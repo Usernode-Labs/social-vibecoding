@@ -167,7 +167,7 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
   if (s.title) titleParts.push(s.title);
   else if (s.reasons && s.reasons[0]) titleParts.push(s.reasons[0].detail);
   if (s.tier === 2 && extra > 0) {
-    titleParts.push(`and ${extra} more reason${extra === 1 ? '' : 's'} — open for details`);
+    titleParts.push(`and ${extra} more reason${extra === 1 ? '' : 's'} (open for details)`);
   }
   const cd = s.countdown ? (s.reject ? ' gc-reject-countdown' : ' gc-merge-countdown') : '';
   const block = inline ? '' : ' dev-status-pill-block';
@@ -188,14 +188,14 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
         {s.advisory > 0 ? (
           <span
             className="gc-vote-count-suffix"
-            title={`${s.advisory} advisory vote${s.advisory === 1 ? '' : 's'} from non-approvers — they don't count toward merging`}
+            title={`${s.advisory} advisory vote${s.advisory === 1 ? '' : 's'} from non-approvers. They don't count toward merging`}
           >{`+${s.advisory}`}</span>
         ) : null}
         {s.lock ? (
           <span
             className="gc-vote-count-lock"
             aria-hidden="true"
-            title="This changes who can administer the app, so it won’t merge on a timer — it needs real Yes votes to reach the app’s normal threshold."
+            title="This changes who can administer the app, so it won’t merge on a timer. It needs real Yes votes to reach the app’s normal threshold."
           >{'\u{1F512}'}</span>
         ) : null}
       </span>

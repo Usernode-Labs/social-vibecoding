@@ -28,7 +28,7 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).DevChat : null) || null;
 }
 
-const BUSY_TITLE = 'Claude is busy with a turn — sync will be available when it finishes';
+const BUSY_TITLE = 'Claude is busy with a turn. Sync will be available when it finishes';
 
 const SYNC_BTN
   = 'rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed'
@@ -110,7 +110,7 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
     <div id="dc-new-change-banner" className={SHELL.violet}>
       <PlusThinIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
       <span className="text-violet-800 dark:text-violet-200 flex-1">
-        {`This change has been ${b.stateLabel}. New work in this chat is added to the same PR — start a new change to keep PRs focused.`}
+        {`This change has been ${b.stateLabel}. New work in this chat is added to the same PR. Start a new change to keep PRs focused.`}
       </span>
       {/* The one primary-filled button on these four strips, so it routes
           through the shell's <Button> — `pill` + `dim60` + `xsText` + `solid`

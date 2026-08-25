@@ -299,7 +299,7 @@ test('the locked-app banner has one writer', () => {
   // which used to be the module's `classList.toggle` over React's constant.
   assert.match(FRAME, /const \{ locked \} = useStoreState<LockedNoticeState>\(lockedNoticeStore\);/);
   assert.match(FRAME, /id="dev-locked-notice" className=\{locked \? 'px-3 pt-2' : 'px-3 pt-2 hidden'\}/);
-  assert.match(FRAME, /App is locked — an admin must approve any proposal before it applies\./);
+  assert.match(FRAME, /App is locked, so an admin must approve any proposal before it applies\./);
   const code = APP_VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
   const fn = code.match(/_renderLockedNotice\(\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(fn, '_renderLockedNotice() found');

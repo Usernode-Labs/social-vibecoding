@@ -567,7 +567,7 @@ function unreachableOriginDetail(rows, origin) {
     if (!sample) sample = String(hit.message || '').slice(0, CONSOLE_MAX_MSG_LEN);
   }
   const where = origin ? ` at ${origin}` : '';
-  return `Staging preview unreachable${where} — no route could be loaded (${sample}).`;
+  return `Staging preview unreachable${where}: no route could be loaded (${sample}).`;
 }
 
 // Classify the parsed test frames into the persisted snapshot:
@@ -2105,9 +2105,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       // knowingly incomplete.
       runCutShort: runPartial ? (runPartialReason || true) : false,
     };
-    if (!media) captureDetail.reason = 'No frontend files in commit range — console/tests-only run';
+    if (!media) captureDetail.reason = 'No frontend files in commit range (console/tests-only run)';
     else if (!stored) captureDetail.reason = 'No usable "after" artifact was produced';
-    else if (runPartial) captureDetail.reason = `Capture run cut short (${runPartialReason || 'unknown'}) — partial set stored`;
+    else if (runPartial) captureDetail.reason = `Capture run cut short (${runPartialReason || 'unknown'}). Partial set stored`;
     await storeCaptureOutcome(pool, session.id, captureState, captureDetail).catch((err) => {
       log.warn('visuals', 'Capture-outcome store failed (non-fatal)', {
         sessionId: session.id, err: err.message,

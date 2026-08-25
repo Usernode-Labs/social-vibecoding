@@ -85,7 +85,7 @@ function Gate({ items }: { items: Config[] }) {
             {`No active version rule for ${OS_LABEL[os]}`}
           </span>
           <span className="text-amber-800/80 dark:text-amber-300/80">
-            {` — every ${OS_LABEL[os]} build is told it is up to date, including old ones. `}
+            {`, so every ${OS_LABEL[os]} build is told it is up to date, including old ones. `}
             {`Add an active config for ${os} to turn the update gate on.`}
           </span>
         </div>
@@ -103,7 +103,7 @@ function ActivityTable({ activity }: { activity: Activity | null }) {
   if (!activity.total) {
     return (
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-4">
-        {`No version checks in the last ${days} days — no app build has asked this platform whether it needs to update.`}
+        {`No version checks in the last ${days} days: no app build has asked this platform whether it needs to update.`}
       </p>
     );
   }
@@ -210,7 +210,7 @@ function ConfigForm({
         <Field
           label="Current version"
           htmlFor="admin-topo-av-f-current_version"
-          help="Display only — the gate compares build numbers, not this string."
+          help="Display only: the gate compares build numbers, not this string."
         >
           <Input
             id="admin-topo-av-f-current_version"
@@ -248,7 +248,7 @@ function ConfigForm({
         <Field
           label="Update URL"
           htmlFor="admin-topo-av-f-update_url"
-          help="Must be http(s). Only sent when an update is required or suggested — leave it blank and a forced update gives the user nowhere to go."
+          help="Must be http(s). Only sent when an update is required or suggested. Leave it blank and a forced update gives the user nowhere to go."
           className="md:col-span-2"
         >
           <Input
@@ -406,7 +406,7 @@ function AppVersionScreen() {
         {items !== null && !error && !items.length ? (
           <EmptyState
             title="No app version configs yet"
-            body="Without a rule per OS the update gate is off — every build is told it is up to date."
+            body="Without a rule per OS the update gate is off, so every build is told it is up to date."
             action={write ? (
               <button
                 id="admin-topo-av-empty-new"

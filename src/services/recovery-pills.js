@@ -136,7 +136,7 @@ Write the pills in the SAME LANGUAGE the conversation is in, not always English.
 // the message needs resending. The restart itself stays in the logs and
 // in metadata.recovered on the row.
 const UNANSWERED_BREADCRUMB =
-  "I didn't get to reply to that — send your message again.";
+  "I didn't get to reply to that. Send your message again.";
 
 // Earlier wordings of UNANSWERED_BREADCRUMB. The backfill sweep's
 // idempotence check compares the session's newest system row against the
@@ -144,6 +144,7 @@ const UNANSWERED_BREADCRUMB =
 // this rename would post a second breadcrumb on top of a pre-rename one.
 const LEGACY_UNANSWERED_BREADCRUMBS = Object.freeze([
   'The platform restarted before I could reply — send your message again.',
+  "I didn't get to reply to that — send your message again.",
 ]);
 
 // True when `content` is this breadcrumb under its current OR any earlier
@@ -157,14 +158,14 @@ function isUnansweredBreadcrumb(content) {
 // The breadcrumb text for a recovered scout turn whose journal replay
 // produced no spec text (previously emit-only, so it vanished on reload).
 const SCOUT_NO_SPEC_BREADCRUMB =
-  "The scout didn't produce a spec — please send your request again.";
+  "The scout didn't produce a spec. Please send your request again.";
 
 // The breadcrumb text for a coding turn that could not be resumed at all.
 // One string for every unresumable shape (worker gone, journal unreadable,
 // mid-exec kill, watchdog reap) — the shapes differ only to an operator,
 // and metadata.recoveredReason keeps them apart in SQL.
 const TURN_UNFINISHED_BREADCRUMB =
-  "That coding turn didn't finish — please send your request again.";
+  "That coding turn didn't finish. Please send your request again.";
 
 // The breadcrumb for a turn that couldn't be resumed BUT whose code
 // already landed: the agent committed and the branch is on GitHub, only
@@ -182,16 +183,20 @@ const TURN_UNFINISHED_BREADCRUMB =
 function buildCodeLandedBreadcrumb({ prNumber = null, rebuildingPreview = true } = {}) {
   const where = prNumber ? `pushed to PR #${prNumber}` : 'pushed to your branch';
   return rebuildingPreview
-    ? `Your changes are committed and ${where} — rebuilding the preview now.`
+    ? `Your changes are committed and ${where}. Rebuilding the preview now.`
     : `Your changes are committed and ${where}.`;
 }
 
 // Every wording buildCodeLandedBreadcrumb can produce, as a matcher —
 // the boot backfill's "did I already post this?" test needs to recognise
 // its own row, and it has no access to the prNumber that shaped it.
+// Transcript rows written before the em-dash copy sweep carry the old
+// " — rebuilding the preview now." tail, so the matcher accepts BOTH the
+// old and the current wording indefinitely; dropping the old branch would
+// make the backfill post a duplicate breadcrumb on every pre-sweep session.
 function isCodeLandedBreadcrumb(content) {
   if (typeof content !== 'string') return false;
-  return /^Your changes are committed and pushed to (PR #\d+|your branch)( — rebuilding the preview now)?\.$/
+  return /^Your changes are committed and pushed to (PR #\d+|your branch)( — rebuilding the preview now|\.? Rebuilding the preview now)?\.$/
     .test(content);
 }
 

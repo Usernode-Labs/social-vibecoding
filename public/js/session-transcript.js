@@ -81,7 +81,7 @@
       const size = humanSize(a && a.sizeBytes);
       const icon = a && a.kind === 'image' ? '🖼' : '📎';
       return '<span class="dc-msg-att-chip st-att-chip" title="' + name
-        + ' — attachments aren\'t shared, only their names"><span aria-hidden="true">' + icon + '</span>'
+        + ' (attachments aren\'t shared, only their names)"><span aria-hidden="true">' + icon + '</span>'
         + '<span class="dc-attach-name">' + name + '</span>'
         + (size ? '<span class="dc-attach-size">' + esc(size) + '</span>' : '')
         + '</span>';
@@ -178,8 +178,8 @@
 
     let html = '';
     if (data.truncated) {
-      html += '<div class="st-truncated">Showing the most recent part of a long chat —'
-        + ' earlier messages aren\'t included.</div>';
+      html += '<div class="st-truncated">Showing the most recent part of a long chat.'
+        + ' Earlier messages aren\'t included.</div>';
     }
     html += '<div class="st-timeline">';
     for (const msg of messages) {

@@ -403,7 +403,7 @@ test('the heal claims the resolved commit before staging can fail', () => {
 });
 
 test('an imported row with no recorded head sha records a terminal skip', () => {
-  assert.match(RECOVERY_SRC, /if \(imported && !importedHead\) \{[\s\S]*?reason: 'imported PR has no recorded head commit — nothing to preview'/,
+  assert.match(RECOVERY_SRC, /if \(imported && !importedHead\) \{[\s\S]*?reason: 'imported PR has no recorded head commit\. Nothing to preview'/,
     'nothing to pin → an explicit gate-passing verdict, not a NULL that the sweeper re-picks forever');
 });
 

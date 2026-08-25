@@ -152,7 +152,7 @@ function makeHarness(storage = new Map(), net = {}) {
           if (net.server.length >= 20 && !net.server.some((d) => d.id === body.id)) {
             return {
               ok: false, status: 409,
-              json: async () => ({ error: "That's 20 saved drafts — send or delete one first", code: 'draft_cap' }),
+              json: async () => ({ error: "That's 20 saved drafts. Send or delete one first", code: 'draft_cap' }),
             };
           }
           if (!net.server.some((d) => d.id === body.id)) {

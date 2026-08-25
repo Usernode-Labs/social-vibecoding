@@ -102,8 +102,8 @@ const BADGES: Record<string, { label: string; cls: string; spin?: boolean }> = {
   running:            { label: 'Running',              cls: 'bg-sky-500/20 text-sky-700 dark:text-sky-300', spin: true },
   merged:             { label: 'Merged',               cls: 'bg-green-500/20 text-green-800 dark:text-green-300' },
   blocked:            { label: 'Blocked',              cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-300' },
-  conflict_resolving: { label: 'Conflict — resolving', cls: 'bg-sky-500/20 text-sky-700 dark:text-sky-300', spin: true },
-  conflict_failed:    { label: 'Conflict — failed',    cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
+  conflict_resolving: { label: 'Conflict: resolving', cls: 'bg-sky-500/20 text-sky-700 dark:text-sky-300', spin: true },
+  conflict_failed:    { label: 'Conflict: failed',    cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
   awaiting_github:    { label: 'Awaiting GitHub',      cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' },
   noop:               { label: 'No-op',                cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400' },
   error:              { label: 'Error',                cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
@@ -205,7 +205,7 @@ function RunCard({ run }: { run: Run }) {
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
-  const title = run.pr_title ? ` — ${run.pr_title}` : '';
+  const title = run.pr_title ? `: ${run.pr_title}` : '';
   const pr = run.pr_number ? `PR #${run.pr_number}` : `session ${run.session_id}`;
   const kindLabel = run.kind === 'conflict_resolution' ? 'conflict resolution'
     : run.kind === 'checks' ? 'checks'
@@ -267,7 +267,7 @@ const TEXT_CLASS = 'mt-1 w-24 bg-white dark:bg-zinc-800 border border-zinc-300 d
 
 const OUTCOMES: Array<[string, string]> = [
   ['', 'Any'], ['running', 'Running'], ['merged', 'Merged'], ['blocked', 'Blocked'],
-  ['conflict_resolving', 'Conflict — resolving'], ['conflict_failed', 'Conflict — failed'],
+  ['conflict_resolving', 'Conflict: resolving'], ['conflict_failed', 'Conflict: failed'],
   ['awaiting_github', 'Awaiting GitHub'], ['noop', 'No-op'], ['error', 'Error'],
   ['pr_closed', 'PR closed'], ['passing', 'Checks passing'], ['failing', 'Checks failing'],
   ['skipped', 'Checks skipped'],
@@ -344,7 +344,7 @@ function MergesSection() {
       }
       if (!alive.current) return;
       if (!me.user?.isAdmin) {
-        setGate('Admins only — this section shows merge & conflict-resolution logs.');
+        setGate('Admins only. This section shows merge & conflict-resolution logs.');
         return;
       }
       setReady(true);

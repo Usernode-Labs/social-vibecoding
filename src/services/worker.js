@@ -1644,7 +1644,7 @@ async function _bootstrapWarmContainer(sessionId, {
   }
   if (privacy.private) {
     throw new Error(
-      `Cannot bootstrap worker for ${repoOwner}/${repoName}: repo is private. Usernode requires public repositories — make it public on GitHub or delete this app and re-import.`
+      `Cannot bootstrap worker for ${repoOwner}/${repoName}: repo is private. Usernode requires public repositories. Make it public on GitHub or delete this app and re-import.`
     );
   }
 
@@ -3266,7 +3266,7 @@ async function execPushFromWorker(sessionId, branchName) {
     err.permanent = true;
     err.userMessage =
       'The platform has no GitHub bot token configured, so it cannot push on '
-      + "your behalf. This needs a platform admin — retrying won't help.";
+      + "your behalf. This needs a platform admin. Retrying won't help.";
     throw err;
   }
   if (!branchNames.isValidBranchName(branchName)) {
@@ -3276,8 +3276,8 @@ async function execPushFromWorker(sessionId, branchName) {
     err.permanent = true;
     err.userMessage =
       `This session's branch name (${branchName}) isn't a valid git branch, `
-      + 'so the push can never succeed. Start a new session on this app — '
-      + 'its branch will be named correctly — or ask an admin to rename this one.';
+      + 'so the push can never succeed. Start a new session on this app '
+      + '(its branch will be named correctly) or ask an admin to rename this one.';
     throw err;
   }
 
@@ -3353,7 +3353,7 @@ async function execPushFromWorker(sessionId, branchName) {
 function describePushFailure(err) {
   const code = err?.code || 'push_failed';
   const permanent = err?.permanent === true;
-  const lead = "Push to GitHub failed — your changes are committed in the "
+  const lead = "Push to GitHub failed. Your changes are committed in the "
     + "session's worker but not on GitHub.";
 
   if (err?.userMessage) {

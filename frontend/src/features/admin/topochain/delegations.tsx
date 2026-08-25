@@ -364,7 +364,7 @@ function DelegationsScreen() {
     <>
       <ScreenHeader
         title="Delegations"
-        subtitle="Who delegated stake to the platform node, one row per testnet account. Every period is kept — expand a row for that account’s history."
+        subtitle="Who delegated stake to the platform node, one row per testnet account. Every period is kept. Expand a row for that account’s history."
         actions={(
           <>
             <label className="sr-only" htmlFor="admin-topo-dlg-season-filter">Filter by season</label>

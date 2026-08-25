@@ -513,7 +513,7 @@ export function NotificationsBody(): ReactNode {
           ? 'px-4 py-6 text-sm text-zinc-500 text-center dark:text-zinc-400'
           : 'hidden px-4 py-6 text-sm text-zinc-500 text-center dark:text-zinc-400'}
       >
-        You&rsquo;re all caught up — no new notifications.
+        You&rsquo;re all caught up. No new notifications.
       </div>
       {/*
           The footer toggle. Rendered only when there is something behind it,

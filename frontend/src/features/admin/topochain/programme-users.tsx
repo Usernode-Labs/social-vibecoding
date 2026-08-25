@@ -74,7 +74,7 @@ function DeleteConfirm({ user, onCancel, onConfirm }: {
       <p className="text-xs text-red-700 dark:text-red-300 mb-3">
         {'This permanently deletes '}
         <strong>{expected}</strong>
-        {' from the platform users table — this can be ANY platform user, including real logins '}
+        {' from the platform users table. This can be ANY platform user, including real logins '}
         {'and other admins, not just a user of this programme. Type '}
         <code>{expected}</code>
         {' exactly to confirm.'}
@@ -197,7 +197,7 @@ function UserForm({ id, events, onClose, onSaved }: {
             <CheckField
               id="admin-topo-u-f-accept_logs"
               label="Accept logs"
-              help="Mobile log opt-out lives here — no separate log-payload viewer exists; see Task 15 notes."
+              help="Mobile log opt-out lives here. No separate log-payload viewer exists; see Task 15 notes."
               checked={acceptLogs}
               onChange={setAcceptLogs}
             />
@@ -282,7 +282,7 @@ function ImportPanel({ events, onClose, onImported }: {
           </Select>
         </Field>
         <Field
-          label={'Users — one "email,username" per line *'}
+          label={'Users: one "email,username" per line *'}
           htmlFor="admin-topo-u-imp-rows"
           help="username here maps to the Discord handle column, per the import API."
         >

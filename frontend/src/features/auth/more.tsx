@@ -145,7 +145,7 @@ export function MoreScreen() {
     } catch {
       outcome = null;
     }
-    if (outcome === 'ok') return { text: 'Account verified — thanks.', tone: 'ok' };
+    if (outcome === 'ok') return { text: 'Account verified. Thanks.', tone: 'ok' };
     if (outcome === 'failed' || outcome === 'denied' || outcome === 'unavailable') {
       return {
         text:
@@ -314,15 +314,15 @@ export function MoreScreen() {
         });
         const data = await res.json().catch(() => null);
         if (res.ok) {
-          setMsg({ text: (data && data.message) || 'Saved — thanks.', tone: 'ok' });
+          setMsg({ text: (data && data.message) || 'Saved. Thanks.', tone: 'ok' });
         } else {
           setMsg({
-            text: (data && data.error) || 'Something went wrong — try again.',
+            text: (data && data.error) || 'Something went wrong. Try again.',
             tone: 'error',
           });
         }
       } catch {
-        setMsg({ text: 'Connection issue — try again.', tone: 'error' });
+        setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
       }
       setSaving(false);
     },
@@ -355,7 +355,7 @@ export function MoreScreen() {
       </a>
       <div className="max-w-2xl mx-auto px-6 py-16">
         <p className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400">
-          Optional — moves you up the list
+          Optional (moves you up the list)
         </p>
         <h1 className="mt-1 text-2xl font-bold">
           Want in sooner?
@@ -376,13 +376,13 @@ export function MoreScreen() {
         >
           {status === 'throttled' ? (
             <>
-              Your link is fine — we&rsquo;re limiting requests from your
+              Your link is fine. We&rsquo;re limiting requests from your
               address right now. Try again in {retryText}, or just reopen the
               link from your waitlist email then.
             </>
           ) : (
             <>
-              {"This link doesn't look right — use the one from your waitlist email, or "}
+              {"This link doesn't look right. Use the one from your waitlist email, or "}
               <a href="#landing" className="underline">
                 join the waitlist
               </a>
@@ -401,7 +401,7 @@ export function MoreScreen() {
               Tell us about a group you&rsquo;re part of that could use its own app.
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
-              A team, a server, a club, a group chat, a co-op, a band, a league, a neighbourhood. Not a hypothetical one — a real group you&rsquo;re actually in.
+              A team, a server, a club, a group chat, a co-op, a band, a league, a neighbourhood. Not a hypothetical one: a real group you&rsquo;re actually in.
             </p>
             <input
               ref={groupName}
@@ -434,7 +434,7 @@ export function MoreScreen() {
               </select>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3 mb-1.5">
-              What does it run on today? — pick any
+              What does it run on today? (pick any)
             </p>
             <MultiChipRow
               id="more-group-tools"
@@ -479,7 +479,7 @@ export function MoreScreen() {
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
               <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
-                What happened? — pick any
+                What happened? (pick any)
               </p>
               <MultiChipRow
                 id="more-loss-kinds"
@@ -545,7 +545,7 @@ export function MoreScreen() {
                 id="more-handle-farcaster"
                 type="text"
                 maxLength={255}
-                placeholder="Farcaster — @handle"
+                placeholder="Farcaster (@handle)"
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
               <input
@@ -553,7 +553,7 @@ export function MoreScreen() {
                 id="more-handle-discord"
                 type="text"
                 maxLength={255}
-                placeholder="Discord — username"
+                placeholder="Discord (username)"
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
               <input
@@ -561,7 +561,7 @@ export function MoreScreen() {
                 id="more-handle-telegram"
                 type="text"
                 maxLength={255}
-                placeholder="Telegram — @handle"
+                placeholder="Telegram (@handle)"
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
               <input
@@ -569,7 +569,7 @@ export function MoreScreen() {
                 id="more-handle-other"
                 type="text"
                 maxLength={255}
-                placeholder="Anywhere else — Twitch, YouTube, Mastodon…"
+                placeholder="Anywhere else (Twitch, YouTube, Mastodon…)"
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
             </div>
@@ -629,7 +629,7 @@ export function MoreScreen() {
               id="more-referrer"
               type="text"
               maxLength={255}
-              placeholder="Did someone here refer you? Their handle — optional"
+              placeholder="Did someone here refer you? Their handle (optional)"
               className="mt-3 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
           </div>
@@ -647,7 +647,7 @@ export function MoreScreen() {
               {msg ? msg.text : null}
             </p>
             <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-3">
-              A blank answer just means we have less to go on — nothing here is required.
+              A blank answer just means we have less to go on. Nothing here is required.
             </p>
           </div>
         </form>

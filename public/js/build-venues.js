@@ -119,7 +119,7 @@
       requires: null,
       defaultable: true,
       chat: true,
-      blurb: 'Usernode runs the turns right here, on your daily Claude credits — or your own Anthropic key once they run out.',
+      blurb: 'Usernode runs the turns right here, on your daily Claude credits, or your own Anthropic key once they run out.',
       cta: 'Use Claude',
     },
     {
@@ -134,7 +134,7 @@
       requires: ['cliAuthEnabled', 'sessionBridgeEnabled'],
       defaultable: true,
       chat: true,
-      blurb: 'The Usernode CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal — the work just executes locally.',
+      blurb: 'The Usernode CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.',
       cta: 'Set up the Usernode CLI',
     },
     {
@@ -170,7 +170,7 @@
       // Both exceptions, stated once. See the header.
       defaultable: false,
       chat: false,
-      blurb: 'Build it however you like — Cursor, Zed, vim, any agent — push a branch, then bring the pull request in with “Import Feature from a PR”.',
+      blurb: 'Build it however you like (Cursor, Zed, vim, any agent), push a branch, then bring the pull request in with “Import Feature from a PR”.',
       cta: 'How importing a PR works',
     },
   ];
@@ -292,15 +292,15 @@
   function webNote(kind, paused) {
     if (kind === 'session') {
       return paused
-        ? 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch — '
+        ? 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch: '
           + 'the code lands on this session\'s branch, and its preview and checks catch up when you reopen the '
           + 'session. The agent\'s own conversation happens there, not in this transcript.'
-        : 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch — '
+        : 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch: '
           + 'the code lands here, and its preview and checks rebuild. The agent\'s own conversation happens there, '
           + 'not in this transcript.';
     }
     if (kind === 'proposal') {
-      return 'It starts from this proposal\'s latest commit and pushes back onto the same proposal — submitting '
+      return 'It starts from this proposal\'s latest commit and pushes back onto the same proposal. Submitting '
         + 'clears the votes it has already collected and re-runs its checks. The agent\'s own conversation happens '
         + 'there, not in this transcript.';
     }
@@ -317,16 +317,16 @@
     var s = state || {};
     if (id === 'own-tools-pr') {
       if (mode === 'switch') {
-        return 'Starts separate work — this chat stays where it is, and what you import comes back as its own proposal. It can’t be your default.';
+        return 'Starts separate work. This chat stays where it is, and what you import comes back as its own proposal. It can’t be your default.';
       }
       if (mode === 'blocked') {
         return 'Costs no credits: you build it yourself and import the pull request. There is no Usernode chat for this one, and it can’t be your default.';
       }
-      return 'No Usernode chat for this one — you build it, then import the pull request. It can’t be your default.';
+      return 'No Usernode chat for this one: you build it, then import the pull request. It can’t be your default.';
     }
     if (v.group === 'in-chat') {
       return mode === 'switch'
-        ? 'Keeps this chat, this branch and this proposal — only where the turns run changes.'
+        ? 'Keeps this chat, this branch and this proposal. Only where the turns run changes.'
         : 'The work happens in this chat.';
     }
     // Web hand-off: what it does depends on where this session is, which
@@ -473,7 +473,7 @@
   function chipHtml(venueId) {
     var v = venue(venueId);
     if (!v) return '';
-    return '<span class="dc-venue-chip" title="' + escapeHtml(v.label + ' — ' + v.blurb) + '">'
+    return '<span class="dc-venue-chip" title="' + escapeHtml(v.label + ': ' + v.blurb) + '">'
       + escapeHtml(v.label) + '</span>';
   }
 
@@ -486,7 +486,7 @@
   // explanation. One sentence, naming the fix.
   var FALLBACK_NOTES = {
     flag_off: 'Your default is Usernode · OpenRouter, but this deployment has it turned off, so this session is building in Usernode · Claude.',
-    not_in_beta: 'Your default is Usernode · OpenRouter, which is still in a limited beta you’re not in yet — this session is building in Usernode · Claude.',
+    not_in_beta: 'Your default is Usernode · OpenRouter, which is still in a limited beta you’re not in yet, so this session is building in Usernode · Claude.',
     model_unavailable: 'Your default is Usernode · OpenRouter but no model is set for it, so this session is building in Usernode · Claude. Pick a model in Settings and the next one will use it.',
     no_credential: 'Your default is Usernode · OpenRouter but your OpenRouter key is missing or no longer valid, so this session is building in Usernode · Claude. Re-save the key in Settings.',
   };
@@ -547,7 +547,7 @@
       venue: null,
       matches: ['usernode-claude', 'usernode-openrouter'],
       requires: null,
-      blurb: 'Usernode runs the turns right here, in this chat — on your daily AI credits, or your own key once they run out.',
+      blurb: 'Usernode runs the turns right here, in this chat, on your daily AI credits, or your own key once they run out.',
     },
     {
       id: 'web-agent',
@@ -565,7 +565,7 @@
       venue: 'own-tools-pr',
       matches: ['own-tools-pr'],
       requires: 'canCollaborate',
-      blurb: 'Build it however you like — Cursor, Zed, vim, any agent — push a branch, then bring the pull request in.',
+      blurb: 'Build it however you like (Cursor, Zed, vim, any agent), push a branch, then bring the pull request in.',
     },
     {
       // Last on purpose, and absent unless the deployment offers the CLI
@@ -578,7 +578,7 @@
       venue: 'local',
       matches: ['local'],
       requires: ['cliAuthEnabled', 'sessionBridgeEnabled'],
-      blurb: 'The Usernode CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal — the work just executes locally.',
+      blurb: 'The Usernode CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.',
     },
   ];
 

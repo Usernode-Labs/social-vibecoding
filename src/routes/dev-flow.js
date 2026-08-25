@@ -461,7 +461,7 @@ function devFlowRoutes(config) {
     const proposalId = hasProposal ? rawProposal : null;
     if (!brief.trim() && !issueNumber) {
       return res.status(400).json({
-        error: 'Describe the change you want first — the work order needs something to hand your agent.',
+        error: 'Describe the change you want first. The work order needs something to hand your agent.',
         code: 'invalid_request',
       });
     }
@@ -749,7 +749,7 @@ function demoStatus(app, parsed, targetKind) {
       // An array, exactly as renderPreparedTask returns — a reviewer looking
       // at the demo payload should see the real shape, not a stand-in one.
       guidance: [
-        `Fork ${owner}/${repo} on GitHub — your fork is ${login}/${repo}.`,
+        `Fork ${owner}/${repo} on GitHub. Your fork is ${login}/${repo}.`,
         'Open https://claude.ai/code and start a new session.',
         `Choose ${login}/${repo} as its repository.`,
         'Paste the work order below in exactly as written.',

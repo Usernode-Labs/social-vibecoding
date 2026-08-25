@@ -332,7 +332,7 @@ test('multiple reasons: the pill names the worst and counts the rest', () => {
   });
   const html = pillHtml(AppView, pr);
   assert.match(html, /Checks failing · 1/);
-  assert.match(html, /and 2 more reasons — open for details/);
+  assert.match(html, /and 2 more reasons \(open for details\)/);
   assert.equal(AppView.blockReasons(pr).length, 3);
 });
 

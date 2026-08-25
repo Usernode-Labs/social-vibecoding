@@ -698,7 +698,7 @@ const AppView = {
       AppView._setStagingLoader(true, {
         title: 'Spinning the preview back up…',
         sub: 'The preview was paused after a while of inactivity. Rebuilding it '
-          + 'from the session’s latest changes — this usually takes 20–60 seconds.',
+          + 'from the session’s latest changes. This usually takes 20–60 seconds.',
       });
       return;
     }
@@ -1659,7 +1659,7 @@ const AppView = {
       const missing = Array.isArray(appData.missingSecrets) ? appData.missingSecrets : [];
       return {
         dot: 'creating',
-        message: 'Awaiting required secrets — deploy is blocked.',
+        message: 'Awaiting required secrets. Deploy is blocked.',
         detail: missing.length ? missing.join(', ') : null,
         action: appData.slug
           ? { key: 'secrets', label: 'Configure secrets', slug: appData.slug }
@@ -1759,7 +1759,7 @@ const AppView = {
       AppView._unmountAppFrame();
       AppView._paintAppStatus(content, {
         dot: null,
-        message: 'This app needs a connection — reconnect to open it.',
+        message: 'This app needs a connection. Reconnect to open it.',
         detail: null,
         action: null,
       });
@@ -2585,8 +2585,8 @@ const AppView = {
       body = {
         actions: AppView._detailActionsView('session', item),
         note: imported
-          ? 'Imported pull request — the code stays on GitHub. The discussion below is visible to everyone and carries over when the importer puts it up for vote.'
-          : `Live dev session by ${ownerName} — the discussion below is visible to everyone and carries over if this becomes a proposal.`,
+          ? 'Imported pull request. The code stays on GitHub. The discussion below is visible to everyone and carries over when the importer puts it up for vote.'
+          : `Live dev session by ${ownerName}. The discussion below is visible to everyone and carries over if this becomes a proposal.`,
         transcript: imported ? null : AppView._transcriptSectionView(item),
       };
     } else {
@@ -2729,7 +2729,7 @@ const AppView = {
       if (!generating && !clonedReady) {
         pills.push({
           key: 'generate', cls: 'gc-vote-btn', label: 'Generate proposal',
-          title: 'Spin up a headless AI session that starts solving this issue on its own — uses your credits',
+          title: 'Spin up a headless AI session that starts solving this issue on its own (uses your credits)',
           act: { fn: 'confirmAutoSession', args: [item.number] },
         });
       }
@@ -2743,14 +2743,14 @@ const AppView = {
         }
         : {
           key: 'claim', cls: 'gc-vote-btn', label: 'Claim this issue',
-          title: "Tell everyone you're taking this issue — a claim, not a promise of progress",
+          title: "Tell everyone you're taking this issue: a claim, not a promise of progress",
           act: { fn: 'markIssueInProgress', args: [item.number] },
         });
       const meta = AppView._ghIssuesMeta || {};
       pills.push({
         key: 'bounty', cls: 'gc-vote-btn',
         label: item.my_bounty ? '★ Bountied' : 'Pledge kudos',
-        title: "Pledge a kudos bounty — paid to whoever's merged PR closes this issue",
+        title: "Pledge a kudos bounty, paid to whoever's merged PR closes this issue",
         disabled: !!(item.my_bounty || meta.myRemaining === 0),
         act: { fn: 'giveIssueBounty', args: [item.number] },
       });
@@ -2764,7 +2764,7 @@ const AppView = {
         }
         : {
           key: 'close', cls: 'gc-vote-btn', label: 'Propose to close',
-          title: 'Propose closing this issue — the group votes; if it passes, the issue is closed here and on GitHub',
+          title: 'Propose closing this issue. The group votes; if it passes, the issue is closed here and on GitHub',
           act: { fn: 'promptCloseIssue', args: [item.number] },
         });
     }
@@ -3415,7 +3415,7 @@ const AppView = {
       // #621: non-collaborators read the thread but can't post to it.
       readOnly: AppView.readOnly,
       ...(AppView.readOnly
-        ? { notice: "You're viewing this app's dev space read-only — only collaborators can post." }
+        ? { notice: "You're viewing this app's dev space read-only. Only collaborators can post." }
         : {}),
     });
   },
@@ -3855,7 +3855,7 @@ const AppView = {
       // #694: an attachments-only send is allowed; a send while an upload
       // is still in flight waits (input keeps its text).
       if (GroupChat.attachmentsUploading(null)) {
-        GroupChat._setAttachError('Still uploading — one moment…', null);
+        GroupChat._setAttachError('Still uploading. One moment…', null);
         return;
       }
       if (!content && !GroupChat.hasPendingAttachments(null)) return;
@@ -5299,7 +5299,7 @@ const AppView = {
     } catch {
       AppView._boardOrder = prev;
       AppView._repaintKanbanBoard(true);
-      PlatformUI.toast('Couldn’t save the new order — reverted.');
+      PlatformUI.toast('Couldn’t save the new order, so it was reverted.');
     }
   },
 
@@ -5429,7 +5429,7 @@ const AppView = {
         empty: null,
         orderCol: null,
         footer: null,
-        hint: 'Somebody or something is on these — being worked on, auto-solving, paused, waiting on an answer, or just claimed. The chip on each card says which.',
+        hint: 'Somebody or something is on these: being worked on, auto-solving, paused, waiting on an answer, or just claimed. The chip on each card says which.',
       },
       {
         key: 'inreview', title: 'In review', count: kInReview.length,
@@ -5567,7 +5567,7 @@ const AppView = {
       externalAgent: s.external_agent,
     }));
     if (!v) return null;
-    return { t: 'venue', key: 'venue', label: v.label, title: `${v.label} — ${v.blurb}` };
+    return { t: 'venue', key: 'venue', label: v.label, title: `${v.label}: ${v.blurb}` };
   },
 
   // The session card's state chip, as a SPEC. Three sources, in
@@ -5662,7 +5662,7 @@ const AppView = {
         }
         : {
           key: 'vis', cls: 'gc-vote-btn', label: 'Make visible',
-          title: "Show this session in everyone's In progress area — others can comment and open its live preview, but can't read your chat unless you also share it",
+          title: "Show this session in everyone's In progress area. Others can comment and open its live preview, but can't read your chat unless you also share it",
           act: { fn: '_setSessionShared', args: [s.id, true, null] },
         });
     }
@@ -5673,7 +5673,7 @@ const AppView = {
     if (shared && !imported) {
       menu.push(transcriptShared
         ? {
-          label: 'Chat shared — stop sharing',
+          label: 'Chat shared. Stop sharing',
           icon: 'chat',
           title: 'Stop others reading this chat (they keep the card and the discussion)',
           act: () => AppView._setTranscriptShared(s.id, false, null),
@@ -5681,7 +5681,7 @@ const AppView = {
         : {
           label: 'Share chat',
           icon: 'chat',
-          title: "Let everyone read this chat, read-only — they can't reply in it, and can't see your costs or uploaded files",
+          title: "Let everyone read this chat, read-only. They can't reply in it, and can't see your costs or uploaded files",
           act: () => AppView._setTranscriptShared(s.id, true, null),
         });
       const chatN = sh ? (parseInt(sh.chat_count, 10) || 0) : 0;
@@ -5711,7 +5711,7 @@ const AppView = {
     // nobody else can see it, replacing the caption that used to sit above
     // the group. Single-row shell like every other card on the board.
     const mutedCls = shared || imported ? '' : ` ${AppView.DEV_CARD_MUTED_CLS}`;
-    const attrs = { role: 'button', tabindex: '0', title: `${s.busy ? 'AI is working — ' : ''}${label}` };
+    const attrs = { role: 'button', tabindex: '0', title: `${s.busy ? 'AI is working. ' : ''}${label}` };
     if (imported) attrs['data-shared-session-row'] = String(s.id);
     else attrs['data-session-chip'] = String(s.id);
     return {
@@ -5802,7 +5802,7 @@ const AppView = {
   // divider label's tooltip, and the private group's own cards carry the
   // muted shell, so the information survives at a fraction of the height.
   PRIVATE_DIVIDER_TITLE: 'Only you can see your active sessions.',
-  VISIBLE_DIVIDER_TITLE: 'Visible to everyone — including a live preview of your changes.',
+  VISIBLE_DIVIDER_TITLE: 'Visible to everyone, including a live preview of your changes.',
   OTHERS_DIVIDER_TITLE: 'Dev sessions other people have made visible.',
 
   _privateDividerRow() {
@@ -5837,7 +5837,7 @@ const AppView = {
     return {
       t: 'note',
       key: 'note:session-filter',
-      text: `Dev sessions don't carry priority, category or assignee — the ${sessionCount} `
+      text: `Dev sessions don't carry priority, category or assignee, so the ${sessionCount} `
         + `session card${sessionCount === 1 ? '' : 's'} below ${sessionCount === 1 ? 'is' : 'are'} not filtered by ${list}.`,
     };
   },
@@ -5981,7 +5981,7 @@ const AppView = {
   // and what doesn't, before they publish it.
   SHARE_CHAT_CONFIRM: {
     title: 'Let everyone read this chat?',
-    message: 'Anyone who can see this app will be able to read the whole conversation — '
+    message: 'Anyone who can see this app will be able to read the whole conversation: '
       + "your messages, the AI's replies, and what the coding agent did. They can't reply "
       + "in your chat, and they can't see your costs or your uploaded files. You can turn "
       + 'this off at any time.',
@@ -6351,7 +6351,7 @@ const AppView = {
       </div>`;
   },
 
-  FORK_CHAT_TITLE: 'Start your own dev session from this chat — you get a copy of the '
+  FORK_CHAT_TITLE: 'Start your own dev session from this chat. You get a copy of the '
     + "conversation and your own branch off theirs. Their session isn't affected.",
 
   // Fork a shared chat into the viewer's own new session, then open it.
@@ -6371,7 +6371,7 @@ const AppView = {
       }
       const created = body.session;
       if (!created || !created.id) {
-        PlatformUI.toast("Fork created, but couldn't open it — check your sessions.");
+        PlatformUI.toast("Fork created, but couldn't open it. Check your sessions.");
         if (btn) { btn.disabled = false; btn.textContent = original; }
         return;
       }
@@ -6601,7 +6601,7 @@ const AppView = {
       attrs,
       icon: AppView._devCardIcon(
         isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'),
-        mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined),
+        mine && !isMerged ? { title: 'This is your PR. Open its session.' } : undefined),
       title,
       meta,
       pill,
@@ -6751,13 +6751,13 @@ const AppView = {
       const direct = !!entry.my_kudos_direct;
       const reason = isSelf
         ? 'You can’t give kudos to your own PR'
-        : (mineKudos && !direct ? 'Credited via an issue bounty award — can’t be retracted' : '');
+        : (mineKudos && !direct ? 'Credited via an issue bounty award (can’t be retracted)' : '');
       const count = entry.count || 0;
       items.push({
         label: (mineKudos && direct ? 'Retract kudos' : 'Give kudos') + (count ? ` (${count})` : ''),
         icon: 'kudos',
         title: reason || (mineKudos && direct
-          ? 'You gave kudos to this PR — this retracts it'
+          ? 'You gave kudos to this PR. This retracts it'
           : 'Thank the author of this change'),
         disabled: !!reason,
         act: reason ? null : () => {
@@ -6836,7 +6836,7 @@ const AppView = {
         key: 'imported',
         tone: 'warn',
         parts: pr.imported_pr_author
-          ? ['Imported pull request — authored by ', { b: pr.imported_pr_author }, `. ${IMPORTED_TAIL}`]
+          ? ['Imported pull request, authored by ', { b: pr.imported_pr_author }, `. ${IMPORTED_TAIL}`]
           : [`Imported pull request. ${IMPORTED_TAIL}`],
       });
     }
@@ -6862,7 +6862,7 @@ const AppView = {
     if (!pr.staging_url && pr.staging_building) {
       notes.push({
         key: 'preview', tone: 'muted',
-        parts: ["A staging preview is being built for this proposal — it usually takes a few minutes, and a Preview button appears as soon as it's ready. Automated checks run against that preview, so they'll still be pending until then."],
+        parts: ["A staging preview is being built for this proposal. It usually takes a few minutes, and a Preview button appears as soon as it's ready. Automated checks run against that preview, so they'll still be pending until then."],
       });
     } else if (!pr.staging_url && pr.staging_error) {
       notes.push({
@@ -6922,7 +6922,7 @@ const AppView = {
       helpHint: showHelp,
       explicitNote,
       lockedNote: (ctx.locked && pr.status !== 'merged')
-        ? 'App is locked — this also needs at least one admin yes before it merges.'
+        ? 'App is locked, so this also needs at least one admin yes before it merges.'
         : null,
     };
   },
@@ -7000,7 +7000,7 @@ const AppView = {
     // sends no merge_window_ends_at for a flagged row.
     const noTimer = !!pr.requires_explicit_approval;
     const noTimerNote = noTimer
-      ? ` This changes who can administer the app, so it won’t merge on a timer — it needs ${required} actual Yes vote${required === 1 ? '' : 's'}.`
+      ? ` This changes who can administer the app, so it won’t merge on a timer. It needs ${required} actual Yes vote${required === 1 ? '' : 's'}.`
       : '';
 
     // #646: "at least N approvals" mode — clock-free, so none of the
@@ -7014,7 +7014,7 @@ const AppView = {
       if (reached) {
         s = blocker
           ? `It has the approvals it needs (${yes} of ${n}), but it can’t merge yet: ${blocker}.`
-          : `It has the approvals it needs (${yes} of ${n}) — queued to merge shortly.`;
+          : `It has the approvals it needs (${yes} of ${n}), so it is queued to merge shortly.`;
       } else {
         s = `This app requires at least ${n} approval${n === 1 ? '' : 's'} from ${who}. Currently ${yes} of ${n}.`;
         if (blocker) s += ` Note: ${blocker}.`;
@@ -7043,28 +7043,28 @@ const AppView = {
       // normal threshold is met, subject to the usual blockers.
       sentence = blocker
         ? `It has enough Yes votes (${yes} of ${required}), but it can’t merge yet: ${blocker}.`
-        : `It has the votes it needs (${yes} of ${required}) — queued to merge shortly.`;
+        : `It has the votes it needs (${yes} of ${required}), so it is queued to merge shortly.`;
       foldedBlocker = true;
     } else if (noTimer && pr.rejection_armed && inReject) {
       // Rejection is deliberately untouched by the no-timer modifier.
       const cd = AppView._fmtCountdown(rejectEnds - now);
-      sentence = `More No than Yes, without enough support — this closes in ${cd} unless it gains support. ${tally}`;
+      sentence = `More No than Yes, without enough support. This closes in ${cd} unless it gains support. ${tally}`;
     } else if (noTimer) {
       sentence = `It needs ${required} of ${active} active testers to vote Yes. ${tally}`;
     } else if (!contested && inMergeWindow && (reached || lazyLead)) {
       const cd = AppView._fmtCountdown(mergeEnds - now);
       sentence = reached
-        ? `There are enough Yes votes (${yes} of ${required}) — this merges in ${cd} unless someone objects.`
-        : `It has support (${yes} of ${required} needed) and no objections — it merges in ${cd} unless the vote changes; silence counts as agreement.`;
+        ? `There are enough Yes votes (${yes} of ${required}), so this merges in ${cd} unless someone objects.`
+        : `It has support (${yes} of ${required} needed) and no objections, so it merges in ${cd} unless the vote changes; silence counts as agreement.`;
     } else if (pr.rejection_armed && inReject) {
       const cd = AppView._fmtCountdown(rejectEnds - now);
-      sentence = `More No than Yes, without enough support — this closes in ${cd} unless it gains support. ${tally}`;
+      sentence = `More No than Yes, without enough support. This closes in ${cd} unless it gains support. ${tally}`;
     } else if (contested) {
-      sentence = `It’s contested — enough people object that the timed path is off, so it now needs a clear majority of Yes votes to pass. ${tally}`;
+      sentence = `It’s contested: enough people object that the timed path is off, so it now needs a clear majority of Yes votes to pass. ${tally}`;
     } else if (reached) {
       sentence = blocker
         ? `It has enough Yes votes (${yes} of ${required}), but it can’t merge yet: ${blocker}.`
-        : `It has the votes it needs (${yes} of ${required}) and green checks — queued to merge shortly.`;
+        : `It has the votes it needs (${yes} of ${required}) and green checks, so it is queued to merge shortly.`;
       foldedBlocker = true;
     } else {
       sentence = `It needs ${required} of ${active} active testers to vote Yes. ${tally}`;
@@ -7210,7 +7210,7 @@ const AppView = {
       weight: 'foot',
       parts: mcs === 'failed'
         ? [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.']
-        : ['Automatic resolution may not run for this proposal — ', { b: creator },
+        : ['Automatic resolution may not run for this proposal. ', { b: creator },
           ' needs to finish the merge: open the session\'s dev-chat and run "Sync with main".'],
     });
     return {
@@ -7237,7 +7237,7 @@ const AppView = {
       return {
         key: 'env', tone: 'neutral',
         heading: "Platform variables couldn't be checked.",
-        rows: [{ t: 'line', parts: ['This does not block the merge — the check is re-run when votes reach the threshold.'] }],
+        rows: [{ t: 'line', parts: ['This does not block the merge. The check is re-run when votes reach the threshold.'] }],
       };
     }
 
@@ -7249,7 +7249,7 @@ const AppView = {
       const one = missing.length === 1;
       return {
         key: 'env', tone: 'warn',
-        heading: '⚠ New platform variables have no value set — merge is blocked.',
+        heading: '⚠ New platform variables have no value set. Merge is blocked.',
         // The keys lead — they are what a reader has to act on — and the
         // two explanatory lines follow them.
         rows: [
@@ -7261,7 +7261,7 @@ const AppView = {
             })),
           },
           { t: 'line', parts: [`Deploying without ${one ? 'it' : 'them'} would restart the platform missing configuration it now expects.`], weight: 'foot' },
-          { t: 'line', parts: [`No rebuild needed — set the value${one ? '' : 's'} and vote again.`], weight: 'foot' },
+          { t: 'line', parts: [`No rebuild needed. Set the value${one ? '' : 's'} and vote again.`], weight: 'foot' },
         ],
         action: {
           key: 'env-fix',
@@ -7281,7 +7281,7 @@ const AppView = {
     if (carried.length) {
       rows.push({
         t: 'line',
-        parts: [`${carried.join(', ')} ${carried.length === 1 ? 'carries its value' : 'carry their values'} with this proposal — applied when it merges.`],
+        parts: [`${carried.join(', ')} ${carried.length === 1 ? 'carries its value' : 'carry their values'} with this proposal, applied when it merges.`],
       });
     }
     return { key: 'env', tone: 'ok', heading: '✓ New platform variables are configured.', rows };
@@ -7310,7 +7310,7 @@ const AppView = {
     }
     rows.push({
       t: 'line',
-      parts: ['Pushing a fix rebuilds the preview and re-runs the check — the warning clears if the errors are gone.'],
+      parts: ['Pushing a fix rebuilds the preview and re-runs the check. The warning clears if the errors are gone.'],
       weight: 'foot',
     });
     return {
@@ -7361,7 +7361,7 @@ const AppView = {
       if (!pr.console_check_state) {
         const stale = AppView._checksRunStale(pr.created_at);
         const rows = [{ t: 'line', parts: ['The staging preview is being prepared, then automated tests run against it. Merge is blocked until all tests pass.'] }];
-        if (stale) rows.push({ t: 'line', parts: ['If this has been stuck for a while, the platform re-runs the checks automatically — or re-run them now.'], weight: 'foot' });
+        if (stale) rows.push({ t: 'line', parts: ['If this has been stuck for a while, the platform re-runs the checks automatically, or re-run them now.'], weight: 'foot' });
         return [{
           key: 'checks', tone: 'neutral', spinner: true,
           heading: 'Checks are starting…', rows, action: stale ? recheck : null,
@@ -7398,7 +7398,7 @@ const AppView = {
       // nothing at all, so legacy rows are unchanged.
       const why = AppView._checksTriggerCopy(pr.check_trigger);
       if (why) rows.push({ t: 'line', parts: [why], weight: 'foot' });
-      if (stale) rows.push({ t: 'line', parts: ['If this has been running for a while, the platform re-runs the checks automatically — or re-run them now.'], weight: 'foot' });
+      if (stale) rows.push({ t: 'line', parts: ['If this has been running for a while, the platform re-runs the checks automatically, or re-run them now.'], weight: 'foot' });
       return [{
         key: 'checks', tone: 'neutral', spinner: true,
         heading: phase.title, rows, action: stale ? recheck : null,
@@ -7426,7 +7426,7 @@ const AppView = {
         : 'there was nothing to test';
       return [{
         key: 'checks', tone: 'neutral', heading: 'Checks skipped.',
-        rows: [{ t: 'line', parts: [`Automated checks were skipped — ${reason}. This does not block the merge.`] }],
+        rows: [{ t: 'line', parts: [`Automated checks were skipped: ${reason}. This does not block the merge.`] }],
         action: recheck,
       }];
     }
@@ -7480,7 +7480,7 @@ const AppView = {
     if (advisoryChecks) summaryBits.push(plural(advisoryChecks, 'advisory failure', 'advisory failures'));
 
     let heading;
-    if (failing) heading = '⚠ Some checks failed — merge is blocked until they pass.';
+    if (failing) heading = '⚠ Some checks failed. Merge is blocked until they pass.';
     else if (advisoryRows.length) heading = '✓ Every merge-blocking check passed on the staging build.';
     else heading = '✓ All checks passed on the staging build.';
 
@@ -7497,7 +7497,7 @@ const AppView = {
         : null,
       checkedNote: pr.checks_checked_at ? `Last checked ${relTime(pr.checks_checked_at)}.` : null,
       fixNote: failing
-        ? 'Pushing a fix rebuilds the preview and re-runs the checks — the block clears when they pass.'
+        ? 'Pushing a fix rebuilds the preview and re-runs the checks. The block clears when they pass.'
         : null,
       action: failing ? AppView._recheckAction(pr) : null,
     };
@@ -7675,8 +7675,8 @@ const AppView = {
       return {
         spinner: false, tone: 'amber', busy: false,
         label: st.kind === 'close_issue'
-          ? 'Close didn\'t complete — try voting again'
-          : 'Didn\'t complete — try voting again',
+          ? 'Close didn\'t complete. Try voting again'
+          : 'Didn\'t complete. Try voting again',
         title: st.error
           ? `The apply didn't finish: ${st.error}`
           : 'The apply didn\'t finish. Voting again re-drives it.',
@@ -7686,16 +7686,16 @@ const AppView = {
       return {
         spinner: false, tone: 'amber', busy: false,
         label: st.kind === 'close_issue'
-          ? 'Still closing — refresh to check'
-          : 'Still applying — refresh to check',
+          ? 'Still closing. Refresh to check'
+          : 'Still applying. Refresh to check',
         title: 'This is taking much longer than usual. The apply may still '
-          + 'be running on the server — refresh to see where it landed.',
+          + 'be running on the server. Refresh to see where it landed.',
       };
     }
     if (st.phase === 'slow') {
       return {
         spinner: true, tone: 'amber', busy: true,
-        label: `${label.replace(/…$/, '')} — still working, GitHub may be slow…`,
+        label: `${label.replace(/…$/, '')}: still working, GitHub may be slow…`,
         title: 'Still working. GitHub can be slow to accept the close; '
           + 'nothing is lost while this runs.',
       };
@@ -7703,8 +7703,8 @@ const AppView = {
     return {
       spinner: true, tone: 'amber', busy: true, label,
       title: issue.kind === 'close_issue'
-        ? 'The vote passed — the issue is being closed here and on GitHub.'
-        : 'The vote passed — this change is being applied.',
+        ? 'The vote passed. The issue is being closed here and on GitHub.'
+        : 'The vote passed. This change is being applied.',
     };
   },
 
@@ -7772,8 +7772,8 @@ const AppView = {
       return {
         spinner: false, tone: 'neutral', busy: false,
         label: issue.kind === 'close_issue'
-          ? 'Close pending — will retry automatically'
-          : 'Apply pending — will retry automatically',
+          ? 'Close pending. Will retry automatically'
+          : 'Apply pending. Will retry automatically',
         title: 'The vote passed, but the change hasn\'t gone through yet. '
           + 'The platform retries automatically.',
       };
@@ -7781,8 +7781,8 @@ const AppView = {
     return {
       spinner: true, tone: 'amber', busy: true, label,
       title: issue.kind === 'close_issue'
-        ? 'The vote passed — the issue is being closed here and on GitHub.'
-        : 'The vote passed — this change is being applied.',
+        ? 'The vote passed. The issue is being closed here and on GitHub.'
+        : 'The vote passed. This change is being applied.',
     };
   },
 
@@ -9094,7 +9094,7 @@ const AppView = {
       title: 'Undo this merge?',
       message:
         'This opens a revert PR that backs out this merged change.\n\n'
-        + 'It still needs a merge vote to land — undoing is a proposal the group votes on, just like any other change.',
+        + 'It still needs a merge vote to land. Undoing is a proposal the group votes on, just like any other change.',
       confirmLabel: 'Open revert PR',
       cancelLabel: 'Cancel',
       danger: true,
@@ -9147,7 +9147,7 @@ const AppView = {
         : isCampaign
           ? 'This bypasses the platform vote and starts the campaign right now: an AI will open one maintenance PR per app across the fleet.\n\n'
           : 'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n')
-        + 'Use only when you\'re confident the change should ship — the override is announced in group chat with your username.',
+        + 'Use only when you\'re confident the change should ship. The override is announced in group chat with your username.',
       confirmLabel: isCloseIssue ? 'Close now' : isCampaign ? 'Start now' : 'Apply now',
       cancelLabel: 'Cancel',
       danger: true,
@@ -9231,8 +9231,8 @@ const AppView = {
       ? AppView._devCardIcon('issueProposal', { pulse: true, title: 'A proposal is being generated for this issue' })
       : h && h.status === 'ready'
         ? (h.mySessionId
-            ? AppView._devCardIcon('issueProposalMine', { title: 'You have a session for this issue — go to it.' })
-            : AppView._devCardIcon('issueProposal', { title: 'Proposal ready — review it to start a session' }))
+            ? AppView._devCardIcon('issueProposalMine', { title: 'You have a session for this issue. Go to it.' })
+            : AppView._devCardIcon('issueProposal', { title: 'Proposal ready. Review it to start a session' }))
         : AppView._devCardIcon('issue');
 
     // "Propose to close" — opens the reason modal and files a close_issue
@@ -9406,7 +9406,7 @@ const AppView = {
       if (h.mySessionId) {
         return {
           key: 'primary', cls: 'gc-vote-btn', label: 'Go to session',
-          title: 'You already started a session from this proposal — open it',
+          title: 'You already started a session from this proposal. Open it',
           act: { fn: 'goToAutoSessionClone', args: [h.mySessionId] },
         };
       }
@@ -9428,7 +9428,7 @@ const AppView = {
         if (h.mine && h.sessionId) {
           return {
             key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
-            title: 'Your auto-solve run is waiting on an answer — open its session to read the question and reply',
+            title: 'Your auto-solve run is waiting on an answer. Open its session to read the question and reply',
             act: { fn: 'openAutoRunSession', args: [h.sessionId] },
           };
         }
@@ -9442,7 +9442,7 @@ const AppView = {
         if (noNav) return null;
         return {
           key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
-          title: 'This auto-solve run has a question — answer it on this issue, then use ⋯ → Generate proposal to re-run',
+          title: 'This auto-solve run has a question. Answer it on this issue, then use ⋯ → Generate proposal to re-run',
           act: { fn: 'openTopic', args: ['issue', n] },
         };
       }
@@ -9451,13 +9451,13 @@ const AppView = {
         : h.outcome === 'code' ? 'it pushed a code change'
           : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
             : 'it finished a run';
-      const label = hasPreview ? 'Changes ready — review & start session'
+      const label = hasPreview ? 'Changes ready. Review & start session'
         : h.outcome === 'spec' ? 'Review spec & start session'
           : h.outcome === 'code' ? 'Review solution & start session'
             : 'Start session from proposal';
       return {
         key: 'primary', cls: 'gc-vote-btn', label,
-        title: `Clone the finished proposal (${outcomeNote}) into your own dev chat — others can clone it too`,
+        title: `Clone the finished proposal (${outcomeNote}) into your own dev chat. Others can clone it too`,
         act: { fn: 'startFromAutoSession', args: [h.sessionId] },
       };
     }
@@ -9498,7 +9498,7 @@ const AppView = {
       }
       : {
         key: 'claim', cls: 'gc-vote-btn', label: 'Claim this issue',
-        title: "Tell everyone you're taking this issue — a claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue's thread keeps it alive.",
+        title: "Tell everyone you're taking this issue: a claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue's thread keeps it alive.",
         act: { fn: 'markIssueInProgress', args: [n] },
       };
   },
@@ -9527,8 +9527,8 @@ const AppView = {
           label: 'Generate proposal',
           icon: 'generate',
           title: h && h.status === 'ready' && h.outcome === 'question'
-            ? 'Questions were posted on the issue — answer them, then generate a proposal again'
-            : 'Spin up a headless AI session that starts solving this issue on its own — uses your credits',
+            ? 'Questions were posted on the issue. Answer them, then generate a proposal again'
+            : 'Spin up a headless AI session that starts solving this issue on its own (uses your credits)',
           act: () => AppView.confirmAutoSession(n),
         });
       }
@@ -9542,7 +9542,7 @@ const AppView = {
         label: issue.my_bounty ? 'Bountied' : 'Pledge kudos',
         icon: 'kudos',
         title: kudosReason
-          || 'Pledge a kudos bounty — paid to whoever’s merged PR closes this issue',
+          || 'Pledge a kudos bounty, paid to whoever’s merged PR closes this issue',
         disabled: !!kudosReason,
         act: kudosReason ? null : () => AppView.giveIssueBounty(n),
       });
@@ -9567,7 +9567,7 @@ const AppView = {
           : {
             label: 'Claim this issue',
             icon: 'progress',
-            title: 'Tell everyone you’re taking this issue — a claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
+            title: 'Tell everyone you’re taking this issue: a claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
             act: () => AppView.markIssueInProgress(n),
           });
       }
@@ -9598,7 +9598,7 @@ const AppView = {
           : {
             label: 'Propose to close',
             icon: 'close',
-            title: 'Propose closing this issue — the group votes; if it passes, the issue is closed here and on GitHub',
+            title: 'Propose closing this issue. The group votes; if it passes, the issue is closed here and on GitHub',
             danger: true,
             act: () => AppView.promptCloseIssue(n),
           });
@@ -10149,13 +10149,13 @@ const AppView = {
         defaultModel = data.default || (models[0] && models[0].id) || '';
       }
     } catch {
-      PlatformUI.toast("Couldn't load the model list — try again.");
+      PlatformUI.toast("Couldn't load the model list. Try again.");
       return;
     }
     if (!models.length || !defaultModel) {
       PlatformUI.toast(provider === 'openrouter'
         ? 'No OpenRouter models are available under your key.'
-        : "Couldn't load the model list — try again.");
+        : "Couldn't load the model list. Try again.");
       return;
     }
     const stored = provider === 'claude' ? localStorage.getItem('usernode:dc:model') : null;
@@ -10350,7 +10350,7 @@ const AppView = {
     const venue = window.BuildVenues ? BuildVenues.venue(modalOptions.venueId || 'usernode-claude') : null;
     const intro = openRouter
       ? 'This sends the issue directly to your selected OpenRouter model. It can inspect the repository, answer with a question, or commit and push a change to its own branch (never a PR or deploy). The run bills your OpenRouter key and does not use platform Claude credits.'
-      : 'This spins up a headless AI session that immediately starts working on the issue on its own — investigating the repo and drafting a spec, pushing a code change, or coming back with a question. When the drafted spec looks straightforward, the session may also implement it in the same run (committing and pushing to its own branch — never a PR or deploy). It is not connected to your dev chat, but it will automatically use your tokens/credits the moment you confirm.';
+      : 'This spins up a headless AI session that immediately starts working on the issue on its own: investigating the repo and drafting a spec, pushing a code change, or coming back with a question. When the drafted spec looks straightforward, the session may also implement it in the same run (committing and pushing to its own branch, never a PR or deploy). It is not connected to your dev chat, but it will automatically use your tokens/credits the moment you confirm.';
 
     document.body.appendChild(root);
     react.mountAutoSessionModal(root, {
@@ -10537,7 +10537,7 @@ const AppView = {
       out.push({
         key: 'conflict_failed',
         label: 'Conflict resolution failed',
-        detail: 'The last automatic conflict resolution failed — the proposal’s owner needs to resolve it manually from their dev session.',
+        detail: 'The last automatic conflict resolution failed. The proposal’s owner needs to resolve it manually from their dev session.',
       });
     } else if (p.merge_conflict_state === 'conflict') {
       out.push({
@@ -10575,8 +10575,8 @@ const AppView = {
         key: 'behind',
         label: behind ? `Behind main · ${behind}` : 'Behind main',
         detail: behind
-          ? `This proposal is ${behind} commit${behind === 1 ? '' : 's'} behind main — syncing automatically, then it retries the merge.`
-          : 'This proposal is behind main — syncing automatically, then it retries the merge.',
+          ? `This proposal is ${behind} commit${behind === 1 ? '' : 's'} behind main. It is syncing automatically, then it retries the merge.`
+          : 'This proposal is behind main. It is syncing automatically, then it retries the merge.',
         soft: true,
       });
     }
@@ -10588,8 +10588,8 @@ const AppView = {
         key: 'console_errors',
         label: n ? `Console errors · ${n}` : 'Console errors',
         detail: n
-          ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'} — this change may break the app. It does not block the merge.`
-          : 'The staging preview logged console errors — this change may break the app. It does not block the merge.',
+          ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'}. This change may break the app. It does not block the merge.`
+          : 'The staging preview logged console errors. This change may break the app. It does not block the merge.',
         soft: true,
         advisory: true,
       });
@@ -10677,12 +10677,12 @@ const AppView = {
       return { ...base, tier: 2, key: 'checks_running',
         label: p.check_state === 'pending' ? 'Checks running…' : 'Checks starting…',
         tone: 'neutral', spinner: true, reasons, advisory: 0,
-        title: 'Automated tests are still running on the staging build — merge is blocked until they pass.' };
+        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.' };
     }
     // 3 — contested: the timed path is off, it needs a straight majority.
     if (isOpenRow && p.contested) {
       return { ...base, tier: 3, key: 'contested', label: `Contested · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
-        title: 'Enough No votes that the time-based merge path is off — this needs a straight majority of Yes votes.' };
+        title: 'Enough No votes that the time-based merge path is off, so this needs a straight majority of Yes votes.' };
     }
     // "At least N approvals" mode is clock-free, so it can't count down.
     if (p.approvals_required != null && isOpenRow) {
@@ -10692,7 +10692,7 @@ const AppView = {
         label: `${yes} of ${n} approval${n === 1 ? '' : 's'}`,
         tone: reached ? 'ok' : 'progress', reasons,
         title: reached
-          ? `Approval target reached (${yes} of ${n}) — merges as soon as checks pass`
+          ? `Approval target reached (${yes} of ${n}), so it merges as soon as checks pass`
           : `Needs at least ${n} approval${n === 1 ? '' : 's'} to merge` };
     }
     // 4 — counting down. A flagged (admins-changing) row never merges on a
@@ -10707,14 +10707,14 @@ const AppView = {
         label: `Merging in ${AppView._fmtCountdown(windowEndsMs - Date.now())}${suffix}`,
         suffix, reasons,
         title: reachedMaj
-          ? `Enough yes votes (${yes} / ${maj}) — merges when the visibility window elapses unless opposed`
-          : `Has support (${yes} / ${maj} yes) and no opposition — merges when the countdown ends unless more votes arrive` };
+          ? `Enough yes votes (${yes} / ${maj}), so it merges when the visibility window elapses unless opposed`
+          : `Has support (${yes} / ${maj} yes) and no opposition, so it merges when the countdown ends unless more votes arrive` };
     }
     const rejectEndsMs = p.reject_window_ends_at ? Date.parse(p.reject_window_ends_at) : NaN;
     if (isOpenRow && p.rejection_armed && Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now()) {
       return { ...base, tier: 4, key: 'reject_countdown', tone: 'blocked', fill: 'full-no', countdown: rejectEndsMs, reject: true,
         label: `Rejecting in ${AppView._fmtCountdown(rejectEndsMs - Date.now())}`, reasons,
-        title: `More No than Yes and not enough support (${yes} / ${maj}) — closes when this elapses unless support arrives` };
+        title: `More No than Yes and not enough support (${yes} / ${maj}), so it closes when this elapses unless support arrives` };
     }
     // 5 — needs your vote. Absorbs the standalone pulsing "Vote" badge.
     if (p.status === 'promoted' && !p.my_vote && !AppView.readOnly) {
@@ -10765,7 +10765,7 @@ const AppView = {
         && pr.status !== 'merged' && pr.status !== 'merging')
       ? Math.max(0, (parseInt(pr.yes_count) || 0) - yes) : 0;
     const advisoryChip = advisoryYes > 0
-      ? `<span class="gc-vote-advisory" title="${advisoryYes} advisory Yes vote${advisoryYes === 1 ? '' : 's'} from non-approvers — they don't count toward merging">+${advisoryYes} advisory</span>`
+      ? `<span class="gc-vote-advisory" title="${advisoryYes} advisory Yes vote${advisoryYes === 1 ? '' : 's'} from non-approvers. They don't count toward merging">+${advisoryYes} advisory</span>`
       : '';
 
     // #788: this proposal changes who can administer the app. The app's
@@ -10774,7 +10774,7 @@ const AppView = {
     // Suppressed on settled rows (the vote is history there).
     const explicitChip = (pr.requires_explicit_approval
         && pr.status !== 'merged' && pr.status !== 'merging')
-      ? '<span class="gc-vote-explicit" title="This changes the app\'s admins, so it won\'t merge on a timer — it needs real Yes votes to reach the app\'s normal threshold. It can still be voted down.">Explicit approval</span>'
+      ? '<span class="gc-vote-explicit" title="This changes the app\'s admins, so it won\'t merge on a timer. It needs real Yes votes to reach the app\'s normal threshold. It can still be voted down.">Explicit approval</span>'
       : '';
 
     // #646: "at least N" mode — a clock-free approvals-progress pill
@@ -10785,7 +10785,7 @@ const AppView = {
       const reached = yes >= n;
       const who = pr.approval_policy === 'invited' ? 'invited approvers' : 'any user';
       const title = reached
-        ? `Approval target reached (${yes} of ${n}) — merges as soon as checks pass`
+        ? `Approval target reached (${yes} of ${n}), so it merges as soon as checks pass`
         : `Needs at least ${n} approval${n === 1 ? '' : 's'} from ${who} to merge`;
       const fills = reached
         ? `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
@@ -10819,8 +10819,8 @@ const AppView = {
       && !pr.contested && inWindow && (state === 'yes' || lazyLead)) {
       const label = AppView._fmtCountdown(windowEndsMs - Date.now());
       const title = state === 'yes'
-        ? `Enough yes votes (${yes} / ${maj}) — merges when the visibility window elapses unless opposed`
-        : `Has support (${yes} / ${maj} yes) and no opposition — merges when the countdown ends unless more votes arrive`;
+        ? `Enough yes votes (${yes} / ${maj}), so it merges when the visibility window elapses unless opposed`
+        : `Has support (${yes} / ${maj} yes) and no opposition, so it merges when the countdown ends unless more votes arrive`;
       // Below threshold the tally rides along in the label so it's clear
       // the vote is still open and can be swung either way. The suffix is
       // mirrored into data-label-suffix so the 30s ticker preserves it when
@@ -10844,7 +10844,7 @@ const AppView = {
     if (isOpenRow && pr.rejection_armed && inReject) {
       const label = AppView._fmtCountdown(rejectEndsMs - Date.now());
       return `<span class="gc-vote-count gc-vote-count-no gc-reject-countdown" data-window-ends="${rejectEndsMs}"`
-        + ` title="More No than Yes and not enough support (${yes} / ${maj}) — closes when this elapses unless support arrives">`
+        + ` title="More No than Yes and not enough support (${yes} / ${maj}), so it closes when this elapses unless support arrives">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>`
         + `<span class="gc-vote-count-label">Rejecting in ${label}</span>`
         + `</span>` + advisoryChip + explicitChip;
@@ -10933,8 +10933,8 @@ const AppView = {
     const n = Array.isArray(pr.console_errors) ? pr.console_errors.length : 0;
     const label = n ? `Console errors · ${n}` : 'Console errors';
     const title = n
-      ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'} — this change may break the app. Open the discussion to see them.`
-      : 'The staging preview logged console errors — this change may break the app.';
+      ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'}. This change may break the app. Open the discussion to see them.`
+      : 'The staging preview logged console errors. This change may break the app.';
     return `<span class="gc-warning-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
   },
 
@@ -10969,7 +10969,7 @@ const AppView = {
       // instead of silence. Rows carrying a console snapshot are genuine
       // pre-#47 legacy — keep their advisory fallback.
       if (!pr.console_check_state) {
-        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run — merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…</span>`;
+        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…</span>`;
       }
       return AppView.consoleWarningBadgeHtml(pr);
     }
@@ -10984,25 +10984,25 @@ const AppView = {
         ? pr.test_results.filter((r) => r && r.status !== 'pass').length : 0;
       const label = n ? `Checks failing · ${n}` : 'Checks failing';
       const title = n
-        ? `${n} automated test${n === 1 ? '' : 's'} failed on the staging build — merge is blocked until checks pass. Open the discussion to see them.`
-        : 'Automated tests failed on the staging build — merge is blocked until checks pass.';
+        ? `${n} automated test${n === 1 ? '' : 's'} failed on the staging build. Merge is blocked until checks pass. Open the discussion to see them.`
+        : 'Automated tests failed on the staging build. Merge is blocked until checks pass.';
       return `<span class="gc-blocked-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
     }
     if (state === 'error') {
-      return `<span class="gc-conflict-badge" title="The staging build or the test run itself broke, so the platform can't confirm the app works — merge is blocked until checks pass.">⚠ Checks couldn't run</span>`;
+      return `<span class="gc-conflict-badge" title="The staging build or the test run itself broke, so the platform can't confirm the app works. Merge is blocked until checks pass.">⚠ Checks couldn't run</span>`;
     }
     if (state === 'skipped') {
       // #461: explicit terminal "nothing to test" verdict — grey, no
       // spinner, and NON-blocking (the merge gate treats it like passing).
       const why = pr.check_error_detail
-        ? `Automated checks were skipped — ${String(pr.check_error_detail).slice(0, 280)}. This does not block the merge.`
-        : 'Automated checks were skipped — there was nothing to test. This does not block the merge.';
+        ? `Automated checks were skipped: ${String(pr.check_error_detail).slice(0, 280)}. This does not block the merge.`
+        : 'Automated checks were skipped: there was nothing to test. This does not block the merge.';
       return `<span class="gc-checks-running-badge" title="${escapeHtml(why)}">Checks skipped</span>`;
     }
     // 'pending' (or anything else): tests are still running. #405: grey
     // (gc-checks-running-badge), not amber, so a not-yet-started check is
     // visibly distinct from the amber in-flight merge stages.
-    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build — merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…</span>`;
+    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…</span>`;
   },
 
   // #195/#270: before/after visual tiles for a session's stored capture
@@ -11097,7 +11097,7 @@ const AppView = {
         a && a.webm ? `data-after-webm="${a.webm}"` : '',
         a && a.gif ? `data-after-gif="${a.gif}"` : '',
       ].filter(Boolean).join(' ');
-      return `<button type="button" ${dataAttrs} title="${label} — open before/after comparison" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
+      return `<button type="button" ${dataAttrs} title="${label}: open before/after comparison" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
         <div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
         ${media}
       </button>`;
@@ -11119,16 +11119,16 @@ const AppView = {
       // frame needs calling out even at the root.
       const label = (single && (path === '/' || !path) && !mobile)
         ? ''
-        : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`;
+        : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">Before / after: <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`;
       // Honest-pair captions: explain a missing "before" (route is new —
       // there's no production version to compare) and a fell-back "before"
       // (the deep route 404'd on production, so the tile shows the home
       // page) so a mismatched-looking comparison isn't read as a bug.
       let note = '';
       if (a && !b) {
-        note = 'New page — no production version to compare';
+        note = 'New page: no production version to compare';
       } else if (b && g.beforeFellBack) {
-        note = '"Before" shows the home page — this page didn’t exist in production yet';
+        note = '"Before" shows the home page, because this page didn’t exist in production yet';
       }
       const noteHtml = note
         ? `<div class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" style="margin:2px 0 0">${esc(note)}</div>`
@@ -11194,7 +11194,7 @@ const AppView = {
     };
 
     const pathLabel = ((path && path !== '/') || mobile)
-      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="margin-bottom:10px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
+      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="margin-bottom:10px">Before / after: <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
       : '';
     const bodyHtml = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
 
@@ -11471,7 +11471,7 @@ const AppView = {
       main = `${subj} started work on this and paused it${when}, so nobody is working on it at the moment.`
         + (clears ? ` This clears itself on ${clears} unless the session picks up again.` : '');
     } else if (s.key === 'answer_needed') {
-      main = 'An auto-solve run got part way and asked a question — it needs an answer from someone before it can go further.';
+      main = 'An auto-solve run got part way and asked a question. It needs an answer from someone before it can go further.';
     } else if (s.key === 'draft_ready') {
       main = 'An auto-solve run finished and left a draft here for someone to look over.';
     } else {
@@ -11524,7 +11524,7 @@ const AppView = {
     if (target && targetId) {
       return {
         t: 'chipBtn', key: 'work', cls: `dev-badge ${tone}`, hover,
-        label: st.label, title: `${st.tip} — open the linked work`,
+        label: st.label, title: `${st.tip}. Open the linked work`,
         spinner: !!st.spinner, data,
         act: { fn: 'openInProgressTarget', args: [String(target.kind), targetId] },
       };
@@ -11757,13 +11757,13 @@ const AppView = {
     if (it.staging_building) {
       return {
         state: 'building', iconOnly,
-        title: 'The staging preview is being built — this usually takes a few minutes. A Preview button appears here as soon as it’s ready.',
+        title: 'The staging preview is being built. This usually takes a few minutes. A Preview button appears here as soon as it’s ready.',
       };
     }
     if (it.staging_error) {
       return {
         state: 'error', iconOnly,
-        title: `Preview unavailable — ${String(it.staging_error).slice(0, 280)}`,
+        title: `Preview unavailable: ${String(it.staging_error).slice(0, 280)}`,
       };
     }
     return null;
@@ -11781,7 +11781,7 @@ const AppView = {
       return `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`;
     }
     if (pr.staging_building) {
-      return '<span class="gc-checks-running-badge" title="The staging preview for this proposal is being built — this usually takes a few minutes. A Preview button appears here as soon as it&#39;s ready.">'
+      return '<span class="gc-checks-running-badge" title="The staging preview for this proposal is being built. This usually takes a few minutes. A Preview button appears here as soon as it&#39;s ready.">'
         + '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Preview building…</span>';
     }
     if (pr.staging_error) {
@@ -11824,7 +11824,7 @@ const AppView = {
       title: 'Force-merge this PR?',
       message:
         'This bypasses the active-user vote majority and merges the PR right now.\n\n'
-        + 'Use only when you\'re confident the change should ship — the override is announced in group chat with your username.',
+        + 'Use only when you\'re confident the change should ship. The override is announced in group chat with your username.',
       confirmLabel: 'Force-merge',
       cancelLabel: 'Cancel',
       danger: true,
@@ -11952,10 +11952,10 @@ const AppView = {
         // Not an error: the guard found the target already closed and
         // retired the proposal instead of applying it.
         PlatformUI.toast(
-          `Issue #${targetN || '?'} was already closed — the proposal was resolved automatically.`
+          `Issue #${targetN || '?'} was already closed, so the proposal was resolved automatically.`
         );
       } else if (outcome && outcome.awaitingAdmin) {
-        PlatformUI.toast('Vote passed — an admin still needs to approve before it applies.');
+        PlatformUI.toast('Vote passed. An admin still needs to approve before it applies.');
       } else if (outcome && outcome.error) {
         PlatformUI.toast(`The change didn't complete: ${outcome.error}`);
       }
@@ -12013,7 +12013,7 @@ const AppView = {
     if (ref.linkable && ref.slug) {
       slot.innerHTML = `<a href="#app/${encodeURIComponent(ref.slug)}" `
         + `class="${cls}" `
-        + `title="Forked from ${escapeAttr(name)} — open the original">${label}</a>`;
+        + `title="Forked from ${escapeAttr(name)}. Open the original">${label}</a>`;
     } else {
       slot.innerHTML = `<span class="${cls} opacity-90" `
         + `title="The original app no longer exists">${label}</span>`;
@@ -12437,7 +12437,7 @@ const AppView = {
     AppView._setStagingLoader(true, {
       title: 'Spinning the preview back up…',
       sub: 'The preview was paused after a while of inactivity. Rebuilding it '
-        + 'from the session’s latest changes — this usually takes 20–60 seconds.',
+        + 'from the session’s latest changes. This usually takes 20–60 seconds.',
     });
     AppView._pendingStagingPreview = { sessionId, jump, testing, dock, loadId };
     if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
@@ -13183,7 +13183,7 @@ const AppView = {
         if (elapsed >= 60) {
           AppView._setStagingLoader(true, {
             title: 'Still waiting on the preview',
-            sub: `The preview hasn’t responded yet (${elapsed}s). Hang tight — this keeps retrying automatically.`,
+            sub: `The preview hasn’t responded yet (${elapsed}s). Hang tight. This keeps retrying automatically.`,
           });
         } else if (elapsed >= 20) {
           AppView._setStagingLoader(true, {
@@ -13890,14 +13890,14 @@ const AppView = {
         purpose: info.llm?.purpose ? String(info.llm.purpose) : null,
         intro: byokOnly
           ? `This lets ${appName} use your own Anthropic API key, without exposing the key to the app.`
-          : `This lets ${appName} spend from your daily AI budget — the same one your dev chats use — up to the daily cap below.`,
+          : `This lets ${appName} spend from your daily AI budget (the same one your dev chats use), up to the daily cap below.`,
         capacity: noCapacity
           ? { t: 'blocked', eligibilityUnavailable }
           : {
             t: 'cap',
             prefill: (prefillCents / 100).toFixed(2),
             suggestedNote: suggested != null
-              ? 'Suggested by this app — you can change it.'
+              ? 'Suggested by this app. You can change it.'
               : 'You can change this anytime in Settings.',
             byok: info.hasApiKey
               ? {

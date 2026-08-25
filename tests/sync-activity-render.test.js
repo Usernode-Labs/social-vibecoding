@@ -68,7 +68,7 @@ test('ACTIVE_CC_STATUS_RE matches the sync opening status (and keeps build/scout
   // The terminal outcome line must NOT be treated as an active CC status,
   // or the progress log would attach to the wrong (later) row.
   assert.doesNotMatch('Merged main cleanly. Pushed abc1234.', ACTIVE_CC_STATUS_RE);
-  assert.doesNotMatch('Already up to date with main — nothing to merge.', ACTIVE_CC_STATUS_RE);
+  assert.doesNotMatch('Already up to date with main. Nothing to merge.', ACTIVE_CC_STATUS_RE);
 });
 
 test('a sync activity reload pairs the progress log with its opening status, not the terminal', () => {

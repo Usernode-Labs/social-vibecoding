@@ -211,7 +211,7 @@ function AccountDetail({ id, seasons, onClose }: {
                   {season ? `${season.name} (#${a.season_id})` : `#${a.season_id}`}
                 </DetailRow>
                 <DetailRow label="Event">
-                  {a.event ? `${a.event.name} (#${a.event.id})` : '— (season-wide)'}
+                  {a.event ? `${a.event.name} (#${a.event.id})` : '(season-wide)'}
                 </DetailRow>
                 <DetailRow label="Status">
                   {a.is_used ? (
@@ -245,7 +245,7 @@ function AccountDetail({ id, seasons, onClose }: {
                 </dl>
               ) : (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  Unassigned — no user has claimed this account.
+                  Unassigned: no user has claimed this account.
                 </p>
               )}
             </>
@@ -327,7 +327,7 @@ function ImportPanel({ onClose, onImported }: { onClose: () => void; onImported:
           </Select>
         </Field>
         <Field
-          label={'Accounts — one "amount,identity_uid,address,public_key,secret_key,tier,description" per line *'}
+          label={'Accounts: one "amount,identity_uid,address,public_key,secret_key,tier,description" per line *'}
           htmlFor="admin-topo-oa-imp-rows"
           help="registration_code is generated server-side; do not include it."
         >

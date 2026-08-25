@@ -537,7 +537,7 @@ test('apply: superseded guard — healthy list without the target resolves inste
     // No GitHub writes, no bounty changes.
     assert.equal(spies.ghCalls.filter((c) => ['closeIssue', 'createIssueComment'].includes(c.type)).length, 0);
     assert.ok(!pool.issued(/issue_bounties/), 'bounties untouched');
-    assert.match(spies.systemMessages[0][2], /resolved automatically — the issue was closed on GitHub/);
+    assert.match(spies.systemMessages[0][2], /resolved automatically: the issue was closed on GitHub/);
   } finally { restore(); }
 });
 

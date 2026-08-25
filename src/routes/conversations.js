@@ -111,7 +111,7 @@ function demoMessages(user, conversationId) {
     },
     {
       id: 9100102, conversationId, sender: self,
-      content: 'Yes — the consent and privacy boundary looks right.', createdAt: '2026-08-13T13:25:00Z', editedAt: '2026-08-13T13:26:00Z',
+      content: 'Yes, the consent and privacy boundary looks right.', createdAt: '2026-08-13T13:25:00Z', editedAt: '2026-08-13T13:26:00Z',
       reply: { id: 9100101, sender: ada, content: 'Can you look at the latest proposal?' },
       reactions: [], attachments: [], objects: [{
         type: 'app', appId: 1, appSlug: 'usernode', available: true,

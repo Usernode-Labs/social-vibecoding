@@ -97,8 +97,8 @@ function agentApiFailure(text) {
 function describeAgentApiFailure(failure) {
   if (!failure) return '';
   return failure.kind === 'truncated'
-    ? `The coding agent's API connection dropped mid-response, so its answer was cut off — ${failure.line}`
-    : `The coding agent's API connection failed — ${failure.line}`;
+    ? `The coding agent's API connection dropped mid-response, so its answer was cut off: ${failure.line}`
+    : `The coding agent's API connection failed: ${failure.line}`;
 }
 
 module.exports = { agentApiFailure, describeAgentApiFailure };

@@ -19,7 +19,7 @@ const HINT
   + ' text-xs text-zinc-600 dark:text-zinc-300 shrink-0';
 
 const HINT_TEXT
-  = 'Describe the change you want — when it’s ready, promoting this'
+  = 'Describe the change you want. When it’s ready, promoting this'
   + " session's PR is what creates the proposal everyone votes on.";
 
 /** The composer bar's two class runs, as complete literals for Tailwind. */

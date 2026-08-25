@@ -202,13 +202,13 @@ test('the fork follow-up names the owner, the branch, and the memory caveat', ()
   // owner must be told the model only knows the transcript.
   assert.match(msg, /not the coding agent's own memory of that work/);
   // A spec came across, so it's pointed at.
-  assert.match(msg, /open the spec viewer/);
+  assert.match(msg, /Open the spec viewer/);
 });
 
 test('the fork follow-up degrades gracefully with no title, owner or spec', () => {
   const msg = buildForkFollowUpMessage({ branch_name: 'dev/them-1' });
   assert.match(msg, /another user's dev chat \("dev\/them-1"\)/);
-  assert.doesNotMatch(msg, /open the spec viewer/, 'no spec → no spec sentence');
+  assert.doesNotMatch(msg, /Open the spec viewer/, 'no spec → no spec sentence');
   assert.doesNotThrow(() => buildForkFollowUpMessage(null));
   assert.doesNotThrow(() => buildForkFollowUpMessage({}));
 });

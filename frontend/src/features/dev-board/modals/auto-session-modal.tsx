@@ -47,7 +47,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
       </h2>
       <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">{view.intro}</p>
       <p className="text-xs text-amber-800 mb-2 dark:text-amber-300">
-        {'Experimental — not recommended for normal users at the moment. Costs are billed '
+        {'Experimental: not recommended for normal users at the moment. Costs are billed '
           + "to you even if the result isn't useful."}
       </p>
       {/* WHERE it builds, named before you confirm — the pot the costs above
@@ -58,7 +58,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
           <>
             {'Building in '}
             <b>{view.venue.label}</b>
-            {` — your saved default. ${view.venue.blurb}`}
+            {`, your saved default. ${view.venue.blurb}`}
           </>
         ) : null}
       </p>

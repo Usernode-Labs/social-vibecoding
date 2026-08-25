@@ -81,8 +81,8 @@ const REAP_STATES: Record<string, { label: string; cls: string }> = {
   pending: { label: 'Queued', cls: NEUTRAL_CHIP },
   running: { label: 'Shutting down…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300' },
   torn_down: { label: 'Shut down', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-  torn_down_no_db: { label: 'Shut down — database kept', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-  skipped_gone: { label: 'Skipped — already gone', cls: NEUTRAL_CHIP },
+  torn_down_no_db: { label: 'Shut down: database kept', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
+  skipped_gone: { label: 'Skipped: already gone', cls: NEUTRAL_CHIP },
   failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
 };
 
@@ -97,9 +97,9 @@ const REAP_CLASSIFICATIONS: Record<string, string> = {
   merging: 'merging now',
   active: 'session open',
   paused: 'session paused',
-  merged_unlinked: 'merged — leaked past teardown',
-  archived_unlinked: 'abandoned — leaked past teardown',
-  promoted_unlinked: 'up for a vote — link lost',
+  merged_unlinked: 'merged (leaked past teardown)',
+  archived_unlinked: 'abandoned (leaked past teardown)',
+  promoted_unlinked: 'up for a vote (link lost)',
   no_session_row: 'session no longer exists',
 };
 
@@ -152,7 +152,7 @@ function automaticLine(
   if (!automatic || !automatic.intervalMs) return 'The automatic background sweep is switched off.';
   if (!automatic.lastRunAt) {
     const every = Math.round(automatic.intervalMs / 60000);
-    return `Automatic sweep runs every ${every} minutes — it hasn't run yet since this platform process started.`;
+    return `Automatic sweep runs every ${every} minutes. It hasn't run yet since this platform process started.`;
   }
   const bits = [`Automatic sweep last ran ${ago(automatic.lastRunAt) || 'recently'}`];
   bits.push(`${automatic.tornDown || 0} shut down`);
@@ -176,7 +176,7 @@ function Summary({ loaded, job, demo }: { loaded: boolean; job: ReapJob | null; 
   if (!loaded) return <>Loading…</>;
   if (!job) return <>No sweep has run since this platform process started.</>;
   if (!job.total) {
-    return <>{job.finishedAt ? 'Finished — no open previews were found.' : 'Starting…'}</>;
+    return <>{job.finishedAt ? 'Finished. No open previews were found.' : 'Starting…'}</>;
   }
   const parts = [`${job.done} of ${job.total} done`];
   if (job.failed) parts.push(`${job.failed} failed`);
@@ -185,7 +185,7 @@ function Summary({ loaded, job, demo }: { loaded: boolean; job: ReapJob | null; 
     <>
       {demo ? <><span className="text-violet-700 dark:text-violet-400">Staging demo data</span>{' — '}</> : null}
       <span className="font-medium">{when}</span>
-      {` — ${parts.join(', ')}`}
+      {`: ${parts.join(', ')}`}
       {job.startedBy ? ` · started by ${job.startedBy}` : ''}
     </>
   );
@@ -335,7 +335,7 @@ function StalePreviewsSection() {
         Shuts down every proposal preview that is still running. A preview&apos;s
         settings are fixed when it is built, so after a platform change to
         what gets injected into containers, old previews keep running with
-        the old settings — typically showing a login screen instead of the
+        the old settings, typically showing a login screen instead of the
         app. Out-of-date previews are now found and cleaned up
         automatically in the background; this button is the immediate
         version, and takes every preview rather than only the stale ones.
@@ -383,7 +383,7 @@ function StalePreviewsSection() {
         </button>
       ) : (
         <p className={ReapUI.viewOnly}>
-          View-only admin — you can watch a sweep, but not start one.
+          View-only admin: you can watch a sweep, but not start one.
         </p>
       )}
       <p id="admin-reap-summary" className={ReapUI.summary}>

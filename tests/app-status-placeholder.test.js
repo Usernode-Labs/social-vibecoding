@@ -80,7 +80,7 @@ test('awaiting secrets: the missing names, and a way to set them', () => {
   assert.equal(v.detail, 'STRIPE_KEY, MAIL_TOKEN');
   assert.deepEqual(v.action, { key: 'secrets', label: 'Configure secrets', slug: 'recipebot' });
   const out = html(v);
-  assert.match(out, /deploy is blocked/);
+  assert.match(out, /Deploy is blocked/);
   assert.match(out, /font-mono text-red-700[^>]*>STRIPE_KEY, MAIL_TOKEN/);
   assert.match(out, /id="awaiting-open-secrets"/);
 });

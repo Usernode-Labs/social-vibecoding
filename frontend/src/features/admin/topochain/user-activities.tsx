@@ -605,7 +605,7 @@ function UserActivitiesScreen() {
         {items !== null && !error && !items.length ? (
           <EmptyState
             title="No activities yet"
-            body="Activities are recorded when users complete challenges — you can also add one by hand."
+            body="Activities are recorded when users complete challenges. You can also add one by hand."
             action={write ? (
               <button
                 id="admin-topo-act-empty-new"

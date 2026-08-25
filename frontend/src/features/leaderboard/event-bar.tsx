@@ -105,13 +105,13 @@ function Hero({ hero }: { hero: HeroView }) {
       */}
       {hero.seasonNote ? (
         <p id="tc-ev-season-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-          {'Whole-season standings — every public event in this season, combined. '}
+          {'Whole-season standings: every public event in this season, combined. '}
           Pick a single event above to see just its results.
         </p>
       ) : null}
       {hero.fallbackNote ? (
         <p id="tc-ev-fallback-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-          Nothing is running right now — showing the most recent event.
+          Nothing is running right now. Showing the most recent event.
         </p>
       ) : null}
     </div>

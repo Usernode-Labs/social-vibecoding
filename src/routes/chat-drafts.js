@@ -50,7 +50,7 @@ const DRAFT_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 // broken clock can't pin a draft above everything or into the far future.
 const SAVED_AT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
-const CAP_MESSAGE = `That's ${MAX_DRAFTS} saved drafts — send or delete one first`;
+const CAP_MESSAGE = `That's ${MAX_DRAFTS} saved drafts. Send or delete one first`;
 
 function newDraftId() {
   return `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;

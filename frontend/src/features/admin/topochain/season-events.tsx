@@ -214,7 +214,7 @@ function EventForm({ id, seasons, onClose, onSaved }: {
                 value={v.season_id || ''}
                 onChange={(e) => set('season_id', e.target.value)}
               >
-                <Options options={seasonOptions(seasons)} blank="— No season —" />
+                <Options options={seasonOptions(seasons)} blank="No season" />
               </Select>
             </Field>
             <Field label="Type" htmlFor={fid('type')}>
@@ -399,7 +399,7 @@ function EventList({ onManage }: { onManage: (id: number) => void }) {
             >
               <Options
                 options={[
-                  { value: 'none', label: '— No season —' },
+                  { value: 'none', label: 'No season' },
                   ...seasonOptions(seasons),
                 ]}
                 blank="All seasons"

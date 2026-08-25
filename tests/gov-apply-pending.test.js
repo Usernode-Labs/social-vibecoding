@@ -294,7 +294,7 @@ test('the slow and stalled phases soften the copy instead of spinning forever', 
 
   h.fireTimer(h.AppView.GOV_APPLY_STALLED_MS);
   const stalled = h.AppView._govApplyState(row);
-  assert.equal(stalled.label, 'Still closing — refresh to check');
+  assert.equal(stalled.label, 'Still closing. Refresh to check');
   assert.equal(stalled.spinner, false, 'stops spinning rather than lying');
   assert.equal(stalled.busy, false, 'and stops blocking the buttons');
 });
@@ -319,7 +319,7 @@ test('applied → success toast, state cleared', async () => {
 
 test('superseded → "already closed", treated as success not failure', async () => {
   const h = await voteWith({ ok: true, issueClosed: { applied: false, superseded: true } });
-  assert.match(h.toasts[0], /already closed — the proposal was resolved automatically/);
+  assert.match(h.toasts[0], /already closed, so the proposal was resolved automatically/);
   assert.equal(h.AppView._govApplying[61], undefined, 'no failure label parked on the card');
 });
 
@@ -334,7 +334,7 @@ test('waitingForWindow → no toast at all; the countdown pill says it', async (
 
 test('awaitingAdmin → the locked-app explanation', async () => {
   const h = await voteWith({ ok: true, issueClosed: { applied: false, awaitingAdmin: true } });
-  assert.match(h.toasts[0], /an admin still needs to approve/);
+  assert.match(h.toasts[0], /An admin still needs to approve/);
 });
 
 test('a non-ok response is surfaced (the 409 that used to be silent)', async () => {
@@ -359,7 +359,7 @@ test('a thrown fetch parks the failure copy on the card', async () => {
   // The server-side apply may well have completed, so the card must not
   // pretend nothing happened.
   const state = h.AppView._govApplyState(PROPOSAL());
-  assert.equal(state.label, 'Close didn\'t complete — try voting again');
+  assert.equal(state.label, 'Close didn\'t complete. Try voting again');
   assert.equal(state.spinner, false);
 });
 
@@ -397,7 +397,7 @@ test('derived: past the 120s grace the spinner degrades to the retry copy', () =
     PROPOSAL({ up_count: 2, merge_window_ends_at: secsAgo(600) })
   );
   assert.ok(state);
-  assert.equal(state.label, 'Close pending — will retry automatically');
+  assert.equal(state.label, 'Close pending. Will retry automatically');
   assert.equal(state.spinner, false, 'never spins indefinitely');
   assert.equal(state.busy, false, 'and stops blocking the vote buttons');
 });
@@ -418,7 +418,7 @@ test('derived: a due row with NO window end is still bounded (first-seen anchor)
   AppView._govDueSince[61] = Date.now() - (AppView.GOV_APPLY_DERIVED_GRACE_MS + 1000);
   const later = AppView._derivedGovApplying(row);
   assert.equal(later.spinner, false);
-  assert.equal(later.label, 'Close pending — will retry automatically');
+  assert.equal(later.label, 'Close pending. Will retry automatically');
 });
 
 test('derived: the first-seen anchor is dropped when the row stops being due', () => {
@@ -665,7 +665,7 @@ test('?demo=1 mock 9100006 renders the retry copy with no spinner', () => {
 
   const html = govCardHtml(h.AppView, row);
   assert.match(html, /gc-checks-running-badge/);
-  assert.match(html, /Close pending — will retry automatically/);
+  assert.match(html, /Close pending\. Will retry automatically/);
   assert.ok(!/dc-status-spinner-arc/.test(html), 'a long-stalled apply must not spin');
 });
 

@@ -62,7 +62,7 @@ const MODELS = {
     outputCostPerMTok: 50,
     changeSize: {
       short: 'design, taste, and difficult coding',
-      long: 'Design and taste — how a screen looks, reads, and feels — plus the most difficult coding work.',
+      long: 'Design and taste (how a screen looks, reads, and feels), plus the most difficult coding work.',
     },
   },
 };

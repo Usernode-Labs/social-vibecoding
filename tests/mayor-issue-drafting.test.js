@@ -267,7 +267,7 @@ function phase2Content(tu, activeId, memo) {
   if (tu.id === activeId) return 'terminal result';
   if (memo.has(tu.id)) return memo.get(tu.id);
   if (IN_PROCESS_TOOL_NAMES.has(tu.name)) return 'freshly resolved';
-  return 'Skipped — only one action runs per turn.';
+  return 'Skipped: only one action runs per turn.';
 }
 
 test('phase-2: a stray draft is answered from the memo, never re-drafted or skipped', () => {
@@ -286,5 +286,5 @@ test('phase-2: a stray draft is answered from the memo, never re-drafted or skip
 
 test('phase-2: an unknown tool still gets the benign skip note', () => {
   const out = phase2Content({ id: 'z', name: 'something_else' }, 'a', new Map());
-  assert.equal(out, 'Skipped — only one action runs per turn.');
+  assert.equal(out, 'Skipped: only one action runs per turn.');
 });

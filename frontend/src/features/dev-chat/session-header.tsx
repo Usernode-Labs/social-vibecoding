@@ -41,7 +41,7 @@ export function MergeStatusPill({ life }: { life: MergeLife }): ReactNode {
       {advisory ? (
         <span
           className="ms-advisory"
-          title={`${advisory} advisory vote${advisory === 1 ? '' : 's'} from non-approvers — they don’t count toward merging`}
+          title={`${advisory} advisory vote${advisory === 1 ? '' : 's'} from non-approvers. They don’t count toward merging`}
         >
           {`+${advisory}`}
         </span>

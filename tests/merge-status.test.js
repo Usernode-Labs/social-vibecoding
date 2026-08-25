@@ -151,7 +151,7 @@ test("state 4b — 'conflict' (merge attempt failed) is red and says the creator
     status: 'promoted', merge_conflict_state: 'conflict', check_state: 'passing', behind_main: 1,
   });
   assert.equal(life.key, 'merge_conflict');
-  assert.equal(life.label, 'Merge failed — conflict');
+  assert.equal(life.label, 'Merge failed: conflict');
   assert.equal(life.tone, 'red');
   assert.match(life.title, /creator needs to finish the merge/);
   assert.match(life.title, /Sync with main/);
@@ -188,7 +188,7 @@ test('state 9 — ready: passed the vote with green checks and not behind', () =
     { majority: 3 }
   );
   assert.equal(life.key, 'ready');
-  assert.equal(life.label, 'Passed — merging shortly');
+  assert.equal(life.label, 'Passed: merging shortly');
   assert.equal(life.tone, 'green');
   // Past threshold but checks NOT passing → not ready (the gate blocks it).
   // #607: with no verdict recorded at all the row reads as checks-starting

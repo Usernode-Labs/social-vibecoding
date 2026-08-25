@@ -371,7 +371,7 @@ function Explorer({ ex }: { ex: any }) {
         {ex.latencyMs != null ? <span className="text-xs text-zinc-500 dark:text-zinc-400">{`${ex.latencyMs}ms`}</span> : null}
         {ex.status !== 'ok' && ex.downSince ? (
           <span className="text-red-700 dark:text-red-300/80">
-            {` — unreachable for ${fmtDurationMs(Date.now() - ex.downSince)}`}
+            {`unreachable for ${fmtDurationMs(Date.now() - ex.downSince)}`}
             {ex.consecutiveFailures ? ` (${ex.consecutiveFailures} failed probes)` : ''}
           </span>
         ) : null}
@@ -380,7 +380,7 @@ function Explorer({ ex }: { ex: any }) {
         <div className="mt-3 rounded border border-red-300 dark:border-red-700/40 bg-red-50 dark:bg-red-900/20 p-2 text-xs">
           <span className="font-semibold text-red-700 dark:text-red-300">Wallet linking is paused</span>
           <span className="text-red-700 dark:text-red-300/80">
-            — the chain poller reads incoming link transactions from this explorer, so &quot;Link wallet&quot; will not
+            : the chain poller reads incoming link transactions from this explorer, so &quot;Link wallet&quot; will not
             complete until it is reachable again. Retries are backing off; no action is needed here beyond restoring the upstream.
           </span>
         </div>
@@ -392,7 +392,7 @@ function Explorer({ ex }: { ex: any }) {
 
 function Node({ node }: { node: any }) {
   if (!node || node.status === 'unknown') {
-    return <div className="text-zinc-500 dark:text-zinc-400">No NODE_RPC_URL configured — node status unavailable.</div>;
+    return <div className="text-zinc-500 dark:text-zinc-400">No NODE_RPC_URL configured, so node status is unavailable.</div>;
   }
   const meta = nodeStatusMeta(node);
   const ourTip = node.bestTipHeight;
@@ -445,7 +445,7 @@ function Node({ node }: { node: any }) {
         <div className="mt-3 rounded border border-red-300 dark:border-red-700/40 bg-red-50 dark:bg-red-900/20 p-2 text-xs">
           <span className="font-semibold text-red-700 dark:text-red-300">Partial ledger mode</span>
           <span className="text-red-700 dark:text-red-300/80">
-            — sidecar booted without HAS_FULL_UTXO_DB. Incoming tx from non-tracked senders may be silently dropped.
+            : sidecar booted without HAS_FULL_UTXO_DB. Incoming tx from non-tracked senders may be silently dropped.
             Restart with a fresh archive snapshot.
           </span>
         </div>
@@ -783,7 +783,7 @@ function StatusSection() {
           </span>
           <div className="text-sm">
             <span className="font-semibold text-violet-800 dark:text-violet-200">Deploy in progress</span>
-            <span className="text-violet-700 dark:text-violet-300/80"> — your changes may take a minute to go live.</span>
+            <span className="text-violet-700 dark:text-violet-300/80">. Your changes may take a minute to go live.</span>
           </div>
           <span id="admin-status-deploy-meta" className="ml-auto text-xs mono text-violet-700 dark:text-violet-400">
             {[sha, elapsed && `${elapsed} ago`].filter(Boolean).join(' · ')}

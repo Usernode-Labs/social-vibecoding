@@ -15,7 +15,7 @@ export function ApiKeySection() {
   return (
     <div data-settings-section="api-key" className="hidden">
       <SectionHeading title="Anthropic API key">
-        Bring your own Anthropic API key to keep working past the daily limit. Your platform daily allowance is used first; once it runs out, your key takes over automatically &mdash; even in the middle of a running turn &mdash; and usage bills directly to your Anthropic account.
+        Bring your own Anthropic API key to keep working past the daily limit. Your platform daily allowance is used first; once it runs out, your key takes over automatically (even in the middle of a running turn) and usage bills directly to your Anthropic account.
       </SectionHeading>
       {/*
           The viewer's own daily AI allowance (#555), used vs. remaining.
@@ -116,7 +116,7 @@ export function ApiKeySection() {
       </div>
       <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
         Encrypted at rest, verified against Anthropic before saving, never shown in full after save.
-    The server decrypts it in memory to call Anthropic on your behalf &mdash; don't paste keys into services you don't trust with that level of access.
+    The server decrypts it in memory to call Anthropic on your behalf, so don't paste keys into services you don't trust with that level of access.
         <a
           href="https://console.anthropic.com/settings/keys"
           target="_blank"

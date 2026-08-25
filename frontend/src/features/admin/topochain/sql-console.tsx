@@ -203,7 +203,7 @@ function SqlConsoleScreen() {
         <div className="lg:order-2">
           <Panel
             title="Query"
-            subtitle="SELECT only — bare wildcards are rejected."
+            subtitle="SELECT only. Bare wildcards are rejected."
             footer={(
               <>
                 <button id="admin-topo-sql-run" type="button" className={BTN.primary} onClick={run}>

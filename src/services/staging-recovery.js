@@ -140,7 +140,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     // backoff) when the cause is transient.
     await recordChecksSkipped({
       config, pool, session, commitSha: session.checks_commit_sha || null,
-      reason: 'checks unavailable — GitHub is not configured',
+      reason: 'checks unavailable: GitHub is not configured',
     });
     return 'skipped';
   }
@@ -149,7 +149,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   if (!pat) {
     await recordChecksSkipped({
       config, pool, session, commitSha: session.checks_commit_sha || null,
-      reason: 'checks unavailable — GitHub is not configured',
+      reason: 'checks unavailable: GitHub is not configured',
     });
     return 'skipped';
   }
@@ -172,7 +172,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   if (imported && !importedHead) {
     await recordChecksSkipped({
       config, pool, session, commitSha: session.checks_commit_sha || null,
-      reason: 'imported PR has no recorded head commit — nothing to preview',
+      reason: 'imported PR has no recorded head commit. Nothing to preview',
     });
     return 'skipped';
   }
@@ -208,8 +208,8 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
       commitSha: compare.base_commit?.sha || session.checks_commit_sha || null,
       expectedCommitSha: session.checks_commit_sha || null,
       reason: imported
-        ? 'imported PR has no commits beyond main — nothing to test'
-        : 'branch has no commits beyond main — nothing to test',
+        ? 'imported PR has no commits beyond main. Nothing to test'
+        : 'branch has no commits beyond main. Nothing to test',
     });
     return 'skipped';
   }
@@ -356,7 +356,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   if (imported) {
     const { sendSystemMessage } = require('./ws');
     const label = session.pr_title
-      ? `PR #${session.pr_number} — ${session.pr_title}`
+      ? `PR #${session.pr_number}: ${session.pr_title}`
       : `PR #${session.pr_number}`;
     await sendSystemMessage(
       pool, session.app_id,
@@ -364,7 +364,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
       // away (a restart, the idle GC, a lost container) is operator
       // detail; the reader only needs to know the button works again.
       // `reason` still rides the log line at the end of this function.
-      `The staging preview for ${label} was rebuilt — the Preview button works again.`,
+      `The staging preview for ${label} was rebuilt. The Preview button works again.`,
       'system',
       { stagingBuild: 'ready', prNumber: session.pr_number || null, stagingUrl: stagingResult.stagingUrl },
       { type: 'session', ref: session.id }
@@ -441,7 +441,7 @@ async function announceRebuildStarted({ pool, session, imported }) {
       // the group discussion thread its card links to (#866) — same split
       // the success note below makes.
       const label = session.pr_title
-        ? `PR #${session.pr_number} — ${session.pr_title}`
+        ? `PR #${session.pr_number}: ${session.pr_title}`
         : `PR #${session.pr_number}`;
       await sendSystemMessage(
         pool, session.app_id,

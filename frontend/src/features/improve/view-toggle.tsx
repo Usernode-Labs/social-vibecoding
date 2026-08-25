@@ -197,7 +197,7 @@ export function ImproveViewToggle({ compact }: { compact: boolean }) {
         aria-selected={active === 'feed' ? 'true' : 'false'}
         className={segmentCls(active === 'feed', compact)}
         onClick={() => select('feed')}
-        title="Feed — recent development activity, newest first"
+        title="Feed: recent development activity, newest first"
       >
         <ListLinesIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
         Feed
@@ -209,7 +209,7 @@ export function ImproveViewToggle({ compact }: { compact: boolean }) {
         aria-selected={active === 'kanban' ? 'true' : 'false'}
         className={segmentCls(active === 'kanban', compact)}
         onClick={() => select('kanban')}
-        title="Kanban — work in flight, by column"
+        title="Kanban: work in flight, by column"
       >
         <BoardIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
         Kanban

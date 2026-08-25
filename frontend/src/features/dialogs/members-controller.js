@@ -92,7 +92,7 @@ const MembersDialog = {
       console.warn('[members] openMembersModal called with no app loaded');
       const visStatus = document.getElementById('members-vis-error');
       if (visStatus) {
-        visStatus.textContent = 'This app is still loading — open Members & visibility again in a moment.';
+        visStatus.textContent = 'This app is still loading. Open Members & visibility again in a moment.';
         visStatus.className = 'text-sm text-red-400';
       }
       return;
@@ -133,7 +133,7 @@ const MembersDialog = {
           .forEach((p) => { p.disabled = !appData.repo_url; });
         if (!appData.repo_url) {
           if (visStatus) {
-            visStatus.textContent = 'Visibility changes are proposed as a dapp.json pull request — this app has no GitHub repository, so they\'re unavailable.';
+            visStatus.textContent = 'Visibility changes are proposed as a dapp.json pull request. This app has no GitHub repository, so they\'re unavailable.';
             visStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
           }
         }
@@ -159,7 +159,7 @@ const MembersDialog = {
           .forEach((p) => { p.disabled = !appData.repo_url; });
         if (!appData.repo_url) {
           if (govStatus) {
-            govStatus.textContent = 'Approval-settings changes are proposed as a dapp.json pull request — this app has no GitHub repository, so they\'re unavailable.';
+            govStatus.textContent = 'Approval-settings changes are proposed as a dapp.json pull request. This app has no GitHub repository, so they\'re unavailable.';
             govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
             govStatus.classList.remove('hidden');
           }
@@ -492,12 +492,12 @@ const MembersDialog = {
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 409) {
-        setStatus('A visibility change is already up for vote — see the proposal in the Dev tab\'s vote panel.', false);
+        setStatus('A visibility change is already up for vote. See the proposal in the Dev tab\'s vote panel.', false);
         return;
       }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setStatus(
-        `Proposal opened (PR #${data.prNumber}) — it needs the group's vote in the Dev tab's vote panel before the new visibility applies.`,
+        `Proposal opened (PR #${data.prNumber}). It needs the group's vote in the Dev tab's vote panel before the new visibility applies.`,
         false
       );
     } catch (err) {
@@ -706,7 +706,7 @@ const MembersDialog = {
       if (roster.length) {
         statusLine.textContent = `Current approvers stay in place: ${roster.map((r) => `@${r.username}`).join(', ')}. Add more people to invite below (optional).`;
       } else if (appData.self_hosted) {
-        statusLine.textContent = 'Platform admins can approve proposals until invited approvers are added — pick some below.';
+        statusLine.textContent = 'Platform admins can approve proposals until invited approvers are added. Pick some below.';
       } else if (AppView._approversData && AppView._approversData.creatorId != null
                  && AppView._approversData.creatorId !== me.id) {
         statusLine.textContent = 'The app\'s creator will automatically become the first approver. Add more people to invite below (optional).';
@@ -835,12 +835,12 @@ const MembersDialog = {
       const data = await res.json().catch(() => ({}));
       if (res.status === 409) {
         AppView._renderMembersGovPills();
-        setStatus('A governance change is already up for vote — see the proposal in the Dev tab\'s vote panel.', false);
+        setStatus('A governance change is already up for vote. See the proposal in the Dev tab\'s vote panel.', false);
         return;
       }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       AppView._hideInitialApproversDraft();
-      let msg = `Proposal opened (PR #${data.prNumber}) — it needs the group's vote in the Dev tab's vote panel before the new settings apply.`;
+      let msg = `Proposal opened (PR #${data.prNumber}). It needs the group's vote in the Dev tab's vote panel before the new settings apply.`;
       if (Array.isArray(data.inviteWarnings) && data.inviteWarnings.length) {
         msg += ` Some approver invites could not be sent: ${data.inviteWarnings.join('; ')}.`;
       }
@@ -1010,7 +1010,7 @@ const MembersDialog = {
       const known = resolvedLower.has(lower)
         || (AppView._appAdminsKnown && AppView._appAdminsKnown.has(lower));
       const note = known ? ''
-        : '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="No account with this username yet — they\'ll become an admin once they sign up and the app next deploys">no account yet</span>';
+        : '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="No account with this username yet. They\'ll become an admin once they sign up and the app next deploys">no account yet</span>';
       rows.push(
         `<div class="${rowCls}"><span class="truncate">@${escapeHtml(name)}</span>`
         + `<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-amber-800 font-medium dark:text-amber-300">will be added</span>${note}${removeBtn(name)}</span></div>`
@@ -1045,17 +1045,17 @@ const MembersDialog = {
     const note = document.getElementById('members-appadmins-note');
     if (note) {
       note.innerHTML = editable
-        ? 'Changes are proposed as a pull request editing <code>dapp.json</code>&rsquo;s <code>admins</code> list &mdash; it needs real Yes votes and won&rsquo;t merge on a timer.'
-        : 'Set in <code>dapp.json</code>. To change them, open a pull request that edits the <code>admins</code> list &mdash; that proposal needs real Yes votes and won&rsquo;t merge on a timer.';
+        ? 'Changes are proposed as a pull request editing <code>dapp.json</code>&rsquo;s <code>admins</code> list. It needs real Yes votes and won&rsquo;t merge on a timer.'
+        : 'Set in <code>dapp.json</code>. To change them, open a pull request that edits the <code>admins</code> list. That proposal needs real Yes votes and won&rsquo;t merge on a timer.';
     }
 
     // Default status: the open-proposal pointer or the no-repo hint.
     // Callers wanting a custom message (Propose result) overwrite after
     // rendering.
     if (editable && d.openProposal) {
-      AppView._setAppAdminsStatus('An app-admins change is already up for vote — see the proposal in the Dev tab.', false);
+      AppView._setAppAdminsStatus('An app-admins change is already up for vote. See the proposal in the Dev tab.', false);
     } else if (editable && noRepo) {
-      AppView._setAppAdminsStatus('Admin changes are proposed as a dapp.json pull request — this app has no GitHub repository, so they\'re unavailable.', false);
+      AppView._setAppAdminsStatus('Admin changes are proposed as a dapp.json pull request. This app has no GitHub repository, so they\'re unavailable.', false);
     } else {
       AppView._setAppAdminsStatus('', false);
     }
@@ -1132,8 +1132,8 @@ const MembersDialog = {
 
     const emptying = !draft.length && declared.length > 0;
     const message = emptying
-      ? 'This removes every app admin — only the creator and platform admins will be able to manage the app. The change opens a proposal that needs real Yes votes and won\'t merge on a timer.'
-      : 'Changing who administers this app opens a proposal. Because it grants app-level power, it will not merge on a timer — it needs real Yes votes to reach the app\'s normal threshold, and only a platform admin can force-merge it.';
+      ? 'This removes every app admin. Only the creator and platform admins will be able to manage the app. The change opens a proposal that needs real Yes votes and won\'t merge on a timer.'
+      : 'Changing who administers this app opens a proposal. Because it grants app-level power, it will not merge on a timer: it needs real Yes votes to reach the app\'s normal threshold, and only a platform admin can force-merge it.';
     if (!await PlatformUI.confirm({
       title: 'Open an app-admins proposal?',
       message,
@@ -1165,7 +1165,7 @@ const MembersDialog = {
       }
       AppView._appAdminsDraft = [...declared];
       AppView._renderAppAdmins();
-      AppView._setAppAdminsStatus(`Proposal opened (PR #${data.prNumber}) — it needs the group's vote in the Dev tab before the new admins apply.`, false);
+      AppView._setAppAdminsStatus(`Proposal opened (PR #${data.prNumber}). It needs the group's vote in the Dev tab before the new admins apply.`, false);
     } catch (err) {
       // No proposal opened — keep the draft so nothing typed is lost.
       AppView._setAppAdminsStatus(`Could not open the admins proposal: ${err.message}`, true);
@@ -1209,7 +1209,7 @@ const MembersDialog = {
       // Only visible when the policy is 'invited' — honest about the
       // merge gate's empty-roster fallback (services/governance.js:
       // full admins act as the approver set).
-      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No approvers yet — platform admins can approve proposals until an approver is added.</div>';
+      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No approvers yet. Platform admins can approve proposals until an approver is added.</div>';
       return;
     }
     const canManage = !!AppView.appData?.can_manage;

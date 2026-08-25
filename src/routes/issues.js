@@ -128,7 +128,7 @@ function stagingMockIssues(repoUrl) {
       + 'Expected: the preference persists across reloads.', 2),
     mk(900002, '[Mock] Add a keyboard shortcut for voting',
       'Staging-only mock issue for previewing the Dev card list.\n\n'
-      + 'Power users vote on a lot of proposals — pressing Y/N while a '
+      + 'Power users vote on a lot of proposals, so pressing Y/N while a '
       + 'proposal card is focused should cast the vote without reaching '
       + 'for the mouse.', 9),
     mk(900003, '[Mock] Topic cards overflow on narrow phones',
@@ -168,7 +168,7 @@ function stagingMockIssues(repoUrl) {
       'Staging-only mock issue for previewing the "Create new proposal" '
       + 'button state. A synthetic per-viewer session is attached to this '
       + "row so the start-work button reads \"Create new proposal\" "
-      + 'instead of "Create proposal" — exactly what a viewer who already '
+      + 'instead of "Create proposal", exactly what a viewer who already '
       + 'started a dev chat on this issue would see.', 7),
     // #556: dedicated row for reviewing the author-only "edit title"
     // pencil in the topic head. The staging enrichment block in
@@ -178,8 +178,8 @@ function stagingMockIssues(repoUrl) {
       'Staging-only mock issue for previewing the author-only title edit '
       + 'affordance (#556). Open this topic and a pencil appears next to '
       + 'the title because the row is marked as authored by you. Saving '
-      + 'a new title will fail — there is no real GitHub issue behind '
-      + 'this mock row — so this is purely for visual review.', 3),
+      + 'a new title will fail (there is no real GitHub issue behind '
+      + 'this mock row), so this is purely for visual review.', 3),
     // #617: the NEWEST mock row, deliberately absent from the demo drag
     // order (stagingMockOrder in board-order.js ranks only 900002/900001).
     // With the fix, an issue filed after the last drag surfaces at the TOP
@@ -215,15 +215,15 @@ function stagingMockIssues(repoUrl) {
     // proposals below (stagingMockGovernance 9100005 / 9100006), so the
     // ?demo=1 preview shows the governance card's spinner state AND the
     // matching "Closing…" state on the target issue's own row.
-    mk(900011, '[Mock] Close vote passed — issue is being closed',
+    mk(900011, '[Mock] Close vote passed. Issue is being closed',
       'Staging-only mock issue for previewing the #1010 in-progress close '
       + 'indicator. A mock close proposal for this issue has passed its '
       + 'vote and its window has just elapsed, so both the governance card '
       + 'and this row render the "Closing…" spinner state.', 6),
-    mk(900012, '[Mock] Close vote passed a while ago — retry pending',
+    mk(900012, '[Mock] Close vote passed a while ago. Retry pending',
       'Staging-only mock issue for previewing the #1010 stalled-apply '
       + 'state. Its mock close proposal passed long enough ago that the '
-      + 'spinner has timed out, so the card reads "Close pending — will '
+      + 'spinner has timed out, so the card reads "Close pending. Will '
       + 'retry automatically" instead of spinning forever.', 8),
     // #1112: the two work-states that no other mock row can show, because
     // both need a session in a state the other rows never sit in. The
@@ -261,7 +261,7 @@ function stagingMockIssues(repoUrl) {
     mk(900017, '[Mock] Issue with an open proposal against it',
       'Staging-only mock issue for previewing #1251: an issue whose work '
       + 'is already up for a vote. It must appear on the kanban board (In '
-      + 'progress) as well as in the list view — the proposal card in In '
+      + 'progress) as well as in the list view. The proposal card in In '
       + 'review is not the only place it exists.', 8),
   ];
 }
@@ -341,18 +341,18 @@ function stagingMockGovernance() {
     //   9100005 — 30s ago  → inside the 120s grace → spinner, "Closing issue #900011…"
     //   9100006 — 10m ago  → past the grace        → "Close pending — will retry automatically"
     mk(9100005, 'close_issue',
-      '[Mock] Close issue #900011: "Close vote passed — issue is being closed"',
+      '[Mock] Close issue #900011: "Close vote passed. Issue is being closed"',
       {
         issueNumber: 900011,
-        issueTitle: 'Close vote passed — issue is being closed',
-        reason: 'Fixed by the theme rework — closing.',
+        issueTitle: 'Close vote passed. Issue is being closed',
+        reason: 'Fixed by the theme rework, closing.',
       }, 5, 2, 0,
       { required: 2, windowEndsAt: secsAgo(30) }),
     mk(9100006, 'close_issue',
-      '[Mock] Close issue #900012: "Close vote passed a while ago — retry pending"',
+      '[Mock] Close issue #900012: "Close vote passed a while ago. Retry pending"',
       {
         issueNumber: 900012,
-        issueTitle: 'Close vote passed a while ago — retry pending',
+        issueTitle: 'Close vote passed a while ago. Retry pending',
         reason: 'Duplicate of an older report.',
       }, 7, 2, 0,
       { required: 2, windowEndsAt: secsAgo(600) }),
@@ -845,7 +845,7 @@ function issueRoutes(config) {
         const parsed = parseOwnerRepo(app.repo_url);
         if (!github.isEnabled() || !parsed) {
           return res.status(422).json({
-            error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+            error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
           });
         }
         const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -899,7 +899,7 @@ function issueRoutes(config) {
           return res.status(403).json({ error: 'Full admin access required' });
         }
         if (!github.isEnabled()) {
-          return res.status(422).json({ error: 'GitHub is not configured — campaigns cannot run' });
+          return res.status(422).json({ error: 'GitHub is not configured, so campaigns cannot run' });
         }
         const campaignTitle = typeof title === 'string' ? title.trim() : '';
         const instructions = typeof payload?.instructions === 'string' ? payload.instructions.trim() : '';
@@ -1776,7 +1776,7 @@ function issueRoutes(config) {
       const parsed = parseOwnerRepo(app.repo_url);
       if (!github.isEnabled() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -1894,7 +1894,7 @@ function issueRoutes(config) {
       const parsed = parseOwnerRepo(app.repo_url);
       if (!github.isEnabled() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -1975,7 +1975,7 @@ function issueRoutes(config) {
       const parsed = parseOwnerRepo(app.repo_url);
       if (!github.isEnabled() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -2742,8 +2742,8 @@ async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, 
 
       resolved.push(row.id);
       const msg = cause?.kind === 'pr-merge'
-        ? `Close proposal for issue #${n} resolved automatically — PR #${cause.prNumber} closed the issue`
-        : `Close proposal for issue #${n} resolved automatically — the issue was closed on GitHub`;
+        ? `Close proposal for issue #${n} resolved automatically: PR #${cause.prNumber} closed the issue`
+        : `Close proposal for issue #${n} resolved automatically: the issue was closed on GitHub`;
       await sendSystemMessage(pool, row.app_id, msg, 'system')
         .catch((err) => log.warn('issues', 'Superseded chat message failed', { err: err.message }));
       await sendSystemMessage(pool, row.app_id, msg, 'system',
@@ -3096,7 +3096,7 @@ async function maybeApplyMaintenanceCampaignProposal(config, pool, issue, option
     ? `by admin override (${options.forceBy?.username || 'admin'})`
     : `by group vote (${upCount}/${required})`;
   const startedMsg = `Maintenance campaign "${issue.payload?.title || issue.title}" approved ${appliedHow}. `
-    + 'The platform is now opening one PR per app — progress on the campaign dashboard.';
+    + 'The platform is now opening one PR per app (progress on the campaign dashboard).';
   await sendSystemMessage(pool, issue.app_id, startedMsg, 'system')
     .catch((err) => log.warn('issues', 'Campaign chat msg failed', { err: err.message }));
   await sendSystemMessage(pool, issue.app_id, startedMsg, 'system',

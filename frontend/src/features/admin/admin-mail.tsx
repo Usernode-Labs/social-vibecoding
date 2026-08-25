@@ -126,11 +126,11 @@ function statusClass(status?: string): string {
 function outcomeHeadline(outcome: Outcome): string {
   switch (outcome.status) {
     case 'sent': return 'Delivered to the provider. Check the inbox.';
-    case 'skipped_staging': return 'Rendered to the platform log — staging never delivers mail.';
+    case 'skipped_staging': return 'Rendered to the platform log. Staging never delivers mail.';
     case 'failed': return 'The provider refused the message.';
-    case 'no_transport': return 'Nothing was sent — no mail transport is configured.';
+    case 'no_transport': return 'Nothing was sent. No mail transport is configured.';
     case 'suppressed_rate_limit': return 'Held back by the outbound throttle.';
-    case 'invalid_recipient': return 'Nothing was sent — that address could not be used.';
+    case 'invalid_recipient': return 'Nothing was sent. That address could not be used.';
     default: return 'The send finished with an unexpected result.';
   }
 }
@@ -172,7 +172,7 @@ function StatusCard({ status, failed }: { status: MailStatus | null; failed: boo
     return (
       <div className="rounded-lg border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 px-4 py-3 text-sm">
         <div className="font-semibold text-sky-800 dark:text-sky-300">
-          Staging preview — email is rendered to the log, never delivered
+          Staging preview: email is rendered to the log, never delivered
         </div>
         <p className="text-sky-800/80 dark:text-sky-300/80 mt-1">
           {'This preview holds a clone of production data, so it must not mail real people. Login codes and links appear in the platform log ('}
@@ -189,7 +189,7 @@ function StatusCard({ status, failed }: { status: MailStatus | null; failed: boo
       <div className={`${AdminUI.card} px-4 py-3 text-sm`}>
         <span className="font-semibold text-emerald-700 dark:text-emerald-400">Email is configured</span>
         <span className="text-zinc-500 dark:text-zinc-400">
-          {' — login codes and waitlist confirmations are being sent via '}
+          {': login codes and waitlist confirmations are being sent via '}
           <span className="font-medium">{status.provider || 'unknown'}</span>{'.'}
         </span>
         <Sender s={status} />
@@ -200,7 +200,7 @@ function StatusCard({ status, failed }: { status: MailStatus | null; failed: boo
   return (
     <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm">
       <div className="font-semibold text-amber-800 dark:text-amber-300">
-        Email is not deliverable — no mail sender configured
+        Email is not deliverable: no mail sender configured
       </div>
       <p className="text-amber-800/80 dark:text-amber-300/80 mt-1">
         These flows still report success to the user but deliver nothing:
@@ -215,7 +215,7 @@ function StatusCard({ status, failed }: { status: MailStatus | null; failed: boo
       <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
         {(status.providers || []).map((p) => (
           <li key={p.name}>
-            {`${p.label || p.name} — `}
+            {`${p.label || p.name}: `}
             {p.configured
               ? <span className="text-emerald-700 dark:text-emerald-400">ready</span>
               : <>{'needs '}<CodeList keys={p.missing} /></>}
@@ -466,7 +466,7 @@ function MailSection() {
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
               Sends one message through the configured provider and reports exactly what
-              happened — unlike the flows this checks, which always report success. Up to
+              happened, unlike the flows this checks, which always report success. Up to
               10 per hour, and no more than one to the same address every 30 seconds.
             </p>
           </>

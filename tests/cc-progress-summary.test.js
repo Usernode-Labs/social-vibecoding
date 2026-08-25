@@ -159,10 +159,10 @@ test('formatCountdown (#891): a fixed anchor decrements as time passes', () => {
 test('runCohortHint (#906): silent below ten minutes, long-run context above', () => {
   assert.equal(runCohortHint(0), '');
   assert.equal(runCohortHint(599_999), '');
-  assert.equal(runCohortHint(600_000), 'running longer than most — about 1 in 5 runs do');
-  assert.equal(runCohortHint(1_799_999), 'running longer than most — about 1 in 5 runs do');
-  assert.equal(runCohortHint(1_800_000), 'this is a long one — some runs go 30 min+');
-  assert.equal(runCohortHint(9_999_999), 'this is a long one — some runs go 30 min+');
+  assert.equal(runCohortHint(600_000), 'running longer than most (about 1 in 5 runs do)');
+  assert.equal(runCohortHint(1_799_999), 'running longer than most (about 1 in 5 runs do)');
+  assert.equal(runCohortHint(1_800_000), 'this is a long one (some runs go 30 min+)');
+  assert.equal(runCohortHint(9_999_999), 'this is a long one (some runs go 30 min+)');
 });
 
 test('runCohortHint (#906): the retired range copy is gone at every elapsed', () => {

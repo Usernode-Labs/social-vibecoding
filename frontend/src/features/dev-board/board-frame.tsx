@@ -252,7 +252,7 @@ export function DevBoardFrame({
                 <button data-plus="proposal" className={PLUS_ROW_CLS}>
                   <span className={PLUS_TITLE_CLS}>Propose a change</span>
                   <span className={PLUS_SUB_CLS}>
-                    Start a dev session — you pick where it is built, and can change that
+                    Start a dev session. You pick where it is built, and can change that
                     any time
                   </span>
                 </button>
@@ -263,7 +263,7 @@ export function DevBoardFrame({
                   >
                     <span className={PLUS_TITLE_CLS}>Import Feature from a PR</span>
                     <span className={PLUS_SUB_CLS}>
-                      Your computer &middot; your own tools — you have already built it, so
+                      Your computer &middot; your own tools: you have already built it, so
                       there is no chat for this one
                     </span>
                   </button>
@@ -302,7 +302,7 @@ export function DevBoardFrame({
                 >
                   <span className={PLUS_TITLE_CLS}>App display name</span>
                   <span className={PLUS_SUB_CLS}>
-                    Renames are proposals — applied once voted in
+                    Renames are proposals, applied once voted in
                   </span>
                 </button>
                 <button data-plus="secrets" className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}>
@@ -318,7 +318,7 @@ export function DevBoardFrame({
                   </span>
                   <span className={PLUS_SUB_CLS}>
                     {selfHosted
-                      ? "The platform's own env — applied on its next deploy"
+                      ? "The platform's own env, applied on its next deploy"
                       : 'Set or update secret values'}
                   </span>
                 </button>
@@ -354,7 +354,7 @@ export function DevBoardFrame({
         <div id="dev-locked-notice" className={locked ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
           {locked ? (
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-400">
-              App is locked — an admin must approve any proposal before it applies.
+              App is locked, so an admin must approve any proposal before it applies.
             </div>
           ) : null}
         </div>

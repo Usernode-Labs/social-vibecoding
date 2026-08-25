@@ -131,7 +131,7 @@ export function init() {
       bountyCheckbox.disabled = exhausted;
       bountyRow.classList.toggle('opacity-60', exhausted);
       if (remaining === null) bountyNote.textContent = '';
-      else if (exhausted) bountyNote.textContent = `You've used all ${limit} kudos this week — resets Monday 00:00 UTC.`;
+      else if (exhausted) bountyNote.textContent = `You've used all ${limit} kudos this week (resets Monday 00:00 UTC).`;
       else bountyNote.textContent = `${remaining} of ${limit} kudos left this week`;
       bountyRow.classList.remove('hidden');
     };
@@ -405,8 +405,8 @@ export function init() {
       } catch {
         // #1054: keep the bytes when the network fails. The outbox uploads
         // them at flush time, and an online submit retries first.
-        screenshotState.textContent = "Saved with your feedback — it'll upload when you're back online";
-        showFeedbackNotice("Couldn't upload the screenshot yet — it'll be sent along with your feedback.", false);
+        screenshotState.textContent = "Saved with your feedback. It'll upload when you're back online";
+        showFeedbackNotice("Couldn't upload the screenshot yet. It'll be sent along with your feedback.", false);
       } finally {
         screenshotUploading = false;
       }
@@ -502,15 +502,15 @@ export function init() {
         // says the words are still there, because the words are what a user
         // is afraid of losing — the screenshot they can retake (#1284).
         if (err && err.code === 'denied') {
-          showFeedbackNotice('Screen capture was declined — nothing was attached, and your feedback is safe.', false);
+          showFeedbackNotice('Screen capture was declined. Nothing was attached, and your feedback is safe.', false);
         } else if (err && err.code === 'register_failed') {
-          showFeedbackNotice("Couldn't locate this page in the shared window — keep it fully visible and try again. Your feedback is safe.", true);
+          showFeedbackNotice("Couldn't locate this page in the shared window. Keep it fully visible and try again. Your feedback is safe.", true);
         } else if (err && err.code === 'too-large') {
-          showFeedbackNotice('That screenshot is larger than 4 MB — your feedback is safe, attach a smaller one.', true);
+          showFeedbackNotice('That screenshot is larger than 4 MB. Your feedback is safe, attach a smaller one.', true);
         } else if (nativeAttempt) {
-          showFeedbackNotice("Couldn't take a screenshot — but your feedback is safe. Choose one from Photos, or just send it as it is.", true);
+          showFeedbackNotice("Couldn't take a screenshot, but your feedback is safe. Choose one from Photos, or just send it as it is.", true);
         } else if (err && err.code !== 'cancelled') {
-          showFeedbackNotice('Screenshot capture failed — but your feedback is safe. Try again, or send it without one.', true);
+          showFeedbackNotice('Screenshot capture failed, but your feedback is safe. Try again, or send it without one.', true);
         }
       } finally {
         // The round trip is over: the page survived it, so the stash has
@@ -557,7 +557,7 @@ export function init() {
         } else if (err && err.code === 'too-large') {
           showFeedbackNotice('That image is larger than 4 MB.', true);
         } else {
-          showFeedbackNotice("Couldn't attach that image — please try another.", true);
+          showFeedbackNotice("Couldn't attach that image. Please try another.", true);
         }
       } finally {
         clearCaptureDraft();
@@ -591,9 +591,9 @@ export function init() {
     // A refused save is always explained — an invisible outbox that silently
     // drops things is worse than the bug this replaces.
     const queueRefusal = (code) => {
-      if (code === 'duplicate') return "You've already saved this message — it'll send once you're back online.";
+      if (code === 'duplicate') return "You've already saved this message. It'll send once you're back online.";
       if (code === 'full') return `Only ${window.FeedbackQueue?.MAX_ENTRIES || 10} messages can wait offline at once. The earlier ones send first.`;
-      if (code === 'too-large') return "There isn't room to keep another screenshot offline — remove it and save the text.";
+      if (code === 'too-large') return "There isn't room to keep another screenshot offline. Remove it and save the text.";
       return "Couldn't save this message on this device.";
     };
 
@@ -611,17 +611,17 @@ export function init() {
       // tests/feedback-offline-ui.test.js verifies they exist verbatim here.
       if (offline && n > 0) {
         return n === 1
-          ? "You're offline — 1 message saved on this device is waiting to send. This one will be saved too."
-          : `You're offline — ${n} messages saved on this device are waiting to send. This one will be saved too.`;
+          ? "You're offline. 1 message saved on this device is waiting to send. This one will be saved too."
+          : `You're offline. ${n} messages saved on this device are waiting to send. This one will be saved too.`;
       }
       if (offline) {
-        return "You're offline — your message will be saved on this device and sent automatically "
+        return "You're offline. Your message will be saved on this device and sent automatically "
           + "when you're back online.";
       }
       if (n > 0) {
         return n === 1
-          ? '1 message saved on this device — sending now.'
-          : `${n} messages saved on this device — sending now.`;
+          ? '1 message saved on this device. Sending now.'
+          : `${n} messages saved on this device. Sending now.`;
       }
       return '';
     };
@@ -712,7 +712,7 @@ export function init() {
         showFeedbackNotice(queueRefusal(err && err.code), true);
         return false;
       }
-      feedbackStatus.textContent = "Saved on this device — we'll send it as soon as you're back online.";
+      feedbackStatus.textContent = "Saved on this device. We'll send it as soon as you're back online.";
       feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
       feedbackStatus.classList.remove('hidden');
       queueLineText = '';
@@ -781,7 +781,7 @@ export function init() {
       // #683: a screenshot upload is still in flight — the id isn't known
       // yet, so filing now would silently drop the attachment.
       if (screenshotUploading) {
-        showFeedbackNotice('Screenshot is still uploading — one moment…', false);
+        showFeedbackNotice('Screenshot is still uploading. One moment…', false);
         return;
       }
       // #732: freeze the title snapshot for this submit — cancel the
@@ -853,8 +853,8 @@ export function init() {
             body.pageState = pageState.json;
             if (pageState.truncated) body.pageStateTruncated = true;
           } else {
-            stateNotice = " Couldn't collect app state — filed without it.";
-            showFeedbackNotice("Couldn't collect app state — filing without it…", false);
+            stateNotice = " Couldn't collect app state. Filed without it.";
+            showFeedbackNotice("Couldn't collect app state. Filing without it…", false);
           }
         }
         // #1054: we already know the network is down (the /health probe said
@@ -895,7 +895,7 @@ export function init() {
           let bountyNotice = '';
           if (data.bounty) {
             if (data.bounty.placed) {
-              bountyNotice = ` — and pledged 1 kudos as a bounty. ${data.bounty.remaining} left this week.`;
+              bountyNotice = `, and pledged 1 kudos as a bounty. ${data.bounty.remaining} left this week.`;
               // The drawer's Kudos meter must show the number the user
               // just spent down to, not the one they saw before.
               window.Kudos?.Budget?.refresh?.();
@@ -1064,7 +1064,7 @@ export function init() {
           if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
           if (p.target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
           feedbackStatus.textContent = `This message couldn't be sent: ${failed.lastError || 'the server rejected it'}.`
-            + ' Your text is back — edit it and try again.';
+            + ' Your text is back. Edit it and try again.';
           feedbackStatus.className = 'text-sm mt-2 text-red-400';
           feedbackStatus.classList.remove('hidden');
           queueLineText = '';
@@ -1086,7 +1086,7 @@ export function init() {
             titleDirty = rescued.titleDirty !== false;
           }
           if (rescued.target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
-          showFeedbackNotice("The screenshot didn't make it, but your feedback is safe — here it is again.", false);
+          showFeedbackNotice("The screenshot didn't make it, but your feedback is safe. Here it is again.", false);
           queueLineText = '';
         }
       }
@@ -1187,7 +1187,7 @@ export function init() {
     if (!readCaptureDraft()) return;
     bootDraftAnnounced = true;
     try {
-      PlatformUI?.toast?.('Your feedback draft was saved — reopen Send feedback to finish it.');
+      PlatformUI?.toast?.('Your feedback draft was saved. Reopen Send feedback to finish it.');
     } catch { /* the draft is in the stash either way */ }
   };
   App.noticeRescuedFeedbackDraft();

@@ -105,7 +105,7 @@ function LimitsSection() {
       setAsOf(data.asOf || '');
     }
     if (!data.configured) {
-      setDerived('Nothing recorded yet — no remaining-credit figure is being tracked.');
+      setDerived('Nothing recorded yet. No remaining-credit figure is being tracked.');
     } else if (typeof data.remainingCents !== 'number') {
       setDerived(`Couldn’t reach Anthropic to compute the remaining credit${
         data.error ? ` (${data.error})` : ''}.`);
@@ -113,7 +113,7 @@ function LimitsSection() {
       const src = data.source === 'anthropic'
         ? 'from Anthropic’s billed cost report'
         : 'estimated from platform spend records (no ANTHROPIC_ADMIN_KEY configured)';
-      setDerived(`$${console_().centsToDollars(data.remainingCents)} remaining — `
+      setDerived(`$${console_().centsToDollars(data.remainingCents)} remaining: `
         + `$${console_().centsToDollars(data.spentCents)} spent since ${data.asOf}, ${src}.`
         + (data.stale ? ' Showing a cached figure; the last refresh failed.' : ''));
     }

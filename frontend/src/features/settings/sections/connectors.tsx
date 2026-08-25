@@ -91,7 +91,7 @@ export function ConnectorsSection() {
     <div data-settings-section="connectors" className="hidden">
       <div id="connectors-section">
         <SectionHeading title={<>Claude &amp; ChatGPT connectors</>}>
-          Connect Usernode to Claude.ai or ChatGPT and you can browse apps, file requests and turn finished work into proposals from the chat you already have open &mdash; with the coding done by Claude Code or Codex on your own plan, not your Usernode daily allowance.
+          Connect Usernode to Claude.ai or ChatGPT and you can browse apps, file requests and turn finished work into proposals from the chat you already have open, with the coding done by Claude Code or Codex on your own plan, not your Usernode daily allowance.
         </SectionHeading>
         <Label className="mb-1" htmlFor="connector-url">
           Connector URL
@@ -144,20 +144,20 @@ export function ConnectorsSection() {
         */}
         <div className="mb-2 rounded-md border border-zinc-200 dark:border-zinc-800 p-3">
           <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-2">
-            Set up in Claude &mdash; claude.ai on the web
+            Set up in Claude (claude.ai on the web)
           </h4>
           <ol className="space-y-2">
             <SetupStep n={1} title="Open connector settings.">
               Go to <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Customize &rarr; Connectors</strong> in Claude (<code className="font-mono text-zinc-600 dark:text-zinc-400">claude.ai/customize/connectors</code>). This is where both directory connectors and your own custom ones live.
             </SetupStep>
             <SetupStep n={2} title="Start a custom connector.">
-              Click the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button, then choose &ldquo;Add custom connector&rdquo;. On Team or Enterprise plans this option isn&rsquo;t there for members &mdash; an Owner adds it first from Organization settings &rarr; Connectors (Add &rarr; hover &ldquo;Custom&rdquo; &rarr; &ldquo;Web&rdquo;).
+              Click the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button, then choose &ldquo;Add custom connector&rdquo;. On Team or Enterprise plans this option isn&rsquo;t there for members. An Owner adds it first from Organization settings &rarr; Connectors (Add &rarr; hover &ldquo;Custom&rdquo; &rarr; &ldquo;Web&rdquo;).
             </SetupStep>
             <SetupStep n={3} title="Paste your MCP server URL.">
-              For Usernode that is the connector URL in the field above &mdash; a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>. A custom server must be reachable from Anthropic&rsquo;s cloud, not just from your machine.
+              For Usernode that is the connector URL in the field above: a public HTTPS endpoint ending in <code className="font-mono text-zinc-600 dark:text-zinc-400">/mcp</code>. A custom server must be reachable from Anthropic&rsquo;s cloud, not just from your machine.
             </SetupStep>
             <SetupStep n={4} title="Add OAuth credentials if needed.">
-              If a server requires OAuth, open &ldquo;Advanced settings&rdquo; and enter your OAuth Client ID and Client Secret. Skip this for Usernode &mdash; it uses dynamic client registration, so there is nothing to enter.
+              If a server requires OAuth, open &ldquo;Advanced settings&rdquo; and enter your OAuth Client ID and Client Secret. Skip this for Usernode: it uses dynamic client registration, so there is nothing to enter.
             </SetupStep>
             <SetupStep n={5} title="Save and authenticate.">
               Click &ldquo;Add&rdquo; to finish configuring, then click &ldquo;Connect&rdquo; next to the connector. You&rsquo;ll be redirected through the OAuth flow; review the scopes it asks for before approving.
@@ -169,7 +169,7 @@ export function ConnectorsSection() {
         </div>
         <div className="mb-2 rounded-md border border-zinc-200 dark:border-zinc-800 p-3">
           <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-2">
-            Set up in ChatGPT &mdash; on the web
+            Set up in ChatGPT (on the web)
           </h4>
           <ol className="space-y-2">
             <SetupStep n={1} title="Use ChatGPT on the web.">
@@ -185,13 +185,13 @@ export function ConnectorsSection() {
               The <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> button lets you add your own MCP-backed app.
             </SetupStep>
             <SetupStep n={5} title="Enter your MCP server details.">
-              Enter the URL of the remote MCP server &mdash; for Usernode, the connector URL in the field above &mdash; and configure authentication if required. The server must be reachable by ChatGPT; one running only on <code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code> will not work directly.
+              Enter the URL of the remote MCP server (for Usernode, the connector URL in the field above) and configure authentication if required. The server must be reachable by ChatGPT; one running only on <code className="font-mono text-zinc-600 dark:text-zinc-400">localhost</code> will not work directly.
             </SetupStep>
             <SetupStep n={6} title="Create the app.">
               ChatGPT connects to the MCP server and discovers the tools it exposes. Once that succeeds, save/create the app.
             </SetupStep>
             <SetupStep n={7} title="Use the MCP server in a chat.">
-              Start a <strong className="font-semibold text-zinc-600 dark:text-zinc-400">new ChatGPT conversation</strong> and open the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> / tools menu next to the message box. Select Developer mode, then select the MCP app you just created. Now ask ChatGPT to perform something that uses one of the tools &mdash; for example: <em>&ldquo;Use my MCP server to list the open support tickets.&rdquo;</em> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.
+              Start a <strong className="font-semibold text-zinc-600 dark:text-zinc-400">new ChatGPT conversation</strong> and open the <code className="font-mono text-zinc-600 dark:text-zinc-400">+</code> / tools menu next to the message box. Select Developer mode, then select the MCP app you just created. Now ask ChatGPT to perform something that uses one of the tools, for example: <em>&ldquo;Use my MCP server to list the open support tickets.&rdquo;</em> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.
             </SetupStep>
           </ol>
           <p className="mt-3 pt-2 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">
@@ -213,7 +213,7 @@ export function ConnectorsSection() {
             client that derives the name and one where it was typed agree.
         */}
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-4 leading-relaxed">
-          Name it exactly <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code>. Claude Code builds its permission rules from that name &mdash; a different spelling still works, but the read-only allowlist Usernode ships in every app repo will not match it, and you will keep being asked to approve each call. The allowlist covers <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code> as well, so the capitalised form is safe; anything else needs the rules rewritten, which the field further down does for you.
+          Name it exactly <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code>. Claude Code builds its permission rules from that name. A different spelling still works, but the read-only allowlist Usernode ships in every app repo will not match it, and you will keep being asked to approve each call. The allowlist covers <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code> as well, so the capitalised form is safe; anything else needs the rules rewritten, which the field further down does for you.
         </p>
         {/*
             #1218 follow-up: the same three rules land in two different files
@@ -237,7 +237,7 @@ export function ConnectorsSection() {
             Stop the permission prompts
           </h4>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3 leading-relaxed">
-            Claude Code asks you to approve <em>every</em> connector call by default &mdash; including read-only ones like <code className="font-mono text-zinc-600 dark:text-zinc-400">whoami</code> and <code className="font-mono text-zinc-600 dark:text-zinc-400">get_app</code>. Which fix applies depends on where you run it.
+            Claude Code asks you to approve <em>every</em> connector call by default, including read-only ones like <code className="font-mono text-zinc-600 dark:text-zinc-400">whoami</code> and <code className="font-mono text-zinc-600 dark:text-zinc-400">get_app</code>. Which fix applies depends on where you run it.
           </p>
           {/*
               #1222 follow-up: the page used to present the blocks below with
@@ -249,7 +249,7 @@ export function ConnectorsSection() {
               turns "why is this still asking me" into a task with an owner.
           */}
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3 leading-relaxed">
-            Usernode cannot switch this on for you. Permission rules live in a file on your machine or in your app&rsquo;s repo, and a connector has no way to write either &mdash; which is also what stops any other connector you add from granting itself permissions. Copying one of the blocks below is the whole fix, and it is a one-time thing.
+            Usernode cannot switch this on for you. Permission rules live in a file on your machine or in your app&rsquo;s repo, and a connector has no way to write either, which is also what stops any other connector you add from granting itself permissions. Copying one of the blocks below is the whole fix, and it is a one-time thing.
           </p>
 
           <div id="connector-case-cc-local" className="mb-3">
@@ -294,7 +294,7 @@ export function ConnectorsSection() {
               Claude Code on the web
             </h5>
             <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2 leading-relaxed">
-              A web session gets a fresh container each time, so a settings file on your own machine is not in it and last session&rsquo;s approvals are gone. What the container does carry is the repo it checks out &mdash; so commit the same block as <code className="font-mono text-zinc-600 dark:text-zinc-400">.claude/settings.json</code> in the app repo. Usernode writes that file into every app repo it creates, imports or forks; repos that already existed before it shipped do not have one, and adding it is an ordinary commit.
+              A web session gets a fresh container each time, so a settings file on your own machine is not in it and last session&rsquo;s approvals are gone. What the container does carry is the repo it checks out, so commit the same block as <code className="font-mono text-zinc-600 dark:text-zinc-400">.claude/settings.json</code> in the app repo. Usernode writes that file into every app repo it creates, imports or forks; repos that already existed before it shipped do not have one, and adding it is an ordinary commit.
             </p>
             {/* Same header row as the case above — see the note there. */}
             <div className="flex items-center justify-between gap-2 mb-1">
@@ -315,7 +315,7 @@ export function ConnectorsSection() {
             {/* `mb-2` was the flex row's; the trailing paragraph still needs it. */}
             <pre id="connector-repo-allow-rules" className="min-w-0 overflow-x-auto text-xs font-mono text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2 mb-2">{PERSONAL_ALLOW_RULES}</pre>
             <p className="text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">
-              Claude Code may still ask you to trust the workspace once per container before a repo-level file takes effect. Whether that dialog appears in every web session has not been settled &mdash; if you are still prompted after committing the file, that is the reason, and the case above is the fix that does not depend on it.
+              Claude Code may still ask you to trust the workspace once per container before a repo-level file takes effect. Whether that dialog appears in every web session has not been settled. If you are still prompted after committing the file, that is the reason, and the case above is the fix that does not depend on it.
             </p>
           </div>
 
@@ -324,12 +324,12 @@ export function ConnectorsSection() {
               Claude.ai chat and ChatGPT
             </h5>
             <p className="text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">
-              Nothing to do. You approve the connector once in that product&rsquo;s own settings and it does not ask again per call &mdash; the two blocks above are Claude Code&rsquo;s file format and have no effect there.
+              Nothing to do. You approve the connector once in that product&rsquo;s own settings and it does not ask again per call. The two blocks above are Claude Code&rsquo;s file format and have no effect there.
             </p>
           </div>
 
           <p className="text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">
-            Reads only. Anything that acts on your behalf &mdash; filing a request, opening or advancing a proposal &mdash; still asks every time, on purpose.
+            Reads only. Anything that acts on your behalf (filing a request, opening or advancing a proposal) still asks every time, on purpose.
           </p>
           {/*
               The blocks above cover `usernode` and `Usernode`. Any other
@@ -351,7 +351,7 @@ export function ConnectorsSection() {
               Connector registered under a different name?
             </Label>
             <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2 leading-relaxed">
-              Check what your tools are called in your session &mdash; the middle part of <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__usernode__whoami</code>. If it is not <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> or <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, type it here and both blocks above are rewritten for it.
+              Check what your tools are called in your session: the middle part of <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__usernode__whoami</code>. If it is not <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> or <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, type it here and both blocks above are rewritten for it.
             </p>
             <Input
               id="connector-name-spelling"
@@ -406,7 +406,7 @@ export function ConnectorsSection() {
           Preferred build flow
         </h3>
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3 leading-relaxed">
-          {'When you start a proposal, Usernode can ask how you want to build it — here on the '
+          {'When you start a proposal, Usernode can ask how you want to build it: here on the '
             + 'platform with the Usernode agent, or by handing the work order to your own Claude '
             + 'Code or Codex web session. Pick one here to skip the question; choose '}
           <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Ask me every time</strong>
@@ -442,7 +442,7 @@ export function ConnectorsSection() {
           <strong className="font-semibold text-zinc-600 dark:text-zinc-400">
             no access to your repositories
           </strong>
-          &mdash; identity-only profile information &mdash; and stores no provider token. GitHub can also attribute proposals built by your own coding agent to the account you verified.
+          (identity-only profile information) and stores no provider token. GitHub can also attribute proposals built by your own coding agent to the account you verified.
         </SectionHeading>
         <div id="github-link-body" className="space-y-2">
           <SocialIdentity />

@@ -263,7 +263,7 @@ test('sessions.js heals a failed push, then errors instead of warning', () => {
   assert.ok(/worker\.describePushFailure\(/.test(sessionsSrc),
     'the push-failure tail must describe the failure, not hardcode one sentence');
   const workerSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/worker.js'), 'utf8');
-  assert.ok(/Push to GitHub failed — your changes are committed/.test(workerSrc),
+  assert.ok(/Push to GitHub failed\. Your changes are committed/.test(workerSrc),
     'the visible push-failure error message must exist');
 });
 

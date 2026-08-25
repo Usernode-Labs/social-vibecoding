@@ -372,7 +372,7 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           {row.unmergedNote ? (
             <span
               className="shrink-0 text-[11px] text-amber-800 dark:text-amber-400"
-              title="Kudos on PRs that haven’t merged yet — not counted toward ranking"
+              title="Kudos on PRs that haven’t merged yet (not counted toward ranking)"
             >
               {row.unmergedNote}
             </span>
@@ -451,7 +451,7 @@ function ProfileBody({ view }: { view: Extract<BodyView, { kind: 'profile' }> })
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <span
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-xs font-semibold"
-          title="Kudos earned on merged PRs — the leaderboard ranking score"
+          title="Kudos earned on merged PRs: the leaderboard ranking score"
         >
           <span aria-hidden="true">{CLAP}</span>
           <span>{view.stats.kudosMerged}</span>

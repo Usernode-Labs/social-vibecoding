@@ -65,7 +65,7 @@ function makeAppView(opts) {
     BuildVenues: o.venue === false ? undefined
       : { venue: () => ({ label: 'Usernode', blurb: 'Runs on the platform.' }) },
     DevChat: {
-      modelOptionText: (m) => `${m.id} — 40-60%`,
+      modelOptionText: (m) => `${m.id}: 40-60%`,
       modelNoteText: (m) => `${m.id} does medium changes`,
       MODEL_GUIDANCE_TOOLTIP: 'How to read these',
       _openRouterModelOptionLabel: (m) => `${m.id} (openrouter)`,
@@ -139,7 +139,7 @@ test('the Generate-proposal dialog names the issue, the venue and the models', (
   assert.match(html, /headless AI session/);
   assert.match(html, /Building in <b>Usernode<\/b>/, 'the venue is named before you confirm');
   assert.match(html, /id="auto-session-model"/);
-  assert.match(html, /<option value="opus">opus — 40-60%<\/option>/);
+  assert.match(html, /<option value="opus">opus: 40-60%<\/option>/);
   assert.match(html, /selected/, 'the preselected model is the one selected');
   assert.match(html, /Experimental/);
 });

@@ -147,7 +147,7 @@ test('filed and dismissed cards with long bodies stay expandable', () => {
 
   assert.match(html, /data-persist-id="42:pireport"/, 'filed card is expandable');
   assert.match(html, /data-persist-id="43:pireport"/, 'dismissed card is expandable');
-  assert.match(html, /Reported — issue #9/, 'filed state still renders its link');
+  assert.match(html, /Reported: issue #9/, 'filed state still renders its link');
   assert.match(html, /Dismissed/, 'dismissed state still renders its label');
   assert.ok(draftRows().every((r) => r.action.kind !== 'buttons'),
     'no confirm/dismiss buttons on resolved cards');

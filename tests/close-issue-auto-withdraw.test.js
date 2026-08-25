@@ -117,7 +117,7 @@ test('resolver: flips matching open proposals with a pr-merge audit trail and me
 
     // Group line + governance-thread dual-post, pr-merge wording names the PR.
     assert.equal(spies.systemMessages.length, 2);
-    assert.match(spies.systemMessages[0][2], /Close proposal for issue #42 resolved automatically — PR #431 closed the issue/);
+    assert.match(spies.systemMessages[0][2], /Close proposal for issue #42 resolved automatically: PR #431 closed the issue/);
     assert.deepEqual(spies.systemMessages[1][5], { type: 'governance', ref: 61 });
 
     // Same event the withdraw path emits — clients drop the card.
@@ -142,7 +142,7 @@ test('resolver: github-close cause wording has no PR number', async () => {
     await subject.resolveSupersededCloseProposals(pool, {
       appId: 9, appSlug: 'cool-app', numbers: [42], cause: { kind: 'github-close' },
     });
-    assert.match(spies.systemMessages[0][2], /resolved automatically — the issue was closed on GitHub/);
+    assert.match(spies.systemMessages[0][2], /resolved automatically: the issue was closed on GitHub/);
     const audit = JSON.parse(pool.issued(/UPDATE issues SET status = 'closed'/).params[1]);
     assert.equal(audit.supersededBy, 'github-close');
   } finally { restore(); }

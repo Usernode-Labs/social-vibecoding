@@ -99,8 +99,8 @@ function formatCountdown(targetMs, nowMs) {
 function runCohortHint(elapsedMs) {
   var ms = Number(elapsedMs) || 0;
   if (ms < 600000) return '';
-  if (ms < 1800000) return 'running longer than most — about 1 in 5 runs do';
-  return 'this is a long one — some runs go 30 min+';
+  if (ms < 1800000) return 'running longer than most (about 1 in 5 runs do)';
+  return 'this is a long one (some runs go 30 min+)';
 }
 
 // Friendly names for the __USERNODE_PHASE__ markers run-cc.sh emits.

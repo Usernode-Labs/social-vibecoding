@@ -289,7 +289,7 @@ function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> 
 }
 
 const MERGED_TITLE = 'This change is merged and now live in the app.';
-const PREVIEW_GONE = 'Preview removed after merge — this change is now live in the app';
+const PREVIEW_GONE = 'Preview removed after merge. This change is now live in the app';
 
 function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): ReactNode {
   const preview = (testing: boolean, url: string) => controller()?.previewStaging?.(url, testing);
@@ -351,7 +351,7 @@ function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): Re
             </button>
           ) : null}
           {r.status2.kind === 'merged'
-            ? <span className="ms-badge ms-badge-violet" title={MERGED_TITLE}>✓ Merged — now live in the app</span>
+            ? <span className="ms-badge ms-badge-violet" title={MERGED_TITLE}>✓ Merged. Now live in the app</span>
             : null}
           {r.status2.kind === 'badge'
             ? <span className="contents" dangerouslySetInnerHTML={{ __html: r.status2.html }} />
@@ -407,7 +407,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
       {r.attachments && r.attachments.length ? (
         <div className="dc-msg-attachments">
           {r.attachments.map((a) => (a.kind === 'image' ? (
-            <a key={a.href} href={a.href} target="_blank" rel="noopener noreferrer" title={`${a.name} — open full size`}>
+            <a key={a.href} href={a.href} target="_blank" rel="noopener noreferrer" title={`${a.name} (open full size)`}>
               <img className="dc-msg-att-img" src={a.href} alt={a.name} loading="lazy" />
             </a>
           ) : (

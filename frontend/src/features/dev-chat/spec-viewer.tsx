@@ -168,7 +168,7 @@ function CopyButton({ action, raw }: { action: SpecAction; raw: string }): React
       onClick={async () => {
         const ok = await ui()?.copyText?.(raw);
         setLabel(ok ? 'Copied!' : 'Copy failed');
-        if (!ok) ui()?.toast?.('Couldn’t copy — select the text and copy it manually');
+        if (!ok) ui()?.toast?.('Couldn’t copy. Select the text and copy it manually');
         setTimeout(() => setLabel('Copy markdown'), 1500);
       }}
     >{label}</button>

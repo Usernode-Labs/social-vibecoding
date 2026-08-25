@@ -116,7 +116,7 @@ async function applyPatch({
     return fail(
       'patch_too_large',
       `That patch is ${Math.round(bytes / 1024)} KB, over the ${Math.round(MAX_PATCH_BYTES / 1024)} KB a patch can `
-      + 'be. Push the branch to your fork instead and submit it with `branch` — there is no size limit on that route.',
+      + 'be. Push the branch to your fork instead and submit it with `branch`; there is no size limit on that route.',
       { retryable: false }
     );
   }
@@ -237,7 +237,7 @@ async function applyPatch({
       return fail(
         'patch_rejected',
         `That patch changes ${err.file}. Usernode applies patches with the platform's own GitHub credentials, so `
-        + 'it will not commit changes under `.github/` — CI workflow files are out of scope for a proposal.',
+        + 'it will not commit changes under `.github/`: CI workflow files are out of scope for a proposal.',
         { retryable: false }
       );
     }

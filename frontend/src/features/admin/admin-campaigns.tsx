@@ -271,7 +271,7 @@ function CampaignRow({
     for (const a of failingChecks) {
       try { await postRecheck(a.sessionId!); } catch { bad += 1; }
       if (alive.current) {
-        setStatus(`Queued rechecks — ${bad ? `${bad} failed to queue, ` : ''}watching for results…`);
+        setStatus(`Queued rechecks: ${bad ? `${bad} failed to queue, ` : ''}watching for results…`);
       }
     }
     if (!alive.current) return;
@@ -288,7 +288,7 @@ function CampaignRow({
     });
     if (!ok) return;
     setMerging(true);
-    setStatus('Merging sequentially — this can take a while…');
+    setStatus('Merging sequentially. This can take a while…');
     try {
       const res = await fetch(`/api/campaigns/${c.id}/merge-green`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
@@ -421,7 +421,7 @@ function CampaignsSection() {
       // surface; resolve its slug first.
       const meta = await fetchJson('/api/campaigns/meta');
       const slug = meta.data?.selfAppSlug;
-      if (!slug) throw new Error('Platform self-app not found — is self-hosting configured?');
+      if (!slug) throw new Error('Platform self-app not found. Is self-hosting configured?');
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/issues`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -435,7 +435,7 @@ function CampaignsSection() {
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (!alive.current) return;
       setFormStatus({
-        msg: 'Proposal opened on the platform app — the campaign starts when the vote passes (or an admin applies it).',
+        msg: 'Proposal opened on the platform app. The campaign starts when the vote passes (or an admin applies it).',
         ok: true,
       });
       setTitle(''); setInstructions(''); setTargets('');
@@ -466,10 +466,10 @@ function CampaignsSection() {
       {write ? (
         <div id="admin-campaign-form" className={`${formOpen ? '' : 'hidden '}mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3 space-y-2`}>
           <input id="admin-campaign-title" type="text" maxLength={200} className={FORM_INPUT}
-            placeholder="Campaign title — becomes each app's PR title"
+            placeholder="Campaign title (becomes each app's PR title)"
             value={title} onChange={(e) => setTitle(e.target.value)} />
           <textarea id="admin-campaign-instructions" rows={6} maxLength={20000} className={`${FORM_INPUT} font-mono`}
-            placeholder="Instructions for the AI — what to change in each app, with code snippets where helpful. The AI reads each repo and applies these per-app."
+            placeholder="Instructions for the AI: what to change in each app, with code snippets where helpful. The AI reads each repo and applies these per-app."
             value={instructions} onChange={(e) => setInstructions(e.target.value)} />
           <input id="admin-campaign-targets" type="text" className={`${FORM_INPUT} font-mono`}
             placeholder="Optional: comma-separated app slugs to target (blank = every app)"

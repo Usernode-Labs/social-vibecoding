@@ -138,11 +138,11 @@ function buildForkFollowUpMessage(src) {
   const owner = s.owner_username || 'another user';
   const label = s.session_title || s.pr_title || s.branch_name || 'their dev chat';
   const spec = (s.spec_md || '').trim()
-    ? ' Their spec came across too — open the spec viewer to read it.'
+    ? ' Their spec came across too. Open the spec viewer to read it.'
     : '';
-  return `You forked ${owner}'s dev chat ("${label}"). Everything above is their conversation, copied in as history — you're now on your own branch, forked off theirs, so any code they had already pushed is here to build on. Their session is untouched and keeps running independently.${spec}
+  return `You forked ${owner}'s dev chat ("${label}"). Everything above is their conversation, copied in as history. You're now on your own branch, forked off theirs, so any code they had already pushed is here to build on. Their session is untouched and keeps running independently.${spec}
 
-One thing to know: I have the transcript above, but not the coding agent's own memory of that work — so if a detail from their chat matters, say it again rather than assuming I remember it. Tell me what you want to change and I'll take it from here.`;
+One thing to know: I have the transcript above, but not the coding agent's own memory of that work, so if a detail from their chat matters, say it again rather than assuming I remember it. Tell me what you want to change and I'll take it from here.`;
 }
 
 // Static next-step pills for the fork follow-up, so the pill row above the

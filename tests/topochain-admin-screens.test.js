@@ -351,7 +351,7 @@ test('the season events screen links to seasons by name and can filter by one', 
   assert.match(seTsx, /params\.set\('season_id', seasonFilter\)/,
     'the filter is sent to the API, not applied client-side over one page of results');
   assert.match(seTsx, /ev\.season\?\.name/, 'the Season column shows the name, not the raw id');
-  assert.match(seTsx, /— No season —/, 'the unassigned bucket is selectable');
+  assert.match(seTsx, /"No season"|'No season'/, 'the unassigned bucket is selectable');
   assert.match(seTsx, /<Select\n\s*id=\{fid\('season_id'\)\}/,
     'the event form picks a season from a dropdown instead of asking for a numeric id');
   // The Seasons screen writes the filter before jumping here; losing the

@@ -238,7 +238,7 @@ function guidanceMap() {
       label: 'Fable 5',
       changeSize: {
         short: 'design, taste, and difficult coding',
-        long: 'Design and taste — how a screen looks, reads, and feels — plus the most difficult coding work.',
+        long: 'Design and taste (how a screen looks, reads, and feels), plus the most difficult coding work.',
       },
     },
   };
@@ -284,12 +284,12 @@ test('the seed MODELS map carries no price and no measured figures', () => {
 
 // ── 2. option text: what kind of work, not how big ──────────────────
 
-test('each option reads "<label> — <what it is for>"', () => {
+test('each option reads "<label>: <what it is for>"', () => {
   const { html } = render();
   for (const expected of [
-    'Sonnet 5 — simple, small changes',
-    'Opus 5 — general coding work',
-    'Fable 5 — design, taste, and difficult coding',
+    'Sonnet 5: simple, small changes',
+    'Opus 5: general coding work',
+    'Fable 5: design, taste, and difficult coding',
   ]) {
     assert.ok(
       html.includes(expected),
@@ -318,9 +318,9 @@ test('OpenRouter sessions show their pinned model and never show the Claude mode
 
   assert.doesNotMatch(html, /Chat model:/);
   assert.doesNotMatch(html, /id="dc-model-select"/);
-  assert.doesNotMatch(html, /Sonnet 5 — simple, small changes/);
-  assert.doesNotMatch(html, /Opus 5 — general coding work/);
-  assert.doesNotMatch(html, /Fable 5 — design, taste, and difficult coding/);
+  assert.doesNotMatch(html, /Sonnet 5: simple, small changes/);
+  assert.doesNotMatch(html, /Opus 5: general coding work/);
+  assert.doesNotMatch(html, /Fable 5: design, taste, and difficult coding/);
 });
 
 test('the OpenRouter model button opens the provider-locked catalog', () => {
@@ -352,12 +352,12 @@ test('no option implies a size ladder between Opus and Fable', () => {
   // The superseded copy positioned Fable as the "bigger" model. Opus is
   // now the general coding pick and Fable the taste pick, so this exact
   // string must not come back.
-  assert.ok(!html.includes('Fable 5 — big or tricky work'));
+  assert.ok(!html.includes('Fable 5: big or tricky work'));
   assert.ok(!html.includes('a few files'));
   // #809: Opus is the general-purpose coding model, not one reserved for
   // big or tricky changes — the old restrictive wording must not return.
   assert.ok(
-    !html.includes('Opus 5 — big or tricky coding'),
+    !html.includes('Opus 5: big or tricky coding'),
     'Opus option reverted to the superseded "big or tricky" framing'
   );
 });
@@ -393,12 +393,12 @@ test('the caption text itself survives, for the picker that is met once', () => 
   const { DevChat } = makeHarness();
   assert.equal(
     DevChat.modelNoteText(DevChat.MODELS['claude-opus-5']),
-    'Opus 5 — best for anything from a quick fix to a multi-file feature, '
+    'Opus 5: best for anything from a quick fix to a multi-file feature, '
       + 'a refactor, or debugging that needs real digging.'
   );
   assert.equal(
     DevChat.modelNoteText(DevChat.MODELS['claude-sonnet-5']),
-    'Sonnet 5 — best for one small thing at a time: a text tweak, a colour, a single file.'
+    'Sonnet 5: best for one small thing at a time: a text tweak, a colour, a single file.'
   );
   assert.equal(DevChat.modelNoteText({ label: 'Opus 5' }), '', 'no guidance, no sentence');
   assert.match(DevChat.MODEL_GUIDANCE_TOOLTIP, /general coding pick/);
@@ -433,9 +433,9 @@ test('the Fable option owns difficult coding without displacing Opus as the gene
   // coding, Fable = design/taste plus the MOST difficult coding. Fable
   // gaining "difficult coding" must not revert Opus to a
   // big-or-tricky-only framing.
-  assert.ok(html.includes('Fable 5 — design, taste, and difficult coding'));
-  assert.ok(!html.includes('Opus 5 — big or tricky coding'));
-  assert.ok(html.includes('Opus 5 — general coding work'));
+  assert.ok(html.includes('Fable 5: design, taste, and difficult coding'));
+  assert.ok(!html.includes('Opus 5: big or tricky coding'));
+  assert.ok(html.includes('Opus 5: general coding work'));
 });
 
 // ── 4. missing guidance degrades, never crashes ─────────────────────

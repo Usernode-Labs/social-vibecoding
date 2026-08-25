@@ -218,7 +218,7 @@ test('Settings markup has the Language section', () => {
   const html = read('public/index.html');
   assert.match(html, /id="settings-locale"/);
   assert.match(html, /id="settings-locale-status"/);
-  assert.match(html, /Auto — use device language/);
+  assert.match(html, /Auto \(use device language\)/);
 });
 
 test('settings.js wires the picker to POST /api/me/locale and the live push', () => {

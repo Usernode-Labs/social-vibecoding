@@ -170,14 +170,14 @@ function renameHeadFailure(result, branch) {
     return fail(
       'not_your_fork',
       `${branch} was not found in a repository owned by the GitHub account linked to your Usernode profile. `
-      + 'A proposal is only advanced from its author\'s own fork — push the branch to your fork and try again.',
+      + 'A proposal is only advanced from its author\'s own fork. Push the branch to your fork and try again.',
       { retryable: false }
     );
   }
   if (result.code === 'branch_not_found') {
     return fail(
       'fork_branch_not_found',
-      `Your fork has no branch called ${branch}. Push it first — GitHub creates branches on push, and Usernode `
+      `Your fork has no branch called ${branch}. Push it first (GitHub creates branches on push), and Usernode `
       + 'reads it from your fork rather than from your machine.',
       { retryable: true }
     );
@@ -325,7 +325,7 @@ async function updateProposalFromForkBranch(deps, params) {
     return fail(
       'github_link_unavailable',
       'This Usernode deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
-      + 'yours — and a proposal is only advanced from its author\'s verified fork. Ask an admin to set '
+      + 'yours, and a proposal is only advanced from its author\'s verified fork. Ask an admin to set '
       + 'GITHUB_LINK_CLIENT_ID and GITHUB_LINK_CLIENT_SECRET in the platform variables panel.',
       { retryable: false }
     );
@@ -362,7 +362,7 @@ async function updateProposalFromForkBranch(deps, params) {
     if (busy(session)) {
       return fail(
         'session_busy',
-        'This proposal is in the middle of a build right now. Retry in a minute — pushing onto it mid-build '
+        'This proposal is in the middle of a build right now. Retry in a minute: pushing onto it mid-build '
         + 'would leave its preview and its checks describing two different commits.',
         { retryable: true }
       );
@@ -928,7 +928,7 @@ function ownershipGate(session, user) {
   if (!session || !user || Number(session.user_id) !== Number(user.id)) {
     return fail(
       'not_your_proposal',
-      'That proposal was not opened by you. Only its author advances it — anyone else contributes by opening '
+      'That proposal was not opened by you. Only its author advances it; anyone else contributes by opening '
       + 'their own proposal, which the group votes on separately.',
       { retryable: false }
     );
@@ -938,7 +938,7 @@ function ownershipGate(session, user) {
       'proposal_closed',
       session.status === 'merging' || session.status === 'merged'
         ? 'That proposal has already passed its vote and is merging, so its code is frozen. Anything further is a '
-          + 'new proposal — call prepare_work again.'
+          + 'new proposal: call prepare_work again.'
         : `That proposal is ${session.status || 'no longer open'}, so it cannot take a new revision. Open a new `
           + 'proposal with prepare_work.',
       { retryable: false }
@@ -1434,8 +1434,8 @@ async function recordChangesReadyCard({ pool, session, sessionId, headSha }) {
      VALUES ($1, 'system', $2, $3)`,
     [sessionId,
       sha8
-        ? `Changes ready — commit ${sha8} arrived from your coding agent.`
-        : 'Changes ready — an update arrived from your coding agent.',
+        ? `Changes ready. Commit ${sha8} arrived from your coding agent.`
+        : 'Changes ready. An update arrived from your coding agent.',
       JSON.stringify({
         changesReady: true,
         externalUpdate: true,
@@ -1513,7 +1513,7 @@ async function advanceForkHead(ctx) {
     return fail(
       'invalid_request',
       `This proposal follows ${prBranch || 'the pull request\'s own branch'} in your fork, not ${branch}. Push your `
-      + 'new commits to that branch — an open pull request cannot be repointed at a different one — or open a new '
+      + 'new commits to that branch (an open pull request cannot be repointed at a different one), or open a new '
       + 'proposal from this branch with prepare_work.',
       { retryable: false }
     );
@@ -1530,7 +1530,7 @@ async function advanceForkHead(ctx) {
     // second or two after a push. Nothing is written on a disagreement.
     return fail(
       'platform_unavailable',
-      'GitHub is still catching up with your push — its pull request and its branch report different commits. '
+      'GitHub is still catching up with your push: its pull request and its branch report different commits. '
       + 'Try again in a few seconds.',
       { retryable: true }
     );
@@ -1587,7 +1587,7 @@ async function advanceForkHead(ctx) {
     log.error('proposal-update', 'imported head change failed', { sessionId, err: err.message });
     return fail(
       'platform_unavailable',
-      'Usernode could not record your new commit against this proposal. Your push is on GitHub either way — try '
+      'Usernode could not record your new commit against this proposal. Your push is on GitHub either way. Try '
       + 'again shortly.',
       { retryable: true }
     );
@@ -1659,7 +1659,7 @@ async function checkAncestry({ gh, owner, repo, base, head: newHead, branch }) {
   if (cmp.status !== 'ahead' && cmp.status !== 'identical') {
     return fail(
       'base_mismatch',
-      `${branch} is not built on this proposal's current commit — it is ${cmp.status} relative to it, so pushing it `
+      `${branch} is not built on this proposal's current commit: it is ${cmp.status} relative to it, so pushing it `
       + 'would drop commits that are already under review. Fetch the proposal\'s head, rebase your branch onto it '
       + 'and submit again.',
       { retryable: false, expectedBase: base }
@@ -1671,7 +1671,7 @@ async function checkAncestry({ gh, owner, repo, base, head: newHead, branch }) {
 function movedError(headSha) {
   return fail(
     'branch_moved',
-    `This proposal is now at commit ${headSha.slice(0, 8)}, not the one your update was built against — somebody `
+    `This proposal is now at commit ${headSha.slice(0, 8)}, not the one your update was built against. Somebody `
     + 'advanced it in the meantime. Re-read the proposal, rebase onto its current head and submit again.',
     { retryable: false, headSha }
   );

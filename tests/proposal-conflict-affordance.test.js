@@ -99,7 +99,7 @@ test("card: a 'conflict' snapshot with the resolver in flight shows 'Resolving c
     resolving: true,
   }));
   assert.match(html, /Resolving conflicts…/, 'in-flight resolve outranks the failure badge');
-  assert.doesNotMatch(html, /Merge failed — conflict/, 'no stale failure while progress is being made');
+  assert.doesNotMatch(html, /Merge failed: conflict/, 'no stale failure while progress is being made');
 });
 
 test("card: a 'failed' snapshot shows the red 'Conflict resolution failed' affordance", () => {

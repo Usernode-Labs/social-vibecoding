@@ -531,7 +531,7 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
     // poller / "Check for updates", exactly like a deploy-failed merge.
     await ctx.step({
       phase: 'pr_state',
-      message: `PR #${session.pr_number} is already merged on GitHub — marking the proposal merged.`,
+      message: `PR #${session.pr_number} is already merged on GitHub. Marking the proposal merged.`,
       detail: { state: pr0.state, merged: true, sha: pr0.mergeCommitSha },
     });
     await pool.query(
@@ -547,7 +547,7 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
       pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: true });
     } catch (_) { /* ws non-fatal */ }
     await postGroupMessage(pool, session,
-      `PR #${session.pr_number} was already merged on GitHub — marked the proposal merged.`);
+      `PR #${session.pr_number} was already merged on GitHub, so the proposal was marked merged.`);
     return { ok: true, reason: 'pr_already_merged' };
   }
   if (pr0.state === 'closed') {
@@ -560,7 +560,7 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
       await github.reopenPR(repo.owner, repo.repo, session.pr_number);
       await ctx.step({
         phase: 'reopened_closed_pr',
-        message: `PR #${session.pr_number} was closed on GitHub — reopened it to restore the proposal.`,
+        message: `PR #${session.pr_number} was closed on GitHub. Reopened it to restore the proposal.`,
         detail: {},
       });
       // Re-poll: the reopen kicks off a fresh mergeability computation.
@@ -589,7 +589,7 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
         pushSessionUpdate({ action: 'paused', sessionId: session.id, appSlug: session.app_slug });
       } catch (_) { /* ws non-fatal */ }
       await postGroupMessage(pool, session,
-        `PR #${session.pr_number} is closed on GitHub and couldn't be reopened — it has been taken off the vote panel. Re-propose it from the session's dev-chat.`);
+        `PR #${session.pr_number} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`);
       return { ok: false, reason: 'pr_closed' };
     }
   }
@@ -644,9 +644,9 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
         sessionId: session.id, reason: sysBudget.error,
       });
       await postGroupMessage(pool, session,
-        `Auto-conflict-resolution skipped on PR #${session.pr_number}: the system token budget is exhausted — resolve manually via "Sync with main" or wait for the midnight-UTC reset.`
+        `Auto-conflict-resolution skipped on PR #${session.pr_number}: the system token budget is exhausted. Resolve manually via "Sync with main" or wait for the midnight-UTC reset.`
       );
-      await ctx.step({ phase: 'budget', level: 'error', message: 'Skipped — system token budget exhausted.', detail: { reason: sysBudget.error } });
+      await ctx.step({ phase: 'budget', level: 'error', message: 'Skipped: system token budget exhausted.', detail: { reason: sysBudget.error } });
       return { ok: false, reason: 'over_budget' };
     }
 
@@ -688,13 +688,13 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
     if (sync.syncResult === 'conflict') {
       const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
       await postGroupMessage(pool, session,
-        `PR #${session.pr_number} couldn't be auto-merged with main — Claude couldn't resolve the conflicts. ${owner}: open the session's dev-chat to resolve it.`
+        `PR #${session.pr_number} couldn't be auto-merged with main: Claude couldn't resolve the conflicts. ${owner}: open the session's dev-chat to resolve it.`
       );
       await ctx.step({ phase: 'sync_result', level: 'error', message: 'Claude could not resolve the conflicts; branch left unchanged.', detail: { syncResult: 'conflict', conflictFiles: sync.conflictFiles || sync.conflict_files || [] } });
-      await ctx.step({ phase: 'group_chat', message: "Posted to group chat: couldn't auto-merge — owner must resolve in dev-chat.", detail: { reason: 'unresolved_conflict' } });
+      await ctx.step({ phase: 'group_chat', message: "Posted to group chat: couldn't auto-merge; owner must resolve in dev-chat.", detail: { reason: 'unresolved_conflict' } });
       return { ok: false, reason: 'unresolved_conflict' };
     }
-    await ctx.step({ phase: 'sync_result', message: `Worker sync ${sync.syncResult}${sync.sha ? ` — pushed ${String(sync.sha).slice(0, 9)}` : ''}.`, detail: { syncResult: sync.syncResult, sha: sync.sha || null, behind: sync.behind, pushOk: !!sync.pushOk } });
+    await ctx.step({ phase: 'sync_result', message: `Worker sync ${sync.syncResult}${sync.sha ? `: pushed ${String(sync.sha).slice(0, 9)}` : ''}.`, detail: { syncResult: sync.syncResult, sha: sync.sha || null, behind: sync.behind, pushOk: !!sync.pushOk } });
   } else if (mergeable0 !== true) {
     // No recorded drift and GitHub never settled to a definite state
     // (null). Nothing actionable — don't risk a 405 on an unknown state.
@@ -742,8 +742,8 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
     if (didSync) {
       await postGroupMessage(pool, session,
         force
-          ? `PR #${session.pr_number} is synced with main and conflict-free — GitHub is still finalizing mergeability. Retry the admin merge to complete it.`
-          : `PR #${session.pr_number} is synced with main and conflict-free — GitHub is still finalizing mergeability, the merge will complete on the next vote or sweep.`
+          ? `PR #${session.pr_number} is synced with main and conflict-free, but GitHub is still finalizing mergeability. Retry the admin merge to complete it.`
+          : `PR #${session.pr_number} is synced with main and conflict-free, but GitHub is still finalizing mergeability. The merge will complete on the next vote or sweep.`
       );
     }
     return { ok: true, reason: 'mergeable_recompute_pending', syncResult };
@@ -774,7 +774,7 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
   }
 
   if (mergeResult?.merged) {
-    await ctx.step({ phase: 'retry_merge', message: 'Re-attempted merge after sync — merged.', detail: { syncResult } });
+    await ctx.step({ phase: 'retry_merge', message: 'Re-attempted merge after sync: merged.', detail: { syncResult } });
     try {
       const { pushVoteUpdate } = require('./ws');
       pushVoteUpdate({ sessionId: fresh.id, appSlug: fresh.app_slug, merged: true });
@@ -787,7 +787,7 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
   // vote-status lines for every clean-but-unapproved promoted PR.
   if (didSync && typeof mergeResult?.yesCount === 'number' && typeof mergeResult?.needed === 'number') {
     await postGroupMessage(pool, fresh,
-      `PR #${fresh.pr_number} is now synced with main and conflict-free — ${mergeResult.yesCount}/${mergeResult.needed} yes votes needed to merge.`
+      `PR #${fresh.pr_number} is now synced with main and conflict-free. ${mergeResult.yesCount}/${mergeResult.needed} yes votes needed to merge.`
     );
   }
   return { ok: true, reason: didSync ? 'synced_awaiting_votes' : 'awaiting_votes', syncResult };

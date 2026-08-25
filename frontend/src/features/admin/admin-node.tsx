@@ -144,7 +144,7 @@ function PartialUtxoExplainer() {
     <>
       <span className={AdminUI.badge.destructive}>PARTIAL</span>
       <span className={NodeUI.warnText}>
-        {' sidecar lacks HAS_FULL_UTXO_DB — incoming txs from non-tracked senders may be silently dropped'}
+        {' sidecar lacks HAS_FULL_UTXO_DB, so incoming txs from non-tracked senders may be silently dropped'}
       </span>
       <details className={NodeUI.details} style={{ marginTop: '6px' }}>
         <summary className={NodeUI.summary}>Why? (likely cause)</summary>
@@ -157,7 +157,7 @@ function PartialUtxoExplainer() {
           <Code>DEBUG</Code>{' by default, so they don’t appear in '}<Code>RUST_LOG=info</Code>{'.)'}
           <br /><br />
           {'A related contributing path is the '}<Code>BlocksApplyWithoutCandidateVerification</Code>
-          {' warning — peer-fetched blocks reaching the apply pipeline before candidate verification has signed off. Upstream '}
+          {' warning: peer-fetched blocks reaching the apply pipeline before candidate verification has signed off. Upstream '}
           <Code>FIXME</Code>{' at '}
           <a
             href="https://github.com/Usernode-Labs/usernode/blob/main/crates/node/src/blockchain/sync/blockchain_sync_reducer.rs#L468"
@@ -240,7 +240,7 @@ function ExplorerCard({ ex }: { ex?: Record<string, any> | null }) {
       {/* The consequence an operator can't infer from the fields above. */}
       {ex.status && ex.status !== 'ok' && ex.status !== 'mock' ? (
         <p className={NodeUI.errText} style={{ marginTop: '10px' }}>
-          Wallet linking is paused while the explorer is unreachable — the
+          Wallet linking is paused while the explorer is unreachable: the
           chain poller reads incoming link transactions from here, so
           “Link wallet” will not complete. Retries are backing off.
         </p>

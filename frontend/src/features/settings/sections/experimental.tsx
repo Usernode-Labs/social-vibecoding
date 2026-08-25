@@ -46,7 +46,7 @@ export function ExperimentalSection() {
             Session bridge (run this chat on your computer)
           </SwitchRow>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            Adds <span className="font-mono">Your computer &middot; Usernode session</span> to the list of places a session can be built. You keep the platform chat exactly as it is &mdash; same transcript, same branch, same proposal &mdash; but its turns run through the Usernode CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.
+            Adds <span className="font-mono">Your computer &middot; Usernode session</span> to the list of places a session can be built. You keep the platform chat exactly as it is (same transcript, same branch, same proposal), but its turns run through the Usernode CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.
           </p>
           <StatusLine id="session-bridge-status" size="xs" />
         </div>

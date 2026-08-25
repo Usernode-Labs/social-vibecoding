@@ -422,7 +422,7 @@ function describeBlock(detail, label) {
   const keys = missing.map((m) => m.key).join(', ');
   return `${label} reached the vote threshold but adds ${missing.length} platform environment variable${missing.length === 1 ? '' : 's'} with no value set (${keys}). `
     + 'Open the platform\'s Platform variables panel (the "+" menu on its dev tab): an admin can set the value outright, '
-    + 'and anyone else can propose one by vote. A value has to be APPLIED to clear this — a proposal still waiting on votes '
+    + 'and anyone else can propose one by vote. A value has to be APPLIED to clear this. A proposal still waiting on votes '
     + 'does not count. Then vote again; the check is re-evaluated at that moment, so no rebuild is needed.';
 }
 

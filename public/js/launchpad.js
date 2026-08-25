@@ -159,7 +159,7 @@
 
     var importStep = s.canImport === false
       ? '<div class="dc-launchpad-step-detail">Importing a pull request needs push access to this app, '
-        + 'which this account does not have. Your agent can still submit through the connector — '
+        + 'which this account does not have. Your agent can still submit through the connector: '
         + '<code>submit_work</code> opens the pull request for you.</div>'
       : '<div class="dc-launchpad-step-detail">If your agent submitted through the connector it is '
         + 'already a proposal and there is nothing to do here. Import is the manual door, for a '
@@ -172,7 +172,7 @@
     return ''
       + '<div class="dc-launchpad" data-launchpad="own-tools-pr">'
       + '<div class="dc-launchpad-lead">Building with your own tools</div>'
-      + '<div class="dc-launchpad-sub">There is no Usernode chat for this one — the conversation '
+      + '<div class="dc-launchpad-sub">There is no Usernode chat for this one. The conversation '
       + 'happens in your own agent. Usernode still opens the pull request, builds the preview '
       + 'and runs the checks.</div>'
       + '<div class="dc-launchpad-steps">'

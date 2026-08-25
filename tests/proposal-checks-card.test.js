@@ -144,7 +144,7 @@ test('the checks detail lists per-test rows with failure reasons', () => {
       { name: 'Feed renders', path: '/feed', status: 'fail', failureReason: '1 console error on load', consoleErrors: [{ kind: 'pageerror', message: 'TypeError: x', source: 'a.js:1' }] },
     ],
   }));
-  assert.match(html, /merge is blocked/);
+  assert.match(html, /Merge is blocked/);
   assert.match(html, /Home loads/);
   assert.match(html, /Feed renders/);
   assert.match(html, /1 console error on load/);

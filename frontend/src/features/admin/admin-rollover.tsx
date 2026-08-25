@@ -79,10 +79,10 @@ const ROLLOVER_STATES: Record<string, { label: string; cls: string }> = {
   running: { label: 'Rolling over…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300' },
   rolled: { label: 'Done', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
   rebuilt: { label: 'Rebuilt', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-  skipped_deploying: { label: 'Skipped — deploying', cls: NEUTRAL_CHIP },
-  skipped_missing_secrets: { label: 'Skipped — missing secrets', cls: NEUTRAL_CHIP },
-  skipped_no_db_password: { label: 'Skipped — no DB role', cls: NEUTRAL_CHIP },
-  skipped_deleted: { label: 'Skipped — app gone', cls: NEUTRAL_CHIP },
+  skipped_deploying: { label: 'Skipped: deploying', cls: NEUTRAL_CHIP },
+  skipped_missing_secrets: { label: 'Skipped: missing secrets', cls: NEUTRAL_CHIP },
+  skipped_no_db_password: { label: 'Skipped: no DB role', cls: NEUTRAL_CHIP },
+  skipped_deleted: { label: 'Skipped: app gone', cls: NEUTRAL_CHIP },
   failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
 };
 
@@ -121,7 +121,7 @@ function Summary({ loaded, job, demo }: { loaded: boolean; job: RolloverJob | nu
   if (!loaded) return <>Loading…</>;
   if (!job) return <>No rollover has run since this platform process started.</>;
   if (!job.total) {
-    return <>{job.finishedAt ? 'Finished — no eligible app containers were found.' : 'Starting…'}</>;
+    return <>{job.finishedAt ? 'Finished. No eligible app containers were found.' : 'Starting…'}</>;
   }
   const parts = [`${job.done} of ${job.total} done`];
   if (job.failed) parts.push(`${job.failed} failed`);
@@ -130,7 +130,7 @@ function Summary({ loaded, job, demo }: { loaded: boolean; job: RolloverJob | nu
     <>
       {demo ? <><span className="text-violet-700 dark:text-violet-400">Staging demo data</span>{' — '}</> : null}
       <span className="font-medium">{when}</span>
-      {` — ${parts.join(', ')}`}
+      {`: ${parts.join(', ')}`}
       {job.startedBy ? ` · started by ${job.startedBy}` : ''}
     </>
   );
@@ -196,7 +196,7 @@ function RolloverSection() {
       title: 'Roll over all app containers?',
       message: `This recreates ${many} with the environment this platform build injects. `
         + 'Each app is briefly unavailable (a few seconds) as its turn comes up, '
-        + 'and only the environment changes — no new code is shipped. '
+        + 'and only the environment changes; no new code is shipped. '
         + 'The platform app itself is not touched.',
       confirmLabel: 'Roll over',
     });
@@ -250,12 +250,12 @@ function RolloverSection() {
       <p className={RolloverUI.lede}>
         Recreates every running app container so it picks up the environment
         this platform build hands out. Needed after a platform change to what
-        gets injected into containers — a restart is not enough, because a
+        gets injected into containers. A restart is not enough, because a
         restarted container keeps the environment it was created with.
       </p>
       <p className={RolloverUI.fine}>
         This re-runs each app&apos;s existing build: it changes the environment and
-        nothing else — no new code is shipped, unlike a per-app redeploy. Each
+        nothing else. No new code is shipped, unlike a per-app redeploy. Each
         app blinks offline for a few seconds as its turn comes up. The platform
         app itself is never touched.
       </p>
@@ -288,7 +288,7 @@ function RolloverSection() {
         </button>
       ) : (
         <p className={RolloverUI.viewOnly}>
-          View-only admin — you can watch a rollover, but not start one.
+          View-only admin: you can watch a rollover, but not start one.
         </p>
       )}
       <p id="admin-rollover-summary" className={RolloverUI.summary}>

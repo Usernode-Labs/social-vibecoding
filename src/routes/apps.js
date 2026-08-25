@@ -950,7 +950,7 @@ function appRoutes(config) {
       }
       // Can't fork a half-built source (no repo / DB yet).
       if (!sourceApp.repo_url) {
-        return res.status(409).json({ error: 'This app isn’t ready to fork yet — it has no repository.' });
+        return res.status(409).json({ error: 'This app isn’t ready to fork yet: it has no repository.' });
       }
 
       // Per-user quota + global cap — identical gate to POST /api/apps.
@@ -1659,7 +1659,7 @@ function appRoutes(config) {
       const documentedAsDeployOwned = scope === 'platform'
         && (manifest.secrets || []).some((s) => s.key === key);
       if (declaredHere || documentedAsDeployOwned) {
-        return res.status(409).json({ error: `${key} already exists — use its row in the panel.` });
+        return res.status(409).json({ error: `${key} already exists. Use its row in the panel.` });
       }
       const { rows: valueRows } = await pool.query(
         scope === 'platform'
@@ -1668,7 +1668,7 @@ function appRoutes(config) {
         [app.id, key]
       );
       if (valueRows.length) {
-        return res.status(409).json({ error: `${key} already has a stored value — use its row in the panel.` });
+        return res.status(409).json({ error: `${key} already has a stored value. Use its row in the panel.` });
       }
       const alreadyPending = await pendingSecrets.findLiveByKey(pool, app.id, key);
       if (alreadyPending) {
@@ -1992,8 +1992,8 @@ function appRoutes(config) {
       const { sendSystemMessage, pushAppUpdate } = require('../services/ws');
       await sendSystemMessage(pool, app.id,
         locked
-          ? `${req.user.username} locked this app — merges now also require an admin yes vote`
-          : `${req.user.username} unlocked this app — merges no longer require an admin yes vote`,
+          ? `${req.user.username} locked this app, so merges now also require an admin yes vote`
+          : `${req.user.username} unlocked this app, so merges no longer require an admin yes vote`,
         'system'
       ).catch((err) => log.warn('apps', 'Lock chat msg failed', { err: err.message }));
 

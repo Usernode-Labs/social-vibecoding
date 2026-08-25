@@ -304,13 +304,13 @@ test('step 3 names what is being continued, and step 4 where the agent talks', (
   }));
   assert.match(session.prepare.detail, /^Continuing "Session and billing options"\. /);
   assert.match(session.prepare.detail, /Branch usernode\/add-a-button/);
-  assert.match(session.handoff.detail, /this transcript stays where it is/);
+  assert.match(session.handoff.detail, /This transcript stays where it is/);
 
   const proposal = stepsOf(continuingStatus('proposal', {
     branch: { state: 'missing', pushed: false, missing: true },
   }));
   assert.match(proposal.prepare.detail, /^Updating "Add a dark-mode toggle"\. /);
-  assert.match(proposal.handoff.detail, /this transcript stays where it is/);
+  assert.match(proposal.handoff.detail, /This transcript stays where it is/);
 
   // New work has no "over there" to explain, so it says nothing about it.
   const plain = stepsOf(fullStatus({

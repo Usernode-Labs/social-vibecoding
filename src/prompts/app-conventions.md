@@ -2725,3 +2725,26 @@ fenced-code format with a `filepath:` prefix the harness parses:
 
 Always output the **full** file contents, not diffs or partial
 snippets.
+
+## Copy style: no em dashes in user-facing strings
+
+Do not use em dashes (`—`) or en dashes (`–`) as prose punctuation in
+any string a user reads: UI labels, buttons, toasts, empty states,
+error and status messages, notification and email copy, placeholders,
+help text. Heavy dash use reads as AI-generated. Rewrite with plainer
+punctuation, chosen per sentence:
+
+- Status then instruction: split into two sentences.
+  "Draft saved. Send it whenever you're ready." (not "Draft saved —
+  send it whenever you're ready")
+- Label and value, or heading and qualifier: use a colon.
+  "PR #431: Fix the dark mode toggle"
+- Parenthetical qualifier: use parentheses. "Optional (moves you up
+  the list)"
+- Cause and consequence: use ", so" / ", because" / a colon.
+- Mid-sentence aside: use a comma pair or parentheses.
+
+Two legitimate dash uses stay: a lone `—` as a "no value" placeholder
+in a table cell or stat tile, and an en dash in a numeric or date
+range (`4–5`, `$10–$15`, `20–60 seconds`). Code comments are not user
+copy and are out of scope.

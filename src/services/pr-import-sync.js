@@ -44,7 +44,7 @@ function activeGithub() {
 // Human label for the proposal in thread notes ("PR #123 — Fix the footer").
 function prLabel(session) {
   return session.pr_title
-    ? `PR #${session.pr_number} — ${session.pr_title}`
+    ? `PR #${session.pr_number}: ${session.pr_title}`
     : `PR #${session.pr_number}`;
 }
 
@@ -174,7 +174,7 @@ async function applyHeadChange({ config, pool, session, pr, repo, newHead, oldHe
     ).catch(() => {});
     await sendSystemMessage(
       pool, session.app_id,
-      `${label} was updated on GitHub — earlier votes were cleared, please re-review the new changes. `
+      `${label} was updated on GitHub. Earlier votes were cleared, please re-review the new changes. `
         + 'The staging preview and automated checks are being rebuilt against the new commit.',
       'system',
       { headChanged: true, prNumber: session.pr_number, headSha: newHead },
@@ -323,7 +323,7 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
   // instead of building staging, so the head-change flow stays clickable.
   if (usesMockGithubForImports()) {
     await visuals.storeChecksSkipped(pool, session.id, newHead,
-      'mock GitHub preview — automated checks not run')
+      'mock GitHub preview. Automated checks not run')
       .catch((err) => log.warn('pr-import-sync', 'mock storeChecksSkipped failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
@@ -470,7 +470,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // the whole preview flow (import → vote → merge) is exercisable.
     if (usesMockGithubForImports()) {
       await visuals.storeChecksSkipped(pool, session.id, headSha || null,
-        'mock GitHub preview — automated checks not run')
+        'mock GitHub preview. Automated checks not run')
         .catch((err) => log.warn('pr-import-sync', 'import mock storeChecksSkipped failed (non-fatal)', {
           sessionId: session.id, err: err.message,
         }));
@@ -484,7 +484,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // later or was looking at the discussion rather than the card.
     await postProposalNote(
       pool, session,
-      `Building a staging preview for ${prLabel(session)} — this usually takes a few minutes. `
+      `Building a staging preview for ${prLabel(session)}. This usually takes a few minutes. `
         + 'The automated checks run against it, and a Preview button appears on this proposal when it\'s ready.',
       { stagingBuild: 'started', headSha: headSha || null }
     );
@@ -525,7 +525,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // while the Preview button on the card is the durable way in.
     await postProposalNote(
       pool, session,
-      `The staging preview for ${prLabel(session)} is ready — use the Preview button on this proposal to try the change. Automated checks are running against it now.`,
+      `The staging preview for ${prLabel(session)} is ready. Use the Preview button on this proposal to try the change. Automated checks are running against it now.`,
       { stagingBuild: 'ready', headSha: headSha || null, stagingUrl: result.stagingUrl }
     );
 

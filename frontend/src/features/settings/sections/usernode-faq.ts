@@ -43,14 +43,14 @@ const BLOCK_PRODUCTION: FaqTile = {
   paragraphs: [
     'This feature automatically wakes your device to produce '
     + "blockchain blocks when your node wins a slot. Here's how it works:",
-    '1. VRF Selection — Each epoch, the network randomly selects which '
+    '1. VRF Selection: each epoch, the network randomly selects which '
     + 'validators will produce blocks using Verifiable Random Function '
     + '(VRF).',
-    '2. Slot Scheduling — When you win slots, the app schedules alarms '
+    '2. Slot Scheduling: when you win slots, the app schedules alarms '
     + 'to wake your device ~1 minute before each slot.',
-    '3. Block Production — At slot time, the app monitors your node '
+    '3. Block Production: at slot time, the app monitors your node '
     + 'and ensures the block is produced.',
-    '4. Success Tracking — Results are recorded to track your '
+    '4. Success Tracking: results are recorded to track your '
     + 'reliability over time.',
   ],
 };
@@ -62,7 +62,7 @@ const VRF: FaqTile = {
     + 'selects block producers. At the start of each epoch, the network '
     + 'runs VRF calculations to determine which validators will produce '
     + 'blocks in upcoming slots.',
-    'Status meanings — Pending: waiting for epoch transition to start '
+    'Status meanings. Pending: waiting for epoch transition to start '
     + 'calculations. Calculating: VRF evaluation in progress (takes a '
     + 'few hours). Complete: slot assignments are finalized and '
     + 'scheduled.',
@@ -80,15 +80,15 @@ export function faqTiles(isAndroid: boolean, deviceManufacturer?: string | null)
     ? [
       "Uses Android's exact alarm system (AlarmManager) to wake your "
       + 'device precisely when needed for block production.',
-      'Reliability by mode: Default (Event-Driven) 90-95% — '
+      'Reliability by mode: Default (Event-Driven) 90-95%, '
       + 'battery-efficient, wakes only during slot windows. Keep-Alive '
-      + 'Mode 100% — persistent service, higher battery (~5-10%/hr).',
+      + 'Mode 100%, persistent service, higher battery (~5-10%/hr).',
     ]
     : [
       'Uses a combination of background tasks and keep-alive mode to '
       + 'wake your device for block production.',
-      'Reliability by mode: Keep-Alive Mode 99% — app stays awake in '
-      + 'foreground, requires charger. Background Only 40-60% — iOS '
+      'Reliability by mode: Keep-Alive Mode 99%, app stays awake in '
+      + 'foreground, requires charger. Background Only 40-60%, iOS '
       + 'controls execution, not guaranteed.',
     ];
   if (isAndroid && deviceManufacturer) platform.push(`Device: ${deviceManufacturer}`);

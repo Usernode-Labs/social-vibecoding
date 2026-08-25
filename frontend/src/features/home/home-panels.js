@@ -551,7 +551,7 @@ const HomePanels = {
       you: isYou,
       tip: isYou
         ? `You are ${where}${total ? ` of ${total}` : ''} ${metric}`
-        : `${who} — ${where} ${metric}`,
+        : `${who}: ${where} ${metric}`,
     };
   },
 
@@ -690,7 +690,7 @@ const HomePanels = {
       goal: String(c.goal || ''),
       // The task is the row's tooltip — the one place the dropped detail still
       // surfaces without costing height.
-      tip: c.task ? `${c.goal || ''} — ${c.task}` : (c.goal || ''),
+      tip: c.task ? `${c.goal || ''}: ${c.task}` : (c.goal || ''),
       done: !!(c.progress && c.progress.done),
       reward: HomePanels.formatReward(c.reward),
       meter: numeric

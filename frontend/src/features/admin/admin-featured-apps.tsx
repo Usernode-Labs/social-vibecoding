@@ -117,7 +117,7 @@ function FeaturedAppsSection() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       if (!alive.current) return;
-      setStatus('Saved — live on every home screen.');
+      setStatus('Saved. Live on every home screen.');
       setSaving(false);
       load();
     } catch (err: any) {
@@ -153,7 +153,7 @@ function FeaturedAppsSection() {
           : featured == null
             ? <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>
             : !slugs.length
-              ? <p className="text-sm text-zinc-500 dark:text-zinc-400">No featured apps — the home row is hidden for everyone.</p>
+              ? <p className="text-sm text-zinc-500 dark:text-zinc-400">No featured apps, so the home row is hidden for everyone.</p>
               : slugs.map((slug, i) => {
                 const m = meta[slug] || { slug, name: slug };
                 const label = m.name || slug;
@@ -211,7 +211,7 @@ function FeaturedAppsSection() {
         </>
       ) : (
         <p className="pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400">
-          View-only admin — the list is read-only here.
+          View-only admin: the list is read-only here.
         </p>
       )}
     </div>

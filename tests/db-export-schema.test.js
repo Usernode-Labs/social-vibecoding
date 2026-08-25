@@ -104,7 +104,7 @@ test('the audit row is written BEFORE the export runs', () => {
   const issueAt = ticketRoute.indexOf('dbExport.issueTicket(');
   assert.ok(auditAt > 0 && issueAt > 0, 'both steps located');
   assert.ok(auditAt < issueAt, 'the record is committed before the ticket exists');
-  assert.match(ticketRoute.slice(auditAt, issueAt), /if \(!auditId\)[\s\S]*refusing to run it/,
+  assert.match(ticketRoute.slice(auditAt, issueAt), /if \(!auditId\)[\s\S]*so it was not run/,
     'if the audit insert fails, the export is refused rather than run unrecorded');
 });
 

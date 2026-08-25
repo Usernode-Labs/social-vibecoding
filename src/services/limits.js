@@ -259,7 +259,7 @@ async function checkBudget(pool, userId) {
     // tomorrow" left the reader guessing at the boundary — and guessing
     // wrong, since it is a UTC one and most readers are not on UTC.
     return {
-      error: 'Global daily limit reached — the platform\'s shared AI budget for today is spent. Resets at midnight UTC.',
+      error: 'Global daily limit reached: the platform\'s shared AI budget for today is spent. Resets at midnight UTC.',
       reason: 'global_limit',
       ...entitlement,
     };

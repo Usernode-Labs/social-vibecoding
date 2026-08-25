@@ -157,7 +157,7 @@ export function blockedOffline(setError?: (msg: string) => void): boolean {
     offline = false;
   }
   if (!offline) return false;
-  if (setError) setError("You're offline — signing in needs a connection.");
+  if (setError) setError("You're offline, and signing in needs a connection.");
   try {
     legacy().Offline?.nudge();
   } catch {

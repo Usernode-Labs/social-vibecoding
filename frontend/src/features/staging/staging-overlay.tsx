@@ -171,7 +171,7 @@ export function StagingOverlay(): ReactNode {
           confusion the first time someone previews their own PR.
       */}
       <div className="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-500 shrink-0 dark:text-zinc-400">
-        Private preview — only you can see this until the app's users vote your change in.
+        Private preview: only you can see this until the app's users vote your change in.
       </div>
       <div className="relative flex-1">
         {/*

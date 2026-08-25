@@ -321,7 +321,7 @@ test('headless build: markerless first attempt re-dispatches once and succeeds',
     assert.equal(stopCalls.length, 1);
     // The retry status line is in the persisted transcript.
     assert.ok(pool.state.messages.some(
-      (m) => /The coding step failed unexpectedly — retrying once/.test(m.content || '')
+      (m) => /The coding step failed unexpectedly\. Retrying once/.test(m.content || '')
     ));
     // The run finalized as a successful code run despite the first death.
     assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'code' });
@@ -364,7 +364,7 @@ test('headless build: second identical failure surfaces the cause-specific messa
     assert.deepEqual(execCalls, ['build', 'build']);
     // The failure message names the cause instead of a bare "-1".
     assert.ok(pool.state.messages.some(
-      (m) => /The coding agent was killed — most likely it ran out of memory\. No changes were made\./.test(m.content || '')
+      (m) => /The coding agent was killed, most likely because it ran out of memory\. No changes were made\./.test(m.content || '')
     ));
     assert.ok(!pool.state.messages.some(
       (m) => /exited with code -1/.test(m.content || '')
@@ -411,7 +411,7 @@ test('headless scout: markerless first attempt re-dispatches once and stores the
     assert.equal(pool.state.specMd, SPEC);
     assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'spec' });
     assert.ok(pool.state.messages.some(
-      (m) => /The coding step failed unexpectedly — retrying once/.test(m.content || '')
+      (m) => /The coding step failed unexpectedly\. Retrying once/.test(m.content || '')
     ));
   } finally {
     await srv.close();
