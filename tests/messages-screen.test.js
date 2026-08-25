@@ -37,7 +37,7 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
     === '#platform-header #messages-btn + #notifications-btn'));
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#drawer-main-rows #drawer-row-profile + #drawer-row-settings + #drawer-row-admin'));
+    === '#drawer-main-rows > div:has(#drawer-row-profile + #drawer-row-settings) + #drawer-row-admin'));
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   assert.match(app, /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/);
   assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,600}navigateToMessages/);

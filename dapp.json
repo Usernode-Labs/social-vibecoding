@@ -1754,9 +1754,9 @@
       "expectSelector": "#platform-header #messages-btn + #notifications-btn"
     },
     {
-      "name": "The bottom group is Profile, Settings, Admin & moderation and nothing else",
+      "name": "The drawer closes with the Profile | Settings pair, then Admin & moderation (Streamlined Concept)",
       "path": "/?shot=menu",
-      "expectSelector": "#drawer-main-rows #drawer-row-profile + #drawer-row-settings + #drawer-row-admin"
+      "expectSelector": "#drawer-main-rows > div:has(#drawer-row-profile + #drawer-row-settings) + #drawer-row-admin"
     },
     {
       "name": "The title tab opens the Apps switcher, with Home and Explore (Streamlined Concept)",
