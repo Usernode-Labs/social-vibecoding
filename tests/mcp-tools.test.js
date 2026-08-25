@@ -1220,7 +1220,12 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'get_connector_guidance',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
     'get_request', 'list_apps',
-    'list_my_proposals', 'list_requests', 'prepare_work', 'release_request',
+    'list_my_proposals', 'list_requests',
+    // #1405. They write a row, but only into the CALLER'S OWN notification
+    // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
+    // for why that is a different category from the acting tools below.
+    'notify_awaiting_input', 'notify_input_received',
+    'prepare_work', 'release_request',
     'start_platform_build', 'submit_platform_build', 'submit_work', 'whoami',
   ]);
   // Nothing that decides an app's future. The connector hands work to the
@@ -1403,9 +1408,15 @@ test('ACTING_TOOLS still names the five, and every one is a write', () => {
 
 test('read-only tools are named get_/list_ (or the one grandfathered whoami)', () => {
   const {
-    READ_ONLY_TOOL_PREFIXES, READ_ONLY_TOOL_EXCEPTIONS,
+    READ_ONLY_TOOL_PREFIXES, READ_ONLY_TOOL_EXCEPTIONS, SELF_SCOPED_ALLOW_TOOLS,
   } = require('../src/services/mcp-connect-constants');
+  // Still exactly one grandfathered READ. #1405's two tools are allow-listed
+  // as well, but they are writes and live in their own list — folding them in
+  // here would make this contract state something false about them, and the
+  // globs' safety rests on it being true.
   assert.deepEqual([...READ_ONLY_TOOL_EXCEPTIONS], ['whoami']);
+  assert.deepEqual([...SELF_SCOPED_ALLOW_TOOLS],
+    ['notify_awaiting_input', 'notify_input_received']);
 
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   for (const name of registered) {
@@ -1413,6 +1424,14 @@ test('read-only tools are named get_/list_ (or the one grandfathered whoami)', (
     const next = SRC.indexOf('server.registerTool(', idx + 10);
     const body = SRC.slice(idx, next > 0 ? next : undefined);
     const isRead = /annotations: readAnnotations/.test(body);
+    // A self-scoped tool is deliberately BOTH allow-listed and a write, so it
+    // is the one shape this equality does not describe. Assert what actually
+    // has to hold for it instead: it must not be annotated as a read, or the
+    // annotation would be lying about a tool that writes.
+    if (SELF_SCOPED_ALLOW_TOOLS.includes(name)) {
+      assert.equal(isRead, false, `${name} writes, so it must not claim readOnlyHint`);
+      continue;
+    }
     const matchesReadRule = READ_ONLY_TOOL_PREFIXES.some((p) => name.startsWith(p))
       || READ_ONLY_TOOL_EXCEPTIONS.includes(name);
     assert.equal(
@@ -1449,13 +1468,21 @@ test('whoami hands the model the canonical name and the exact shipped rules', ()
   assert.match(body, /permissionAllowRules: \[\.\.\.READ_ONLY_ALLOW_RULES\]/,
     'the rules come from the constant, and are copied so a caller cannot mutate the frozen array');
   assert.equal(SERVER_NAME, 'usernode');
+  // Two globs and three literals per spelling. The two `notify_*` entries are
+  // #1405's self-scoped pair — writes, but only into the caller's own
+  // notification feed, which is why they are literals here and not a widening
+  // of the globs.
   assert.deepEqual([...READ_ONLY_ALLOW_RULES], [
     'mcp__usernode__get_*',
     'mcp__usernode__list_*',
     'mcp__usernode__whoami',
+    'mcp__usernode__notify_awaiting_input',
+    'mcp__usernode__notify_input_received',
     'mcp__Usernode__get_*',
     'mcp__Usernode__list_*',
     'mcp__Usernode__whoami',
+    'mcp__Usernode__notify_awaiting_input',
+    'mcp__Usernode__notify_input_received',
   ]);
 
   // The description has to say what the model should DO with them, or the

@@ -47,9 +47,13 @@ const PERSONAL_ALLOW_RULES = `{
       "mcp__usernode__get_*",
       "mcp__usernode__list_*",
       "mcp__usernode__whoami",
+      "mcp__usernode__notify_awaiting_input",
+      "mcp__usernode__notify_input_received",
       "mcp__Usernode__get_*",
       "mcp__Usernode__list_*",
-      "mcp__Usernode__whoami"
+      "mcp__Usernode__whoami",
+      "mcp__Usernode__notify_awaiting_input",
+      "mcp__Usernode__notify_input_received"
     ]
   }
 }`;

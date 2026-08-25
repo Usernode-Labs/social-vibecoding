@@ -1152,6 +1152,90 @@ function registerTools(server, ctx) {
     });
   });
 
+  // ── notify_awaiting_input / notify_input_received (#1405 path B) ─────
+  //
+  // The pair that lets a coding agent say "I have asked the user something and
+  // I am now waiting", so the platform can nudge them if they have wandered
+  // off. The reasoning for the delay, the one-shot bound and the copy lives in
+  // services/connector-input-waits.js; what matters HERE is the permission
+  // shape, because it decides whether the feature is usable at all.
+  //
+  // Both are called at the boundaries of ordinary turns, so a prompt on every
+  // call would make them worse than not having them. They are therefore in the
+  // shipped allow rules as LITERAL entries beside `whoami` — never by widening
+  // the `get_*` / `list_*` globs, whose safety rests entirely on acting tools
+  // never taking those names.
+  //
+  // The justification is the same one `whoami` has: these touch only the
+  // CALLER'S OWN notification feed. They spend nothing, change no app, write
+  // nothing the group can see, and cannot be aimed at another user — `user.id`
+  // comes from the connection, never from input. That is a different category
+  // from the acting tools, every one of which puts something in front of other
+  // people.
+  server.registerTool('notify_awaiting_input', {
+    title: 'Say you are waiting on the user',
+    description: "Tell Usernode you have asked the user something and are waiting for their answer. If they have not replied after a short delay, Usernode notifies them (and pushes to their phone if they have that on) so a question does not sit unseen while they are away from the screen. Call it as the LAST thing in a turn that hands back with a question — the Claude app does not notify them by itself. Then call notify_input_received when they reply: that is what stops the notification, and forgetting it means one stray nudge. Arming twice supersedes rather than stacks, so at most one is ever outstanding, and it fires at most once. It notifies nobody but you, spends nothing and changes nothing about any app.",
+    inputSchema: {
+      question: z.string().optional()
+        .describe('What you asked, in a sentence. Stored so the record says what the user was actually asked; the notification itself leads with when it was asked rather than quoting it.'),
+      slug: z.string().optional()
+        .describe('The app this is about, if any — from list_apps. Omitted is fine; a question about no particular app still notifies.'),
+      delaySeconds: z.number().int().positive().optional()
+        .describe('How long to wait before notifying. Defaults to 10 minutes, which is long enough that somebody at their keyboard answers first. Clamped to between 1 minute and 2 hours.'),
+    },
+    outputSchema: {
+      armed: z.boolean(),
+      notifyAt: z.string(),
+      supersededPrevious: z.boolean(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ question, slug, delaySeconds }) => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    // Delegated whole, including the slug lookup: this module never issues a
+    // query of its own — see the contract at the top of the file.
+    const waits = require('./connector-input-waits');
+    const armed = await waits.arm(pool, {
+      userId: user.id,
+      slug,
+      question,
+      clientId: clientId || null,
+      delayMs: delaySeconds ? delaySeconds * 1000 : null,
+    });
+    if (!armed) return toolError('platform_unavailable', 'Usernode could not arm that reminder. Try again shortly.');
+    return toolResult({
+      armed: true,
+      notifyAt: new Date(armed.notify_at).toISOString(),
+      supersededPrevious: !!armed.superseded,
+      nextStep: 'Hand back to the user now. When they reply, call notify_input_received before you carry on — '
+        + 'that is what cancels the notification. It fires once and only once, so a forgotten clear costs one '
+        + 'stray nudge rather than a repeating alarm.',
+    });
+  });
+
+  server.registerTool('notify_input_received', {
+    title: 'The user answered — stand down',
+    description: "Cancel the reminder armed by notify_awaiting_input, because the user has replied. Call it FIRST in the turn after they answer. Usernode also cancels on any other connector call, but do not rely on that: an agent can reply and then work for a long time without calling anything, which is exactly the case this exists for. Safe to call when nothing is armed — it reports that it cleared nothing and does nothing else.",
+    inputSchema: {},
+    outputSchema: {
+      cleared: z.boolean(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async () => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    const waits = require('./connector-input-waits');
+    const cleared = await waits.clearForUser(pool, user.id, 'answered');
+    return toolResult({
+      cleared: cleared > 0,
+      nextStep: cleared > 0
+        ? 'Cancelled — the user will not be nudged about that question. Carry on with what they asked.'
+        : 'Nothing was armed, so nothing to cancel. Carry on.',
+    });
+  });
+
   // ── get_platform_conventions ─────────────────────────────────────────
   //
   // The handbook, over the connector. A work order can only carry the ~4 KB

@@ -904,6 +904,10 @@ async function becomeLeader() {
   // public/gated for the landing page's app directory. Re-probes after
   // deploys and hourly. See services/shell-probe.js.
   require('./src/services/shell-probe').start(config);
+  // #1405 path B: fires the "your agent is waiting on you" nudges whose delay
+  // has elapsed without the agent standing them down. One query a minute
+  // against a partial index; see services/connector-input-waits.js.
+  require('./src/services/connector-input-waits').start(config);
   // Production app-container watchdog (#426): restart/rebuild
   // status='running' apps whose `usernode-app-<slug>` container is
   // stopped or missing — the drift poller above only acts on new

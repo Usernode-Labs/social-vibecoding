@@ -67,6 +67,14 @@ function daysSince(value, now) {
   return Math.floor(elapsed / (24 * 60 * 60 * 1000));
 }
 
+// #1405. Same shape as daysSince, at the grain path B's copy needs: this is a
+// nudge measured in minutes, not a proposal going stale over days.
+function minutesSince(value, now) {
+  const elapsed = new Date(now).getTime() - new Date(value || NaN).getTime();
+  if (!Number.isFinite(elapsed) || elapsed < 0) return 0;
+  return Math.floor(elapsed / (60 * 1000));
+}
+
 // Kind-specific {title, body}, or null when the kind's essential context is
 // missing (e.g. a mention without a sender) — null means the generic copy.
 function buildCopy(kind, context, now) {
@@ -210,6 +218,34 @@ function buildCopy(kind, context, now) {
         body: days >= 1
           ? `No votes in ${days} ${days === 1 ? 'day' : 'days'} — nudge collaborators or share the preview`
           : 'Nudge collaborators or share the preview',
+      };
+    }
+    // #1405 path A. The agent, not you, put this somewhere — so the copy leads
+    // with the destination, which is the fact you cannot infer from being away.
+    case 'connector_submitted':
+      return {
+        title: withApp(quotedTitle
+          ? `Your agent submitted ${quotedTitle}`
+          : 'Your agent submitted work'),
+        body: context.detail === 'shared'
+          ? 'It is visible in the in-progress area — no vote yet'
+          : 'It is up for the group\'s vote, and its checks are running',
+      };
+    // #1405 path B, and the copy is load-bearing.
+    //
+    // It says WHEN the question was asked, never "Claude is waiting on you".
+    // The difference matters because the clear depends on the agent calling
+    // back, which it may forget: "is waiting on you" is FALSE once you have
+    // answered, and a notification making a false claim reads as broken. "asked
+    // you something N minutes ago" stays true either way, which turns the
+    // failure this design cannot prevent into a mild redundancy instead.
+    case 'agent_awaiting_input': {
+      const mins = minutesSince(context.armedAt || context.createdAt, now);
+      return {
+        title: withApp('Claude asked you something'),
+        body: mins >= 1
+          ? `Asked ${mins} ${mins === 1 ? 'minute' : 'minutes'} ago — it is holding for your answer`
+          : 'It is holding for your answer',
       };
     }
     default:

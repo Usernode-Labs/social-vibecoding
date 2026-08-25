@@ -250,6 +250,64 @@ async function createSessionDoneNotification(pool, { userId, appId, sessionId })
   return rows;
 }
 
+// #1405 path A: a connector session put work somewhere (kind=
+// 'connector_submitted'). Aimed at the TASK OWNER — the person whose agent did
+// it — which is the exact inverse of createPrProposedNotifications' rule that
+// "the proposer is always excluded".
+//
+// That rule is right for a human clicking Promote: you know what you just did.
+// The connector breaks the assumption, because the proposer is an agent acting
+// on your behalf while you may be nowhere near the screen. So this is a
+// separate kind rather than a relaxation of that one — pr_proposed means "come
+// vote" and fans out to collaborators; this means "your agent did a thing" and
+// goes to one person.
+//
+// `detail` is which destination it took: 'submitted' (up for a vote) or
+// 'shared' (#1347's in-progress area). Unread-deduped per session AND per
+// detail, so sharing repeatedly onto the same card — which #1347 deliberately
+// allows — notifies once, while a later submit of that same card still does.
+async function createConnectorSubmittedNotification(pool, { userId, appId, sessionId, detail }) {
+  if (!userId || !sessionId) return [];
+  const kindDetail = (detail || 'submitted').slice(0, 32);
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     SELECT $1, $2, $3, NULL, 'connector_submitted', $4::varchar
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3
+          AND n.kind = 'connector_submitted' AND n.detail IS NOT DISTINCT FROM $4
+          AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [userId, appId || null, sessionId, kindDetail]
+  );
+  return rows;
+}
+
+// #1405 path B: the agent said it is waiting on this user, and the wait has now
+// been outstanding long enough to be worth a nudge (kind=
+// 'agent_awaiting_input'). Created by the sweeper in
+// services/connector-input-waits.js, never at arming time — the whole point of
+// the delay is that somebody at their keyboard answers before this ever runs.
+//
+// No session: the question is about the CHAT, which the platform cannot see.
+// `appId` is whatever app the agent named, and may be null.
+//
+// Deliberately NOT deduped on unread. Each row corresponds to one armed wait
+// that survived its delay, and the arming side already guarantees at most one
+// live wait per user (see the partial unique index in schema.sql) — so the
+// bound lives where it can actually be enforced rather than here.
+async function createAgentAwaitingInputNotification(pool, { userId, appId }) {
+  if (!userId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
+     VALUES ($1, $2, NULL, NULL, 'agent_awaiting_input')
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [userId, appId || null]
+  );
+  return rows;
+}
+
 // #161: headless auto-solve completion (kind='auto_solve_done').
 // Always created at runHeadlessSession's terminal writes (no arming —
 // starting an auto-solve opts you into its completion notification).
@@ -899,6 +957,8 @@ module.exports = {
   createCheckFailedNotification,
   createSessionDoneNotification,
   createAutoSolveDoneNotification,
+  createConnectorSubmittedNotification,
+  createAgentAwaitingInputNotification,
   createSpecSharedNotification,
   createManagedOpenRouterAdminNotifications,
   notifyManagedOpenRouterAdmins,

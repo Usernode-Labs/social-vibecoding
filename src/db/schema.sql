@@ -1999,6 +1999,55 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
 -- kept generic + nullable so future kinds can reuse it.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
 
+-- #1405 path B: a coding agent driving the connector telling the platform it
+-- has asked the user something and is now waiting.
+--
+-- WHY THIS IS STORED AT ALL, rather than notifying immediately: if you are at
+-- the keyboard you will answer in seconds, and a push for that is pure noise.
+-- So the arming call records an intent to notify at `notify_at`, and a sweeper
+-- fires only the rows still live when their moment arrives.
+--
+-- WHY THE PLATFORM CANNOT WORK THIS OUT ITSELF: it sees MCP calls, and silence
+-- from a connector is ambiguous between "waiting for you", "busy working",
+-- "session over" and "tab closed" — a coding agent routinely runs for many
+-- minutes with no connector call at all. The agent is the only party that
+-- knows, so it has to say so.
+--
+-- ONE-SHOT, deliberately. `fired_at` is stamped when the sweeper sends, and a
+-- fired row is never reconsidered. Clearing depends on the agent calling back,
+-- which it may forget; one-shot means a forgotten clear costs one stray
+-- notification rather than a repeating alarm. That bound is what makes the
+-- unreliable half of this feature acceptable.
+--
+-- `question` is the agent's own text. It is what the user was asked, so it is
+-- personal content and this table is staging:private for the same reason the
+-- messages tables are.
+CREATE TABLE IF NOT EXISTS connector_input_waits (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id      INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  question    TEXT NOT NULL DEFAULT '',
+  client_id   TEXT,
+  armed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  notify_at   TIMESTAMPTZ NOT NULL,
+  cleared_at  TIMESTAMPTZ,
+  fired_at    TIMESTAMPTZ
+);
+COMMENT ON TABLE connector_input_waits IS 'staging:private';
+
+-- The sweeper's only query: rows that are due, not cleared and not yet fired.
+CREATE INDEX IF NOT EXISTS connector_input_waits_due_idx
+  ON connector_input_waits (notify_at)
+  WHERE cleared_at IS NULL AND fired_at IS NULL;
+
+-- At most ONE live wait per user. Arming twice supersedes rather than stacks:
+-- an agent that asks a second question before the first fired should not
+-- produce two pushes, and a user with several sessions running still only
+-- needs telling once that something wants them.
+CREATE UNIQUE INDEX IF NOT EXISTS connector_input_waits_live_idx
+  ON connector_input_waits (user_id)
+  WHERE cleared_at IS NULL AND fired_at IS NULL;
+
 -- Per-app environment secrets. Values are AES-256-GCM encrypted via
 -- src/services/secrets.js (keyed off DATA_ENCRYPTION_KEY), serialized as
 -- "v1:<iv>:<tag>:<ct>" — same scheme used for users.anthropic_key_enc.
@@ -4151,6 +4200,8 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('spec_shared', 'shared_work', TRUE),
   ('session_done', 'developer_sessions', TRUE),
   ('auto_solve_done', 'developer_sessions', TRUE),
+  ('connector_submitted', 'developer_sessions', TRUE),
+  ('agent_awaiting_input', 'developer_sessions', TRUE),
   ('stale_pr', 'proposal_alerts', TRUE),
   ('check_failed', 'proposal_alerts', TRUE),
   ('pr_proposed', 'proposal_alerts', TRUE),

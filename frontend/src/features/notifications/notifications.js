@@ -1299,6 +1299,49 @@ function rowView(n) {
     };
   }
 
+  // #1405 path A: your agent put work somewhere while you were away. The row
+  // leads with the DESTINATION, because that is the part you cannot infer —
+  // "submitted" is at a vote with checks running, "shared" is visible on the
+  // Dev board with nobody being asked to decide anything.
+  if (n.kind === 'connector_submitted') {
+    const shared = n.detail === 'shared';
+    return {
+      ...base,
+      wrap: true,
+      icon: shared ? '\u{1F441}\uFE0F' : '\u{1F4E4}',
+      segments: [
+        { t: 'text', v: 'Your agent' },
+        { t: 'text', v: shared ? 'shared work in progress in' : 'submitted work in' },
+        { t: 'strong', v: appLine },
+      ],
+      body: {
+        text: n.sessionTitle || n.prTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your change'),
+        medium: true,
+        mention: false,
+      },
+    };
+  }
+
+  // #1405 path B: the agent asked you something and you have not answered.
+  //
+  // The copy says WHEN it was asked, never that you are currently being waited
+  // on. Clearing depends on the agent calling back and it may forget, so "is
+  // waiting on you" would be FALSE on the row you see after already replying —
+  // and a notification making a false claim reads as broken. This phrasing
+  // stays true either way, which is what makes a stale one merely redundant.
+  if (n.kind === 'agent_awaiting_input') {
+    return {
+      ...base,
+      wrap: true,
+      icon: '\u{1F4AC}',
+      segments: [
+        { t: 'text', v: 'Claude asked you something' },
+        ...(n.appName ? [{ t: 'text', v: 'in' }, { t: 'strong', v: appLine }] : []),
+      ],
+      body: { text: 'It is holding for your answer', medium: false, mention: false },
+    };
+  }
+
   // #161: dev-session completion — the owner left mid-turn and it
   // finished. Clicking deep-links straight into the dev session.
   // #971: label precedence is sessionTitle → prTitle → branchName. The
