@@ -219,6 +219,58 @@ test('each kind gets its own wording, and all four call sites use this helper', 
   }), /gc-vote-btn-preview/);
 });
 
+// ── A session shared with no pull request ─────────────────────────────
+//
+// `submit_work({ share: true })` lands a branch in the app's in-progress area
+// with a staging preview and NO pull request. Its card is a shared-session
+// card like any other, but `pr_number` is null — and `can_preview` used to be
+// derived from exactly that, so the moment the idle staging GC nulled
+// staging_url the card rendered NOTHING: no eye, no rebuild, no explanation,
+// for the author as much as for anyone else.
+//
+// The server had authorized this case all along — ensure-staging lets any app
+// member rebuild an explicitly-shared session — so the affordance was the only
+// thing missing. can_preview now also reads checks_commit_sha, which is set
+// once a real commit on the branch has been built and, unlike staging_url,
+// survives teardown.
+
+test('a shared session with a slept preview and no PR still offers the eye', () => {
+  const AppView = makeAppView();
+  const slept = {
+    id: 72, session_title: 'Shared, no PR', username: 'them',
+    staging_url: null, can_preview: true,
+  };
+  assert.match(sharedSessionCardHtml(AppView, slept), /gc-vote-btn-preview/,
+    'a collaborator can wake it, so the eye is live');
+  // …and it says so: the title is the wake wording, not the plain one.
+  assert.match(sharedSessionCardHtml(AppView, slept), /rebuilds it if it went to sleep/);
+});
+
+test('a read-only viewer needs a LIVE url — they cannot POST ensure-staging', () => {
+  const AppView = makeAppView({ readOnly: true });
+  assert.doesNotMatch(sharedSessionCardHtml(AppView, {
+    id: 73, session_title: 'Shared, no PR', username: 'them',
+    staging_url: null, can_preview: true,
+  }), /gc-vote-btn-preview/, 'no live url and no rebuild right → no eye');
+  // A live preview is a link, and needs no permission at all.
+  assert.match(sharedSessionCardHtml(AppView, {
+    id: 74, session_title: 'Shared, no PR', username: 'them',
+    staging_url: 'https://s', can_preview: true,
+  }), /gc-vote-btn-preview/, 'a live url is openable by anyone who can see the card');
+});
+
+test('the owner of a share-only session gets the same affordance', () => {
+  // The owner's card is built from /api/me/active-sessions, which is a
+  // different query — it carries the same derived can_preview now, so the two
+  // cards cannot disagree about whether a slept preview can be woken.
+  const AppView = makeAppView();
+  AppView._sharedById = {};
+  assert.match(mySessionCardHtml(AppView, {
+    id: 52, session_title: 'Mine, no PR', pr_number: null, staging_url: null,
+    can_preview: true,
+  }), /gc-vote-btn-preview/);
+});
+
 test('an issue run with no preview (or a spec-only outcome) shows no affordance', () => {
   const AppView = makeAppView();
   assert.doesNotMatch(issueCardHtml(AppView, {
