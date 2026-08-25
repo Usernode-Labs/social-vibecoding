@@ -102,8 +102,11 @@ test('#1085 chunk H: there is exactly ONE React root in the bundle', () => {
   const portalCode = PORTALS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.ok(!portalCode.includes('createRoot'), 'the portal helper creates no root');
   assert.ok(!MOUNT.includes('createRoot'), 'mount.ts creates no root of its own');
-  assert.match(PORTALS, /createPortal\(entry\.node, entry\.host,/,
-    'the subtree is portalled into the host instead');
+  // `entry.node` reaches the host wrapped in an error boundary — see
+  // lib/island-boundary.tsx: without one, a throw in ANY portalled region
+  // unmounts the root, and the root is `document.body`.
+  assert.match(PORTALS, /createPortal\(\s*\/\/[\s\S]*?createElement\(Island, \{ name: `portal:[\s\S]*?\}, entry\.node\),\s*\n\s*entry\.host,/,
+    'the subtree is portalled into the host instead, inside its own boundary');
   assert.equal(MAIN.split('hydrateRoot(').length - 1, 1, 'main.tsx has the only root');
   // The retired helper is gone, not merely unused.
   assert.ok(!fs.existsSync(path.join(root, 'frontend/src/lib/interim-root.ts')),

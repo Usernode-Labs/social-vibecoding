@@ -50,6 +50,8 @@
 import { Fragment, createElement, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 
+import { Island } from './island-boundary';
+
 interface PortalEntry {
   host: Element;
   node: ReactNode;
@@ -178,6 +180,14 @@ export function LegacyPortals(): ReactNode {
   return createElement(
     Fragment,
     null,
-    ...live.map((entry) => createPortal(entry.node, entry.host, `legacy-portal-${entry.seq}`)),
+    ...live.map((entry) => createPortal(
+      // Per ENTRY, not around the whole map: without it one portalled region
+      // throwing takes every other portal down with it, and then the root —
+      // see ./island-boundary.tsx for what "and then the root" costs when the
+      // root is `document.body`.
+      createElement(Island, { name: `portal:${entry.host.id || 'anonymous'}` }, entry.node),
+      entry.host,
+      `legacy-portal-${entry.seq}`,
+    )),
   );
 }

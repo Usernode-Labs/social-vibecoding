@@ -44,6 +44,20 @@
 //    inventory; deliberate changes are recorded in the RETIRED_*/ADDED_* maps
 //    in tests/shell-id-inventory.test.js and tests/shell-script-order.test.js,
 //    never by refreshing the baseline.
+//
+// ── Why every island is wrapped in <Island> ────────────────────────────
+//
+// main.tsx hydrates `document.body`, so THIS TREE IS THE DOCUMENT. React's
+// answer to an uncaught render or commit error is to unmount the root — which
+// here means emptying the page: no header, no screens, no listeners, just
+// `html`'s background (near-black in dark mode). One mistake in one island
+// takes the whole app, and there is nothing left on screen to say so or to
+// act on.
+//
+// `<Island name="…">` is an error boundary and renders no DOM of its own, so
+// the markup, the prerender and the hydration match are unchanged (constraint
+// 3 holds). What changes is the blast radius: a throw costs that island and
+// nothing else. See ./lib/island-boundary.tsx.
 
 import { Button } from '@/components/ui/button';
 import { AdminScreen } from './features/admin';
@@ -68,6 +82,7 @@ import { Dialogs } from './features/dialogs';
 import { StagingOverlay, VisualCompareOverlay } from './features/staging';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 import { LegacyPortals } from './lib/legacy-portals';
+import { Island } from './lib/island-boundary';
 
 export function Shell() {
   return (
@@ -78,14 +93,14 @@ export function Shell() {
           features/header/platform-header.tsx, alongside the port of the
           retired public/js/header-layout.js that measures it.
       */}
-      <PlatformHeader />
+      <Island name="PlatformHeader"><PlatformHeader /></Island>
       {/*
           Offline indicator (#487) — a React island since #1078. Shown while
           the /health connectivity probe in src/lib/offline.ts fails;
           everything on screen is the last version that loaded successfully.
           Hidden the moment the probe succeeds.
       */}
-      <OfflineBanner />
+      <Island name="OfflineBanner"><OfflineBanner /></Island>
       {/*
           Slide-out navigation drawer (all viewport widths — #122) — a React
           island since #1079 chunk B. Overlay dims the page; panel slides in
@@ -94,7 +109,7 @@ export function Shell() {
           features/header/header-menu.tsx; opening and closing is still
           App.HeaderMenu in app.js.
       */}
-      <HeaderMenu />
+      <Island name="HeaderMenu"><HeaderMenu /></Island>
       {/*
           Persistent banner shown only while an admin has flipped the
           "View as non-admin" toggle in Settings — a React island since
@@ -103,7 +118,7 @@ export function Shell() {
           a JS error elsewhere on the page then can't strand an admin in
           masked mode without the visible reminder.
       */}
-      <ViewAsNonAdminBanner />
+      <Island name="ViewAsNonAdminBanner"><ViewAsNonAdminBanner /></Island>
       {/*
           The "Platform updating… write actions are paused" banner that used
           to live here is GONE (#1015). It existed because a self-app merge
@@ -125,7 +140,7 @@ export function Shell() {
           App._isScreenVisible now falls back to the DOM for an unpublished
           converted screen.
       */}
-      <HomeScreen />
+      <Island name="HomeScreen"><HomeScreen /></Island>
       {/*
           Browse-all-apps screen (#apps). Sibling of #home-screen: every app
           this viewer may see, featured first, with per-tile add/remove badges.
@@ -133,7 +148,7 @@ export function Shell() {
           fills it both live in frontend/src/features/apps/. Still mounted by
           App.navigateToBrowse, which now shows it through the visibility store.
       */}
-      <BrowseScreen />
+      <Island name="BrowseScreen"><BrowseScreen /></Island>
       {/*
           Leaderboard screen (hidden by default): the one place the group's
           shared progress lives — the Topochain standings, the Kudos
@@ -163,7 +178,7 @@ export function Shell() {
           #leaderboard-event-bar by topochain-event-context.js and hidden
           while the Kudos tab is active.
       */}
-      <LeaderboardScreen />
+      <Island name="LeaderboardScreen"><LeaderboardScreen /></Island>
       {/*
           The Challenges screen used to be its own <main> here
           (#challenges-screen, app-as-SV-chrome migration), rendered by the
@@ -186,7 +201,7 @@ export function Shell() {
           frontend/src/features/profile/profile.js, and the island imports it.
           #profile-root is still that module's to fill.
       */}
-      <ProfileScreen />
+      <Island name="ProfileScreen"><ProfileScreen /></Island>
       {/*
           Admin & moderation console screen (#818, extended by #860): the
           full-page console behind the header shield icon (#588 shipped the
@@ -204,8 +219,8 @@ export function Shell() {
           hidden like its sibling screens, but through the visibility store —
           #admin-screen is in App.REACT_SCREEN_IDS.
       */}
-      <AdminScreen />
-      <SettingsScreen />
+      <Island name="AdminScreen"><AdminScreen /></Island>
+      <Island name="SettingsScreen"><SettingsScreen /></Island>
       {/*
           Platform-wide direct and group messaging (#488). This is a fully
           React-owned sibling screen: unlike app-scoped GroupChat, no legacy
@@ -213,7 +228,7 @@ export function Shell() {
           hydration parity; the hash router publishes visibility and the
           feature loads authenticated data only after #messages opens.
       */}
-      <MessagesScreen />
+      <Island name="MessagesScreen"><MessagesScreen /></Island>
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down
@@ -251,22 +266,22 @@ export function Shell() {
           app is open, so a visitor who likes what they just used can sign
           up without backing out first.
       */}
-      <LandingScreen />
+      <Island name="LandingScreen"><LandingScreen /></Island>
       {/*
           Login screen — features/auth/login.tsx (#1080 chunk C). Also hosts
           the #signup email-code sub-view, the forgot-password recovery
           sub-view, and the #reset-password/<token> redeem view.
       */}
-      <LoginScreen />
+      <Island name="LoginScreen"><LoginScreen /></Island>
       {/* Register screen (activation-code flow) — features/auth/register.tsx */}
-      <RegisterScreen />
+      <Island name="RegisterScreen"><RegisterScreen /></Island>
       {/*
           Waiting-room screen — features/auth/waiting.tsx (#1080 chunk C).
           The platform-access gate: an authed session without
           hasPlatformAccess lands here; it polls /api/auth/me and boots the
           full shell in place when access is granted.
       */}
-      <WaitingScreen />
+      <Island name="WaitingScreen"><WaitingScreen /></Island>
       {/*
           Stage-1 waitlist survey — features/auth/waitlist.tsx (#1080 chunk C).
           Its own screen (#waitlist), reached from the landing CTA block's link
@@ -279,7 +294,7 @@ export function Shell() {
           document.querySelector('header'), and a second <header> in the
           document would have hijacked it.
       */}
-      <WaitlistScreen />
+      <Island name="WaitlistScreen"><WaitlistScreen /></Island>
       {/*
           Stage-2 waitlist survey — features/auth/more.tsx (#1080 chunk C).
           "Want in sooner?" (#more/<token>, two-stage waitlist ported from the
@@ -288,7 +303,7 @@ export function Shell() {
           verify via the /waitlist/connect OAuth round-trip when the platform
           has creds.
       */}
-      <MoreScreen />
+      <Island name="MoreScreen"><MoreScreen /></Island>
       {/*
           App view (hidden by default).
           
@@ -324,7 +339,7 @@ export function Shell() {
           survive a tab switch instead of being reloaded by the next
           #app-content write — see features/app-frame/app-frame.tsx.
       */}
-      <AppViewIsland />
+      <Island name="AppViewIsland"><AppViewIsland /></Island>
       {/*
           #notifications-panel (the bell dropdown) and #work-drawer-panel (the
           header-cog "your work" drawer) both used to be islands here — same
@@ -358,17 +373,17 @@ export function Shell() {
           bottom sheet below it (public/css/app.css), and a real native-kit
           sheet on touch where the kit is loaded.
       */}
-      <ImproveIsland />
+      <Island name="ImproveIsland"><ImproveIsland /></Island>
       {/* Developer console (slide-up panel, anchored to bottom) — an ISLAND
           since #1079 chunk B: features/dev-console owns the whole subtree and
           public/js/dev-console.js is retired. */}
-      <DevConsolePanel />
+      <Island name="DevConsolePanel"><DevConsolePanel /></Island>
       {/* Staging preview (fullscreen overlay) — an ISLAND since #1085 chunk H:
           features/staging owns the whole subtree, #staging-iframe included.
           public/js/app-view.js publishes state through the bridge on
           window.UsernodeReact.staging (it keeps the file, and every
           responsibility that is not shell markup). */}
-      <StagingOverlay />
+      <Island name="StagingOverlay"><StagingOverlay /></Island>
       {/*
           #353: before/after comparison (fullscreen overlay). Opened by
           clicking either tile rendered by AppView.visualsTilesHtml — shows
@@ -381,13 +396,13 @@ export function Shell() {
           seam (frontend/src/lib/static-modal.ts), so nothing moves its card
           out from under React and it may hold state.
       */}
-      <VisualCompareOverlay />
+      <Island name="VisualCompareOverlay"><VisualCompareOverlay /></Island>
       {/*
           Every dialog in the shell (#1078 chunk A). One component per modal
           root, rendered in the same order they were spelled out here — see
           features/dialogs/index.tsx.
       */}
-      <Dialogs />
+      <Island name="Dialogs"><Dialogs /></Island>
       {/*
           #1085 chunk H, step 3: the Dev board's runtime-injected regions.
           Renders NO DOM of its own — it is the anchor that lets
@@ -397,7 +412,7 @@ export function Shell() {
           no root to leak, and no `createRoot` on a live container. See
           lib/legacy-portals.tsx.
       */}
-      <LegacyPortals />
+      <Island name="LegacyPortals"><LegacyPortals /></Island>
       {/*
           PlatformUI — the platform's single wrapper over the native kit
           (toasts, alerts, confirms, sheets). Loaded FIRST in the bundle:
