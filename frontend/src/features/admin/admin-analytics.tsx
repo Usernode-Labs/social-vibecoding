@@ -87,7 +87,7 @@ const ADMIN_COLOR = '#f59e0b';
 // where a saturated mid-tone is exactly right. They are NOT for text: as ink
 // on the light card this cyan measures 2.4:1 and the amber 2.2:1, and both
 // were being used for readout lines. The legend and readout text carry
-// `text-cyan-700 dark:text-cyan-400` / `text-amber-700 dark:text-amber-400`
+// `text-cyan-700 dark:text-cyan-400` / `text-amber-800 dark:text-amber-400`
 // instead — same hue family, readable on both grounds, and a class rather
 // than an inline style so it can vary by theme at all.
 const SYSTEM_COLOR = '#06b6d4';
@@ -637,7 +637,7 @@ function Retention({ r, mode }: { r: any; mode: string }) {
   // One coloured cell. `key` makes the tooltip id unique within the row.
   const Cell = (v: number | null | undefined, size: number, headLabel: string, ci: number, key: string) => {
     if (v == null) {
-      return <td key={key} className="px-2 py-1 text-center text-zinc-400 dark:text-zinc-500">·</td>;
+      return <td key={key} className="px-2 py-1 text-center text-zinc-500 dark:text-zinc-500">·</td>;
     }
     const p = pct(v, size);
     const alpha = Math.max(0.06, Math.min(1, p / 100));
@@ -1005,7 +1005,7 @@ function Spend({
     // Admin portion for the active mode (#341): tooltip-only breakout.
     const adminCents = mode === 'platform' ? platAdmin[i] : mode === 'user' ? byokAdmin[i] : platAdmin[i] + byokAdmin[i];
     const adminLine = includeAdmins && adminCents > 0
-      ? `<div class="flex justify-between gap-3 text-[11px] text-amber-700 dark:text-amber-400"><span>of which admin</span><span>${dollars(adminCents)}</span></div>`
+      ? `<div class="flex justify-between gap-3 text-[11px] text-amber-800 dark:text-amber-400"><span>of which admin</span><span>${dollars(adminCents)}</span></div>`
       : '';
     // #361: system-token spend line, shown whenever the day had any.
     const systemLine = sys[i] > 0
@@ -1124,7 +1124,7 @@ function SpendByBuilder({
         <div class="text-zinc-300 mb-1">#${i + 1} · ${dollars(valueOf(b))}</div>
         ${tipRow('Platform key', p)}
         ${tipRow('User key (BYOK)', u)}
-        ${tipRow('Total', p + u)}${isAdmin ? '<div class="mt-1 text-[11px] text-amber-700 dark:text-amber-400">admin</div>' : ''}`;
+        ${tipRow('Total', p + u)}${isAdmin ? '<div class="mt-1 text-[11px] text-amber-800 dark:text-amber-400">admin</div>' : ''}`;
   });
   useTips('builder', tips);
   const anyLegend = mode === 'both' || includeAdmins;
@@ -1329,7 +1329,7 @@ function AnalyticsSection() {
           <section className="flex items-center gap-2">
             <label className="inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 cursor-pointer select-none">
               <input id="include-admins" type="checkbox"
-                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-600 focus:ring-violet-500"
+                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
                 checked={includeAdmins}
                 onChange={(e) => {
                   setIncludeAdmins(e.target.checked);

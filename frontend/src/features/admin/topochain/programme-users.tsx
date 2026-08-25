@@ -457,13 +457,13 @@ function ProgrammeUsers() {
 
   const columns: Column<User>[] = [
     { label: 'User', primary: true, cell: (u) => u.display_name || ident(u) },
-    { label: 'Email', cell: (u) => u.email || '—', tdClass: 'text-xs text-zinc-500' },
-    { label: 'Telegram', cell: (u) => u.telegram || '—', tdClass: 'text-xs text-zinc-500' },
-    { label: 'Discord', cell: (u) => u.discord || '—', tdClass: 'text-xs text-zinc-500' },
+    { label: 'Email', cell: (u) => u.email || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Telegram', cell: (u) => u.telegram || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Discord', cell: (u) => u.discord || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
     {
       label: 'Podium',
       cell: (u) => (u.exclude_podium
-        ? <span className="text-amber-600 dark:text-amber-400">excluded</span>
+        ? <span className="text-amber-800 dark:text-amber-400">excluded</span>
         : '—'),
     },
     { label: 'Accept logs', cell: (u) => (u.accept_logs ? 'yes' : 'no') },

@@ -55,7 +55,7 @@ export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
       {view.dot ? <div className={`status-dot ${view.dot}`}></div> : null}
       <p className="text-sm">{view.message}</p>
       {view.detail ? (
-        <p className="text-xs font-mono text-red-500 max-w-md break-words">{view.detail}</p>
+        <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-400">{view.detail}</p>
       ) : null}
       {view.action ? (
         <Button

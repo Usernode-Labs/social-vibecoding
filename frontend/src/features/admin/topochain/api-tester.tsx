@@ -61,8 +61,8 @@ type Result =
   | { kind: 'response'; ok: boolean; status: number; statusText: string; body: string };
 
 const NOTE_TONES = {
-  error: 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400',
-  busy: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500',
+  error: 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400',
+  busy: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400',
 };
 
 function ResultBlock({ result }: { result: Result }) {
@@ -76,7 +76,7 @@ function ResultBlock({ result }: { result: Result }) {
   }
   const okTone = result.ok
     ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400'
-    : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400';
+    : 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400';
   return (
     <div className={`mt-4 ${PANEL_CLS} overflow-hidden`}>
       <header className="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 sm:px-5">

@@ -114,10 +114,10 @@ async function fetchJson(url: string, opts?: RequestInit): Promise<{ status: num
 function statusClass(status?: string): string {
   if (status === 'sent') return 'text-emerald-700 dark:text-emerald-400';
   if (status === 'failed') return 'text-rose-700 dark:text-rose-400';
-  if (status === 'suppressed_rate_limit') return 'text-amber-700 dark:text-amber-400';
-  if (status === 'no_transport') return 'text-amber-700 dark:text-amber-400';
+  if (status === 'suppressed_rate_limit') return 'text-amber-800 dark:text-amber-400';
+  if (status === 'no_transport') return 'text-amber-800 dark:text-amber-400';
   if (status === 'skipped_staging') return 'text-sky-700 dark:text-sky-400';
-  return 'text-zinc-500';
+  return 'text-zinc-500 dark:text-zinc-400';
 }
 
 // One plain-English sentence per outcome. The raw status is shown too — it is
@@ -187,7 +187,7 @@ function StatusCard({ status, failed }: { status: MailStatus | null; failed: boo
   if (status.configured) {
     return (
       <div className={`${AdminUI.card} px-4 py-3 text-sm`}>
-        <span className="font-semibold text-emerald-600 dark:text-emerald-400">Email is configured</span>
+        <span className="font-semibold text-emerald-700 dark:text-emerald-400">Email is configured</span>
         <span className="text-zinc-500 dark:text-zinc-400">
           {' — login codes and waitlist confirmations are being sent via '}
           <span className="font-medium">{status.provider || 'unknown'}</span>{'.'}

@@ -116,7 +116,7 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
           <button
             type="button"
             id="widget-section-help"
-            className="w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 dark:text-zinc-500 hover:text-violet-500 dark:hover:text-violet-400 transition-colors"
+            className="w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 dark:text-zinc-500 hover:text-violet-500 dark:hover:text-violet-400 transition-colors"
             title="How to add the widget to your home screen"
             aria-label="How to add the widget to your home screen"
             aria-expanded={strip.helpVisible}

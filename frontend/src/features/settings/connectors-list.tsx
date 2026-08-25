@@ -56,7 +56,7 @@ export function ConnectorsListView({ phase, connectors }: ConnectorsState) {
             </div>
             <button
               type="button"
-              className="shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+              className="shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
               onClick={(e) => controller()?._disconnectConnector?.(connector.id, e.currentTarget)}
             >
               Disconnect

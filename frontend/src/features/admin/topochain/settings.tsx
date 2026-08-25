@@ -97,7 +97,7 @@ function MailCard({ mail }: { mail: MailStatus | null }) {
   if (mail.configured) {
     return (
       <div className={`${PANEL_CLS} px-4 py-3 text-sm sm:px-5`}>
-        <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+        <span className="font-semibold text-emerald-700 dark:text-emerald-400">
           Email is configured
         </span>
         <span className="text-zinc-500 dark:text-zinc-400">
@@ -297,8 +297,8 @@ function SettingsScreen() {
   const columns: Column<Setting>[] = [
     { label: 'Key', primary: true, cell: (s) => s.key, tdClass: 'text-xs font-mono' },
     { label: 'Value', cell: (s) => s.value, tdClass: 'font-mono text-right', thClass: 'text-right' },
-    { label: 'Description', cell: (s) => s.description || '—', tdClass: 'text-xs text-zinc-500' },
-    { label: 'Updated', cell: (s) => fmt(s.updated_at), tdClass: 'text-xs text-zinc-500' },
+    { label: 'Description', cell: (s) => s.description || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Updated', cell: (s) => fmt(s.updated_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
   ];
 
   const editingItem = editing === 'new'

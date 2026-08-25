@@ -102,7 +102,17 @@ module.exports = {
 //               --accent in public/css/app.css.
   theme: { extend: {
     colors: {
-      zinc: { 50:'#f5f5f7',100:'#eaeaea',200:'#e3e3e6',300:'#c7c7cc',400:'#8e8e93',500:'#6c6c70',600:'#48484a',700:'#3a3a3c',800:'#2c2c2e',900:'#1c1c1e',950:'#0b0b0c' },
+      // zinc-500 is the product's SECONDARY INK, and it was eyedropped at
+      // #6c6c70 — which lands at 4.35:1 on zinc-100, the page ground these
+      // labels actually sit on. A live WCAG sweep found 63 distinct failing
+      // styles from that one value, more than any other cause in the product.
+      //
+      // #68686c is four steps darker and clears 4.61:1. Correcting the RAMP
+      // rather than 63 call sites is the whole reason this is a token: the
+      // alternative was `text-zinc-500` → `text-zinc-600` everywhere, which
+      // is 7.58:1 — near-primary, and no longer a secondary ink at all.
+      // Exactly the correction the note above anticipates.
+      zinc: { 50:'#f5f5f7',100:'#eaeaea',200:'#e3e3e6',300:'#c7c7cc',400:'#8e8e93',500:'#68686c',600:'#48484a',700:'#3a3a3c',800:'#2c2c2e',900:'#1c1c1e',950:'#0b0b0c' },
       // The FULL ramp, deliberately. The pre-reskin config pinned only
       // 400/500/600/700, so 280 call sites using violet-50 (191 of them),
       // -100, -200, -300, -800, -900 and -950 were quietly rendering STOCK

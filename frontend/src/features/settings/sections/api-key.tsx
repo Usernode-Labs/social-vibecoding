@@ -121,7 +121,7 @@ export function ApiKeySection() {
           href="https://console.anthropic.com/settings/keys"
           target="_blank"
           rel="noopener"
-          className="text-violet-500 hover:text-violet-400 underline"
+          className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400"
         >
           Set tight spend limits
         </a>

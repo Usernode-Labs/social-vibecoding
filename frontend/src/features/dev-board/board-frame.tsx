@@ -118,7 +118,7 @@ function PlusMenuHeading({
     <div
       data-plus-group={groupKey}
       className={
-        'px-3 pt-2.5 pb-1 text-[0.9375rem] font-semibold text-zinc-400 dark:text-zinc-500 select-none' +
+        'px-3 pt-2.5 pb-1 text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-500 select-none' +
         (divider ? ' border-t border-zinc-200 dark:border-zinc-800 mt-1' : '')
       }
     >
@@ -146,7 +146,7 @@ const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
  */
 function ChatCardIcon() {
   return (
-    <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-500 flex items-center justify-center shrink-0">
+    <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-700 flex items-center justify-center shrink-0 dark:text-violet-400">
       <DiscussionIcon className="w-5 h-5" aria-hidden="true" />
     </span>
   );
@@ -303,7 +303,7 @@ export function DevBoardFrame({
                         writes its text again. */}
                     <span
                       id="dc-secrets-state"
-                      className="text-xs font-normal text-zinc-400 dark:text-zinc-500"
+                      className="text-xs font-normal text-zinc-500 dark:text-zinc-500"
                     ></span>
                   </span>
                   <span className={PLUS_SUB_CLS}>
@@ -343,7 +343,7 @@ export function DevBoardFrame({
         */}
         <div id="dev-locked-notice" className={locked ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
           {locked ? (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-600 dark:text-amber-400">
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-400">
               App is locked — an admin must approve any proposal before it applies.
             </div>
           ) : null}
@@ -366,7 +366,7 @@ export function DevBoardFrame({
                 Talk with everyone building this app
               </span>
             </span>
-            <ChevronRightIcon className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
+            <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" />
           </button>
         </div>
         {/* Body region: the Feed mounts #dev-feed here; Kanban mounts

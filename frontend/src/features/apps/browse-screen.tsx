@@ -46,7 +46,7 @@ import { BrowseRows } from './browse-list';
 import { browseStore } from './mount';
 
 const CLEAR_CLASS = 'absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center '
-  + 'justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 '
+  + 'justify-center rounded-full text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200  dark:text-zinc-400'
   + 'hover:bg-zinc-500/10 text-base leading-none';
 
 function browse(): any {
@@ -95,7 +95,7 @@ export function BrowseScreen() {
       >
         <div className="relative max-w-xl">
           <SearchIcon
-            className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
+            className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
             aria-hidden="true"
           />
           <input

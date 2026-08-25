@@ -44,12 +44,12 @@ export function FooterView({ f }: { f: FooterSpec }): ReactNode {
   }
   if (f.kind === 'github') {
     return (
-      <a href={f.href} target="_blank" rel="noopener" className="text-xs text-violet-400 hover:underline">
+      <a href={f.href} target="_blank" rel="noopener" className="text-xs text-violet-700 hover:underline dark:text-violet-400">
         {'More open issues on GitHub →'}
       </a>
     );
   }
-  return <span className="text-xs text-zinc-400 dark:text-zinc-500 italic">{`+${f.n} more completed`}</span>;
+  return <span className="text-xs text-zinc-500 dark:text-zinc-500 italic">{`+${f.n} more completed`}</span>;
 }
 
 export function DevFeed(): ReactNode {

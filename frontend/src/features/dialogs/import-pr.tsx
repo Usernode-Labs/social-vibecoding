@@ -288,7 +288,7 @@ export function ImportPrDialog() {
         */}
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
           {"A staging preview is built from the pull request's head commit, so it takes a few minutes to appear — and automated checks stay pending until it does. Rows marked "}
-          <span className="text-amber-600 dark:text-amber-400">
+          <span className="text-amber-800 dark:text-amber-400">
             from a fork
           </span>
           {" are branches in someone else's repository: review the changes on GitHub before importing."}
@@ -345,7 +345,7 @@ export function ImportPrDialog() {
                     */}
                     {c.fromFork ? (
                       <span
-                        className="block text-xs text-amber-600 dark:text-amber-400 mt-0.5"
+                        className="block text-xs text-amber-800 dark:text-amber-400 mt-0.5"
                         title="This branch lives in a fork, not in this app's own repository. The preview is built from the pull request's head commit. Review the changes on GitHub before importing."
                       >
                         {'from a fork — '}
@@ -357,7 +357,7 @@ export function ImportPrDialog() {
                         href={String(c.htmlUrl)}
                         target="_blank"
                         rel="noopener"
-                        className="inline-block text-xs text-violet-500 hover:underline mt-1"
+                        className="inline-block text-xs text-violet-700 hover:underline mt-1 dark:text-violet-400"
                         onClick={(event) => event.stopPropagation()}
                       >
                         View on GitHub ↗

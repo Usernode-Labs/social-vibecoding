@@ -215,7 +215,7 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
           {label}
         </div>
         {gated ? (
-          <p className="app-card-status text-zinc-400 dark:text-zinc-500">Account required</p>
+          <p className="app-card-status text-zinc-500 dark:text-zinc-500">Account required</p>
         ) : null}
       </div>
     </div>
@@ -729,7 +729,7 @@ export function LandingScreen() {
               complete. Say so once, here.
           */}
           <div className="offline-only mb-10 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-            <h2 className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
               You're offline
             </h2>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
@@ -739,7 +739,7 @@ export function LandingScreen() {
             <button
               type="button"
               data-offline-retry=""
-              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
+              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
             >
               Try again
             </button>

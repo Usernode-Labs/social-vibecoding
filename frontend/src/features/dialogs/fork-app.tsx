@@ -153,7 +153,7 @@ export function ForkAppDialog() {
               you become the sole owner — collaborators, group chat, issues, proposals and votes all start empty.
             </p>
             <p>
-              <span className="text-amber-700 dark:text-amber-400">
+              <span className="text-amber-800 dark:text-amber-400">
                 ❌ Not copied:
               </span>
               <strong>

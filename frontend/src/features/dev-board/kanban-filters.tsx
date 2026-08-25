@@ -151,7 +151,7 @@ export function KanbanFiltersView({
       <button
         id="dev-kanban-clear"
         type="button"
-        className={`text-xs text-violet-500 hover:underline shrink-0${active ? '' : ' hidden'}`}
+        className={`text-xs text-violet-700 hover:underline shrink-0${active ? '' : ' hidden'}`}
         onClick={() => controller()?._clearKanbanFilters?.()}
       >
         Clear

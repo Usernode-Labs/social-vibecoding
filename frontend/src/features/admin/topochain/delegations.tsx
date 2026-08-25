@@ -348,12 +348,12 @@ function DelegationsScreen() {
         ? <Badge label="Delegated" tone="green" />
         : <Badge label="Ended" tone="zinc" />),
     },
-    { label: 'Since', cell: (d) => fmt(d.started_at), tdClass: 'text-xs text-zinc-500' },
-    { label: 'Ended', cell: (d) => fmt(d.ended_at), tdClass: 'text-xs text-zinc-500' },
+    { label: 'Since', cell: (d) => fmt(d.started_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Ended', cell: (d) => fmt(d.ended_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
     {
       label: 'Periods',
       cell: (d) => d.period_count,
-      tdClass: 'tabular-nums text-right text-xs text-zinc-500',
+      tdClass: 'tabular-nums text-right text-xs text-zinc-500 dark:text-zinc-400',
       thClass: 'text-right',
     },
   ];
@@ -422,13 +422,13 @@ function DelegationsScreen() {
             <Tile
               label="Delegated now"
               value={stats.delegated_accounts}
-              valueCls="text-green-600 dark:text-green-400"
+              valueCls="text-green-800 dark:text-green-400"
             />
             <Tile label="Ended" value={stats.ended_accounts} />
             <Tile
               label="Account not on file"
               value={stats.orphaned_accounts}
-              valueCls={stats.orphaned_accounts ? 'text-amber-600 dark:text-amber-400' : ''}
+              valueCls={stats.orphaned_accounts ? 'text-amber-800 dark:text-amber-400' : ''}
             />
             <Tile label="Periods recorded" value={stats.total_periods} />
           </div>

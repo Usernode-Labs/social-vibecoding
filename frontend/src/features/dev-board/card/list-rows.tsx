@@ -47,7 +47,7 @@ function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
             <CardIcon spec={r.icon} />
             <span className="flex-1 min-w-0">
               <span className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 break-words">{r.label}</span>
-              <span className="block text-xs text-zinc-400 dark:text-zinc-500 truncate">Archived</span>
+              <span className="block text-xs text-zinc-500 dark:text-zinc-500 truncate">Archived</span>
             </span>
             <button type="button" className="gc-vote-btn" data-unarchive-chip={r.id} title="Restore this session (reopens its PR)">
               Unarchive
@@ -71,7 +71,7 @@ export function ListRowView({ row }: { row: ListRow }): ReactNode {
         </div>
       );
     case 'note':
-      return <div className="text-xs text-zinc-400 dark:text-zinc-500 italic px-0.5">{row.text}</div>;
+      return <div className="text-xs text-zinc-500 dark:text-zinc-500 italic px-0.5">{row.text}</div>;
     case 'archived':
       return <ArchivedBlock rows={row.rows} />;
     default:

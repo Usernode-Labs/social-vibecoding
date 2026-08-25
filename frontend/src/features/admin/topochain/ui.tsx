@@ -211,7 +211,7 @@ export function ErrorState({
       <p className="text-sm font-medium text-red-700 dark:text-red-300">
         {title || "Couldn't load this"}
       </p>
-      <p className="mt-1 text-xs text-red-600 dark:text-red-400">{detail}</p>
+      <p className="mt-1 text-xs text-red-700 dark:text-red-400">{detail}</p>
       {onRetry ? (
         <div className="mt-4 flex justify-center">
           <button
@@ -416,7 +416,7 @@ export function FormError({ message }: { message?: string | null }) {
   if (!message) return null;
   return (
     <p
-      className="mt-3 rounded-lg bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-600 dark:text-red-400"
+      className="mt-3 rounded-lg bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-400"
       role="alert"
     >
       {message}
@@ -462,7 +462,7 @@ export function CheckField({
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-5 w-5 shrink-0 rounded border-zinc-300 dark:border-zinc-600 text-violet-600 focus:ring-2 focus:ring-violet-500"
+        className="mt-0.5 h-5 w-5 shrink-0 rounded border-zinc-300 dark:border-zinc-600 text-violet-700 focus:ring-2 focus:ring-violet-500 dark:text-violet-400"
       />
       <span className="text-xs">
         <span className="font-medium text-zinc-600 dark:text-zinc-400">{label}</span>
@@ -479,7 +479,7 @@ export function CheckField({
 // disappearing.
 const BADGE_TONES: Record<string, string> = {
   green: 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400',
-  amber: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400',
+  amber: 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400',
   violet: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400',
   zinc: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
 };
@@ -497,7 +497,7 @@ export function Badge({ label, tone }: { label: ReactNode; tone?: string }) {
 // be answered by reading every label. Mirrors AdminTopochain._formSection.
 export function FormSection({ label }: { label: ReactNode }) {
   return (
-    <p className="mt-5 mb-3 border-t border-zinc-200 dark:border-zinc-800 pt-4 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+    <p className="mt-5 mb-3 border-t border-zinc-200 dark:border-zinc-800 pt-4 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
       {label}
     </p>
   );

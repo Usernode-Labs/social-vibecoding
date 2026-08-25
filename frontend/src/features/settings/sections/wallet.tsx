@@ -41,7 +41,7 @@ export function WalletSection() {
         {/* Linked: show pubkey + unlink */}
         <div id="wallet-linked" className="hidden">
           <div className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2">
-            <span className="text-xs text-emerald-500 font-bold">
+            <span className="text-xs text-emerald-700 font-bold dark:text-emerald-400">
               &#x2713;
             </span>
             <span

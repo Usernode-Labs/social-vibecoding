@@ -24,7 +24,7 @@ import { cn } from '@/lib/utils';
 export function DaySeparator({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('py-3 text-center text-[0.9375rem] text-zinc-400 dark:text-zinc-500', className)}
+      className={cn('py-3 text-center text-[0.9375rem] text-zinc-500 dark:text-zinc-500', className)}
       {...props}
     />
   );
@@ -69,7 +69,7 @@ export function ChatMessageRow({
   /**
    * Per-row controls, pinned to the header's trailing edge — the group chat's
    * edit / save / react buttons. A separate slot from `timestamp` because that
-   * one is a muted text span and a button inheriting `text-zinc-400` on a
+   * one is a muted text span and a button inheriting `text-zinc-500 dark:text-zinc-400` on a
    * transcript is a control you cannot see.
    */
   actions?: React.ReactNode;
@@ -81,7 +81,7 @@ export function ChatMessageRow({
         <div className="flex items-baseline gap-2">
           <span className="truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{name}</span>
           {timestamp ? (
-            <span className="shrink-0 text-[0.9375rem] text-zinc-400 dark:text-zinc-500">{timestamp}</span>
+            <span className="shrink-0 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>
           ) : null}
           {actions ? <span className="ml-auto flex shrink-0 items-center gap-1">{actions}</span> : null}
         </div>
@@ -113,11 +113,11 @@ export function ThreadReplySummary({
       {...props}
     >
       {avatars ? <span className="flex -space-x-1" aria-hidden="true">{avatars}</span> : null}
-      <span className="text-[0.9375rem] font-bold text-violet-600 dark:text-violet-400">
+      <span className="text-[0.9375rem] font-bold text-violet-700 dark:text-violet-400">
         {count} {count === 1 ? 'reply' : 'replies'}
       </span>
       {timestamp ? (
-        <span className="text-[0.9375rem] text-zinc-400 dark:text-zinc-500">{timestamp}</span>
+        <span className="text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>
       ) : null}
     </button>
   );

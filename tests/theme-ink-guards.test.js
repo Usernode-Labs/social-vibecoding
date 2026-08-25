@@ -130,7 +130,12 @@ test('no bare -400 status ink outside the always-dark chrome', () => {
   // sat in front of it and the ratchet was not ratcheting. Set to the measured
   // number, admin included. If you are lowering it, say in the commit which
   // sweep run you measured against.
-  const BUDGET = 78;
+  //
+  // 78 -> 58 with the product-wide ink correction: every light-side status ink
+  // the live sweep measured under 4.5:1 on the page ground moved a shade or
+  // two darker AND gained a `dark:` partner, so the remaining 58 are ones the
+  // sweep has not reached rather than ones it forgave.
+  const BUDGET = 58;
   assert.ok(bad.length <= BUDGET,
     `bare -400 status inks: ${bad.length} > ${BUDGET}. Newly added:\n  ${bad.slice(0, 8).join('\n  ')}`);
 });
@@ -156,12 +161,48 @@ test('no unpaired zinc-400 ink outside the always-dark chrome', () => {
       bad.push(`${s.path}:${src.slice(0, m.index).split('\n').length}`);
     }
   }
-  // Same ratchet as rule 2. 109 before the admin console was re-spelled to the
-  // shell's pair; 52 after, all of them outside admin.
-  const BUDGET = 52;
-  assert.ok(bad.length <= BUDGET,
-    `unpaired zinc-400 inks: ${bad.length} > ${BUDGET}. Pair them as `
-    + `text-zinc-500 dark:text-zinc-400. Newly added:\n  ${bad.slice(0, 8).join('\n  ')}`);
+  // This one RAN OUT of budget, which is the outcome a ratchet is for: 109
+  // before the admin console was re-spelled, 52 after, and 0 once the
+  // product-wide pass paired the rest. It is a ban now, not a budget — there
+  // is no longer such a thing as an acceptable unpaired zinc-400 ink.
+  assert.deepStrictEqual(bad, [],
+    'unpaired zinc-400 inks are 2.71:1 on the light page ground. Pair them as '
+    + `text-zinc-500 dark:text-zinc-400:\n  ${bad.slice(0, 8).join('\n  ')}`);
+});
+
+// ── 2c. A paired ink handed to classList, which takes TOKENS ────────────
+//
+// Pairing rule 2b's inks was a mechanical pass over string literals, and a
+// class string is a class string wherever it appears — including inside
+// `el.classList.remove('text-red-500')`, where the value is not a class
+// string at all but a single DOMTokenList token. Appending ` dark:text-red-400`
+// there turns a working call into `InvalidCharacterError: the token contains
+// HTML space characters`, thrown at the first status message.
+//
+// It got past 9,725 tests: they render components and read markup, and no
+// vm-based DOM stub in the suite implements DOMTokenList's validation. It
+// surfaced in a browser, on the one route that writes a status line — and a
+// console error on any route fails the platform's proposal checks.
+//
+// So the rule is spelled the way the mistake was made: a `classList.add` or
+// `.remove` argument is ONE token. Pass a pair as two arguments.
+test('no classList argument carries more than one class token', () => {
+  const bad = [];
+  const call = /classList\.(?:add|remove|toggle|contains|replace)\(([^()]*)\)/g;
+  for (const s of SOURCES) {
+    for (const m of s.text.matchAll(call)) {
+      for (const arg of m[1].split(',')) {
+        const lit = arg.trim().match(/^'([^']*)'$/);
+        if (lit && /\s/.test(lit[1].trim()) === false) continue;
+        if (lit && /\s/.test(lit[1])) {
+          bad.push(`${s.path}:${s.text.slice(0, m.index).split('\n').length}  '${lit[1]}'`);
+        }
+      }
+    }
+  }
+  assert.deepStrictEqual(bad, [],
+    'classList takes tokens, not class strings — a space throws '
+    + `InvalidCharacterError:\n  ${bad.slice(0, 8).join('\n  ')}`);
 });
 
 // ── 3. An `outline` Button with no ink ──────────────────────────────────

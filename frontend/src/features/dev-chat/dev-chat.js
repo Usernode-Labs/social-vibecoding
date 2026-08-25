@@ -775,18 +775,18 @@ const DevChat = {
             <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${openRouterModelOnly ? 'Choose an OpenRouter model' : (mode === 'switch' ? 'Where should this session build?' : 'Where should this build?')}</h2>
             <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${openRouterModelOnly ? 'Changing the model keeps this branch and conversation, but starts fresh OpenRouter context on the next turn.' : (mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.')}</p>
           </div>
-          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" aria-label="Close">✕</button>
+          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close">✕</button>
         </div>
         <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="Session AI">
           <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · OpenRouter</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Preferred. Use your included daily credits or personal key, with any available model.</span>
-            ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
+            ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
           </button>
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · Claude</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Use the platform Claude allowance instead.</span>
-            ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
+            ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
           </button>
         </div>
         <div id="dc-agent-choice-codex-options" class="mt-4 hidden rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
@@ -1415,7 +1415,7 @@ const DevChat = {
         return {
           title: 'Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available.',
           parts: [
-            { text: 'platform credits locked', className: 'text-amber-700 dark:text-amber-400 hover:underline', href: '#settings/connectors' },
+            { text: 'platform credits locked', className: 'text-amber-800 dark:text-amber-400 hover:underline', href: '#settings/connectors' },
             { text: ' · ', className: muted },
             { text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400' },
           ],
@@ -1425,7 +1425,7 @@ const DevChat = {
         title: null,
         parts: [{
           text: 'verify account · unlock $10/day',
-          className: 'text-amber-700 dark:text-amber-400 font-medium hover:underline',
+          className: 'text-amber-800 dark:text-amber-400 font-medium hover:underline',
           href: '#settings/connectors',
           title: 'Connect GitHub or X to unlock $10/day',
         }],
@@ -1434,7 +1434,7 @@ const DevChat = {
     if (state && state.level === 'unavailable') {
       return hasApiKey
         ? { title: null, parts: [{ text: 'your key available', className: 'text-emerald-700 dark:text-emerald-400', title: 'Platform credit eligibility is temporarily unavailable; your own key remains available.' }] }
-        : { title: null, parts: [{ text: 'credits temporarily unavailable', className: 'text-amber-700 dark:text-amber-400', title: 'Platform credit eligibility could not be verified. Try again shortly.' }] };
+        : { title: null, parts: [{ text: 'credits temporarily unavailable', className: 'text-amber-800 dark:text-amber-400', title: 'Platform credit eligibility could not be verified. Try again shortly.' }] };
     }
 
     // #1353: no "· $X left" alongside the pair. The remainder is $limit
@@ -1495,7 +1495,7 @@ const DevChat = {
         title: `Your free daily AI credits are used up. ${
           resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`,
         parts: [
-          { text: `$${spent}`, className: 'text-red-500 font-semibold' },
+          { text: `$${spent}`, className: 'text-red-700 font-semibold dark:text-red-400' },
           { text: `/$${limit}`, className: 'text-red-700 dark:text-red-400' },
         ],
       };

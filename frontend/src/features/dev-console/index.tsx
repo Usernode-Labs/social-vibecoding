@@ -136,7 +136,7 @@ export function DevConsolePanel() {
         <span className="font-medium text-zinc-200">
           Developer console
         </span>
-        <span id="dev-console-counts" className="text-xs text-zinc-500">
+        <span id="dev-console-counts" className="text-xs text-zinc-500 dark:text-zinc-400">
           {showLive ? devConsole.countsLabel() : null}
         </span>
         <span className="flex-1">
@@ -167,14 +167,14 @@ export function DevConsolePanel() {
         </select>
         <button
           id="dev-console-clear"
-          className="text-xs text-zinc-400 hover:text-zinc-200"
+          className="text-xs text-zinc-500 hover:text-zinc-200 dark:text-zinc-400"
           onClick={() => devConsole.clear()}
         >
           Clear
         </button>
         <button
           id="dev-console-close"
-          className="text-zinc-400 hover:text-zinc-100"
+          className="text-zinc-500 hover:text-zinc-100 dark:text-zinc-400"
           aria-label="Close"
           onClick={() => devConsole.hide()}
         >
@@ -194,7 +194,7 @@ export function DevConsolePanel() {
       <div
         ref={emptyRef}
         id="dev-console-empty-hint"
-        className="hidden px-3 py-2 text-xs text-zinc-500 border-t border-zinc-800 shrink-0"
+        className="hidden px-3 py-2 text-xs text-zinc-500 border-t border-zinc-800 shrink-0 dark:text-zinc-400"
       >
         No messages yet. If this app was created before dev-console support shipped, ask the coding agent in Dev Chat to "add dev-console forwarding to public/index.html".
       </div>

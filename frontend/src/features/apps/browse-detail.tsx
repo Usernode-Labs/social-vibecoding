@@ -104,7 +104,7 @@ function ContributorRow({ row }: { row: ContributorRowView }): ReactNode {
       title={`View @${row.who}’s proposals`}
       onClick={() => controller()?.openContributor(row.who)}
     >
-      <div className="w-5 shrink-0 text-center text-xs font-mono text-zinc-400 dark:text-zinc-500">{row.rank}</div>
+      <div className="w-5 shrink-0 text-center text-xs font-mono text-zinc-500 dark:text-zinc-500">{row.rank}</div>
       <div className="w-8 h-8 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-xs">{row.initial}</div>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">{`@${row.who}`}</div>
@@ -131,7 +131,7 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
       >
         Contributors
         {view.count == null ? null : (
-          <span className="text-zinc-400 dark:text-zinc-500 font-normal">{` · ${view.count}`}</span>
+          <span className="text-zinc-500 dark:text-zinc-500 font-normal">{` · ${view.count}`}</span>
         )}
       </h3>
       {view.note ? <p className={NOTE_CLASS}>{view.note}</p> : null}
@@ -144,7 +144,7 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
         <button
           type="button"
           id="browse-contrib-toggle"
-          className="w-full px-3 py-2.5 text-sm font-medium text-violet-600 dark:text-violet-400 text-left transition-colors hover:bg-zinc-500/5 border-t border-zinc-200 dark:border-zinc-800"
+          className="w-full px-3 py-2.5 text-sm font-medium text-violet-700 dark:text-violet-400 text-left transition-colors hover:bg-zinc-500/5 border-t border-zinc-200 dark:border-zinc-800"
           onClick={() => controller()?.toggleContributors()}
         >{view.toggle}</button>
       ) : null}
@@ -160,7 +160,7 @@ function Missing(): ReactNode {
       <a
         id="browse-detail-back"
         href="#apps"
-        className="inline-block text-violet-500 hover:text-violet-400"
+        className="inline-block text-violet-700 hover:text-violet-400 dark:text-violet-400"
         onClick={(e) => {
           const nav = (window as any).NavLink;
           if (nav && nav.isNativeClick(e.nativeEvent)) return;
@@ -186,7 +186,7 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
         </div>
         <div className="min-w-0 flex-1">
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 break-words">{view.name}</h2>
-          <p className="text-xs font-mono text-zinc-400 dark:text-zinc-500 break-all">{view.slug}</p>
+          <p className="text-xs font-mono text-zinc-500 dark:text-zinc-500 break-all">{view.slug}</p>
           {view.versionPillHtml ? (
             <div className="mt-2" dangerouslySetInnerHTML={{ __html: view.versionPillHtml }} />
           ) : null}
@@ -244,7 +244,7 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
               key={a.index}
               type="button"
               className={`browse-detail-action relative w-full flex items-center justify-between gap-2 px-3 py-3 text-sm text-left transition-colors hover:bg-zinc-500/5 ${ROW_RULE} ${
-                a.danger ? 'text-red-500' : 'text-zinc-700 dark:text-zinc-200'
+                a.danger ? 'text-red-700 dark:text-red-400' : 'text-zinc-700 dark:text-zinc-200'
               }`}
               data-action-index={a.index}
               title={a.title || undefined}

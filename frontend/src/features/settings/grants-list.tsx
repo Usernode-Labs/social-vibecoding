@@ -117,7 +117,7 @@ export function GrantsList() {
   const state = useStoreState(grantsStore);
   if (state.phase === 'idle') return null;
   if (state.phase === 'loading') return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p>;
-  if (state.phase === 'error') return <p className="text-xs text-red-500">Failed to load app permissions.</p>;
+  if (state.phase === 'error') return <p className="text-xs text-red-700 dark:text-red-400">Failed to load app permissions.</p>;
   if (!state.grants.length) {
     return <p className="text-xs text-zinc-500 dark:text-zinc-500">No apps have asked to use AI yet.</p>;
   }

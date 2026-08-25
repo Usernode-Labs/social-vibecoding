@@ -88,7 +88,7 @@ export function ViewAsNonAdminBanner() {
   return (
     <div
       id="view-as-non-admin-banner"
-      className="hidden bg-amber-500/15 text-amber-700 dark:text-amber-300 border-b border-amber-500/30 px-4 py-2 text-xs flex items-center justify-center gap-2"
+      className="hidden bg-amber-500/15 text-amber-800 dark:text-amber-300 border-b border-amber-500/30 px-4 py-2 text-xs flex items-center justify-center gap-2"
     >
       <span>Viewing as non-admin (admin UI hidden).</span>
       <button

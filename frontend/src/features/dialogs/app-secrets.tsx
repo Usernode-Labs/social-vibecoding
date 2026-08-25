@@ -116,7 +116,7 @@ export function AppSecretsDialog() {
           className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400 hidden"
         >
           Changes apply on the next deploy. Admins can
-          <button id="app-secrets-redeploy" className="text-violet-500 hover:text-violet-400 underline">
+          <button id="app-secrets-redeploy" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
             redeploy now
           </button>
           .

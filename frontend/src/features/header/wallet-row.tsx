@@ -36,7 +36,7 @@ export function WalletRow(): ReactNode {
           this span empty and the prerender has to agree. */}
       <span
         id="drawer-wallet-balance"
-        className="ml-auto text-xs font-semibold text-violet-600 dark:text-violet-400"
+        className="ml-auto text-xs font-semibold text-violet-700 dark:text-violet-400"
       >{s.balanceLabel}</span>
     </button>
   );

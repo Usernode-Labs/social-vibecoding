@@ -975,10 +975,16 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
   // the table is the same `bg-<hue>-500/10 text-<hue>-…` badge recipe.
   assert.match(fe, /cls: `dev-badge \$\{tone\}`/, 'the work-state chip leads with dev-badge');
   const toneTable = fe.slice(fe.indexOf('_WORK_TONE_CLS:'), fe.indexOf('_WORK_TONE_HOVER:'));
-  assert.match(toneTable, /sky: 'bg-sky-500\/10 text-sky-500'/, 'sky tint is the badge recipe');
+  assert.match(toneTable, /sky: 'bg-sky-500\/10 text-sky-700 dark:text-sky-400'/, 'sky tint is the badge recipe');
   for (const line of toneTable.split('\n')) {
-    const tint = line.match(/'(bg-[a-z]+-500\/10 text-[a-z]+-[0-9]{3})'/);
-    if (tint) assert.match(tint[1], /^bg-([a-z]+)-500\/10 text-\1-[0-9]{3}$/, `off-recipe tint: ${tint[1]}`);
+    // The contrast pass gave every light ink a dark partner, so a tint is a
+    // PAIR now. Both halves must still name the same hue — that is the
+    // recipe, and a mismatched partner is exactly the drift this guards.
+    const tint = line.match(/'(bg-[a-z]+-500\/10 text-[a-z]+-[0-9]{3}(?: dark:text-[a-z]+-[0-9]{3})?)'/);
+    if (tint) {
+      assert.match(tint[1], /^bg-([a-z]+)-500\/10 text-\1-[0-9]{3}(?: dark:text-\1-[0-9]{3})?$/,
+        `off-recipe tint: ${tint[1]}`);
+    }
   }
   assert.match(fe, /bg-zinc-500\/10 text-zinc-500/, 'muted placeholder uses the badge muted tint');
   // Hover deepens the same tint (like the linked-issue pills), not a filter.

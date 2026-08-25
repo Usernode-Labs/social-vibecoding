@@ -220,7 +220,7 @@ export function AdminScreen() {
           <div className={AdminUI.dialogPanel}>
             <h2 className={`${AdminUI.cardTitle} mb-1`}>Temporary password</h2>
             <p className={`${AdminUI.muted} mb-4`}>
-              Give this to <span id="admin-temp-pw-username" className="font-medium text-zinc-800 dark:text-zinc-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from <a href="#settings/password" className="text-violet-600 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 underline">Settings → Change password</a>. It signs them out everywhere and <span className="font-medium">won't be shown again</span>.
+              Give this to <span id="admin-temp-pw-username" className="font-medium text-zinc-800 dark:text-zinc-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from <a href="#settings/password" className="text-violet-700 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 underline">Settings → Change password</a>. It signs them out everywhere and <span className="font-medium">won't be shown again</span>.
             </p>
             <div className="flex gap-2">
               <code id="admin-temp-pw-value" className="flex-1 min-w-0 break-all rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-900 dark:text-zinc-100"></code>

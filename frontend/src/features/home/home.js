@@ -1354,7 +1354,7 @@ const Home = {
       <button class="card-add-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
         isAdded
           ? 'bg-emerald-500 border-emerald-500 text-white'
-          : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-600 dark:text-violet-400 hover:border-violet-400'
+          : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
       }" data-slug="${app.slug}" data-added="${isAdded}" title="${
         isAdded ? 'Added — tap to remove from Your apps' : 'Add to Your apps'
       }" aria-label="${

@@ -36,15 +36,15 @@ import type { SessionAction, SessionListState, SessionRow } from './session-list
  * other direction.
  */
 const STATUS_TONE: Record<SessionRow['statusTone'], string> = {
-  active: 'text-emerald-600 dark:text-emerald-400',
-  promoted: 'text-violet-600 dark:text-violet-400',
+  active: 'text-emerald-700 dark:text-emerald-400',
+  promoted: 'text-violet-700 dark:text-violet-400',
   paused: 'text-zinc-500 dark:text-zinc-400',
-  other: 'text-zinc-500',
+  other: 'text-zinc-500 dark:text-zinc-400',
 };
 
 const ACTION_TONE: Record<SessionAction['tone'], string> = {
   quiet: 'text-zinc-500 dark:text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400',
-  go: 'text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300',
+  go: 'text-emerald-700 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300',
   danger: 'text-zinc-500 dark:text-zinc-400 hover:text-red-500 dark:hover:text-red-400',
 };
 
@@ -95,7 +95,7 @@ function Row({ row }: { row: SessionRow }): ReactNode {
       <span className={`text-xs ${STATUS_TONE[row.statusTone]} font-mono`}>{row.status}</span>
       <span className="text-sm text-zinc-800 dark:text-zinc-300 flex-1 truncate" title={row.branch}>{row.title}</span>
       {row.busy ? (
-        <span className="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0">
+        <span className="inline-flex items-center gap-1 text-xs text-emerald-700 shrink-0 dark:text-emerald-400">
           <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>
           {'working…'}
         </span>
@@ -105,7 +105,7 @@ function Row({ row }: { row: SessionRow }): ReactNode {
           href={row.pr.url}
           target="_blank"
           rel="noopener"
-          className="text-xs text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
+          className="text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
           onClick={(e) => e.stopPropagation()}
         >{`PR#${row.pr.number}`}</a>
       ) : null}
@@ -127,7 +127,7 @@ function EmptyPitch(): ReactNode {
       </p>
       <p className="text-xs text-zinc-500 dark:text-zinc-500">
         {'Hit '}
-        <span className="font-medium text-emerald-600 dark:text-emerald-400">+ New Session</span>
+        <span className="font-medium text-emerald-700 dark:text-emerald-400">+ New Session</span>
         {' above to start, e.g. '}
         <span className="italic">&quot;make the header dark blue&quot;</span>
         {'.'}

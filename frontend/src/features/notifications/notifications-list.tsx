@@ -180,7 +180,7 @@ function Body({ body }: { body: NotificationRowView['body'] }): ReactNode {
   return (
     <div className={cls}>
       {mentionParts(body.text).map((p, i) => (p.at
-        ? <span key={i} className="text-violet-400 font-medium">{p.text}</span>
+        ? <span key={i} className="text-violet-700 font-medium dark:text-violet-400">{p.text}</span>
         : <span key={i}>{p.text}</span>))}
     </div>
   );
@@ -323,7 +323,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
               here, because everything in this section is saved by
               definition — so the two ends of the gesture read as one
               feature. */}
-          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3 h-3 align-middle text-violet-500" />
+          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3 h-3 align-middle text-violet-700 dark:text-violet-400" />
           <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
           {' in '}
           <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
@@ -484,7 +484,7 @@ export function NotificationsBody(): ReactNode {
             id="notifications-load-more"
             type="button"
             disabled={state.loadingMore}
-            className="w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 disabled:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800"
+            className="w-full text-left px-3 py-2 text-xs text-violet-700 hover:text-violet-400 disabled:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 dark:text-violet-400"
             onClick={(e) => {
               // Same reason every other handler in this file stops the click:
               // the re-render detaches this node, and the document-level
@@ -510,8 +510,8 @@ export function NotificationsBody(): ReactNode {
       <div
         id="notifications-caught-up"
         className={state.caughtUp
-          ? 'px-4 py-6 text-sm text-zinc-500 text-center'
-          : 'hidden px-4 py-6 text-sm text-zinc-500 text-center'}
+          ? 'px-4 py-6 text-sm text-zinc-500 text-center dark:text-zinc-400'
+          : 'hidden px-4 py-6 text-sm text-zinc-500 text-center dark:text-zinc-400'}
       >
         You&rsquo;re all caught up — no new notifications.
       </div>
@@ -526,7 +526,7 @@ export function NotificationsBody(): ReactNode {
         <button
           id="notifications-older-toggle"
           type="button"
-          className="shrink-0 w-full px-4 py-2.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 border-t border-zinc-200 dark:border-zinc-800 transition-colors"
+          className="shrink-0 w-full px-4 py-2.5 text-xs font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 border-t border-zinc-200 dark:border-zinc-800 transition-colors"
           aria-expanded={state.showOlder ? 'true' : 'false'}
           onClick={() => controller()?.toggleOlder()}
         >
@@ -538,8 +538,8 @@ export function NotificationsBody(): ReactNode {
       <div
         id="notifications-empty"
         className={state.empty
-          ? 'px-4 py-6 text-sm text-zinc-500 text-center'
-          : 'hidden px-4 py-6 text-sm text-zinc-500 text-center'}
+          ? 'px-4 py-6 text-sm text-zinc-500 text-center dark:text-zinc-400'
+          : 'hidden px-4 py-6 text-sm text-zinc-500 text-center dark:text-zinc-400'}
       >
         You'll get pinged here when someone proposes a change to an app you use.
       </div>

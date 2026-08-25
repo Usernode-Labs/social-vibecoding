@@ -142,7 +142,7 @@ function SurveyAnswers({ answers }: { answers: Answers }) {
   }
   if (a.verified && Object.keys(a.verified).length) {
     line('Verified', Object.entries(a.verified).map(([pf, h]) => (
-      <span key={pf} className="text-emerald-600 dark:text-emerald-400">{`✓ ${pf} · ${h}  `}</span>
+      <span key={pf} className="text-emerald-700 dark:text-emerald-400">{`✓ ${pf} · ${h}  `}</span>
     )));
   }
   if (a.handles && Object.keys(a.handles).length) {
@@ -262,7 +262,7 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
         {w.email}
         {w.confirmed_at ? (
           <span
-            className="text-emerald-600 dark:text-emerald-400 text-xs"
+            className="text-emerald-700 dark:text-emerald-400 text-xs"
             title="Followed the confirm link in the join email"
           >
             {' ✓ confirmed'}
@@ -278,14 +278,14 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
       </>
     ),
   },
-  { label: 'Joined', cell: (w) => fmt(w.submitted_at), tdClass: 'text-xs text-zinc-500' },
+  { label: 'Joined', cell: (w) => fmt(w.submitted_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
   {
     label: 'Account',
     cell: (w) => (w.linked_username ? (
       <>
         {w.linked_username}
         {w.has_platform_access ? (
-          <span className="text-emerald-600 dark:text-emerald-400 text-xs">{' (has access)'}</span>
+          <span className="text-emerald-700 dark:text-emerald-400 text-xs">{' (has access)'}</span>
         ) : null}
       </>
     ) : <span className="text-zinc-500 dark:text-zinc-400">no account yet</span>),
@@ -294,11 +294,11 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
     label: 'Status',
     cell: (w) => (w.released_at
       ? (
-        <span className="text-emerald-600 dark:text-emerald-400 text-xs">
+        <span className="text-emerald-700 dark:text-emerald-400 text-xs">
           {`Released ${fmt(w.released_at)}`}
         </span>
       )
-      : <span className="text-amber-600 dark:text-amber-400 text-xs">pending</span>),
+      : <span className="text-amber-800 dark:text-amber-400 text-xs">pending</span>),
   },
 ];
 
@@ -306,17 +306,17 @@ const bpIdent = (u: BpRow) => u.display_name || u.username || u.email || `user #
 
 const BP_COLUMNS: Column<BpRow>[] = [
   { label: 'User', primary: true, cell: (u) => u.display_name || u.username || `user #${u.id}` },
-  { label: 'Email', cell: (u) => u.email || '—', tdClass: 'text-xs text-zinc-500 font-mono' },
-  { label: 'Requested', cell: (u) => fmt(u.bp_requested_at), tdClass: 'text-xs text-zinc-500' },
+  { label: 'Email', cell: (u) => u.email || '—', tdClass: 'text-xs text-zinc-500 font-mono dark:text-zinc-400' },
+  { label: 'Requested', cell: (u) => fmt(u.bp_requested_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
   {
     label: 'Status',
     cell: (u) => (u.bp_released_at
       ? (
-        <span className="text-emerald-600 dark:text-emerald-400 text-xs">
+        <span className="text-emerald-700 dark:text-emerald-400 text-xs">
           {`Released ${fmt(u.bp_released_at)}`}
         </span>
       )
-      : <span className="text-amber-600 dark:text-amber-400 text-xs">pending</span>),
+      : <span className="text-amber-800 dark:text-amber-400 text-xs">pending</span>),
   },
 ];
 

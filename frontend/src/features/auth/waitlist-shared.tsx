@@ -166,7 +166,7 @@ export type MsgTone = 'error' | 'ok' | 'warn';
 
 export function msgClass(tone: MsgTone | null): string {
   if (!tone) return 'hidden text-sm mt-3';
-  if (tone === 'error') return 'text-sm mt-3 text-red-500 dark:text-red-400';
-  if (tone === 'warn') return 'text-sm mt-3 text-amber-600 dark:text-amber-400';
-  return 'text-sm mt-3 text-emerald-600 dark:text-emerald-400';
+  if (tone === 'error') return 'text-sm mt-3 text-red-700 dark:text-red-400';
+  if (tone === 'warn') return 'text-sm mt-3 text-amber-800 dark:text-amber-400';
+  return 'text-sm mt-3 text-emerald-700 dark:text-emerald-400';
 }

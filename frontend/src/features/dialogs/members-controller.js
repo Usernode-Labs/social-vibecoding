@@ -531,13 +531,13 @@ const MembersDialog = {
     list.innerHTML = rows.map((r) => {
       const pending = r.status === 'invited';
       const tag = r.isCreator
-        ? '<span class="text-[0.65rem] text-violet-500 font-medium ml-1">creator</span>'
-        : (pending ? '<span class="text-[0.65rem] text-amber-500 font-medium ml-1">invited</span>' : '');
+        ? '<span class="text-[0.65rem] text-violet-700 font-medium ml-1 dark:text-violet-400">creator</span>'
+        : (pending ? '<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">invited</span>' : '');
       // Remove/revoke: creator/admin for anyone but the creator; users
       // may remove themselves (leave). Mirrors the server rules.
       const canRemove = !r.isCreator && (canManage || r.userId === me.id);
       const removeBtn = canRemove
-        ? `<button data-remove-user="${r.userId}" class="text-xs text-zinc-400 hover:text-red-500 px-2 py-1" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Leave app' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
+        ? `<button data-remove-user="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Leave app' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
         : '';
       return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
         <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>
@@ -737,8 +737,8 @@ const MembersDialog = {
     if (!list) return;
     list.innerHTML = AppView._govDraftApprovers.map((u) =>
       `<div class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800">
-        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(u)}<span class="text-[0.65rem] text-amber-500 font-medium ml-1">will be invited</span></span>
-        <button type="button" data-remove-draft-approver="${escapeAttr(u)}" class="text-xs text-zinc-400 hover:text-red-500 px-2 py-1">Remove</button>
+        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(u)}<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">will be invited</span></span>
+        <button type="button" data-remove-draft-approver="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400">Remove</button>
       </div>`
     ).join('');
     list.querySelectorAll('[data-remove-draft-approver]').forEach((btn) => {
@@ -971,10 +971,10 @@ const MembersDialog = {
     const declaredLower = new Set(declared.map((u) => u.toLowerCase()));
     const rowCls = 'flex items-center justify-between gap-2 px-3 py-2 text-sm';
     const removeBtn = (u) => (canEdit
-      ? `<button type="button" data-remove-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-400 hover:text-red-500 px-2 py-1 shrink-0">Remove</button>`
+      ? `<button type="button" data-remove-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 shrink-0 dark:text-zinc-400">Remove</button>`
       : '');
     const undoBtn = (u) =>
-      `<button type="button" data-restore-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-400 hover:text-violet-500 px-2 py-1 shrink-0">Undo</button>`;
+      `<button type="button" data-restore-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-violet-500 px-2 py-1 shrink-0 dark:text-zinc-400">Undo</button>`;
 
     const rows = [];
     for (const name of declared) {
@@ -984,7 +984,7 @@ const MembersDialog = {
       // hasn't signed up yet, and it starts working on the next deploy
       // once they do.
       const tag = resolvedLower.has(lower)
-        ? '<span class="text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">Admin</span>'
+        ? '<span class="text-[0.65rem] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-400">Admin</span>'
         : '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="Declared in dapp.json but no account with this username exists yet">not a registered user</span>';
       if (draftLower.has(lower)) {
         rows.push(
@@ -995,7 +995,7 @@ const MembersDialog = {
         // Staged removal: struck through, nothing has happened yet.
         rows.push(
           `<div class="${rowCls} opacity-60"><span class="truncate line-through">@${escapeHtml(name)}</span>`
-          + '<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-red-500 font-medium">will be removed</span>'
+          + '<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-red-700 font-medium dark:text-red-400">will be removed</span>'
           + `${canEdit ? undoBtn(name) : ''}</span></div>`
         );
       }
@@ -1013,7 +1013,7 @@ const MembersDialog = {
         : '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="No account with this username yet — they\'ll become an admin once they sign up and the app next deploys">no account yet</span>';
       rows.push(
         `<div class="${rowCls}"><span class="truncate">@${escapeHtml(name)}</span>`
-        + `<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-amber-500 font-medium">will be added</span>${note}${removeBtn(name)}</span></div>`
+        + `<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-amber-800 font-medium dark:text-amber-300">will be added</span>${note}${removeBtn(name)}</span></div>`
       );
     }
     if (!rows.length) {
@@ -1216,13 +1216,13 @@ const MembersDialog = {
     list.innerHTML = rows.map((r) => {
       const pending = r.status === 'invited';
       const tag = pending
-        ? '<span class="text-[0.65rem] text-amber-500 font-medium ml-1">invited</span>'
-        : '<span class="text-[0.65rem] text-violet-500 font-medium ml-1">approver</span>';
+        ? '<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">invited</span>'
+        : '<span class="text-[0.65rem] text-violet-700 font-medium ml-1 dark:text-violet-400">approver</span>';
       // Remove/revoke: creator/admin for anyone; approvers may remove
       // themselves (leave). Mirrors the server rules.
       const canRemove = canManage || r.userId === me.id;
       const removeBtn = canRemove
-        ? `<button data-remove-approver="${r.userId}" class="text-xs text-zinc-400 hover:text-red-500 px-2 py-1" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Stop being an approver' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
+        ? `<button data-remove-approver="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Stop being an approver' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
         : '';
       return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
         <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>

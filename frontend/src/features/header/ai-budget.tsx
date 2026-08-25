@@ -48,11 +48,11 @@ export interface AiBudgetState {
 const TONE: Record<MeterTone, string> = {
   none: '',
   dim: 'drawer-meter-dim',
-  high: 'text-red-600 dark:text-red-400',
-  mid: 'text-amber-600 dark:text-amber-400',
-  low: 'text-emerald-600 dark:text-emerald-400',
-  byok: 'text-emerald-600 dark:text-emerald-400',
-  warn: 'text-amber-600 dark:text-amber-400',
+  high: 'text-red-700 dark:text-red-400',
+  mid: 'text-amber-800 dark:text-amber-400',
+  low: 'text-emerald-700 dark:text-emerald-400',
+  byok: 'text-emerald-700 dark:text-emerald-400',
+  warn: 'text-amber-800 dark:text-amber-400',
 };
 
 const ROW = 'flex items-center gap-2 flex-wrap rounded-lg bg-zinc-100 dark:bg-zinc-800'

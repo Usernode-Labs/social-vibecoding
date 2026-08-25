@@ -381,8 +381,8 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   const reasoning = useDetails(r.reasoning ? r.reasoning.details : { persistId: '', defaultOpen: false });
   const who = r.who === 'user' ? 'You' : r.who === 'cc' ? 'Claude Code' : 'AI';
   const whoClass = r.who === 'user'
-    ? 'text-violet-400'
-    : r.who === 'cc' ? 'text-emerald-400' : 'text-emerald-700 dark:text-emerald-400';
+    ? 'text-violet-700 dark:text-violet-400'
+    : r.who === 'cc' ? 'text-emerald-700 dark:text-emerald-400' : 'text-emerald-700 dark:text-emerald-400';
   return (
     <div className={`dc-msg ${r.who === 'user' ? 'dc-msg-user' : 'dc-msg-assistant'}`}>
       <div className="dc-msg-header">

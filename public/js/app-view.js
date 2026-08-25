@@ -119,7 +119,7 @@ const AppView = {
   DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-3.5 py-3 text-left transition-colors',
   // Trailing chevron marking a card as tappable (same affordance as the
   // General chat card).
-  DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
+  DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
   // Tappable cards have no border left to tint, so the affordance moves to the
   // surface itself — the same `active:` fill ListRow uses.
   DEV_CARD_HOVER_CLS: 'hover:bg-zinc-50 dark:hover:bg-zinc-800 cursor-pointer',
@@ -138,22 +138,22 @@ const AppView = {
   // Per-type tinted icon chips — the Dev list's identity system, a mini
   // version of the home tiles' avatar square. [tint classes, SVG path].
   DEV_CARD_ICONS: {
-    chat: ['bg-violet-600/15 text-violet-500', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
+    chat: ['bg-violet-600/15 text-violet-700 dark:text-violet-400', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
     // Pencil (Heroicons outline) — sessions are edits-in-progress, not
     // terminals (#219). Distinct from the issue icon's pencil-in-bubble.
-    session: ['bg-emerald-500/15 text-emerald-500', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z'],
+    session: ['bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z'],
     // Comment-bubble-with-pencil: the chat bubble outline (dots removed)
     // plus the Heroicons pencil-alt tip scaled to sit inside it — issues
     // are written feedback, not warnings (hence no more exclamation).
-    issue: ['bg-amber-500/15 text-amber-500', 'M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5zM15.35 6.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H10.2v-1.7l5.15-5.15z'],
-    proposal: ['bg-sky-500/15 text-sky-500', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
+    issue: ['bg-amber-500/15 text-amber-800 dark:text-amber-300', 'M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5zM15.35 6.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H10.2v-1.7l5.15-5.15z'],
+    proposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
     gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
-    done: ['bg-emerald-500/10 text-emerald-500', 'M5 13l4 4L19 7'],
+    done: ['bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', 'M5 13l4 4L19 7'],
     // Document-text (Heroicons outline) — an issue with an auto-generated
     // proposal attached (#250). Sky keeps "blue = proposal" consistent with
     // the proposal cards, while the page shape stays distinct from their
     // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
-    issueProposal: ['bg-sky-500/15 text-sky-500', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
+    issueProposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
     // "Mine" variants — distinguished from their base by GLYPH ONLY: they keep
     // the same sky tint as the base issue/PR chips but swap in a self-contained
     // pencil/edit mark = "your work-in-progress, jump back in." They mark the
@@ -162,8 +162,8 @@ const AppView = {
     // session). No manual coordinate compositing: issueProposalMine is a true
     // document-with-pencil (page + folded corner + pencil) so it still reads
     // as a document; proposalMine is a plain pencil "edit" mark.
-    issueProposalMine: ['bg-sky-500/15 text-sky-500', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
-    proposalMine: ['bg-sky-500/15 text-sky-500', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3'],
+    issueProposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
+    proposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3'],
   },
 
   // Returns the icon's SPEC — tint classes + SVG path — which
@@ -4074,7 +4074,7 @@ const AppView = {
         // purely an affordance.
         isAppAdmin: !!promotedData.isAppAdmin,
         lockedHint: locked
-          ? ' <span class="text-amber-500 font-normal">· locked: also needs an admin yes</span>'
+          ? ' <span class="text-amber-800 font-normal dark:text-amber-300">· locked: also needs an admin yes</span>'
           : '',
       };
       AppView._merged = merged;
@@ -4362,7 +4362,7 @@ const AppView = {
       const isBot = AppView._isBotCommentAuthor(c.author);
       const author = c.author ? escapeHtml(c.author) : 'unknown';
       const botTag = isBot
-        ? ' <span class="text-[0.9375rem] text-sky-600 dark:text-sky-400">bot</span>'
+        ? ' <span class="text-[0.9375rem] text-sky-700 dark:text-sky-400">bot</span>'
         : '';
       return `<div class="dev-feed-comment">
           <span class="dev-feed-comment-author">${author}</span>${botTag}
@@ -5464,7 +5464,7 @@ const AppView = {
   _sessionStatusTagSpec(s) {
     if (AppView._sessionBusy(s)) {
       return {
-        t: 'chip', key: 'state', cls: 'dev-badge bg-emerald-500/10 text-emerald-500',
+        t: 'chip', key: 'state', cls: 'dev-badge bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
         label: 'working…', spinner: true,
       };
     }
@@ -5498,7 +5498,7 @@ const AppView = {
 
   _importedSessionBadgeSpec(s) {
     return s && s.source === 'imported'
-      ? { t: 'chip', key: 'imported', cls: 'dev-badge bg-amber-500/10 text-amber-600 dark:text-amber-400', label: 'Imported PR' }
+      ? { t: 'chip', key: 'imported', cls: 'dev-badge bg-amber-500/10 text-amber-800 dark:text-amber-400', label: 'Imported PR' }
       : null;
   },
 
@@ -6396,7 +6396,7 @@ const AppView = {
     const isMerged = pr.status === 'merged';
     const title = { text: '', title: pr.pr_title || `Change by ${pr.username || ''}` };
     if (pr.revert_of_session_id) {
-      title.lead = { s: '↩ Revert of', cls: 'text-amber-500' };
+      title.lead = { s: '↩ Revert of', cls: 'text-amber-800 dark:text-amber-300' };
       title.text = pr.original_pr_title
         ? pr.original_pr_title
         : `PR #${pr.original_pr_number || pr.revert_of_session_id}`;
@@ -6411,7 +6411,7 @@ const AppView = {
     // meta words they cost no slot and still read at a glance.
     const meta = [{
       t: 'link', href: pr.pr_url || '#', s: `PR#${pr.pr_number || pr.id}`,
-      cls: 'font-mono text-violet-400 hover:underline',
+      cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
     }];
     const provenance = AppView._proposalProvenanceWords(pr);
     if (provenance) meta.push({ t: 'text', s: provenance });
@@ -8186,9 +8186,9 @@ const AppView = {
   // hover the linked-issue pills use, never a brightness filter.
   _priorityMeta(value) {
     switch (value) {
-      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-500', hover: 'hover:bg-red-500/20' };
-      case 'medium': return { label: 'Medium', cls: 'bg-amber-500/10 text-amber-500', hover: 'hover:bg-amber-500/20' };
-      case 'low': return { label: 'Low', cls: 'bg-sky-500/10 text-sky-500', hover: 'hover:bg-sky-500/20' };
+      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-700 dark:text-red-400', hover: 'hover:bg-red-500/20' };
+      case 'medium': return { label: 'Medium', cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-300', hover: 'hover:bg-amber-500/20' };
+      case 'low': return { label: 'Low', cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400', hover: 'hover:bg-sky-500/20' };
       default: return null;
     }
   },
@@ -8228,11 +8228,11 @@ const AppView = {
   // enforced across every source file instead of two directories.
   CATEGORY_CUSTOM_TINTS: [
     { cls: 'bg-teal-500/10 text-teal-500', hover: 'hover:bg-teal-500/20' },
-    { cls: 'bg-cyan-500/10 text-cyan-500', hover: 'hover:bg-cyan-500/20' },
+    { cls: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-400', hover: 'hover:bg-cyan-500/20' },
     { cls: 'bg-fuchsia-500/10 text-fuchsia-500', hover: 'hover:bg-fuchsia-500/20' },
     { cls: 'bg-lime-500/10 text-lime-600', hover: 'hover:bg-lime-500/20' },
     { cls: 'bg-purple-500/10 text-purple-400', hover: 'hover:bg-purple-500/20' },
-    { cls: 'bg-orange-500/10 text-orange-500', hover: 'hover:bg-orange-500/20' },
+    { cls: 'bg-orange-500/10 text-orange-700 dark:text-orange-400', hover: 'hover:bg-orange-500/20' },
   ],
 
   // Deterministic tint for a custom category slug — the same small string
@@ -8259,12 +8259,12 @@ const AppView = {
   // USER INPUT for custom categories — every caller must escapeHtml it.
   _categoryMeta(value) {
     switch (value) {
-      case 'feature': return { label: 'Feature', cls: 'bg-emerald-500/10 text-emerald-500', hover: 'hover:bg-emerald-500/20' };
-      case 'bug': return { label: 'Bug', cls: 'bg-red-500/10 text-red-500', hover: 'hover:bg-red-500/20' };
-      case 'improvement': return { label: 'Improvement', cls: 'bg-sky-500/10 text-sky-500', hover: 'hover:bg-sky-500/20' };
-      case 'design': return { label: 'Design', cls: 'bg-violet-500/10 text-violet-400', hover: 'hover:bg-violet-500/20' };
-      case 'docs': return { label: 'Docs', cls: 'bg-amber-500/10 text-amber-500', hover: 'hover:bg-amber-500/20' };
-      case 'chore': return { label: 'Chore', cls: 'bg-zinc-500/10 text-zinc-500', hover: 'hover:bg-zinc-500/20' };
+      case 'feature': return { label: 'Feature', cls: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', hover: 'hover:bg-emerald-500/20' };
+      case 'bug': return { label: 'Bug', cls: 'bg-red-500/10 text-red-700 dark:text-red-400', hover: 'hover:bg-red-500/20' };
+      case 'improvement': return { label: 'Improvement', cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400', hover: 'hover:bg-sky-500/20' };
+      case 'design': return { label: 'Design', cls: 'bg-violet-500/10 text-violet-700 dark:text-violet-400', hover: 'hover:bg-violet-500/20' };
+      case 'docs': return { label: 'Docs', cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-300', hover: 'hover:bg-amber-500/20' };
+      case 'chore': return { label: 'Chore', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', hover: 'hover:bg-zinc-500/20' };
       default: break;
     }
     if (!value) return null;
@@ -8307,10 +8307,10 @@ const AppView = {
   // for the assignee initial-avatar, drawn from the same colour family the
   // card badges use so the circles sit consistently in light + dark themes.
   ASSIGNEE_AVATAR_TINTS: [
-    'bg-violet-500/20 text-violet-600 dark:text-violet-300',
-    'bg-emerald-500/20 text-emerald-600 dark:text-emerald-300',
-    'bg-sky-500/20 text-sky-600 dark:text-sky-300',
-    'bg-amber-500/20 text-amber-600 dark:text-amber-300',
+    'bg-violet-500/20 text-violet-700 dark:text-violet-300',
+    'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300',
+    'bg-sky-500/20 text-sky-700 dark:text-sky-300',
+    'bg-amber-500/20 text-amber-800 dark:text-amber-300',
     'bg-rose-500/20 text-rose-600 dark:text-rose-300',
   ],
 
@@ -8353,13 +8353,13 @@ const AppView = {
     if (field === 'priority') {
       const meta = AppView._priorityMeta(s.top);
       if (meta) { label = { kind: 'glyph', glyph: '⚑', text: meta.label }; cls = meta.cls; hover = meta.hover; }
-      else { label = { kind: 'glyph', glyph: '⚑', text: 'Set priority' }; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+      else { label = { kind: 'glyph', glyph: '⚑', text: 'Set priority' }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'; hover = 'hover:bg-zinc-500/20'; }
     } else if (field === 'category') {
       // #504: lead with the small colour swatch (the same attr-dot used in
       // the popover) so the category reads at a glance, then the label.
       const meta = AppView._categoryMeta(s.top);
       if (meta) { label = { kind: 'dot', cls: meta.cls, text: meta.label }; cls = meta.cls; hover = meta.hover; }
-      else { label = { kind: 'dot', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', text: 'Set category' }; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+      else { label = { kind: 'dot', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', text: 'Set category' }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'; hover = 'hover:bg-zinc-500/20'; }
     } else if (s.top) {
       // #489: the assignee leads with a coloured initial-avatar (an at-a-
       // glance "who owns this"); the empty state reads as an explicit
@@ -8371,11 +8371,11 @@ const AppView = {
         initial: (name.trim().charAt(0) || '?').toUpperCase(),
         text: `@${name}`,
       };
-      cls = 'bg-violet-500/10 text-violet-400';
+      cls = 'bg-violet-500/10 text-violet-700 dark:text-violet-400';
       hover = 'hover:bg-violet-500/20';
     } else {
       label = { kind: 'avatarEmpty', text: 'Unassigned' };
-      cls = 'bg-zinc-500/10 text-zinc-500';
+      cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400';
       hover = 'hover:bg-zinc-500/20';
     }
     let title;
@@ -9097,12 +9097,12 @@ const AppView = {
     // count and the auto-title marker. Both cost a badge slot each and
     // neither changes what you'd do next, so they read as meta words.
     const meta = [
-      { t: 'link', href, s: `#${n}`, cls: 'font-mono text-violet-400 hover:underline' },
+      { t: 'link', href, s: `#${n}`, cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400' },
     ];
     if (issue.created_by_username) meta.push({ t: 'text', s: issue.created_by_username });
     if (issue.bounty_count) {
       meta.push({
-        t: 'span', cls: 'text-amber-500', title: 'Kudos bounties pledged on this issue',
+        t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: 'Kudos bounties pledged on this issue',
         s: `★ ${parseInt(issue.bounty_count, 10) || 0}`,
       });
     }
@@ -9633,18 +9633,18 @@ const AppView = {
     // merged card it is a FACT about the change, not something to do.
     const meta = [{
       t: 'link', href: pr.pr_url || '#', s: `PR#${pr.pr_number || pr.id}`,
-      cls: 'font-mono text-emerald-400 hover:underline',
+      cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400',
     }];
     if (pr.username) meta.push({ t: 'text', s: pr.username });
     meta.push({ t: 'text', s: date });
     if (pr.revert_of_session_id) {
-      meta.push({ t: 'span', cls: 'text-amber-500', title: 'This PR is itself a revert', s: '↩ revert' });
+      meta.push({ t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: 'This PR is itself a revert', s: '↩ revert' });
     } else if (pr.revert_session_id) {
       const rs = pr.revert_status;
       const rpr = pr.revert_pr_number || pr.revert_session_id;
       meta.push({
         t: 'link', href: pr.revert_pr_url || '#',
-        cls: 'text-amber-500 hover:text-amber-400 font-medium',
+        cls: 'text-amber-800 hover:text-amber-400 font-medium dark:text-amber-300',
         s: rs === 'merged'
           ? `Undone by PR#${rpr}`
           : rs === 'merging'
@@ -9727,7 +9727,7 @@ const AppView = {
     const meta = [{ t: 'text', s: 'Issue close' }];
     if (issueN) {
       meta.push(base
-        ? { t: 'link', href: `${base}/issues/${issueN}`, s: `#${issueN}`, cls: 'font-mono text-emerald-400 hover:underline' }
+        ? { t: 'link', href: `${base}/issues/${issueN}`, s: `#${issueN}`, cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400' }
         : { t: 'span', cls: 'font-mono', s: `#${issueN}` });
     }
     meta.push({ t: 'text', s: date ? `${how} · ${date}` : how });
@@ -10760,7 +10760,7 @@ const AppView = {
     if (!name) return '';
     const label = (value === 'claude-code' || value === 'codex')
       ? `Built with ${name}` : 'Built with a coding agent';
-    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Usernode opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
+    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Usernode opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
   },
 
   // #381: advisory "may break the app" warning. Shown alongside (not
@@ -10915,7 +10915,7 @@ const AppView = {
       // (the whole point of the reliability work) — a still-only tile is
       // marked "no recording" beside its label.
       const marker = (clickToPlay && !v.webm)
-        ? ' <span class="text-zinc-400 dark:text-zinc-500" style="text-transform:none;letter-spacing:0">· no recording</span>'
+        ? ' <span class="text-zinc-500 dark:text-zinc-500" style="text-transform:none;letter-spacing:0">· no recording</span>'
         : '';
       const labelHtml = `<div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}${marker}</div>`;
       // Without the overlay there's nothing to click — render an inert
@@ -11019,7 +11019,7 @@ const AppView = {
     const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
     const column = (label, v) => {
       const has = v && (v.png || v.webm || v.gif);
-      const heading = `<div class="text-[0.7rem] font-semibold text-zinc-400">${label}</div>`;
+      const heading = `<div class="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">${label}</div>`;
       if (!has) {
         return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">No ${label.toLowerCase()} version to compare.</div></div>`;
       }
@@ -11028,13 +11028,13 @@ const AppView = {
         : `<img src="/visuals/${v.png || v.gif}" alt="${label}" style="${mediaStyle}">`;
       const orig = pick(v.webm, v.gif, v.png);
       const origLink = orig
-        ? `<a href="/visuals/${orig}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">Open original ↗</a>`
+        ? `<a href="/visuals/${orig}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">Open original ↗</a>`
         : '';
       return `<div style="${colStyle}">${heading}${media}${origLink}</div>`;
     };
 
     const pathLabel = ((path && path !== '/') || mobile)
-      ? `<div class="text-xs text-zinc-400" style="margin-bottom:10px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
+      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="margin-bottom:10px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
       : '';
     const bodyHtml = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
 
@@ -11336,11 +11336,11 @@ const AppView = {
   // a plain informational span (private work, claims-only, or headless-only
   // — those rows' own buttons navigate).
   _WORK_TONE_CLS: {
-    violet: 'bg-violet-500/10 text-violet-400',
-    sky: 'bg-sky-500/10 text-sky-500',
-    emerald: 'bg-emerald-500/10 text-emerald-500',
-    zinc: 'bg-zinc-500/10 text-zinc-500',
-    amber: 'bg-amber-500/10 text-amber-500',
+    violet: 'bg-violet-500/10 text-violet-700 dark:text-violet-400',
+    sky: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
+    emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+    zinc: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+    amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-300',
   },
   _WORK_TONE_HOVER: {
     violet: 'hover:bg-violet-500/20',
@@ -11400,7 +11400,7 @@ const AppView = {
   // proposal card passes 'Closes' to keep its established wording).
   issueChipSpecs(linkedIssues, opts) {
     const prefix = opts && opts.label ? `${opts.label} ` : '';
-    const cls = 'dev-badge font-mono bg-violet-500/10 text-violet-400 hover:bg-violet-500/20';
+    const cls = 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
     return AppView._sanitizeIssueNumbers(linkedIssues).map((n) => ({
       t: 'issueChip', key: `issue:${n}`, n, prefix, cls,
       title: `Open issue #${n}'s discussion`,
@@ -11432,8 +11432,8 @@ const AppView = {
     // Match the PR-number link tint at each site: emerald for merged,
     // violet for open.
     const cls = merged
-      ? 'dev-badge font-mono bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'
-      : 'dev-badge font-mono bg-violet-500/10 text-violet-400 hover:bg-violet-500/20';
+      ? 'dev-badge font-mono bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400'
+      : 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
     const out = [];
     for (const n of AppView._sanitizeIssueNumbers(pr.linked_issues)) {
       const href = AppView.issueUrlFromPrUrl(pr.pr_url, n);
@@ -12044,8 +12044,8 @@ const AppView = {
     const setLabel = (text, tone) => {
       stateEl.textContent = text;
       stateEl.className = 'text-xs ' + (tone === 'err'
-        ? 'font-medium text-red-500 dark:text-red-400'
-        : 'text-zinc-400 dark:text-zinc-500');
+        ? 'font-medium text-red-700 dark:text-red-400'
+        : 'text-zinc-500 dark:text-zinc-500');
     };
 
     try {

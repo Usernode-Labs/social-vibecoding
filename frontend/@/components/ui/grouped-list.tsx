@@ -43,7 +43,7 @@ import { ChevronRightIcon } from './icons';
 export function SectionHeader({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h2
-      className={cn('px-4 pb-2 pt-6 text-[0.9375rem] font-normal text-zinc-400 dark:text-zinc-500', className)}
+      className={cn('px-4 pb-2 pt-6 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500', className)}
       {...props}
     />
   );
@@ -131,7 +131,7 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
       <div className="min-w-0 flex-1">
         <div className="truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{title}</div>
         {subtitle ? (
-          <div className="truncate text-[0.9375rem] text-zinc-400 dark:text-zinc-500">{subtitle}</div>
+          <div className="truncate text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{subtitle}</div>
         ) : null}
       </div>
       {dot ? (

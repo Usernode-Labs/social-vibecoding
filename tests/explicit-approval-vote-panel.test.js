@@ -260,7 +260,7 @@ test('_proposalDetailsHtml: a flagged row below threshold renders the amber note
   assert.match(html, /won&#x27;t merge on a timer/);
   assert.match(html, /needs 3 real Yes votes and has 1 so far/);
   assert.match(html, /can still be voted down/);
-  assert.match(html, /text-amber-600/, 'amber styling, matching the locked note family');
+  assert.match(html, /text-amber-800/, 'amber styling, matching the locked note family');
 });
 
 test('_proposalDetailsHtml: a flagged row at threshold says it will merge once gates clear', () => {

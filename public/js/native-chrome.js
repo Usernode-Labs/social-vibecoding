@@ -1023,8 +1023,8 @@
           (ok ? 'bg-emerald-500' : 'bg-amber-500')));
         row.appendChild(el('span', 'text-zinc-800 dark:text-zinc-200', label));
         row.appendChild(el('span', 'ml-auto text-xs ' + (ok
-          ? 'text-emerald-600 dark:text-emerald-400'
-          : 'text-amber-600 dark:text-amber-400'),
+          ? 'text-emerald-700 dark:text-emerald-400'
+          : 'text-amber-800 dark:text-amber-400'),
         ok ? 'Granted' : 'Not granted'));
         return row;
       };

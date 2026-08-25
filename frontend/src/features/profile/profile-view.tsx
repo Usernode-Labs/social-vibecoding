@@ -131,7 +131,7 @@ function PublicControls({ controls, status, publishing, previewOpen }: {
         {controls.visibility}
       </div>
       {controls.moderationDisabled ? (
-        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+        <p className="mt-1 text-xs text-red-700 dark:text-red-400">
           You can keep editing or unpublish, but the public page remains unavailable.
         </p>
       ) : null}
@@ -196,7 +196,7 @@ function Completed({ completed }: { completed: any }): ReactNode {
           {completed.title}
         </div>
         {completed.count ? (
-          <div className="shrink-0 text-xs text-zinc-400">{completed.count}</div>
+          <div className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">{completed.count}</div>
         ) : null}
       </div>
       {completed.rows.length === 0 ? (
@@ -239,7 +239,7 @@ function Completed({ completed }: { completed: any }): ReactNode {
               <span
                 className={
                   'shrink-0 px-2 py-0.5 rounded-full text-[0.65rem] font-semibold '
-                  + 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                  + 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
                 }
               >
                 Completed
@@ -248,7 +248,7 @@ function Completed({ completed }: { completed: any }): ReactNode {
           ))}
           <div className="mt-1 mb-2">
             <a
-              className="text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline"
+              className="text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
               href="#leaderboard/challenges"
             >
               See all challenges
@@ -316,7 +316,7 @@ export function ProfileRoot(): ReactNode {
 
   if (view.kind === 'empty') return null;
   if (view.kind === 'loading') {
-    return <div className="text-sm text-zinc-400 py-8 text-center">Loading profile…</div>;
+    return <div className="text-sm text-zinc-500 py-8 text-center dark:text-zinc-400">Loading profile…</div>;
   }
   // signedOut is checked BEFORE error — see buildProfileView. A lapsed session
   // is a normal state, and the connection-error copy blames the network for it.
@@ -340,14 +340,14 @@ export function ProfileRoot(): ReactNode {
   }
   if (view.kind === 'error') {
     return (
-      <div className="text-sm text-zinc-400 py-8 text-center">
+      <div className="text-sm text-zinc-500 py-8 text-center dark:text-zinc-400">
         Could not load your profile — check your connection and try again.
       </div>
     );
   }
   if (view.kind === 'publicNotFound') {
     return (
-      <div className="text-sm text-zinc-400 py-12 text-center">This profile is unavailable.</div>
+      <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400">This profile is unavailable.</div>
     );
   }
   if (view.kind === 'public') {
@@ -404,7 +404,7 @@ export function ProfileRoot(): ReactNode {
                 className="relative flex items-center gap-3 px-3 py-2 text-sm [&:not(:first-child)]:before:absolute [&:not(:first-child)]:before:top-0 [&:not(:first-child)]:before:left-3 [&:not(:first-child)]:before:right-0 [&:not(:first-child)]:before:h-px [&:not(:first-child)]:before:bg-zinc-200 dark:[&:not(:first-child)]:before:bg-zinc-800 [&:not(:first-child)]:before:content-['']"
               >
                 <span className="flex-1 min-w-0 truncate">{row.label}</span>
-                <span className="shrink-0 font-semibold text-violet-600 dark:text-violet-400">
+                <span className="shrink-0 font-semibold text-violet-700 dark:text-violet-400">
                   {`${Number(row.points || 0).toLocaleString()} pts`}
                 </span>
               </div>

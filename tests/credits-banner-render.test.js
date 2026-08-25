@@ -143,7 +143,7 @@ test('exhausted meter keeps the $spent/$limit pair, styled red', () => {
   DevChat.renderBudget();
   assert.match(meterHtml(), /\$25\.00/, 'the spent figure stays visible');
   assert.match(meterHtml(), /\/\$25\.00/, 'the limit figure stays visible');
-  assert.match(meterHtml(), /text-red-500/, 'exhausted pair is unmistakably red');
+  assert.match(meterHtml(), /text-red-700/, 'exhausted pair is unmistakably red');
   assert.match(meterHtml(), /free daily AI credits are used up/, 'tooltip still explains the state');
   assert.doesNotMatch(meterHtml(), /free credits used up</, 'no replacement label — the numbers remain');
 });

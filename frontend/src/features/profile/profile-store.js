@@ -193,9 +193,9 @@ export function publicControlsView(state) {
       ? 'Hidden by moderation'
       : owner.published ? 'Published' : 'Private',
     visibilityClass: owner.moderationDisabled
-      ? 'text-red-600 dark:text-red-400'
+      ? 'text-red-700 dark:text-red-400'
       : owner.published
-        ? 'text-emerald-600 dark:text-emerald-400'
+        ? 'text-emerald-700 dark:text-emerald-400'
         : 'text-zinc-500 dark:text-zinc-400',
     openHref: profile.url || `#profile/${encodeURIComponent(profile.username || '')}`,
     publishLabel: owner.published ? 'Unpublish' : 'Publish profile',

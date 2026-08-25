@@ -178,17 +178,17 @@ function Kebab({ user, open, onToggle, onReload }: {
 
   return (
     <div className="relative shrink-0 admin-user-actions">
-      <button type="button" className="admin-kebab-btn rounded px-2 py-1 text-lg leading-none text-zinc-400 hover:text-zinc-700 dark:text-zinc-300 dark:hover:text-zinc-200"
+      <button type="button" className="admin-kebab-btn rounded px-2 py-1 text-lg leading-none text-zinc-500 hover:text-zinc-700 dark:text-zinc-300 dark:hover:text-zinc-200"
         aria-label="User actions" aria-haspopup="true" aria-expanded={open}
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>⋯</button>
       <div className={`admin-kebab-menu${open ? '' : ' hidden'} absolute right-0 mt-1 z-20 min-w-[11rem] rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 py-1 shadow-lg`}>
         <button type="button" data-reset-id={user.id} data-username={user.username} onClick={resetPassword}
-          className="admin-reset-pw-btn block w-full text-left px-3 py-2 text-sm text-violet-500 hover:bg-zinc-100 dark:hover:bg-zinc-700">
+          className="admin-reset-pw-btn block w-full text-left px-3 py-2 text-sm text-violet-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-violet-400">
           Reset password</button>
         {/* Delete stays hidden for admins. */}
         {!user.is_admin ? (
           <button type="button" data-delete-id={user.id} onClick={remove}
-            className="admin-delete-user-btn block w-full text-left px-3 py-2 text-sm text-red-500 hover:bg-zinc-100 dark:hover:bg-zinc-700">
+            className="admin-delete-user-btn block w-full text-left px-3 py-2 text-sm text-red-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-red-400">
             Delete</button>
         ) : null}
       </div>

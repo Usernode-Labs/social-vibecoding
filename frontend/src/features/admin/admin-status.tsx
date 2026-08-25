@@ -230,7 +230,7 @@ function Capacity({ data }: { data: StatusData }) {
         <div className="flex justify-between"><span className="text-zinc-500 dark:text-zinc-400">archived</span><span className="mono">{bs.archived ?? 0}</span></div>
         <div className="flex justify-between">
           <span className="text-zinc-500 dark:text-zinc-400">stale → archive</span>
-          <span className={c.staleNotified > 0 ? 'mono text-yellow-600 dark:text-yellow-400' : 'mono'}>{c.staleNotified}</span>
+          <span className={c.staleNotified > 0 ? 'mono text-yellow-800 dark:text-yellow-400' : 'mono'}>{c.staleNotified}</span>
         </div>
         <div className="flex justify-between"><span className="text-zinc-500 dark:text-zinc-400">resumable</span><span className="mono">{c.archivedResumable}</span></div>
       </div>
@@ -296,7 +296,7 @@ function Summary({ s, node, runtimeKind }: { s: StatusData; node: any; runtimeKi
         <>
           {inFlight}
           {warmIdle > 0 ? <> <span className="text-zinc-500 dark:text-zinc-400 text-xs">{`+${warmIdle} warm`}</span></> : null}
-          {s.workersOrphaned > 0 ? <> <span className="text-red-600 dark:text-red-400 text-xs">{`+${s.workersOrphaned} orphan`}</span></> : null}
+          {s.workersOrphaned > 0 ? <> <span className="text-red-700 dark:text-red-400 text-xs">{`+${s.workersOrphaned} orphan`}</span></> : null}
         </>
       )}
     </SummaryCard>,
@@ -385,7 +385,7 @@ function Explorer({ ex }: { ex: any }) {
           </span>
         </div>
       ) : null}
-      {ex.error ? <div className="mt-2 text-xs text-red-600 dark:text-red-400 mono break-all">{ex.error}</div> : null}
+      {ex.error ? <div className="mt-2 text-xs text-red-700 dark:text-red-400 mono break-all">{ex.error}</div> : null}
     </>
   );
 }
@@ -426,7 +426,7 @@ function Node({ node }: { node: any }) {
           {'tip '}<span className="mono text-zinc-700 dark:text-zinc-300">{ourTip != null ? ourTip.toLocaleString() : '—'}</span>
           {peerTip != null ? <>{' / '}<span className="mono text-zinc-600 dark:text-zinc-400">{peerTip.toLocaleString()}</span>{' on network'}</> : null}
           {behind != null && behind > 0
-            ? <span className="text-yellow-600 dark:text-yellow-400 ml-1">{`(${behind.toLocaleString()} blocks behind)`}</span>
+            ? <span className="text-yellow-800 dark:text-yellow-400 ml-1">{`(${behind.toLocaleString()} blocks behind)`}</span>
             : null}
         </div>
       ) : null}
@@ -437,7 +437,7 @@ function Node({ node }: { node: any }) {
           </div>
         </div>
       ) : null}
-      {node.error ? <div className="mt-2 text-xs text-red-600 dark:text-red-400 mono break-all">{node.error}</div> : null}
+      {node.error ? <div className="mt-2 text-xs text-red-700 dark:text-red-400 mono break-all">{node.error}</div> : null}
       {/* PARTIAL_LEDGER_RECENT_TX_SOURCE_BUG warning. False here means the
           sidecar booted without HAS_FULL_UTXO_DB, which causes the recent-tx
           stream to silently drop tx from non-tracked senders. */}
@@ -470,7 +470,7 @@ function SessionRow({ s }: { s: any }) {
         <span className="mono text-zinc-500 dark:text-zinc-400 text-xs">{s.branchName || '—'}</span>
         <span className="text-xs">
           {s.prUrl
-            ? <a href={s.prUrl} target="_blank" rel="noopener" className="text-violet-600 dark:text-violet-400 hover:underline">{`PR #${s.prNumber}`}</a>
+            ? <a href={s.prUrl} target="_blank" rel="noopener" className="text-violet-700 dark:text-violet-400 hover:underline">{`PR #${s.prNumber}`}</a>
             : <span className="text-zinc-500 dark:text-zinc-400">no PR</span>}
         </span>
         {s.prTitle ? <span className="text-zinc-700 dark:text-zinc-300 ml-2 truncate">{s.prTitle}</span> : null}
@@ -479,7 +479,7 @@ function SessionRow({ s }: { s: any }) {
       <div className="mt-0.5 text-xs flex items-center gap-2 flex-wrap">
         {s.stagingUrl ? (
           <a href={stagingResolved} target="_blank" rel="noopener"
-            className="text-violet-600 dark:text-violet-400 hover:underline mono text-xs break-all">{stagingResolved}</a>
+            className="text-violet-700 dark:text-violet-400 hover:underline mono text-xs break-all">{stagingResolved}</a>
         ) : null}
         {s.staging?.stats ? (
           <span className="mono text-zinc-500 dark:text-zinc-400 ml-2">{`${s.staging.stats.mem} · ${s.staging.stats.cpu}`}</span>
@@ -491,7 +491,7 @@ function SessionRow({ s }: { s: any }) {
             <StatePill state={s.worker.state || 'unknown'} label={`worker: ${s.worker.state || 'unknown'}`} />
             <span className="text-zinc-600 dark:text-zinc-400">
               {fmtDurationSeconds(s.worker.uptimeSeconds)}
-              {s.worker.orphan ? <span className="text-red-600 dark:text-red-400 ml-1">(orphan)</span> : null}
+              {s.worker.orphan ? <span className="text-red-700 dark:text-red-400 ml-1">(orphan)</span> : null}
             </span>
             {s.worker.model ? <span className="mono text-zinc-500 dark:text-zinc-400">{s.worker.model}</span> : null}
           </div>
@@ -585,7 +585,7 @@ function Workers({ workers }: { workers: any[] }) {
               {idleLabel ? <span className="text-xs text-zinc-500 dark:text-zinc-400">{idleLabel}</span> : null}
               <span className="text-xs text-zinc-500 dark:text-zinc-400 ml-auto">
                 {fmtDurationSeconds(w.uptimeSeconds)}
-                {w.orphan ? <span className="text-red-600 dark:text-red-400 ml-1">orphan</span> : null}
+                {w.orphan ? <span className="text-red-700 dark:text-red-400 ml-1">orphan</span> : null}
               </span>
             </div>
             {w.lastProgress
@@ -642,12 +642,12 @@ function Llm({ data }: { data: StatusData }) {
             <div className="flex items-center gap-2 min-w-0">
               <span className="truncate">{`@${u.username}`}</span>
               {stagingCt >= limits.stagingPerUser
-                ? <span className="text-red-600 dark:text-red-400 text-[10px]">{`${stagingCt}/${limits.stagingPerUser} staging`}</span>
+                ? <span className="text-red-700 dark:text-red-400 text-[10px]">{`${stagingCt}/${limits.stagingPerUser} staging`}</span>
                 : stagingCt > 0
                   ? <span className="text-zinc-500 dark:text-zinc-400 text-[10px]">{`${stagingCt} staging`}</span>
                   : null}
             </div>
-            <span className={`mono ${atCap ? 'text-red-600 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-400'}`}>
+            <span className={`mono ${atCap ? 'text-red-700 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-400'}`}>
               {`${fmtDollars(u.costCents)} (${userPct}%)`}
             </span>
           </div>
@@ -675,8 +675,8 @@ function Drift({ drift }: { drift: any[] }) {
 }
 
 const EVENT_LEVEL: Record<string, string> = {
-  ERROR: 'text-red-600 dark:text-red-400',
-  WARN: 'text-yellow-600 dark:text-yellow-400',
+  ERROR: 'text-red-700 dark:text-red-400',
+  WARN: 'text-yellow-800 dark:text-yellow-400',
   INFO: 'text-zinc-600 dark:text-zinc-400',
   DEBUG: 'text-zinc-600',
 };
@@ -785,7 +785,7 @@ function StatusSection() {
             <span className="font-semibold text-violet-800 dark:text-violet-200">Deploy in progress</span>
             <span className="text-violet-700 dark:text-violet-300/80"> — your changes may take a minute to go live.</span>
           </div>
-          <span id="admin-status-deploy-meta" className="ml-auto text-xs mono text-violet-600 dark:text-violet-400">
+          <span id="admin-status-deploy-meta" className="ml-auto text-xs mono text-violet-700 dark:text-violet-400">
             {[sha, elapsed && `${elapsed} ago`].filter(Boolean).join(' · ')}
           </span>
         </div>
@@ -804,7 +804,7 @@ function StatusSection() {
         <div className="flex items-baseline justify-between mb-2">
           <h3 className={SECTION_H3}>Usernode node</h3>
           <button type="button" data-admin-section="node"
-            className="text-xs text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300"
+            className="text-xs text-violet-700 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300"
             onClick={() => {
               const c = (window as any).AdminConsole;
               if (c?.setSection) c.setSection('node');

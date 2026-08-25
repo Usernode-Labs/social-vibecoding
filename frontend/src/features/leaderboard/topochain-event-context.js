@@ -303,12 +303,12 @@ const TopochainEventContext = {
     // closed while the season is still the dataset on screen.
     const isSeason = TopochainEventContext.isSeasonSelected();
     const statusClass = isSeason
-      ? 'bg-violet-500/20 text-violet-600 dark:text-violet-300'
+      ? 'bg-violet-500/20 text-violet-700 dark:text-violet-300'
       : (ev.is_current
-        ? 'bg-green-500/20 text-green-600 dark:text-green-300'
+        ? 'bg-green-500/20 text-green-800 dark:text-green-300'
         : (ev.is_active
-          ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300'
-          : 'bg-zinc-500/20 text-zinc-500'));
+          ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300'
+          : 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400'));
     const statusLabel = isSeason ? 'season'
       : (ev.is_current ? 'active now' : (ev.is_active ? 'active' : 'past'));
     const fmt = (iso) => (iso

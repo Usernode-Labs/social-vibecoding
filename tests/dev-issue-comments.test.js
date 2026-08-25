@@ -48,12 +48,12 @@ test('a comment carries its author, its bot tag and its date', () => {
       comment({ key: '2', author: 'github-actions[bot]', bot: true, date: '' }),
     ],
   });
-  assert.match(html, /<div class="text-\[0\.9375rem\] text-zinc-400 dark:text-zinc-500 px-1">Discussion<\/div>/);
+  assert.match(html, /<div class="text-\[0\.9375rem\] text-zinc-500 dark:text-zinc-500 px-1">Discussion<\/div>/);
   assert.equal((html.match(/class="dev-issue-comment/g) || []).length, 2);
   assert.match(html, /<span class="text-xs font-medium text-zinc-700 dark:text-zinc-200">evan<\/span>/);
   // The bot tag is a quiet word beside the name, not a different row.
   assert.equal((html.match(/>bot</g) || []).length, 1);
-  assert.match(html, /github-actions\[bot\]<\/span><span class="text-\[0\.9375rem\] text-sky-600 dark:text-sky-400">bot<\/span>/);
+  assert.match(html, /github-actions\[bot\]<\/span><span class="text-\[0\.9375rem\] text-sky-700 dark:text-sky-400">bot<\/span>/);
   // A row with no timestamp omits the date rather than drawing an empty span.
   assert.equal((html.match(/text-\[10px\]/g) || []).length, 1);
   assert.match(html, /2026-03-04/);

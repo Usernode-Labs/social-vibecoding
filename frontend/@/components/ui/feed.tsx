@@ -95,11 +95,11 @@ export function ActivityRow({
       {avatarNode}
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-2">
-          <div className="min-w-0 flex-1 text-[1.0625rem] leading-snug text-zinc-400 dark:text-zinc-500 [&>strong]:font-bold [&>strong]:text-zinc-900 dark:[&>strong]:text-zinc-100">
+          <div className="min-w-0 flex-1 text-[1.0625rem] leading-snug text-zinc-500 dark:text-zinc-500 [&>strong]:font-bold [&>strong]:text-zinc-900 dark:[&>strong]:text-zinc-100">
             {summary}
           </div>
           {timestamp ? (
-            <span className="shrink-0 text-[0.9375rem] text-zinc-400 dark:text-zinc-500">{timestamp}</span>
+            <span className="shrink-0 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>
           ) : null}
         </div>
         {children ? <div className="mt-2 space-y-2">{children}</div> : null}
@@ -125,7 +125,7 @@ export function QuoteCard({
         <div className="text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{title}</div>
       ) : null}
       {body ? (
-        <div className="mt-0.5 line-clamp-2 text-[1.0625rem] text-zinc-400 dark:text-zinc-500">{body}</div>
+        <div className="mt-0.5 line-clamp-2 text-[1.0625rem] text-zinc-500 dark:text-zinc-500">{body}</div>
       ) : null}
       {children ? <div className="mt-3 flex flex-wrap items-center gap-2">{children}</div> : null}
     </div>

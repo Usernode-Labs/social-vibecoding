@@ -65,13 +65,13 @@ const DB_EXPORT_REASONS: Record<string, string> = {
 };
 
 const DB_EXPORT_STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  completed: { label: 'Completed', cls: 'bg-green-500/20 text-green-600 dark:text-green-400' },
-  streaming: { label: 'Streaming', cls: 'bg-violet-500/20 text-violet-600 dark:text-violet-400' },
-  requested: { label: 'Requested', cls: 'bg-violet-500/20 text-violet-600 dark:text-violet-400' },
-  failed: { label: 'Failed', cls: 'bg-red-500/20 text-red-600 dark:text-red-400' },
-  cancelled: { label: 'Cancelled', cls: 'bg-amber-500/20 text-amber-700 dark:text-amber-400' },
-  interrupted: { label: 'Interrupted', cls: 'bg-amber-500/20 text-amber-700 dark:text-amber-400' },
-  denied: { label: 'Denied', cls: 'bg-red-500/20 text-red-600 dark:text-red-400' },
+  completed: { label: 'Completed', cls: 'bg-green-500/20 text-green-800 dark:text-green-400' },
+  streaming: { label: 'Streaming', cls: 'bg-violet-500/20 text-violet-700 dark:text-violet-400' },
+  requested: { label: 'Requested', cls: 'bg-violet-500/20 text-violet-700 dark:text-violet-400' },
+  failed: { label: 'Failed', cls: 'bg-red-500/20 text-red-700 dark:text-red-400' },
+  cancelled: { label: 'Cancelled', cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-400' },
+  interrupted: { label: 'Interrupted', cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-400' },
+  denied: { label: 'Denied', cls: 'bg-red-500/20 text-red-700 dark:text-red-400' },
 };
 
 function fmtBytes(n: any): string {
@@ -125,7 +125,7 @@ function HistoryRow({ r }: { r: Row }) {
               </span>
             ) : null}
           </div>
-          {r.error ? <div className="text-xs text-red-600 dark:text-red-400 mt-1 break-words">{r.error}</div> : null}
+          {r.error ? <div className="text-xs text-red-700 dark:text-red-400 mt-1 break-words">{r.error}</div> : null}
         </div>
       </div>
     </div>
@@ -289,7 +289,7 @@ function DbExportSection() {
           className={`${confirming ? '' : 'hidden '}mt-4 rounded-lg border border-red-300 dark:border-red-900 bg-white dark:bg-zinc-950 p-4`}>
           <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Confirm the export</p>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            {'Type '}<code className="font-mono text-red-600 dark:text-red-400">EXPORT</code>
+            {'Type '}<code className="font-mono text-red-700 dark:text-red-400">EXPORT</code>
             {' and re-enter your own account password.'}
           </p>
           <div className="mt-3 space-y-2">
@@ -301,7 +301,7 @@ function DbExportSection() {
               value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
           <p id="admin-db-export-error"
-            className={`${error ? '' : 'hidden '}text-xs text-red-600 dark:text-red-400 mt-2`}>{error}</p>
+            className={`${error ? '' : 'hidden '}text-xs text-red-700 dark:text-red-400 mt-2`}>{error}</p>
           <div className="flex items-center gap-2 mt-3">
             <button id="admin-db-export-go" type="button" className={RED_BTN} disabled={busy} onClick={start}>
               {busy ? 'Exporting…' : 'Download the .sql.gz'}

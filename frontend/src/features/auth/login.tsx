@@ -81,7 +81,7 @@ type RecoveryPath = 'wallet' | 'email';
 // already covers every one of them.
 const P = 'text-sm text-zinc-500 dark:text-zinc-400';
 const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
-const QUIET_BUTTON = 'w-full text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300';
+const QUIET_BUTTON = 'w-full text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300 dark:text-zinc-400';
 
 /**
  * What the retired `BUTTON` class constant is now: the same string, spelled as
@@ -111,7 +111,7 @@ const FIELD = { box: 'auth', hint: 'dim' } as const;
  */
 const AUTHFIELD = { box: 'auth', hint: 'muted', ring: 'seamless' } as const;
 const ERROR = 'text-red-400 text-sm';
-const STATUS = 'text-sm text-zinc-400';
+const STATUS = 'text-sm text-zinc-500 dark:text-zinc-400';
 
 const EXPIRED_MSG =
   'This reset link is invalid or has expired. Go back to login and request a new one from "Forgot password?".';
@@ -767,7 +767,7 @@ export function LoginScreen() {
               are the ones that can't work.
           */}
           <div className="offline-only mb-8 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-            <h2 className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
               You're offline
             </h2>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
@@ -778,14 +778,14 @@ export function LoginScreen() {
             <button
               type="button"
               data-offline-retry=""
-              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
+              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
             >
               Try again
             </button>
           </div>
           {/* Wallet auth status (shown when native bridge detected) */}
           <div id="wallet-auth" className={hiddenFirst(!(base && walletUi), 'space-y-4')}>
-            <div id="wallet-status" className="text-center text-sm text-zinc-400">
+            <div id="wallet-status" className="text-center text-sm text-zinc-500 dark:text-zinc-400">
               {walletStatus}
             </div>
             <div id="wallet-error" className={hiddenLast(!walletError, ERROR)}>
@@ -805,7 +805,7 @@ export function LoginScreen() {
             </div>
             <div
               id="wallet-divider"
-              className={hiddenFirst(!walletControls, 'flex items-center gap-3 text-xs text-zinc-500')}
+              className={hiddenFirst(!walletControls, 'flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400')}
             >
               <div className="flex-1 h-px bg-zinc-300 dark:bg-zinc-800">
               </div>
@@ -886,7 +886,7 @@ export function LoginScreen() {
             className={hiddenLast(!base, 'text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6')}
           >
             {'Have an activation code? '}
-            <a href="#register" className="text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">
+            <a href="#register" className="text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">
               Register
             </a>
           </p>
@@ -1159,7 +1159,7 @@ export function LoginScreen() {
                   temporary password
                 </span>
                 {". Once you're back in, set a password you choose from "}
-                <a href="#settings/password" className="text-violet-500 hover:text-violet-400 underline">
+                <a href="#settings/password" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
                   Settings → Change password
                 </a>
                 .

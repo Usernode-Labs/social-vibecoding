@@ -61,7 +61,7 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
   if (b.kind === 'inflight') {
     return (
       <div id="dc-sync-banner" className={SHELL.amber}>
-        <SpinnerArcIcon className="w-4 h-4 animate-spin text-amber-600 dark:text-amber-400 shrink-0" />
+        <SpinnerArcIcon className="w-4 h-4 animate-spin text-amber-800 dark:text-amber-400 shrink-0" />
         <span className="text-amber-800 dark:text-amber-200 flex-1">{b.message}</span>
         <button id="dc-sync-btn" type="button" disabled className={SYNC_BTN}>Syncing…</button>
       </div>
@@ -70,12 +70,12 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
   if (b.kind === 'ok') {
     return (
       <div id="dc-sync-banner" className={SHELL.emerald}>
-        <CheckLongIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+        <CheckLongIcon className="w-4 h-4 text-emerald-700 dark:text-emerald-400 shrink-0" />
         <span className="text-emerald-800 dark:text-emerald-200 flex-1">{b.message}</span>
       </div>
     );
   }
-  const warn = <WarningTriangleIcon className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />;
+  const warn = <WarningTriangleIcon className="w-4 h-4 text-amber-800 dark:text-amber-400 shrink-0" />;
   if (b.kind === 'failed') {
     return (
       <div id="dc-sync-banner" className={SHELL.amber}>
@@ -108,7 +108,7 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
 function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
   return (
     <div id="dc-new-change-banner" className={SHELL.violet}>
-      <PlusThinIcon className="w-4 h-4 text-violet-600 dark:text-violet-400 shrink-0" />
+      <PlusThinIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
       <span className="text-violet-800 dark:text-violet-200 flex-1">
         {`This change has been ${b.stateLabel}. New work in this chat is added to the same PR — start a new change to keep PRs focused.`}
       </span>
@@ -130,8 +130,8 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
 }
 
 const ICON_CLASS = {
-  amber: 'w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0',
-  red: 'w-4 h-4 text-red-500 dark:text-red-400 shrink-0',
+  amber: 'w-4 h-4 text-amber-800 dark:text-amber-400 shrink-0',
+  red: 'w-4 h-4 text-red-700 dark:text-red-400 shrink-0',
 } as const;
 
 const TEXT_CLASS = {

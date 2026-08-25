@@ -46,7 +46,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
         {`Generate proposal for issue #${view.issueNumber}?`}
       </h2>
       <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">{view.intro}</p>
-      <p className="text-xs text-amber-500 mb-2">
+      <p className="text-xs text-amber-800 mb-2 dark:text-amber-300">
         {'Experimental — not recommended for normal users at the moment. Costs are billed '
           + "to you even if the result isn't useful."}
       </p>

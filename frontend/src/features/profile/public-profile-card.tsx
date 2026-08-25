@@ -36,7 +36,7 @@ function PublicAvatar({ profile }: { profile: any }): ReactNode {
     <div
       className={
         'w-20 h-20 relative rounded-full overflow-hidden bg-violet-100 '
-        + 'dark:bg-violet-950 flex items-center justify-center text-violet-700 '
+        + 'dark:bg-violet-950 flex items-center justify-center text-violet-700  dark:text-violet-400'
         + 'dark:text-violet-300 text-2xl font-bold shrink-0'
       }
     >

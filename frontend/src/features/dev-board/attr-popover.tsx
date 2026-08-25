@@ -62,7 +62,7 @@ export function AttrOptionRow({ option, field }: { option: AttrOptionView; field
       <span className="attr-opt-right">
         {option.count ? <span className="attr-opt-count">{option.count}</span> : null}
         {option.mine ? (
-          <CheckIcon className="w-3.5 h-3.5 text-violet-500 shrink-0" strokeWidth="3" />
+          <CheckIcon className="w-3.5 h-3.5 text-violet-700 shrink-0 dark:text-violet-400" strokeWidth="3" />
         ) : null}
       </span>
     </button>
@@ -121,7 +121,7 @@ export function AttrPopoverView({
     return <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">Loading…</div>;
   }
   if (phase === 'error') {
-    return <div className="px-3 py-2 text-xs text-red-500">Couldn&#39;t load options.</div>;
+    return <div className="px-3 py-2 text-xs text-red-700 dark:text-red-400">Couldn&#39;t load options.</div>;
   }
   return (
     <>
@@ -142,7 +142,7 @@ export function AttrPopoverView({
         </Fragment>
       ))}
       {emptyNote ? (
-        <div className="px-3 py-1.5 text-xs text-zinc-400 dark:text-zinc-500">{emptyNote}</div>
+        <div className="px-3 py-1.5 text-xs text-zinc-500 dark:text-zinc-500">{emptyNote}</div>
       ) : null}
       {add ? <AddBox add={add} suggestions={suggestions} /> : null}
     </>

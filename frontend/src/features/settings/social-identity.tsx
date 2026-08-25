@@ -87,8 +87,8 @@ const TIER_TONE = {
 const CONNECT_SURFACE = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white';
 
 const STATE_TONE = {
-  amber: 'text-amber-600 dark:text-amber-400',
-  emerald: 'text-emerald-600 dark:text-emerald-400',
+  amber: 'text-amber-800 dark:text-amber-400',
+  emerald: 'text-emerald-700 dark:text-emerald-400',
   muted: 'text-zinc-500 dark:text-zinc-400',
 };
 
@@ -126,7 +126,7 @@ function AuditNote({ provider }: { provider: 'github' | 'x' }) {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-violet-600 dark:text-violet-400 hover:underline"
+        className="text-violet-700 dark:text-violet-400 hover:underline"
       >
         {label}
       </a>
@@ -196,26 +196,26 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
               }
               if (answer.clientAuth === 'ok') {
                 setVerdict({
-                  tone: 'text-emerald-600 dark:text-emerald-400',
+                  tone: 'text-emerald-700 dark:text-emerald-400',
                   text: `${view.name} accepted the platform’s client credentials. `
                     + `If connecting still fails on ${view.name}’s own page, the callback address above `
                     + `is not registered on the ${view.name} app.`,
                 });
               } else if (answer.clientAuth === 'rejected') {
                 setVerdict({
-                  tone: 'text-red-600 dark:text-red-400',
+                  tone: 'text-red-700 dark:text-red-400',
                   text: `${view.name} rejected the platform’s client ID or secret — `
                     + 'the configured credential pair is wrong.',
                 });
               } else {
                 setVerdict({
-                  tone: 'text-amber-600 dark:text-amber-400',
+                  tone: 'text-amber-800 dark:text-amber-400',
                   text: `Couldn’t reach ${view.name} to verify the credentials. Try again shortly.`,
                 });
               }
             } catch {
               setVerdict({
-                tone: 'text-red-600 dark:text-red-400',
+                tone: 'text-red-700 dark:text-red-400',
                 text: 'The configuration check failed to run. Try again shortly.',
               });
             } finally {
@@ -272,7 +272,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
             <button
               type="button"
               disabled={row.unlink.disabled}
-              className="rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50 transition-colors"
+              className="rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50 transition-colors"
               onClick={(e) => {
                 if (row.unlink?.disabled) return;
                 controller()?._unlinkGithub?.(e.currentTarget, row.provider);
@@ -292,7 +292,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
       {row.strandedNote ? (
         <p
           id={`${row.provider}-link-pending-note`}
-          className="text-xs text-amber-600 dark:text-amber-400 mt-2"
+          className="text-xs text-amber-800 dark:text-amber-400 mt-2"
         >
           {row.strandedNote}
         </p>

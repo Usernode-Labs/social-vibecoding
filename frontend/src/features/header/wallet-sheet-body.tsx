@@ -163,7 +163,7 @@ function SendForm({ onSent }: { onSent: () => void }): ReactNode {
         value={amount} onChange={(e) => setAmount(e.target.value)}
       />
       <Button size="flushBold" disabled={sending} onClick={submit}>Send</Button>
-      <div className="text-xs text-zinc-400">
+      <div className="text-xs text-zinc-500 dark:text-zinc-400">
         You will confirm this transaction on the next screen.
       </div>
     </div>
@@ -182,7 +182,7 @@ export function WalletSheetBody(): ReactNode {
         <span className="font-mono">{s.shortAddress}</span>
         {s.address ? (
           <button
-            className="text-violet-500 hover:text-violet-400 text-xs font-medium"
+            className="text-violet-700 hover:text-violet-400 text-xs font-medium dark:text-violet-400"
             onClick={() => controller()?.copyAddress?.()}
           >Copy</button>
         ) : null}
@@ -200,7 +200,7 @@ export function WalletSheetBody(): ReactNode {
         </div>
       ) : null}
       {s.stateError ? (
-        <div className="mb-4 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
+        <div className="mb-4 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-400">
           {s.stateError}
         </div>
       ) : null}
@@ -214,14 +214,14 @@ export function WalletSheetBody(): ReactNode {
       </div>
       <div>
         {s.receipts == null
-          ? <div className="text-sm text-zinc-400 py-2">Loading…</div>
+          ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">Loading…</div>
           : s.receipts.length === 0
-            ? <div className="text-sm text-zinc-400 py-2">No transactions sent from this session yet.</div>
+            ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">No transactions sent from this session yet.</div>
             : s.receipts.slice(0, 20).map((r) => (
               <div key={r.key} className={ROW_LINE}>
                 <div className="min-w-0">
                   <div className="font-medium truncate">{r.line1}</div>
-                  <div className="text-xs text-zinc-400">{r.line2}</div>
+                  <div className="text-xs text-zinc-500 dark:text-zinc-400">{r.line2}</div>
                 </div>
               </div>
             ))}

@@ -28,12 +28,12 @@ export const STATUS_STYLES: Record<NodeStatusKind, {
   synced: {
     dot: 'bg-emerald-500',
     label: 'Synced',
-    ink: 'text-emerald-600 dark:text-emerald-400',
+    ink: 'text-emerald-700 dark:text-emerald-400',
   },
   syncing: {
     dot: 'bg-amber-500',
     label: 'Syncing',
-    ink: 'text-amber-600 dark:text-amber-400',
+    ink: 'text-amber-800 dark:text-amber-400',
   },
   connecting: {
     dot: 'bg-zinc-400 animate-pulse',
@@ -43,7 +43,7 @@ export const STATUS_STYLES: Record<NodeStatusKind, {
   offline: {
     dot: 'bg-red-500',
     label: 'Offline',
-    ink: 'text-red-600 dark:text-red-400',
+    ink: 'text-red-700 dark:text-red-400',
   },
   unavailable: {
     dot: 'bg-zinc-400',
@@ -89,7 +89,7 @@ export function NodePillRow(): ReactNode {
           shipped this span blank, and the prerender has to agree. */}
       <span
         id="drawer-node-status"
-        className={s.visible ? `ml-auto text-xs font-medium ${style.ink}` : 'ml-auto text-xs font-medium text-zinc-400'}
+        className={s.visible ? `ml-auto text-xs font-medium ${style.ink}` : 'ml-auto text-xs font-medium text-zinc-500 dark:text-zinc-400'}
       >{s.visible ? style.label : ''}</span>
     </button>
   );

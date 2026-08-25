@@ -124,7 +124,7 @@ export function AgentFilesList({ kind, empty }: { kind: string; empty: string })
   }
   if (state.phase === 'error') {
     return kind === 'instruction'
-      ? <p className="text-xs text-red-500">Failed to load your agent files.</p>
+      ? <p className="text-xs text-red-700 dark:text-red-400">Failed to load your agent files.</p>
       : null;
   }
   const files = state.files.filter((f) => f.kind === kind);

@@ -442,7 +442,7 @@ const Kudos = {
       const tip = `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
       const tone = remaining === 0
         ? 'text-zinc-500 dark:text-zinc-400'
-        : 'text-violet-600 dark:text-violet-400';
+        : 'text-violet-700 dark:text-violet-400';
       // Plain inline text, NOT a pill: the row already labels itself
       // "Kudos", so the badge chrome was framing a number that needed no
       // frame — and it read as a tappable chip competing with the nav

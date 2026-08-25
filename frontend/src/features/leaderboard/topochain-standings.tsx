@@ -106,7 +106,7 @@ const ALIGN: Record<ColumnKey, string> = {
   success: 'text-right',
 };
 
-const HINT = 'text-sm text-zinc-500 py-8 text-center';
+const HINT = 'text-sm text-zinc-500 py-8 text-center dark:text-zinc-400';
 
 function Disclaimer({ text }: { text: string | null }): ReactNode {
   if (!text) return null;
@@ -125,10 +125,10 @@ function ChallengeLine(
   return (
     <p id="tc-lb-challenge-link" className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
       {`${line.completed} of ${line.total} challenges completed `}
-      <span className="text-zinc-400 dark:text-zinc-500">·</span>
+      <span className="text-zinc-500 dark:text-zinc-500">·</span>
       <button
         id="tc-lb-to-challenges"
-        className="font-medium text-violet-600 dark:text-violet-400 hover:underline"
+        className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
         onClick={() => controller()?._goToChallenges()}
       >
         View challenges →
@@ -147,7 +147,7 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
         <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.user}</span>
         {row.nonPodium ? (
           <span
-            className="text-[0.9375rem] text-zinc-400"
+            className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400"
             title="Excluded from podium ranking"
           >{' non-podium'}</span>
         ) : null}
@@ -158,7 +158,7 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
     return (
       <td className="px-3 py-2 text-sm font-mono text-right">
         {row.points}
-        <span className="text-zinc-400">{` +${row.extra}`}</span>
+        <span className="text-zinc-500 dark:text-zinc-400">{` +${row.extra}`}</span>
       </td>
     );
   }
@@ -285,7 +285,7 @@ function Activities({ view }: { view: DrillView['activities'] }): ReactNode {
       {view.items.map((a, i) => (
         <li key={i} className="flex items-center justify-between gap-3 text-xs">
           <span className="text-zinc-600 dark:text-zinc-300">{a.label}</span>
-          <span className="font-mono text-zinc-400">{`+${a.points}`}</span>
+          <span className="font-mono text-zinc-500 dark:text-zinc-400">{`+${a.points}`}</span>
         </li>
       ))}
     </ul>
@@ -382,7 +382,7 @@ function Drill({ view }: { view: DrillView | null }): ReactNode {
           </h3>
           <button
             id="tc-lb-drill-close"
-            className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 text-lg leading-none"
+            className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 text-lg leading-none dark:text-zinc-400"
             aria-label="Close"
             onClick={() => controller()?._closeDrill()}
           >
@@ -390,7 +390,7 @@ function Drill({ view }: { view: DrillView | null }): ReactNode {
           </button>
         </div>
         {view.walletAddress ? (
-          <p className="text-xs font-mono text-zinc-400 mb-3 break-all">{view.walletAddress}</p>
+          <p className="text-xs font-mono text-zinc-500 mb-3 break-all dark:text-zinc-400">{view.walletAddress}</p>
         ) : null}
         <Profile view={view.profile} />
         <div className="grid sm:grid-cols-2 gap-4">

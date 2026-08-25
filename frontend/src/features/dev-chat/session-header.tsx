@@ -97,11 +97,11 @@ export function SessionHeader(): ReactNode {
       >
         {'←'}
       </a>
-      <span className="text-xs text-zinc-400 truncate flex-1" title={s.branch}>{s.title}</span>
+      <span className="text-xs text-zinc-500 truncate flex-1 dark:text-zinc-400" title={s.branch}>{s.title}</span>
       {s.pr ? (
         <button
           id="dc-pr-header-link"
-          className="text-xs text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
+          className="text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
           title={s.prTitle}
           onClick={() => controller()?.revealPrCard?.()}
         >

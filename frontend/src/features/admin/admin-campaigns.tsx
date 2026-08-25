@@ -127,12 +127,12 @@ function writeSubHash(id: number | null): void {
 }
 
 const APP_BADGE: Record<string, [string, string]> = {
-  pending: ['bg-zinc-500/10 text-zinc-500', 'Pending'],
-  running: ['bg-violet-500/10 text-violet-500', 'Running'],
-  pr_open: ['bg-sky-500/10 text-sky-600 dark:text-sky-400', 'PR open'],
-  merged: ['bg-green-500/10 text-green-600 dark:text-green-400', 'Merged'],
+  pending: ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Pending'],
+  running: ['bg-violet-500/10 text-violet-700 dark:text-violet-400', 'Running'],
+  pr_open: ['bg-sky-500/10 text-sky-700 dark:text-sky-400', 'PR open'],
+  merged: ['bg-green-500/10 text-green-800 dark:text-green-400', 'Merged'],
   skipped: ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Skipped'],
-  failed: ['bg-red-500/10 text-red-500', 'Failed'],
+  failed: ['bg-red-500/10 text-red-700 dark:text-red-400', 'Failed'],
 };
 
 function AppBadge({ state }: { state?: string }) {
@@ -144,11 +144,11 @@ function AppBadge({ state }: { state?: string }) {
   );
 }
 
-const CHECK_CLASS = (s?: string) => (s === 'passing' ? 'text-green-600 dark:text-green-400'
-  : (s === 'failing' || s === 'error') ? 'text-red-500 dark:text-red-400'
+const CHECK_CLASS = (s?: string) => (s === 'passing' ? 'text-green-800 dark:text-green-400'
+  : (s === 'failing' || s === 'error') ? 'text-red-700 dark:text-red-400'
     : 'text-zinc-500 dark:text-zinc-400');
 
-const ROW_LINK = 'text-xs text-violet-500 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300 shrink-0';
+const ROW_LINK = 'text-xs text-violet-700 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300 shrink-0';
 
 // POST one session recheck; resolves when the server accepted it (including
 // the "already running" coalesce response).
@@ -200,7 +200,7 @@ function AppRow({
         <span className="flex items-center gap-2">
           {app.prUrl ? (
             <a href={app.prUrl} target="_blank" rel="noopener"
-              className="text-violet-500 dark:text-violet-400 hover:underline text-xs">
+              className="text-violet-700 dark:text-violet-400 hover:underline text-xs">
               {`PR #${app.prNumber || '?'}`}
             </a>
           ) : null}
@@ -220,7 +220,7 @@ function AppRow({
           ) : null}
         </span>
       </div>
-      {app.error ? <div className="text-xs text-red-500 dark:text-red-400 mt-0.5 break-words">{app.error}</div> : null}
+      {app.error ? <div className="text-xs text-red-700 dark:text-red-400 mt-0.5 break-words">{app.error}</div> : null}
     </li>
   );
 }
@@ -304,8 +304,8 @@ function CampaignRow({
     onReloadList();
   };
 
-  const statusCls = c.status === 'running' ? 'text-violet-500'
-    : c.status === 'done' ? 'text-green-600 dark:text-green-400' : 'text-zinc-500 dark:text-zinc-400';
+  const statusCls = c.status === 'running' ? 'text-violet-700 dark:text-violet-400'
+    : c.status === 'done' ? 'text-green-800 dark:text-green-400' : 'text-zinc-500 dark:text-zinc-400';
 
   return (
     <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3" id={`admin-campaign-${c.id}`}>
@@ -320,11 +320,11 @@ function CampaignRow({
         </div>
         <div className="text-xs font-mono shrink-0">
           {`${c.merged_apps}/${c.total_apps} merged`}
-          {c.failed_apps ? <>{' · '}<span className="text-red-500">{`${c.failed_apps} failed`}</span></> : null}
+          {c.failed_apps ? <>{' · '}<span className="text-red-700 dark:text-red-400">{`${c.failed_apps} failed`}</span></> : null}
         </div>
       </div>
       <div className={`mt-2${open ? '' : ' hidden'}`} data-campaign-detail={c.id}>
-        {failed ? <p className="text-xs text-red-500 dark:text-red-400">Failed to load campaign detail.</p> : null}
+        {failed ? <p className="text-xs text-red-700 dark:text-red-400">Failed to load campaign detail.</p> : null}
         {!failed && detail ? (
           <>
             <details className="mb-2">
@@ -482,7 +482,7 @@ function CampaignsSection() {
               disabled={submitting} onClick={submit}>Propose campaign</button>
           </div>
           <p id="admin-campaign-form-status"
-            className={formStatus ? `text-xs ${formStatus.ok ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}` : 'text-xs hidden'}>
+            className={formStatus ? `text-xs ${formStatus.ok ? 'text-green-800 dark:text-green-400' : 'text-red-700 dark:text-red-400'}` : 'text-xs hidden'}>
             {formStatus ? formStatus.msg : ''}
           </p>
         </div>

@@ -48,10 +48,10 @@ function Tab({ col, active }: { col: KanbanColView; active: boolean }): ReactNod
   const cls = 'dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 flex flex-col items-center justify-center '
     + 'border-b-2 transition-colors '
     + (active
-      ? 'border-violet-500 text-violet-500 font-semibold'
+      ? 'border-violet-500 text-violet-700 font-semibold dark:text-violet-400'
       : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200');
   const countCls = 'font-mono text-[11px] leading-tight '
-    + (active ? 'text-violet-400' : (col.count ? 'text-zinc-400 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-500'));
+    + (active ? 'text-violet-700 dark:text-violet-400' : (col.count ? 'text-zinc-500 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-500'));
   return (
     <button
       type="button"
@@ -90,7 +90,7 @@ function DragItem({ orderKey, children }: { orderKey?: string | null; children: 
 function Column({ col, active }: { col: KanbanColView; active: boolean }): ReactNode {
   let cards: ReactNode;
   if (col.empty) {
-    cards = <div className="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">{col.empty}</div>;
+    cards = <div className="text-xs text-zinc-500 dark:text-zinc-500 italic py-2">{col.empty}</div>;
   } else if (col.orderCol) {
     cards = (
       <div className="space-y-2 dev-drag-list" data-order-col={col.orderCol}>
@@ -119,7 +119,7 @@ function Column({ col, active }: { col: KanbanColView; active: boolean }): React
         title={col.hint || undefined}
       >
         {`${col.title} `}
-        <span className="text-zinc-400 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>
+        <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>
       </div>
       {cards}
       {col.footer ? <div className="mt-2"><FooterView f={col.footer} /></div> : null}

@@ -90,7 +90,7 @@ function DiscoverTile({ tile }: { tile: DiscoverTileView }) {
           className={`card-add-btn absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
             added
               ? 'bg-emerald-500 border-emerald-500 text-white'
-              : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-600 dark:text-violet-400 hover:border-violet-400'
+              : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
           }`}
           data-slug={tile.slug}
           data-added={String(added)}
@@ -145,7 +145,7 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
           <button
             type="button"
             id="home-browse-btn"
-            className="home-panel-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap"
+            className="home-panel-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
             title="Browse every app in the directory"
             aria-label="Browse all apps"
             onClick={(e) => {
@@ -176,7 +176,7 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
       {view.popular.length ? (
         <>
           <div className="home-discover-divider flex-none flex items-center px-2.5">
-            <span className="text-[0.9375rem] text-zinc-400 dark:text-zinc-500">Popular</span>
+            <span className="text-[0.9375rem] text-zinc-500 dark:text-zinc-500">Popular</span>
           </div>
           <Lane tiles={view.popular} extraClass="home-discover-popular" />
         </>

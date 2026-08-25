@@ -216,7 +216,7 @@ export function ImprovePanel() {
           <button
             id="improve-close"
             type="button"
-            className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 un-touch-target"
+            className="text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 un-touch-target dark:text-zinc-400"
             aria-label="Close"
             onClick={close}
           >

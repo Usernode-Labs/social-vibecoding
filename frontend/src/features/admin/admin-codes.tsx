@@ -71,7 +71,7 @@ function CodeRow({ code, canWrite, onDelete }: {
   return (
     <div className={ROW}>
       <div className="flex-1 min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <code className={`font-mono text-sm ${used ? 'text-zinc-500 dark:text-zinc-400 line-through' : 'text-violet-400'}`}>{code.code}</code>
+        <code className={`font-mono text-sm ${used ? 'text-zinc-500 dark:text-zinc-400 line-through' : 'text-violet-700 dark:text-violet-400'}`}>{code.code}</code>
         {used ? (
           <span className="text-xs text-zinc-500 dark:text-zinc-400">
             {'Used by '}<strong className="text-zinc-500 dark:text-zinc-400">{code.used_by_username}</strong>

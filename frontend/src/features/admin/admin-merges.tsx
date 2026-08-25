@@ -99,22 +99,22 @@ const EMPTY_FILTERS: Filters = { app: '', pr_number: '', session_id: '', outcome
 
 // ── Outcome badge ───────────────────────────────────────────────────────
 const BADGES: Record<string, { label: string; cls: string; spin?: boolean }> = {
-  running:            { label: 'Running',              cls: 'bg-sky-500/20 text-sky-600 dark:text-sky-300', spin: true },
-  merged:             { label: 'Merged',               cls: 'bg-green-500/20 text-green-600 dark:text-green-300' },
-  blocked:            { label: 'Blocked',              cls: 'bg-amber-500/20 text-amber-600 dark:text-amber-300' },
-  conflict_resolving: { label: 'Conflict — resolving', cls: 'bg-sky-500/20 text-sky-600 dark:text-sky-300', spin: true },
-  conflict_failed:    { label: 'Conflict — failed',    cls: 'bg-red-500/20 text-red-600 dark:text-red-300' },
+  running:            { label: 'Running',              cls: 'bg-sky-500/20 text-sky-700 dark:text-sky-300', spin: true },
+  merged:             { label: 'Merged',               cls: 'bg-green-500/20 text-green-800 dark:text-green-300' },
+  blocked:            { label: 'Blocked',              cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-300' },
+  conflict_resolving: { label: 'Conflict — resolving', cls: 'bg-sky-500/20 text-sky-700 dark:text-sky-300', spin: true },
+  conflict_failed:    { label: 'Conflict — failed',    cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
   awaiting_github:    { label: 'Awaiting GitHub',      cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' },
   noop:               { label: 'No-op',                cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400' },
-  error:              { label: 'Error',                cls: 'bg-red-500/20 text-red-600 dark:text-red-300' },
+  error:              { label: 'Error',                cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
   // The proposal's PR is closed on GitHub and couldn't be reopened —
   // terminal, distinct from a conflict.
-  pr_closed:          { label: 'PR closed',            cls: 'bg-red-500/20 text-red-600 dark:text-red-300' },
+  pr_closed:          { label: 'PR closed',            cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
   // A kind='checks' run ends on the verdict its suite produced rather than
   // on a merge outcome. ('error' above is shared — a checks run whose
   // container broke reports the same thing a failed merge does.)
-  passing:            { label: 'Checks passing',       cls: 'bg-green-500/20 text-green-600 dark:text-green-300' },
-  failing:            { label: 'Checks failing',       cls: 'bg-red-500/20 text-red-600 dark:text-red-300' },
+  passing:            { label: 'Checks passing',       cls: 'bg-green-500/20 text-green-800 dark:text-green-300' },
+  failing:            { label: 'Checks failing',       cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
   skipped:            { label: 'Checks skipped',       cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400' },
 };
 
@@ -135,8 +135,8 @@ const LEVEL_DOT: Record<string, string> = {
   error: 'bg-red-400',
 };
 const LEVEL_TEXT: Record<string, string> = {
-  error: 'text-red-600 dark:text-red-300',
-  warn: 'text-amber-600 dark:text-amber-300',
+  error: 'text-red-700 dark:text-red-300',
+  warn: 'text-amber-800 dark:text-amber-300',
 };
 const LEVEL_TEXT_DEFAULT = 'text-zinc-700 dark:text-zinc-200';
 
@@ -182,7 +182,7 @@ function StepRow({ s }: { s: Step }) {
             <>
               <button
                 type="button"
-                className="detail-toggle text-[11px] text-violet-500 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300 mt-0.5"
+                className="detail-toggle text-[11px] text-violet-700 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300 mt-0.5"
                 onClick={() => setDetailOpen((v) => !v)}
               >
                 detail
@@ -249,7 +249,7 @@ function RunCard({ run }: { run: Run }) {
       </button>
       <div className={`run-body${open ? '' : ' hidden'} border-t border-zinc-200 dark:border-zinc-800 px-4 py-3`}>
         {stepsError
-          ? <div className="text-xs text-red-500 dark:text-red-400">Failed to load steps: {stepsError}</div>
+          ? <div className="text-xs text-red-700 dark:text-red-400">Failed to load steps: {stepsError}</div>
           : steps == null
             ? <div className="text-xs text-zinc-500 dark:text-zinc-400">Loading steps…</div>
             : steps.length
@@ -416,7 +416,7 @@ function MergesSection() {
               className="px-3 py-1.5 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Refresh</button>
             <label className="inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 cursor-pointer select-none">
               <input id="admin-merges-live" type="checkbox"
-                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-600 focus:ring-violet-500"
+                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
                 checked={live} onChange={(e) => setLive(e.target.checked)} />
               <span>Live</span>
             </label>
@@ -424,7 +424,7 @@ function MergesSection() {
 
           <div id="admin-merges-runs" className="space-y-2">
             {error
-              ? <div className="text-sm text-red-500 dark:text-red-400">Failed to load: {error}</div>
+              ? <div className="text-sm text-red-700 dark:text-red-400">Failed to load: {error}</div>
               : runs.map((r) => <RunCard key={r.id} run={r} />)}
           </div>
 

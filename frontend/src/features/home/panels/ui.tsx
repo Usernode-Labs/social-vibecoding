@@ -87,7 +87,7 @@ export function PanelShell({
         {title}
         <button
           type="button"
-          className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none"
+          className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none dark:text-zinc-400"
           data-panel-key={panelKey}
           aria-haspopup="menu"
           title="Widget options"
@@ -109,7 +109,7 @@ export function PanelShell({
 /** The block's own title text, truncating so a control beside it survives. */
 export function PanelTitle({ children }: { children: ReactNode }) {
   return (
-    <span className="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[0.9375rem] text-zinc-400 dark:text-zinc-500">
+    <span className="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[0.9375rem] text-zinc-500 dark:text-zinc-500">
       {children}
     </span>
   );
@@ -126,7 +126,7 @@ export function LeaderboardLink() {
   return (
     <button
       type="button"
-      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap"
+      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
       title="Open the Leaderboard screen"
       aria-label="Open leaderboard"
       onClick={(e) => {
@@ -162,7 +162,7 @@ export function PanelFooter({
     <div className="home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5">
       <button
         type="button"
-        className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap"
+        className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
         data-panel-key={panelKey}
         aria-expanded={expanded}
         title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}

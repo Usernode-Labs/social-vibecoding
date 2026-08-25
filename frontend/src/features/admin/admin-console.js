@@ -144,7 +144,7 @@ export const AdminUI = Object.freeze({
     outline: 'inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors',
     destructive: 'bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium',
     ghost: 'font-medium transition-colors text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
-    link: 'font-medium transition-colors text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300',
+    link: 'font-medium transition-colors text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300',
     primarySm: 'bg-violet-600 hover:bg-violet-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-medium',
     outlineSm: 'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors',
     destructiveSm: 'bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-medium',
@@ -161,7 +161,7 @@ export const AdminUI = Object.freeze({
     outline: 'inline-flex items-center rounded-full border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:text-zinc-300',
     destructive: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-50 text-red-700 ring-1 ring-inset ring-red-700/10 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-400/20',
     success: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-700/10 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/20',
-    warn: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-700/10 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20',
+    warn: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-700/10 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20',
   }),
   // Overlay — topochain modal: black/50 backdrop, xl-rounded white panel.
   dialogOverlay: 'fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4',
@@ -872,7 +872,7 @@ const AdminConsole = {
       return `
       <div class="${i === 0 ? '' : 'mt-6'}">
         ${AdminConsole._groupToggleHtml(g.name, domId, collapsed,
-          'flex items-center gap-1.5 w-full text-left px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors')}
+          'flex items-center gap-1.5 w-full text-left px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors')}
         <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}"${collapsed ? ' class="hidden"' : ''}>
           ${g.items.map(itemHtml).join('')}
         </div>
@@ -886,14 +886,14 @@ const AdminConsole = {
   // on the right) rather than the kit's inset-grouped card, which would
   // read as a foreign surface next to the rest of the platform.
   _mobileMenuHtml() {
-    const chevron = `<svg class="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>`;
+    const chevron = `<svg class="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>`;
     const rowHtml = (s) => `
       <button type="button" data-admin-section="${s.key}"
               class="admin-menu-row flex items-center gap-3 w-full text-left min-h-[44px] px-4 py-2
                      border-b border-zinc-100 dark:border-zinc-800
                      text-zinc-700 dark:text-zinc-200
                      hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors">
-        <span class="text-zinc-400 dark:text-zinc-500">${AdminConsole.NAV_ICONS[s.key] || ''}</span>
+        <span class="text-zinc-500 dark:text-zinc-500">${AdminConsole.NAV_ICONS[s.key] || ''}</span>
         <span class="flex-1 min-w-0 text-sm font-medium truncate">${AdminConsole.esc(s.label)}</span>
         ${chevron}
       </button>`;
@@ -905,7 +905,7 @@ const AdminConsole = {
       return `
       <div class="mb-5">
         ${AdminConsole._groupToggleHtml(g.name, domId, collapsed,
-          'flex items-center gap-1.5 w-full text-left px-4 pb-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500')}
+          'flex items-center gap-1.5 w-full text-left px-4 pb-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500')}
         <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}"
              class="${AdminUI.card} overflow-hidden
                     [&>button:last-child]:border-b-0${collapsed ? ' hidden' : ''}">

@@ -136,7 +136,7 @@ export function ShareDialog() {
             href={href || '#'}
             target="_blank"
             rel="noopener"
-            className="text-sm text-violet-500 hover:text-violet-400 transition-colors inline-flex items-center gap-1"
+            className="text-sm text-violet-700 hover:text-violet-400 transition-colors inline-flex items-center gap-1 dark:text-violet-400"
           >
             Open in new tab
             <ArrowRightIcon className="w-4 h-4" />

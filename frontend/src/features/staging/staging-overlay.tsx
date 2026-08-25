@@ -91,7 +91,7 @@ export function StagingOverlay(): ReactNode {
       <div className="staging-chrome-bar flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
         <button
           id="staging-back"
-          className="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1"
+          className="text-zinc-500 hover:text-zinc-100 text-sm flex items-center gap-1 dark:text-zinc-400"
           onClick={() => stagingHandlers.onBack?.()}
         >
           <ChevronLeftIcon className="w-4 h-4" />
@@ -129,7 +129,7 @@ export function StagingOverlay(): ReactNode {
         >
           {state.fsBtnText}
         </button>
-        <span id="staging-url-label" className="text-xs text-zinc-500 font-mono truncate">
+        <span id="staging-url-label" className="text-xs text-zinc-500 font-mono truncate dark:text-zinc-400">
           {state.urlLabel}
         </span>
         {/*
@@ -142,7 +142,7 @@ export function StagingOverlay(): ReactNode {
         */}
         <button
           id="staging-dev-console-btn"
-          className="relative text-zinc-400 hover:text-zinc-200"
+          className="relative text-zinc-500 hover:text-zinc-200 dark:text-zinc-400"
           aria-label="Open developer console"
         >
           <TerminalIcon className="w-5 h-5" />
@@ -159,7 +159,7 @@ export function StagingOverlay(): ReactNode {
         */}
         <button
           id="staging-dock-close"
-          className="staging-dock-only text-zinc-400 hover:text-zinc-100 text-lg leading-none px-1 shrink-0"
+          className="staging-dock-only text-zinc-500 hover:text-zinc-100 text-lg leading-none px-1 shrink-0 dark:text-zinc-400"
           aria-label="Close preview"
           onClick={() => stagingHandlers.onDockClose?.()}
         >
@@ -170,7 +170,7 @@ export function StagingOverlay(): ReactNode {
           Explains why this change isn't live yet — a common point of
           confusion the first time someone previews their own PR.
       */}
-      <div className="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-400 shrink-0">
+      <div className="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-500 shrink-0 dark:text-zinc-400">
         Private preview — only you can see this until the app's users vote your change in.
       </div>
       <div className="relative flex-1">
@@ -207,7 +207,7 @@ export function StagingOverlay(): ReactNode {
             </span>
             <button
               id="staging-testing-close"
-              className="text-zinc-500 hover:text-zinc-200 text-sm leading-none px-1"
+              className="text-zinc-500 hover:text-zinc-200 text-sm leading-none px-1 dark:text-zinc-400"
               aria-label="Dismiss testing instructions"
               onClick={() => stagingHandlers.onTestingClose?.()}
             >
@@ -241,7 +241,7 @@ export function StagingOverlay(): ReactNode {
           <div id="staging-loader-title" className="text-sm text-zinc-200 font-medium">
             {state.loaderTitle}
           </div>
-          <div id="staging-loader-sub" className="text-xs text-zinc-500 max-w-xs leading-relaxed">
+          <div id="staging-loader-sub" className="text-xs text-zinc-500 max-w-xs leading-relaxed dark:text-zinc-400">
             {state.loaderSub}
           </div>
         </div>

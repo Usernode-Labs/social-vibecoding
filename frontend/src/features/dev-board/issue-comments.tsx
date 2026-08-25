@@ -36,10 +36,10 @@ function Comment({ comment }: { comment: IssueCommentView }) {
           {comment.author}
         </span>
         {comment.bot ? (
-          <span className="text-[0.9375rem] text-sky-600 dark:text-sky-400">bot</span>
+          <span className="text-[0.9375rem] text-sky-700 dark:text-sky-400">bot</span>
         ) : null}
         {comment.date ? (
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{comment.date}</span>
+          <span className="text-[10px] text-zinc-500 dark:text-zinc-500">{comment.date}</span>
         ) : null}
       </div>
       <Body html={comment.bodyHtml} />
@@ -52,9 +52,9 @@ export function IssueCommentsView({ comments, truncated, htmlUrl }: IssueComment
   if (!comments.length) return null;
   return (
     <div className="flex flex-col gap-2 mt-2">
-      <div className="text-[0.9375rem] text-zinc-400 dark:text-zinc-500 px-1">Discussion</div>
+      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-500 px-1">Discussion</div>
       {truncated ? (
-        <div className="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">
+        <div className="text-[11px] text-zinc-500 dark:text-zinc-500 px-1">
           {'Earlier comments omitted — '}
           {htmlUrl ? (
             <a

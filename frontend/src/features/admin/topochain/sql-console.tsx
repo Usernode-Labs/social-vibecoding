@@ -60,9 +60,9 @@ type QueryResult =
   };
 
 const NOTE_TONES = {
-  error: 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400',
-  warn: 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400',
-  busy: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500',
+  error: 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400',
+  warn: 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400',
+  busy: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400',
 };
 
 const UNAVAILABLE = <p className="text-xs text-zinc-500 dark:text-zinc-400">Unavailable.</p>;
@@ -297,7 +297,7 @@ function SqlConsoleScreen() {
                   onClick={() => draft(t)}
                 >
                   <span className="truncate">{t.name}</span>
-                  <span className="shrink-0 text-zinc-400 dark:text-zinc-500">{t.columns.length}</span>
+                  <span className="shrink-0 text-zinc-500 dark:text-zinc-500">{t.columns.length}</span>
                 </button>
               ))}
             </div>

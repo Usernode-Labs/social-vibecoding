@@ -29,7 +29,7 @@ export function AppsMoreBody({ moreCount }: { moreCount: number }) {
         <button
           type="button"
           id="home-apps-more-btn"
-          className="w-full rounded-lg px-3 py-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          className="w-full rounded-lg px-3 py-1.5 text-xs font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
           onClick={() => {
             const home = controller();
             if (!home) return;

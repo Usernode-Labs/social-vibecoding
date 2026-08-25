@@ -76,7 +76,7 @@ const NEUTRAL_CHIP = 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-
 
 const ROLLOVER_STATES: Record<string, { label: string; cls: string }> = {
   pending: { label: 'Queued', cls: NEUTRAL_CHIP },
-  running: { label: 'Rolling over…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300' },
+  running: { label: 'Rolling over…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300' },
   rolled: { label: 'Done', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
   rebuilt: { label: 'Rebuilt', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
   skipped_deploying: { label: 'Skipped — deploying', cls: NEUTRAL_CHIP },
@@ -100,7 +100,7 @@ const RolloverUI = Object.freeze({
   row: 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800',
   rowMain: 'flex-1 min-w-0',
   rowSlug: 'font-mono text-sm',
-  rowError: 'block text-xs text-red-500 mt-0.5',
+  rowError: 'block text-xs text-red-700 mt-0.5 dark:text-red-400',
   rowRight: 'flex items-center gap-2 shrink-0',
   rowSecs: 'text-xs text-zinc-500 dark:text-zinc-400',
 });
@@ -128,7 +128,7 @@ function Summary({ loaded, job, demo }: { loaded: boolean; job: RolloverJob | nu
   const when = job.finishedAt ? 'Finished' : (job.stale ? 'Stalled' : 'Running');
   return (
     <>
-      {demo ? <><span className="text-violet-500">Staging demo data</span>{' — '}</> : null}
+      {demo ? <><span className="text-violet-700 dark:text-violet-400">Staging demo data</span>{' — '}</> : null}
       <span className="font-medium">{when}</span>
       {` — ${parts.join(', ')}`}
       {job.startedBy ? ` · started by ${job.startedBy}` : ''}

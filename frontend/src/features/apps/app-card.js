@@ -106,7 +106,7 @@ export function appPillsFor(app) {
   }
   if (openPrs > 0) {
     chipDefs.push({
-      cls: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+      cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
       label: `${openPrs} to vote`,
       tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
     });
@@ -149,7 +149,7 @@ export function appPillsFor(app) {
 // app surfaces at once.
 //
 // The INK is a -700 in light and a -400 in dark. A single -400/-500 was a
-// dark-shell value: on the light page a `text-sky-500` label over a 10% sky
+// dark-shell value: on the light page a `text-sky-700 dark:text-sky-400` label over a 10% sky
 // tint measured 2.3:1, which is a colour you can see but not read. The tint
 // behind it is unchanged — it is the same 10% wash in both themes, and it is
 // the ink that has to move.

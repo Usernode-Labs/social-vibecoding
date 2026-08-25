@@ -120,8 +120,8 @@ function fmtDate(iso?: string): string {
 // outcomes were persisted — render it as "unknown" rather than mislabelling
 // it as a success or a failure.
 const CHIP: Record<string, { label: string; cls: string }> = {
-  captured: { label: 'Captured', cls: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' },
-  partial: { label: 'Partial', cls: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
+  captured: { label: 'Captured', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
+  partial: { label: 'Partial', cls: 'bg-amber-500/15 text-amber-800 dark:text-amber-400' },
   console_only: { label: 'No visual change expected', cls: 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400' },
   failed: { label: 'Capture failed', cls: 'bg-rose-500/15 text-rose-600 dark:text-rose-400' },
 };
@@ -139,7 +139,7 @@ const PROBLEMS: Array<[string, string]> = [
   ['failed_or_skipped', 'Capture failed or skipped'],
 ];
 
-const DOT = <span className="text-zinc-400 dark:text-zinc-500">·</span>;
+const DOT = <span className="text-zinc-500 dark:text-zinc-500">·</span>;
 
 function Chip({ state, reason }: { state?: string; reason?: string }) {
   const chip = (state && CHIP[state]) || CHIP_UNKNOWN;
@@ -150,7 +150,7 @@ function Chip({ state, reason }: { state?: string; reason?: string }) {
   );
 }
 
-const LINK = 'text-violet-500 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300';
+const LINK = 'text-violet-700 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300';
 
 function ProposalCard({ p }: { p: Proposal }) {
   const appView = typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -164,7 +164,7 @@ function ProposalCard({ p }: { p: Proposal }) {
   if (p.prUrl && p.prNumber) {
     meta.push(
       <a key="pr" href={p.prUrl} target="_blank" rel="noopener"
-        className="font-mono text-violet-500 dark:text-violet-400 hover:underline">PR#{p.prNumber}</a>,
+        className="font-mono text-violet-700 dark:text-violet-400 hover:underline">PR#{p.prNumber}</a>,
     );
   } else if (p.prNumber) {
     meta.push(<span key="pr" className="font-mono text-zinc-500 dark:text-zinc-400">PR#{p.prNumber}</span>);

@@ -742,7 +742,7 @@
         active: s.key === active,
         className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
           + (s.key === active
-            ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
+            ? 'bg-violet-600/10 text-violet-700 dark:text-violet-400'
             : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
       });
       return Settings._groupedSections().map((g, i) => ({
@@ -1036,7 +1036,7 @@
       }
       if (status && agents.some((a) => a.demo)) {
         status.textContent = 'Demo data — changes are not saved.';
-        status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
 
@@ -1085,8 +1085,8 @@
         button.disabled = false;
         if (status) {
           status.textContent = err.message || 'Could not detach that machine.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       }
     },
@@ -1354,8 +1354,8 @@
         if (loadId !== this._connectorLoadId) return;
         this._publishConnectors({ phase: 'idle', connectors: [] });
         status.textContent = err.message || 'Could not load your connections.';
-        status.classList.remove('hidden', 'text-emerald-500');
-        status.classList.add('text-red-500');
+        status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+        status.classList.add('text-red-700', 'dark:text-red-400');
       }
     },
 
@@ -1498,15 +1498,15 @@
         await this._loadConnectors();
         if (status) {
           status.textContent = 'Disconnected.';
-          status.classList.remove('hidden', 'text-red-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
         if (button) button.disabled = false;
         if (status) {
           status.textContent = err.message || 'Could not disconnect.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       }
     },
@@ -1752,8 +1752,10 @@
       };
       status.textContent = messages[result] || '';
       if (!status.textContent) return;
-      status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
-      status.classList.add(result === 'linked' ? 'text-emerald-500' : 'text-red-500');
+      status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
+      status.classList.add(...(result === 'linked'
+        ? ['text-emerald-700', 'dark:text-emerald-400']
+        : ['text-red-700', 'dark:text-red-400']));
     },
 
     async _unlinkGithub(button, provider = 'github') {
@@ -1771,8 +1773,8 @@
         if (button) button.disabled = false;
         if (status) {
           status.textContent = err.message || 'Could not disconnect this account.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       }
     },
@@ -1854,8 +1856,8 @@
         if (loadId !== this._cliTokenLoadId) return;
         if (!this._cliTokens.length) this._publishCliTokens({ phase: 'idle', tokens: [] });
         status.textContent = err.message || 'Could not load CLI credentials.';
-        status.classList.remove('hidden', 'text-emerald-500');
-        status.classList.add('text-red-500');
+        status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+        status.classList.add('text-red-700', 'dark:text-red-400');
       } finally {
         if (loadId === this._cliTokenLoadId) {
           this._cliTokensLoading = false;
@@ -1896,7 +1898,7 @@
       more.classList.toggle('hidden', !this._cliTokenCursor);
       if (this._cliTokensDemo() && this._cliTokens.some((t) => t.demo)) {
         status.textContent = 'Demo data — changes are not saved.';
-        status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
 
@@ -1911,15 +1913,15 @@
         if (response.status !== 204) throw new Error('Could not revoke the credential.');
         if (status) {
           status.textContent = 'Credential revoked.';
-          status.classList.remove('hidden', 'text-red-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
         await this._loadCliTokens(true);
       } catch (err) {
         if (status) {
           status.textContent = err.message || 'Could not revoke the credential.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
         button.disabled = false;
       }
@@ -1932,8 +1934,8 @@
         if (select) select.value = this.state.locale || '';
         if (status) {
           status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
       try {
@@ -1957,8 +1959,8 @@
         }
         if (status) {
           status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-500', 'text-zinc-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
         fail(`Network error: ${err.message}`);
@@ -1975,8 +1977,8 @@
         if (select) select.value = this.state.devFlowPreference || '';
         if (status) {
           status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
       try {
@@ -1992,8 +1994,8 @@
         if (typeof App !== 'undefined' && App.user) App.user.devFlowPreference = this.state.devFlowPreference;
         if (status) {
           status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-500', 'text-zinc-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
         fail(`Network error: ${err.message}`);
@@ -2007,8 +2009,8 @@
         if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
         if (status) {
           status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
       try {
@@ -2040,8 +2042,8 @@
         if (toggle) toggle.checked = !!this.state.sessionBridgeEnabled;
         if (status) {
           status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
       try {
@@ -2168,7 +2170,7 @@
       if (!status) return;
       status.textContent = message || (disabled ? 'Loading mobile push preferences…' : 'Saved to your account.');
       status.className = 'text-xs mt-3 ' + (error
-        ? 'text-red-600 dark:text-red-400'
+        ? 'text-red-700 dark:text-red-400'
         : 'text-zinc-500 dark:text-zinc-400');
     },
 
@@ -2273,10 +2275,10 @@
     _setStatus(text, kind) {
       const el = document.getElementById('settings-status');
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500'
-                : kind === 'ok' ? 'text-emerald-500'
-                : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400'
+                : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400'
+                : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
     },
 
@@ -2409,8 +2411,8 @@
       const el = document.getElementById('settings-openrouter-status');
       if (!el) return;
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
     },
 
@@ -2662,8 +2664,8 @@
       const el = document.getElementById('cp-status');
       if (!el) return;
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
     },
 
@@ -2763,8 +2765,8 @@
       const el = document.getElementById('cu-status');
       if (!el) return;
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
     },
 
@@ -3236,8 +3238,8 @@
       const el = document.getElementById('llm-grants-status');
       if (!el) return;
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
@@ -3443,8 +3445,8 @@
         return;
       }
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
@@ -3586,8 +3588,8 @@
       const el = document.getElementById('wallet-status');
       if (!el) return;
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
@@ -4526,7 +4528,7 @@
       }
       if (payload.terms_link) {
         const a = el('a',
-          'block text-sm text-violet-600 dark:text-violet-400 underline mb-3',
+          'block text-sm text-violet-700 dark:text-violet-400 underline mb-3',
           'Read the full terms');
         a.href = payload.terms_link;
         a.target = '_blank';
@@ -4539,7 +4541,7 @@
       // a non-dismissible overlay with no consent buttons has no exit.
       const blocking = opts.blocking === true && !accepted;
       const statusEl = el('p', 'text-sm mb-3 ' + (accepted
-        ? 'text-emerald-600 dark:text-emerald-400'
+        ? 'text-emerald-700 dark:text-emerald-400'
         : 'text-zinc-600 dark:text-zinc-400'),
       accepted
         ? 'You accepted this version' +

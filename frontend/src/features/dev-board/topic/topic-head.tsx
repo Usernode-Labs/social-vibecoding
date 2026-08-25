@@ -54,9 +54,9 @@ function call(fn: string, ...args: unknown[]): void {
  */
 const TONE: Record<NoteTone, string> = {
   neutral: 'border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 text-zinc-600 dark:text-zinc-400',
-  ok: 'border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-500',
-  warn: 'border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-500',
-  error: 'border-red-500/30 bg-red-500/5 text-red-500',
+  ok: 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-500',
+  warn: 'border-amber-500/30 bg-amber-500/5 text-amber-800 dark:text-amber-500',
+  error: 'border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-400',
 };
 
 /** A prose run, with its `font-medium` spans. See ./model.ts's `TextRun`. */
@@ -106,7 +106,7 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
   return (
     <>
       <li className={r.advisory ? 'opacity-70' : undefined}>
-        <span className={`${r.pass ? 'text-emerald-500' : (r.advisory ? 'text-zinc-500' : 'text-red-500')} font-medium`}>
+        <span className={`${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`}>
           {r.pass ? '✓' : '✗'}
         </span>
         {` ${r.name} `}
@@ -169,7 +169,7 @@ function Roster({ r }: { r: RosterView }): ReactNode {
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
       {r.phase === 'loading' ? 'Loading votes…' : (
         <>
-          <span className="text-emerald-500 font-medium">{`${r.yes!.label}:`}</span>
+          <span className="text-emerald-700 font-medium dark:text-emerald-400">{`${r.yes!.label}:`}</span>
           {` ${r.yes!.names} `}
           <span className="text-red-400 font-medium">{`${r.no!.label}:`}</span>
           {` ${r.no!.names}`}
@@ -186,7 +186,7 @@ function DetailsView({ d }: { d: ProposalDetails }): ReactNode {
     if (i) meta.push(' · ');
     meta.push(m.href
       ? (
-        <a key={i} href={m.href} target="_blank" rel="noopener" className="text-violet-400 hover:underline">
+        <a key={i} href={m.href} target="_blank" rel="noopener" className="text-violet-700 hover:underline dark:text-violet-400">
           <Runs parts={m.parts} />
         </a>
       )
@@ -208,7 +208,7 @@ function DetailsView({ d }: { d: ProposalDetails }): ReactNode {
       </div>
       {d.notes.map((n) => (
         <div key={n.key} className={n.tone === 'warn'
-          ? 'text-xs text-amber-600 dark:text-amber-400 mt-1'
+          ? 'text-xs text-amber-800 dark:text-amber-400 mt-1'
           : 'text-xs text-zinc-500 dark:text-zinc-400 mt-1'}>
           <Runs parts={n.parts} />
         </div>
@@ -220,7 +220,7 @@ function DetailsView({ d }: { d: ProposalDetails }): ReactNode {
             <a
               key={l.n}
               href={l.href}
-              className="dev-badge font-mono bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20"
+              className="dev-badge font-mono bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400"
               title={`Open issue #${l.n}`}
             >{`#${l.n}`}</a>
           ))}
@@ -236,8 +236,8 @@ function DetailsView({ d }: { d: ProposalDetails }): ReactNode {
           <button type="button" className="voting-help-link" data-voting-help="">How voting works</button>
         </div>
       ) : null}
-      {d.explicitNote ? <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">{d.explicitNote}</div> : null}
-      {d.lockedNote ? <div className="text-xs text-amber-500 mt-1">{d.lockedNote}</div> : null}
+      {d.explicitNote ? <div className="text-xs text-amber-800 dark:text-amber-400 mt-1">{d.explicitNote}</div> : null}
+      {d.lockedNote ? <div className="text-xs text-amber-800 mt-1 dark:text-amber-300">{d.lockedNote}</div> : null}
     </div>
   );
 }

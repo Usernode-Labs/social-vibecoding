@@ -53,7 +53,7 @@ function ChallengeRow({ row }: { row: ChallengeRowView }) {
       */}
       {row.done ? (
         <span
-          className="home-panel-glyph shrink-0 w-2.5 h-2.5 flex items-center justify-center text-emerald-500 text-[11px] leading-none"
+          className="home-panel-glyph shrink-0 w-2.5 h-2.5 flex items-center justify-center text-emerald-700 text-[11px] leading-none dark:text-emerald-400"
           aria-hidden="true"
         >
           ✓
@@ -78,7 +78,7 @@ function ChallengeRow({ row }: { row: ChallengeRowView }) {
           tight row wraps the chip to a second line the fixed row height clips.
       */}
       {row.reward ? (
-        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-600 dark:text-violet-400">
+        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-700 dark:text-violet-400">
           {row.reward}
         </span>
       ) : null}
@@ -124,7 +124,7 @@ function FillRow({ row, kind }: { row: FillRowView; kind: 'topochain' | 'kudos' 
       onClick={() => panels()?.goToLeaderboard?.(kind)}
     >
       <span
-        className="home-panel-glyph shrink-0 w-2.5 text-[10px] leading-none tabular-nums text-right text-zinc-400 dark:text-zinc-500"
+        className="home-panel-glyph shrink-0 w-2.5 text-[10px] leading-none tabular-nums text-right text-zinc-500 dark:text-zinc-500"
         aria-hidden="true"
       >
         {row.rankLabel}
@@ -141,11 +141,11 @@ function FillRow({ row, kind }: { row: FillRowView; kind: 'topochain' | 'kudos' 
           accent colour reads as a warning, not as a starting point.
       */}
       {row.hasScore ? (
-        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-600 dark:text-violet-400">
+        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-700 dark:text-violet-400">
           {row.scoreText}
         </span>
       ) : (
-        <span className="shrink-0 whitespace-nowrap text-[11px] text-zinc-400 dark:text-zinc-500">
+        <span className="shrink-0 whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-500">
           0
         </span>
       )}
@@ -156,7 +156,7 @@ function FillRow({ row, kind }: { row: FillRowView; kind: 'topochain' | 'kudos' 
 function FillBlock({ fill }: { fill: FillView }) {
   return (
     <div className="home-panel-fill flex-none" data-fill-kind={fill.kind}>
-      <div className="home-panel-fill-label flex items-center px-2.5 text-[0.9375rem] text-zinc-400 dark:text-zinc-500">
+      <div className="home-panel-fill-label flex items-center px-2.5 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">
         {fill.label}
       </div>
       {fill.rows.map((row, i) => (

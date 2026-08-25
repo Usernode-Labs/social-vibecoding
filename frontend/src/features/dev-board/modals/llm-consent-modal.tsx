@@ -88,7 +88,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
         </>
       )}
       {/* app-view.js's line — see the header. Rendered once, empty, hidden. */}
-      <div id="llm-consent-error" className="hidden text-sm text-red-500 mt-3"></div>
+      <div id="llm-consent-error" className="hidden text-sm text-red-700 mt-3 dark:text-red-400"></div>
       <div className="flex justify-end gap-2 mt-5">
         <Button
           type="button"

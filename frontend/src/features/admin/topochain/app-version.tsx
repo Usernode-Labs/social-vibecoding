@@ -350,12 +350,12 @@ function AppVersionScreen() {
     {
       label: 'Current version',
       cell: (c) => c.current_version || '—',
-      tdClass: 'text-xs text-zinc-500',
+      tdClass: 'text-xs text-zinc-500 dark:text-zinc-400',
     },
     {
       label: 'Active',
       cell: (c) => (c.is_active
-        ? <span className="text-green-600 dark:text-green-400">active</span>
+        ? <span className="text-green-800 dark:text-green-400">active</span>
         : '—'),
     },
   ];

@@ -20,7 +20,7 @@ const src = fs.readFileSync(
 );
 
 test('DEV_CARD_ICONS carries an issueProposal entry with the sky tint', () => {
-  assert.match(src, /issueProposal:\s*\['bg-sky-500\/15 text-sky-500'/);
+  assert.match(src, /issueProposal:\s*\['bg-sky-500\/15 text-sky-700/);
 });
 
 test('_renderIssueRow selects issueProposal for the generating status', () => {
@@ -46,7 +46,7 @@ test('_renderIssueRow selects a sky proposal chip for the ready status (mine vs 
 });
 
 test('DEV_CARD_ICONS issueProposalMine is also a sky chip', () => {
-  assert.match(src, /issueProposalMine:\s*\['bg-sky-500\/15 text-sky-500'/);
+  assert.match(src, /issueProposalMine:\s*\['bg-sky-500\/15 text-sky-700/);
 });
 
 test('_devCardIcon supports the pulse and title opts', () => {

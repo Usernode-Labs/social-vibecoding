@@ -232,8 +232,8 @@ function estimatorVerdict(w: any, ctx: any): { ready: boolean; reason: string } 
 // Colour only the three decision metrics — green when the threshold is met,
 // amber when it isn't. Sample-size and data-health tiles stay neutral.
 const tone = (ok: boolean | null) => (ok == null
-  ? 'text-zinc-500'
-  : ok ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400');
+  ? 'text-zinc-500 dark:text-zinc-400'
+  : ok ? 'text-green-800 dark:text-green-400' : 'text-amber-800 dark:text-amber-400');
 
 function Tile({ label, value, cls, sub }: { label: string; value: string; cls?: string; sub?: string }) {
   return (
@@ -430,7 +430,7 @@ function EstimatorCard({ e }: { e: any }) {
                   <td className="py-1 text-zinc-600 dark:text-zinc-300">
                     {`v${fmtInt(v.promptVersion)}`}
                     {v.promptVersion === CANDIDATE_PROMPT_VERSION
-                      ? <> <span className="text-[10px] uppercase tracking-wide text-violet-500">candidate</span></>
+                      ? <> <span className="text-[10px] uppercase tracking-wide text-violet-700 dark:text-violet-400">candidate</span></>
                       : null}
                   </td>
                   <td className="py-1 text-right">{fmtInt(v.scored)}</td>
@@ -445,7 +445,7 @@ function EstimatorCard({ e }: { e: any }) {
       ) : null}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Tile label={`Scored guesses (${headLabel})`} value={fmtInt(head.scored)} cls={sampleOk ? '' : 'text-zinc-500'}
+        <Tile label={`Scored guesses (${headLabel})`} value={fmtInt(head.scored)} cls={sampleOk ? '' : 'text-zinc-500 dark:text-zinc-400'}
           sub={`${fmtInt(head.runs)} runs · ${fmtInt(head.users)} users · need ${ESTIMATOR_BAR.scored}/${ESTIMATOR_BAR.runs}/${ESTIMATOR_BAR.users}`} />
         <Tile label="Median error" value={fmtSecs(head.medianAbsErrS)} cls={tone(errOk)}
           sub={oracleErr == null ? 'bar: ≤ the oracle baseline' : `bar: ≤ ${fmtSecs(oracleErr)} (oracle)`} />
@@ -472,7 +472,7 @@ function EstimatorCard({ e }: { e: any }) {
       </div>
 
       {verdict ? (
-        <div className={`mt-3 text-sm ${verdict.ready ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
+        <div className={`mt-3 text-sm ${verdict.ready ? 'text-green-800 dark:text-green-400' : 'text-amber-800 dark:text-amber-400'}`}>
           <b>{verdict.ready ? 'Ready to leave experimental' : 'Stays experimental'}</b>
           {` — ${verdict.reason} `}
           <span className="text-zinc-500 dark:text-zinc-400">(last 30 days)</span>
@@ -530,7 +530,7 @@ function EstimatorCard({ e }: { e: any }) {
             <h4 className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">
               Run-length figures given to the model
             </h4>
-            <span className={`text-xs ${priors.stale ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
+            <span className={`text-xs ${priors.stale ? 'text-amber-800 dark:text-amber-400' : 'text-green-800 dark:text-green-400'}`}>
               {priors.stale ? 'Priors stale — re-run the committed refresh query and update the constant' : 'Priors current'}
             </span>
           </div>
@@ -557,7 +557,7 @@ function EstimatorCard({ e }: { e: any }) {
                   <td className="py-1 text-right">{fmtSecs(b.committedP50)}</td>
                   <td className="py-1 text-right">{fmtSecs(b.liveP50)}</td>
                   <td className={`py-1 text-right ${b.driftRatio != null && b.driftRatio > 0.25
-                    ? 'text-amber-600 dark:text-amber-400' : ''}`}>{fmtPct(b.driftRatio)}</td>
+                    ? 'text-amber-800 dark:text-amber-400' : ''}`}>{fmtPct(b.driftRatio)}</td>
                 </tr>
               ))}
             </tbody>

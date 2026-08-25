@@ -76,7 +76,7 @@ const fieldId = (key: string) => `admin-topo-ch-f-${key}`;
 function Stat({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 px-3 py-2">
-      <dt className="text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+      <dt className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
         {label}
       </dt>
       <dd className="mt-0.5 text-sm font-medium">{String(value)}</dd>
@@ -555,14 +555,14 @@ function EventDetail({ eventId, onBack }: { eventId: number; onBack: () => void 
 
   const columns: Column<Challenge>[] = useMemo(() => [
     { label: 'Goal', primary: true, cell: (c) => c.card_preview?.goal || '' },
-    { label: 'Kind', cell: (c) => c.card_preview?.label || '', tdClass: 'text-xs text-zinc-500' },
+    { label: 'Kind', cell: (c) => c.card_preview?.label || '', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
     {
       label: 'Enabled',
       cell: (c) => (c.enabled
-        ? <span className="text-green-600 dark:text-green-400">enabled</span>
+        ? <span className="text-green-800 dark:text-green-400">enabled</span>
         : <span className="text-zinc-500 dark:text-zinc-400">disabled</span>),
     },
-    { label: 'Completed', cell: (c) => (c.completed ? 'completed' : '—'), tdClass: 'text-zinc-500' },
+    { label: 'Completed', cell: (c) => (c.completed ? 'completed' : '—'), tdClass: 'text-zinc-500 dark:text-zinc-400' },
   ], []);
 
   const editing = typeof form === 'number'

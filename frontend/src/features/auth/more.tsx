@@ -354,7 +354,7 @@ export function MoreScreen() {
         &larr; Back
       </a>
       <div className="max-w-2xl mx-auto px-6 py-16">
-        <p className="text-xs font-semibold uppercase tracking-widest text-violet-600 dark:text-violet-400">
+        <p className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400">
           Optional — moves you up the list
         </p>
         <h1 className="mt-1 text-2xl font-bold">
@@ -610,7 +610,7 @@ export function MoreScreen() {
             <button
               type="button"
               id="more-invite-add"
-              className="mt-2 text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline"
+              className="mt-2 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
               onClick={addInvite}
             >
               + Add another
@@ -646,7 +646,7 @@ export function MoreScreen() {
             <p id="more-msg" className={msgClass(msg ? msg.tone : null)}>
               {msg ? msg.text : null}
             </p>
-            <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-3">
+            <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-3">
               A blank answer just means we have less to go on — nothing here is required.
             </p>
           </div>

@@ -124,7 +124,7 @@ export function CardIcon({ spec }: { spec: CardIconSpec }): ReactNode {
 
 /** The tap-through chevron (`DEV_CARD_CHEVRON`). */
 export function Chevron(): ReactNode {
-  return <ChevronRightIcon className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />;
+  return <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" />;
 }
 
 /**
@@ -270,7 +270,7 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
       // Rendered at 0 too, wearing `hidden`, so a live bump has a target.
       return (
         <span
-          className={`dev-chat-badge dev-badge ${b.count ? 'bg-violet-500/10 text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'}`}
+          className={`dev-chat-badge dev-badge ${b.count ? 'bg-violet-500/10 text-violet-700 dark:text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'}`}
           data-count={b.count}
           title="Messages in this thread"
         >{`\u{1F4AC} ${b.count}`}</span>
@@ -487,7 +487,7 @@ function TitleContent({ t }: { t: TitleSpec }): ReactNode {
         <>
           <button
             type="button"
-            className="align-middle text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors"
+            className="align-middle text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
             title="Edit this issue's title (you created it)"
             aria-label="Edit title"
             onClick={() => call({ fn: 'beginIssueTitleEdit', args: [t.edit!.issue] })}
@@ -513,11 +513,11 @@ function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
     <div className="mt-1 flex flex-wrap items-center gap-1 px-0.5 text-[0.65rem] text-zinc-500 dark:text-zinc-400">
       {'Claims:'}
       {x.claims.map((c) => (
-        <span key={c.userId} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500">
+        <span key={c.userId} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-700 dark:text-sky-400">
           {c.username}
           <button
             type="button"
-            className="hover:text-sky-700 dark:hover:text-sky-300"
+            className="hover:text-sky-700 dark:hover:text-sky-300 dark:text-sky-400"
             title={`Release ${c.username}'s claim (admin)`}
             onClick={() => call({ fn: 'clearIssueClaim', args: [c.issue, c.userId] })}
           >{'×'}</button>

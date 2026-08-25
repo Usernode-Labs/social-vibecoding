@@ -224,7 +224,7 @@ function SeasonForm({ id, onClose, onSaved }: {
           </FormGrid>
           <fieldset className="mt-5 border-t border-zinc-200 dark:border-zinc-800 pt-4">
             <legend className="sr-only">Visibility</legend>
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
               Visibility
             </p>
             <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
@@ -380,19 +380,19 @@ function SeasonsScreen() {
         );
       },
     },
-    { label: 'Starts', cell: (sn) => fmt(sn.starts_at), tdClass: 'text-xs text-zinc-500' },
-    { label: 'Ends', cell: (sn) => fmt(sn.ends_at), tdClass: 'text-xs text-zinc-500' },
+    { label: 'Starts', cell: (sn) => fmt(sn.starts_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Ends', cell: (sn) => fmt(sn.ends_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
     {
       label: 'Events',
       cell: (sn) => (sn.season_events_count != null ? sn.season_events_count : '—'),
-      tdClass: 'text-zinc-500',
+      tdClass: 'text-zinc-500 dark:text-zinc-400',
     },
     {
       label: 'Users',
       cell: (sn) => (sn.users_count != null ? sn.users_count : '—'),
-      tdClass: 'text-zinc-500',
+      tdClass: 'text-zinc-500 dark:text-zinc-400',
     },
-    { label: 'Order', cell: (sn) => sn.display_order ?? 0, tdClass: 'text-zinc-500' },
+    { label: 'Order', cell: (sn) => sn.display_order ?? 0, tdClass: 'text-zinc-500 dark:text-zinc-400' },
   ];
 
   return (

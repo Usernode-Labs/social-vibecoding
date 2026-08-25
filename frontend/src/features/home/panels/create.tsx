@@ -86,8 +86,8 @@ export function CreatePanel({ view }: { view: CreateView }) {
         <span
           className={`home-create-label text-sm leading-tight max-w-full ${
             view.canCreate
-              ? 'text-violet-600 dark:text-violet-400'
-              : 'text-zinc-400 dark:text-zinc-500'
+              ? 'text-violet-700 dark:text-violet-400'
+              : 'text-zinc-500 dark:text-zinc-500'
           }`}
         >
           Create app

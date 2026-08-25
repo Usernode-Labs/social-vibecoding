@@ -239,7 +239,7 @@ const buttonVariants = cva('', {
       // the rendered class attribute.
       fillLate: 'transition-colors bg-violet-600 hover:bg-violet-500 text-white',
       unavailableLate:
-        'transition-colors bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed',
+        'transition-colors bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed dark:text-zinc-400',
       // #agent-files-cancel.
       muted:
         'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors',
@@ -249,7 +249,7 @@ const buttonVariants = cva('', {
       neutral: 'text-zinc-900 dark:text-zinc-100 transition-colors',
       // #settings-remove.
       danger:
-        'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors',
+        'text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors',
     },
   },
   defaultVariants: {

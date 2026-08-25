@@ -79,7 +79,7 @@ const NEUTRAL_CHIP = 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-
 // string so a new outcome shows up rather than disappearing.
 const REAP_STATES: Record<string, { label: string; cls: string }> = {
   pending: { label: 'Queued', cls: NEUTRAL_CHIP },
-  running: { label: 'Shutting down…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300' },
+  running: { label: 'Shutting down…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300' },
   torn_down: { label: 'Shut down', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
   torn_down_no_db: { label: 'Shut down — database kept', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
   skipped_gone: { label: 'Skipped — already gone', cls: NEUTRAL_CHIP },
@@ -119,7 +119,7 @@ const ReapUI = Object.freeze({
   rowSlug: 'font-mono text-sm',
   rowSession: 'text-xs text-zinc-500 dark:text-zinc-400 ml-1',
   rowWhy: 'block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5',
-  rowError: 'block text-xs text-red-500 mt-0.5',
+  rowError: 'block text-xs text-red-700 mt-0.5 dark:text-red-400',
   rowRight: 'flex items-center gap-2 shrink-0',
   rowSecs: 'text-xs text-zinc-500 dark:text-zinc-400',
 });
@@ -183,7 +183,7 @@ function Summary({ loaded, job, demo }: { loaded: boolean; job: ReapJob | null; 
   const when = job.finishedAt ? 'Finished' : (job.stale ? 'Stalled' : 'Running');
   return (
     <>
-      {demo ? <><span className="text-violet-500">Staging demo data</span>{' — '}</> : null}
+      {demo ? <><span className="text-violet-700 dark:text-violet-400">Staging demo data</span>{' — '}</> : null}
       <span className="font-medium">{when}</span>
       {` — ${parts.join(', ')}`}
       {job.startedBy ? ` · started by ${job.startedBy}` : ''}

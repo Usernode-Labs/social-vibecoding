@@ -39,9 +39,9 @@ const FEATURES_CSV_FIELDS = [
 ];
 
 const FEATURES_STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  open: { label: 'Open', cls: 'bg-green-500/20 text-green-600 dark:text-green-300' },
+  open: { label: 'Open', cls: 'bg-green-500/20 text-green-800 dark:text-green-300' },
   closed: { label: 'Closed', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' },
-  completed: { label: 'Shipped', cls: 'bg-violet-500/20 text-violet-600 dark:text-violet-300' },
+  completed: { label: 'Shipped', cls: 'bg-violet-500/20 text-violet-700 dark:text-violet-300' },
 };
 
 interface Feature {
@@ -84,7 +84,7 @@ function FeatureCard({ f, rank }: { f: Feature; rank: number }) {
             <div className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 whitespace-pre-wrap break-words">{f.description}</div>
           ) : null}
           <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-violet-500 dark:text-violet-400">{f.app_name}</span>
+            <span className="text-violet-700 dark:text-violet-400">{f.app_name}</span>
             <span className="text-zinc-500 dark:text-zinc-400">{f.app_slug}</span>
             <span>{`by ${f.created_by_username || '—'}`}</span>
             <span>{fmtTime(f.created_at)}</span>
@@ -94,7 +94,7 @@ function FeatureCard({ f, rank }: { f: Feature; rank: number }) {
           </div>
         </div>
         <div className="text-right text-sm shrink-0">
-          <div className="text-green-600 dark:text-green-400 font-semibold">{`▲ ${f.up_count}`}</div>
+          <div className="text-green-800 dark:text-green-400 font-semibold">{`▲ ${f.up_count}`}</div>
           <div className="text-zinc-500 dark:text-zinc-400">{`▼ ${f.down_count}`}</div>
         </div>
       </div>

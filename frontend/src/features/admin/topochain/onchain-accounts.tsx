@@ -216,10 +216,10 @@ function AccountDetail({ id, seasons, onClose }: {
                 <DetailRow label="Status">
                   {a.is_used ? (
                     <>
-                      <span className="text-amber-600 dark:text-amber-400">used</span>
+                      <span className="text-amber-800 dark:text-amber-400">used</span>
                       {` · ${fmt(a.used_at)}`}
                     </>
-                  ) : <span className="text-green-600 dark:text-green-400">free</span>}
+                  ) : <span className="text-green-800 dark:text-green-400">free</span>}
                 </DetailRow>
                 <DetailRow label="Delegation">
                   {a.delegated ? (
@@ -467,14 +467,14 @@ function OnchainAccountsScreen() {
       ),
       tdClass: 'text-xs font-mono',
     },
-    { label: 'Tier', cell: (a) => a.tier, tdClass: 'text-zinc-500' },
+    { label: 'Tier', cell: (a) => a.tier, tdClass: 'text-zinc-500 dark:text-zinc-400' },
     { label: 'Amount', cell: (a) => a.amount, tdClass: 'font-mono text-right', thClass: 'text-right' },
-    { label: 'Event', cell: (a) => (a.event ? a.event.name : '—'), tdClass: 'text-xs text-zinc-500' },
+    { label: 'Event', cell: (a) => (a.event ? a.event.name : '—'), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
     {
       label: 'Status',
       cell: (a) => (a.is_used
-        ? <span className="text-amber-600 dark:text-amber-400">used</span>
-        : <span className="text-green-600 dark:text-green-400">free</span>),
+        ? <span className="text-amber-800 dark:text-amber-400">used</span>
+        : <span className="text-green-800 dark:text-green-400">free</span>),
     },
     {
       label: 'Delegation',
@@ -482,7 +482,7 @@ function OnchainAccountsScreen() {
         ? <Badge label="Delegated" tone="green" />
         : <span className="text-zinc-500 dark:text-zinc-400">—</span>),
     },
-    { label: 'User', cell: (a) => (a.user ? a.user.username : '—'), tdClass: 'text-xs text-zinc-500' },
+    { label: 'User', cell: (a) => (a.user ? a.user.username : '—'), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
   ];
 
   const filtered = !!(search || seasonFilter || eventFilter || delegatedFilter);
