@@ -409,6 +409,18 @@ const AppView = {
   // { issues: [{type,ref}], review: [{type,ref}] }; empty arrays mean the
   // default derived sort (today's board).
   _boardOrder: { issues: [], review: [] },
+  // False until this app's FIRST board load lands (set at the end of
+  // _loadDevData, cleared by open() on an app change and by close()).
+  //
+  // It exists because _repaintDevBody paints from the caches, and several
+  // things call it before those caches hold anything — a session-state flush
+  // does, ~550ms into a cold open, via _repaintCards. With empty caches the
+  // board drew four columns of "Nothing here yet · 0", which is not a slow
+  // screen but a wrong one: it looks finished. Both view models carry this
+  // through as `loading` so the components draw placeholders instead of
+  // asserting a count or an emptiness they don't know yet. See
+  // frontend/src/features/dev-board/card/skeleton.tsx.
+  _devDataReady: false,
   // One-shot flag set by the "Create proposal" button so the freshly
   // opened dev session renders a "promoting this PR creates the
   // proposal" hint.
@@ -449,6 +461,10 @@ const AppView = {
       Object.keys(AppView._govApplyTimers).forEach(AppView._clearGovApplyTimers);
       AppView._govApplying = Object.create(null);
       AppView._govDueSince = Object.create(null);
+      // A different app's board is a different board: until its own load
+      // lands, the caches still hold the PREVIOUS app's cards, and painting
+      // those under this app's name is worse than painting placeholders.
+      AppView._devDataReady = false;
     }
     AppView.appData = appData;
 
@@ -712,6 +728,10 @@ const AppView = {
     AppView.appData = null;
     AppView.iframeToken = null;
     AppView.iframeTokenSlug = null;
+    // Leaving the app retires its board data as far as the surfaces are
+    // concerned: the next open re-loads, and until it does the caches on this
+    // object are stale by definition.
+    AppView._devDataReady = false;
     if (window.DevConsole) {
       DevConsole.hide();
       DevConsole.setCurrentApp(null);
@@ -3959,8 +3979,21 @@ const AppView = {
   // chat's inline vote rows — plus the session caches above (the In
   // progress area renders them now). Shared by the card list and the
   // topic sub-view. Returns false on a failed load.
+  // Returns TRUE on a completed load, FALSE when the fetches genuinely
+  // failed, and NULL when there was nothing to load yet.
+  //
+  // That third value is the fix for a visible defect: "the app data has not
+  // arrived" and "the network failed" both returned false, and _loadDevFeed
+  // renders "Couldn't load the feed right now." for a false. Opening the dev
+  // board calls it once before appData is set, so the board painted a FAILURE
+  // MESSAGE in 0ms — no request made — and replaced it with content when the
+  // real load landed a moment later. On a fast connection that is a flicker;
+  // on a slow one you sit looking at an error for a load that is merely slow.
+  //
+  // `!ok` is still true for null, so the one other caller that reads this
+  // (the topic sub-view's fall-back-to-the-board branch) is unchanged.
   async _loadDevData() {
-    if (!AppView.appData) return false;
+    if (!AppView.appData) return null;
     const slug = AppView.appData.slug;
     try {
       const [ghRes, issuesRes, promotedRes, mergedRes, orderRes] = await Promise.all([
@@ -4093,6 +4126,12 @@ const AppView = {
       // #607: keep the checks-in-progress polling fallback in sync with
       // what this load actually saw.
       AppView._syncChecksPoll(promoted);
+      // Every cache this function fills is now populated, so the surfaces may
+      // state counts and emptiness as fact. Set on the success path ONLY: a
+      // failed load leaves the placeholders up and _loadDevFeed paints its
+      // own error, and a not-ready-yet call (the `null` return above) never
+      // reaches here.
+      AppView._devDataReady = true;
       return true;
     } catch {
       return false;
@@ -4103,6 +4142,10 @@ const AppView = {
     const ok = await AppView._loadDevData();
     const body = document.getElementById('dev-body');
     if (!body) return;
+    // Nothing was loaded because there was nothing to load YET. Leave the
+    // skeleton up: a later call does the real work, and claiming failure here
+    // is how the board came to show an error message during a slow open.
+    if (ok === null) return;
     if (!ok) {
       body.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
       return;
@@ -4271,8 +4314,14 @@ const AppView = {
     // The viewer's own sessions are pinned above the feed proper, outside
     // the "Show more" pager, with the visibility dividers + archived toggle.
     const block = AppView._mySessionsRows();
+    // Before the first load, "no activity yet" is a claim about data nobody
+    // has seen. Placeholders instead; the flag is checked before the empty
+    // note so a slow load never flashes the wrong one.
+    if (!AppView._devDataReady) {
+      return { loading: true, block, emptyNote: null, entries: [], footer: null };
+    }
     if (!items.length) {
-      return { block, emptyNote: { loadFailed: !!meta.note }, entries: [], footer: null };
+      return { loading: false, block, emptyNote: { loadFailed: !!meta.note }, entries: [], footer: null };
     }
 
     const shown = Math.min(AppView._feedShown || 20, items.length);
@@ -4312,7 +4361,11 @@ const AppView = {
     } else if (meta.truncatedList && meta.repoUrl) {
       footer = { kind: 'github', href: `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues` };
     }
-    return { block, emptyNote: null, entries, footer };
+    // `loading` is on EVERY return path, never omitted. The store MERGES a
+    // patch (lib/plain-store.js), so a view model that simply left the key out
+    // would inherit the previous publish's `true` and leave the feed on its
+    // placeholders for good.
+    return { loading: false, block, emptyNote: null, entries, footer };
   },
 
   // The two completed row types share one dispatcher: the Feed folds
@@ -5348,7 +5401,7 @@ const AppView = {
     // The In progress column's own empty note has to come after its rows are
     // built: the archived toggle counts as content even with no cards.
     if (!cols[1].rows.length) cols[1].empty = emptyNote;
-    return { activeTab: AppView._activeKanbanTab(), cols };
+    return { activeTab: AppView._activeKanbanTab(), cols, loading: !AppView._devDataReady };
   },
 
   // #814: the mobile tab strip is card/dev-kanban.tsx's markup now — one

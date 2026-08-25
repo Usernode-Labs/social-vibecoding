@@ -77,6 +77,10 @@ const at = (h) => `2026-06-01T${String(h).padStart(2, '0')}:00:00Z`;
 
 // A board with something in every column, so counts are distinguishable.
 function seedBoard(AppView, { issues = 2, merged = 3, total = null } = {}) {
+  // A seeded board is a LOADED board. `_kanbanView()` reports `loading` until
+  // this is set, and the columns then draw placeholders with no counts — see
+  // frontend/src/features/dev-board/card/skeleton.tsx.
+  AppView._devDataReady = true;
   AppView._ghIssues = Array.from({ length: issues }, (_, i) => ({
     number: i + 1, title: `Issue ${i + 1}`, updatedAt: at(1), lastMessageAt: at(1), headless: null,
   }));

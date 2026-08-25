@@ -113,7 +113,7 @@ test('staging + ?demo=1: six mock session-kind rows prepend, and only the unread
     );
     // FIVE unread rows feed the cog badge, and ONE ships already read. That
     // last one is the only thing a staging preview has behind the drawer's
-    // "See N older notifications" button: without it the button does not
+    // "See more notifications" button: without it the button does not
     // render at all and the caught-up state is unreachable, so the two things
     // a reviewer is asked to look at are both invisible.
     assert.equal(mocks.filter((n) => !n.readAt).length, 5,
@@ -180,7 +180,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     // `readAt` is null on every row EXCEPT the one that exists to be read —
-    // the drawer parks read notifications behind "See N older notifications",
+    // the drawer parks read notifications behind "See more notifications",
     // and a staging clone has nothing to put there otherwise.
     assert.ok(r.readAt === null || typeof r.readAt === 'string',
       'readAt is either absent or a timestamp');

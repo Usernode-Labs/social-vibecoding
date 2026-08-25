@@ -22,7 +22,13 @@
 import { createStore } from '../../../lib/plain-store.js';
 import type { DevFeedView, DevKanbanView } from './model';
 
+// `loading: true` is the honest initial value for both: nothing has been
+// fetched when the module loads. It is also why every view model app-view.js
+// publishes carries the key EXPLICITLY — `set` merges a patch, so a model that
+// omitted it would inherit whatever was published last and strand the surface
+// on its placeholders.
 export const devFeedStore = createStore<DevFeedView>({
+  loading: true,
   block: [],
   emptyNote: null,
   entries: [],
@@ -32,6 +38,7 @@ export const devFeedStore = createStore<DevFeedView>({
 export const devKanbanStore = createStore<DevKanbanView>({
   activeTab: 'issues',
   cols: [],
+  loading: true,
 });
 
 /** `Date.now()` at the last 30s tick; 0 until the first, when baked labels hold. */

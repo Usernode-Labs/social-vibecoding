@@ -518,9 +518,15 @@ export function NotificationsBody(): ReactNode {
       {/*
           The footer toggle. Rendered only when there is something behind it,
           so a first-time viewer never sees an "older" button that reveals
-          nothing. The count is on the reveal and not on the hide, because
-          "See 12 older" answers "is it worth tapping?" while "Hide older"
-          only has to undo it.
+          nothing.
+
+          The COUNT used to be on the reveal — "See 12 older notifications" —
+          on the reasoning that it answers "is it worth tapping?". It reads
+          badly at the sizes that actually occur: "See 100 older
+          notifications" is a wall of text in a narrow drawer, and the number
+          is the count of everything behind the toggle rather than of anything
+          a reader is looking for. `olderCount` still gates whether the button
+          exists at all, which is the part that was load-bearing.
       */}
       {state.olderCount > 0 ? (
         <button
@@ -530,9 +536,7 @@ export function NotificationsBody(): ReactNode {
           aria-expanded={state.showOlder ? 'true' : 'false'}
           onClick={() => controller()?.toggleOlder()}
         >
-          {state.showOlder
-            ? 'Hide older notifications'
-            : `See ${state.olderCount} older notification${state.olderCount === 1 ? '' : 's'}`}
+          {state.showOlder ? 'Hide older notifications' : 'See more notifications'}
         </button>
       ) : null}
       <div

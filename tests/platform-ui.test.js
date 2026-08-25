@@ -539,6 +539,29 @@ test('the view toggle renders in BOTH homes, and CSS picks which one shows', () 
     'and it must do it through the store, not by repainting a node');
 });
 
+test('the home-indicator inset is not counted twice inside a kit surface', () => {
+  // #improve-footer carries .platform-safe-scroll, which is correct in the
+  // two cases where nothing else reserves the home indicator: the desktop
+  // slide-over (inset 0) and mobile Safari, where the kit is absent and the
+  // panel stays a fixed slide-over.
+  //
+  // Inside an adopted kit surface it is applied TWICE — `.un-sheet` already
+  // sets padding-bottom from the same inset, and `.un-sheet-body` adds 20px
+  // under it. Measured with a 34px indicator: 88px below the version row
+  // (34 + 20 + 34) instead of 54.
+  const css = read('public/css/app.css');
+  const rule = css.match(
+    /\.platform-sheet-adopted #improve-footer,\s*\n\.platform-panel-adopted #improve-footer \{[^}]*\}/);
+  assert.ok(rule, 'both adopted surfaces zero the footer padding');
+  assert.match(rule[0], /padding-bottom:\s*0\s*!important/,
+    '!important, because .platform-safe-scroll uses it too');
+  // …and the footer still ASKS for the inset, for the un-adopted cases.
+  const panel = read('frontend/src/features/improve/improve-panel.tsx');
+  const foot = panel.slice(panel.indexOf('id="improve-footer"'));
+  assert.match(foot.slice(0, 300), /platform-safe-scroll/,
+    'mobile Safari has no kit — something has to clear the indicator there');
+});
+
 test('the Improve panel bottom-anchors its version / GitHub / share block', () => {
   const panel = read('frontend/src/features/improve/improve-panel.tsx');
   const html = read('public/index.html');

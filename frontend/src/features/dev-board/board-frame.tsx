@@ -59,6 +59,7 @@ import {
 } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
+import { skeletonListHtml } from './card/skeleton';
 import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
@@ -155,23 +156,32 @@ function ChatCardIcon() {
 /**
  * `#dev-body`'s initial content, as a constant string — see the header.
  *
- * The "Loading…" placeholder the template always put there. The second node
- * it used to carry — `#gc-merged`, the Completed block — is gone: completed
- * work is ordinary activity in the Feed's own stream now (see
- * `AppView._feedItems`), and the kanban Done column renders its own.
+ * A SKELETON, not the word "Loading…". The report this answers was that
+ * content "loads without you realising it's loading": eleven characters of
+ * `text-xs` grey in the top-left of an empty screen is not a state anybody
+ * reads, and the eye takes the blank area for an empty board rather than a
+ * pending one.
+ *
+ * Deliberately ONE constant and not a per-mode pair. The prop's identity has
+ * to stay stable (see `DEV_BODY_INITIAL` below), and swapping it on a
+ * view-toggle would rewrite `#dev-body` out from under whatever
+ * `_repaintDevBody` had just painted there. Card-shaped rows are a fair
+ * first frame for either mode: the Feed keeps them, and the board replaces
+ * the whole host with its own four columns of the same rows the moment it
+ * paints (card/skeleton.tsx renders both).
+ *
+ * Concatenation of literals and one call to the shared builder, evaluated
+ * ONCE at module scope — never a template with a live value in it. What the
+ * constant has to be is the same bytes on every render; see `DEV_BODY_INITIAL`
+ * below for what happens when it is not.
+ *
+ * The second node this used to carry — `#gc-merged`, the Completed block —
+ * is gone: completed work is ordinary activity in the Feed's own stream now
+ * (see `AppView._feedItems`), and the kanban Done column renders its own.
  */
 const DEV_BODY_INITIAL_HTML =
-  '<div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>';
+  '<div id="dev-feed">' + skeletonListHtml(3) + '</div>';
 
-/**
- * Module-level so the prop's IDENTITY is stable across renders. React 19's
- * host-prop diff is `nextProp !== lastProp` and its dangerouslySetInnerHTML
- * setter assigns `innerHTML` unconditionally (the `__html` string comparison
- * React 18 did is gone) — with an inline `{{ __html: … }}` literal, every
- * re-render of this frame (i.e. every view-toggle click, via the view-mode
- * store) rewrote #dev-body back to the placeholder right after
- * `_repaintDevBody()` painted it.
- */
 const DEV_BODY_INITIAL = { __html: DEV_BODY_INITIAL_HTML };
 
 export function DevBoardFrame({

@@ -251,6 +251,12 @@ export type FooterSpec =
   | { kind: 'moreCompleted'; n: number };
 
 export interface DevFeedView {
+  /**
+   * True until the board's first fetch lands. The stream draws placeholder
+   * cards and the empty note is withheld — see ../card/skeleton.tsx for why
+   * "No activity yet" on a screen that is still loading is worse than slow.
+   */
+  loading?: boolean;
   /** The pinned own-sessions block above the stream. Empty draws nothing. */
   block: ListRow[];
   /** The no-activity note, with its load-failure prefix. */
@@ -275,4 +281,10 @@ export interface KanbanColView {
 export interface DevKanbanView {
   activeTab: string;
   cols: KanbanColView[];
+  /**
+   * True until the board's first fetch lands. Every column draws placeholder
+   * cards, and its count draws as a bar rather than `· 0` — an empty board
+   * and an unloaded one look identical otherwise, which is the bug.
+   */
+  loading?: boolean;
 }

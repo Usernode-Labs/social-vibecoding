@@ -246,7 +246,21 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
   assert.ok(!decl[1].includes('${'), 'no interpolation — the string never changes');
   // Byte-for-byte what the template put there.
   assert.ok(decl[1].includes('<div id="dev-feed">'), 'still ships #dev-feed');
-  assert.ok(decl[1].includes('Loading…'), 'still ships the loading placeholder');
+  // The placeholder is a SKELETON now, not the word "Loading…". Eleven
+  // characters of grey in the corner of an empty screen is not a state a
+  // reader notices, and the blank beside it reads as an empty board rather
+  // than a pending one — which is the report this answers. The rows are built
+  // by card/skeleton.tsx so the string here and the components the board
+  // paints a moment later cannot drift apart.
+  assert.ok(decl[1].includes('skeletonListHtml('),
+    'the placeholder rows come from the shared builder');
+  assert.ok(!decl[1].includes('Loading…'),
+    'the bare "Loading…" text is not what stands in for the feed any more');
+  const SKELETON = read('frontend/src/features/dev-board/card/skeleton.tsx');
+  assert.match(SKELETON, /role="status"/,
+    'the skeleton carries one live-region label for the decorative rows');
+  assert.match(SKELETON, /aria-hidden="true"/,
+    'the bars themselves are hidden from assistive tech');
   // #gc-merged is NOT here any more: THE UI OVERHAUL folded completed work
   // into the Feed's own stream (AppView._feedItems), so the second node the
   // template used to ship — the "Completed" block parked below the feed — is
