@@ -60,6 +60,10 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {ImproveSession[]} otherSessions
  * @property {boolean} loadingSessions
  * @property {boolean} sessionsLoaded
+ * @property {boolean} working
+ * @property {number} sessionUnread
+ * @property {number} sessionDone
+ * @property {'idle'|'deploying'|'stale'} versionState
  */
 
 /** @type {ImproveState} */
@@ -117,6 +121,48 @@ const INITIAL = {
   loadingSessions: false,
   /** True once a session load has resolved at least once. */
   sessionsLoaded: false,
+
+  // ── The three things the BUTTON says, with the panel shut ────────────
+  //
+  // All three used to be painted onto other controls by classic modules that
+  // resolved a span by id and wrote `classList` / `textContent` into it. The
+  // button is React-owned end to end (see ./improve-button.tsx), so they are
+  // state here and the component renders them — the same reason
+  // #feedback-queue-dot goes through the visibility store rather than being
+  // toggled by id.
+  //
+  // None of them is derived from `sessions` below, deliberately: that array is
+  // only loaded while the panel is OPEN, and every one of these has to be true
+  // when it is shut. They come from sources that run at boot instead —
+  // SessionState's live entries and the notification stream.
+
+  /**
+   * A dev session the viewer can see is mid-turn. Drives the glyph: a spinner
+   * instead of the lightbulb, so "something is running" is legible without
+   * opening anything. From `SessionState.anyActive()`.
+   */
+  working: false,
+  /**
+   * Unread session-related notifications — the green count on the button.
+   * Split out of the bell's red count by Notifications._renderBadge so the
+   * two never double-count; this is that same split, published rather than
+   * written into a span.
+   */
+  sessionUnread: 0,
+  /**
+   * How many of those are specifically "your session finished". Rendered as
+   * `data-session-done`, which a declared check selects on to prove the badge
+   * is showing for a real reason rather than merely present.
+   */
+  sessionDone: 0,
+  /**
+   * The platform version row's state, mirrored onto the button as a dot:
+   * amber while a deploy is in flight, violet once the platform has rolled
+   * past the SHA this tab loaded against. The version rows themselves live in
+   * the panel's footer, which is why the cue belongs on this button and not
+   * on the hamburger where it used to sit.
+   */
+  versionState: 'idle',
 };
 
 export const improveStore = createStore(INITIAL);

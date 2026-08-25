@@ -52,6 +52,18 @@ function makeNotifEnv() {
   const getEl = (id) => (elements[id] || (elements[id] = new FakeEl()));
   const sandbox = { console, Date, JSON, Math, Set, Map };
   sandbox.window = sandbox;
+  // The GREEN half of the split is published rather than painted since it
+  // moved onto #improve-btn — that button is React-owned, so an id lookup and
+  // a classList write would be a mismatch React patches straight back out.
+  // Record the call; the red half is still a span this env can read.
+  const badge = { unread: null, done: null, calls: 0 };
+  sandbox.Improve = {
+    setSessionBadge(unread, done) {
+      badge.calls += 1;
+      badge.unread = unread;
+      badge.done = done;
+    },
+  };
   sandbox.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
   sandbox.document = {
     title: 'My App',
@@ -60,7 +72,7 @@ function makeNotifEnv() {
     createElement: () => ({ set textContent(v) { this._t = v; }, get innerHTML() { return this._t || ''; } }),
   };
   vm.runInNewContext(NOTIF_SRC, sandbox);
-  return { Notifications: sandbox.window.Notifications, elements };
+  return { Notifications: sandbox.window.Notifications, elements, badge };
 }
 
 // Build a fresh sandbox + DevAlerts instance with configurable environment.
@@ -301,8 +313,8 @@ test('settings.js wires the toggle and the test-alert button', () => {
 
 // ── badge split (green AI vs red remainder) ──────────────────────────────
 
-test('the bell renders a green AI-completion badge and a red badge for the remainder', () => {
-  const { Notifications, elements } = makeNotifEnv();
+test('the session count is published green, the remainder painted red', () => {
+  const { Notifications, elements, badge } = makeNotifEnv();
   Notifications.items = [
     { id: 1, kind: 'session_done', readAt: null },
     { id: 2, kind: 'auto_solve_done', readAt: null },
@@ -313,25 +325,35 @@ test('the bell renders a green AI-completion badge and a red badge for the remai
   Notifications.invites = [{ appId: 9 }];
   Notifications._renderBadge();
 
-  const green = elements['notifications-badge-ai'];
   const red = elements['notifications-badge'];
-  assert.equal(green.textContent, '2', 'green = unread session_done + auto_solve_done');
-  assert.equal(green.hidden, false);
+  assert.equal(badge.unread, 2, 'green = unread session_done + auto_solve_done');
+  assert.equal(badge.done, 1, 'and the session_done subset rides along');
   // red = (unread - aiUnread) + invites = (3 - 2) + 1 = 2
   assert.equal(red.textContent, '2', 'red = non-AI unread + invites');
   assert.equal(red.hidden, false);
+  // The SPLIT is the point, and this is what states it: the red count is the
+  // unread total with the green half taken out, plus invites. If the two ever
+  // stopped being disjoint a session would be counted on both controls.
+  assert.equal(Number(red.textContent), Notifications.unread - badge.unread + 1);
 });
 
-test('each bell badge hides when its own count is zero', () => {
-  const { Notifications, elements } = makeNotifEnv();
+test('each count falls to zero on its own', () => {
+  const { Notifications, elements, badge } = makeNotifEnv();
   Notifications.items = [{ id: 1, kind: 'session_done', readAt: null }];
   Notifications.unread = 1;
   Notifications.invites = [];
   Notifications._renderBadge();
-  assert.equal(elements['notifications-badge-ai'].textContent, '1');
-  assert.equal(elements['notifications-badge-ai'].hidden, false);
+  assert.equal(badge.unread, 1);
   // No non-AI unread and no invites → red badge hidden.
   assert.equal(elements['notifications-badge'].hidden, true);
+
+  // And the green half reports zero rather than going silent: the component
+  // needs the number to decide `hidden`, so "nothing to report" is a publish
+  // of 0, not an absent call.
+  Notifications.items = [{ id: 1, kind: 'session_done', readAt: '2020-01-01T00:00:00Z' }];
+  Notifications.unread = 0;
+  Notifications._renderBadge();
+  assert.equal(badge.unread, 0);
 });
 
 test('dev-alerts.js still loads before notifications, and index.html ships the settings UI', () => {

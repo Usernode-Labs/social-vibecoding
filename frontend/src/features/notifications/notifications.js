@@ -625,12 +625,24 @@ const Notifications = {
   },
 
   _renderBadge() {
-    // Two badges, BOTH on the hamburger since the bell and the cog merged
-    // into it. Green = the viewer's unread session-related notifications;
-    // red = everything else (mentions/replies/reactions/kudos/votes) +
-    // pending invites. The green count is split OUT of the red one so the two
-    // never double-count, and each hides at zero. Keeping them distinct is
-    // what lets one icon say "there are two different reasons to open me".
+    // TWO COUNTS, ONE SPLIT, TWO CONTROLS NOW.
+    //
+    // Green = the viewer's unread session-related notifications; red =
+    // everything else (mentions/replies/reactions/kudos/votes) + pending
+    // invites. The green count is split OUT of the red one so the two never
+    // double-count, and each hides at zero — unchanged.
+    //
+    // What changed is where each lands. Both used to be spans on the
+    // hamburger, which is what let one icon say "there are two different
+    // reasons to open me". Sessions are not notifications and the drawer is
+    // not where you go to look at one, so the green half moved onto
+    // #improve-btn — where the sessions themselves are. The red half stays
+    // here on the bell's drawer.
+    //
+    // It PUBLISHES rather than paints: that button is React-owned end to end,
+    // and this module cannot import the store (two test files load it as a
+    // classic script in a vm, where a top-level `import` is a syntax error —
+    // the same constraint dev-chat.js documents). window.Improve is the seam.
     const aiUnread = Notifications._sessionUnread();
     const redCount = Notifications._bellUnread() + Notifications.invites.length;
 
@@ -644,15 +656,9 @@ const Notifications = {
       }
     }
 
-    const aiBadge = document.getElementById('notifications-badge-ai');
-    if (aiBadge) {
-      aiBadge.dataset.sessionDone = String(Notifications._sessionDoneUnread());
-      if (aiUnread > 0) {
-        aiBadge.textContent = aiUnread > 99 ? '99+' : String(aiUnread);
-        aiBadge.classList.remove('hidden');
-      } else {
-        aiBadge.classList.add('hidden');
-      }
+    if (typeof window !== 'undefined' && window.Improve
+      && typeof window.Improve.setSessionBadge === 'function') {
+      window.Improve.setSessionBadge(aiUnread, Notifications._sessionDoneUnread());
     }
 
     const markAll = document.getElementById('notifications-mark-all');

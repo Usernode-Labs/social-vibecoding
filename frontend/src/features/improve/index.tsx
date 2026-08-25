@@ -46,6 +46,11 @@ export function ImproveIsland() {
       SessionState?: { subscribe(fn: () => void): (() => void) | void };
     }).SessionState;
     if (!sessionState?.subscribe) return undefined;
+    // Read once on mount as well as on change: `subscribe` fires on the NEXT
+    // notify, and app.js's boot path has usually already synced by the time
+    // this island mounts — so a turn that was in flight before the page loaded
+    // would leave the button's glyph un-spun until something else moved.
+    Improve.onSessionStateChanged();
     const unsubscribe = sessionState.subscribe(() => Improve.onSessionStateChanged());
     return typeof unsubscribe === 'function' ? unsubscribe : undefined;
   }, []);
