@@ -251,6 +251,30 @@ test('installOffer: only http(s) destinations are offered', () => {
   }
 });
 
+// ── storeLabel(): what the strip calls the destination ──────────────
+
+test('storeLabel: a TestFlight invite is not called the App Store', () => {
+  // The value published for iOS today IS a TestFlight link, so this is the
+  // live case, not a hypothetical: saying "the App Store" while opening a
+  // beta invite tells the visitor something untrue about what they join.
+  const { storeLabel } = loadTsx('frontend/src/features/mobile-install/detect.ts');
+  assert.equal(storeLabel('ios', 'https://testflight.apple.com/join/H9puE1gu'), 'TestFlight');
+});
+
+test('storeLabel: real store listings get their store name', () => {
+  const { storeLabel } = loadTsx('frontend/src/features/mobile-install/detect.ts');
+  assert.equal(storeLabel('ios', IOS_URL), 'the App Store');
+  assert.equal(storeLabel('android', PLAY_URL), 'Google Play');
+});
+
+test('storeLabel: an unrecognised or unparseable URL falls back to the platform store', () => {
+  // update_url is one free-text field and nobody is asked what kind of link
+  // it is, so an enterprise or self-hosted destination must still read sanely.
+  const { storeLabel } = loadTsx('frontend/src/features/mobile-install/detect.ts');
+  assert.equal(storeLabel('android', 'https://downloads.example.com/usernode.apk'), 'Google Play');
+  assert.equal(storeLabel('ios', 'not a url'), 'the App Store');
+});
+
 // ── The island's first render ───────────────────────────────────────
 
 test('island: first render is the hidden strip, with no data and no store link', () => {
@@ -266,4 +290,6 @@ test('island: first render is the hidden strip, with no data and no store link',
   assert.match(html, /class="hidden /);
   assert.doesNotMatch(html, /https:\/\/apps\.apple\.com/);
   assert.doesNotMatch(html, /https:\/\/play\.google\.com/);
+  // …and names no destination, because none is known yet.
+  assert.doesNotMatch(html, /App Store|Google Play|TestFlight/);
 });

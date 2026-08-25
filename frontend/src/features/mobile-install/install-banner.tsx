@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { XIcon } from '@/components/ui/icons';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import {
-  STORE_LABEL, detectMobileOs, installOffer, type InstallOffer, type StoreUrls,
+  detectMobileOs, installOffer, storeLabel, type InstallOffer, type StoreUrls,
 } from './detect';
 
 /**
@@ -144,7 +144,7 @@ export function MobileInstallBanner() {
       <div className="min-w-0 flex-1 text-left leading-tight">
         <div className="font-medium text-zinc-900 dark:text-zinc-100 truncate">Usernode</div>
         <div className="text-zinc-500 dark:text-zinc-400 truncate">
-          {offer ? `Get the app on the ${STORE_LABEL[offer.os]}` : 'Get the app'}
+          {offer ? `Get the app on ${storeLabel(offer.os, offer.url)}` : 'Get the app'}
         </div>
       </div>
       <a

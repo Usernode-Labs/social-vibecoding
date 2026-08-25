@@ -35,11 +35,41 @@ export interface InstallOffer {
   url: string;
 }
 
-/** What the button says, per store. */
+/**
+ * The fallback name of each platform's store, when the URL says nothing more.
+ * Each reads as the tail of "Get the app on …", article included where the
+ * name takes one.
+ */
 export const STORE_LABEL: Record<MobileOs, string> = {
-  ios: 'App Store',
+  ios: 'the App Store',
   android: 'Google Play',
 };
+
+/**
+ * What the strip should CALL the destination.
+ *
+ * Not simply `STORE_LABEL[os]`, because the URL is not always a store. The
+ * value published for iOS today is a `testflight.apple.com` invite — a beta,
+ * not an App Store listing — and a strip that said "Get the app on the App
+ * Store" while opening TestFlight would be telling the visitor something
+ * untrue about what they are about to join.
+ *
+ * The host is the only thing that can answer this: `update_url` is one free
+ * text field, and whoever fills it in is not asked which kind of link it is.
+ * Anything unrecognised falls back to the platform's store name.
+ */
+export function storeLabel(os: MobileOs, url: string): string {
+  let host = '';
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return STORE_LABEL[os];
+  }
+  if (host === 'testflight.apple.com') return 'TestFlight';
+  if (host === 'apps.apple.com' || host === 'itunes.apple.com') return 'the App Store';
+  if (host === 'play.google.com') return 'Google Play';
+  return STORE_LABEL[os];
+}
 
 /**
  * Which mobile OS is this, if any?
