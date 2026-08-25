@@ -1,19 +1,18 @@
-// #1406 / #1407 / #1408 — three small UI tweaks, two of which are one change.
-//
-// They ship together because #1406 and #1407 touch the same measurement:
-// putting the view selector and the improve button on more screens changes the
-// right group's width on exactly those screens, and the right group's width is
-// the input the title-centring decision reads. Landing them apart would mean
-// tuning a centring rule against a header about to change under it.
-//
-// What each is:
+// #1406 / #1408 — two small UI tweaks.
 //
 //   #1406  The improve button and the view selector stay on the other platform
 //          screens (settings, profile, messages) instead of vanishing the
 //          moment you leave home.
-//   #1407  The title centres in the space the side groups LEAVE, not on the
-//          viewport — the groups are lopsided, so those are different places.
 //   #1408  Text boxes grow with their content up to a ceiling.
+//
+// #1407 was here too — centring the title in the space the side groups LEAVE
+// rather than on the viewport, which is a different place because the groups
+// are lopsided. It was implemented, reviewed on the staging preview and backed
+// out: the anchor moving with the right group's width read as the title
+// wandering rather than as it being centred. use-header-layout.ts keeps the
+// viewport-centred rule it always had — absolute at left:50% when the title's
+// natural width clears the wider group on both sides, flex flow otherwise —
+// and nothing in this file asserts on it.
 //
 // Run with: node --test tests/header-and-textbox-tweaks.test.js
 
@@ -27,7 +26,6 @@ const APP_JS = read('public/js/app.js');
 const HOME_JS = read('frontend/src/features/home/home.js');
 const IMPROVE_JS = read('frontend/src/features/improve/improve-controller.js');
 const TOGGLE_TSX = read('frontend/src/features/improve/view-toggle.tsx');
-const LAYOUT_TS = read('frontend/src/features/header/use-header-layout.ts');
 const GROW_TS = read('frontend/src/lib/use-auto-grow.ts');
 const COMPOSER = read('frontend/src/features/messages/composer.tsx');
 const ROW = read('frontend/src/features/messages/message-row.tsx');
@@ -173,42 +171,6 @@ test('a late payload never overwrites a header its screen no longer owns', () =>
   const cb = publish.slice(publish.indexOf('loading.then('));
   assert.match(cb, /if \(App\.currentApp\) return;/);
   assert.match(cb, /if \(App\._isScreenVisible\('home-screen'\)\) return;/);
-});
-
-// ── #1407: centred in the gap, not on the viewport ─────────────────────
-
-test('the anchor is the midpoint between the groups', () => {
-  assert.match(LAYOUT_TS, /const gapStart = leftW \+ SIDE_GAP_PX/);
-  assert.match(LAYOUT_TS, /const gapEnd = headerW - rightW - SIDE_GAP_PX/);
-  assert.match(LAYOUT_TS, /gapStart \+ availableForCenter \/ 2/);
-  // The old rule demanded the WIDER group's width as clearance on both sides,
-  // which threw away the narrow side's room and put the title off-centre
-  // within the gap it actually occupies.
-  assert.doesNotMatch(LAYOUT_TS, /Math\.max\(leftW, rightW\)/,
-    'the symmetric-clearance rule is gone, not merely bypassed');
-});
-
-test('the fit test asks only whether the title fits the gap', () => {
-  assert.match(LAYOUT_TS, /availableForCenter = gapEnd - gapStart/);
-  assert.match(LAYOUT_TS, /availableForCenter > 0[\s\S]{0,120}titleNaturalW \+ JITTER_SLACK_PX <= availableForCenter/);
-  // The contract is unchanged: no state where a truncated title is also
-  // centred. Falling back to flex flow is still how that is guaranteed.
-  assert.match(LAYOUT_TS, /classList\.toggle\('is-centered', canCenter\)/);
-});
-
-test('the offset reaches CSS as a property, and is cleared when unused', () => {
-  assert.match(LAYOUT_TS, /setProperty\('--header-title-centre'/);
-  assert.match(LAYOUT_TS, /removeProperty\('--header-title-centre'/,
-    'a left-aligned title must not carry a stale offset from a width it lost');
-  assert.match(CSS, /left: var\(--header-title-centre, 50%\)/,
-    'the stylesheet keeps the positioning rule; the hook supplies one number');
-});
-
-test('the measurement still reacts to the right group changing size', () => {
-  // #1406 makes the right group's width vary across screens, which is exactly
-  // what this observer exists for — the two changes meet here.
-  assert.match(LAYOUT_TS, /rightObserver\.observe\(rightGroup\)/);
-  assert.match(LAYOUT_TS, /headerObserver\.observe\(header\)/);
 });
 
 // ── #1408: text boxes that grow ────────────────────────────────────────

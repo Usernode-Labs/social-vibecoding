@@ -6391,11 +6391,7 @@ span.gc-vote-btn-icon { cursor: default; }
    in-between state where the title is truncated *while* centered. */
 #header-title.is-centered {
   position: absolute;
-  /* #1407: the midpoint of the space the side groups leave, published by
-     features/header/use-header-layout.ts. The 50% fallback is the old
-     viewport-centred behaviour and applies only in the frame before the hook's
-     first measurement — never a resting state. */
-  left: var(--header-title-centre, 50%);
+  left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
   flex: none;
