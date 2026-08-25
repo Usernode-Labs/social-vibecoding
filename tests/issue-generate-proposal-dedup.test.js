@@ -20,6 +20,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
+const { cardHtml, hasAction, issueCardHtml } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -61,67 +62,68 @@ const issue = (headless) => ({ number: 5, title: 'Fix the thing', headless });
 
 // Count the HEADLESS text pills on the card face — this file's subject is that
 // an issue never offers two ways to generate the same proposal at once, so the
-// count must exclude pills that have nothing to do with the run. The ⋯ trigger
-// and the preview icon carry .gc-vote-btn-icon; the in-progress claim toggle is
-// a second, unrelated promoted pill (it names its own handlers, so it filters
-// out by wiring rather than by position).
-function primaryCount(html) {
-  const row = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
-  if (!row) return 0;
-  return (row[1].match(/<button[^>]*>/g) || [])
-    .filter((b) => !/gc-vote-btn-icon/.test(b))
-    .filter((b) => !/markIssueInProgress|clearIssueClaim/.test(b)).length;
+// count must exclude pills that have nothing to do with the run. The card
+// holds its handlers as closures now (#1367's card chunk), so this counts the
+// MODEL's action specs and drops the in-progress claim toggle by the call it
+// dispatches, which is what it was filtering on before.
+const CLAIM = /^(markIssueInProgress|clearIssueClaim)$/;
+function primaryCount(model) {
+  return (model.actions || [])
+    .filter((a) => !(a.act && CLAIM.test(a.act.fn))).length;
 }
-function menuLabels(AppView, html) {
-  const m = html.match(/data-card-menu="([^"]+)"/);
-  if (!m) return [];
-  return (AppView._cardMenus[m[1]] || []).map((it) => it.label);
+function menuLabels(AppView, model) {
+  const key = model.rail && model.rail.menuKey;
+  if (!key) return [];
+  return (AppView._cardMenus[key] || []).map((it) => it.label);
 }
 
 test('a question outcome the viewer has NOT cloned: one primary + one ⋯ re-run', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(issue({ status: 'ready', outcome: 'question', sessionId: 91 }));
-  assert.equal(primaryCount(html), 1, 'exactly one headless pill on the card face');
+  const model = AppView._issueCardModel(issue({ status: 'ready', outcome: 'question', sessionId: 91 }));
+  const html = cardHtml(model);
+  assert.equal(primaryCount(model), 1, 'exactly one headless pill on the card face');
   assert.match(html, /Answer &amp; regenerate/, 'the folded primary');
   // The band's other pill is the promoted claim toggle, which is not a second
   // way to do this — it is a different action entirely.
-  assert.match(html, /markIssueInProgress\(5\)/);
-  const generate = menuLabels(AppView, html).filter((l) => /^Generate proposal$/.test(l));
+  assert.ok(hasAction(model, 'markIssueInProgress', 5));
+  const generate = menuLabels(AppView, model).filter((l) => /^Generate proposal$/.test(l));
   assert.equal(generate.length, 1, 'exactly one Generate proposal affordance, in ⋯');
 });
 
 test('a question outcome the viewer HAS cloned: Go to session and NO re-run anywhere', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(issue({
+  const model = AppView._issueCardModel(issue({
     status: 'ready', outcome: 'question', sessionId: 91, mySessionId: 92,
   }));
-  assert.equal(primaryCount(html), 1);
-  assert.match(html, /goToAutoSessionClone\(92\)/);
+  const html = cardHtml(model);
+  assert.equal(primaryCount(model), 1);
+  assert.ok(hasAction(model, 'goToAutoSessionClone', 92));
   assert.match(html, />Go to session</);
   // The original bug, stated directly: no second Generate beside it.
-  assert.ok(!menuLabels(AppView, html).some((l) => /^Generate proposal$/.test(l)),
+  assert.ok(!menuLabels(AppView, model).some((l) => /^Generate proposal$/.test(l)),
     'the proposal already exists — offering a re-run here is the #150 bug');
-  assert.doesNotMatch(html, /confirmAutoSession/, 'no re-run wiring on the card at all');
+  assert.ok(!hasAction(model, 'confirmAutoSession'), 'no re-run wiring on the card at all');
 });
 
 test('a run in flight offers neither a clone nor a re-run', () => {
   const AppView = makeAppView();
-  const html = AppView._renderIssueRow(issue({ status: 'generating', sessionId: 93 }));
-  assert.equal(primaryCount(html), 1);
+  const model = AppView._issueCardModel(issue({ status: 'generating', sessionId: 93 }));
+  const html = cardHtml(model);
+  assert.equal(primaryCount(model), 1);
   assert.match(html, /disabled[^>]*>Generating proposal/);
-  assert.ok(!menuLabels(AppView, html).some((l) => /^Generate proposal$/.test(l)),
+  assert.ok(!menuLabels(AppView, model).some((l) => /^Generate proposal$/.test(l)),
     'nothing to generate while one is already running');
 });
 
 test('every other outcome also yields exactly one primary', () => {
   const AppView = makeAppView();
   for (const outcome of ['spec', 'code', 'spec_code', undefined]) {
-    const html = AppView._renderIssueRow(issue({ status: 'ready', outcome, sessionId: 90 }));
-    assert.equal(primaryCount(html), 1, `outcome ${outcome}: one primary`);
-    assert.match(html, /startFromAutoSession\(90\)/);
+    const model = AppView._issueCardModel(issue({ status: 'ready', outcome, sessionId: 90 }));
+    assert.equal(primaryCount(model), 1, `outcome ${outcome}: one primary`);
+    assert.ok(hasAction(model, 'startFromAutoSession', 90));
   }
   // …and so does a never-started issue.
-  const fresh = AppView._renderIssueRow(issue(null));
+  const fresh = AppView._issueCardModel(issue(null));
   assert.equal(primaryCount(fresh), 1);
-  assert.match(fresh, /createPrForIssue\(5\)/);
+  assert.ok(hasAction(fresh, 'createPrForIssue', 5));
 });

@@ -28,6 +28,12 @@ const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 const platformUiSrc = read('public', 'js', 'platform-ui.js');
 const devChatSrc = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
 const groupChatSrc = read('public', 'js', 'group-chat.js');
+// The panel's MARKUP moved to a component in #1191; group-chat.js keeps the
+// fetch, the raw-source stash and the gate that decides whether Copy appears.
+const panelTsx = read('frontend', 'src', 'features', 'group-chat', 'spec-panel.tsx');
+// #1078: the dev-chat viewer's markup moved the same way the panel's did.
+const viewerTsx = read('frontend', 'src', 'features', 'dev-chat', 'spec-viewer.tsx');
+const { renderComponent } = require('./lib/render-tsx');
 const appCss = read('public', 'css', 'app.css');
 const sessionsSrc = read('src', 'routes', 'sessions.js');
 
@@ -84,44 +90,52 @@ test('copyText resolves a boolean instead of throwing', () => {
 
 // ── 2. Dev-chat spec viewer ─────────────────────────────────────────────
 
-test('_renderSpecViewer renders a copy button and binds it', () => {
-  const src = methodSource(devChatSrc, '_renderSpecViewer', 'dev-chat.js');
-  assert.ok(src.includes('dc-spec-viewer-copy'),
-    '_renderSpecViewer must render the copy button');
-  assert.ok(src.includes("querySelector('#dc-spec-viewer-copy')"),
-    'the copy button must be looked up and bound after the innerHTML write');
-  assert.ok(/disabled title="No spec to copy yet"/.test(src),
-    'an empty spec must render the copy button disabled, mirroring the share buttons');
+// #1078: the panel's MARKUP moved to features/dev-chat/spec-viewer.tsx, the
+// same split the group-chat panel below already made. What crosses the seam
+// is `raw` — the whole selected version — so the property #1012 is about is
+// now pinned on BOTH sides: the model must carry the raw document, and the
+// button must copy what the model carried.
+test('the viewer renders a copy button and the model tells it what to copy', () => {
+  const src = methodSource(devChatSrc, '_specViewerView', 'dev-chat.js');
+  assert.ok(/raw: displayContent,/.test(src),
+    'the model must carry displayContent — the raw selected version');
+  assert.ok(/copy = isEmpty \? \{ kind: 'blank' \} : \{ kind: 'live' \}/.test(src),
+    'an empty spec must blank the copy button, mirroring the share buttons');
+
+  assert.ok(viewerTsx.includes('id="dc-spec-viewer-copy"'), 'the copy button is rendered');
+  assert.ok(/disabled\s*\n?\s*title="No spec to copy yet"/.test(viewerTsx),
+    'and its disabled placeholder keeps the same title');
 });
 
-test('the dev-chat copy button copies displayContent — the WHOLE document', () => {
-  const src = methodSource(devChatSrc, '_renderSpecViewer', 'dev-chat.js');
-  assert.ok(/PlatformUI\.copyText\(displayContent\)/.test(src),
-    'the copy handler must pass displayContent (the raw selected version) to copyText');
+test('the dev-chat copy button copies `raw` — the WHOLE document', () => {
+  assert.ok(/copyText\?\.\(raw\)/.test(viewerTsx),
+    'the copy handler must pass the raw selected version to copyText');
   // The crux of #1012: never the rendered half, never the active tab.
-  assert.ok(!/copyText\((?:[^)]*\b(?:split|activeTab|userFacing|technical)\b[^)]*)\)/.test(src),
-    'the copy source must not be a split half or keyed off activeTab');
+  assert.ok(!/copyText\?\.\((?:[^)]*\b(?:split|activeTab|tab|halfHtml|body)\b[^)]*)\)/.test(viewerTsx),
+    'the copy source must not be a split half or keyed off the active tab');
+  // And the model's `raw` is not the rendered body either.
+  const src = methodSource(devChatSrc, '_specViewerView', 'dev-chat.js');
+  assert.ok(!/raw: (?:body|split|half)/.test(src));
 });
 
 test('the copy button sits after the version select and before the share buttons', () => {
-  const src = methodSource(devChatSrc, '_renderSpecViewer', 'dev-chat.js');
-  const selectIdx = src.indexOf('id="dc-spec-viewer-version"');
-  const copyIdx = src.indexOf('${copyBtnHtml}');
-  const shareUserIdx = src.indexOf('${shareUserBtnHtml}');
-  assert.ok(selectIdx !== -1, 'version select missing from the header template');
-  assert.ok(copyIdx !== -1, 'copy button missing from the header template');
-  assert.ok(shareUserIdx !== -1, 'share-to-user button missing from the header template');
-  assert.ok(selectIdx < copyIdx && copyIdx < shareUserIdx,
+  const selectIdx = viewerTsx.indexOf('id="dc-spec-viewer-version"');
+  const copyIdx = viewerTsx.indexOf('<CopyButton ');
+  const shareUserIdx = viewerTsx.indexOf('<UserShareButton ');
+  const shareIdx = viewerTsx.indexOf('<GroupShareButton ');
+  assert.ok(selectIdx !== -1, 'version select missing from the header');
+  assert.ok(copyIdx !== -1, 'copy button missing from the header');
+  assert.ok(shareUserIdx !== -1, 'share-to-user button missing from the header');
+  assert.ok(selectIdx < copyIdx && copyIdx < shareUserIdx && shareUserIdx < shareIdx,
     'header order must be: version select, copy, share buttons (close stays trailing)');
 });
 
 test('the copy button flashes its own label and reports failure', () => {
-  const src = methodSource(devChatSrc, '_renderSpecViewer', 'dev-chat.js');
-  assert.ok(src.includes("'Copied!'") && src.includes("'Copy failed'"),
+  assert.ok(viewerTsx.includes("'Copied!'") && viewerTsx.includes("'Copy failed'"),
     'both the success and failure labels must be present');
-  assert.ok(/setTimeout\(\(\) => \{ copyBtn\.textContent = 'Copy markdown'; \}, 1500\)/.test(src),
+  assert.ok(/setTimeout\(\(\) => setLabel\('Copy markdown'\), 1500\)/.test(viewerTsx),
     'the label must be restored after the flash');
-  assert.ok(/if \(!ok\) PlatformUI\.toast\(/.test(src),
+  assert.ok(/if \(!ok\) ui\(\)\?\.toast\?\.\(/.test(viewerTsx),
     'a failed copy must also explain the manual fallback via a toast');
 });
 
@@ -130,24 +144,50 @@ test('the copy button flashes its own label and reports failure', () => {
 test('_showSpecPanel stashes the raw markdown in JS state', () => {
   const src = methodSource(groupChatSrc, '_showSpecPanel', 'group-chat.js');
   assert.ok(/GroupChat\._specPanelRaw = content/.test(src),
-    '_showSpecPanel must stash `content` on _specPanelRaw (the panel rewrites its innerHTML)');
+    '_showSpecPanel must stash `content` on _specPanelRaw — the panel does not '
+    + 'hold the raw source, it renders the markdown');
   // Multi-KB markdown with quotes/newlines must never be inlined into markup.
   assert.ok(!/data-spec-(?:raw|content|markdown)/.test(src),
     'the raw spec must not be interpolated into a data- attribute');
-  assert.ok(/PlatformUI\.copyText\(GroupChat\._specPanelRaw\)/.test(src),
+  // The copy handler moved into the panel component with the markup (#1191);
+  // what it copies did not change, and it still reaches the stash by name
+  // because that is where the raw source lives.
+  assert.ok(!/data-spec-(?:raw|content|markdown)/.test(panelTsx),
+    'nor into one on the React side');
+  assert.ok(/copyText\?\.\(controller\(\)\?\._specPanelRaw\)/.test(panelTsx),
     'the panel copy handler must copy the stashed raw markdown');
 });
 
 test('the panel copy button is gated on canCopy and a non-error body', () => {
+  // The GATE is still decided in the module, where `isError` and the option
+  // live; the button is drawn from the one field it produces.
   const src = methodSource(groupChatSrc, '_showSpecPanel', 'group-chat.js');
   assert.ok(/canCopy = true/.test(src),
     '_showSpecPanel must accept a canCopy option defaulting to true');
-  assert.ok(/\(canCopy && !isError && content\)/.test(src),
+  assert.ok(/canCopy: !!\(canCopy && !isError && content\)/.test(src),
     'the button must render only for a copyable, non-error, non-empty body');
-  const copyIdx = src.indexOf('${copyBtnHtml}');
-  const closeIdx = src.indexOf('gc-spec-panel-close" aria-label');
-  assert.ok(copyIdx !== -1 && closeIdx !== -1, 'header template missing copy/close buttons');
-  assert.ok(copyIdx < closeIdx, 'the copy button must sit left of the close ✕');
+
+  // …and the header's order is checked on the RENDERED markup rather than on
+  // template-literal positions, which is a stronger statement of the same
+  // thing: the copy control sits left of the close ✕.
+  const header = (state) => renderComponent(
+    'frontend/src/features/group-chat/spec-panel.tsx', 'SpecPanelView', state);
+  const base = {
+    open: true, title: 'Spec', subtitle: 'v1', canCopy: true,
+    body: { kind: 'markdown', html: '<p>hi</p>' },
+  };
+  const withCopy = header(base);
+  assert.ok(withCopy.indexOf('gc-spec-panel-copy') < withCopy.indexOf('gc-spec-panel-close'),
+    'the copy button must sit left of the close ✕');
+  // Gated off: an error body, and an explicit canCopy: false.
+  assert.ok(!header({ ...base, canCopy: false }).includes('gc-spec-panel-copy'));
+  assert.ok(!header({ ...base, canCopy: false, body: { kind: 'error', text: 'Not found' } })
+    .includes('gc-spec-panel-copy'));
+  // An error body is TEXT, never markdown — formatting a 404 makes it look
+  // like a document.
+  const err = header({ ...base, canCopy: false, body: { kind: 'error', text: '<b>404</b>' } });
+  assert.ok(!err.includes('<b>404</b>'), 'the error message is not markup');
+  assert.match(err, /gc-spec-panel-error">&lt;b&gt;404&lt;\/b&gt;</);
 });
 
 test('the reload-restore skeleton is not copyable', () => {

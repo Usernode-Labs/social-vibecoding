@@ -318,16 +318,24 @@ test('notifications anchor to the top of the drawer, the nav rows to the bottom'
   assert.match(rowsTag, /flex flex-col/,
     '#header-menu-rows stays the column flex the anchoring depends on');
 
-  // `mt-auto` collects the free space ABOVE the nav rows. It degrades on its
-  // own when there is none (a short viewport, an expanded list), which is why
-  // there is no measurement anywhere in this feature.
+  // WHICH BLOCK ABSORBS THE FREE SPACE, and therefore which one scrolls.
+  //
+  // The nav rows used to hug the bottom with `mt-auto`, which collects the
+  // space ABOVE them — and so did nothing in the one case that mattered, a
+  // notification list long enough to leave none: Profile / Messages /
+  // Settings / Admin then sat below the fold behind a scroll nobody expects
+  // in a menu. It is the other way round now. The notifications block is the
+  // flexing, scrolling one; the rows are `shrink-0` and unconditional.
   const navTag = html.slice(navAt, html.indexOf('>', navAt));
-  assert.match(navTag, /\bmt-auto\b/, 'the navigation rows must hug the bottom');
+  assert.match(navTag, /\bshrink-0\b/, 'the navigation rows keep their height');
+  assert.ok(!/\bmt-auto\b/.test(navTag),
+    'and do not depend on free space existing above them');
   const notifTag = html.slice(notifAt, html.indexOf('>', notifAt));
-  assert.match(notifTag, /\bshrink-0\b/,
-    'and the notifications block must not be squeezed to make room');
-  assert.ok(!/\bmt-auto\b/.test(notifTag),
-    'nothing may push the notifications block off the top');
+  assert.match(notifTag, /\bflex-1\b/, 'the notifications block takes what is left');
+  assert.match(notifTag, /\bmin-h-0\b/,
+    'and may shrink below its content, which is what lets it scroll');
+  assert.ok(!/\boverflow-y-auto\b/.test(rowsTag),
+    '#header-menu-rows itself must not scroll — only the list inside it does');
 });
 
 // ── The follow-up: the SECTION is not collapsible; its GROUPS are ────

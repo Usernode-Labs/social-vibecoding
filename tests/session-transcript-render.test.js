@@ -190,9 +190,18 @@ test('headerText labels both the collapsed and expanded states', () => {
   const ST = load();
   const s = { username: 'alice', message_count: 24 };
   assert.strictEqual(ST.headerText(s, { expanded: false }), 'Read the dev chat (24 messages)');
-  assert.strictEqual(ST.headerText(s, { expanded: true }), 'Dev chat by alice · 24 messages · read-only');
+  assert.strictEqual(ST.headerText(s, { expanded: true }), 'Dev chat by alice · 24 messages');
+  // NOT "· read-only": the toggle renders a `.st-readonly-tag` chip saying so
+  // immediately after this line, and carrying it in both places printed
+  // "read-only read-only" on every opened transcript.
+  assert.doesNotMatch(ST.headerText(s, { expanded: true }), /read-only/);
+  const HEAD = fs.readFileSync(path.join(
+    __dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', 'topic-head.tsx'), 'utf8');
+  assert.match(HEAD, /className="st-readonly-tag">read-only</, 'the chip is the one that says it');
   // Singular, and a missing count degrades rather than printing "0 messages".
-  assert.match(ST.headerText({ username: 'alice', message_count: 1 }, { expanded: true }), /1 message ·/);
+  assert.strictEqual(
+    ST.headerText({ username: 'alice', message_count: 1 }, { expanded: true }),
+    'Dev chat by alice · 1 message', 'singular, and nothing after it');
   assert.strictEqual(ST.headerText({}, { expanded: false }), 'Read the dev chat');
 });
 

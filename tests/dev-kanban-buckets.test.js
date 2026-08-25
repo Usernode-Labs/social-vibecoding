@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { kanbanHtml } = require('./lib/dev-card-html');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -386,8 +387,12 @@ const seedDone = (AppView, { loaded, total, hasMore, loading }) => {
 test('Kanban Done footer is a clickable Load more button when more pages exist', () => {
   const AppView = makeAppView();
   seedDone(AppView, { loaded: 2, total: 25, hasMore: true, loading: false });
-  const html = AppView._renderKanbanInner();
-  assert.match(html, /onclick="AppView\.loadMoreMerged\(\)"/, 'wired to the pager');
+  const html = kanbanHtml(AppView);
+  // The handler is a closure on the React footer now, so the wiring is read
+  // off the view model and the markup is checked for what it draws.
+  const done = AppView._kanbanView().cols.find((c) => c.key === 'done');
+  assert.deepEqual(JSON.parse(JSON.stringify(done.footer)),
+    { kind: 'loadMerged', loading: false, n: 23 }, 'wired to the pager');
   assert.match(html, /Load more \(23\)/, 'shows remaining count');
   assert.match(html, /class="gc-vote-btn"/, 'uses the shared button class');
   assert.doesNotMatch(html, /more completed/, 'no dead static hint when expandable');
@@ -396,8 +401,10 @@ test('Kanban Done footer is a clickable Load more button when more pages exist',
 test('Kanban Done Load more button is disabled with a Loading state while fetching', () => {
   const AppView = makeAppView();
   seedDone(AppView, { loaded: 2, total: 25, hasMore: true, loading: true });
-  const html = AppView._renderKanbanInner();
-  assert.match(html, /onclick="AppView\.loadMoreMerged\(\)"[^>]*>Loading…|disabled[^>]*onclick="AppView\.loadMoreMerged/);
+  const html = kanbanHtml(AppView);
+  const done = AppView._kanbanView().cols.find((c) => c.key === 'done');
+  assert.equal(done.footer.kind, 'loadMerged');
+  assert.equal(done.footer.loading, true);
   assert.match(html, /Loading…/);
   assert.match(html, /disabled/);
 });
@@ -406,7 +413,7 @@ test('Kanban Done footer falls back to the static hint when the server has no mo
   const AppView = makeAppView();
   // total exceeds loaded but hasMore=false — degenerate; keep a hint, no dead button.
   seedDone(AppView, { loaded: 1, total: 5, hasMore: false, loading: false });
-  const html = AppView._renderKanbanInner();
+  const html = kanbanHtml(AppView);
   assert.match(html, /\+4 more completed/);
   assert.doesNotMatch(html, /loadMoreMerged/);
 });
@@ -414,7 +421,7 @@ test('Kanban Done footer falls back to the static hint when the server has no mo
 test('Kanban Done footer is absent once every completed item is loaded', () => {
   const AppView = makeAppView();
   seedDone(AppView, { loaded: 3, total: 3, hasMore: false, loading: false });
-  const html = AppView._renderKanbanInner();
+  const html = kanbanHtml(AppView);
   assert.doesNotMatch(html, /loadMoreMerged/);
   assert.doesNotMatch(html, /more completed/);
 });

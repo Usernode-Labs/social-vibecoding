@@ -124,43 +124,110 @@ selects a skill.
 - Adding or removing a `public/js/**` script means updating `SHELL_ASSETS` in
   `public/sw.js` and the count in `tests/shell-script-order.test.js` too.
 
-## Two design systems, one bundle — keep the boundary
+## One language, two surfaces — keep the boundary
 
-This repo ships **two** class vocabularies, and they are not a migration in
-progress. Neither is waiting to absorb the other.
+This repo ships **one** visual vocabulary in **two tunings**, and the split
+between them is about the SURFACE each is drawn for, not about styling.
 
 - **The platform shell** — `frontend/@/components/ui/**`. shadcn primitives,
-  hand-rolled, `cssVariables: false`, styled in the platform's `zinc`/`violet`
-  palette. Twelve modules today: `alert`, `anchored-panel`, `button`, `dialog`,
-  `field`, `icons`, `input`, `label`, `select`, `switch`, `tabs`, `textarea`.
+  hand-rolled, `cssVariables: false`, in the platform's `zinc`/`violet`
+  palette. Eighteen modules today: `alert`, `anchored-panel`, `button`, `chat`,
+  `chip`, `dialog`, `feed`, `field`, `grouped-list`, `icon-tile`, `icons`,
+  `input`, `label`, `page-header`, `select`, `switch`, `tabs`, `textarea`.
+  Count them in the directory rather than trusting this line — it has been
+  stale before, and a primitive nobody knows exists gets hand-written instead.
   Variants are `cva` tables; every class in them is a complete literal, because
   Tailwind's extractor is a regex over source text and a computed class name is
   a class name that never gets compiled.
 - **The admin console** — the `AdminUI` registry in
   `frontend/src/features/admin/admin-console.js`. A frozen object of class
-  *recipes* (`AdminUI.card`, `AdminUI.btn.primary`, `AdminUI.cardTitle`, …)
-  interpolated into template-literal `innerHTML`, in the topochain admin
-  vocabulary: `gray`/`indigo`, not `zinc`/`violet`. It is published on
-  `window.AdminUI` as well as exported, because the section modules
-  (`admin-analytics.js`, `admin-mail.js`, `admin-topochain.js`, …) read it as a
-  bare identifier at call time.
+  *recipes* (`AdminUI.card`, `AdminUI.btn.primary`, `AdminUI.cardTitle`, …). It
+  is published on `window.AdminUI` as well as exported, because the section
+  modules (`admin-analytics.js`, `admin-mail.js`, `admin-topochain.js`, …) read
+  it as a bare identifier at call time.
 
-**Do not cross them.** An admin section that reaches for `@/components/ui/*`
-gets a `zinc`/`violet` control sitting in a `gray`/`indigo` page; a shell
-component that reaches for `AdminUI` inverts the same mistake and drags an
-`innerHTML`-oriented registry into a reconciled tree. Both directions are
-enforced — `tests/admin-ui-registry.test.js` asserts that no admin source
-imports from `@/components/ui/`, that nothing outside `features/admin/`
-mentions `AdminUI` in code (prose in comments is fine), and that neither
-palette appears in the other system's files. It also holds the console to its
-own registry: a section module may not hand-write a class string a recipe of
-five or more utilities already covers — interpolate the key, or the copy stops
-tracking the recipe the first time it changes.
+The console used to be a genuinely separate design system — the topochain
+admin's `gray`/`indigo`, deliberately not the shell's `zinc`/`violet`. The
+widget-language reskin folded it in: same scales, same figure/ground, same
+filled controls, same radii. `gray-*` and `indigo-*` now appear NOWHERE in the
+product, and `tests/admin-ui-registry.test.js` enforces that as one rule over
+`frontend/@/components/ui/**`, `frontend/src/**` and `public/js/**` rather than
+as a split. It is worth knowing WHY that rule is absolute: `zinc` and `violet`
+are overridden in `tailwind.config.js` — `violet-*` is the BLUE accent now, not
+a violet — so a stray `bg-gray-100` or `bg-indigo-500` renders an untuned stock
+hue beside the platform's, which is a difference no reviewer spots in a diff of
+class strings.
 
-The admin console is **not** step-3 work, and converting it is not a
-like-for-like exercise: it is a second product surface with its own palette,
-its own idiom and its own tests. Leave it alone unless an issue asks for it by
-name.
+**Do not cross the surfaces.** What is left after the reskin is a density
+boundary, and it does not dissolve as sections convert to React: a 44px tap
+target and a card with 1.5rem of padding are right on `#home` and wrong in a
+table of 130 rows on a 27" display. A shell component handed `AdminUI.card`
+and an admin section reaching for `<Button>` are the same mistake in the two
+directions, and the same test catches both — no admin source imports from
+`@/components/ui/`, and nothing outside `features/admin/` mentions `AdminUI`
+in code (prose in comments is fine). It also holds the console to its own
+registry: a section may not hand-write a class string a recipe of five or more
+utilities already covers — interpolate the key, or the copy stops tracking the
+recipe the first time it changes.
+
+### The console is React — add a section the same way
+
+**Every admin section renders from React.** `admin-console.js` is a chassis
+(routing, the nav, `canWrite`/`_alert`/`_confirm`, the money helpers) and
+`admin-topochain.js` is a router for the eleven programme screens under
+`frontend/src/features/admin/topochain/`. Neither builds markup. A NEW section
+follows the same seam rather than reintroducing an `innerHTML` one.
+
+`AdminConsole._renderSection` hands each section module its content host and
+calls `mod.render(host)`, so a section module is:
+
+```js
+render(el) { host = el; mountLegacyPortal(el, <Section/>); },
+destroy()  { unmountLegacyPortal(host); host = null; },
+```
+
+Five things that hold across all of them:
+
+- **The host is genuinely single-owner.** Every path into
+  `#admin-section-content` — `_renderSection`, `_renderMobileMenu` — runs
+  `_teardownActiveSection()` first, so exactly one section occupies it at a
+  time and each owns its whole subtree. That is the ownership rule satisfied at
+  the section boundary, not at a node inside it. The programme screens nest the
+  same arrangement one level down: `admin-topochain.js` owns
+  `#admin-topo-content` and mounts exactly one screen into it, tearing the
+  previous portal down BEFORE the `innerHTML` that discards the node.
+- **`destroy()` is the state reset.** Dropping the portal entry gives the next
+  `render()` a fresh `seq` and therefore a fresh component instance.
+- **Use the surface, don't re-derive it.** A console section builds from the
+  `AdminUI` recipe registry; a programme screen builds from
+  `topochain/ui.tsx` (`Panel`, `ScreenHeader`, `List`, `Pager`, `Field`,
+  `FormGrid`, `FormError`, `Skeleton`, `EmptyState`, `ErrorState`, `Badge`,
+  `CloseButton`, `BackButton`, …) and `topochain/tokens.ts`. Fetching goes
+  through `topochain/api.ts`. Re-implementing any of these is how two panels
+  stop matching.
+- **Ids are like-for-like on a conversion.** `dapp.json`'s declared checks
+  select on them, so keep every id, `data-*` and class string unless the
+  product change requires otherwise. `esc()` goes away — React escapes text
+  children — but the rule it could not express does not: an admin- or
+  API-supplied URL is NEVER rendered as a clickable anchor.
+- **Scope the host in the ownership audit.** Add
+  `{ sel: '#admin-section-content', when: '#admin/<key>' }` (or
+  `{ sel: '#admin-topo-content', … }` for a programme screen) to `OWNED` in
+  `scripts/audit-react-ownership.mjs`, and the route to `ROUTES`. The `when`
+  clause is load-bearing: the host is shared, so an unscoped entry would report
+  a sibling section's writes as a violation.
+
+Two behaviours are easy to lose to React's defaults and are worth naming:
+
+- **A search box that drives a paged server query commits on blur or Enter,
+  not on every keystroke.** React's `onChange` is the DOM `input` event; these
+  boxes listened for `change`. Keep them uncontrolled with a `defaultValue` and
+  commit in `onBlur` / `onKeyDown`.
+- **A cross-screen jump needs an explicit export.** Delegations' "View
+  account" opens the dialog Onchain accounts owns; Seasons' "View events"
+  hands Season events a pre-set filter. Publish a function from the target
+  module and import it — a bare global read broke exactly this way once, and
+  a dead button is silent.
 
 ## Shell CSS is generated by the image build — do not commit it
 

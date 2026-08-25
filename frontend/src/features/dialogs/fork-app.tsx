@@ -106,7 +106,7 @@ export function ForkAppDialog() {
         <h2 className="text-lg font-bold mb-1">
           Fork this app
         </h2>
-        <p className="text-xs text-zinc-500 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
           Forking
           <span id="fork-source-name" className="font-mono text-zinc-300">
             {sourceName}
@@ -137,7 +137,7 @@ export function ForkAppDialog() {
           </div>
           <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3">
             <p>
-              <span className="text-emerald-500">
+              <span className="text-emerald-700 dark:text-emerald-400">
                 ✅ Carries over:
               </span>
               the app's code, its icon, and its current
@@ -147,13 +147,13 @@ export function ForkAppDialog() {
               data (e.g. leaderboards, public posts).
             </p>
             <p>
-              <span className="text-violet-400">
+              <span className="text-violet-700 dark:text-violet-400">
                 🔁 Resets to you:
               </span>
               you become the sole owner — collaborators, group chat, issues, proposals and votes all start empty.
             </p>
             <p>
-              <span className="text-amber-500">
+              <span className="text-amber-800 dark:text-amber-400">
                 ❌ Not copied:
               </span>
               <strong>
@@ -173,7 +173,7 @@ export function ForkAppDialog() {
             <button
               type="button"
               id="fork-cancel"
-              className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={() => dialog.close()}
             >
               Cancel

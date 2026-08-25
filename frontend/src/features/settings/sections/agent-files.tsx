@@ -1,4 +1,6 @@
 import { Button } from '@/components/ui/button';
+
+import { AgentFilesList } from '../agent-files-list';
 import { Field, SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 
@@ -36,6 +38,10 @@ export function AgentFilesSection() {
             </button>
           </div>
           <div id="agent-files-instructions-list" className="space-y-1.5">
+            <AgentFilesList
+              kind="instruction"
+              empty="No instruction files yet — upload a markdown file to guide the coding agent on every build you start."
+            />
           </div>
         </div>
         <div className="mb-2">
@@ -51,6 +57,10 @@ export function AgentFilesSection() {
             </button>
           </div>
           <div id="agent-files-skills-list" className="space-y-1.5">
+            <AgentFilesList
+              kind="skill"
+              empty="No skills yet — upload a skill file the agent can use while building for you."
+            />
           </div>
         </div>
         {/*

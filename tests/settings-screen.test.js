@@ -33,10 +33,36 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+const { renderComponent } = require('./lib/render-tsx');
 
 const html = read('public/index.html');
 const appJs = read('public/js/app.js');
 const settingsJs = read('frontend/src/features/settings/settings.js');
+// #1079: #settings-usernode-section's markup moved to a component; its tests
+// read both halves — the DECISIONS here, the SHAPES there.
+const usernodeTsx = read('frontend/src/features/settings/sections/usernode.tsx');
+const usernodeUiTsx = read('frontend/src/features/settings/sections/usernode-ui.tsx');
+const usernodeStoreTs = read('frontend/src/features/settings/sections/usernode-store.ts');
+
+/** One method's source, by brace matching — stable across reordering. */
+function sliceMethod(src, name) {
+  const re = new RegExp(`\\n    (async )?${name}\\(`);
+  const m = src.match(re);
+  assert.ok(m, `${name} exists`);
+  // Depth starts at ZERO: the match ends inside the PARAMETER list, before
+  // the body's opening brace. Seeding it at 1 makes the scan need two closers
+  // and run on into the next method — which reads as a passing slice right up
+  // until an assertion counts something.
+  let i = m.index + m[0].length;
+  let depth = 0;
+  let started = false;
+  for (; i < src.length; i++) {
+    if (src[i] === '{') { depth++; started = true; }
+    else if (src[i] === '}') { depth--; }
+    if (started && depth === 0) { i++; break; }
+  }
+  return src.slice(m.index, i);
+}
 // The halves the two nav hosts were split into by #1191 slice 6, conversion 8.
 const navTsx = read('frontend/src/features/settings/settings-nav.tsx');
 const navStoreJs = read('frontend/src/features/settings/settings-nav-store.js');
@@ -206,11 +232,15 @@ test('the four formerly-anonymous section roots got stable ids', () => {
 
 test('no section container is ever innerHTML-written', () => {
   // Section BODIES may still repaint their own dynamic list hosts
-  // (#llm-grants-list, #cli-tokens-list, #agent-files-*-list) exactly as
-  // they did in the modal — those are built by settings.js and carry no
-  // init()-bound listeners. What must never happen is a write that
-  // replaces a WRAPPER or the container holding them, which would detach
-  // every id-bound control at once.
+  // (#cli-tokens-list) exactly as they did in the modal — those are built by
+  // settings.js and carry no init()-bound listeners. #llm-grants-list and the
+  // two #agent-files-*-list hosts are NOT among them any more: all three are
+  // React-owned end to end (frontend/src/features/settings/grants-list.tsx,
+  // agent-files-list.tsx) and settings.js publishes a view model to each,
+  // which the assertions below pin.
+  //
+  // What must never happen is a write that replaces a WRAPPER or the container
+  // holding them, which would detach every id-bound control at once.
   for (const forbidden of ['settings-section-content', 'settings-screen', 'settings-root']) {
     assert.doesNotMatch(
       settingsJs,
@@ -220,6 +250,22 @@ test('no section container is ever innerHTML-written', () => {
   }
   assert.doesNotMatch(settingsJs, /data-settings-section[^\n]*innerHTML/,
     'no wrapper is ever rebuilt');
+
+  // #llm-grants-list is React's. settings.js must not reach into it at all:
+  // not innerHTML, not appendChild, not even getElementById. It fetches and
+  // publishes; grants-list.tsx renders. Two writers over one subtree is the
+  // failure the migration's ownership rule exists to prevent, and the row
+  // handlers here are exactly the kind of code that would reach for the node.
+  assert.doesNotMatch(settingsJs, /llm-grants-list/,
+    '#llm-grants-list is React-owned — settings.js publishes to grants-store instead');
+  assert.match(settingsJs, /UsernodeReact\.settingsGrants/,
+    'settings.js reaches the grants store through the published bridge');
+  for (const host of ['agent-files-instructions-list', 'agent-files-skills-list']) {
+    assert.doesNotMatch(settingsJs, new RegExp(host),
+      `#${host} is React-owned — settings.js publishes to agent-files-store instead`);
+  }
+  assert.match(settingsJs, /UsernodeReact\.settingsAgentFiles/,
+    'settings.js reaches the agent-files store through the published bridge');
 
   // #1191 slice 6, conversion 8: the two nav hosts are React now
   // (frontend/src/features/settings/settings-nav.tsx), so _renderNav pushes
@@ -469,7 +515,7 @@ test('the nav components render what the module shapes, and nothing else', () =>
   // with state, so it stays in the module — which is also what keeps
   // settings.js loadable by the vm harnesses (see settings-mobile-push).
   const nav = settingsJs.slice(settingsJs.indexOf('    _navView() {'));
-  assert.match(nav.slice(0, 1200), /bg-violet-600\/10 text-violet-600 dark:text-violet-400/,
+  assert.match(nav.slice(0, 1200), /bg-violet-600\/10 text-violet-700 dark:text-violet-400/,
     'the active sidebar row keeps its tint, character for character');
   assert.match(navTsx, /className=\{item\.className\}/,
     'the component renders that string rather than recomputing it');
@@ -551,15 +597,22 @@ test('the credits banner deep-links all three ways to keep building', () => {
   // delegates to CreditOptions, which owns the same three routes the
   // in-chat card and the Generate-proposal modal render — so the wiring
   // assertion moved with it.
-  const fn = devChatJs.slice(devChatJs.indexOf('  _wireCreditsBanner() {'));
+  // The banner is a component since the four strips converted, so the wiring
+  // moved from `_wireCreditsBanner` in dev-chat.js to a ref in
+  // features/dev-chat/banners.tsx — one delegated click per mounted element,
+  // which is what `CreditOptions.wire` has always bound.
+  const bannersTsx = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'banners.tsx'), 'utf8'
+  );
+  const fn = bannersTsx.slice(bannersTsx.indexOf('const wireRef'));
   // #1049 added a second argument: the two hand-off routes are handled in
   // place (they start the walkthrough in this chat) rather than navigated.
   // #1348 added a third: "Change session type" opens the venue sheet here
   // too, in blocked mode — the bar is two buttons now, and that is the one
   // standing in for every venue the bar used to list.
-  assert.match(fn.slice(0, 800), /CreditOptions\.wire\(banner, \{\s*\n?\s*onFlow:/,
+  assert.match(fn.slice(0, 800), /CO\?\.wire\?\.\(el, \{\s*\n?\s*onFlow:/,
     'the shared module wires the banner');
-  assert.match(fn.slice(0, 800), /onVenue: \(button\) => DevChat\.openVenueSheet\(button, \{ blocked: true \}\)/,
+  assert.match(fn.slice(0, 800), /openVenueSheet\?\.\(button, \{ blocked: true \}\)/,
     'and the venue door opens the sheet blocked, on the refusal banner');
   assert.doesNotMatch(fn.slice(0, 800), /Settings\.open\(/,
     'no direct module call any more');
@@ -779,26 +832,28 @@ test('the usernode section renders a reason, not just "could not load"', () => {
     'the reason is read through one helper');
   assert.match(settingsJs, /NativeChrome\.lastReadError\('getSettingsState'\)/,
     'it comes from the shared bridge record, not a settings-local guess');
-  assert.match(settingsJs, /'Could not load Usernode app settings\.'/,
+  assert.match(usernodeTsx, /Could not load Usernode app settings\./,
     'the headline is unchanged so existing reports stay recognisable');
-  assert.match(settingsJs, /font-mono[^']*', *\n? *readError\.message/,
-    "the app's own message is rendered verbatim");
+  // #1079: the box is sections/usernode.tsx now. The MODEL carries the
+  // app's own message and the component renders it verbatim in a mono run.
+  assert.match(settingsJs, /message: \(readError && readError\.message\) \|\| null/,
+    "the app's own message reaches the view model verbatim");
+  assert.match(usernodeTsx, /font-mono[^"]*">\{b\.message\}/,
+    'and is rendered as a mono line, not reworded');
 });
 
 test('the failed read is recoverable in place', () => {
-  const box = settingsJs.slice(
-    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
-    settingsJs.indexOf('    _renderSocialPushSection(section) {'),
-  );
-  assert.ok(box, '_renderUsernodeError exists');
-  assert.match(box, /box\.id = 'settings-usernode-error'/,
+  // #1079: the box is sections/usernode.tsx and the retry is a named module
+  // action. The PROPERTIES are unchanged: stable ids, a retry on screen, and
+  // a retry that swaps in a progress line rather than blanking the section.
+  assert.match(usernodeTsx, /id="settings-usernode-error"/,
     'the error box has a stable id');
-  assert.match(box, /retry\.id = 'settings-usernode-retry'/,
-    'the retry button has a stable id');
-  assert.match(box, /'Try again'/, 'the retry is offered on the screen');
-  assert.match(box, /_renderUsernodeBody\(readError, true\)/,
+  assert.match(usernodeTsx, /id: 'settings-usernode-retry', label: 'Try again'/,
+    'the retry button has a stable id and is offered on the screen');
+  const retry = sliceMethod(settingsJs, '_retryUsernodeRead');
+  assert.match(retry, /this\._usernodeLoading = true;/,
     'a retry swaps the box for a progress line instead of blanking the section');
-  assert.match(box, /await this\._renderUsernodeSection\(\)/,
+  assert.match(retry, /await this\._renderUsernodeSection\(\)/,
     'the retry re-runs the read');
   // The JS-built ids must NOT be in the static shell — that is what makes
   // this section the exception to the id-binding rule.
@@ -809,37 +864,43 @@ test('the failed read is recoverable in place', () => {
 });
 
 test('a failed read still leaves the snapshot-independent blocks up', () => {
-  const body = settingsJs.slice(
-    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
-    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
-  );
-  assert.ok(body, '_renderUsernodeBody takes the failure record');
-  assert.match(body, /if \(!s\) \{\n\s+this\._renderUsernodeError\(/,
+  // #1079: the body is a view MODEL now. The property is unchanged and easier
+  // to state: the error replaces only the snapshot-dependent slice, and the
+  // slices that need no snapshot are separate fields rather than being
+  // sequenced after it.
+  const view = sliceMethod(settingsJs, '_usernodeView');
+  const body = sliceMethod(settingsJs, '_usernodeBodyView');
+  assert.match(body, /if \(!s\) \{[\s\S]{0,400}kind: 'error'/,
     'the error box replaces ONLY the snapshot-dependent permissions block');
+
   // These need no snapshot, so they must not sit behind an `if (s)`.
-  for (const call of [
-    'this._renderSocialPushSection(section);',
-    'this._renderBpSection(section);',
-    'this._renderUsernodeFaq(aboutBox,',
-    "this._openNativeScreen('benchmark',",
-    "this._openNativeScreen('httpLogs',",
+  for (const field of [
+    'socialPush: this._socialPushView()',
+    'blockProduction: this._bpView()',
+    'widgetIcons: this._widgetIconsView()',
   ]) {
-    assert.ok(body.includes(call), `${call} runs with or without a snapshot`);
+    assert.ok(view.includes(field), `${field} is computed with or without a snapshot`);
   }
+  assert.match(view, /actions: \[\s*\n?\s*\{ label: 'Device benchmark'/,
+    'the two native screens are reachable whether or not the snapshot loaded');
+  assert.match(usernodeTsx, /<Faq s=\{s\} \/>/, 'the FAQ needs no snapshot');
+
   // These read the snapshot, so every one of them must be guarded.
   for (const guarded of [
     's.nodeSleepEnabled', 's.facematchStrict', 's.debugMode', 's.authStatus',
   ]) {
-    const at = body.indexOf(guarded);
+    const at = view.indexOf(guarded);
     assert.ok(at > -1, `${guarded} still drives its control`);
-    assert.match(body.slice(0, at), /if \(s\) \{|if \(s && /,
+    assert.match(view.slice(0, at), /s \? \{|\(s &&/,
       `${guarded} is only read behind a snapshot guard`);
   }
-  assert.match(body, /const perms = \(s && s\.permissions\) \|\| \{\}/,
+  assert.match(view, /const perms = \(s && s\.permissions\) \|\| \{\}/,
     'no snapshot means no permission rows, not a TypeError');
-  assert.match(body, /const bi = \(s && s\.buildInfo\) \|\| \{\}/,
+  assert.match(sliceMethod(settingsJs, '_usernodeBuildNotes'),
+    /const bi = \(this\._usernodeState && this\._usernodeState\.buildInfo\) \|\| \{\}/,
     'the build line simply goes missing without a snapshot');
 });
+
 
 test('the usernode read is retried once on readiness and never leaks a listener', () => {
   assert.match(settingsJs, /_armUsernodeAuthStatusRetry\(\)\s*\{/);
@@ -858,7 +919,7 @@ test('the usernode read is retried once on readiness and never leaks a listener'
     /window\.addEventListener\('usernode:auth-status', listener\)/);
   const clear = settingsJs.slice(
     settingsJs.indexOf('    _clearUsernodeAuthStatusRetry() {'),
-    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
+    settingsJs.indexOf('    _publishUsernode() {'),
   );
   assert.match(clear,
     /window\.removeEventListener\(\n?\s*'usernode:auth-status'/,
@@ -868,7 +929,7 @@ test('the usernode read is retried once on readiness and never leaks a listener'
     settingsJs.indexOf('    async _renderUsernodeSection() {'),
     settingsJs.indexOf('    _usernodeReadError() {'),
   );
-  assert.match(section, /this\._clearUsernodeAuthStatusRetry\(\);\n\s+this\._renderUsernodeBody\(\);/,
+  assert.match(section, /this\._clearUsernodeAuthStatusRetry\(\);\n\s+this\._usernodeLoading = false;/,
     'a successful read stops listening');
   const close = settingsJs.slice(settingsJs.indexOf('    close() {'));
   assert.match(close.slice(0, 500), /_clearUsernodeAuthStatusRetry\(\)/,
@@ -881,17 +942,21 @@ test('the usernode read is retried once on readiness and never leaks a listener'
 });
 
 test('activity notifications wait for native admission and surface failures', () => {
-  const section = settingsJs.slice(
-    settingsJs.indexOf('    _renderSocialPushSection(section) {'),
-    settingsJs.indexOf('    // Block production queue')
-  );
-  assert.match(section, /NativeChrome\.isSessionAdmitted\(\)/,
+  // #1079: the wording and the gate are the view builder's; the retry is a
+  // named action. Every property below is unchanged.
+  const view = sliceMethod(settingsJs, '_socialPushView');
+  assert.match(view, /NativeChrome\.isSessionAdmitted\(\)/,
     'a closed handoff renders recovery instead of a stale toggle');
-  assert.match(section, /NativeChrome\.recoverSessionAdmission\(\)/,
+  assert.match(view, /NativeChrome\.recoverSessionAdmission/,
     'the notification section offers an explicit handoff retry');
-  assert.match(section, /Finishing secure app sign-in/);
-  assert.match(section, /includeErrorDetail: true/,
+  assert.match(view, /Finishing secure app sign-in/);
+  assert.match(sliceMethod(settingsJs, '_retrySocialPush'),
+    /NativeChrome\.recoverSessionAdmission\(\)/,
+    'and the retry actually re-runs the handoff');
+  assert.match(usernodeTsx, /includeErrorDetail: true/,
     'native storage and admission errors remain visible to the user');
+  assert.match(usernodeUiTsx, /Could not save the setting/,
+    'a failed setter says so rather than silently reverting');
 });
 
 test('only the newest usernode read attempt paints', () => {
@@ -928,18 +993,39 @@ test('the local-agent block lives in Experimental and ships hidden', () => {
   assert.match(experimental, /Usernode still opens the pull request/);
 });
 
-test('the machine list is built as DOM nodes, never innerHTML', () => {
+// The label is free text typed on someone's own laptop and arrives here
+// verbatim, so it must never reach an HTML string. It was hand-built with
+// `document.createElement` + `textContent` for that reason; #1191 made the
+// list React's, which gives the same guarantee by construction — a text child
+// is escaped, and there is no template to interpolate into.
+test('a machine label can never escape into markup', () => {
+  const hostile = '<img src=x onerror=alert(1)> "quoted" & \'apostrophe\'';
+  const html2 = renderComponent(
+    'frontend/src/features/settings/local-agents-list.tsx', 'LocalAgentsListView',
+    {
+      phase: 'ready',
+      agents: [{
+        leaseId: 'lease_1',
+        title: hostile,
+        where: hostile,
+        detail: 'claude-code · last seen 10:00',
+        detachable: true,
+      }],
+    },
+  );
+  assert.ok(!html2.includes('<img'), 'the tag never lands as markup');
+  assert.match(html2, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html2, /&quot;quoted&quot;/);
+  assert.match(html2, /&#x27;apostrophe&#x27;/);
+  // …and the module has nothing left that builds DOM for this host.
   const render = settingsJs.slice(
     settingsJs.indexOf('_renderLocalAgentsSection()'),
     settingsJs.indexOf('_detachLocalAgent(')
   );
-  // The label is free text typed on someone's own laptop and arrives here
-  // verbatim. This section follows the screen's MOVE-DON'T-REWRITE rule too:
-  // it only ever writes into its own list host.
-  assert.ok(!/innerHTML\s*=\s*`/.test(render), 'no template-literal innerHTML');
-  assert.match(render, /createElement\(/);
-  assert.match(render, /\.textContent = /);
-  assert.match(render, /list\.textContent = '';/, 'the list host is emptied, not rewritten');
+  // Comments first — the note beside the publish names the builder it replaced.
+  assert.ok(!/innerHTML/.test(code(render)), 'no innerHTML');
+  assert.ok(!/createElement\(/.test(code(render)), 'and no createElement either');
+  assert.match(render, /settingsLocalAgents/, 'it publishes instead');
 });
 
 test('the machine list hides itself when there is nothing to list', () => {
@@ -978,11 +1064,26 @@ test('detaching is confirmed, and an already-gone lease is not an error', () => 
   assert.match(detach, /204|404/);
   assert.match(detach, /confirm/i);
   // Demo rows have no Detach button at all — there is nothing to detach.
-  const card = settingsJs.slice(
-    settingsJs.indexOf('_localAgentCard('),
+  // The rule is one field on the view model now, and the component draws the
+  // button only for a row that carries it.
+  const view = settingsJs.slice(
+    settingsJs.indexOf('_localAgentView(agent) {'),
     settingsJs.indexOf('_detachLocalAgent(')
   );
-  assert.match(card, /!agent\.demo/);
+  assert.match(view, /detachable: !agent\.demo && !!agent\.leaseId/);
+  const list = read('frontend/src/features/settings/local-agents-list.tsx');
+  assert.match(list, /agent\.detachable \? \(/);
+  const withoutLease = renderComponent(
+    'frontend/src/features/settings/local-agents-list.tsx', 'LocalAgentsListView',
+    {
+      phase: 'ready',
+      agents: [{
+        leaseId: null, title: 'staging demo', where: 'an app',
+        detail: 'claude-code · last seen 10:00', detachable: false,
+      }],
+    },
+  );
+  assert.ok(!withoutLease.includes('Detach'), 'and a demo row draws none');
 });
 
 test('the Experimental toggle still gates the whole section', () => {
@@ -1006,31 +1107,25 @@ test('the usernode section is gated on being in the app, not on a capability', (
 });
 
 test('the connection panel renders above the failures it explains', () => {
-  const body = settingsJs.slice(
-    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
-    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
-  );
-  const panelAt = body.indexOf('this._renderUsernodeConnection(section);');
-  const errorAt = body.indexOf('this._renderUsernodeError(');
+  // #1079: the ordering is the component's now, and it is easier to read
+  // there — <Connection /> is the first child of the section body.
+  const panelAt = usernodeTsx.indexOf('<Connection s={s} />');
+  const errorAt = usernodeTsx.indexOf('<Body s={s} />');
   assert.ok(panelAt > -1, 'the panel is rendered from the section body');
   assert.ok(errorAt > panelAt,
     'the explanation comes before the "could not load" box, not after it');
 });
 
 test('the panel has stable ids and both actions', () => {
-  const panel = settingsJs.slice(
-    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
-    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
-  );
-  assert.ok(panel, '_renderUsernodeConnection exists');
-  assert.match(panel, /box\.id = 'settings-usernode-connection'/);
-  assert.match(panel, /retry\.id = 'settings-usernode-connection-retry'/);
-  assert.match(panel, /copy\.id = 'settings-usernode-connection-copy'/);
-  assert.match(panel, /'Try again'/);
-  assert.match(panel, /'Copy diagnostics'/);
+  assert.match(usernodeTsx, /id="settings-usernode-connection"/);
+  assert.match(usernodeTsx, /id: 'settings-usernode-connection-retry'/);
+  assert.match(usernodeTsx, /id: 'settings-usernode-connection-copy'/);
+  assert.match(usernodeTsx, /'Try again'/);
+  assert.match(usernodeTsx, /'Copy diagnostics'/);
   // PlatformUI.copyText is the real API (async → boolean, never throws).
-  assert.match(panel, /PlatformUI\.copyText\(/);
-  assert.doesNotMatch(panel, /PlatformUI\.copy\(/);
+  const copy = sliceMethod(settingsJs, '_copyUsernodeDiagnostics');
+  assert.match(copy, /PlatformUI\.copyText\(/);
+  assert.doesNotMatch(copy, /PlatformUI\.copy\(/);
   // JS-built, so they must not appear in the static shell.
   for (const id of [
     'settings-usernode-connection',
@@ -1050,12 +1145,10 @@ test('the panel has stable ids and both actions', () => {
 // last sent per entry) is spread across three pieces of state that no
 // log line reports. This box is that state, in one place.
 test('the widget-icon box reports every step of the icon decision', () => {
-  const widget = settingsJs.slice(
-    settingsJs.indexOf('    _renderWidgetIconsSection(parent) {'),
-    settingsJs.indexOf('    _widgetIconTime(ms) {'),
-  );
-  assert.ok(widget, '_renderWidgetIconsSection exists');
-  assert.match(widget, /'Usernode app — widget icons'/);
+  // #1079: the DECISIONS are _widgetIconsView's; the heading is the
+  // component's. Every property below is unchanged.
+  const widget = sliceMethod(settingsJs, '_widgetIconsView');
+  assert.match(usernodeTsx, /Usernode app — widget icons/);
   for (const id of [
     'settings-widget-mechanism-row',
     'settings-widget-registry-row',
@@ -1085,26 +1178,19 @@ test('the widget-icon box reports every step of the icon decision', () => {
 });
 
 test('the widget-icon box is gated on being in the app, never on a capability', () => {
-  const widget = settingsJs.slice(
-    settingsJs.indexOf('    _renderWidgetIconsSection(parent) {'),
-    settingsJs.indexOf('    _widgetIconTime(ms) {'),
-  );
+  const widget = sliceMethod(settingsJs, '_widgetIconsView');
   // The ONLY early return is "no snapshot at all" (not in the app, and
   // not the demo link). Hiding the box when the mechanism or the
   // capability says no would hide it in exactly the cases it exists for.
-  const returns = widget.match(/^\s+(?:if \(.*\) )?return;/gm) || [];
+  const returns = widget.match(/^\s+(?:if \(.*\) )?return( null)?;/gm) || [];
   assert.equal(returns.length, 1, 'one early return, and it is the snapshot');
-  assert.match(widget, /if \(!diag\) return;/);
+  assert.match(widget, /if \(!diag\) return null;/);
   assert.doesNotMatch(widget, /diag\.mechanism !== 'widget'\) return/);
 });
 
 test('per-entry rows separate "never sent" from "sent and not kept"', () => {
-  const entries = settingsJs.slice(
-    settingsJs.indexOf('    _renderWidgetIconEntries(box, diag) {'),
-    settingsJs.indexOf('    _bridgeDiagnostics() {'),
-  );
-  assert.ok(entries, '_renderWidgetIconEntries exists');
-  assert.match(entries, /id = 'settings-widget-icon-entries'/);
+  const entries = sliceMethod(settingsJs, '_widgetIconEntryViews');
+  assert.match(usernodeTsx, /id="settings-widget-icon-entries"/);
   assert.doesNotMatch(html, /id="settings-widget-icon-entries"/);
   // has_icon / has_icon_dark come from the widget; `matches` is SV's own
   // record of what it last sent. The pair is what tells a platform bug
@@ -1142,12 +1228,13 @@ test('?widgeticons=demo opens the box on a plain browser', () => {
   assert.match(demo, /matches: false/, 'and one is stale against what SV sent');
   // The re-check button performs bridge I/O, so it must not render on a
   // browser pretending to be a device.
-  const widget = settingsJs.slice(
-    settingsJs.indexOf('    _renderWidgetIconsSection(parent) {'),
-    settingsJs.indexOf('    _widgetIconTime(ms) {'),
-  );
-  assert.match(widget, /if \(!this\._widgetIconsDemo\(\)\) \{\n\s+this\._unButton\(box, 'Re-check icons'/);
-  assert.match(widget, /Staging demo — sample data/);
+  // #1079: the GATE is the model's, the button and the label are the
+  // component's. The property — no bridge I/O from a browser pretending to be
+  // a device — is unchanged.
+  const widget = sliceMethod(settingsJs, '_widgetIconsView');
+  assert.match(widget, /recheck: !this\._widgetIconsDemo\(\)/);
+  assert.match(usernodeTsx, /w\.recheck \? <UnBtn btn=\{\{ label: 'Re-check icons'/);
+  assert.match(usernodeTsx, /Staging demo — sample data/);
 });
 
 test('Try again re-probes, re-admits and re-arms readiness in one press', () => {
@@ -1208,19 +1295,22 @@ test('a refused bridge changes what the dependent messages say', () => {
   assert.match(helper, /err\.usernodePrivileged === true/,
     'it keys off the bridge tag, not English pattern-matching');
   // Every user-facing failure path that can be caused by a refused bridge.
-  for (const site of [
-    'this._nativeActionMessage(err,\n              `Could not save the setting',
-    "this._nativeActionMessage(err, 'Action failed')",
-    'this._nativeActionMessage(err, failMsg)',
-  ]) {
-    assert.ok(settingsJs.includes(site), `${site} routes through the helper`);
+  // #1079: the row/button/toggle trio hand-copied this wrapper three times;
+  // sections/usernode-ui.tsx's `useAction` is the single copy, and it routes
+  // through the SAME helper by name across the seam.
+  assert.match(usernodeUiTsx, /settings\(\)\?\._nativeActionMessage\?\.\(err, fallback\)/,
+    'the shared control wrapper routes through the helper');
+  for (const fallback of ['Could not save the setting', 'Action failed']) {
+    assert.ok(usernodeUiTsx.includes(fallback), `${fallback} is a fallback message`);
   }
+  assert.ok(settingsJs.includes('this._nativeActionMessage(err, failMsg)'),
+    'the native-screen opener still routes through the helper');
 });
 
 test('the diagnostics text carries no token and no user data', () => {
   const text = settingsJs.slice(
     settingsJs.indexOf('    _bridgeDiagnosticsText(diag) {'),
-    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
+    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
   );
   assert.ok(text, '_bridgeDiagnosticsText exists');
   for (const banned of [
@@ -1251,13 +1341,16 @@ test('the bridgediag demo hook is read-only and reads the HASH query', () => {
     'the ordinary query string is accepted too');
   assert.match(flag, /'bridgediag'\) === 'demo'/);
 
-  const panel = settingsJs.slice(
-    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
-    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
-  );
-  assert.match(panel, /'Staging demo — sample data'/,
+  // #1079: the panel's `demo` bit is the model's and the label is the
+  // component's — a demo snapshot still says so on screen.
+  assert.match(sliceMethod(settingsJs, '_usernodeConnectionView'),
+    /demo: !!this\._bridgeDiagDemo\(\)/);
+  assert.match(usernodeTsx, /c\.demo \? <UnP note=\{\{ text: 'Staging demo — sample data'/,
     'the demo snapshot is labelled as fake on screen');
-  assert.match(panel, /retry\.disabled = true;\n\s+copy\.disabled = true;/,
+  // Read-only hook: the buttons render so the screenshot shows the real
+  // panel, but they must not touch a bridge or a session.
+  assert.match(sliceMethod(settingsJs, '_usernodeConnectionView'),
+    /retryDisabled: !!this\._bridgeDiagDemo\(\)/,
     'the demo may not drive the real bridge');
 
   const snapshot = settingsJs.slice(
@@ -1329,4 +1422,206 @@ test('the best-effort app logout cannot block leaving the app', () => {
   assert.match(best, /NATIVE_SIGNOUT_BUDGET_MS/, 'it is time-boxed');
   assert.match(best, /settle\(false\)/, 'a rejection resolves false, never throws');
   assert.doesNotMatch(best, /throw /);
+});
+
+
+// ── The CLI credential rows (#1191) ───────────────────────────────────
+//
+// `#cli-tokens-list` was built by `document.createElement` in
+// `Settings._renderCliTokens`; it is features/settings/cli-tokens-list.tsx's
+// now, driven by what the module publishes. The rules that were only visible
+// in that builder get executed coverage here rather than a source grep,
+// because every one of them is a branch that renders differently.
+
+
+const CLI_LIST = 'frontend/src/features/settings/cli-tokens-list.tsx';
+const cliRows = (state) => renderComponent(CLI_LIST, 'CliTokensListView', state);
+
+test('the credential list renders its three host states', () => {
+  // `idle` is the PRERENDER state and has to draw nothing at all: the shipped
+  // `<div id="cli-tokens-list">` is empty, and a first render that drew the
+  // empty line would mismatch on hydration — a console error on #settings, and
+  // a console error on any route fails proposal checks.
+  assert.equal(cliRows({ phase: 'idle', tokens: [] }), '');
+  assert.equal(read('public/index.html').includes('<div id="cli-tokens-list" class="space-y-2"></div>'),
+    true, 'and the prerendered document agrees');
+  // The two the module used to write with `textContent`.
+  assert.match(cliRows({ phase: 'loading', tokens: [] }), /Loading credentials…/);
+  assert.match(cliRows({ phase: 'ready', tokens: [] }), /No CLI credentials\./);
+});
+
+test('only a live, non-demo credential offers Revoke', () => {
+  const rows = [
+    { id: 'tok_1', hint: 'sv_live_…abcd', detail: 'valid · created Jan 1', revocable: true },
+    // Staging ?demo=1 rows are fabricated server-side and have nothing to
+    // revoke — the server flags them and the view model turns that into
+    // `revocable: false`, so a button is never drawn for one.
+    { id: null, hint: 'staging-demo-cli-1', detail: 'valid · created Jan 1', revocable: false },
+    // An expired or already-revoked credential is the same: nothing to undo.
+    { id: 'tok_3', hint: 'sv_live_…efgh', detail: 'revoked · created Jan 1', revocable: false },
+  ];
+  const html2 = cliRows({ phase: 'ready', tokens: rows });
+  assert.equal((html2.match(/>Revoke</g) || []).length, 1, 'exactly one button');
+  assert.match(html2, /sv_live_…abcd/);
+  assert.match(html2, /staging-demo-cli-1/);
+  // The hint is a monospace line and the metadata a muted one, as the two
+  // `document.createElement` nodes were.
+  assert.match(html2, /class="text-sm font-mono[^"]*">sv_live_…abcd</);
+  assert.match(html2, /class="text-xs text-zinc-500[^"]*">valid · created Jan 1</);
+});
+
+test('settings.js publishes the rows rather than building them', () => {
+  const render = settingsJs.slice(
+    settingsJs.indexOf('    _renderCliTokens() {'),
+    settingsJs.indexOf('    async _revokeCliToken(id, button) {'),
+  );
+  assert.ok(render.length > 200, 'located the renderer');
+  // Comments first — this one names the builder it replaced.
+  assert.doesNotMatch(code(render), /createElement|appendChild/,
+    'no DOM building is left in the module');
+  assert.match(render, /revocable: token\.status === 'valid'\s*\n?\s*&& typeof token\.id === 'string' && !token\.demo/,
+    'and the demo/expired rule is decided where the payload is');
+  // The two SIBLINGS of the host stay the module's: the Load-more button
+  // follows the keyset cursor and the status line has three writers.
+  assert.match(render, /more\.classList\.toggle\('hidden', !this\._cliTokenCursor\)/);
+  assert.match(render, /status\.textContent = 'Demo data/);
+});
+
+
+// ── The connector cards (#1191) ───────────────────────────────────────
+
+const CONNECTORS_LIST = 'frontend/src/features/settings/connectors-list.tsx';
+const connectorRows = (state) => renderComponent(CONNECTORS_LIST, 'ConnectorsListView', state);
+
+test('the connections list renders its three host states', () => {
+  assert.equal(connectorRows({ phase: 'idle', connectors: [] }), '');
+  assert.equal(
+    read('public/index.html').includes('<div id="connectors-list" class="space-y-2"></div>'),
+    true, 'and the prerendered document agrees');
+  assert.match(connectorRows({ phase: 'loading', connectors: [] }), /Loading connections…/);
+  assert.match(connectorRows({ phase: 'ready', connectors: [] }),
+    /No chat products connected yet\./);
+});
+
+test('every connection is disconnectable, and names itself', () => {
+  const html2 = connectorRows({
+    phase: 'ready',
+    connectors: [
+      { id: '1', title: 'Claude', detail: 'connected 1 Jan · last used 2 Jan' },
+      { id: '2', title: 'Connected client', detail: 'connected 1 Jan · never used' },
+    ],
+  });
+  assert.equal((html2.match(/>Disconnect</g) || []).length, 2,
+    'unlike a credential, a connection is always revocable');
+  assert.match(html2, />Claude</);
+  // The fallback title, for a client that registered without a name.
+  assert.match(html2, />Connected client</);
+  assert.match(html2, /never used/);
+});
+
+test('settings.js publishes the connector cards rather than building them', () => {
+  const render = settingsJs.slice(
+    settingsJs.indexOf('    _renderConnectors() {'),
+    settingsJs.indexOf('    async _disconnectConnector(id, button) {'),
+  );
+  assert.ok(render.length > 200, 'located the renderer');
+  assert.doesNotMatch(code(render), /createElement|appendChild/,
+    'no DOM building is left in the module');
+  // The two siblings it still owns, and must keep calling: the "stop the
+  // prompts" prose blocks and the read-only tip status both key off which
+  // client FAMILIES are connected, which is not a property of any one card.
+  assert.match(render, /this\._renderConnectorCases\(connectors\)/);
+  assert.match(render, /this\._renderConnectorHint\(connectors\)/);
+});
+
+
+// ── The social-account block (#1191) ──────────────────────────────────
+//
+// `#github-link-body` was ~330 lines of `document.createElement` in
+// settings.js — a tier card, a row per provider with five mutually-exclusive
+// states and two actions, an audit note, a stranded-attempt note and an
+// admin diagnostics panel. The module decides all of it; the markup is
+// features/settings/social-identity.tsx's.
+//
+// These render the component against each shape, because every one of them is
+// a different sentence to a user about how much they may spend and why.
+
+const SOCIAL = 'frontend/src/features/settings/social-identity.tsx';
+const socialHtml = (state) => renderComponent(SOCIAL, 'SocialIdentityView', state);
+const socialBase = { phase: 'ready', message: null, tier: null, providers: [] };
+
+test('the social block renders its four host states', () => {
+  assert.equal(socialHtml({ ...socialBase, phase: 'idle' }), '');
+  assert.equal(
+    read('public/index.html').includes('<div id="github-link-body" class="space-y-2"></div>'),
+    true, 'and the prerendered document agrees');
+  assert.match(socialHtml({ ...socialBase, phase: 'loading', message: 'Loading…' }), /Loading…/);
+  assert.match(
+    socialHtml({ ...socialBase, phase: 'error', message: 'Could not load social accounts. Try again shortly.' }),
+    /Could not load social accounts/);
+});
+
+test('the tier card carries its tone as well as its wording', () => {
+  const locked = socialHtml({ ...socialBase, tier: { tone: 'warn', title: 'Layer 1 locked · $0/day', detail: 'Connect either.' } });
+  assert.match(locked, /border-amber-300/, 'a locked tier is amber');
+  assert.match(locked, /Layer 1 locked · \$0\/day/);
+  const open = socialHtml({ ...socialBase, tier: { tone: 'ok', title: 'Layer 1 unlocked · $10.00/day', detail: 'Verified.' } });
+  assert.match(open, /border-emerald-300/, 'an unlocked one is emerald');
+  // The three neutral states (unavailable, legacy policy, admin override)
+  // share the plain card — they are statements of fact, not outcomes.
+  const plain = socialHtml({ ...socialBase, tier: { tone: 'plain', title: 'Administrator-set allowance: $25.00/day', detail: 'Override.' } });
+  assert.doesNotMatch(plain, /border-amber-300|border-emerald-300/);
+});
+
+test('a demo Connect control is inert but present, and matches the live one', () => {
+  const row = {
+    provider: 'github',
+    name: 'GitHub',
+    heading: 'GitHub',
+    state: { tone: 'muted', text: 'Not connected.' },
+    linkedAt: null,
+    noToken: null,
+    connect: { label: 'Connect GitHub', href: '/api/me/social-identities/github/connect' },
+    unlink: null,
+    strandedNote: null,
+    diagnostics: null,
+  };
+  const live = socialHtml({ ...socialBase, providers: [row] });
+  assert.match(live, /<a href="\/api\/me\/social-identities\/github\/connect"/,
+    'the real control is an ANCHOR — the OAuth flow is a top-level navigation');
+  // The ?demo= twin must not navigate out of the fixture, so it is a disabled
+  // button — and it has to LOOK the same, which one shared constant is what
+  // guarantees (see the file's header and the primitive allow-list entry).
+  const demo = socialHtml({
+    ...socialBase,
+    providers: [{ ...row, connect: { label: 'Connect GitHub', href: null } }],
+  });
+  assert.match(demo, /<button type="button" disabled/);
+  const surface = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white';
+  assert.ok(live.includes(surface) && demo.includes(surface), 'one surface, both spellings');
+});
+
+test('the reviewable claims travel with the row that makes them', () => {
+  const html2 = socialHtml({
+    ...socialBase,
+    providers: [{
+      provider: 'github',
+      name: 'GitHub',
+      heading: 'GitHub · @octo',
+      state: { tone: 'emerald', text: 'Ownership verified · counts toward the single $10/day social tier.' },
+      linkedAt: 'linked 1 Jan',
+      noToken: 'Usernode holds no GitHub access token for your account.',
+      connect: null,
+      unlink: { disabled: false },
+      strandedNote: 'Your last GitHub connection attempt didn’t complete.',
+      diagnostics: null,
+    }],
+  });
+  assert.match(html2, /id="github-link-no-token"/, 'the no-token claim keeps its id');
+  assert.match(html2, /id="github-link-audit-note"[\s\S]*?github\.com\/settings\/applications/,
+    'and the audit link beside it makes the claim checkable');
+  assert.match(html2, /target="_blank" rel="noopener noreferrer"/,
+    'top-level, because the shell is framed and github.com is not frameable');
+  assert.match(html2, /id="github-link-pending-note"/, 'the stranded-attempt note keeps its id');
+  assert.match(html2, />Disconnect</);
 });

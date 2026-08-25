@@ -69,7 +69,7 @@ const BuildLog = {
         <div class="text-xs text-zinc-500 dark:text-zinc-400 space-y-1">
           ${metaBits.map((m) => `<div>${m}</div>`).join('')}
         </div>
-        <p class="mt-2 text-sm font-mono text-red-500 break-words">${blEscape(String(failure.reason || '').slice(0, 280))}</p>
+        <p class="mt-2 text-sm font-mono text-red-700 break-words dark:text-red-400">${blEscape(String(failure.reason || '').slice(0, 280))}</p>
         ${logText
           ? `<pre id="build-log-pre" class="mt-3 max-h-72 overflow-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 p-3 text-[0.7rem] leading-relaxed font-mono whitespace-pre-wrap break-words select-text text-zinc-700 dark:text-zinc-300">${blEscape(logText)}</pre>`
           : '<p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">No log output was captured for this failure.</p>'}

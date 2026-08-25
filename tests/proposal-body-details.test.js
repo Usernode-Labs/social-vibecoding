@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { proposalBodyHtml, proposalCardHtml } = require('./lib/dev-card-html');
 
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'), 'utf8'
@@ -66,10 +67,22 @@ test('both live and completed proposal rows include the full PR body', () => {
     VOTES_SRC,
     /\/api\/apps\/:slug\/promoted[\s\S]*?SELECT[^`]*cs\.pr_summary_md, cs\.pr_body,/
   );
+  // #1367 split the topic head into a view MODEL and a component; the
+  // ordering contract is the order of the model's fields, which is what
+  // topic/topic-head.tsx renders them in.
   assert.match(
     APP_VIEW_SRC,
-    /_proposalSummaryHtml\(item\)[\s\S]*?_proposalBodyHtml\(item\)[\s\S]*?_proposalDetailsHtml\(item\)/,
+    /summaryHtml: AppView\._proposalSummaryHtml\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/,
     'the focused topic places the full body between its summary and metadata'
+  );
+  const HEAD_SRC = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'topic', 'topic-head.tsx'),
+    'utf8'
+  );
+  assert.match(
+    HEAD_SRC,
+    /body\.summaryHtml[\s\S]*?body\.proposalBody[\s\S]*?body\.details/,
+    'and the component draws them in that order'
   );
 });
 
@@ -100,8 +113,9 @@ test('legacy and blank PR bodies render no disclosure', () => {
   const AppView = makeAppView(() => {
     assert.fail('blank bodies must not reach the Markdown renderer');
   });
-  assert.equal(AppView._proposalBodyHtml({ id: 7 }), '');
-  assert.equal(AppView._proposalBodyHtml({ id: 7, pr_body: '   ' }), '');
+  assert.equal(AppView._proposalBodyView({ id: 7 }), null);
+  assert.equal(AppView._proposalBodyView({ id: 7, pr_body: '   ' }), null);
+  assert.equal(proposalBodyHtml(AppView, { id: 7, pr_body: '   ' }), '');
 });
 
 test('a full PR body is collapsed and rendered through the Markdown pipeline', () => {
@@ -110,7 +124,8 @@ test('a full PR body is collapsed and rendered through the Markdown pipeline', (
     seen.push({ md, opts });
     return `<safe-markdown>${md}</safe-markdown>`;
   });
-  const html = AppView._proposalBodyHtml({ id: 7, pr_body: '# Why\n\nMore context.' });
+  const pr = { id: 7, pr_body: '# Why\n\nMore context.' };
+  const html = proposalBodyHtml(AppView, pr);
 
   assert.equal(seen.length, 1);
   assert.equal(seen[0].md, '# Why\n\nMore context.');
@@ -120,12 +135,14 @@ test('a full PR body is collapsed and rendered through the Markdown pipeline', (
   assert.doesNotMatch(html, /^<details[^>]* open(?: |>|=)/, 'closed by default');
   assert.match(html, />Full proposal details<\/summary>/);
   assert.match(html, /<safe-markdown># Why\n\nMore context\.<\/safe-markdown>/);
-  assert.match(html, /ontoggle="AppView\._setProposalBodyOpen\(7, this\.open\)"/);
+  // The toggle is an onToggle closure now, not an `ontoggle` attribute, so
+  // what the markup can carry is the id it reports back with.
+  assert.equal(AppView._proposalBodyView(pr).id, 7);
 });
 
 test('the no-Markdown-renderer fallback escapes an untrusted PR body', () => {
   const AppView = makeAppView(undefined);
-  const html = AppView._proposalBodyHtml({
+  const html = proposalBodyHtml(AppView, {
     id: 7,
     pr_body: '<img src=x onerror="alert(1)">',
   });
@@ -135,20 +152,23 @@ test('the no-Markdown-renderer fallback escapes an untrusted PR body', () => {
 });
 
 test('the expanded state survives a focused-view repaint', () => {
+  // The flag lives in app-view.js rather than in component state for
+  // exactly this reason: the head repaints on every checks poll and WS
+  // event, and each repaint rebuilds the model from here.
   const AppView = makeAppView((md) => md);
   AppView._setProposalBodyOpen(7, true);
-  assert.match(AppView._proposalBodyHtml({ id: 7, pr_body: 'Details' }), /^<details[^>]* open/);
+  assert.match(proposalBodyHtml(AppView, { id: 7, pr_body: 'Details' }), /^<details[^>]* open/);
 
   AppView._setProposalBodyOpen(7, false);
   assert.doesNotMatch(
-    AppView._proposalBodyHtml({ id: 7, pr_body: 'Details' }),
+    proposalBodyHtml(AppView, { id: 7, pr_body: 'Details' }),
     /^<details[^>]* open/
   );
 });
 
 test('compact proposal cards do not render the full body', () => {
   const AppView = makeAppView((md) => `<safe-markdown>${md}</safe-markdown>`);
-  const html = AppView._renderProposalCard({
+  const html = proposalCardHtml(AppView, {
     id: 7,
     pr_number: 700,
     pr_title: 'Add details',

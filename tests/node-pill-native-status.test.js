@@ -16,45 +16,40 @@ function deferred() {
   return { promise, resolve };
 }
 
-function element({ hidden = false } = {}) {
-  const classes = new Set(hidden ? ['hidden'] : []);
-  const listeners = {};
-  const children = [];
-  let text = '';
-  const attributes = {};
-  const target = {
-    className: '',
-    classList: {
-      contains(name) { return classes.has(name); },
-      remove(name) { classes.delete(name); },
-    },
-    addEventListener(type, listener) { listeners[type] = listener; },
-    appendChild(child) { children.push(child); },
-    setAttribute(name, value) { attributes[name] = value; },
-    children,
-    attributes,
-    listeners,
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+
+// ONE bundle per process: a second `loadTsx` entry would hand this file a
+// different `nodePillStore` from the one the components subscribe to.
+let api = null;
+const mod = () => (api || (api = loadTsx('tests/fixtures/node-pill-api.ts')));
+
+/**
+ * The row as the browser draws it, from the store the module just published.
+ *
+ * These were DOM stubs whose `className` and `textContent` the module wrote
+ * directly. It publishes now and the component renders, so the same
+ * assertions read REAL markup — which also means a component that dropped an
+ * id, or emitted a computed class Tailwind never compiled, would fail them.
+ */
+function rowParts() {
+  const html = renderToHtml(createElement(mod().NodePillRow, {}));
+  const cls = (id) => (html.match(new RegExp(`id="${id}"[^>]*class="([^"]*)"`)) || [, ''])[1];
+  const text = (id) => (html.match(new RegExp(`id="${id}"[^>]*>([^<]*)<`)) || [, ''])[1];
+  const has = (id, name) => cls(id).split(/\s+/).includes(name);
+  return {
+    html,
+    row: { className: cls('drawer-row-node'), classList: { contains: (n) => has('drawer-row-node', n) } },
+    dot: { className: cls('drawer-node-dot'), classList: { contains: (n) => has('drawer-node-dot', n) } },
+    status: { className: cls('drawer-node-status'), textContent: text('drawer-node-status') },
   };
-  Object.defineProperty(target, 'textContent', {
-    get() { return text; },
-    set(value) {
-      text = value;
-      if (value === '') children.length = 0;
-    },
-  });
-  return target;
 }
 
-function loadNodePill({
-  hasNodeStatus,
-  snapshot = null,
-  isNative = true,
-  withSheetBody = false,
-}) {
-  const row = element({ hidden: true });
-  const dot = element();
-  const status = element();
-  const sheetBody = withSheetBody ? element() : null;
+/** The detail sheet's body, likewise — it reads the same store. */
+function sheetHtml() {
+  return renderToHtml(createElement(mod().NodeSheetBody, {}));
+}
+
+function loadNodePill({ hasNodeStatus, snapshot = null, isNative = true }) {
   const windowListeners = {};
   let statusReads = 0;
   const sandbox = {
@@ -69,33 +64,35 @@ function loadNodePill({
         return snapshot;
       },
     },
-    document: {
-      createElement() { return element(); },
-      getElementById(id) {
-        return {
-          'drawer-row-node': row,
-          'drawer-node-dot': dot,
-          'drawer-node-status': status,
-          'node-pill-sheet-body': sheetBody,
-        }[id] || null;
-      },
-    },
     addEventListener(type, listener) { windowListeners[type] = listener; },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  // The module is an ordinary bundle module and pulls its store and its two
+  // portal helpers in by name. Bind the REAL store, stub the portal helpers
+  // (the sheet's kit hand-off needs a browser), and drop the import lines so
+  // the body evaluates as a script exactly as it did — same technique as
+  // tests/challenge-template-prefill.test.js.
+  mod().nodePillStore.set({ ...mod().NODE_PILL_EMPTY });
+  sandbox.nodePillStore = mod().nodePillStore;
+  sandbox.NODE_PILL_EMPTY = mod().NODE_PILL_EMPTY;
+  sandbox.mountNodeSheet = () => {};
+  sandbox.unmountNodeSheet = () => {};
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox);
+  vm.runInContext(source.replace(/^import[^\n]*\n/gm, ''), sandbox);
   // The module used to end with `NodePill.init()`. It is initialised from the
   // island's layout effect now (so the `hidden` it lifts off #drawer-row-node
   // lands after hydration), which makes the call this harness's job.
   sandbox.window.NodePill.init();
   return {
-    row,
-    dot,
-    status,
-    sheetBody,
+    get row() { return rowParts().row; },
+    get dot() { return rowParts().dot; },
+    get status() { return rowParts().status; },
+    get sheetHtml() { return sheetHtml(); },
     get statusReads() { return statusReads; },
+    // #1402's four derivations. They are DECISIONS, so the merge kept them in
+    // the module rather than moving them into the component — which also
+    // keeps upstream's tests for them pointed at their original subject.
     networkHeightFor(detail) {
       return sandbox.window.NodePill._networkHeightFor(detail);
     },
@@ -133,7 +130,12 @@ test('successful capability probe reveals and populates the Node row',
     assert.equal(loaded.row.classList.contains('hidden'), false);
     assert.equal(loaded.status.textContent, 'Synced');
     assert.equal(loaded.statusReads, 1);
-    assert.equal(typeof loaded.row.listeners.click, 'function');
+    // The row's click was an addEventListener on the element; it is the
+    // component's onClick now, dispatching into a named module function.
+    const rowSrc = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src',
+      'features', 'header', 'node-pill-row.tsx'), 'utf8');
+    assert.match(rowSrc, /onClick=\{\(\) => controller\(\)\?\.openFromRow\?\.\(\)\}/);
+    assert.match(source, /\n    openFromRow\(\) \{/);
   });
 
 test('native status event reveals the row while the first probe is inconclusive',
@@ -182,6 +184,58 @@ test('desktop keeps the native-only Node row hidden', async () => {
   assert.equal(loaded.row.classList.contains('hidden'), true);
   assert.equal(loaded.statusReads, 0);
   });
+
+// #1079: the detail sheet's body was six nodes built imperatively and blanked
+// with `body.textContent = ''` on every status event. It reads the same store
+// the row does now, which is the point — the two surfaces cannot disagree.
+test('the detail sheet renders from the same status the row does', () => {
+  const loaded = loadNodePill({
+    hasNodeStatus: true,
+    snapshot: {
+      status: 'syncing',
+      localBestHeight: 1234,
+      networkBestHeight: 5678,
+      connectedPeers: 8,
+      totalPeers: 42,
+    },
+  });
+  loaded.dispatchNodeStatus({
+    status: 'syncing',
+    localBestHeight: 1234,
+    networkBestHeight: 5678,
+    connectedPeers: 8,
+    totalPeers: 42,
+  });
+  const html = loaded.sheetHtml;
+  assert.match(html, /Syncing/);
+  assert.match(html, /Your block height/);
+  assert.match(html, /1,234/);
+  assert.match(html, /Network block height/);
+  assert.match(html, /5,678/);
+  assert.match(html, /8 ready \/ 42 known/);
+  // The row agrees, from the same publish.
+  assert.equal(loaded.status.textContent, 'Syncing');
+});
+
+test('unknown numbers render an em dash, never a zero', () => {
+  const loaded = loadNodePill({ hasNodeStatus: true, snapshot: null });
+  loaded.dispatchNodeStatus({ status: 'offline' });
+  const html = loaded.sheetHtml;
+  // An unknown height and a height of zero are different facts.
+  assert.doesNotMatch(html, />0</);
+  // Four now, not three: #1402 added the chain, and an unknown chain is a
+  // fact worth showing rather than a blank row.
+  assert.equal((html.match(/—/g) || []).length, 4, 'four unknown figures');
+  assert.match(html, /Offline/);
+});
+
+// ── #1402, merged from upstream/main ────────────────────────────────────
+//
+// The four derivations below are unchanged from the commit that added them —
+// they are decisions and they stayed in the module. The sheet test is not: it
+// walked `sheetBody.children[n].children[m].textContent` through a DOM stub,
+// and there is no such stub any more. It asserts the same six facts against
+// the markup the component actually renders.
 
 test('Network block height follows the node sync state', async () => {
   const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
@@ -247,10 +301,7 @@ test('node warnings are conditional and ordered', async () => {
 });
 
 test('Node sheet puts chain first and labels ready peers', async () => {
-  const loaded = loadNodePill({
-    hasNodeStatus: Promise.resolve(false),
-    withSheetBody: true,
-  });
+  const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
   await settle();
 
   loaded.dispatchNodeStatus({
@@ -263,16 +314,46 @@ test('Node sheet puts chain first and labels ready peers', async () => {
     syncStalled: true,
   });
 
-  const rows = loaded.sheetBody.children;
-  assert.equal(rows[1].children[0].textContent, 'Chain');
-  assert.equal(rows[1].children[1].textContent, 'testnet');
-  assert.equal(rows[2].children[0].textContent, 'Your block height');
-  assert.equal(rows[2].children[1].textContent, '120');
-  assert.equal(rows[3].children[1].textContent, '130');
-  assert.equal(rows[4].children[1].textContent, '4 ready / 7 known');
-  assert.equal(rows[5].attributes.role, 'status');
-  assert.equal(
-    rows[5].children[0].children[0].children[1].textContent,
-    'Sync appears stalled.'
-  );
+  const html = loaded.sheetHtml;
+  assert.ok(html.indexOf('Chain') < html.indexOf('Your block height'),
+    'the chain row comes first');
+  assert.match(html, /Chain<\/span><span[^>]*>testnet</);
+  assert.match(html, /Your block height<\/span><span[^>]*>120</);
+  assert.match(html, /Network block height<\/span><span[^>]*>130</,
+    'a syncing node shows its target tip, not its own');
+  assert.match(html, /4 ready \/ 7 known/);
+  assert.match(html, /role="status"/);
+  assert.match(html, /Sync appears stalled\./);
+});
+
+test('a healthy node draws no warning box at all', async () => {
+  const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
+  await settle();
+
+  loaded.dispatchNodeStatus({
+    status: 'synced',
+    chain: 'testnet',
+    localBestHeight: 130,
+    readyPeers: 4,
+    totalPeers: 7,
+  });
+
+  const html = loaded.sheetHtml;
+  assert.doesNotMatch(html, /role="status"/,
+    'an empty warning list renders nothing, not an empty box');
+  // A synced node's own tip IS the network height — the same number twice.
+  assert.match(html, /Network block height<\/span><span[^>]*>130</);
+});
+
+test('a known tip age rides along with the height, in one row', async () => {
+  const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
+  await settle();
+
+  loaded.dispatchNodeStatus({
+    status: 'synced',
+    localBestHeight: 12480,
+    localBestTimestampMs: Date.now() - 4 * 60 * 1000,
+  });
+
+  assert.match(loaded.sheetHtml, /12,480 · 4 minutes ago/);
 });

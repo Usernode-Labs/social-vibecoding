@@ -94,21 +94,35 @@ test('the admin screen ships hidden in the shell like its siblings', () => {
     'the section host ships EMPTY: sections render into it from the module');
 });
 
-test('the console island imports all eleven admin modules, console first', () => {
-  // The load-order cluster the retired <script> tags used to express. The ten
+test('the console island imports every admin module, console first', () => {
+  // The load-order cluster the retired <script> tags used to express. The
   // section modules read the AdminUI registry admin-console.js exports, and
   // admin-topochain.js reads it while its module body evaluates — so if the
   // console import ever stops coming first, the prerender pass throws.
+  //
+  // The list GROWS as #1120 moves the console's own sections out of the
+  // chassis one at a time — `admin-overview` in slice 16, `admin-codes` in
+  // slice 17. Six of the eight self-rendered sections are still inline in
+  // admin-console.js; each will add a line here.
   const island = fs.readFileSync(
     path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
-  const order = [...island.matchAll(/from '\.\/(admin-[a-z]+)\.js'|import '\.\/(admin-[a-z]+)\.js'/g)]
-    .map((m) => m[1] || m[2]);
+  // `.tsx` as well as `.js`: sections are converting to React one at a time
+  // (#1120), and the import order this pins is about module EVALUATION order,
+  // which the file extension has nothing to do with.
+  // `[a-z0-9-]` rather than `[a-z]`: the character class used to miss
+  // `admin-e2e` (a digit) silently, and would now also miss
+  // `admin-featured-apps` (a second hyphen). A section this test cannot see is
+  // a section whose import order it does not actually pin.
+  const order = [...island.matchAll(/(?:from|import) '\.\/(admin-[a-z0-9-]+)\.(?:js|tsx)'/g)]
+    .map((m) => m[1]);
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
-    'admin-analytics', 'admin-campaigns', 'admin-estimator', 'admin-gallery',
-    'admin-mail', 'admin-merges', 'admin-node', 'admin-push', 'admin-status',
-    'admin-topochain',
-  ], 'all ten section modules are imported by the island');
+    'admin-analytics', 'admin-campaigns', 'admin-codes', 'admin-db-export',
+    'admin-e2e', 'admin-estimator', 'admin-featured-apps', 'admin-features',
+    'admin-gallery', 'admin-limits', 'admin-mail', 'admin-merges', 'admin-node',
+    'admin-overview', 'admin-push', 'admin-rollover', 'admin-staging-reap',
+    'admin-status', 'admin-topochain', 'admin-users',
+  ], 'every section module is imported by the island');
 });
 
 test('every full-screen exit path also exits the admin screen', () => {
@@ -232,10 +246,14 @@ test('every folded-in section has a module, an island import and no stale wiring
   for (const [key, file] of Object.entries(MODULES)) {
     assert.match(consoleJs, new RegExp(`${key}: '`),
       `SECTION_MODULES maps '${key}' to a module global`);
-    assert.ok(fs.existsSync(path.join(root, 'frontend/src/features/admin', `${file}.js`)),
-      `frontend/src/features/admin/${file}.js exists`);
-    assert.ok(island.includes(`'./${file}.js'`),
-      `${file}.js is imported by the console island`);
+    // Either renderer — a converted section is a `.tsx` (#1120). What has to
+    // hold is that the module exists at its new path and the island imports
+    // it; losing either shows "module failed to load" instead of the section.
+    const ext = ['js', 'tsx'].find((e) => fs.existsSync(
+      path.join(root, 'frontend/src/features/admin', `${file}.${e}`)));
+    assert.ok(ext, `frontend/src/features/admin/${file}.{js,tsx} exists`);
+    assert.ok(island.includes(`'./${file}.${ext}'`),
+      `${file}.${ext} is imported by the console island`);
     assert.ok(!html.includes(`/js/${file}.js`),
       `${file}.js is bundled, so the shell must not still load it as a script`);
     assert.ok(!sw.includes(`'/js/${file}.js'`),
@@ -258,17 +276,24 @@ test('every section module exposes destroy(), and switches call it first', () =>
   for (const file of ['admin-status', 'admin-node', 'admin-analytics',
     'admin-estimator', 'admin-merges', 'admin-gallery', 'admin-campaigns',
     'admin-topochain', 'admin-mail']) {
+    // `.js` or `.tsx` — the render/destroy contract is what the console
+    // dispatches through, and converting a section to React (#1120) keeps it.
+    const ext = ['js', 'tsx'].find((e) => fs.existsSync(
+      path.join(root, 'frontend/src/features/admin', `${file}.${e}`)));
     const src = fs.readFileSync(
-      path.join(root, 'frontend/src/features/admin', `${file}.js`), 'utf8');
-    assert.match(src, /destroy\(\)\s*\{/, `${file}.js implements destroy()`);
-    assert.match(src, /render\(\s*\w+\s*\)\s*\{/, `${file}.js implements render(host)`);
+      path.join(root, 'frontend/src/features/admin', `${file}.${ext}`), 'utf8');
+    assert.match(src, /destroy\(\)\s*\{/, `${file}.${ext} implements destroy()`);
+    assert.match(src, /render\(\s*\w+\s*(?:: [\w.<>[\] |]+)?\)\s*\{/,
+      `${file}.${ext} implements render(host)`);
   }
   assert.match(consoleJs, /_teardownActiveSection\(\)\s*\{/,
     'the console has a single teardown choke point');
   const renderSection = consoleJs.slice(consoleJs.indexOf('  _renderSection() {'));
   const head = renderSection.slice(0, 1200);
   const teardownAt = head.indexOf('_teardownActiveSection()');
-  const renderAt = head.indexOf('mod.render(host)');
+  // The dispatch body is `_renderModule` since #1120 slice 16 — `overview`
+  // became a module, so the switch's `default:` arm needed the same path.
+  const renderAt = head.indexOf('_renderModule(host, modName, key)');
   assert.ok(teardownAt > -1, '_renderSection tears the previous section down');
   assert.ok(renderAt > -1, '_renderSection delegates to the section module');
   assert.ok(teardownAt < renderAt, 'teardown happens BEFORE the next section renders');
@@ -344,16 +369,22 @@ test('dapp.json locks the rendered page in with checks', () => {
 // the download is a NAVIGATION rather than a Blob, and every string that
 // reaches the DOM from the history API is escaped.
 
+// ── Database export ─────────────────────────────────────────────────────
+//
+// The section moved out of the chassis into its own module in #1120 slice 19,
+// so these read admin-db-export.tsx rather than slicing admin-console.js. What
+// each one pins is unchanged; only the two that were ABOUT the old renderer
+// are restated, and both got stronger for it.
+
+const dbExportTsx = fs.readFileSync(
+  path.join(root, 'frontend/src/features/admin/admin-db-export.tsx'), 'utf8');
+
 test('the export section warns before it offers, and never uses a native prompt', () => {
-  const fn = consoleJs.slice(
-    consoleJs.indexOf('  renderDbExportSection(host) {'),
-    consoleJs.indexOf('  _resetDbExportConfirm()')
-  );
-  assert.ok(fn.length > 0, 'renderDbExportSection located');
-  assert.match(fn, /password hash/, 'spells out what the file contains');
-  assert.match(fn, /admin-db-export-phrase/, 'the typed EXPORT confirmation is an in-page field');
-  assert.match(fn, /admin-db-export-password/, 'password re-entry is an in-page field');
-  assert.ok(!/\bprompt\(/.test(consoleJs), 'no native prompt() — the platform renders its own dialogs');
+  assert.match(dbExportTsx, /password hash/, 'spells out what the file contains');
+  assert.match(dbExportTsx, /admin-db-export-phrase/, 'the typed EXPORT confirmation is an in-page field');
+  assert.match(dbExportTsx, /admin-db-export-password/, 'password re-entry is an in-page field');
+  assert.ok(!/\bprompt\(/.test(dbExportTsx), 'no native prompt() — the platform renders its own dialogs');
+  assert.ok(!/\bprompt\(/.test(consoleJs), 'and none left behind in the chassis either');
 });
 
 test('the restore instructions match the file the server actually sends', () => {
@@ -361,56 +392,56 @@ test('the restore instructions match the file the server actually sends', () => 
   // document gunzip + psql. A stale `pg_restore … .dump` line here is worse
   // than no line at all: an admin follows it during an incident and the
   // restore fails on a file pg_restore cannot read.
-  const fn = consoleJs.slice(
-    consoleJs.indexOf('  renderDbExportSection(host) {'),
-    consoleJs.indexOf('  _resetDbExportConfirm()')
-  );
-  assert.match(fn, /\.sql\.gz/, 'names the extension the browser will save');
-  assert.match(fn, /gunzip -c/, 'the restore starts by decompressing');
-  assert.match(fn, /\|\s*psql/, 'and replays the SQL with psql, not pg_restore');
-  assert.ok(!/pg_restore/.test(consoleJs), 'no leftover custom-format restore command');
-  assert.ok(!/&lt;file&gt;\.dump/.test(consoleJs), 'no leftover .dump filename');
+  assert.match(dbExportTsx, /\.sql\.gz/, 'names the extension the browser will save');
+  assert.match(dbExportTsx, /gunzip -c/, 'the restore starts by decompressing');
+  assert.match(dbExportTsx, /\|\s*psql/, 'and replays the SQL with psql, not pg_restore');
+  assert.ok(!/pg_restore/.test(dbExportTsx), 'no leftover custom-format restore command');
+  assert.ok(!/<file>\.dump/.test(dbExportTsx), 'no leftover .dump filename');
 });
 
 test('the export button is enabled by the server, not by the client', () => {
-  const fn = consoleJs.slice(
-    consoleJs.indexOf('  async loadDbExportStatus()'),
-    consoleJs.indexOf('  async startDbExport()')
-  );
-  assert.match(fn, /btn\.disabled = !data\.available/,
+  // The disabled expression is the whole assertion now: it may consult the
+  // server's `available` flag and whether the confirm panel is open, and
+  // nothing else. An environment check of the client's own would show up here
+  // as a third term.
+  assert.match(dbExportTsx, /disabled=\{!status\?\.available \|\| confirming\}/,
     'the probe decides; the client only renders the decision');
-  assert.match(fn, /DB_EXPORT_REASONS\[data\.reason\]/,
+  assert.match(dbExportTsx, /DB_EXPORT_REASONS\[status\.reason\]/,
     'the refusal copy is keyed off the server reason code');
   for (const reason of ['staging', 'unavailable', 'in_progress', 'rate_limited']) {
-    assert.ok(new RegExp(`${reason}:`).test(consoleJs), `reason '${reason}' has copy`);
+    assert.ok(new RegExp(`${reason}:`).test(dbExportTsx), `reason '${reason}' has copy`);
   }
+  // And the client must not be deciding availability from the environment.
+  assert.ok(!/IS_STAGING|USERNODE_ENV|location\.hostname/.test(dbExportTsx),
+    'availability is the server’s call, so the client reads no environment signal');
 });
 
 test('the download is navigated, not fetched into memory', () => {
-  const fn = consoleJs.slice(
-    consoleJs.indexOf('  async startDbExport()'),
-    consoleJs.indexOf('  _dbExportRow(r)')
-  );
+  const at = dbExportTsx.indexOf('  const start = async () => {');
+  const fn = dbExportTsx.slice(at, dbExportTsx.indexOf('  return (', at));
+  assert.ok(fn.length > 400, 'located the ticket flow');
   assert.match(fn, /\/api\/admin\/db-export\/ticket/, 'step 1 posts the confirmation');
   assert.match(fn, /window\.location\.href = data\.url/, 'step 2 navigates to the ticket URL');
-  assert.ok(!/createObjectURL/.test(fn),
+  assert.ok(!/createObjectURL/.test(dbExportTsx),
     'a multi-hundred-MB dump must never be held in page memory as a Blob');
-  assert.match(fn, /pw\.value = ''/, 'the password field is cleared as soon as it is spent');
+  assert.match(fn, /setPassword\(''\)/, 'the password field is cleared as soon as it is spent');
 });
 
-test('history rows are escaped — they carry admin-controlled strings', () => {
-  const fn = consoleJs.slice(
-    consoleJs.indexOf('  _dbExportRow(r)'),
-    consoleJs.indexOf('  async loadDbExportHistory()')
-  );
+test('history rows cannot render admin-controlled strings as markup', () => {
+  // These fields carry admin-supplied text — a username, a database name, a
+  // pg_dump error. They used to be interpolated into an innerHTML template,
+  // so each needed its own esc(); the row is JSX now, which escapes text
+  // children by construction. The assertion is that the class is unreachable
+  // AND that the four fields still reach the output.
+  assert.ok(!/dangerouslySetInnerHTML|\.innerHTML/.test(dbExportTsx),
+    'the history row renders no raw HTML at all');
   for (const field of ['r.username', 'r.db_name', 'r.ip', 'r.error']) {
-    assert.ok(new RegExp(`esc\\(${field.replace('.', '\\.')}`).test(fn)
-      || new RegExp(`esc\\([^)]*${field.replace('.', '\\.')}`).test(fn),
-      `${field} passes through esc()`);
+    assert.ok(dbExportTsx.includes(`{${field}}`) || dbExportTsx.includes(field),
+      `${field} still reaches the rendered row`);
   }
 });
 
 test('the section spells out post-export rotation guidance', () => {
-  assert.match(consoleJs, /rotate/i, 'the console tells the admin what to rotate if the file leaks');
-  assert.match(consoleJs, /JWT secret/i, 'naming the one rotation that invalidates every session');
+  assert.match(dbExportTsx, /rotate/i, 'the section tells the admin what to rotate if the file leaks');
+  assert.match(dbExportTsx, /JWT secret/i, 'naming the one rotation that invalidates every session');
 });

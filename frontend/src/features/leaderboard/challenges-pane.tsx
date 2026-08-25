@@ -126,11 +126,11 @@ const CARD = 'tc-se-card bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zi
   + 'dark:hover:border-violet-600 transition-colors';
 const CARD_FEATURED = ' ring-1 ring-violet-500/40';
 const CARD_DONE = ' opacity-60';
-const CARD_LABEL = 'text-[10px] uppercase tracking-wide text-violet-600 '
+const CARD_LABEL = 'text-[10px] uppercase tracking-wide text-violet-700  dark:text-violet-400'
   + 'dark:text-violet-400 font-semibold';
 const DONE_CHIP = 'shrink-0 inline-block px-2 py-0.5 rounded-full text-[0.65rem] font-semibold '
-  + 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400';
-const MINE_NOTE = 'text-xs text-emerald-600 dark:text-emerald-400 mt-2 font-medium';
+  + 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400';
+const MINE_NOTE = 'text-xs text-emerald-700 dark:text-emerald-400 mt-2 font-medium';
 const GROUP_HEADING = 'text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-6 mb-2';
 const GRID_ERROR = 'rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 '
   + 'dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm';
@@ -142,7 +142,7 @@ const OVERLAY = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60
 const PANEL_HEAD = 'bg-white dark:bg-zinc-900 rounded-xl p-6 w-full';
 const PANEL_TAIL = 'max-h-[85vh] overflow-y-auto shadow-xl border border-zinc-200 '
   + 'dark:border-zinc-800';
-const CLOSE_X = 'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 text-xl leading-none';
+const CLOSE_X = 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 text-xl leading-none dark:text-zinc-400';
 const ENTRY_ROW = 'tc-se-entry flex items-center justify-between gap-3 text-xs p-1.5 rounded '
   + 'hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer';
 // × as a character, not `&times;` — the entity was HTML source; this is text.
@@ -161,9 +161,9 @@ function Card({ view }: { view: CardView }): ReactNode {
         {view.done ? <span className={DONE_CHIP}>Completed</span> : null}
       </div>
       <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-1">{view.goal}</div>
-      <p className="text-xs text-zinc-500 line-clamp-2">{view.task}</p>
+      <p className="text-xs text-zinc-500 dark:text-zinc-400 line-clamp-2">{view.task}</p>
       {view.reward ? (
-        <p className="text-xs text-violet-500 mt-2 font-medium">{view.reward}</p>
+        <p className="text-xs text-violet-700 mt-2 font-medium dark:text-violet-400">{view.reward}</p>
       ) : null}
       {view.mineNote ? <p className={MINE_NOTE}>{view.mineNote}</p> : null}
     </div>
@@ -175,11 +175,11 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   // starts and the loading line arrives on the very next render.
   if (!view) return null;
   if (view.kind === 'loading') {
-    return <p className="text-sm text-zinc-500">Loading challenges…</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading challenges…</p>;
   }
   if (view.kind === 'error') return <div className={GRID_ERROR}>{view.message}</div>;
   if (view.kind === 'empty') {
-    return <p className="text-sm text-zinc-500 py-8 text-center">No challenges for this event yet.</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center">No challenges for this event yet.</p>;
   }
   return (
     <>
@@ -206,7 +206,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
       <div className="mt-4 text-center">
         <button
           id="tc-se-to-standings"
-          className="text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline"
+          className="text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
           onClick={() => controller()?._toStandings()}
         >
           See where the season stands →
@@ -221,7 +221,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
 function Cta({ view }: { view: CtaView }): ReactNode {
   if (view.kind === 'text') {
     return (
-      <p className="mb-3 text-xs text-zinc-500">
+      <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
         {view.label} <span className="italic">(link unavailable)</span>
       </p>
     );
@@ -243,10 +243,10 @@ function Cta({ view }: { view: CtaView }): ReactNode {
 
 function Entries({ view }: { view: EntriesView }): ReactNode {
   if (view.kind === 'loading') {
-    return <p className="text-xs text-zinc-500">Loading participants…</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading participants…</p>;
   }
-  if (view.kind === 'error') return <p className="text-xs text-zinc-500">{view.message}</p>;
-  if (view.kind === 'empty') return <p className="text-xs text-zinc-500">No participants yet.</p>;
+  if (view.kind === 'error') return <p className="text-xs text-zinc-500 dark:text-zinc-400">{view.message}</p>;
+  if (view.kind === 'empty') return <p className="text-xs text-zinc-500 dark:text-zinc-400">No participants yet.</p>;
   return (
     <>
       <ul className="space-y-1">
@@ -263,16 +263,16 @@ function Entries({ view }: { view: EntriesView }): ReactNode {
               {/* The leading space lived between the two spans in the old
                   string; it is inside this one now, for the reason the header
                   gives. */}
-              {row.nonPodium ? <span className="text-zinc-400"> (non-podium)</span> : null}
+              {row.nonPodium ? <span className="text-zinc-500 dark:text-zinc-400"> (non-podium)</span> : null}
             </span>
-            <span className="font-mono text-zinc-400">{row.points}</span>
+            <span className="font-mono text-zinc-500 dark:text-zinc-400">{row.points}</span>
           </li>
         ))}
       </ul>
       {view.hasMore ? (
         <button
           id="tc-se-breakdown-more"
-          className="mt-2 text-xs text-violet-500 hover:text-violet-400"
+          className="mt-2 text-xs text-violet-700 hover:text-violet-400 dark:text-violet-400"
           onClick={() => controller()?._moreBreakdown()}
         >
           Load more
@@ -303,24 +303,24 @@ function DetailPanel({ view }: { view: DetailView }): ReactNode {
         <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-2">{view.description}</p>
       ) : null}
       {view.mineNote ? (
-        <p className="text-xs text-emerald-600 dark:text-emerald-400 mb-2 font-medium">
+        <p className="text-xs text-emerald-700 dark:text-emerald-400 mb-2 font-medium">
           {view.mineNote}
         </p>
       ) : null}
       {view.requirements ? (
-        <p className="text-xs text-zinc-500 mb-2">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           <span className="font-medium">Requirements:</span> {view.requirements}
         </p>
       ) : null}
       {view.rewardLogic ? (
-        <p className="text-xs text-zinc-500 mb-3">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
           <span className="font-medium">Reward logic:</span> {view.rewardLogic}
         </p>
       ) : null}
       {view.cta ? <Cta view={view.cta} /> : null}
       <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3">
-        <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Participants</div>
-        {view.totals ? <p className="text-xs text-zinc-500 mb-2">{view.totals}</p> : null}
+        <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Participants</div>
+        {view.totals ? <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">{view.totals}</p> : null}
         <Entries view={view.entries} />
       </div>
     </>
@@ -330,31 +330,31 @@ function DetailPanel({ view }: { view: DetailView }): ReactNode {
 // ── Profile overlay ─────────────────────────────────────────────────────
 
 function ProfileBody({ view }: { view: ProfileView }): ReactNode {
-  if (view.kind === 'loading') return <p className="text-sm text-zinc-500">Loading…</p>;
-  if (view.kind === 'error') return <p className="text-sm text-zinc-500">{view.message}</p>;
+  if (view.kind === 'loading') return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+  if (view.kind === 'error') return <p className="text-sm text-zinc-500 dark:text-zinc-400">{view.message}</p>;
   return (
     <>
       <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-3">{view.name}</h2>
       <div className="grid grid-cols-2 gap-2 text-xs mb-4">
         {view.stats.map((s) => (
           <div key={s.label}>
-            <span className="text-zinc-500">{s.label}</span>
+            <span className="text-zinc-500 dark:text-zinc-400">{s.label}</span>
             <div className="font-mono">{s.value}</div>
           </div>
         ))}
       </div>
-      <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Activities</div>
+      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Activities</div>
       {view.activities ? (
         <ul className="space-y-1">
           {view.activities.map((a) => (
             <li key={a.key} className="flex items-center justify-between gap-3 text-xs">
               <span className="text-zinc-600 dark:text-zinc-300">{a.text}</span>
-              <span className="font-mono text-zinc-400">{a.points}</span>
+              <span className="font-mono text-zinc-500 dark:text-zinc-400">{a.points}</span>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="text-xs text-zinc-500">No activities recorded.</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">No activities recorded.</p>
       )}
     </>
   );

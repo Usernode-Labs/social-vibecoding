@@ -346,7 +346,7 @@ export function init() {
 
     const showFeedbackNotice = (text, isError) => {
       feedbackStatus.textContent = text;
-      feedbackStatus.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-400'}`;
+      feedbackStatus.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
       feedbackStatus.classList.remove('hidden');
     };
 
@@ -642,7 +642,7 @@ export function init() {
         return;
       }
       feedbackStatus.textContent = line;
-      feedbackStatus.className = 'text-sm mt-2 text-zinc-400';
+      feedbackStatus.className = 'text-sm mt-2 text-zinc-500 dark:text-zinc-400';
       feedbackStatus.classList.remove('hidden');
       queueLineText = line;
     };
@@ -713,7 +713,7 @@ export function init() {
         return false;
       }
       feedbackStatus.textContent = "Saved on this device — we'll send it as soon as you're back online.";
-      feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
+      feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
       feedbackStatus.classList.remove('hidden');
       queueLineText = '';
       feedbackText.value = '';
@@ -911,7 +911,7 @@ export function init() {
           feedbackStatus.textContent = (data.bounty?.placed
             ? filedAgainst + bountyNotice
             : `${filedAgainst}.${bountyNotice}`) + stateNotice;
-          feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
+          feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
           feedbackTitle.value = '';

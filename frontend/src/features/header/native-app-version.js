@@ -12,6 +12,8 @@
 // but init() runs from the island's layout effect, after hydration has adopted
 // that markup. Data is then written imperatively because other legacy modules
 // still own sibling slots in the same subtree.
+import { nativeAppVersionStore } from './native-app-version-store';
+
 (function () {
   'use strict';
 
@@ -104,14 +106,13 @@
       return build ? `${version}/${build}` : version;
     },
 
+    // One publish where there were two writes — the slot's text and the row's
+    // `hidden`. Both were answers to the same question (is there a conclusive
+    // read yet), so the component derives them from one value. Native data is
+    // still an external input; the component renders it as a TEXT CHILD, which
+    // React escapes, exactly as `textContent` did here.
     _render(value) {
-      const row = document.getElementById('drawer-row-native-app-version');
-      const slot = document.getElementById('native-app-version-slot');
-      if (!row || !slot) return;
-      // Native data is still an external input. textContent keeps it text even
-      // if a malformed producer returns markup characters.
-      slot.textContent = value;
-      row.classList.remove('hidden');
+      nativeAppVersionStore.set({ value: value || '' });
     },
   };
 

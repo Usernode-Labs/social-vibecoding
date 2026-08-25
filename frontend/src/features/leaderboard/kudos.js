@@ -150,14 +150,14 @@ const Kudos = {
           popover.classList.remove('hidden');
           const entry = Kudos._ensureCache(sid);
           if (entry.count === 0) {
-            popover.innerHTML = '<span class="text-zinc-500">No kudos yet — be the first.</span>';
+            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">No kudos yet — be the first.</span>';
             return;
           }
           if (!entry.givers && !loadPromise) {
             loadPromise = Kudos.fetchGivers(sid).then(() => {
               if (!popover.classList.contains('hidden')) Kudos._renderPopover(sid, popover);
             });
-            popover.innerHTML = '<span class="text-zinc-500">Loading…</span>';
+            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">Loading…</span>';
             return;
           }
           Kudos._renderPopover(sid, popover);
@@ -172,7 +172,7 @@ const Kudos = {
   _renderPopover(sid, popover) {
     const entry = Kudos._ensureCache(sid);
     if (!entry.givers || !entry.givers.length) {
-      popover.innerHTML = '<span class="text-zinc-500">No kudos yet — be the first.</span>';
+      popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">No kudos yet — be the first.</span>';
       return;
     }
     const items = entry.givers.map((g) => {
@@ -180,7 +180,7 @@ const Kudos = {
       const when = relativeTime(g.createdAt);
       return `<div class="flex items-center justify-between gap-2 py-0.5">
         <span class="font-medium">@${who}</span>
-        <span class="text-zinc-500">${when}</span>
+        <span class="text-zinc-500 dark:text-zinc-400">${when}</span>
       </div>`;
     }).join('');
     popover.innerHTML = `<div class="mb-1 text-zinc-500 dark:text-zinc-400">Kudos givers (${entry.givers.length})</div>${items}`;
@@ -442,7 +442,7 @@ const Kudos = {
       const tip = `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
       const tone = remaining === 0
         ? 'text-zinc-500 dark:text-zinc-400'
-        : 'text-violet-600 dark:text-violet-400';
+        : 'text-violet-700 dark:text-violet-400';
       // Plain inline text, NOT a pill: the row already labels itself
       // "Kudos", so the badge chrome was framing a number that needed no
       // frame — and it read as a tappable chip competing with the nav

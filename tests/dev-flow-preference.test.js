@@ -210,19 +210,37 @@ test('Settings offers the same preference as a dropdown', () => {
   assert.match(js, /_renderDevFlowSection/);
   assert.match(js, /_saveDevFlow/);
   assert.match(js, /\/api\/me\/dev-flow/);
-  assert.match(js, /id="settings-dev-flow"/);
-  assert.match(js, /devFlowPreference/, 'the section must render from the /me value');
-  // The shell body was frozen against a pre-migration fixture when this was
-  // written (#1078 replaced that with the id/script baselines in
-  // tests/baselines/), so this section is INJECTED by JS
-  // rather than added to frontend/src/Shell.tsx. If that ever changes, the
-  // injection can go — but silently adding static markup instead would fail
-  // the parity test, so the reason is recorded where the code is.
-  assert.match(js, /data-settings-section="connectors"/,
-    'the injected section must land in the Connections settings section');
+  assert.match(js, /devFlowPreference/, 'the control renders from the /me value');
+
+  // ── This assertion INVERTED, on purpose (#1191) ────────────────────
+  //
+  // It used to require that the block be INJECTED and that the dropdown NOT
+  // appear in public/index.html. The reason was real at the time: the shell
+  // body was a hand-written document frozen against a pre-migration fixture,
+  // so a new settings control could only be added by
+  // `document.createElement` at runtime. #1078 replaced that fixture with the
+  // id/script baselines, and the Connections pane is a React component, so
+  // the injection became a legacy module writing a node into a subtree React
+  // owns — the one thing the ownership rule forbids.
+  //
+  // The block is markup now, its three ids are declared in
+  // tests/shell-id-inventory.test.js's ADDED_IDS with that reason, and the
+  // module keeps exactly what it keeps for every other control on the screen.
+  const pane = read('frontend/src/features/settings/sections/connectors.tsx');
+  assert.match(pane, /id="dev-flow-pref-section"/);
+  assert.match(pane, /id="settings-dev-flow"/);
+  assert.match(pane, /data-settings-section="connectors"/,
+    'and it is in the Connections pane, where the flows it configures live');
   const html = read('public/index.html');
-  assert.ok(!html.includes('id="settings-dev-flow"'),
-    'the dropdown must NOT be static markup — the shell document is frozen');
+  assert.ok(html.includes('id="settings-dev-flow"'),
+    'so the dropdown IS in the prerendered document');
+  assert.ok(html.indexOf('id="dev-flow-pref-section"') < html.indexOf('id="github-link-section"'),
+    'above the GitHub block, where the injection put it — the preference reads '
+    + 'as the question and the link below it as one of the answers');
+  // Nothing builds it any more.
+  const render = js.slice(js.indexOf('    _renderDevFlowSection() {'));
+  assert.doesNotMatch(render.slice(0, 1400), /createElement|innerHTML|insertBefore/,
+    'the renderer binds and reflects; it does not build');
 });
 
 test('Settings disables the hand-offs when the deployment cannot offer them', () => {

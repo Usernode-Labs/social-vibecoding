@@ -26,6 +26,7 @@
 // legacy module has its own copy: it is three lines, and a shared import would
 // be a load-order dependency between classic scripts that don't have one.
 
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
@@ -97,28 +98,28 @@ export function appPillsFor(app) {
   if (hasMissing) {
     const n = app.missingSecrets.length;
     chipDefs.push({
-      cls: 'bg-red-500/10 text-red-500',
+      cls: 'bg-red-500/10 text-red-700 dark:text-red-400',
       label: 'Missing secrets',
       tip: `${n} required secret${n === 1 ? '' : 's'} unset — set values in the app's Secrets panel`,
     });
   }
   if (openPrs > 0) {
     chipDefs.push({
-      cls: 'bg-amber-500/10 text-amber-500',
+      cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
       label: `${openPrs} to vote`,
       tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
     });
   }
   if (activeSessions > 0) {
     chipDefs.push({
-      cls: 'bg-sky-500/10 text-sky-500',
+      cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
       label: `${activeSessions} in dev`,
       tip: `${activeSessions} build session${activeSessions === 1 ? '' : 's'} in progress`,
     });
   }
   if (openIssues > 0) {
     chipDefs.push({
-      cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+      cls: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400',
       label: `${openIssues} issue${openIssues === 1 ? '' : 's'}`,
       tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
     });
@@ -145,8 +146,14 @@ export function appPillsFor(app) {
 
 // The chip classes, shared by both renderers so a restyle lands on all four
 // app surfaces at once.
+//
+// The INK is a -700 in light and a -400 in dark. A single -400/-500 was a
+// dark-shell value: on the light page a `text-sky-700 dark:text-sky-400` label over a 10% sky
+// tint measured 2.3:1, which is a colour you can see but not read. The tint
+// behind it is unchanged — it is the same 10% wash in both themes, and it is
+// the ink that has to move.
 export const CHIP_BASE_CLS = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
-export const VIS_CHIP_CLS = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
+export const VIS_CHIP_CLS = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-700 dark:text-violet-400';
 // Heroicons v1 outline paths, drawn as inline currentColor SVGs (rather than
 // emoji) so the glyphs tint violet with the chip in both themes.
 export const VIS_CHIP_PATHS = {
@@ -166,7 +173,9 @@ export function renderAppPillsHtml(app) {
   return `${chipsHtml}${visChipHtml}`;
 }
 
-export const AppCard = { iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor };
+export const AppCard = {
+  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor,
+};
 
 // Published for the legacy half of the split. Both in-bundle consumers
 // (features/apps/browse.js and features/home/home.js, whose two card methods

@@ -29,9 +29,9 @@
  *     "Loading…". Rendering `#dev-feed` as a JSX child instead would make
  *     every view-mode re-render reconcile against nodes the module has since
  *     replaced.
- *   * `#dev-locked-notice`, `#dev-chat-card-preview`, `#dc-secrets-state` —
- *     leaves the module writes text or `innerHTML` into, and in the notice's
- *     case toggles `hidden` on. They are safe because React renders their
+ *   * `#dev-chat-card-preview`, `#dc-secrets-state` —
+ *     leaves the module writes text or `innerHTML` into. They are safe because
+ *     React renders their
  *     `className` (and the preview's placeholder text) as CONSTANT props: React
  *     only writes an attribute when the prop CHANGES, so a re-render of this
  *     component does not clobber a class or a string the module has since
@@ -57,6 +57,9 @@ import {
   ChevronRightIcon,
   DiscussionIcon,
 } from '@/components/ui/icons';
+
+import { useStoreState } from '../../lib/use-store-state';
+import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
@@ -115,7 +118,7 @@ function PlusMenuHeading({
     <div
       data-plus-group={groupKey}
       className={
-        'px-3 pt-2.5 pb-1 text-[10px] uppercase font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 select-none' +
+        'px-3 pt-2.5 pb-1 text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-500 select-none' +
         (divider ? ' border-t border-zinc-200 dark:border-zinc-800 mt-1' : '')
       }
     >
@@ -143,7 +146,7 @@ const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
  */
 function ChatCardIcon() {
   return (
-    <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-500 flex items-center justify-center shrink-0">
+    <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-700 flex items-center justify-center shrink-0 dark:text-violet-400">
       <DiscussionIcon className="w-5 h-5" aria-hidden="true" />
     </span>
   );
@@ -179,6 +182,7 @@ export function DevBoardFrame({
   cardCls,
   cardHoverCls,
 }: DevBoardFrameProps) {
+  const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
   return (
     <div className="flex flex-col h-full min-h-0">
       {/*
@@ -299,7 +303,7 @@ export function DevBoardFrame({
                         writes its text again. */}
                     <span
                       id="dc-secrets-state"
-                      className="text-xs font-normal text-zinc-400 dark:text-zinc-500"
+                      className="text-xs font-normal text-zinc-500 dark:text-zinc-500"
                     ></span>
                   </span>
                   <span className={PLUS_SUB_CLS}>
@@ -329,7 +333,21 @@ export function DevBoardFrame({
         id="dev-forum-scroll"
         className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll"
       >
-        <div id="dev-locked-notice" className="px-3 pt-2 hidden"></div>
+        {/*
+            The locked-app banner. It used to be one of the leaves above — a
+            host the module toggled `hidden` on and wrote `innerHTML` into —
+            which meant TWO owners of one node's class attribute, tolerated only
+            because React rendered that class as a constant. It is a field on
+            the view-mode store now, so the node has one writer and the banner
+            has one spelling.
+        */}
+        <div id="dev-locked-notice" className={locked ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
+          {locked ? (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-400">
+              App is locked — an admin must approve any proposal before it applies.
+            </div>
+          ) : null}
+        </div>
         <div className="px-3 pt-2">
           <button
             id="dev-chat-card"
@@ -348,7 +366,7 @@ export function DevBoardFrame({
                 Talk with everyone building this app
               </span>
             </span>
-            <ChevronRightIcon className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
+            <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" />
           </button>
         </div>
         {/* Body region: the Feed mounts #dev-feed here; Kanban mounts

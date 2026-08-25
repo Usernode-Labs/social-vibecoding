@@ -31,6 +31,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { renderComponent } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -41,6 +42,7 @@ const APP_JS = read('public/js/app.js');
 const APP_VIEW = read('public/js/app-view.js');
 const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
 const BOARD_FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
+const DEV_VIEW = read('frontend/src/features/dev-chat/view.tsx');
 const GROUP_CHAT = read('public/js/group-chat.js');
 
 // ── 1. The tokens ────────────────────────────────────────────────────
@@ -211,63 +213,93 @@ test('the dev scrollers carry platform-safe-scroll', () => {
   assert.ok(!APP_VIEW.includes('id="dev-forum-scroll"'),
     'the template that used to emit it is retired, not duplicated');
 
-  const sessions = /<div id="dc-session-list"[^>]*>/.exec(DEV_CHAT);
-  assert.ok(sessions, '#dc-session-list is missing from dev-chat.js');
+  // #1078: the dev chat's whole screen is a component too, so its scroller's
+  // classes are a JSX className rather than an attribute in a template string.
+  const sessions = /id="dc-session-list"[\s\S]{0,240}?>/.exec(DEV_VIEW);
+  assert.ok(sessions, '#dc-session-list is missing from view.tsx');
   assert.match(sessions[0], /platform-safe-scroll/,
     'the sessions list must clear the home indicator');
+  assert.ok(!DEV_CHAT.includes('id="dc-session-list"'),
+    'the template that used to emit it is retired, not duplicated');
 });
 
 test('the dev-chat composer bar carries platform-safe-bar', () => {
   // The wrapper holding the model row, drafts, attachments, #dc-form and
   // the shortcut hint — anchored to the bottom of the screen in a
   // session, which is where the dead band used to be.
-  const idx = DEV_CHAT.indexOf('id="dc-messages"');
-  assert.ok(idx > -1, '#dc-messages is missing from dev-chat.js');
-  const after = DEV_CHAT.slice(idx, idx + 2000);
-  const bar = /<div id="dc-composer-bar" class="([^"]*)"/.exec(after);
-  assert.ok(bar, "the dev-chat composer's bar wrapper moved — re-anchor this test");
-  assert.match(bar[1], /platform-safe-bar/,
-    'the dev-chat composer must sit above the home indicator');
+  const idx = DEV_VIEW.indexOf('id="dc-messages"');
+  assert.ok(idx > -1, '#dc-messages is missing from view.tsx');
+  assert.match(DEV_VIEW.slice(idx, idx + 1200), /id="dc-composer-bar"/,
+    "the dev-chat composer's bar wrapper moved — re-anchor this test");
   // #1348: the border and padding are dropped when a launchpad has emptied
   // the bar, so that they do not frame nothing. The INSET is not part of
   // that — it is the bottom of the screen either way, and a transcript
   // running under the home indicator is the bug this test exists for. So
-  // platform-safe-bar must sit OUTSIDE the conditional, unlike border-t.
-  const conditional = /\$\{barEmpty \? '' : '([^']*)'\}/.exec(bar[1]);
-  assert.ok(conditional, 'the empty-bar case must still be expressed here');
-  assert.doesNotMatch(conditional[1], /platform-safe-bar/,
+  // platform-safe-bar must be in BOTH class runs, unlike border-t.
+  //
+  // The two runs are complete literals rather than one string with a
+  // conditional tail, because Tailwind's extractor is a regex over source
+  // text: a class name assembled from fragments compiles to nothing.
+  const bare = /bare: '([^']*)'/.exec(DEV_VIEW);
+  const framed = /framed: '([^']*)'/.exec(DEV_VIEW);
+  assert.ok(bare && framed, 'the empty-bar case must still be expressed here');
+  assert.match(bare[1], /platform-safe-bar/,
     'the safe-area inset must never be conditional');
-  assert.match(conditional[1], /border-t/,
+  assert.match(framed[1], /platform-safe-bar/);
+  assert.doesNotMatch(bare[1], /border-t/,
     'the border is the part that goes when there is nothing to frame');
+  assert.match(framed[1], /border-t/);
 });
 
-test('the general-chat composer bar carries platform-safe-bar', () => {
-  const idx = APP_VIEW.indexOf('id="gc-messages"');
-  assert.ok(idx > -1, '#gc-messages is missing from app-view.js');
-  const after = APP_VIEW.slice(idx, idx + 1200);
-  const bar = /<div class="shrink-0 border-t[^"]*"/.exec(after);
-  assert.ok(bar, "the general-chat composer's bar wrapper moved — re-anchor this test");
-  assert.match(bar[0], /platform-safe-bar/,
-    'the general-chat composer must sit above the home indicator');
+test('the general-chat composer bar carries platform-safe-bar, on both branches', () => {
+  // This markup left public/js/app-view.js's `renderGroupChatTab` template for
+  // features/group-chat/general-chat.tsx in #1191, so the check renders the
+  // component instead of reading a template literal — which also proves the
+  // class survives to the DOM rather than merely appearing in a source string.
+  //
+  // BOTH branches, because here the read-only notice sits INSIDE the bar
+  // rather than replacing it (the thread panel does the opposite, below), and
+  // a refactor that lifted the notice out would take the inset with it.
+  const pane = (readOnly) => renderComponent(
+    'frontend/src/features/group-chat/general-chat.tsx', 'GeneralChat',
+    { introAppName: null, readOnly, maxLength: 8000 },
+  );
+  for (const readOnly of [false, true]) {
+    const html = pane(readOnly);
+    const bar = /<div class="shrink-0 border-t[^"]*"/.exec(html);
+    assert.ok(bar, `readOnly=${readOnly}: the composer's bar wrapper moved — re-anchor this test`);
+    assert.match(bar[0], /platform-safe-bar/,
+      `readOnly=${readOnly}: the general-chat composer must sit above the home indicator`);
+  }
+  // The composer is inside that bar, not a sibling of it.
+  assert.match(pane(false), /platform-safe-bar[^>]*><div id="gc-reply-preview"/);
+  assert.match(pane(true), /platform-safe-bar[^>]*><div class="px-3 py-2 text-xs/);
 });
 
 test('the thread composer AND its read-only notice both carry the bar class', () => {
-  // GroupChat.mountThread renders one or the other; the notice REPLACES
-  // the composer, so it needs the identical clearance. This markup serves
-  // the issue / proposal topic sub-view.
-  const idx = GROUP_CHAT.indexOf('const composerHtml = opts.readOnly');
-  assert.ok(idx > -1, 'GroupChat.mountThread composer branch moved');
-  const block = GROUP_CHAT.slice(idx, idx + 900);
-
-  const notice = /\?\s*`<div class="([^"]*)"/.exec(block);
-  assert.ok(notice, 'the read-only notice branch moved');
-  assert.match(notice[1], /platform-safe-bar/,
-    'the read-only notice must clear the indicator like the composer it replaces');
-
-  const composer = /:\s*`<div class="(shrink-0 border-t[^"]*)"/.exec(block);
-  assert.ok(composer, 'the thread composer branch moved');
-  assert.match(composer[1], /platform-safe-bar/,
+  // The thread panel renders one or the other; the notice REPLACES the
+  // composer, so it needs the identical clearance. This markup serves the
+  // issue / proposal topic sub-view, and it moved out of GroupChat.mountThread
+  // into features/group-chat/thread-shell.tsx in #1191 — so this renders both
+  // branches rather than reading two template literals, which also proves the
+  // class SURVIVES to the DOM rather than merely appearing in a source string.
+  const shell = (readOnly) => renderComponent(
+    'frontend/src/features/group-chat/thread-shell.tsx', 'ThreadShell',
+    {
+      fill: true,
+      withHeader: false,
+      readOnly,
+      notice: 'This thread is read-only.',
+      placeholder: 'Reply in thread…',
+      maxLength: 8000,
+    },
+  );
+  const composer = shell(false);
+  assert.match(composer, /class="shrink-0 border-t[^"]*platform-safe-bar"/,
     'the thread composer must sit above the home indicator');
+  const notice = shell(true);
+  assert.match(notice, /class="px-3 py-2[^"]*platform-safe-bar">This thread is read-only\./,
+    'the read-only notice must clear the indicator like the composer it replaces');
 });
 
 // ── 5. Panels that escape #app-view ──────────────────────────────────

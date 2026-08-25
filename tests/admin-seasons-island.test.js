@@ -29,6 +29,16 @@ const root = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
 
 const topo = read('frontend/src/features/admin/admin-topochain.js');
+// The eleven screens are converting to React one at a time (#1120 slice 24).
+// A converted screen's markup lives under frontend/src/features/admin/topochain/,
+// so the id inventory below reads BOTH — a declared check must resolve against
+// whichever renderer currently produces its anchor.
+const topoDir = 'frontend/src/features/admin/topochain';
+const topoReact = fs.readdirSync(path.join(root, topoDir))
+  .filter((f) => /\.tsx?$/.test(f))
+  .map((f) => read(`${topoDir}/${f}`))
+  .join('\n');
+const tokens = read(`${topoDir}/tokens.ts`);
 const islandTsx = read('frontend/src/features/admin/index.tsx');
 const consoleJs = read('frontend/src/features/admin/admin-console.js');
 const manifest = JSON.parse(read('dapp.json'));
@@ -44,10 +54,17 @@ test('the class registry is read at module-evaluation time, from an import', () 
   // instead of one at a time. If it ever stops being an evaluation-time read,
   // say so in the commit that changes it rather than discovering later that the
   // clustering was unnecessary.
-  assert.match(moduleScope, /^const PANEL_CLS = AdminUI\.card;/m,
-    'admin-topochain.js reads AdminUI.card while its module body evaluates');
-  assert.match(moduleScope, /^import \{ AdminUI \} from '\.\/admin-console\.js';$/m,
+  // The read moved to topochain/tokens.ts with the rest of the control tokens
+  // (#1120 slice 24) and is still an evaluation-time one — the module scope
+  // below imports that file, so importing admin-topochain.js still evaluates
+  // AdminUI.card. Nothing about the clustering argument changed; only which
+  // file holds the line.
+  assert.match(tokens, /^export const PANEL_CLS = AdminUI\.card;/m,
+    'topochain/tokens.ts reads AdminUI.card while its module body evaluates');
+  assert.match(tokens, /^import \{ AdminUI \} from '\.\.\/admin-console\.js';$/m,
     'and it must get it from an import, not from <script> order');
+  assert.match(moduleScope, /^\} from '\.\/topochain\/tokens\.ts';$/m,
+    'and admin-topochain.js pulls the tokens in at evaluation time too');
   assert.match(consoleJs, /^export const AdminUI = Object\.freeze\(\{$/m,
     'admin-console.js must export the registry rather than only publishing it');
 });
@@ -136,11 +153,15 @@ test('the section never reaches into the React-owned chassis', () => {
 // argument to the shared _inputHtml/_textareaHtml/_selectHtml builders, and as
 // a getElementById lookup. Any quoted occurrence counts as "the module knows
 // this id" — the builders are covered by their own escaping tests.
+// A converted screen writes `id="admin-topo-…"` in JSX rather than in a
+// template string, which the same two patterns already match; `data-*` in JSX
+// is `data-x={…}` as often as `data-x="…"`, so that pattern accepts both.
+const topoAll = `${topo}\n${topoReact}`;
 const producedIds = new Set([
-  ...[...topo.matchAll(/id=["'`]([\w-]+)["'`]/g)].map((m) => m[1]),
-  ...[...topo.matchAll(/["'`](admin-topo-[\w-]+)["'`]/g)].map((m) => m[1]),
+  ...[...topoAll.matchAll(/id=["'`]([\w-]+)["'`]/g)].map((m) => m[1]),
+  ...[...topoAll.matchAll(/["'`](admin-topo-[\w-]+)["'`]/g)].map((m) => m[1]),
 ]);
-const producedAttrs = new Set([...topo.matchAll(/\b(data-[\w-]+)=/g)].map((m) => m[1]));
+const producedAttrs = new Set([...topoAll.matchAll(/\b(data-[\w-]+)[={]/g)].map((m) => m[1]));
 
 test('every id and data-* a declared programme-screen check selects on is produced', () => {
   // The screens are first-class sections since #1179, so the declared
@@ -179,38 +200,52 @@ test('the deep-linked Season-events screens the brief names still resolve', () =
   // asserted above from dapp.json; this pins the sibling relationship one of
   // those selectors depends on (`#…-se-detail-hero ~ #…-ch-table`), which an
   // innocent-looking wrapper <div> around either one would break.
-  const heroAt = topo.indexOf('id="admin-topo-se-detail-hero"');
-  const tableAt = topo.indexOf('id="admin-topo-ch-table"');
+  const detail = read(`${topoDir}/challenges.tsx`);
+  const heroAt = detail.indexOf('id="admin-topo-se-detail-hero"');
+  const tableAt = detail.indexOf('id="admin-topo-ch-table"');
   assert.ok(heroAt > 0 && tableAt > 0, 'both the detail hero and the challenge table must render');
   assert.ok(heroAt < tableAt, 'the hero must precede the challenge table, as the ~ selector requires');
+  // They are siblings in one component, so the relationship is now
+  // structural rather than a property of two separate innerHTML writes.
+  assert.ok(!/<\w+[^>]*>\s*<div id="admin-topo-ch-table"/.test(detail),
+    'nothing wraps the challenge table, which would break the ~ selector');
 });
 
 // ── 5. The SQL-schema explorer, client half ─────────────────────────────
 
+// The SQL console is React since #1120 slice 25. The same five properties
+// hold; each is expressed in the renderer it uses now, and three of them got
+// stronger in the move because React removed the thing they were guarding.
+const sqlTsx = read(`${topoDir}/sql-console.tsx`);
+
 test('the schema explorer renders its three declared anchors', () => {
   // Named by the brief, and selected by three declared checks on
-  // /#admin/seasons/sql-console.
-  assert.match(topo, /<input id="admin-topo-sql-schema-filter" type="search"/,
+  // /#admin/sql-console.
+  assert.match(sqlTsx, /id="admin-topo-sql-schema-filter"\n\s*type="search"/,
     'a search input filters the table list');
-  assert.match(topo, /<p id="admin-topo-sql-schema-count"[^>]*role="status"/,
+  assert.match(sqlTsx, /id="admin-topo-sql-schema-count"[\s\S]{0,200}?role="status"/,
     'the count is a live region, so a filter change is announced');
-  assert.match(topo, /<div id="admin-topo-sql-schema" class="[^"]*overflow-y-auto"/,
+  assert.match(sqlTsx, /id="admin-topo-sql-schema" className="[^"]*overflow-y-auto"/,
     'the list itself scrolls within the panel rather than the page');
 });
 
-test('filtering the ~90-table schema is client-side over the fetched list', () => {
+test('filtering the ~110-table schema is client-side over the fetched list', () => {
   // One request, then keystroke-local filtering. A request per keystroke would
-  // be ~90 tables of schema re-fetched per character against the admin API.
-  const load = topo.slice(topo.indexOf('async _loadSqlSchema()'), topo.indexOf('_renderSqlSchemaList(term)'));
-  assert.match(load, /fetchJson\('\/api\/v4\/admin\/sql-query\/schema'\)/,
+  // be ~110 tables of schema re-fetched per character against the admin API.
+  assert.match(sqlTsx, /fetchJson\('\/api\/v4\/admin\/sql-query\/schema'\)/,
     'the schema is fetched once');
-  assert.match(load, /AdminTopochain\._sql\.schema = data\.data;/, 'and cached');
-  assert.match(load, /filter\.addEventListener\('input', \(\) => AdminTopochain\._renderSqlSchemaList\(filter\.value\)\)/,
-    'input re-renders from the cache — it must not re-fetch');
-  const render = topo.slice(topo.indexOf('_renderSqlSchemaList(term)'), topo.indexOf('async _runSqlQuery()'));
-  assert.ok(!render.includes('fetchJson'), 'the filtered re-render must not hit the network');
-  assert.match(render, /includes\(needle\)/, 'filtering is a substring match on the table name');
-  assert.match(render, /\$\{shown\.length\} of \$\{all\.length\} tables/,
+  // The whole fetch lives in a mount-only effect — `[]` deps, so nothing the
+  // operator types can re-run it. That is a stronger statement than the
+  // "the re-render must not call fetchJson" the innerHTML version could make:
+  // there is no re-render function left to check.
+  const load = sqlTsx.slice(sqlTsx.indexOf('  useEffect(() => {\n    (async () => {'),
+    sqlTsx.indexOf('  const tables ='));
+  assert.ok(load.length > 300, 'the loading effect has a body');
+  assert.match(load, /\}, \[\]\);\s*$/, 'and runs once on mount, not on any state change');
+  assert.match(sqlTsx, /const shown = useMemo\(/, 'the filtered view is derived, not refetched');
+  assert.match(sqlTsx, /t\.name\.toLowerCase\(\)\.includes\(needle\)/,
+    'filtering is a substring match on the table name');
+  assert.match(sqlTsx, /`\$\{shown\.length\} of \$\{tables\.length\} tables`/,
     'a narrowed list says how much of the schema it is showing');
 });
 
@@ -219,25 +254,35 @@ test('a table button drafts an explicit-column SELECT, never a bare wildcard', (
   // (topochain-db-tools.test.js), so a drafted `SELECT *` would be a query the
   // console hands you and then refuses to run. Listing t.columns also keeps the
   // draft inside the redaction the server already applied to that list.
-  const render = topo.slice(topo.indexOf('_renderSqlSchemaList(term)'), topo.indexOf('async _runSqlQuery()'));
-  assert.match(render, /data-table="\$\{i\}"/,
-    'each button carries its index into the cached schema, not a name to re-resolve');
-  assert.match(render, /const cols = t\.columns\.map\(\(c\) => c\.name\)\.join\(', '\);/,
-    'the draft lists the columns the server disclosed');
-  assert.match(render, /`SELECT \$\{cols\} FROM \$\{t\.name\} LIMIT 100`/,
-    'and bounds the draft with a LIMIT');
-  // Comments stripped: the code above is commented with "Never `SELECT *`",
-  // which is the intent, not a violation of it.
-  const code = render.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  assert.match(sqlTsx,
+    /setQuery\(`SELECT \$\{t\.columns\.map\(\(c\) => c\.name\)\.join\(', '\)\} FROM \$\{t\.name\} LIMIT 100`\);/,
+    'the draft lists the columns the server disclosed, bounded by a LIMIT');
+  // The index-into-the-cache indirection is gone from the CLICK path: a button
+  // closes over its own table, so there is no filtered-view position to
+  // resolve against. `data-table` survives as an ATTRIBUTE because two
+  // declared checks select on it — it is part of the screen's contract, not
+  // part of its wiring any more.
+  assert.match(sqlTsx, /onClick=\{\(\) => draft\(t\)\}/,
+    'each button carries its own table rather than a position to re-resolve');
+  assert.match(sqlTsx, /data-table=\{i\}/,
+    "and still carries the index dapp.json's declared checks select on");
+  // Comments stripped: the code is commented with "Never `SELECT *`", which is
+  // the intent, not a violation of it.
+  const code = sqlTsx.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
   assert.ok(!/SELECT \*/.test(code), 'no bare wildcard may be drafted');
 });
 
-test('the schema list escapes every server-supplied string it renders', () => {
+test('the schema list renders every server-supplied string as data, never markup', () => {
   // Table names and comments come from the database over the admin API — data,
-  // never markup. Both go through the module's hardened esc().
-  const render = topo.slice(topo.indexOf('_renderSqlSchemaList(term)'), topo.indexOf('async _runSqlQuery()'));
-  assert.match(render, /title="\$\{esc\(t\.comment \|\| ''\)\}"/, 'the tooltip is escaped');
-  assert.match(render, /<span class="truncate">\$\{esc\(t\.name\)\}<\/span>/, 'the table name is escaped');
+  // never markup. The innerHTML version put both through the module's hardened
+  // esc(); React escapes text children, so what has to hold now is that the
+  // screen never opts back out. That covers the query RESULT grid too, which
+  // renders arbitrary column values from an operator-written query.
+  assert.match(sqlTsx, /title=\{t\.comment \|\| ''\}/, 'the tooltip is a prop, not interpolated markup');
+  assert.match(sqlTsx, /<span className="truncate">\{t\.name\}<\/span>/, 'so is the table name');
+  const code = sqlTsx.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/dangerouslySetInnerHTML|innerHTML/.test(code),
+    'the screen renders no raw HTML at all');
 });
 
 test('the console island is what loads all of this', () => {

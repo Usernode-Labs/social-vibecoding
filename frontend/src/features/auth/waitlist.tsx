@@ -219,7 +219,7 @@ export function WaitlistScreen() {
           <div>
             <label htmlFor="waitlist-email" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Your email address
-              <span className="text-red-500">
+              <span className="text-red-700 dark:text-red-400">
                 *
               </span>
             </label>
@@ -243,7 +243,7 @@ export function WaitlistScreen() {
               className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
             >
               Link something you&rsquo;ve made
-              <span className="text-red-500">
+              <span className="text-red-700 dark:text-red-400">
                 *
               </span>
             </label>
@@ -270,7 +270,7 @@ export function WaitlistScreen() {
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Where are you?
-              <span className="text-zinc-400 font-normal">
+              <span className="text-zinc-500 font-normal dark:text-zinc-400">
                 Optional
               </span>
             </label>
@@ -309,7 +309,7 @@ export function WaitlistScreen() {
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               How did you find us?
-              <span className="text-red-500">
+              <span className="text-red-700 dark:text-red-400">
                 *
               </span>
             </label>
@@ -359,7 +359,7 @@ export function WaitlistScreen() {
             stops here.
         */}
         <div id="waitlist-joined" className={hiddenFirst(!joined, 'mt-8')}>
-          <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
+          <p className="text-sm text-emerald-700 dark:text-emerald-400 font-medium">
             You're on the waitlist — we'll email you when your spot opens.
           </p>
           <div
@@ -369,7 +369,7 @@ export function WaitlistScreen() {
               'mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-4',
             )}
           >
-            <p className="text-xs font-semibold uppercase tracking-widest text-violet-600 dark:text-violet-400">
+            <p className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400">
               Optional — moves you up the list
             </p>
             <h3 className="mt-1 text-base font-semibold">

@@ -17,62 +17,46 @@
 // The row is present for every native top frame, even while capabilities or
 // node state are unavailable. Desktop browsers and child-app iframes keep it
 // hidden. A temporary bridge/provisioning problem must not rewrite navigation.
+import { nodePillStore, NODE_PILL_EMPTY } from './node-pill-store';
+import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
+
 (function () {
   'use strict';
 
-  // status → { dot color, label, pill tone } — statuses come from the
-  // app's chrome-level provider: synced | syncing | connecting | offline.
-  const STATUS_STYLES = {
-    synced: {
-      dot: 'bg-emerald-500',
-      label: 'Synced',
-      tone: 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
-    },
-    syncing: {
-      dot: 'bg-amber-500',
-      label: 'Syncing',
-      tone: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
-    },
-    connecting: {
-      dot: 'bg-zinc-400 animate-pulse',
-      label: 'Connecting',
-      tone: 'border-zinc-400/40 text-zinc-500 dark:text-zinc-400',
-    },
-    offline: {
-      dot: 'bg-red-500',
-      label: 'Offline',
-      tone: 'border-red-500/40 text-red-600 dark:text-red-400',
-    },
-    unavailable: {
-      dot: 'bg-zinc-400',
-      label: 'Unavailable',
-      tone: 'border-zinc-400/40 text-zinc-500 dark:text-zinc-400',
-    },
-  };
+  // The status → dot/label/ink table moved to ./node-pill-row.tsx. It was a
+  // `tone` string carrying a border colour AND an ink, with the border stripped
+  // at runtime by a `.filter()` — a computed class name, which Tailwind's
+  // extractor cannot see. It is two complete literals there.
 
   const NodePill = {
     _status: null,
     _sheet: null,
+    // Was `hidden` on the row element. It is the model's now, and the
+    // component renders the class — see ./node-pill-row.tsx.
+    _visible: false,
+
+    // #977: the sheet is a second surface, so it waits for the drawer to be
+    // fully gone — one motion at a time, instead of a sheet rising while the
+    // drawer is still sliding out. close() resolves immediately when nothing
+    // is open, and the guard keeps the sheet working with no HeaderMenu at
+    // all. This was an addEventListener on the row; it is the component's
+    // onClick now, dispatching here by name.
+    openFromRow() {
+      const closed = (window.App && App.HeaderMenu && App.HeaderMenu.close)
+        ? App.HeaderMenu.close()
+        : null;
+      Promise.resolve(closed).then(() => NodePill._openSheet());
+    },
 
     async init() {
       if (!window.NativeChrome || !window.usernode ||
           window.usernode.isNative !== true) return;
 
-      const row = document.getElementById('drawer-row-node');
-      if (row) {
-        row.classList.remove('hidden');
-        row.addEventListener('click', () => {
-          // #977: the sheet is a second surface, so it waits for the
-          // drawer to be fully gone — one motion at a time, instead of
-          // a sheet rising while the drawer is still sliding out.
-          // close() resolves immediately when nothing is open, and the
-          // guard keeps the sheet working with no HeaderMenu at all.
-          const closed = (window.App && App.HeaderMenu && App.HeaderMenu.close)
-            ? App.HeaderMenu.close()
-            : null;
-          Promise.resolve(closed).then(() => NodePill._openSheet());
-        });
-      }
+      // The row is present for every native top frame — capabilities and node
+      // state affect its CONTENTS, never the navigation structure — so this
+      // flips before the capability probe and never flips back.
+      NodePill._visible = true;
+      NodePill._render();
 
       // Wire this BEFORE the asynchronous capability probe. The native app
       // pushes this event through the readiness replay, so it is independent
@@ -81,7 +65,7 @@
       window.addEventListener('usernode:node-status', (e) => {
         const status = e && e.detail;
         if (!status || typeof status.status !== 'string') return;
-        if (row) row.classList.remove('hidden');
+        NodePill._visible = true;
         NodePill._status = status;
         NodePill._render();
         NodePill._renderSheetBody();
@@ -100,38 +84,39 @@
       NodePill._render();
     },
 
-    _styleFor(status) {
-      return STATUS_STYLES[status] || STATUS_STYLES.unavailable;
-    },
-
+    // Five writes across two elements — the dot's class, the label's text and
+    // the label's class — become one publish. The row and the sheet read the
+    // same model, so they cannot disagree for a frame.
+    //
+    // It publishes RESOLVED values: the four `_*For` helpers above run here,
+    // once, rather than in the component. A view model carries answers.
     _render() {
-      const dot = document.getElementById('drawer-node-dot');
-      const statusEl = document.getElementById('drawer-node-status');
-      if (!dot || !statusEl) return;
-      const s = NodePill._status;
-      const style = NodePill._styleFor(s && s.status);
-      dot.className = 'w-2.5 h-2.5 rounded-full shrink-0 ' + style.dot;
-      statusEl.textContent = style.label;
-      statusEl.className = 'ml-auto text-xs font-medium ' +
-        style.tone.split(' ').filter((c) => !c.startsWith('border')).join(' ');
+      const s = NodePill._status || {};
+      const networkBestHeight = NodePill._networkHeightFor(s);
+      const readyPeers = NodePill._readyPeersFor(s);
+      nodePillStore.set({
+        visible: NodePill._visible,
+        status: typeof s.status === 'string' ? s.status : 'unavailable',
+        chain: typeof s.chain === 'string' ? s.chain : '',
+        localBestHeight: s.localBestHeight == null ? null : s.localBestHeight,
+        tipAge: NodePill._tipAgeFor(s),
+        networkBestHeight: networkBestHeight == null ? null : networkBestHeight,
+        readyPeers: readyPeers == null ? null : readyPeers,
+        totalPeers: s.totalPeers == null ? null : s.totalPeers,
+        warnings: NodePill._warningMessagesFor(s),
+      });
     },
 
     // -- detail sheet ---------------------------------------------------
 
-    _sheetRow(label, value) {
-      const row = document.createElement('div');
-      row.className = 'flex items-center justify-between py-2 border-b ' +
-        'border-zinc-100 dark:border-zinc-800 text-sm';
-      const l = document.createElement('span');
-      l.className = 'text-zinc-500 dark:text-zinc-400';
-      l.textContent = label;
-      const v = document.createElement('span');
-      v.className = 'font-medium text-right text-zinc-800 dark:text-zinc-100';
-      v.textContent = value;
-      row.appendChild(l);
-      row.appendChild(v);
-      return row;
-    },
+    // #1402's four derivations live here, because each is a DECISION — which
+    // clock, which height counts as the network's, what is worth warning
+    // about — and the module owns decisions. Its `_sheetRow` and
+    // `_sheetWarnings` do NOT come across: those built markup, and markup is
+    // ./node-pill-sheet.tsx's.
+    //
+    // They stay named methods rather than folding into `_render` so that the
+    // tests upstream wrote against them keep their subject.
 
     _networkHeightFor(s) {
       // Once synced, our own best tip is the height the network has reached.
@@ -180,69 +165,13 @@
       return warnings;
     },
 
-    _sheetWarnings(messages) {
-      if (!messages.length) return null;
-      const warning = document.createElement('div');
-      warning.className = 'mt-3 rounded-lg border border-amber-500/40 ' +
-        'bg-amber-500/10 px-3 py-2 text-sm text-amber-800 ' +
-        'dark:text-amber-300';
-      warning.setAttribute('role', 'status');
-      const list = document.createElement('ul');
-      list.className = 'space-y-1';
-      messages.forEach((message) => {
-        const item = document.createElement('li');
-        item.className = 'flex gap-2';
-        const marker = document.createElement('span');
-        marker.setAttribute('aria-hidden', 'true');
-        marker.textContent = '•';
-        const text = document.createElement('span');
-        text.textContent = message;
-        item.appendChild(marker);
-        item.appendChild(text);
-        list.appendChild(item);
-      });
-      warning.appendChild(list);
-      return warning;
-    },
-
+    // `_sheetRow` and `_renderSheetBody` built six nodes imperatively and
+    // blanked them with `body.textContent = ''` on every status event. The
+    // body is a portal now (./node-pill-sheet.tsx) and the store repaints it,
+    // so an event arriving mid-sheet updates the numbers in place — including
+    // #1402's tip age, which is why nothing here needs a timer.
     _renderSheetBody() {
-      const body = document.getElementById('node-pill-sheet-body');
-      if (!body) return;
-      const s = NodePill._status || {};
-      const style = NodePill._styleFor(s.status);
-      body.textContent = '';
-
-      const statusLine = document.createElement('div');
-      statusLine.className = 'flex items-center gap-2 mb-2';
-      const dot = document.createElement('span');
-      dot.className = 'w-2.5 h-2.5 rounded-full ' + style.dot;
-      const label = document.createElement('span');
-      label.className = 'text-base font-semibold';
-      label.textContent = style.label;
-      statusLine.appendChild(dot);
-      statusLine.appendChild(label);
-      body.appendChild(statusLine);
-
-      const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString());
-      body.appendChild(NodePill._sheetRow('Chain', s.chain || '—'));
-      const tipAge = NodePill._tipAgeFor(s);
-      const localHeight = fmt(s.localBestHeight);
-      body.appendChild(NodePill._sheetRow('Your block height',
-        tipAge && s.localBestHeight != null
-          ? `${localHeight} · ${tipAge}`
-          : localHeight));
-      body.appendChild(NodePill._sheetRow('Network block height',
-        fmt(NodePill._networkHeightFor(s))));
-      const readyPeers = NodePill._readyPeersFor(s);
-      body.appendChild(NodePill._sheetRow('Peers',
-        readyPeers == null
-          ? '—'
-          : `${fmt(readyPeers)} ready` +
-            (s.totalPeers != null ? ` / ${fmt(s.totalPeers)} known` : '')));
-      const warnings = NodePill._sheetWarnings(
-        NodePill._warningMessagesFor(s)
-      );
-      if (warnings) body.appendChild(warnings);
+      NodePill._render();
     },
 
     async _openSheet() {
@@ -260,9 +189,17 @@
 
       NodePill._sheet = PlatformUI.sheet({
         contentEl: panel,
-        onDismiss: () => { NodePill._sheet = null; },
+        // Drop the portal BEFORE the kit discards the node it is mounted in —
+        // the rule the dev chat's conversions wrote down, on the one seam here
+        // where something other than React destroys the host.
+        onDismiss: () => {
+          unmountNodeSheet(bodyEl);
+          NodePill._sheet = null;
+        },
       });
-      NodePill._renderSheetBody();
+      // The store already holds what the body draws, so the mount paints the
+      // current status immediately — no separate first render.
+      mountNodeSheet(bodyEl);
 
       // Refresh heights/peers on open — pill events only fire on state
       // transitions, so the numbers can be stale between flips.

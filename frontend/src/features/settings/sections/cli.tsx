@@ -1,10 +1,14 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 
+import { CliTokensList } from '../cli-tokens-list';
+
 /**
  * Global CLI/coding-agent credentials. The server returns only a short token
  * hint and non-secret metadata; raw bearer values never enter the browser
- * Settings surface. Painted by Settings._renderCliTokens() (?demo=1
- * passthrough in staging — cli tokens are staging:private).
+ * Settings surface. Settings._renderCliTokens() owns the keyset fetch and the
+ * DELETE; the ROWS are ../cli-tokens-list.tsx's since #1191 — the section
+ * stays static markup around one stateful child, which is the same shape the
+ * App-AI and agent-files panes already have.
  */
 export function CliSection() {
   return (
@@ -14,6 +18,7 @@ export function CliSection() {
           Credentials approved for the Social Vibecoding CLI, Codex, Claude Code, or OpenCode. Revoking an active credential takes effect immediately.
         </SectionHeading>
         <div id="cli-tokens-list" className="space-y-2">
+          <CliTokensList />
         </div>
         <button
           id="cli-tokens-more"

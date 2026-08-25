@@ -37,6 +37,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeComposerBridge } = require('./lib/dev-composer-html');
+
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
@@ -93,6 +95,12 @@ function makeElement(id) {
 function makeHarness(storage = new Map(), net = {}) {
   net.server = net.server || [];
   net.calls = net.calls || [];
+  // #1078: the drafts list, the save icon and the shortcut hint are three
+  // fields of the composer's view model — `_renderSavedDrafts` and
+  // `_syncSaveDraftBtn` publish rather than write. The MODEL is what these
+  // tests read; the rendering of each is pinned in
+  // tests/dev-chat-composer.test.js.
+  const composer = makeComposerBridge();
   const registry = new Map();
   const getEl = (id) => {
     if (!registry.has(id)) registry.set(id, makeElement(id));
@@ -168,6 +176,7 @@ function makeHarness(storage = new Map(), net = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.UsernodeReact = { devChat: composer.bridge };
 
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
@@ -182,7 +191,13 @@ function makeHarness(storage = new Map(), net = {}) {
   DevChat._applySyncBanner = () => {};
   DevChat.setTitleStatus = () => {};
 
-  return { DevChat, sandbox, document, getEl, storage, net };
+  return {
+    DevChat, sandbox, document, getEl, storage, net, composer,
+    /** The composer's last published model. */
+    view: () => composer.state(),
+    /** The rendered composer, for the assertions that are about markup. */
+    html: () => composer.html(),
+  };
 }
 
 const SESSION_ID = 4242;
@@ -238,7 +253,7 @@ test('drafts are scoped per session and survive a reload', () => {
 });
 
 test('a draft is never sent automatically while the agent is thinking', () => {
-  const { DevChat, document } = makeHarness();
+  const { DevChat, document, view, html } = makeHarness();
   open(DevChat, { streaming: true });
   document.getElementById('dc-input').value = 'do this next';
   DevChat._saveComposerDraft();
@@ -254,8 +269,8 @@ test('a draft is never sent automatically while the agent is thinking', () => {
 
   // And the row renders its Send button disabled while streaming.
   DevChat._renderSavedDrafts();
-  const html = document.getElementById('dc-drafts').innerHTML;
-  assert.match(html, /dc-draft-send[^>]*disabled/,
+  assert.equal(view().drafts.busy, true);
+  assert.match(html(), /dc-draft-send[^>]*disabled=""/,
     'the row Send button is rendered disabled while thinking');
 });
 
@@ -332,19 +347,18 @@ test('trash removes only that draft, and an emptied list stays empty', () => {
 });
 
 test('the save icon is disabled until there is text, and the cap holds', () => {
-  const { DevChat, document } = makeHarness();
+  const { DevChat, document, view } = makeHarness();
   open(DevChat, { streaming: true });
   const input = document.getElementById('dc-input');
-  const btn = document.getElementById('dc-save-draft-btn');
 
   DevChat._syncSaveDraftBtn();
-  assert.equal(btn.disabled, true, 'nothing typed → nothing to save');
+  assert.equal(view().saveDraft.disabled, true, 'nothing typed → nothing to save');
   input.value = '   ';
   DevChat._syncSaveDraftBtn();
-  assert.equal(btn.disabled, true, 'whitespace is not a draft');
+  assert.equal(view().saveDraft.disabled, true, 'whitespace is not a draft');
   input.value = 'something';
   DevChat._syncSaveDraftBtn();
-  assert.equal(btn.disabled, false, 'text typed → save available');
+  assert.equal(view().saveDraft.disabled, false, 'text typed → save available');
 
   for (let i = 0; i < DevChat.MAX_SAVED_DRAFTS + 3; i++) {
     input.value = `note ${i}`;
@@ -357,19 +371,21 @@ test('the save icon is disabled until there is text, and the cap holds', () => {
 });
 
 test('the composer stays typable while a turn streams', () => {
-  const { DevChat, document } = makeHarness();
+  const { DevChat, view, html } = makeHarness();
   open(DevChat);
-  const input = document.getElementById('dc-input');
 
   DevChat._setStreamingUI(true, 'claude');
-  assert.equal(input.disabled, false, 'typing while the agent thinks is the point');
-  assert.equal(input.placeholder, DevChat.COMPOSER_PLACEHOLDER_BUSY,
+  assert.equal(view().placeholder, DevChat.COMPOSER_PLACEHOLDER_BUSY,
     'the busy placeholder points at the save icon');
 
   DevChat._setStreamingUI(false);
-  assert.equal(input.disabled, false);
-  assert.equal(input.placeholder, DevChat.COMPOSER_PLACEHOLDER,
+  assert.equal(view().placeholder, DevChat.COMPOSER_PLACEHOLDER,
     'the normal placeholder comes back when the turn ends');
+
+  // #798: typing while the agent thinks is the point, so nothing renders
+  // `disabled` on the field — which is also why nothing writes it any more.
+  assert.doesNotMatch(html().slice(html().indexOf('<textarea')), /^[^>]*disabled/,
+    'the box is never disabled');
 });
 
 test('typed-but-unsent text still cannot be submitted mid-turn', () => {
@@ -390,59 +406,59 @@ test('typed-but-unsent text still cannot be submitted mid-turn', () => {
 // ── #810: the icon is present only while a turn is RUNNING ─────────────
 
 test('the save icon is hidden while stopped and appears while a turn streams', () => {
-  const { DevChat, document } = makeHarness();
+  const { DevChat, document, view } = makeHarness();
   open(DevChat);
   const input = document.getElementById('dc-input');
-  const btn = document.getElementById('dc-save-draft-btn');
+  const btn = () => view().saveDraft;
   input.value = 'something worth saving';
 
   DevChat._syncSaveDraftBtn();
-  assert.equal(btn.hidden, true, 'no save affordance when the text can just be sent');
-  assert.equal(btn.disabled, true,
+  assert.equal(btn().hidden, true, 'no save affordance when the text can just be sent');
+  assert.equal(btn().disabled, true,
     'hidden implies inert — a stray activation cannot save while stopped');
 
   DevChat.isStreaming = true;
   DevChat._syncSaveDraftBtn();
-  assert.equal(btn.hidden, false, 'the icon appears once the stop sign is up');
-  assert.equal(btn.disabled, false, 'and is live because there is text');
+  assert.equal(btn().hidden, false, 'the icon appears once the stop sign is up');
+  assert.equal(btn().disabled, false, 'and is live because there is text');
 });
 
 test('every streaming transition toggles the icon (incl. the mayor2 wrap-up)', () => {
-  const { DevChat, document } = makeHarness();
+  const { DevChat, document, view } = makeHarness();
   open(DevChat);
-  const btn = document.getElementById('dc-save-draft-btn');
+  const btn = () => view().saveDraft;
   document.getElementById('dc-input').value = 'a note';
 
   // _setStreamingUI is the single choke point every transition funnels
   // through (send, reconnect, phase change, finish, stop).
   DevChat.isStreaming = true;
   DevChat._setStreamingUI(true, 'claude');
-  assert.equal(btn.hidden, false, 'shown as soon as the turn starts');
-  assert.equal(btn.disabled, false);
+  assert.equal(btn().hidden, false, 'shown as soon as the turn starts');
+  assert.equal(btn().disabled, false);
 
   DevChat._setStreamingUI(true, 'mayor2');
-  assert.equal(btn.hidden, false, 'still shown through the un-stoppable wrap-up');
+  assert.equal(btn().hidden, false, 'still shown through the un-stoppable wrap-up');
 
   DevChat.isStreaming = false;
   DevChat._setStreamingUI(false);
-  assert.equal(btn.hidden, true, 'and gone the moment the turn settles');
-  assert.equal(btn.disabled, true);
+  assert.equal(btn().hidden, true, 'and gone the moment the turn settles');
+  assert.equal(btn().disabled, true);
 });
 
 test('mid-turn, the icon is visible whether or not there is text', () => {
-  const { DevChat, document } = makeHarness();
+  const { DevChat, document, view } = makeHarness();
   open(DevChat, { streaming: true });
   const input = document.getElementById('dc-input');
-  const btn = document.getElementById('dc-save-draft-btn');
+  const btn = () => view().saveDraft;
 
   DevChat._syncSaveDraftBtn();
-  assert.equal(btn.hidden, false, 'an empty box still shows the icon…');
-  assert.equal(btn.disabled, true, '…just greyed out');
+  assert.equal(btn().hidden, false, 'an empty box still shows the icon…');
+  assert.equal(btn().disabled, true, '…just greyed out');
 
   input.value = 'now there is something';
   DevChat._syncSaveDraftBtn();
-  assert.equal(btn.hidden, false);
-  assert.equal(btn.disabled, false);
+  assert.equal(btn().hidden, false);
+  assert.equal(btn().disabled, false);
 });
 
 test('saving is refused while stopped, not merely un-clickable', () => {
@@ -711,15 +727,14 @@ test('#940: applyDraftsUpdate only reacts for the session on screen', async () =
 });
 
 test('#940: the drafts header tells the user the list is cross-device', () => {
-  const { DevChat, document } = makeHarness();
+  const { DevChat, document, html } = makeHarness();
   open(DevChat, { streaming: true });
   const input = document.getElementById('dc-input');
   input.value = 'anything';
   DevChat._saveComposerDraft();
 
-  const box = document.getElementById('dc-drafts');
-  assert.match(box.innerHTML, /Saved drafts \(1\)/);
-  assert.match(box.innerHTML, /on all your devices/);
+  assert.match(html(), /Saved drafts \(1\)/);
+  assert.match(html(), /on all your devices/);
 });
 
 test('#940: the ?shot demo seed still paints when nothing is stored', () => {

@@ -30,6 +30,7 @@ const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
 const leaderboardJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-leaderboard.js'), 'utf8');
 const challengesJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8');
 const contextJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-event-context.js'), 'utf8');
+const { renderComponent } = require('./lib/render-tsx');
 const island = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/index.tsx'), 'utf8');
 const mount = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/mount.ts'), 'utf8');
 const standingsTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-standings.tsx'), 'utf8');
@@ -134,7 +135,11 @@ test('one entry point reaches all three surfaces', () => {
     'the Challenges area is in the shell, above the fold of the home screen');
   const panels = fs.readFileSync(
     path.join(root, 'frontend/src/features/home/home-panels.js'), 'utf8');
-  assert.match(panels, /class="home-panel-lb-browse[^"]*"[\s\S]*?aria-label="Open leaderboard"/,
+  // The bar's link is drawn by the React block (#1191); home-panels.js keeps
+  // the destination, which is the half that owns the hash.
+  const ui = fs.readFileSync(
+    path.join(root, 'frontend/src/features/home/panels/ui.tsx'), 'utf8');
+  assert.match(ui, /className="home-panel-lb-browse[^"]*"[\s\S]*?aria-label="Open leaderboard"/,
     'the area\u2019s title bar carries the link');
   assert.match(panels, /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos' \? '#leaderboard\/users' : '#leaderboard'/,
     'and it is a real hash navigation, so the device back gesture returns home');
@@ -293,19 +298,57 @@ test('display_leaderboard=false and API errors are handled without throwing', ()
 
 // ─── esc() discipline — every interpolated API value must pass through it ─
 
-test('every module escapes interpolated values with the established esc() idiom', () => {
-  // Only the event bar is left in this list. #1191 slice 6 took the innerHTML
-  // away from the standings pane (conversion 5) and the challenges pane
-  // (conversion 7) entirely: both return descriptors their .tsx renders, so
-  // escaping is React's job and an esc() there would double-encode. Their own
-  // discipline is asserted below.
+// The list this iterated is EMPTY now, and the rule it enforced has changed
+// hands rather than lapsed.
+//
+// Admin-authored copy — an event's name and its description — lands in both a
+// text node and a double-quoted attribute value on this screen, so & < > alone
+// was never enough: an unescaped `"` would break out of an attribute and
+// inject one. Each Topochain module carried its own `esc()` for that. #1191
+// slice 6 took the innerHTML away from the standings and challenges panes, and
+// this run took it from the event bar — the last of the three — so escaping is
+// React's, by construction, and an `esc()` anywhere here would double-encode.
+//
+// So the check is on the OUTPUT, against copy chosen to break every context at
+// once, rather than on the presence of a helper.
+test('admin-authored copy is escaped in text AND attribute contexts', () => {
+  const hostile = 'Break "out" of <it> & \'quote\'';
+  const html = renderComponent(
+    'frontend/src/features/leaderboard/event-bar.tsx', 'EventBarView',
+    {
+      mounted: true,
+      options: [{ id: 7, label: `${hostile} (current)` }],
+      placeholder: null,
+      selectedId: 7,
+      hero: {
+        kind: 'event',
+        name: hostile,
+        statusLabel: 'active now',
+        statusClass: 'bg-green-500/20 text-green-600 dark:text-green-300',
+        description: hostile,
+        dates: 'Jan 1, 2026 – Mar 1, 2026',
+        participants: ' · 12 taking part',
+        seasonNote: false,
+        fallbackNote: false,
+      },
+    },
+  );
+  // Nothing broke out: the copy never appears with its quotes raw, anywhere.
+  assert.ok(!html.includes('"out"'), 'a raw quoted run would mean an unescaped attribute');
+  assert.ok(!html.includes('<it>'), 'and a raw tag would mean an unescaped text node');
+  assert.match(html, /&quot;out&quot;/, 'double quotes are entities');
+  assert.match(html, /&lt;it&gt;/, 'angle brackets too');
+  assert.match(html, /&amp;/);
+  assert.match(html, /&#x27;quote&#x27;/, 'and the apostrophe');
+  // Both places it lands: the hero's heading (a text node) and the picker's
+  // option label (also a text node, but inside a control whose value is an
+  // attribute — the shape the old esc() had to cover twice).
+  assert.match(html, /<h2[^>]*>Break &quot;out&quot;/);
+  assert.match(html, /<option value="7"[^>]*>Break &quot;out&quot;/);
+  // And no module on this screen carries an esc() any more, which is what
+  // stops one drifting back in beside React's.
   for (const src of [contextJs]) {
-    assert.match(src, /esc\(s\) \{\s*\n\s*return String\(s == null \? '' : s\)/,
-      'esc() mirrors the admin-console.js helper shape');
-  }
-  for (const field of ['ev.name', 'ev.description', 'ev.users_count']) {
-    assert.ok(new RegExp(`esc\\(${field.replace('.', '\\.')}`).test(contextJs),
-      `${field} passes through esc() in topochain-event-context.js`);
+    assert.doesNotMatch(src, /^\s*esc\(s\) \{/m, 'no hand-rolled escaper is left');
   }
 });
 
@@ -335,16 +378,10 @@ test('the standings module builds descriptors, not HTML — so there is nothing 
     'the pane component renders text nodes, never raw HTML');
 });
 
-test('esc() escapes quotes too, not just & < >', () => {
-  // Attribute-value breakout (`<option value="` / `data-*="`, ...) needs
-  // both quote characters escaped, not just the text-node-unsafe three —
-  // stopping-XSS review, task 14 fix.
-  for (const src of [contextJs]) {
-    const fn = src.slice(src.indexOf('esc(s) {'), src.indexOf('esc(s) {') + 300);
-    assert.match(fn, /\.replace\(\/"\/g, '&quot;'\)/, 'esc() escapes double quotes');
-    assert.match(fn, /\.replace\(\/'\/g, '&#39;'\)/, 'esc() escapes single quotes');
-  }
-});
+// (The companion "esc() escapes quotes too, not just & < >" test is folded
+// into the one above: the attribute-breakout case — stopping-XSS review, task
+// 14 — is now checked on the rendered `<option value="…">` rather than on the
+// helper's replace chain, because there is no helper left to read.)
 
 // The challenges pane's replacement for the two tests above, and the same
 // statement the standings pane's makes: it has no escaping discipline to keep

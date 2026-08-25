@@ -203,25 +203,37 @@ test('check-activity windows to 7 days and groups by os + upgrade', () => {
   assert.match(block, /GROUP BY 1, 2/);
 });
 
+// The screen is React since #1120 slice 27; both checks follow it there.
+const APP_VERSION_TSX = path.join(
+  ROOT, 'frontend/src/features/admin/topochain/app-version.tsx');
+
 test('the admin screen warns per-OS when no ACTIVE rule exists', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'frontend/src/features/admin/admin-topochain.js'), 'utf8');
-  const fn = src.slice(src.indexOf('_renderAppVersionGate() {'),
-    src.indexOf('async _loadAppVersionActivity('));
+  const src = fs.readFileSync(APP_VERSION_TSX, 'utf8');
+  const fn = src.slice(src.indexOf('function Gate('), src.indexOf('function ActivityTable('));
+  assert.ok(fn.length > 200, 'the warning has a body');
   // An inactive row is as good as no row for the gate, so the check must
   // test is_active — not merely the row's existence.
   assert.match(fn, /c\.os === os && c\.is_active/);
-  assert.match(fn, /\['ios', 'android'\]/, 'both platforms are checked');
+  assert.match(src, /const OSES = \['ios', 'android'\] as const;/, 'both platforms are checked');
   assert.match(fn, /No active version rule/);
+  // It is derived from the rows now rather than repainted alongside them, so
+  // it cannot go stale behind an edit — pin that it reads the same list the
+  // table does.
+  assert.match(src, /<Gate items=\{items\} \/>/,
+    'the warning renders from the loaded configs, not from its own copy');
 });
 
 test('the build-number fields say what each one triggers', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'frontend/src/features/admin/admin-topochain.js'), 'utf8');
+  const src = fs.readFileSync(APP_VERSION_TSX, 'utf8');
   const form = src.slice(src.indexOf('admin-topo-av-f-min_build_number'),
     src.indexOf('admin-topo-av-f-is_active'));
   assert.match(form, /FORCED update/);
   assert.match(form, /SUGGESTED update/);
   // The footgun worth naming: a forced update with no URL strands the user.
   assert.match(form, /nowhere to go/);
+  // And the URL is validated before it can be saved at all.
+  assert.match(src, /if \(url && !\/\^https\?:\\\/\\\/\/i\.test\(url\)\)/,
+    'a non-http(s) update URL is refused client-side');
 });
 
 test('the seed leaves one OS inactive so the warning is reviewable', () => {

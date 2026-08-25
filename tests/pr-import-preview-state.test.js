@@ -30,6 +30,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { detailsHtml } = require('./lib/dev-card-html');
 
 // ── services/staging.previewDisplayState ────────────────────────────────
 
@@ -254,17 +255,17 @@ test('neither flag keeps the historical empty slot', () => {
 
 test('the detail view explains the same three states in prose', () => {
   const AppView = makeAppView();
-  const building = AppView._proposalDetailsHtml(PR({ staging_building: true }), { majority: 1 });
+  const building = detailsHtml(AppView, PR({ staging_building: true }), { majority: 1 });
   assert.match(building, /staging preview is being built/i);
   assert.match(building, /few minutes/i, 'sets an expectation for how long');
 
-  const failed = AppView._proposalDetailsHtml(
+  const failed = detailsHtml(AppView, 
     PR({ staging_error: 'missing required secret DEMO_API_KEY' }), { majority: 1 }
   );
-  assert.match(failed, /couldn.t be built/i);
+  assert.match(failed, /couldn(&#x27;|')t be built/i);
   assert.ok(failed.includes('missing required secret DEMO_API_KEY'), 'names the reason');
 
-  const ready = AppView._proposalDetailsHtml(PR({ staging_url: 'https://x' }), { majority: 1 });
+  const ready = detailsHtml(AppView, PR({ staging_url: 'https://x' }), { majority: 1 });
   assert.doesNotMatch(ready, /being built/i, 'a ready preview says nothing about building');
 });
 

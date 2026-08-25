@@ -28,17 +28,17 @@ export interface DevChatSubViewProps {
 export function DevChatSubView({ backHref, onBackClick }: DevChatSubViewProps) {
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+      <div className="flex items-center gap-2 px-3 py-2 shrink-0">
         <a
           id="dev-chat-back"
-          className="inline-flex items-center un-touch-target text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm"
+          className="inline-flex items-center un-touch-target text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm dark:text-zinc-400"
           title="Back to the dev page"
           href={backHref}
           onClick={onBackClick}
         >
           &larr;
         </a>
-        <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">
+        <span className="text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">
           General chat
         </span>
       </div>

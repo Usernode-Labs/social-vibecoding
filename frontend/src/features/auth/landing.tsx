@@ -4,8 +4,8 @@
  *
  * Converted first because it carries `#landing-header`, the second authored
  * top bar in the codebase: `tests/header-height-parity.test.js` pins it to the
- * same HEADER HEIGHT INVARIANT as `#platform-header` (53px + safe area at
- * every width), and that test is not modifiable. The markup below is therefore
+ * same HEADER HEIGHT INVARIANT as `#platform-header` (52px + safe area at
+ * every width). The markup below is therefore
  * a like-for-like transcription — same ids, same class strings in the same
  * order, same `hidden` semantics, same `data-*` attributes.
  *
@@ -33,6 +33,7 @@
  */
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+
 
 import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
 
@@ -146,7 +147,11 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
     <div
       className={
         'app-card relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 cursor-pointer' +
-        (gated ? ' opacity-50 grayscale' : '')
+        // `grayscale` alone, where this was `opacity-50 grayscale`. Opacity
+        // composites toward whatever is behind, so it fades on the light page
+        // and muddies on the dark one; draining the colour reads the same on
+        // both. Same correction as the authed launcher's unlaunchable tiles.
+        (gated ? ' grayscale-[0.75]' : '')
       }
       data-slug={app.slug || ''}
       data-gated={gated ? 'true' : 'false'}
@@ -155,7 +160,7 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
       <div className="relative w-14 h-14 shrink-0">
         {app.icon_url ? (
           <div
-            className="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
             data-icon="image"
           >
             <img
@@ -168,7 +173,7 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
           </div>
         ) : app.icon_emoji ? (
           <div
-            className="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
             data-icon="emoji"
           >
             <span className="text-3xl leading-none" aria-hidden="true">
@@ -177,7 +182,7 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
           </div>
         ) : (
           <div
-            className="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
             data-icon="letter"
           >
             {(app.name || '?').charAt(0).toUpperCase()}
@@ -206,7 +211,7 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
           {label}
         </div>
         {gated ? (
-          <p className="app-card-status text-zinc-400 dark:text-zinc-500">Account required</p>
+          <p className="app-card-status text-zinc-500 dark:text-zinc-500">Account required</p>
         ) : null}
       </div>
     </div>
@@ -612,10 +617,10 @@ export function LandingScreen() {
       className="hidden fixed inset-0 z-40 bg-white dark:bg-zinc-950 flex flex-col"
     >
       {/*
-          Mirrors #platform-header's shape (height, padding, hairline,
-          safe-area) so both shells read identically — same HEADER HEIGHT
-          INVARIANT: `py-3` + 1px hairline around a 28px content row, i.e.
-          53px + safe-area, with `h-7` on the back-button wrapper as the
+          Mirrors #platform-header's shape (height, padding, safe-area) so
+          both shells read identically — same HEADER HEIGHT
+          INVARIANT: `py-3` around a 28px content row, i.e.
+          52px + safe-area, with `h-7` on the back-button wrapper as the
           floor and nothing inside allowed to exceed 28px. The CTAs below
           used to break that twice over — `sm:py-2 sm:text-sm` made them
           36px at `sm` and up (a 61px bar), and the bordered one was still
@@ -625,7 +630,7 @@ export function LandingScreen() {
       */}
       <header
         id="landing-header"
-        className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0"
+        className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 shrink-0"
       >
         <div className="w-5 h-7 shrink-0 flex items-center">
           <button
@@ -633,7 +638,7 @@ export function LandingScreen() {
             type="button"
             className={hiddenLast(
               !openApp,
-              'text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-100',
+              'text-zinc-900 hover:text-zinc-500 dark:text-zinc-100 dark:hover:text-zinc-400',
             )}
             aria-label="Back to apps"
             onClick={() => live.current.closeLandingApp()}
@@ -677,7 +682,7 @@ export function LandingScreen() {
               href="#waitlist"
               id="landing-waitlist-cta"
               data-offline-disabled=""
-              className="h-7 inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
+              className="h-7 inline-flex items-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={onLeaveCta}
             >
               Join waitlist
@@ -720,7 +725,7 @@ export function LandingScreen() {
               complete. Say so once, here.
           */}
           <div className="offline-only mb-10 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-            <h2 className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
               You're offline
             </h2>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
@@ -730,7 +735,7 @@ export function LandingScreen() {
             <button
               type="button"
               data-offline-retry=""
-              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
+              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
             >
               Try again
             </button>
@@ -745,7 +750,11 @@ export function LandingScreen() {
           */}
           <section
             id="landing-waitlist"
-            className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10"
+            // No border: this page's ground is WHITE, so the card is a step DOWN
+            // (zinc-50) rather than the step up a card takes on the authed
+            // shell's grey ground. Either way the language separates by
+            // figure/ground, and the outline was doing the separating here.
+            className="rounded-2xl bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10"
           >
             <h2 className="text-lg font-semibold mb-1">
               Build apps together, own them together
@@ -800,13 +809,13 @@ export function LandingScreen() {
             {/* Same launcher-grid shape as the authed homescreen (#app-list). */}
             <div id="landing-apps" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
               {apps.kind === 'loading' ? (
-                <p className="text-sm text-zinc-500">
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
                   Loading&hellip;
                 </p>
               ) : apps.kind === 'error' ? (
-                <p className="text-sm text-zinc-500 col-span-full">Could not load apps right now.</p>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 col-span-full">Could not load apps right now.</p>
               ) : apps.apps.length === 0 ? (
-                <p className="text-sm text-zinc-500 col-span-full">No public apps yet.</p>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 col-span-full">No public apps yet.</p>
               ) : (
                 apps.apps.map((app, i) => (
                   <LandingTile key={app.slug || i} app={app} onOpen={onTileClick} />

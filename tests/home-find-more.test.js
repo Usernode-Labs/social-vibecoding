@@ -24,6 +24,17 @@ const { installAppCard } = require('./helpers/app-card');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
+const { installPanelsStore } = require('./helpers/home-grid-store');
+const { renderComponent } = require('./lib/render-tsx');
+// The panel RENDERERS moved to frontend/src/features/home/panels/*.tsx when
+// the three sections became React (#1191); home-panels.js keeps the data and
+// the view models. Assertions about markup read the components, assertions
+// about what decides the markup read the module.
+const PANEL_SRC = Object.fromEntries(
+  ['ui', 'challenges', 'discover', 'create'].map(
+    (n) => [n, read(`frontend/src/features/home/panels/${n}.tsx`)]
+  )
+);
 const LAYOUT_SRC = read('frontend/src/features/home/home-layout.js');
 const INDEX = read('public/index.html');
 const CSS = read('public/css/app.css');
@@ -56,6 +67,10 @@ function makePanels({ canCreate = true, featured = [] } = {}) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // home-panels.js imports its view-model store; ./helpers/home-modules strips
+  // the line so the source runs as classic script text, and this supplies the
+  // binding it would have made.
+  installPanelsStore(sandbox);
   vm.runInContext(`${PANELS_SRC}\n;globalThis.__HP = HomePanels;`, sandbox);
   return { HP: sandbox.__HP, sandbox };
 }
@@ -259,12 +274,10 @@ test('popularApps: capped at POPULAR_LIMIT; empty / missing input is safe', () =
 // ── The row hides itself when there is nothing to show ───────────
 
 test('the Discover widget swaps its tile row for a note, never an empty box', () => {
-  const src = PANELS_SRC.slice(
-    PANELS_SRC.indexOf('renderDiscoverPanel(panel) {'),
-    PANELS_SRC.indexOf('renderDiscoverTile(app) {'));
-  assert.ok(src.length > 200, 'located renderDiscoverPanel');
+  const src = PANEL_SRC.discover;
+  assert.ok(src.length > 200, 'located the Discover renderer');
   // Tiles OR a one-line note — never a bare bar over an empty lane.
-  assert.match(src, /featured\.length/);
+  assert.match(src, /view\.featured\.length/);
   assert.match(src, /Nothing featured right now/);
   // The browse control always renders: it is THE discovery path, so it must
   // not depend on curation existing. It lives in the title bar now (#949),
@@ -273,7 +286,7 @@ test('the Discover widget swaps its tile row for a note, never an empty box', ()
   assert.match(src, /Browse all apps/);
   // ...and the widget derives its tiles from the SAME per-viewer flags the
   // old row did, rather than issuing a second query.
-  assert.match(src, /Home\.featuredApps\(/);
+  assert.match(PANELS_SRC, /Home\.featuredApps\(/);
 });
 
 // ── Card mode: discovery tiles carry an add badge, not a "…" menu ──
@@ -293,15 +306,13 @@ test('renderAppCard: discovery mode leads with the add badge', () => {
 });
 
 test('Discover tiles are the compact treatment, wired like the old row', () => {
-  const src = PANELS_SRC.slice(
-    PANELS_SRC.indexOf('renderDiscoverTile(app) {'),
-    PANELS_SRC.indexOf('renderCreatePanel(panel) {'));
+  const src = PANEL_SRC.discover.slice(PANEL_SRC.discover.indexOf('function DiscoverTile('));
   // The block is ~366px wide on a phone across six tracks — a 56px launcher
   // card does not fit, so the widget uses the 40px widget-strip tile. The
   // size lives in CSS now (#949): the icon fills its track up to that same
   // 40px, because the narrowest 5-column lane gives it only ~32px and a
   // fixed box there would overflow and be clipped.
-  assert.match(src, /class="app-icon-tile home-discover-icon/);
+  assert.match(src, /className="app-icon-tile home-discover-icon/);
   assert.doesNotMatch(src, /w-14 h-14/);
   // The cap sits on the wrapper, whose width is definite; see the sizing
   // note in app.css and the budget test in home-panels-render.test.js.
@@ -309,9 +320,11 @@ test('Discover tiles are the compact treatment, wired like the old row', () => {
   // It still carries .app-card + data-slug, which is what lets it reuse
   // Home._wireDiscoveryCards wholesale (tap opens, badge toggles) so the
   // widget cannot drift from the row it replaced.
-  assert.match(src, /class="app-card home-discover-tile/);
+  assert.match(src, /className="app-card home-discover-tile/);
   assert.match(src, /card-add-btn/);
-  assert.match(PANELS_SRC, /Home\._wireDiscoveryCards\(tiles\)/);
+  // The binding runs from the LANE's effect now rather than a _wire sweep —
+  // still Home's function, still once per lane.
+  assert.match(PANEL_SRC.discover, /_wireDiscoveryCards\?\.\(el\)/);
 });
 
 test('renderAppCard: an already-added app renders the ✓ state', () => {
@@ -363,9 +376,16 @@ test('the apps grid is four columns at every width, two rows by default', () => 
   assert.match(tag, /\bgrid-cols-4\b/, 'four columns');
   assert.doesNotMatch(tag, /sm:grid-cols-\d/,
     'and no second breakpoint — one column count is the point');
-  // The two-row default is a cap on what is SHOWN, with a way out.
+  // The two-row default is a cap on what is SHOWN, with a way out. The
+  // wording moved with the button: #1191 made `#home-apps-more` React's, so
+  // home.js pushes the COUNT (Home._renderAppsMore) and apps-more.tsx spells
+  // the label. Both halves are pinned so neither can drift alone.
   assert.match(LAYOUT_SRC, /DEFAULT_ROWS: 2,/);
-  assert.match(HOME_SRC, /Show all \$\{count\} apps/);
+  assert.match(HOME_SRC, /chromeStore\.set\(\{\s*moreCount: count \|\| 0,/);
+  assert.match(
+    read('frontend/src/features/home/apps-more.tsx'),
+    /`Show all \$\{moreCount\} apps`/
+  );
   assert.equal(INDEX.indexOf('id="home-apps-more"') > 0, true,
     'the expander has a host outside #app-list');
 });
@@ -376,19 +396,25 @@ test('Discover is one bordered block: lanes under a bar that carries the browse 
   // (#949). A .home-panel-footer is 27px, which on a phone is the whole
   // difference between a tile lane that fits its one cell and one that
   // clips.
-  assert.match(PANELS_SRC,
-    /renderDiscoverPanel\(panel\) \{[\s\S]*?_panelShell\(panel\.key, titleHtml, featuredHtml \+ popularHtml, null,/);
-  const src = PANELS_SRC.slice(
-    PANELS_SRC.indexOf('renderDiscoverPanel(panel) {'),
-    PANELS_SRC.indexOf('renderDiscoverTile(app) {'));
+  const src = PANEL_SRC.discover;
+  assert.match(src, /<PanelShell\b/, 'the same shell as every other block');
+  assert.doesNotMatch(src, /footer=/, 'and Discover passes it no footer');
   assert.doesNotMatch(src, /home-panel-footer/, 'no footer of its own');
   // The browse control rides in the TITLE BAR instead, and it is still the
   // same #home-browse-btn the old footer carried.
-  assert.match(src, /titleHtml = `[\s\S]*?id="home-browse-btn"[\s\S]*?`;/);
+  assert.match(src, /title=\{[\s\S]*?id="home-browse-btn"[\s\S]*?\}/);
   assert.match(src, /home-panel-browse/);
   // The second lane is separated by a hairline, so it reads as part of the
-  // same block rather than a second card.
-  assert.match(src, /home-discover-divider[^`]*border-t/);
+  // same block rather than a second card. The hairline used to be a
+  // `border-t` utility ON the divider; the reskin moved it into app.css as an
+  // INSET ::before, because a rule running the full width of a rounded card
+  // reaches its corner radius. So the markup half of the contract is now just
+  // that the divider element is still there, and the rule itself is asserted
+  // where it lives.
+  assert.match(src, /home-discover-divider/);
+  assert.match(read('public/css/app.css'),
+    /\.home-discover-divider::before \{[^}]*background: var\(--border-light\)/,
+    'app.css draws the divider hairline');
 });
 
 // The width bound is on the FEED, not on each box: #home-body is a
@@ -465,23 +491,27 @@ test('the home feed is a 1024px centred column', () => {
 test('the browse action routes through the hash for a real history entry', () => {
   // The OS/browser back gesture has to return to home, so this navigates by
   // hash rather than calling the router directly.
-  assert.match(PANELS_SRC, /home-panel-browse[\s\S]*?location\.hash = '#apps'/);
+  assert.match(PANEL_SRC.discover, /home-panel-browse[\s\S]*?location\.hash = '#apps'/);
   // ...and it is reachable from the widget's ⋮ menu too.
   assert.match(PANELS_SRC, /label: 'Browse all apps'/);
 });
 
 test('the create widget renders in both states, and only one is tappable', () => {
   const { HP, sandbox } = makePanels();
+  const createHtml = () => renderComponent(
+    'frontend/src/features/home/panels/create.tsx', 'CreatePanel',
+    { view: HP.createView({ key: 'create' }) },
+  );
 
   sandbox.Home.canCreate = () => true;
-  const on = HP.renderCreatePanel({ key: 'create' });
+  const on = createHtml();
   assert.match(on, /data-create-enabled="true"/);
-  assert.match(on, /home-create-btn/, 'wireCreateButtons keys off this class');
+  assert.match(on, /home-create-btn/, 'the class app.css styles the tile through');
   assert.match(on, /Create app/);
   assert.doesNotMatch(on, /aria-disabled/);
 
   sandbox.Home.canCreate = () => false;
-  const off = HP.renderCreatePanel({ key: 'create' });
+  const off = createHtml();
   // Still a real widget in a real cell — dimmed, not absent.
   assert.ok(off.length > 100, 'the widget renders for a viewer with no quota');
   assert.match(off, /data-create-enabled="false"/);
@@ -499,7 +529,7 @@ test('Create app is a fixed section, for every account', () => {
   // now a fixed section again. What never changed is the part that matters —
   // it exists for EVERY account, and app quota decides whether it is
   // tappable, never whether it is there.
-  assert.match(PANELS_SRC, /renderCreatePanel\(panel\) \{/);
+  assert.match(PANELS_SRC, /createView\(panel\) \{/);
   assert.match(PANELS_SRC, /create: 'home-create-section'/,
     'it renders into its own fixed host');
   assert.doesNotMatch(HOME_SRC, /data-panel-slot="/,
@@ -515,10 +545,15 @@ test('a viewer with no quota gets the hint on tap, not a dead tile', () => {
   // One constant, three surfaces: the tooltip, the toast, and the inert
   // note in the widget's ⋮ menu.
   assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account\.'/);
-  const wire = PANELS_SRC.match(/_wire\(section\) \{[\s\S]*?\n {2}\},/)[0];
-  assert.match(wire, /createEnabled === 'true'/);
-  assert.match(wire, /wireCreateButtons\(\)/, 'the enabled tile opens the create modal');
-  assert.match(wire, /PlatformUI\.toast\(hint\)/, 'the disabled one explains itself');
+  // The branch used to live in `_wire`, which read the stamped attribute back
+  // off the painted markup and then either handed the button to
+  // Home.wireCreateButtons() or bound a toast. It is one handler on the
+  // element now, reading the same fact from the view model.
+  const btn = PANEL_SRC.create.slice(PANEL_SRC.create.indexOf('onClick={'));
+  assert.match(btn, /if \(view\.canCreate\)/);
+  assert.match(btn, /App\?\.showCreateModal\?\.\(\)/, 'the enabled tile opens the create modal');
+  assert.match(btn, /PlatformUI\?\.toast\?\.\(/, 'the disabled one explains itself');
+  assert.match(btn, /CREATE_DISABLED_HINT/, 'with the shared sentence');
   // The menu carries the same sentence as an inert row.
   assert.match(PANELS_SRC, /key === 'create' && window\.Home[\s\S]*?CREATE_DISABLED_HINT/);
 });

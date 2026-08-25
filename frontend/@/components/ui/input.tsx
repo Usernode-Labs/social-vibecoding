@@ -53,6 +53,23 @@ import { cn } from '@/lib/utils';
  */
 const inputVariants = cva('', {
   variants: {
+    /**
+     * A styling class from app.css that LEADS the string, ahead of everything
+     * this table draws. It is a variant rather than a `className` for the one
+     * reason every group here exists: className lands LAST, and this does not.
+     *
+     * `composer` is `.gc-composer-input` — the group chat's two composers,
+     * whose only rule is `line-height: 1.5`, tuned against the wrapped
+     * multi-line box the auto-grow produces. Call site:
+     * features/group-chat/composer.tsx.
+     */
+    /**
+     * `devComposer` is `.dc-textarea` — the dev chat's composer field, whose
+     * rule is a `max-height` cap and the scroll that goes with it, tuned
+     * against the same auto-grow. Call site:
+     * features/dev-chat/composer.tsx.
+     */
+    lead: { composer: 'gc-composer-input', devComposer: 'dc-textarea', none: '' },
     // Leads the string on the two fields inside #agent-files-form, which sit
     // under their own label text rather than beside it.
     spacing: { mt1: 'mt-1', none: '' },
@@ -64,6 +81,10 @@ const inputVariants = cva('', {
       flex1: 'flex-1',
       // #members-approvals-n, the approvals-threshold number field.
       hiddenW16: 'hidden w-16',
+      // #llm-consent-cap, the app-consent dialog's dollars-per-day field —
+      // wide enough for "1000.00" and no wider, so it reads as an amount
+      // rather than as a text field.
+      w32: 'w-32',
       none: '',
     },
     box: {
@@ -102,6 +123,30 @@ const inputVariants = cva('', {
       // in features/profile/profile-edit-sheet.tsx.
       groupRow:
         'bg-transparent border-0 px-0 py-2 text-sm text-zinc-900 dark:text-zinc-100',
+      // The group chat composer. `auth`'s darker dark-mode fill (the composer
+      // sits on the chat pane, not on a card) with the settings box's
+      // `text-sm`, and the two shape utilities the field needs BEFORE its
+      // radius — a composer never shows a resize grip, and it scrolls inside
+      // its own height cap rather than growing past it.
+      //
+      // Two values, not one plus padding through className, because className
+      // lands after the focus ring and the padding is part of the box.
+      // `composer` is the general composer and the topic thread's; `composerTight`
+      // is the boxed inline thread layout. Both in
+      // features/group-chat/composer.tsx.
+      composer:
+        'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
+      composerTight:
+        'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100',
+      // The DEV chat's composer. The same fill and box as `composer` above —
+      // it sits on a chat pane too — but the two shape utilities are written
+      // at the very END of its string rather than in front of the radius, so
+      // they ride in through className there and this value carries neither.
+      // Transcribed rather than normalised onto `composer`: folding them
+      // would move the rendered class attribute on the one field it exists
+      // for. Call site: features/dev-chat/composer.tsx.
+      devComposer:
+        'rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
     },
     // The placeholder colour, written between the box and the focus ring in
     // every string that has it. Named `hint`, not `placeholder`, because
@@ -128,6 +173,7 @@ const inputVariants = cva('', {
     text: { true: 'text-zinc-900 dark:text-zinc-100', false: '' },
   },
   defaultVariants: {
+    lead: 'none',
     spacing: 'none',
     width: 'full',
     box: 'default',
@@ -147,12 +193,12 @@ export interface InputProps
 // ahead of `class`. className is destructured out above, so the spread can
 // never clobber it.
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, spacing, width, box, hint, mono, ring, text, ...props }, ref) => (
+  ({ className, lead, spacing, width, box, hint, mono, ring, text, ...props }, ref) => (
     <input
       ref={ref}
       {...props}
       className={cn(
-        inputVariants({ spacing, width, box, hint, mono, ring, text }),
+        inputVariants({ lead, spacing, width, box, hint, mono, ring, text }),
         className,
       )}
     />

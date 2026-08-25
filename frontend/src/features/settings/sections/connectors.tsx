@@ -5,6 +5,9 @@ import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
+import { ConnectorsList } from '../connectors-list';
+import { SocialIdentity } from '../social-identity';
+
 /**
  * Hosted MCP connector: connect Claude.ai / ChatGPT so their built-in coding
  * agent (Claude Code on the web, Codex) can do the work on the user's own
@@ -368,8 +371,66 @@ export function ConnectorsSection() {
           Connected
         </h4>
         <div id="connectors-list" className="space-y-2">
+          <ConnectorsList />
         </div>
         <StatusLine id="connectors-status" size="xs" />
+      </div>
+      {/*
+          "Preferred build flow" (#1049) — the escape hatch for the dev-chat
+          picker's "remember my option" checkbox. Once a user ticks that box
+          the picker stops rendering, so there has to be somewhere to change
+          their mind; Connections is where the GitHub link and the connectors
+          already live, which is exactly the machinery the external flows
+          depend on.
+
+          It was INJECTED at runtime by Settings._renderDevFlowSection until
+          #1191, for a reason that had expired: the shell's body used to be a
+          hand-written document pinned id-for-id against
+          tests/baselines/shell-markup.json, so a new settings control had
+          nowhere to go but a `document.createElement` into this pane. The
+          pane is a component now and a deliberate id is a line in ADDED_IDS,
+          so the block is markup and the module keeps only what it always kept
+          for every other control here: the value, the save, and the two
+          option gates.
+
+          It sits ABOVE the GitHub link block, where the injection put it, so
+          the preference reads as the question and the link below it as one of
+          the answers.
+      */}
+      <div id="dev-flow-pref-section" className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+        <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">
+          Preferred build flow
+        </h3>
+        <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3 leading-relaxed">
+          {'When you start a proposal, Usernode can ask how you want to build it — here on the '
+            + 'platform with the Usernode agent, or by handing the work order to your own Claude '
+            + 'Code or Codex web session. Pick one here to skip the question; choose '}
+          <strong className="font-semibold text-zinc-600 dark:text-zinc-400">Ask me every time</strong>
+          {' to get the picker back.'}
+        </p>
+        {/*
+            A plain `<select>`, not `@/components/ui/select`: the primitive's
+            `default` variant is the same field box but at `border-zinc-300`
+            with no explicit ink, and this control writes its own
+            `text-zinc-900 dark:text-zinc-100`. Adopting it is a styling
+            decision with its own evidence to gather, not part of moving the
+            block out of a runtime injection.
+
+            The two hand-off options are disabled by settings.js where the
+            deployment has no external flows — a deployment without them can
+            still express "always build on Usernode" vs "ask me".
+        */}
+        <select
+          id="settings-dev-flow"
+          className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
+          defaultValue=""
+        >
+          <option value="">Ask me every time</option>
+          <option value="platform">Build on Usernode</option>
+          <option value="claude-code">Claude Code (claude.ai/code)</option>
+          <option value="codex">Codex (chatgpt.com/codex)</option>
+        </select>
+        <div id="settings-dev-flow-status" className="text-xs mt-2 hidden"></div>
       </div>
       <div id="github-link-section" className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
         <SectionHeading title="Social accounts &amp; daily credits">
@@ -380,6 +441,7 @@ export function ConnectorsSection() {
           &mdash; identity-only profile information &mdash; and stores no provider token. GitHub can also attribute proposals built by your own coding agent to the account you verified.
         </SectionHeading>
         <div id="github-link-body" className="space-y-2">
+          <SocialIdentity />
         </div>
         <StatusLine id="github-link-status" size="xs" />
       </div>

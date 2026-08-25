@@ -58,7 +58,22 @@ test('AGENTS keeps always-on rules and routes conditional work to skills', () =>
   assert.match(guidance, /\.claude\/skills/);
   assert.match(guidance, /OpenCode discovers `\.agents\/skills\/` directly/);
   assert.match(guidance, /public\/index\.html.*GENERATED/);
-  assert.match(guidance, /Two design systems, one bundle/);
+  // Renamed twice as the console converged on the shell. The reskin folded it
+  // into the shell's palette, leaving a RENDERING boundary (components vs
+  // class recipes); converting sections to React dissolved that half too, and
+  // what remains is a SURFACE one — an operator console is denser than a phone
+  // screen, so it keeps its own tuning of the shared vocabulary.
+  assert.match(guidance, /One language, two surfaces/);
+  // The heading changed with the state it describes: the sections were
+  // "moving off innerHTML" while some were, and every one of them renders
+  // from React now (#1120 slice 35), so the guidance is about adding a NEW
+  // section rather than converting an old one.
+  assert.match(guidance, /The console is React — add a section the same way/);
+  // The two rules that are easy to lose to React's defaults, and that cost a
+  // real bug each: a search box that drives a paged query must not fire per
+  // keystroke, and a cross-screen jump needs an explicit export.
+  assert.match(guidance, /commits on blur or Enter/);
+  assert.match(guidance, /cross-screen jump needs an explicit export/);
   assert.doesNotMatch(guidance, /open `\/hooks`/);
   assert.doesNotMatch(guidance, /social-vibecoding codex setup/);
 });

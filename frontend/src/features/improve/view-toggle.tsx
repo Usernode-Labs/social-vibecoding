@@ -95,10 +95,17 @@ type Segment = 'app' | 'feed' | 'kanban';
  */
 function segmentCls(active: boolean, compact: boolean): string {
   const base = compact
-    ? 'inline-flex items-center gap-1 h-6 px-2 rounded-md text-xs font-medium transition-colors un-touch-target'
-    : 'flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-2 rounded-md text-xs font-medium transition-colors un-touch-target';
+    ? 'inline-flex items-center gap-1 h-6 px-2.5 rounded-full text-xs font-medium transition-colors un-touch-target'
+    : 'flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-full text-xs font-medium transition-colors un-touch-target';
+  // SELECTION IS A SOLID NEAR-BLACK INVERSION, not an accent-coloured raised
+  // pill — the widget language's one high-contrast state, and the same rule
+  // @/components/ui/chip.tsx states for its own selected variant. It is
+  // deliberately NOT the accent: the accent means "actionable", selection
+  // means "you are looking at this view", and colouring both blue collapses
+  // the two. The `shadow-sm` goes with it — the language separates by
+  // figure/ground and fill, never by lifting one control off the page.
   return active
-    ? `${base} bg-white dark:bg-zinc-900 text-violet-600 dark:text-violet-400 shadow-sm`
+    ? `${base} bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900`
     : `${base} text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200`;
 }
 
@@ -112,7 +119,25 @@ function segmentCls(active: boolean, compact: boolean): string {
  * means the two variants each state theirs exactly once and neither depends on
  * that ordering.
  */
-const TRACK_CLS = 'items-center gap-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 p-0.5';
+/*
+ * The track's fill depends on WHAT IT SITS ON, which is the one thing the two
+ * copies of this control do not share.
+ *
+ * zinc-100 IS the page ground in this palette (#eaeaea). The header copy sits
+ * on that ground, so a zinc-100 track is invisible there and the three
+ * segments read as loose labels — it has to be a raised white surface, like
+ * the hamburger disc beside it. The panel copy sits inside the Improve sheet,
+ * which is already white, so there the reverse is true and white is the
+ * invisible one.
+ *
+ * Two literals rather than one: Tailwind's extractor is a regex over source
+ * text, so neither can be assembled.
+ */
+const TRACK_BASE = 'items-center gap-0.5 rounded-full p-0.5';
+/** On the page ground — the header copy. */
+const TRACK_ON_GROUND = `${TRACK_BASE} bg-white dark:bg-zinc-900`;
+/** On the Improve sheet's white surface — the panel copy. */
+const TRACK_ON_CARD = `${TRACK_BASE} bg-zinc-100 dark:bg-zinc-800`;
 
 export function ImproveViewToggle({ compact }: { compact: boolean }) {
   const { target, slug, selfHosted, tab } = useStoreState(improveStore);
@@ -141,8 +166,8 @@ export function ImproveViewToggle({ compact }: { compact: boolean }) {
       id={compact ? 'improve-view-toggle' : 'improve-view-toggle-panel'}
       className={
         compact
-          ? `hidden sm:inline-flex ${TRACK_CLS} h-7 mr-2`
-          : `flex sm:hidden ${TRACK_CLS} w-full`
+          ? `hidden sm:inline-flex ${TRACK_ON_GROUND} h-7 mr-2`
+          : `flex sm:hidden ${TRACK_ON_CARD} w-full`
       }
       role="tablist"
       aria-label="App view"

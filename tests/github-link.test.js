@@ -18,6 +18,9 @@ const SCHEMA_SRC = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'),
 const SETTINGS_SRC = fs.readFileSync(
   path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8'
 );
+const SOCIAL_TSX = fs.readFileSync(
+  path.join(__dirname, '../frontend/src/features/settings/social-identity.tsx'), 'utf8'
+);
 
 const config = {
   cliAuthOrigin: 'https://example.test',
@@ -179,8 +182,14 @@ test('social identity routes own GitHub independently of MCP and preserve review
   assert.match(ROUTE_SRC, /consumeOauthState\(pool/);
   assert.match(ROUTE_SRC, /saveIdentity\(pool, req\.user\.id, identity\)/);
   assert.match(ROUTE_SRC, /router\.delete\('\/api\/me\/social-identities\/:provider'/);
+  // The two lines that make the claim reviewable. #1191 split them: the
+  // "holds no token" sentence is decided by the module (it depends on the
+  // link's `access`), and the audit link is markup, so it moved with the rest
+  // of the block into features/settings/social-identity.tsx.
   assert.match(SETTINGS_SRC, /holds no GitHub access token/);
-  assert.match(SETTINGS_SRC, /github\.com\/settings\/applications/);
+  assert.match(SOCIAL_TSX, /github\.com\/settings\/applications/);
+  assert.match(SOCIAL_TSX, /target="_blank"[\s\S]{0,80}?rel="noopener noreferrer"/,
+    'and it is still a top-level link — the shell is framed, github.com is not frameable');
 
   const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
   const section = html.slice(

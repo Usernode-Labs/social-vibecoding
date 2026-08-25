@@ -27,6 +27,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { detailsHtml, proposalCardHtml } = require('./lib/dev-card-html');
 
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'), 'utf8'
@@ -89,7 +90,7 @@ test('an ordinary proposal has no agent chip at all', () => {
   assert.equal(AppView.externalAgentName(undefined), '');
   assert.equal(AppView.externalAgentName(''), '');
   assert.equal(AppView.externalAgentBadgeHtml(null), '');
-  const html = AppView._renderProposalCard(connectorProposal({ external_agent: null }));
+  const html = proposalCardHtml(AppView, connectorProposal({ external_agent: null }));
   assert.doesNotMatch(html, /Built with/);
 });
 
@@ -105,7 +106,7 @@ test('an unrecognised value falls back — it never prints itself', () => {
   assert.doesNotMatch(html, /onerror/);
   assert.match(html, /Built with a coding agent/, 'and the chip is generic, not specific');
 
-  const card = AppView._renderProposalCard(connectorProposal({ external_agent: evil }));
+  const card = proposalCardHtml(AppView, connectorProposal({ external_agent: evil }));
   assert.doesNotMatch(card, /onerror=/);
 });
 
@@ -117,16 +118,16 @@ test('an unrecognised value falls back — it never prints itself', () => {
 // verbatim, and other surfaces still render it.
 test('the card names the agent that built it, on the meta line', () => {
   const AppView = makeAppView(ME);
-  const claude = AppView._renderProposalCard(connectorProposal());
+  const claude = proposalCardHtml(AppView, connectorProposal());
   assert.match(claude, /dev-card-meta[^<]*[\s\S]{0,400}?built with Claude Code/);
-  const codex = AppView._renderProposalCard(connectorProposal({ external_agent: 'codex' }));
+  const codex = proposalCardHtml(AppView, connectorProposal({ external_agent: 'codex' }));
   assert.match(codex, /built with Codex/);
   assert.doesNotMatch(codex, /Claude Code/);
 });
 
 test('the agent provenance reads alongside "imported", not instead of it', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(connectorProposal());
+  const html = proposalCardHtml(AppView, connectorProposal());
   // Both facts survive: one says how it got here, the other who built it.
   assert.match(html, /imported from GitHub/);
   assert.match(html, /built with Claude Code/);
@@ -145,13 +146,13 @@ test('a proposal built by a coding agent still behaves like an import', () => {
   // Owned by the viewer: an ordinary proposal would offer "Open session".
   // An imported one must not, connector-authored or otherwise — there is no
   // in-app dev session behind it.
-  const html = AppView._renderProposalCard(connectorProposal({ user_id: ME }));
+  const html = proposalCardHtml(AppView, connectorProposal({ user_id: ME }));
   assert.doesNotMatch(html, /Open session/);
 });
 
 test('the detail says whose subscription paid for the code', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._proposalDetailsHtml(connectorProposal(), { majority: 1 });
+  const html = detailsHtml(AppView, connectorProposal(), { majority: 1 });
   assert.match(html, /Built with <span class="font-medium">Claude Code<\/span>/);
   assert.match(html, /someone/);
   assert.match(html, /their own coding-agent subscription/);
@@ -163,7 +164,7 @@ test('the detail says whose subscription paid for the code', () => {
 
 test('the detail note is absent for a proposal nobody’s agent built', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._proposalDetailsHtml(
+  const html = detailsHtml(AppView, 
     connectorProposal({ external_agent: null }), { majority: 1 }
   );
   assert.doesNotMatch(html, /Built with/);

@@ -77,15 +77,57 @@ const ALLOWED_BUTTON_FILES = new Set([
   // attribute of every other button in the shell. See the header of
   // frontend/src/features/leaderboard/kudos-pane.tsx.
   'leaderboard/kudos-pane.tsx',
+  // The social-account Connect control, which exists in TWO spellings that
+  // must render identically: a live `<a href>` (the OAuth flow is a top-level
+  // navigation, not a fetch) and a disabled `<button>` for the ?demo= fixture,
+  // which must not navigate out of itself.
+  //
+  // This install of Button is hand-rolled and has no `asChild`, so it cannot
+  // be an anchor. Routing only the button through it would leave the pair
+  // written two different ways and free to drift — so both are written from
+  // one `CONNECT_SURFACE` constant in the file, which is the same guarantee
+  // the primitive would have given.
+  'settings/social-identity.tsx',
+  // The group chat composer's Send button was here, as one half of a PAIR
+  // whose other half was still an HTML string in public/js/app-view.js. Both
+  // halves are features/group-chat/composer.tsx now — ONE component with a
+  // `scope` — so the exception has nothing left to protect and the button
+  // routes through <Button>: `size` spells both paddings and the trailing
+  // `shrink-0` arrives through className, which cva emits last.
 ]);
 
 // Empty, and worth keeping empty: every field box in the tree now comes from
 // the primitive. The two remaining literal occurrences of the string are on
 // `<div>`s — the header's theme-toggle groups reuse the field box as a
 // segmented control — and a div is not something Input renders.
-const ALLOWED_FIELD_FILES = new Set([]);
+const ALLOWED_FIELD_FILES = new Set([
+  // The composer's textarea went with its Send button — see the note above.
+  // Its box needed two new `inputVariants` values and a leading `lead` group
+  // for `.gc-composer-input`, all declared in the order the hand-written
+  // string was written, so the rendered class attribute did not move.
+]);
+
+/*
+ * `features/admin/**` is skipped, and it is the one exclusion that is about a
+ * different SURFACE rather than a different element.
+ *
+ * The admin console draws from its own registry — `AdminUI.btn.primary` and
+ * friends in features/admin/admin-console.js — because an operator console is
+ * denser than a phone screen, and tests/admin-ui-registry.test.js enforces in
+ * both directions that the console does not import `@/components/ui/**` and
+ * the shell does not read AdminUI. Scanning the console here would demand
+ * exactly what that test forbids.
+ *
+ * This matters now because the console's sections are converting to React one
+ * at a time (#1120), so `features/admin/*.tsx` files exist for the first time.
+ * A converted section spells its primary button `className={AdminUI.btn.primary}`
+ * — the registry IS its primitive, and the leak rule in
+ * tests/admin-ui-registry.test.js is what keeps it honest there.
+ */
+const ADMIN_DIR = path.join(FEATURES, 'admin');
 
 function walk(dir, out = []) {
+  if (dir === ADMIN_DIR) return out;
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p, out);

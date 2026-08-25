@@ -1,20 +1,16 @@
-// MOVED, NOT REWRITTEN (#1079 chunk B). This file was public/js/ai-credit.js;
-// it renders into #ai-budget-slot / #drawer-row-ai-budget, both inside the
-// now-React #header-menu-panel, so it moved into the bundle with them. The
-// body is unchanged — it never self-initialised (App.init calls
-// AiCredit.Budget.init()), so there was nothing to defer.
+// MOVED in #1079 chunk B (this was public/js/ai-credit.js), and it PUBLISHES
+// rather than paints now: the row it used to write markup into is
+// ./ai-budget.tsx, and this module builds the view model for it.
 //
-// The AI-credit row in the drawer's status pane (#555).
+// The AI-credit row (#555) — the viewer's own daily LLM allowance. It lives
+// in Settings → Anthropic API key, which is already the page about what
+// happens when that allowance runs out; the fetch and the throttle here are
+// unchanged from when it was a hamburger-drawer row.
 //
-// One renderer, modelled on Kudos.Budget in kudos.js — poll an endpoint,
-// paint a value into a slot the shell already owns:
-//
-//   AiCredit.Budget → #ai-budget-slot, every signed-in user.
-//                     Their own daily LLM allowance.
-//
-// The row ships `hidden` in the shell and is revealed only once its
-// audience is confirmed — i.e. when the me-scoped fetch answers — so a
-// signed-out visitor never sees an empty row. The value is never a link.
+// The row ships visible and EMPTY, and hides itself only once the me-scoped
+// fetch has answered with nothing to show — so a signed-out visitor never
+// sees a stub, and a document that has not fetched yet still resolves the
+// slot a declared check selects. The value is never a link.
 //
 // (A sibling "Anthropic credits" row for admins shipped alongside this
 // one and was removed again: on this deployment it could only ever read
@@ -26,20 +22,12 @@
 // Refresh cadence: once at authed boot, then on every drawer open,
 // throttled. The drawer is the only place it renders, so "open the
 // drawer" is exactly the moment the number matters.
+import { aiBudgetStore } from './ai-budget-store.js';
+
 (function () {
   'use strict';
 
   var BUDGET_THROTTLE_MS = 3 * 60 * 1000;
-
-  function escapeHtml(str) {
-    var div = document.createElement('div');
-    div.textContent = String(str == null ? '' : str);
-    return div.innerHTML;
-  }
-
-  function escapeAttr(str) {
-    return escapeHtml(str).replace(/"/g, '&quot;');
-  }
 
   // Cents → "$12.34". Fractional cents exist in the ledger (NUMERIC(10,4)),
   // so always round to the nearest cent for display.
@@ -52,14 +40,6 @@
     });
   }
 
-  function setRowVisible(id, visible) {
-    var row = document.getElementById(id);
-    if (!row) return;
-    // The row ships with Tailwind's `hidden`, which would fight the
-    // `flex` in its own class list — toggle `hidden` only.
-    row.classList.toggle('hidden', !visible);
-  }
-
   // The figure is rendered EXACTLY as the dev chat renders its own meter
   // (see DevChat.renderBudget) — "limit $13.60/$20.00 · your key $129.11"
   // — so the two places a user reads their AI spend agree glyph for
@@ -70,13 +50,10 @@
   //
   // Spend colouring matches the dev chat's thresholds too: >80% of the
   // daily limit is red, >50% amber, otherwise emerald. The BYOK figure
-  // never takes threshold colouring — no cap applies to it.
-  var SPENT_TONE = {
-    high: 'text-red-600 dark:text-red-400',
-    mid: 'text-amber-600 dark:text-amber-400',
-    low: 'text-emerald-600 dark:text-emerald-400',
-  };
-  var BYOK_TONE = 'text-emerald-600 dark:text-emerald-400';
+  // never takes threshold colouring — no cap applies to it. The THRESHOLDS
+  // are here; the four class strings they resolve to are in
+  // ./ai-budget.tsx, because Tailwind's extractor is a regex over source
+  // text and a palette carried through the store would compile to nothing.
 
   var AiCredit = {
 
@@ -114,13 +91,14 @@
         }
       },
 
+      // Publishes the meter's view model; ./ai-budget.tsx draws it. Every
+      // decision below — the thresholds, the wording, whether a "your key"
+      // figure appears — stays here; only the colours are names the
+      // component resolves.
       _render: function () {
-        var slot = document.getElementById('ai-budget-slot');
-        if (!slot) return;
         var s = AiCredit.Budget.state;
         if (!s || typeof s.limitCents !== 'number') {
-          slot.innerHTML = '';
-          setRowVisible('drawer-row-ai-budget', false);
+          aiBudgetStore.set({ view: null, hidden: true });
           return;
         }
 
@@ -140,33 +118,39 @@
         // The reset boundary, worded once (CreditOptions.resetSentence) so
         // this row and the dev chat cannot describe it differently.
         var resetText = state ? CO.resetSentence(state) : 'Free credits reset at midnight UTC.';
+        var show = function (view) { aiBudgetStore.set({ view: view, hidden: false }); };
 
         // A zero tier is a real state, not an unknown cap. Render the
         // unlock action without doing spend/limit division (which used to
         // produce a misleading $0/$0 meter and NaN percentages).
         if (state && state.level === 'locked') {
-          var lockedHtml = '<span class="text-amber-600 dark:text-amber-400">verify account · unlock $10/day</span>';
+          var lockedParts = [
+            { bare: true, runs: [{ tone: 'warn', text: 'verify account · unlock $10/day' }] },
+          ];
           if (s.hasByokKey) {
-            lockedHtml += ' <span class="drawer-meter-part"><span class="drawer-meter-dim">· </span>'
-              + '<span class="' + BYOK_TONE + '">your key available</span></span>';
+            lockedParts.push({
+              runs: [{ tone: 'dim', text: '· ' }, { tone: 'byok', text: 'your key available' }],
+            });
           }
-          slot.innerHTML = '<span class="ai-budget-meter drawer-meter" title="'
-            + escapeAttr('Connect GitHub or X in Settings to unlock $10/day. '
-              + (s.hasByokKey ? 'Your own Anthropic key remains available.' : ''))
-            + '">' + lockedHtml + '</span>';
-          setRowVisible('drawer-row-ai-budget', true);
+          show({
+            title: 'Connect GitHub or X in Settings to unlock $10/day. '
+              + (s.hasByokKey ? 'Your own Anthropic key remains available.' : ''),
+            parts: lockedParts,
+          });
           return;
         }
         if (state && state.level === 'unavailable') {
-          slot.innerHTML = '<span class="ai-budget-meter drawer-meter text-amber-600 dark:text-amber-400" '
-            + 'title="Credit eligibility could not be verified. Try again shortly.">credits temporarily unavailable</span>';
-          setRowVisible('drawer-row-ai-budget', true);
+          show({
+            title: 'Credit eligibility could not be verified. Try again shortly.',
+            tone: 'warn',
+            parts: [{ bare: true, runs: [{ tone: 'none', text: 'credits temporarily unavailable' }] }],
+          });
           return;
         }
 
         // "limit $spent/$limit" — spend-first, exactly like the dev chat.
         var pct = limit > 0 ? Math.min(100, (spent / limit) * 100) : 0;
-        var spentTone = pct > 80 ? SPENT_TONE.high : pct > 50 ? SPENT_TONE.mid : SPENT_TONE.low;
+        var spentTone = pct > 80 ? 'high' : pct > 50 ? 'mid' : 'low';
 
         var tip;
         if (exhausted && s.hasByokKey) {
@@ -183,12 +167,13 @@
             + ' today was billed to your own Anthropic key and does not count against the allowance.';
         }
 
-        var html =
-          '<span class="drawer-meter-part">'
-          + '<span class="drawer-meter-dim">limit </span>'
-          + '<span class="' + spentTone + '">' + escapeHtml(money(spent)) + '</span>'
-          + '<span class="drawer-meter-dim">/' + escapeHtml(money(limit)) + '</span>'
-          + '</span>';
+        var parts = [{
+          runs: [
+            { tone: 'dim', text: 'limit ' },
+            { tone: spentTone, text: money(spent) },
+            { tone: 'dim', text: '/' + money(limit) },
+          ],
+        }];
         // #593: what is LEFT, rendered rather than tooltip-only. The whole
         // point of the row is to answer "can I start another dev session?"
         // before opening one, and a tooltip answers that for nobody on a
@@ -197,28 +182,31 @@
           ? (s.hasByokKey ? '' : 'none left')
           : money(remaining) + ' left';
         if (leftLabel) {
-          html += ' <span class="drawer-meter-part" data-credits-remaining="1">'
-            + '<span class="drawer-meter-dim">· </span>'
-            + '<span class="' + (exhausted ? SPENT_TONE.high
-              : (state && state.level === 'low') ? SPENT_TONE.mid : 'drawer-meter-dim') + '">'
-            + escapeHtml(leftLabel) + '</span></span>';
+          parts.push({
+            remaining: true,
+            runs: [
+              { tone: 'dim', text: '· ' },
+              {
+                tone: exhausted ? 'high' : (state && state.level === 'low') ? 'mid' : 'dim',
+                text: leftLabel,
+              },
+            ],
+          });
         }
         if (byok > 0) {
-          // Own .drawer-meter-part so the two figures break apart at the
-          // "·" rather than either of them splitting mid-number — and the
-          // separator travels WITH the BYOK figure, so a wrapped value
-          // reads "· your key $4.50" instead of leaving a dangling "·"
-          // at the end of the line above.
-          html += ' <span class="drawer-meter-part"><span class="drawer-meter-dim">· </span>'
-            + '<span class="' + BYOK_TONE + '">your key '
-            + escapeHtml(money(byok)) + '</span></span>';
+          // Its own part so the two figures break apart at the "·" rather
+          // than either of them splitting mid-number — and the separator
+          // travels WITH the BYOK figure, so a wrapped value reads
+          // "· your key $4.50" instead of leaving a dangling "·" above.
+          parts.push({
+            runs: [
+              { tone: 'dim', text: '· ' },
+              { tone: 'byok', text: 'your key ' + money(byok) },
+            ],
+          });
         }
 
-        slot.innerHTML =
-          '<span class="ai-budget-meter drawer-meter" title="' + escapeAttr(tip) + '">'
-          + html
-          + '</span>';
-        setRowVisible('drawer-row-ai-budget', true);
+        show({ title: tip, parts: parts });
       },
     },
 

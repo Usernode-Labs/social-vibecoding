@@ -5,11 +5,17 @@
  * ── What the island owns ───────────────────────────────────────────────
  *
  * The screen's STRUCTURE, and nothing else: the pull-to-reveal search bar, the
- * `.home-column` body, and the hosts inside it — the iOS widget strip, the
- * launcher grid `#app-list`, and the three fixed section hosts below it. Every
- * one is an innerHTML host that `home.js` / `home-panels.js` fill, exactly as
- * before. This component renders once and never again: it holds no state, and
- * the only effect it runs is the visibility subscription below.
+ * `.home-column` body, and the hosts inside it. THIS component renders once and
+ * never again — it holds no state, and the only effect it runs is the
+ * visibility subscription below. What lives inside it has moved on, one host at
+ * a time:
+ *
+ *   * `<AppGrid/>`, `<WidgetStrip/>` and `<AppsMore/>` are stateful islands
+ *     rendering plain view models `home.js` pushes (./grid-store.ts and
+ *     ./chrome-store.ts);
+ *   * `<DiscoverSection/>`, `<ChallengesSection/>` and `<CreateSection/>` are
+ *     the same arrangement for the three blocks below the grid, from
+ *     ./panels-store.ts.
  *
  * ── FOUR AREAS, in this order ──────────────────────────────────────────
  *
@@ -32,20 +38,31 @@
  *     stay in `home.js`, driving `#app-list`'s own children. React never
  *     reconciles inside that subtree, so a drag cannot race a render.
  *
- * ── Why nothing here is stateful ───────────────────────────────────────
+ * ── What is stateful, and what that cost ───────────────────────────────
  *
  * The stateful-island rule (AGENTS.md): a region may hold state only when its
- * whole subtree is React-owned. Every dynamic part of this screen is written by
- * a `public/js`-era module, so the whole screen is static markup plus legacy
- * hosts. Making the grid stateful would mean moving the layout engine, the drag
- * gesture, the widget renderers and the WS fan-out inside React at once — a
- * rewrite, not this chunk's conversion.
+ * whole subtree is React-owned. This screen shipped with none — every dynamic
+ * part of it was written by a `public/js`-era module — and it has gained three,
+ * each paid for by moving that module's RENDERER (not its data, not its
+ * gestures) across the line:
  *
- * `data-revealed` on the search bar and `hidden` on the two `<section>`s are
- * written by `home.js` at runtime through `classList` / `dataset`, which is safe
- * for exactly the reason `frontend/src/lib/legacy-dom.ts` documents: React
- * renders their `className` once, as a constant prop, and never writes the
- * attribute again.
+ *   * `#app-list` (#1191): `Home.render()` computes a view model instead of an
+ *     HTML string. The layout engine, the WS fan-out, the drag geometry and
+ *     the kit attachment all stayed in home.js.
+ *   * `#home-widget-strip-section` and `#home-apps-more`: the same split for
+ *     the two hosts outside the canvas, on the same push.
+ *   * the three panel sections: `HomePanels.render()` computes three view
+ *     models where it used to build ~800 lines of HTML string and then
+ *     re-attach eight families of listener over the result.
+ *
+ * Nothing on this screen is an `innerHTML` host any more. The data, the
+ * fetches and the gestures all stayed where they were.
+ *
+ * `data-revealed` on the search bar is written by `home.js` at runtime through
+ * `dataset`, which is safe for exactly the reason
+ * `frontend/src/lib/legacy-dom.ts` documents: React renders its `className`
+ * once, as a constant prop, and never writes the attribute again. The two
+ * `hidden` toggles that used to sit beside it are React's own state now.
  *
  * ── Visibility ─────────────────────────────────────────────────────────
  *
@@ -66,6 +83,11 @@
 import { useRef } from 'react';
 
 import { SearchIcon } from '@/components/ui/icons';
+
+import { AppGrid } from './app-grid';
+import { AppsMore } from './apps-more';
+import { ChallengesSection, CreateSection, DiscoverSection } from './panels/sections';
+import { WidgetStrip } from './widget-strip';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 
@@ -97,16 +119,25 @@ export function HomeScreen() {
           input must keep its focus/caret through those re-renders. Wired
           once by Home._wireSearch().
       */}
-      <div id="home-search-bar" data-revealed="false" className="bg-white dark:bg-zinc-950">
+      {/*
+          NO background of its own. It carried `bg-white dark:bg-zinc-950`,
+          and in light mode that painted a white band across a #eaeaea page —
+          a slab around the input rather than a field sitting on the ground.
+          The bar is a real scroll-space child and never sticky, so nothing
+          passes underneath it and there is nothing for an opaque fill to
+          hide. Letting the page ground show through is both the correct
+          colour and the one that cannot drift if the ground ever moves.
+      */}
+      <div id="home-search-bar" data-revealed="false">
         {/*
-            The bar's BACKGROUND stays full-bleed; only its content sits in
-            the 1024px column, and the px-3 gutter lives here (not on the
-            bar) so this column's content edges match #home-body's exactly.
+            The bar's box stays full-bleed; only its content sits in the
+            1024px column, and the px-3 gutter lives here (not on the bar) so
+            this column's content edges match #home-body's exactly.
         */}
         <div className="home-column px-3 pt-3 pb-2">
           <div className="relative max-w-xl">
             <SearchIcon
-              className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
+              className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
               aria-hidden="true"
             />
             <input
@@ -119,7 +150,7 @@ export function HomeScreen() {
             />
             <button
               id="home-search-clear"
-              className="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none"
+              className="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none dark:text-zinc-400"
               title="Clear search"
               aria-label="Clear search"
             >
@@ -143,11 +174,12 @@ export function HomeScreen() {
             the pinned grid the homescreen widget renders. It lives ABOVE the
             launcher grid rather than inside it — a full-width flow item
             cannot coexist with the explicit cell placement #app-list now
-            uses. Filled + wired by Home.renderWidgetSection /
-            _wireWidgetStrip; empty everywhere but the iOS app.
+            uses. Stateful (chromeStore), and it ships EMPTY and hidden
+            everywhere but the iOS app — see widget-strip.tsx for what the
+            component took over from Home._wireWidgetStrip and what it left
+            there.
         */}
-        <section id="home-widget-strip-section" className="hidden px-3 pt-2">
-        </section>
+        <WidgetStrip />
         {/*
             ── AREA 1 of 4: YOUR APPS ─────────────────────────────────
 
@@ -183,15 +215,14 @@ export function HomeScreen() {
             drop. Trim the padding here, never there.
         */}
         <section id="home-apps-section" className="px-3">
-          <div id="app-list" className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2">
-          </div>
+          <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the
               viewer has more than the default two rows hold. Ships hidden
-              and empty, like every other legacy-owned host here.
+              and empty; it is React's now (chromeStore), which is what lets
+              its listener be attached once instead of on every paint.
           */}
-          <div id="home-apps-more" className="hidden px-2 pb-1 sm:px-3">
-          </div>
+          <AppsMore />
         </section>
         {/*
             ── AREAS 2-4: DISCOVER, CHALLENGES, CREATE APP ────────────
@@ -208,28 +239,26 @@ export function HomeScreen() {
             wherever-you-dropped-them was a canvas with no reading order, and
             it made every one of them optional in a way none of them are.
 
-            Each is an innerHTML host filled by HomePanels.render() from the
-            SAME renderers it always used (renderDiscoverPanel,
-            renderChallengesPanel, renderCreatePanel) — only their parent
-            changed. All three ship EMPTY: the panels cache is fetched, so
-            rendering anything here would disagree with the prerendered
-            document and mismatch on hydration.
+            Each renders its own host now (./panels/sections.tsx) from a view
+            model HomePanels.render() pushes — the three `innerHTML` hosts and
+            the `_stampState` pass that mirrored each block's state up onto
+            them went together. All three still ship EMPTY and un-hidden: the
+            panels cache is fetched, so drawing anything at hydration would
+            disagree with the prerendered document.
 
             `data-panel-slot` rides along from the grid host each one
             replaces. It names WHICH block a host is for, which is as true of
             a section as it was of a cell, and it is the hook everything
             outside this file already selects on: the dapp.json checks
-            (`[data-panel-slot="create"][data-create-enabled="true"]`), the
-            screenshot assertions, and HomePanels._stampState, which mirrors
-            each block's own state attributes up onto its host so one
-            selector can ask for the host AND the state.
+            (`[data-panel-slot="create"][data-create-enabled="true"]`) and the
+            screenshot assertions. That selector is why the block's own state
+            attributes appear on the host as well as on the block — one model
+            now feeds both, rather than a second pass copying one to the
+            other.
         */}
-        <section id="home-discover-section" data-panel-slot="discover" className="px-3 pb-3">
-        </section>
-        <section id="home-challenges-section" data-panel-slot="challenges" className="px-3 pb-3">
-        </section>
-        <section id="home-create-section" data-panel-slot="create" className="px-3 pb-3">
-        </section>
+        <DiscoverSection />
+        <ChallengesSection />
+        <CreateSection />
         {/*
             #home-panels — the widgets' FALLBACK host — is gone with the
             placement it existed for. It caught the moment before the first

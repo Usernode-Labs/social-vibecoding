@@ -22,14 +22,23 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const APP_CARD_PATH = path.join(
-  __dirname, '..', '..', 'frontend', 'src', 'features', 'apps', 'app-card.js'
-);
+const SRC_ROOT = path.join(__dirname, '..', '..', 'frontend', 'src');
+const APP_CARD_PATH = path.join(SRC_ROOT, 'features', 'apps', 'app-card.js');
+// `lib/app-tint.js` used to be loaded alongside this — the slug→tint hash
+// app-card.js imported for the per-app identity colour. Both are gone: the
+// tile is one neutral face now, so there is nothing to hash.
+
+// `export function f` -> `function f`, `export const X` -> `const X`, and drop
+// the `import` lines outright — the sandbox binds those names by evaluating
+// the imported module into the same context first, which is what the two
+// sources below do in dependency order.
+const toClassic = (src) => src
+  .replace(/^import [^\n]*\n/gm, '')
+  .replace(/^export \{[^}]*\};?\n/gm, '')
+  .replace(/^export /gm, '');
 
 const APP_CARD_SRC = fs.readFileSync(APP_CARD_PATH, 'utf8');
-
-// `export function f` -> `function f`, `export const X` -> `const X`.
-const APP_CARD_CLASSIC = APP_CARD_SRC.replace(/^export /gm, '');
+const APP_CARD_CLASSIC = toClassic(APP_CARD_SRC);
 
 // The sandbox must already be a vm context (vm.createContext) with `window`
 // pointing at itself and a `document.createElement` stub. Returns the

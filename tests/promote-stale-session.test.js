@@ -161,11 +161,11 @@ function deferredFetch(sandbox) {
 
 const SESSION_ID = 42;
 
-function makeBtn() {
-  const btn = makeElement('promote-btn');
-  btn.innerHTML = 'Propose to group';
-  return btn;
-}
+// #1078: `promotePR` takes no button. Its in-flight state is a field of the
+// transcript's row model (`DevChat._proposing`, keyed by session), because
+// `renderMessages` runs on every 3s status poll and a repaint mid-request
+// would have restored the label and cleared the re-entry guard.
+const proposing = (DevChat) => DevChat._proposing;
 
 test('navigate-away success: no alert, nothing throws', async () => {
   const { DevChat, sandbox, alerts } = makeHarness();
@@ -173,7 +173,7 @@ test('navigate-away success: no alert, nothing throws', async () => {
   DevChat.currentSession = { id: SESSION_ID, status: 'active' };
   DevChat.sessions = [{ id: SESSION_ID, status: 'active' }];
 
-  const done = DevChat.promotePR(makeBtn());
+  const done = DevChat.promotePR();
   // Simulate AppView.close() → DevChat.reset() mid-flight.
   DevChat.currentSession = null;
   DevChat.sessions = [];
@@ -190,8 +190,7 @@ test('stay-on-page success: status + PR fields folded in, rendered, no alert', a
   DevChat.currentSession = session;
   DevChat.sessions = [session];
 
-  const btn = makeBtn();
-  const done = DevChat.promotePR(btn);
+  const done = DevChat.promotePR();
   net.resolveOk({ prNumber: 12, prUrl: 'https://github.com/x/y/pull/12', prTitle: 'Add dark mode' });
   await done;
 
@@ -212,7 +211,7 @@ test('switched-session mid-flight: current session untouched, list row updated',
   DevChat.currentSession = original;
   DevChat.sessions = [original, other];
 
-  const done = DevChat.promotePR(makeBtn());
+  const done = DevChat.promotePR();
   // User opens a sibling session of the same app while promote runs.
   DevChat.currentSession = other;
   net.resolveOk({ prNumber: 12, prUrl: 'https://github.com/x/y/pull/12', prTitle: 'Add dark mode' });
@@ -235,7 +234,7 @@ test('stale failure: no alert after navigation (server rejection AND fetch rejec
     const net = deferredFetch(sandbox);
     DevChat.currentSession = { id: SESSION_ID, status: 'active' };
     DevChat.sessions = [];
-    const done = DevChat.promotePR(makeBtn());
+    const done = DevChat.promotePR();
     DevChat.currentSession = null;
     net.resolveErr(429, { error: 'You already have 3 PRs up for vote.' });
     await done;
@@ -248,7 +247,7 @@ test('stale failure: no alert after navigation (server rejection AND fetch rejec
     const net = deferredFetch(sandbox);
     DevChat.currentSession = { id: SESSION_ID, status: 'active' };
     DevChat.sessions = [];
-    const done = DevChat.promotePR(makeBtn());
+    const done = DevChat.promotePR();
     DevChat.currentSession = null;
     net.reject(new TypeError('Failed to fetch'));
     await done;
@@ -262,15 +261,13 @@ test('genuine network failure while current: alert fires and the button is resto
   DevChat.currentSession = { id: SESSION_ID, status: 'active' };
   DevChat.sessions = [];
 
-  const btn = makeBtn();
-  const done = DevChat.promotePR(btn);
-  assert.equal(btn.disabled, true, 'button disabled while in flight');
+  const done = DevChat.promotePR();
+  assert.equal(proposing(DevChat), SESSION_ID, 'button disabled while in flight');
   net.reject(new TypeError('Failed to fetch'));
   await done;
 
   assert.deepEqual(alerts, ['Network error'], 'real failure still alerts');
-  assert.equal(btn.disabled, false, 'button restored');
-  assert.equal(btn.innerHTML, 'Propose to group', 'label restored');
+  assert.equal(proposing(DevChat), null, 'button restored');
 });
 
 test('non-JSON error body while current shows the generic message, not "Network error"', async () => {
@@ -279,11 +276,10 @@ test('non-JSON error body while current shows the generic message, not "Network 
   DevChat.currentSession = { id: SESSION_ID, status: 'active' };
   DevChat.sessions = [];
 
-  const btn = makeBtn();
-  const done = DevChat.promotePR(btn);
+  const done = DevChat.promotePR();
   net.resolveErr(502 /* HTML body → res.json() throws */);
   await done;
 
   assert.deepEqual(alerts, ['Failed to promote'], 'proxy HTML body no longer masquerades as a network error');
-  assert.equal(btn.disabled, false, 'button restored');
+  assert.equal(proposing(DevChat), null, 'button restored');
 });

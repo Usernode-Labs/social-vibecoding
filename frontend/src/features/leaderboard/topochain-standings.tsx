@@ -106,11 +106,11 @@ const ALIGN: Record<ColumnKey, string> = {
   success: 'text-right',
 };
 
-const HINT = 'text-sm text-zinc-500 py-8 text-center';
+const HINT = 'text-sm text-zinc-500 py-8 text-center dark:text-zinc-400';
 
 function Disclaimer({ text }: { text: string | null }): ReactNode {
   if (!text) return null;
-  return <p id="tc-lb-disclaimer" className="text-xs text-zinc-500 mb-3">{text}</p>;
+  return <p id="tc-lb-disclaimer" className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">{text}</p>;
 }
 
 /**
@@ -125,10 +125,10 @@ function ChallengeLine(
   return (
     <p id="tc-lb-challenge-link" className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
       {`${line.completed} of ${line.total} challenges completed `}
-      <span className="text-zinc-400 dark:text-zinc-600">·</span>
+      <span className="text-zinc-500 dark:text-zinc-500">·</span>
       <button
         id="tc-lb-to-challenges"
-        className="font-medium text-violet-600 dark:text-violet-400 hover:underline"
+        className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
         onClick={() => controller()?._goToChallenges()}
       >
         View challenges →
@@ -139,7 +139,7 @@ function ChallengeLine(
 
 function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
   if (column === 'rank') {
-    return <td className="px-3 py-2 text-sm font-mono text-zinc-500">{row.rank}</td>;
+    return <td className="px-3 py-2 text-sm font-mono text-zinc-500 dark:text-zinc-400">{row.rank}</td>;
   }
   if (column === 'user') {
     return (
@@ -147,7 +147,7 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
         <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.user}</span>
         {row.nonPodium ? (
           <span
-            className="text-[10px] uppercase tracking-wide text-zinc-400"
+            className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400"
             title="Excluded from podium ranking"
           >{' non-podium'}</span>
         ) : null}
@@ -158,7 +158,7 @@ function Cell({ column, row }: { column: ColumnKey; row: RowView }): ReactNode {
     return (
       <td className="px-3 py-2 text-sm font-mono text-right">
         {row.points}
-        <span className="text-zinc-400">{` +${row.extra}`}</span>
+        <span className="text-zinc-500 dark:text-zinc-400">{` +${row.extra}`}</span>
       </td>
     );
   }
@@ -174,7 +174,7 @@ function StandingsTable(
   return (
     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
       <table className="w-full">
-        <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
+        <thead className="bg-zinc-50 dark:bg-zinc-900 text-[0.9375rem] text-zinc-500 dark:text-zinc-400">
           <tr>
             {view.columns.map((c) => (
               <th key={c} className={`px-3 py-2 ${ALIGN[c]}`}>{view.headers[c]}</th>
@@ -205,7 +205,7 @@ function Pagination(
   const btn = 'rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1 text-xs font-medium disabled:opacity-40';
   return (
     <div className="flex items-center justify-between mt-3 text-sm">
-      <span className="text-zinc-500">
+      <span className="text-zinc-500 dark:text-zinc-400">
         {`Page ${meta.page} of ${meta.totalPages} · ${meta.total} total`}
       </span>
       <div className="flex gap-2">
@@ -232,7 +232,7 @@ function Pagination(
 
 function Body({ view }: { view: BodyView | null }): ReactNode {
   if (!view || view.state === 'loading') {
-    return <p className="text-sm text-zinc-500">Loading…</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
   }
   if (view.state === 'error') {
     return (
@@ -242,7 +242,7 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
     );
   }
   if (view.state === 'empty') return <p className={HINT}>{view.message}</p>;
-  if (view.state === 'none') return <p className="text-sm text-zinc-500">No data.</p>;
+  if (view.state === 'none') return <p className="text-sm text-zinc-500 dark:text-zinc-400">No data.</p>;
   if (view.state === 'private') {
     return (
       <>
@@ -275,17 +275,17 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
 }
 
 function Activities({ view }: { view: DrillView['activities'] }): ReactNode {
-  if (view.loading) return <p className="text-xs text-zinc-500">Loading activities…</p>;
-  if (view.error) return <p className="text-xs text-zinc-500">{view.error}</p>;
+  if (view.loading) return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading activities…</p>;
+  if (view.error) return <p className="text-xs text-zinc-500 dark:text-zinc-400">{view.error}</p>;
   if (!view.items || !view.items.length) {
-    return <p className="text-xs text-zinc-500">No activities recorded for this event.</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400">No activities recorded for this event.</p>;
   }
   return (
     <ul className="space-y-1">
       {view.items.map((a, i) => (
         <li key={i} className="flex items-center justify-between gap-3 text-xs">
           <span className="text-zinc-600 dark:text-zinc-300">{a.label}</span>
-          <span className="font-mono text-zinc-400">{`+${a.points}`}</span>
+          <span className="font-mono text-zinc-500 dark:text-zinc-400">{`+${a.points}`}</span>
         </li>
       ))}
     </ul>
@@ -293,15 +293,15 @@ function Activities({ view }: { view: DrillView['activities'] }): ReactNode {
 }
 
 function EpochBreakdown({ view }: { view: DrillView['epoch'] }): ReactNode {
-  if (view.loading) return <p className="text-xs text-zinc-500">Loading epoch breakdown…</p>;
-  if (view.error) return <p className="text-xs text-zinc-500">{view.error}</p>;
+  if (view.loading) return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading epoch breakdown…</p>;
+  if (view.error) return <p className="text-xs text-zinc-500 dark:text-zinc-400">{view.error}</p>;
   if (!view.rows || !view.rows.length) {
-    return <p className="text-xs text-zinc-500">No epoch data for this event.</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-400">No epoch data for this event.</p>;
   }
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
-        <thead className="text-zinc-500">
+        <thead className="text-zinc-500 dark:text-zinc-400">
           <tr>
             <th className="text-left py-1">Epoch</th>
             <th className="text-right py-1">Won slots</th>
@@ -327,7 +327,7 @@ function EpochBreakdown({ view }: { view: DrillView['epoch'] }): ReactNode {
 function ProfileStat({ label, value }: { label: string; value: string }): ReactNode {
   return (
     <div>
-      <span className="text-zinc-500">{label}</span>
+      <span className="text-zinc-500 dark:text-zinc-400">{label}</span>
       <div className="font-mono">{value}</div>
     </div>
   );
@@ -337,9 +337,9 @@ function Profile({ view }: { view: DrillView['profile'] }): ReactNode {
   if (!view.shown) return null;
   let inner: ReactNode;
   if (view.loading) {
-    inner = <p className="text-xs text-zinc-500">Loading your profile…</p>;
+    inner = <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading your profile…</p>;
   } else if (view.error) {
-    inner = <p className="text-xs text-zinc-500">{view.error}</p>;
+    inner = <p className="text-xs text-zinc-500 dark:text-zinc-400">{view.error}</p>;
   } else if (view.stats) {
     const s = view.stats;
     inner = (
@@ -362,7 +362,7 @@ function Profile({ view }: { view: DrillView['profile'] }): ReactNode {
   }
   return (
     <div className="mb-4">
-      <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Your profile</div>
+      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Your profile</div>
       {inner}
     </div>
   );
@@ -382,7 +382,7 @@ function Drill({ view }: { view: DrillView | null }): ReactNode {
           </h3>
           <button
             id="tc-lb-drill-close"
-            className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 text-lg leading-none"
+            className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 text-lg leading-none dark:text-zinc-400"
             aria-label="Close"
             onClick={() => controller()?._closeDrill()}
           >
@@ -390,16 +390,16 @@ function Drill({ view }: { view: DrillView | null }): ReactNode {
           </button>
         </div>
         {view.walletAddress ? (
-          <p className="text-xs font-mono text-zinc-400 mb-3 break-all">{view.walletAddress}</p>
+          <p className="text-xs font-mono text-zinc-500 mb-3 break-all dark:text-zinc-400">{view.walletAddress}</p>
         ) : null}
         <Profile view={view.profile} />
         <div className="grid sm:grid-cols-2 gap-4">
           <div>
-            <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Activities</div>
+            <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Activities</div>
             <Activities view={view.activities} />
           </div>
           <div>
-            <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">Epoch breakdown</div>
+            <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Epoch breakdown</div>
             <EpochBreakdown view={view.epoch} />
           </div>
         </div>

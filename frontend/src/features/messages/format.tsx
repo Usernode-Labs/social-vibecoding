@@ -70,7 +70,7 @@ export function ObjectCard({ object, compact = false }: { object: SharedObjectCa
     return (
       <div className="messages-object-card messages-object-unavailable" aria-disabled="true">
         <span className="messages-object-icon">?</span>
-        <div className="min-w-0"><div className="text-xs font-semibold">Unavailable</div><div className="text-[11px] text-zinc-500">You can’t access this item.</div></div>
+        <div className="min-w-0"><div className="text-xs font-semibold">Unavailable</div><div className="text-[11px] text-zinc-500 dark:text-zinc-400">You can’t access this item.</div></div>
       </div>
     );
   }
@@ -78,7 +78,7 @@ export function ObjectCard({ object, compact = false }: { object: SharedObjectCa
     <>
       <span className="messages-object-icon">{object.type === 'app' ? '◆' : object.type === 'spec' ? '§' : '#'}</span>
       <div className="min-w-0 flex-1">
-        <div className="text-[10px] uppercase tracking-wide text-violet-600 dark:text-violet-400 font-semibold">{OBJECT_LABELS[object.type]}</div>
+        <div className="text-[10px] uppercase tracking-wide text-violet-700 dark:text-violet-400 font-semibold">{OBJECT_LABELS[object.type]}</div>
         <div className="text-xs font-semibold text-zinc-800 dark:text-zinc-100 truncate">{object.title || 'Untitled'}</div>
         {!compact && (object.subtitle || object.state || object.author) ? (
           <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
@@ -86,7 +86,7 @@ export function ObjectCard({ object, compact = false }: { object: SharedObjectCa
           </div>
         ) : null}
       </div>
-      {object.href ? <span aria-hidden="true" className="text-zinc-400">›</span> : null}
+      {object.href ? <span aria-hidden="true" className="text-zinc-500 dark:text-zinc-400">›</span> : null}
     </>
   );
   return object.href ? (

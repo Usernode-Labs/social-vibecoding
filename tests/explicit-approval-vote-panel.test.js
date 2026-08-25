@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { detailsHtml } = require('./lib/dev-card-html');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
@@ -251,20 +252,20 @@ test('voteButtonsHtml: an ordinary user never gets Admin merge', () => {
 
 test('_proposalDetailsHtml: a flagged row below threshold renders the amber note with M of N', () => {
   const AppView = makeAppView();
-  const html = AppView._proposalDetailsHtml({
+  const html = detailsHtml(AppView, {
     id: 1, status: 'promoted', yes_count: 1, no_count: 0, votes_required: 3,
     check_state: 'passing', requires_explicit_approval: true,
   });
-  assert.match(html, /edits the app&#39;s admins list|edits the app's admins list/);
-  assert.match(html, /won't merge on a timer/);
+  assert.match(html, /edits the app&#x27;s admins list/);
+  assert.match(html, /won&#x27;t merge on a timer/);
   assert.match(html, /needs 3 real Yes votes and has 1 so far/);
   assert.match(html, /can still be voted down/);
-  assert.match(html, /text-amber-600/, 'amber styling, matching the locked note family');
+  assert.match(html, /text-amber-800/, 'amber styling, matching the locked note family');
 });
 
 test('_proposalDetailsHtml: a flagged row at threshold says it will merge once gates clear', () => {
   const AppView = makeAppView();
-  const html = AppView._proposalDetailsHtml({
+  const html = detailsHtml(AppView, {
     id: 1, status: 'promoted', yes_count: 3, no_count: 0, votes_required: 3,
     check_state: 'passing', requires_explicit_approval: true,
   });
@@ -274,7 +275,7 @@ test('_proposalDetailsHtml: a flagged row at threshold says it will merge once g
 
 test('_proposalDetailsHtml: qualified tallies and the ctx majority fallback drive the numbers', () => {
   const AppView = makeAppView({ ctx: { majority: 4 } });
-  const html = AppView._proposalDetailsHtml({
+  const html = detailsHtml(AppView, {
     id: 1, status: 'promoted', yes_count: 5, qualified_yes_count: 2, no_count: 0,
     votes_required: null, check_state: 'passing', requires_explicit_approval: true,
   });
@@ -285,7 +286,7 @@ test('_proposalDetailsHtml: qualified tallies and the ctx majority fallback driv
 test('_proposalDetailsHtml: the note is absent on settled rows', () => {
   const AppView = makeAppView();
   for (const status of ['merged', 'merging']) {
-    const html = AppView._proposalDetailsHtml({
+    const html = detailsHtml(AppView, {
       id: 1, status, yes_count: 3, no_count: 0, votes_required: 3,
       requires_explicit_approval: true,
     });
@@ -295,7 +296,7 @@ test('_proposalDetailsHtml: the note is absent on settled rows', () => {
 
 test('_proposalDetailsHtml: the note is absent on unflagged rows', () => {
   const AppView = makeAppView();
-  const html = AppView._proposalDetailsHtml({
+  const html = detailsHtml(AppView, {
     id: 1, status: 'promoted', yes_count: 1, no_count: 0, votes_required: 3,
     check_state: 'passing',
   });

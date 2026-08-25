@@ -158,7 +158,7 @@ export function WaitingScreen() {
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               This page checks for you every so often; you can also just come back later.
             </p>
-            <p id="waiting-check-state" className="text-xs text-zinc-400 dark:text-zinc-500">
+            <p id="waiting-check-state" className="text-xs text-zinc-500 dark:text-zinc-500">
               {checkState}
             </p>
           </div>

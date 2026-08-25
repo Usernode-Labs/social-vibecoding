@@ -24,6 +24,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeComposerBridge } = require('./lib/dev-composer-html');
+
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
@@ -82,6 +84,9 @@ function makeElement(id) {
 }
 
 function makeHarness() {
+  // #1078: the send button is a FIELD of the composer's view model —
+  // `_setStreamingUI` publishes the four states it used to paint by hand.
+  const composer = makeComposerBridge();
   const registry = new Map();
   const getEl = (id) => {
     if (!registry.has(id)) registry.set(id, makeElement(id));
@@ -159,6 +164,7 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.UsernodeReact = { devChat: composer.bridge };
 
   vm.createContext(sandbox);
   // Expose the file-scoped `const DevChat` to the test.
@@ -177,13 +183,14 @@ function makeHarness() {
   DevChat._setupKeyboardShortcuts = () => {};
   DevChat._restoreDraft = () => {};
   DevChat.renderSessionList = () => {};
-  DevChat._renderSyncBannerHtml = () => '';
-  DevChat._renderNewChangeBannerHtml = () => '';
+  // The banners are a portal now — `_renderBanners` no-ops without the
+  // bridge, so there is nothing left to neutralize here.
+  DevChat._renderBanners = () => {};
   DevChat._loadSpecViewer = () => {};
   DevChat._startHeartbeat = () => {};
   DevChat._setNotifyOnDone = () => {};
 
-  return { DevChat, sandbox, document, getEl };
+  return { DevChat, sandbox, document, getEl, send: () => composer.state().send };
 }
 
 // Drive the send button into the "Stop" state to simulate a previously
@@ -251,13 +258,12 @@ test('opening an existing CLI handoff hydrates its missing staging card from the
 });
 
 test('opening a different idle session resets Stop → Send (busy:false)', async () => {
-  const { DevChat, sandbox, document, getEl } = makeHarness();
-  const btn = getEl('dc-send-btn');
+  const { DevChat, sandbox, document, send } = makeHarness();
 
   // A previously-streaming session is tracked, and the button shows Stop.
   DevChat.currentSession = { id: 111 };
   armStopButton(DevChat);
-  assert.equal(btn.classList.contains('dc-btn-stop'), true, 'precondition: Stop is showing');
+  assert.equal(send().kind, 'stop', 'precondition: Stop is showing');
   assert.equal(DevChat.isStreaming, true, 'precondition: isStreaming true');
   assert.equal(DevChat._titleStatus, 'thinking', 'precondition: thinking marker set');
   assert.ok(document.title.startsWith('⏳'), 'precondition: title has thinking marker');
@@ -269,10 +275,7 @@ test('opening a different idle session resets Stop → Send (busy:false)', async
 
   assert.equal(DevChat.isStreaming, false, 'isStreaming reset to false on idle open');
   assert.equal(DevChat._streamingPhase, null, '_streamingPhase cleared');
-  assert.equal(btn.classList.contains('dc-btn-stop'), false, 'Stop class removed');
-  assert.equal(btn.classList.contains('dc-btn-streaming'), false, 'streaming class removed');
-  assert.equal(btn.textContent, 'Send', 'button label back to Send');
-  assert.equal(btn.getAttribute('aria-label'), 'Send', 'aria-label back to Send');
+  assert.deepEqual(send(), { kind: 'send' }, 'the button is Send again');
   assert.notEqual(DevChat._titleStatus, 'thinking', 'live thinking marker cleared');
   assert.ok(!document.title.includes('Thinking'), 'no Thinking marker left in title');
   // #990: the trailing activity indicator is per-turn state, so it must reset
@@ -282,13 +285,12 @@ test('opening a different idle session resets Stop → Send (busy:false)', async
 });
 
 test('opening a genuinely busy session re-applies Stop/streaming UI (busy:true)', async () => {
-  const { DevChat, sandbox, getEl } = makeHarness();
-  const btn = getEl('dc-send-btn');
+  const { DevChat, sandbox, send } = makeHarness();
 
   // Start fully idle (Send), like a fresh tab.
   DevChat.currentSession = null;
   DevChat._setStreamingUI(false);
-  assert.equal(btn.textContent, 'Send', 'precondition: Send showing');
+  assert.equal(send().kind, 'send', 'precondition: Send showing');
 
   sandbox.fetch = statusFetch(true);
 
@@ -296,8 +298,8 @@ test('opening a genuinely busy session re-applies Stop/streaming UI (busy:true)'
   DevChat.renderChatView();
 
   assert.equal(DevChat.isStreaming, true, 'busy session re-arms isStreaming');
-  assert.equal(btn.classList.contains('dc-btn-stop'), true, 'Stop class re-applied');
-  assert.equal(btn.getAttribute('aria-label'), 'Stop', 'aria-label is Stop');
+  assert.equal(send().kind, 'stop', 'Stop re-applied');
+  assert.equal(send().kind, 'stop', 'and it is the interruptible kind');
   assert.equal(DevChat._titleStatus, 'thinking', 'thinking marker re-applied');
   // #990: a turn is genuinely in flight, and the events that would have armed
   // the indicator were emitted before this tab opened the session. Arm it here
@@ -353,8 +355,7 @@ test('reopening the SAME busy session does not tear down its stream', async () =
   // Guard the "gated on a session-id change" edge case: returning to the
   // already-tracked busy session must NOT drop+reopen its resumable
   // stream or flicker the Stop button off.
-  const { DevChat, sandbox, getEl } = makeHarness();
-  const btn = getEl('dc-send-btn');
+  const { DevChat, sandbox, send } = makeHarness();
 
   let closes = 0;
   DevChat.currentSession = { id: 999 };
@@ -368,5 +369,5 @@ test('reopening the SAME busy session does not tear down its stream', async () =
 
   assert.equal(closes, 0, 'same-session reopen must not tear down the resumable stream');
   assert.equal(DevChat.isStreaming, true, 'still streaming');
-  assert.equal(btn.classList.contains('dc-btn-stop'), true, 'Stop stays applied');
+  assert.equal(send().kind, 'stop', 'Stop stays applied');
 });

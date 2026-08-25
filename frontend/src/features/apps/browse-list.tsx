@@ -26,6 +26,7 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
+import { ListRow } from '@/components/ui/grouped-list';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
@@ -47,9 +48,16 @@ function controller(): any {
 
 const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded-full '
   + 'border px-3 py-1.5 text-xs font-medium transition-colors ';
-const ADD_ON = 'bg-emerald-500 border-emerald-500 text-white';
-const ADD_OFF = 'border-violet-500 dark:border-violet-400 text-violet-600 '
-  + 'dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950';
+// emerald-700, not -500: white on #10b981 is 2.5:1 — a green you can see and a
+// label you cannot read. -700 takes the same pill to 5.5:1 with the state
+// unchanged.
+const ADD_ON = 'bg-emerald-700 border-emerald-700 text-white';
+// Filled neutral, not an accent outline: the row sits on a white card now, and
+// an outlined control on a floating surface is the shape the language never
+// draws (see the `neutral` variant in @/components/ui/button.tsx). ADD_ON stays
+// a filled emerald because "Added" is a STATE, not an action.
+const ADD_OFF = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
+  + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
 
 function Row({ view }: { view: RowView }): ReactNode {
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -79,32 +87,45 @@ function Row({ view }: { view: RowView }): ReactNode {
   const warm = () => controller()?.warmRow(view);
 
   return (
-    <div
+    <ListRow
       ref={rowRef}
-      className={`browse-row flex items-center gap-3 px-3 py-2.5 ${view.openable ? 'cursor-pointer' : 'cursor-default'}`}
+      className={`browse-row ${view.openable ? 'cursor-pointer' : 'cursor-default'}`}
       data-slug={view.slug}
       data-demo={view.demo ? 'true' : undefined}
       onPointerDown={warm}
       onMouseEnter={warm}
-    >
-      <div
-        className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
-        data-icon={appIconKind(view.app)}
-      >
-        <AppIconContent app={view.app} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="font-medium text-sm truncate">{view.name}</span>
-          <span className={`status-dot ${view.statusDot} shrink-0`} title={view.status}></span>
+      inset="none"
+      chevron={false}
+      leading={(
+        <div
+          className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
+          data-icon={appIconKind(view.app)}
+          // The same slug-derived identity tint the launcher grid draws. An
+          // app that is a lilac tile on Home was a blank white square here,
+          // which is the one thing a launcher icon must never be: different
+          // per screen. app.css turns the attribute into the colour.
+        >
+          <AppIconContent app={view.app} />
         </div>
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">{view.meta}</div>
-        {hasAppPills(view.app) ? (
-          <div className="flex flex-wrap items-center gap-1 mt-1">
-            <AppPills app={view.app} />
-          </div>
-        ) : null}
-      </div>
+      )}
+      title={(
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className="truncate">{view.name}</span>
+          <span className={`status-dot ${view.statusDot} shrink-0`} title={view.status}></span>
+        </span>
+      )}
+      subtitle={(
+        <>
+          <span className="block truncate">{view.meta}</span>
+          {hasAppPills(view.app) ? (
+            <span className="mt-1 flex flex-wrap items-center gap-1">
+              <AppPills app={view.app} />
+            </span>
+          ) : null}
+        </>
+      )}
+      trailing={(
+        <>
       {/* No `type` — the hand-written row shipped a bare <button>, and it sits
           in no form, so the default submit type is inert either way. */}
       <button
@@ -121,7 +142,9 @@ function Row({ view }: { view: RowView }): ReactNode {
         {view.added ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" /> : null}
         {view.added ? 'Added' : 'Add'}
       </button>
-    </div>
+        </>
+      )}
+    />
   );
 }
 

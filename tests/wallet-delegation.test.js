@@ -10,26 +10,42 @@ const source = fs.readFileSync(
   'utf8'
 );
 
-function element({ hidden = false } = {}) {
-  const classes = new Set(hidden ? ['hidden'] : []);
-  return {
-    children: [],
-    className: '',
-    textContent: '',
-    disabled: false,
-    listeners: {},
-    classList: {
-      contains(name) { return classes.has(name); },
-      remove(name) { classes.delete(name); },
-    },
-    appendChild(child) { this.children.push(child); return child; },
-    addEventListener(type, listener) { this.listeners[type] = listener; },
-  };
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+
+// ONE bundle per process: a second `loadTsx` entry would hand this file a
+// different `walletSheetStore` from the one the components subscribe to.
+let api = null;
+const mod = () => (api || (api = loadTsx('tests/fixtures/wallet-sheet-api.ts')));
+
+/**
+ * The sheet body as the browser draws it, from the store the module published.
+ *
+ * `_renderStakingCard` used to RETURN a detached element and these tests
+ * walked its children. The card is part of a component now, so the same
+ * assertions run against real markup — reached the way the app reaches it,
+ * through the module's own publish rather than by calling a renderer directly.
+ */
+function bodyHtml() {
+  return renderToHtml(createElement(mod().WalletSheetBody, {}));
+}
+
+/** Publish `staking` through the module and return the rendered body. */
+function stakingHtml(wallet, staking, { pending = false } = {}) {
+  wallet._stakingSupported = true;
+  wallet._stakingPending = pending;
+  wallet._state = Object.assign({}, wallet._state || {}, { staking });
+  wallet._publish();
+  return bodyHtml();
+}
+
+/** Text content only, so a class string cannot satisfy a copy assertion. */
+function textOf(html) {
+  return html.replace(/<[^>]*>/g, '\n')
+    .replace(/&#x27;/g, "'").replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
 }
 
 function loadWallet({ bridgeInfo, walletState = null, isNative = true } = {}) {
-  const walletRow = element({ hidden: true });
-  const balance = element();
   let stateReads = 0;
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
@@ -38,15 +54,6 @@ function loadWallet({ bridgeInfo, walletState = null, isNative = true } = {}) {
     Promise,
     setInterval() { return 1; },
     clearInterval() {},
-    document: {
-      createElement() { return element(); },
-      getElementById(id) {
-        return {
-          'drawer-row-wallet': walletRow,
-          'drawer-wallet-balance': balance,
-        }[id] || null;
-      },
-    },
     NativeChrome: {
       async getInfo() {
         return bridgeInfo || { version: 4, capabilities: [
@@ -66,12 +73,22 @@ function loadWallet({ bridgeInfo, walletState = null, isNative = true } = {}) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  // Bind the REAL store and stub the two portal helpers (the kit hand-off
+  // needs a browser), then drop the import lines so the module body evaluates
+  // as a script exactly as it did — tests/challenge-template-prefill.test.js
+  // uses the same technique.
+  mod().walletSheetStore.set({ ...mod().WALLET_EMPTY });
+  sandbox.walletSheetStore = mod().walletSheetStore;
+  sandbox.WALLET_EMPTY = mod().WALLET_EMPTY;
+  sandbox.mountWalletSheet = () => {};
+  sandbox.unmountWalletSheet = () => {};
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox);
+  vm.runInContext(source.replace(/^import[^\n]*\n/gm, ''), sandbox);
   return {
     sandbox,
     wallet: sandbox.WalletSheet,
-    walletRow,
+    get rowHtml() { return renderToHtml(createElement(mod().WalletRow, {})); },
+    get bodyHtml() { return bodyHtml(); },
     get stateReads() { return stateReads; },
   };
 }
@@ -123,28 +140,28 @@ test('delegation card renders off, active and setup states with disclosure', () 
     'monitor it from your phone? Start the node there using the same ' +
     'account you use on this phone.';
 
-  const off = textTree(wallet._renderStakingCard({
+  const offHtml = stakingHtml(wallet, {
     delegate: null,
     delegated_since: '2026-08-11T10:30:00Z',
-  }));
+  });
+  const off = textOf(offHtml);
   assert.match(off, /Producing blocks on this phone/);
   assert.match(off, /earns full points/);
   assert.ok(off.includes(disclosure));
   assert.ok(off.includes(selfHosted));
   assert.doesNotMatch(off, /Delegated since/,
     'delegated_since is not active-state evidence');
-  assert.equal(findClass(wallet._renderStakingCard({
-    delegate: null,
-    delegated_since: null,
-  }), 'bg-violet-500/10'), null,
-  'the delegated highlight only appears while delegated');
+  assert.doesNotMatch(
+    stakingHtml(wallet, { delegate: null, delegated_since: null }),
+    /bg-violet-500\/10/,
+    'the delegated highlight only appears while delegated');
 
   const activeValue = '2026-08-11T10:30:00Z';
-  const activeCard = wallet._renderStakingCard({
+  const activeHtml = stakingHtml(wallet, {
     delegate: 'B62qiTKpEPjGTSHZrtM8uXiKgn8So916pLmNJKDhKeyBQL9TDb3nvBG',
     delegated_since: activeValue,
   });
-  const active = textTree(activeCard);
+  const active = textOf(activeHtml);
   assert.match(active, /Delegated/);
   assert.match(active, /B62qiTKp…b3nvBG/);
   assert.match(active, /Block production on this phone is disabled/);
@@ -153,26 +170,26 @@ test('delegation card renders off, active and setup states with disclosure', () 
   'the timestamp follows the runtime user locale');
   assert.ok(active.includes(disclosure));
   assert.ok(active.includes(selfHosted));
-  const highlight = findClass(activeCard, 'bg-violet-500/10');
-  assert.ok(highlight, 'the delegated state sits in a tinted container');
-  assert.ok(findText(highlight, 'Delegated'),
-    'the status line lives inside the highlighted container');
-  assert.ok(findText(highlight, 'B62qiTKp…b3nvBG'),
-    'the delegate address lives inside the highlighted container');
 
-  const setup = textTree(wallet._renderStakingCard(null));
+  // The status line and the address live INSIDE the tinted container — the
+  // containment the element walk used to prove, now read off the markup.
+  const tinted = activeHtml.match(
+    /<div class="rounded-lg bg-violet-500\/10 px-3 py-2">([\s\S]*?)<\/div><button/);
+  assert.ok(tinted, 'the delegated state sits in a tinted container');
+  assert.match(tinted[1], /Delegated/);
+  assert.match(tinted[1], /B62qiTKp…b3nvBG/);
+
+  const setup = textOf(stakingHtml(wallet, null));
   assert.match(setup, /Wallet setup is still in progress/);
   assert.match(setup, /Retry/);
 
-  wallet._stakingPending = true;
-  const pending = wallet._renderStakingCard({
+  const pending = stakingHtml(wallet, {
     delegate: null,
     delegated_since: null,
-  });
-  const opening = findText(pending, 'Opening…');
-  assert.ok(opening);
-  assert.equal(opening.disabled, true,
-    'the action is disabled for the lifetime of the native promise');
+  }, { pending: true });
+  assert.match(textOf(pending), /Opening…/);
+  // Disabled for the lifetime of the native promise.
+  assert.match(pending, /<button[^>]*disabled=""[^>]*>Opening…<\/button>/);
 });
 
 test('manage action sends no values, applies native result, then refreshes',
@@ -259,9 +276,15 @@ test('unsupported native bridge keeps Wallet navigation but hides delegation',
 
     await loaded.wallet.init();
 
-    assert.equal(loaded.walletRow.classList.contains('hidden'), false);
+    // The row is present for every native top frame — capabilities affect its
+    // CONTENTS, never whether Wallet is reachable. Read off the rendered row
+    // rather than a stub node's classList.
+    assert.doesNotMatch(loaded.rowHtml, /class="hidden /);
+    assert.match(loaded.rowHtml, /id="drawer-row-wallet"/);
     assert.equal(loaded.wallet._stakingSupported, false);
     assert.equal(loaded.stateReads, 0);
+    // And no delegation card at all on an unsupported bridge.
+    assert.doesNotMatch(loaded.bodyHtml, /Block production/);
   });
 
 test('wallet implementation has no raw channel or delegation HTTP path', () => {

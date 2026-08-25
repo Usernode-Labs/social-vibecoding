@@ -1,5 +1,5 @@
 // The filter bar over SESSION cards (app-view.js _devCardMatches's 'session'
-// kind, _renderKanbanInner's In-progress pass, _sessionFilterNoteHtml).
+// kind, _kanbanView's In-progress pass, _sessionFilterNoteRow).
 //
 // Session cards used to be exempt from the filter bar entirely: type a search
 // term and they just sat there in the In-progress column with no explanation.
@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
+const { kanbanHtml } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
@@ -131,29 +132,36 @@ test('needs-my-vote excludes sessions (there is nothing to vote on yet)', () => 
 test('the note names WHICH filters did not apply, and how many cards', () => {
   const AppView = makeAppView();
   AppView._kanbanFilters = F({ priority: 'high' });
-  const one = AppView._sessionFilterNoteHtml(1);
-  assert.match(one, /the 1 session card below is not filtered by priority/);
+  // The note is a `note` ListRow now (card/list-rows.tsx renders it); its
+  // TEXT is what this file is about, so it reads the row's text.
+  const note = (n) => (AppView._sessionFilterNoteRow(n) || { text: '' }).text;
+  assert.match(note(1), /the 1 session card below is not filtered by priority/);
 
   AppView._kanbanFilters = F({ priority: 'high', assignee: 'maya' });
-  assert.match(AppView._sessionFilterNoteHtml(3),
-    /the 3 session cards below are not filtered by priority/);
+  // #1404: a NAMED person now applies to a session, through its author, so
+  // the note must no longer claim it does not. Only the Unassigned sentinel
+  // is still inapplicable — a session is not an assignable board item.
+  assert.match(note(3), /the 3 session cards below are not filtered by priority/);
+  // Scoped to the VARIABLE half: the note's fixed preamble ("Dev sessions
+  // don't carry priority, category or assignee") names the word either way.
+  assert.doesNotMatch(note(3).split('not filtered by')[1], /assignee/);
 
   AppView._kanbanFilters = F({
     priority: 'high', category: 'bug', assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED,
   });
-  assert.match(AppView._sessionFilterNoteHtml(2), /priority, category or assignee/);
+  assert.match(note(2), /priority, category or assignee/);
 });
 
 test('the note is silent when there is nothing to explain', () => {
   const AppView = makeAppView();
   // No sessions in the column.
   AppView._kanbanFilters = F({ priority: 'high' });
-  assert.equal(AppView._sessionFilterNoteHtml(0), '');
+  assert.equal(AppView._sessionFilterNoteRow(0), null);
   // No inapplicable filter active — a text filter DOES apply to sessions.
   AppView._kanbanFilters = F({ q: 'dark' });
-  assert.equal(AppView._sessionFilterNoteHtml(2), '');
+  assert.equal(AppView._sessionFilterNoteRow(2), null);
   AppView._kanbanFilters = F();
-  assert.equal(AppView._sessionFilterNoteHtml(2), '');
+  assert.equal(AppView._sessionFilterNoteRow(2), null);
 });
 
 // ── End to end through the column ───────────────────────────────────────
@@ -169,7 +177,7 @@ function board(AppView, filters, over) {
   AppView._mySessions = o.mine || [];
   AppView._sharedSessions = o.shared || [];
   AppView._kanbanFilters = filters;
-  return AppView._renderKanbanInner();
+  return kanbanHtml(AppView);
 }
 
 test('a text filter drops a non-matching session and keeps a matching one', () => {

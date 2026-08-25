@@ -742,7 +742,7 @@
         active: s.key === active,
         className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
           + (s.key === active
-            ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
+            ? 'bg-violet-600/10 text-violet-700 dark:text-violet-400'
             : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
       });
       return Settings._groupedSections().map((g, i) => ({
@@ -1022,59 +1022,46 @@
       } catch {}
 
       this._localAgents = agents;
+      // The SECTION's own `hidden` is a sibling concern and stays here: an
+      // empty "Local coding agent — none" panel would be noise on every
+      // account that has never used the CLI, which is nearly all of them.
       section.classList.toggle('hidden', agents.length === 0);
-      list.textContent = '';
-      for (const agent of agents) {
-        list.appendChild(this._localAgentCard(agent));
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsLocalAgents : null;
+      if (bridge) {
+        bridge.publish({
+          phase: 'ready',
+          agents: agents.map((agent) => this._localAgentView(agent)),
+        });
       }
       if (status && agents.some((a) => a.demo)) {
         status.textContent = 'Demo data — changes are not saved.';
-        status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
 
-    // Built with DOM calls rather than innerHTML: the label is free text the
-    // user typed on their own machine and arrives here verbatim.
-    _localAgentCard(agent) {
-      const card = document.createElement('div');
-      card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-
-      const top = document.createElement('div');
-      top.className = 'flex items-start justify-between gap-3';
-      const text = document.createElement('div');
-      text.className = 'min-w-0';
-
-      const title = document.createElement('div');
-      title.className = 'text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate';
-      title.textContent = agent.label || 'Unnamed machine';
-
-      const where = document.createElement('div');
-      where.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1 truncate';
+    // One attached machine, as ./local-agents-list.tsx draws it.
+    //
+    // This was `_localAgentCard`, built with DOM calls rather than innerHTML
+    // for one reason: the label is free text the user typed on their own
+    // machine and arrives verbatim. React escapes it for the same reason, so
+    // the safety property survives the renderer swap — `leaseId` and `demo`
+    // collapse into the one fact the row needs, which is whether there is a
+    // lease to release at all.
+    _localAgentView(agent) {
       const app = agent.appName || agent.appSlug || 'an app';
-      where.textContent = agent.sessionTitle
-        ? `${app} · ${agent.sessionTitle}` : String(app);
-
-      const detail = document.createElement('div');
-      detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-0.5';
       const seen = Number.isFinite(Date.parse(agent.lastSeenAt))
         ? new Date(agent.lastSeenAt).toLocaleTimeString() : 'unknown';
-      detail.textContent = `${agent.runtime || 'claude-code'} · last seen ${seen}`;
-
-      text.append(title, where, detail);
-      top.appendChild(text);
-
-      // Demo rows (staging ?demo=1) are fabricated per request and own no
-      // lease, so there is nothing for a button to release.
-      if (!agent.demo && agent.leaseId) {
-        const detach = document.createElement('button');
-        detach.type = 'button';
-        detach.className = 'shrink-0 rounded border border-zinc-400 dark:border-zinc-600 px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors';
-        detach.textContent = 'Detach';
-        detach.addEventListener('click', () => this._detachLocalAgent(agent, detach));
-        top.appendChild(detach);
-      }
-      card.appendChild(top);
-      return card;
+      return {
+        leaseId: agent.leaseId || null,
+        label: agent.label || null,
+        title: agent.label || 'Unnamed machine',
+        where: agent.sessionTitle ? `${app} · ${agent.sessionTitle}` : String(app),
+        detail: `${agent.runtime || 'claude-code'} · last seen ${seen}`,
+        // Demo rows (staging ?demo=1) are fabricated per request and own no
+        // lease, so there is nothing for a button to release.
+        detachable: !agent.demo && !!agent.leaseId,
+      };
     },
 
     // Releasing from here must not need the machine to cooperate: the common
@@ -1098,8 +1085,8 @@
         button.disabled = false;
         if (status) {
           status.textContent = err.message || 'Could not detach that machine.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       }
     },
@@ -1132,61 +1119,30 @@
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
-    // "Preferred build flow" (#1049) — the escape hatch for the dev-chat
-    // picker's "remember my option" checkbox. Once a user ticks that box the
-    // picker stops rendering, so there has to be somewhere to change their
-    // mind; Connections is where the GitHub link and the connectors already
-    // live, which is exactly the machinery the external flows depend on.
+    // "Preferred build flow" (#1049). The BLOCK is markup now
+    // (sections/connectors.tsx) — it was injected here at runtime until
+    // #1191, because the shell's body was a hand-written document pinned
+    // id-for-id and a new settings control had nowhere else to go. What is
+    // left is what this module does for every other control on the screen:
+    // bind the change, reflect the stored value, and gate the two hand-off
+    // options on whether this deployment has the external flows at all.
     //
-    // The markup is BUILT HERE rather than in frontend/src/Shell.tsx: the
-    // shell's body is id-pinned against tests/baselines/shell-markup.json
-    // by tests/shell-id-inventory.test.js (no undeclared elements, no attribute
-    // changes), so a new settings control has to be injected at runtime.
-    // Idempotent — _renderAllSections and refresh() both call it.
+    // Idempotent — _renderAllSections and refresh() both call it, and the
+    // listener is attached once, to an element React keeps.
     _renderDevFlowSection() {
-      const host = document.querySelector('[data-settings-section="connectors"]');
-      if (!host) return;
-      let block = document.getElementById('dev-flow-pref-section');
-      if (!block) {
-        block = document.createElement('div');
-        block.id = 'dev-flow-pref-section';
-        block.className = 'mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800';
-        block.innerHTML = `
-          <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Preferred build flow</h3>
-          <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3 leading-relaxed">
-            When you start a proposal, Usernode can ask how you want to build it — here on the
-            platform with the Usernode agent, or by handing the work order to your own Claude Code
-            or Codex web session. Pick one here to skip the question; choose
-            <strong class="font-semibold text-zinc-600 dark:text-zinc-400">Ask me every time</strong>
-            to get the picker back.
-          </p>
-          <select id="settings-dev-flow"
-            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
-            <option value="">Ask me every time</option>
-            <option value="platform">Build on Usernode</option>
-            <option value="claude-code">Claude Code (claude.ai/code)</option>
-            <option value="codex">Codex (chatgpt.com/codex)</option>
-          </select>
-          <div id="settings-dev-flow-status" class="text-xs mt-2 hidden"></div>
-        `;
-        // Above the GitHub link block when it exists, so the preference reads
-        // as the question and the link below it as one of the answers.
-        const anchor = document.getElementById('github-link-section');
-        if (anchor) host.insertBefore(block, anchor);
-        else host.appendChild(block);
-      }
-      const select = block.querySelector('#settings-dev-flow');
-      if (select && !select.__devFlowWired) {
+      const select = document.getElementById('settings-dev-flow');
+      if (!select) return;
+      if (!select.__devFlowWired) {
         select.__devFlowWired = true;
         select.addEventListener('change', (e) => this._saveDevFlow(e.target.value));
       }
       // A deployment without the external flows can still express "always
       // build on Usernode" vs "ask me" — just not the two hand-offs.
-      block.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
+      select.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
         opt.disabled = !this.state.externalFlowsAvailable;
       });
-      if (select) select.value = this.state.devFlowPreference || '';
-      const status = block.querySelector('#settings-dev-flow-status');
+      select.value = this.state.devFlowPreference || '';
+      const status = document.getElementById('settings-dev-flow-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
@@ -1358,9 +1314,8 @@
 
     async _loadConnectors() {
       const section = document.getElementById('connectors-section');
-      const list = document.getElementById('connectors-list');
       const status = document.getElementById('connectors-status');
-      if (!section || !list || !status) return;
+      if (!section || !status) return;
 
       // The connector URL is derived from the origin the SPA is served
       // from, so a self-hosted fork shows its own.
@@ -1369,7 +1324,7 @@
 
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;
       const loadId = this._connectorLoadId;
-      list.textContent = 'Loading connections…';
+      this._publishConnectors({ phase: 'loading', connectors: [] });
       status.classList.add('hidden');
 
       try {
@@ -1397,10 +1352,10 @@
         this._renderConnectors();
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
-        list.textContent = '';
+        this._publishConnectors({ phase: 'idle', connectors: [] });
         status.textContent = err.message || 'Could not load your connections.';
-        status.classList.remove('hidden', 'text-emerald-500');
-        status.classList.add('text-red-500');
+        status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+        status.classList.add('text-red-700', 'dark:text-red-400');
       }
     },
 
@@ -1493,51 +1448,39 @@
       line.classList.remove('hidden');
     },
 
+    // Publish the connector cards. Was a `document.createElement` tree per
+    // connection — card, top row, title, metadata, Disconnect and its listener
+    // — and is ./connectors-list.tsx's markup now. The two date formats and
+    // the "never used" fallback are resolved here, where the payload is.
+    _publishConnectors(next) {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsConnectors : null;
+      if (bridge) bridge.publish(next);
+    },
+
     _renderConnectors() {
-      const list = document.getElementById('connectors-list');
-      if (!list) return;
-      list.textContent = '';
       const connectors = this._connectors || [];
+      // Two SIBLINGS of the list host, both still this module's: the static
+      // "stop the prompts" prose blocks, whose visibility follows which client
+      // families are connected, and the read-only tip status.
       this._renderConnectorCases(connectors);
       this._renderConnectorHint(connectors);
-      if (!connectors.length) {
-        const empty = document.createElement('p');
-        empty.className = 'text-xs text-zinc-500 dark:text-zinc-400';
-        empty.textContent = 'No chat products connected yet.';
-        list.appendChild(empty);
-        return;
-      }
-      for (const connector of connectors) {
-        const card = document.createElement('div');
-        card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-
-        const top = document.createElement('div');
-        top.className = 'flex items-start justify-between gap-3';
-        const text = document.createElement('div');
-        text.className = 'min-w-0';
-        const title = document.createElement('div');
-        title.className = 'text-sm font-medium text-zinc-800 dark:text-zinc-200';
-        title.textContent = connector.client_name || 'Connected client';
-        const detail = document.createElement('div');
-        detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-        const connected = Number.isFinite(Date.parse(connector.connected_at))
-          ? new Date(connector.connected_at).toLocaleString() : 'unknown date';
-        const used = connector.last_used_at && Number.isFinite(Date.parse(connector.last_used_at))
-          ? ` · last used ${new Date(connector.last_used_at).toLocaleString()}`
-          : ' · never used';
-        detail.textContent = `connected ${connected}${used}`;
-        text.append(title, detail);
-
-        const disconnect = document.createElement('button');
-        disconnect.type = 'button';
-        disconnect.className = 'shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
-        disconnect.textContent = 'Disconnect';
-        disconnect.addEventListener('click', () => this._disconnectConnector(connector.id, disconnect));
-
-        top.append(text, disconnect);
-        card.appendChild(top);
-        list.appendChild(card);
-      }
+      this._publishConnectors({
+        phase: 'ready',
+        connectors: connectors.map((connector) => {
+          const connected = Number.isFinite(Date.parse(connector.connected_at))
+            ? new Date(connector.connected_at).toLocaleString() : 'unknown date';
+          const used = connector.last_used_at
+            && Number.isFinite(Date.parse(connector.last_used_at))
+            ? ` · last used ${new Date(connector.last_used_at).toLocaleString()}`
+            : ' · never used';
+          return {
+            id: String(connector.id),
+            title: connector.client_name || 'Connected client',
+            detail: `connected ${connected}${used}`,
+          };
+        }),
+      });
     },
 
     async _disconnectConnector(id, button) {
@@ -1555,15 +1498,15 @@
         await this._loadConnectors();
         if (status) {
           status.textContent = 'Disconnected.';
-          status.classList.remove('hidden', 'text-red-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
         if (button) button.disabled = false;
         if (status) {
           status.textContent = err.message || 'Could not disconnect.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       }
     },
@@ -1584,9 +1527,10 @@
 
     async _loadGithubLink() {
       const section = document.getElementById('github-link-section');
-      const body = document.getElementById('github-link-body');
-      if (!section || !body) return;
-      body.textContent = 'Loading…';
+      if (!section) return;
+      this._publishSocialIdentity({
+        phase: 'loading', message: 'Loading…', tier: null, providers: [],
+      });
       try {
         const response = await fetch(`/api/me/social-identities${this._socialIdentityDemoQuery()}`, {
           credentials: 'same-origin',
@@ -1608,287 +1552,184 @@
         this._githubLink = data;
         this._renderGithubLink();
       } catch {
-        body.textContent = 'Could not load social accounts. Try again shortly.';
+        this._publishSocialIdentity({
+          phase: 'error',
+          message: 'Could not load social accounts. Try again shortly.',
+          tier: null,
+          providers: [],
+        });
         section.classList.remove('hidden');
       }
     },
 
+    _publishSocialIdentity(next) {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsSocialIdentity : null;
+      if (bridge) bridge.publish(next);
+    },
+
     _renderGithubLink() {
-      const body = document.getElementById('github-link-body');
       const status = document.getElementById('github-link-status');
-      if (!body) return;
-      body.textContent = '';
       if (status) status.classList.add('hidden');
       const payload = this._githubLink || { providers: {}, entitlement: {} };
-      body.appendChild(this._socialIdentityTierCard(payload.entitlement));
-      ['github', 'x'].forEach((provider) => {
-        body.appendChild(this._socialIdentityProviderRow(
+      const entitlement = payload.entitlement || {};
+      this._publishSocialIdentity({
+        phase: 'ready',
+        message: null,
+        tier: this._socialIdentityTierView(entitlement),
+        providers: ['github', 'x'].map((provider) => this._socialIdentityRowView(
           provider,
           payload.providers[provider] || { provider, linked: false, available: false },
-          payload.entitlement,
+          entitlement,
           !!payload.demo
-        ));
+        )),
       });
+      // A SIBLING of the block, and still this module's: it reports the OAuth
+      // result carried in the hash query, which is about the navigation that
+      // just happened rather than about the block's contents.
       this._socialIdentityCallbackStatus(status);
     },
 
-    _socialIdentityTierCard(entitlement) {
+    // The tier card's five states, as text plus a tone. Every one of them is
+    // a different answer to "how much can this account spend today, and why",
+    // so the wording is decided here, next to the entitlement it reads.
+    _socialIdentityTierView(entitlement) {
       const e = entitlement || {};
-      const card = document.createElement('div');
-      card.className = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 mb-3';
-      const title = document.createElement('div');
-      title.className = 'text-sm font-semibold text-zinc-800 dark:text-zinc-200';
-      const detail = document.createElement('div');
-      detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
       const dollars = `$${(Math.max(0, Number(e.limitCents) || 0) / 100).toFixed(2)}/day`;
       if (e.entitlementAvailable === false) {
-        title.textContent = 'Daily credit tier temporarily unavailable';
-        detail.textContent = 'Usernode could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.';
-      } else if (e.policy === 'legacy') {
-        title.textContent = `Current daily allowance: ${dollars}`;
-        detail.textContent = 'Social account linking is available, but identity-based credit tiers are not active on this deployment yet.';
-      } else if (e.tier === 'override') {
-        title.textContent = `Administrator-set allowance: ${dollars}`;
-        detail.textContent = 'This account has an explicit administrator override, which takes precedence over identity tiers.';
-      } else if (e.verificationRequired) {
-        title.textContent = 'Layer 1 locked · $0/day';
-        detail.textContent = 'Connect either GitHub or X below to unlock $10.00/day. A second provider does not add another $10.';
-        card.className += ' border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20';
-      } else {
-        title.textContent = `Layer 1 unlocked · ${dollars}`;
-        detail.textContent = 'At least one social account ownership proof is current. Provider tokens are not stored.';
-        card.className += ' border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20';
+        return {
+          tone: 'plain',
+          title: 'Daily credit tier temporarily unavailable',
+          detail: 'Usernode could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.',
+        };
       }
-      card.append(title, detail);
-      return card;
+      if (e.policy === 'legacy') {
+        return {
+          tone: 'plain',
+          title: `Current daily allowance: ${dollars}`,
+          detail: 'Social account linking is available, but identity-based credit tiers are not active on this deployment yet.',
+        };
+      }
+      if (e.tier === 'override') {
+        return {
+          tone: 'plain',
+          title: `Administrator-set allowance: ${dollars}`,
+          detail: 'This account has an explicit administrator override, which takes precedence over identity tiers.',
+        };
+      }
+      if (e.verificationRequired) {
+        return {
+          tone: 'warn',
+          title: 'Layer 1 locked · $0/day',
+          detail: 'Connect either GitHub or X below to unlock $10.00/day. A second provider does not add another $10.',
+        };
+      }
+      return {
+        tone: 'ok',
+        title: `Layer 1 unlocked · ${dollars}`,
+        detail: 'At least one social account ownership proof is current. Provider tokens are not stored.',
+      };
     },
 
-    _socialIdentityProviderRow(provider, link, entitlement, demo) {
+    // One provider row. Five mutually-exclusive states, and the two actions:
+    // a Connect anchor (or its inert ?demo= twin) and Disconnect.
+    _socialIdentityRowView(provider, link, entitlement, demo) {
       const name = provider === 'github' ? 'GitHub' : 'X';
-      const wrap = document.createElement('div');
-      wrap.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-      const row = document.createElement('div');
-      row.className = 'flex items-start justify-between gap-3';
-      const text = document.createElement('div');
-      text.className = 'min-w-0';
-      const heading = document.createElement('div');
-      heading.className = 'text-sm font-semibold text-zinc-800 dark:text-zinc-200';
-      heading.textContent = link.linked && link.handle ? `${name} · @${link.handle}` : name;
-      const state = document.createElement('div');
-      state.className = 'text-xs mt-1';
+      let state;
       if (link.reconnectRequired) {
-        state.className += ' text-amber-600 dark:text-amber-400';
-        state.textContent = 'Linked for GitHub attribution · reconnect once to make this identity credit-eligible.';
+        state = {
+          tone: 'amber',
+          text: 'Linked for GitHub attribution · reconnect once to make this identity credit-eligible.',
+        };
       } else if (link.linked && entitlement.policy === 'tiered') {
-        state.className += ' text-emerald-600 dark:text-emerald-400';
-        state.textContent = 'Ownership verified · counts toward the single $10/day social tier.';
+        state = {
+          tone: 'emerald',
+          text: 'Ownership verified · counts toward the single $10/day social tier.',
+        };
       } else if (link.linked) {
-        state.className += ' text-zinc-500 dark:text-zinc-400';
-        state.textContent = 'Ownership verified · identity credit tiers are not active yet.';
+        state = {
+          tone: 'muted',
+          text: 'Ownership verified · identity credit tiers are not active yet.',
+        };
       } else if (link.available === false) {
-        state.className += ' text-zinc-500 dark:text-zinc-400';
-        state.textContent = `${name} linking is not configured on this deployment.`;
+        state = { tone: 'muted', text: `${name} linking is not configured on this deployment.` };
       } else {
-        state.className += ' text-zinc-500 dark:text-zinc-400';
-        state.textContent = entitlement.verificationRequired
-          ? `Not connected · connect ${name} to unlock Layer 1.`
-          : 'Not connected.';
+        state = {
+          tone: 'muted',
+          text: entitlement.verificationRequired
+            ? `Not connected · connect ${name} to unlock Layer 1.`
+            : 'Not connected.',
+        };
       }
-      text.append(heading, state);
-      if (link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))) {
-        const when = document.createElement('div');
-        when.className = 'text-xs text-zinc-500 dark:text-zinc-500 mt-1';
-        when.textContent = `linked ${new Date(link.linkedAt).toLocaleString()}`;
-        text.appendChild(when);
-      }
-      if (link.linked && link.access === 'identity') {
-        const noToken = document.createElement('div');
-        if (provider === 'github') noToken.id = 'github-link-no-token';
-        noToken.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-        noToken.textContent = provider === 'github'
-          ? 'Usernode holds no GitHub access token for your account.'
-          : 'Usernode stores no X access token for your account.';
-        text.appendChild(noToken);
-      }
-
-      const actions = document.createElement('div');
-      actions.className = 'shrink-0 flex flex-wrap justify-end gap-2';
-      if ((!link.linked || link.reconnectRequired) && link.available !== false) {
-        const label = link.reconnectRequired ? 'Reconnect' : `Connect ${name}`;
-        if (demo) {
-          const disabled = document.createElement('button');
-          disabled.type = 'button';
-          disabled.disabled = true;
-          disabled.className = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white opacity-50';
-          disabled.textContent = label;
-          actions.appendChild(disabled);
-        } else {
-          const connect = document.createElement('a');
-          connect.href = `/api/me/social-identities/${provider}/connect`;
-          connect.className = 'rounded-md bg-violet-600 hover:bg-violet-500 px-2 py-1 text-xs font-medium text-white transition-colors';
-          connect.textContent = label;
-          actions.appendChild(connect);
-        }
-      }
-      if (link.linked) {
-        const unlink = document.createElement('button');
-        unlink.type = 'button';
-        unlink.disabled = demo;
-        unlink.className = 'rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50 transition-colors';
-        unlink.textContent = 'Disconnect';
-        if (!demo) unlink.addEventListener('click', () => this._unlinkGithub(unlink, provider));
-        actions.appendChild(unlink);
-      }
-      row.append(text, actions);
-      wrap.append(row, this._socialIdentityAuditNote(provider));
-      // A provider that rejects our callback address errors on its own page
-      // and never redirects back, so the only trace of that failure is the
-      // stranded attempt the server spotted (#1291).
-      if (link.pendingAttemptAt) {
-        const stranded = document.createElement('p');
-        stranded.id = `${provider}-link-pending-note`;
-        stranded.className = 'text-xs text-amber-600 dark:text-amber-400 mt-2';
-        stranded.textContent = `Your last ${name} connection attempt didn't complete. `
-          + `If ${name} showed "Something went wrong — You weren't able to give access to the App", `
-          + `the platform's callback address isn't registered on the ${name} developer app — `
-          + 'an administrator needs to update that app’s settings.';
-        wrap.appendChild(stranded);
-      }
-      if (link.diagnostics) {
-        wrap.appendChild(this._socialIdentityDiagnostics(provider, link.diagnostics, demo));
-      }
-      return wrap;
+      const offersConnect = (!link.linked || link.reconnectRequired) && link.available !== false;
+      return {
+        provider,
+        name,
+        heading: link.linked && link.handle ? `${name} · @${link.handle}` : name,
+        state,
+        linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
+          ? `linked ${new Date(link.linkedAt).toLocaleString()}`
+          : null,
+        noToken: link.linked && link.access === 'identity'
+          ? (provider === 'github'
+            ? 'Usernode holds no GitHub access token for your account.'
+            : 'Usernode stores no X access token for your account.')
+          : null,
+        connect: offersConnect
+          ? {
+            label: link.reconnectRequired ? 'Reconnect' : `Connect ${name}`,
+            // A demo fixture gets the control inert rather than absent: the
+            // real flow would navigate straight out of the fixture.
+            href: demo ? null : `/api/me/social-identities/${provider}/connect`,
+          }
+          : null,
+        unlink: link.linked ? { disabled: !!demo } : null,
+        strandedNote: link.pendingAttemptAt
+          ? `Your last ${name} connection attempt didn't complete. `
+            + `If ${name} showed "Something went wrong — You weren't able to give access to the App", `
+            + `the platform's callback address isn't registered on the ${name} developer app — `
+            + 'an administrator needs to update that app’s settings.'
+          : null,
+        diagnostics: link.diagnostics
+          ? this._socialIdentityDiagnosticsView(provider, link.diagnostics, demo)
+          : null,
+      };
     },
 
-    // Admin-only configuration panel for a provider whose OAuth setup can
-    // fail invisibly on the provider's own page (#1291): names the
-    // credential pair in use, the exact callback URL the developer app must
-    // register, and a live check of the pair against X's token endpoint.
-    _socialIdentityDiagnostics(provider, diagnostics, demo) {
+    // The admin-only configuration panel (#1291): the credential pair in use,
+    // the callback URL the developer app must register, and a live check of
+    // the pair. The transient halves — the Copy control's "Copied" flash and
+    // the check's in-flight/verdict line — are ./social-identity.tsx's own
+    // state: they were local variables closed over by a listener, and they
+    // never leave that subtree.
+    _socialIdentityDiagnosticsView(provider, diagnostics, demo) {
       const name = provider === 'github' ? 'GitHub' : 'X';
-      const panel = document.createElement('div');
-      panel.id = `${provider}-link-diagnostics`;
-      panel.className = 'mt-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2.5 py-2 text-xs';
-
-      const source = document.createElement('div');
-      source.className = 'font-medium text-zinc-700 dark:text-zinc-300';
+      let source;
       if (diagnostics.credentialSource === 'waitlist') {
-        source.textContent = `Reusing the waitlist ${name} app’s credentials.`;
+        source = `Reusing the waitlist ${name} app’s credentials.`;
       } else if (diagnostics.credentialSource === 'dedicated') {
-        source.textContent = diagnostics.sameAppAsWaitlist
+        source = diagnostics.sameAppAsWaitlist
           ? `Dedicated ${name} credentials — same app as the waitlist pair.`
           : `Dedicated ${name} app credentials.`;
       } else {
-        source.textContent = `No complete ${name} credential pair is configured.`;
+        source = `No complete ${name} credential pair is configured.`;
       }
-      panel.appendChild(source);
-
-      const cbRow = document.createElement('div');
-      cbRow.className = 'mt-1 flex items-center gap-2 min-w-0';
-      const cbLabel = document.createElement('span');
-      cbLabel.className = 'text-zinc-500 dark:text-zinc-400 shrink-0';
-      cbLabel.textContent = 'Callback URI:';
-      const cbCode = document.createElement('code');
-      cbCode.className = 'truncate text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 rounded px-1 py-0.5';
-      cbCode.textContent = diagnostics.callbackUrl || '';
-      const cbCopy = document.createElement('button');
-      cbCopy.type = 'button';
-      cbCopy.className = 'shrink-0 rounded border border-zinc-300 dark:border-zinc-600 px-1.5 py-0.5 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
-      cbCopy.textContent = 'Copy';
-      cbCopy.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(diagnostics.callbackUrl || '');
-          cbCopy.textContent = 'Copied';
-          setTimeout(() => { cbCopy.textContent = 'Copy'; }, 1500);
-        } catch { /* clipboard unavailable — the address is still visible */ }
-      });
-      cbRow.append(cbLabel, cbCode, cbCopy);
-      panel.appendChild(cbRow);
-
-      const warning = document.createElement('p');
-      warning.className = 'mt-1 text-zinc-500 dark:text-zinc-400';
-      warning.textContent = `If this address isn’t registered as a callback URI on the ${name} developer app, `
-        + `${name} shows "Something went wrong" before sign-in and never redirects back here.`;
-      panel.appendChild(warning);
-
-      const checkRow = document.createElement('div');
-      checkRow.className = 'mt-2 flex items-start gap-2';
-      const checkButton = document.createElement('button');
-      checkButton.type = 'button';
-      checkButton.id = `${provider}-link-check`;
-      checkButton.className = 'shrink-0 rounded-md border border-violet-400 dark:border-violet-700 px-2 py-1 font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950 disabled:opacity-50 transition-colors';
-      checkButton.textContent = 'Run configuration check';
-      const checkResult = document.createElement('span');
-      checkResult.className = 'text-zinc-500 dark:text-zinc-400 pt-1';
-      checkButton.addEventListener('click', async () => {
-        checkButton.disabled = true;
-        checkResult.className = 'text-zinc-500 dark:text-zinc-400 pt-1';
-        checkResult.textContent = 'Checking…';
-        try {
-          let verdict;
-          if (demo) {
-            verdict = { clientAuth: 'ok' };
-          } else {
-            const response = await fetch('/api/me/social-identities/x/check', {
-              method: 'POST',
-              credentials: 'same-origin',
-              cache: 'no-store',
-            });
-            if (!response.ok) throw new Error(`Check failed (${response.status})`);
-            verdict = await response.json();
-          }
-          if (verdict.clientAuth === 'ok') {
-            checkResult.className = 'text-emerald-600 dark:text-emerald-400 pt-1';
-            checkResult.textContent = `${name} accepted the platform’s client credentials. `
-              + `If connecting still fails on ${name}’s own page, the callback address above `
-              + `is not registered on the ${name} app.`;
-          } else if (verdict.clientAuth === 'rejected') {
-            checkResult.className = 'text-red-600 dark:text-red-400 pt-1';
-            checkResult.textContent = `${name} rejected the platform’s client ID or secret — `
-              + 'the configured credential pair is wrong.';
-          } else {
-            checkResult.className = 'text-amber-600 dark:text-amber-400 pt-1';
-            checkResult.textContent = `Couldn’t reach ${name} to verify the credentials. Try again shortly.`;
-          }
-        } catch {
-          checkResult.className = 'text-red-600 dark:text-red-400 pt-1';
-          checkResult.textContent = 'The configuration check failed to run. Try again shortly.';
-        } finally {
-          checkButton.disabled = false;
-        }
-      });
-      checkRow.append(checkButton, checkResult);
-      panel.appendChild(checkRow);
-      return panel;
+      return {
+        provider,
+        name,
+        source,
+        callbackUrl: diagnostics.callbackUrl || '',
+        warning: `If this address isn’t registered as a callback URI on the ${name} developer app, `
+          + `${name} shows "Something went wrong" before sign-in and never redirects back here.`,
+        demo: !!demo,
+      };
     },
 
-    // "Don't take our word for it": GitHub's own page lists what every
-    // authorized OAuth app can reach, so the claim above is checkable in one
-    // click. Deliberately a top-level link (target=_blank + noopener) — the
-    // shell is framed, and github.com refuses to be framed.
-    _githubAuditNote() {
-      return this._socialIdentityAuditNote('github');
-    },
-
-    _socialIdentityAuditNote(provider) {
-      const note = document.createElement('p');
-      if (provider === 'github') note.id = 'github-link-audit-note';
-      note.className = 'text-xs text-zinc-500 dark:text-zinc-500 mt-2';
-      note.appendChild(document.createTextNode('Review or revoke this authorization at '));
-      const anchor = document.createElement('a');
-      anchor.href = provider === 'github'
-        ? 'https://github.com/settings/applications'
-        : 'https://x.com/settings/connected_apps';
-      anchor.target = '_blank';
-      anchor.rel = 'noopener noreferrer';
-      anchor.className = 'text-violet-600 dark:text-violet-400 hover:underline';
-      anchor.textContent = provider === 'github'
-        ? 'github.com/settings/applications'
-        : 'x.com/settings/connected_apps';
-      note.appendChild(anchor);
-      note.appendChild(document.createTextNode('.'));
-      return note;
-    },
+    // `_socialIdentityAuditNote` / `_githubAuditNote` lived here — the
+    // "don't take our word for it" line linking to the provider's own list of
+    // authorized apps. It is ./social-identity.tsx's `<AuditNote>` now, with
+    // the same top-level-link discipline (target=_blank + noopener), because
+    // the shell is framed and neither provider allows being framed.
 
     _socialIdentityCallbackStatus(status) {
       if (!status) return;
@@ -1911,8 +1752,10 @@
       };
       status.textContent = messages[result] || '';
       if (!status.textContent) return;
-      status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
-      status.classList.add(result === 'linked' ? 'text-emerald-500' : 'text-red-500');
+      status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
+      status.classList.add(...(result === 'linked'
+        ? ['text-emerald-700', 'dark:text-emerald-400']
+        : ['text-red-700', 'dark:text-red-400']));
     },
 
     async _unlinkGithub(button, provider = 'github') {
@@ -1930,18 +1773,25 @@
         if (button) button.disabled = false;
         if (status) {
           status.textContent = err.message || 'Could not disconnect this account.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       }
     },
 
+    // The list host's three states are ./cli-tokens-store.js's phases now, so
+    // this reaches the bridge rather than the element.
+    _publishCliTokens(next) {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsCliTokens : null;
+      if (bridge) bridge.publish(next);
+    },
+
     async _loadCliTokens(reset) {
       const section = document.getElementById('cli-tokens-section');
-      const list = document.getElementById('cli-tokens-list');
       const more = document.getElementById('cli-tokens-more');
       const status = document.getElementById('cli-tokens-status');
-      if (!section || !list || !more || !status) return;
+      if (!section || !more || !status) return;
 
       // Don't ask for a surface this deployment doesn't serve — the 404
       // would be a console error even though the code below handles it.
@@ -1967,7 +1817,7 @@
         this._cliTokenLoadId += 1;
         this._cliTokens = [];
         this._cliTokenCursor = null;
-        list.textContent = 'Loading credentials…';
+        this._publishCliTokens({ phase: 'loading', tokens: [] });
         more.classList.add('hidden');
         status.classList.add('hidden');
       }
@@ -2004,10 +1854,10 @@
         this._renderCliTokens();
       } catch (err) {
         if (loadId !== this._cliTokenLoadId) return;
-        if (!this._cliTokens.length) list.textContent = '';
+        if (!this._cliTokens.length) this._publishCliTokens({ phase: 'idle', tokens: [] });
         status.textContent = err.message || 'Could not load CLI credentials.';
-        status.classList.remove('hidden', 'text-emerald-500');
-        status.classList.add('text-red-500');
+        status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+        status.classList.add('text-red-700', 'dark:text-red-400');
       } finally {
         if (loadId === this._cliTokenLoadId) {
           this._cliTokensLoading = false;
@@ -2017,58 +1867,38 @@
     },
 
     _renderCliTokens() {
-      const list = document.getElementById('cli-tokens-list');
       const more = document.getElementById('cli-tokens-more');
       const status = document.getElementById('cli-tokens-status');
-      if (!list || !more || !status) return;
-      list.textContent = '';
+      if (!more || !status) return;
       status.classList.add('hidden');
-      if (!this._cliTokens.length) {
-        const empty = document.createElement('p');
-        empty.className = 'text-xs text-zinc-500 dark:text-zinc-400';
-        empty.textContent = 'No CLI credentials.';
-        list.appendChild(empty);
-      }
-      for (const token of this._cliTokens) {
-        const card = document.createElement('div');
-        card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-
-        const top = document.createElement('div');
-        top.className = 'flex items-start justify-between gap-3';
-        const text = document.createElement('div');
-        text.className = 'min-w-0';
-        const title = document.createElement('div');
-        title.className = 'text-sm font-mono text-zinc-800 dark:text-zinc-200';
-        title.textContent = typeof token.token_hint === 'string'
-          ? token.token_hint : 'CLI credential';
-        const detail = document.createElement('div');
-        detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-        const created = Number.isFinite(Date.parse(token.created_at))
-          ? new Date(token.created_at).toLocaleString() : 'unknown date';
-        const used = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
-          ? ` · last used ${new Date(token.last_used_at).toLocaleString()}` : '';
-        detail.textContent = `${token.status || 'unknown'} · created ${created}${used}`;
-        text.append(title, detail);
-        top.appendChild(text);
-
-        // Demo rows (staging ?demo=1) are fabricated server-side and have
-        // nothing to revoke — offer no button, same stance as the demo
-        // agent-files rows.
-        if (token.status === 'valid' && typeof token.id === 'string' && !token.demo) {
-          const revoke = document.createElement('button');
-          revoke.type = 'button';
-          revoke.className = 'shrink-0 rounded border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
-          revoke.textContent = 'Revoke';
-          revoke.addEventListener('click', () => this._revokeCliToken(token.id, revoke));
-          top.appendChild(revoke);
-        }
-        card.appendChild(top);
-        list.appendChild(card);
-      }
+      // The ROWS are ./cli-tokens-list.tsx's — a card each, built here with
+      // `document.createElement` until #1191. Every branch it evaluated is
+      // resolved here, where the payload and the demo flag live: the two date
+      // formats, the status line, and whether a row may be revoked at all (a
+      // staging demo row is fabricated server-side and has nothing to revoke).
+      this._publishCliTokens({
+        phase: 'ready',
+        tokens: this._cliTokens.map((token) => {
+          const created = Number.isFinite(Date.parse(token.created_at))
+            ? new Date(token.created_at).toLocaleString() : 'unknown date';
+          const used = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
+            ? ` · last used ${new Date(token.last_used_at).toLocaleString()}` : '';
+          return {
+            id: typeof token.id === 'string' ? token.id : null,
+            hint: typeof token.token_hint === 'string' ? token.token_hint : 'CLI credential',
+            detail: `${token.status || 'unknown'} · created ${created}${used}`,
+            revocable: token.status === 'valid'
+              && typeof token.id === 'string' && !token.demo,
+          };
+        }),
+      });
+      // Both SIBLINGS of that host, and both still this module's: the
+      // Load-more button follows the keyset cursor, and the status line has
+      // three writers (revoke succeeded, revoke failed, demo data).
       more.classList.toggle('hidden', !this._cliTokenCursor);
       if (this._cliTokensDemo() && this._cliTokens.some((t) => t.demo)) {
         status.textContent = 'Demo data — changes are not saved.';
-        status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
 
@@ -2083,15 +1913,15 @@
         if (response.status !== 204) throw new Error('Could not revoke the credential.');
         if (status) {
           status.textContent = 'Credential revoked.';
-          status.classList.remove('hidden', 'text-red-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
         await this._loadCliTokens(true);
       } catch (err) {
         if (status) {
           status.textContent = err.message || 'Could not revoke the credential.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
         button.disabled = false;
       }
@@ -2104,8 +1934,8 @@
         if (select) select.value = this.state.locale || '';
         if (status) {
           status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
       try {
@@ -2129,8 +1959,8 @@
         }
         if (status) {
           status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-500', 'text-zinc-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
         fail(`Network error: ${err.message}`);
@@ -2147,8 +1977,8 @@
         if (select) select.value = this.state.devFlowPreference || '';
         if (status) {
           status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
       try {
@@ -2164,8 +1994,8 @@
         if (typeof App !== 'undefined' && App.user) App.user.devFlowPreference = this.state.devFlowPreference;
         if (status) {
           status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-500', 'text-zinc-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
         fail(`Network error: ${err.message}`);
@@ -2179,8 +2009,8 @@
         if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
         if (status) {
           status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
       try {
@@ -2212,8 +2042,8 @@
         if (toggle) toggle.checked = !!this.state.sessionBridgeEnabled;
         if (status) {
           status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
       try {
@@ -2340,7 +2170,7 @@
       if (!status) return;
       status.textContent = message || (disabled ? 'Loading mobile push preferences…' : 'Saved to your account.');
       status.className = 'text-xs mt-3 ' + (error
-        ? 'text-red-600 dark:text-red-400'
+        ? 'text-red-700 dark:text-red-400'
         : 'text-zinc-500 dark:text-zinc-400');
     },
 
@@ -2445,10 +2275,10 @@
     _setStatus(text, kind) {
       const el = document.getElementById('settings-status');
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500'
-                : kind === 'ok' ? 'text-emerald-500'
-                : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400'
+                : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400'
+                : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
     },
 
@@ -2581,8 +2411,8 @@
       const el = document.getElementById('settings-openrouter-status');
       if (!el) return;
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
     },
 
@@ -2834,8 +2664,8 @@
       const el = document.getElementById('cp-status');
       if (!el) return;
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
     },
 
@@ -2935,8 +2765,8 @@
       const el = document.getElementById('cu-status');
       if (!el) return;
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
     },
 
@@ -3281,9 +3111,11 @@
     // staging:private) grant tables still produce a reviewable list.
 
     async _renderLlmGrants() {
-      const list = document.getElementById('llm-grants-list');
-      if (!list) return;
-      list.innerHTML = '<p class="text-xs text-zinc-500">Loading…</p>';
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsGrants : null;
+      if (!bridge) return;
+      const publish = bridge.publish;
+      publish({ phase: 'loading', grants: [] });
       const demo = new URLSearchParams(window.location.search).get('demo') === '1';
       let grants = [];
       try {
@@ -3292,140 +3124,122 @@
         const j = await r.json();
         grants = j.grants || [];
       } catch {
-        list.innerHTML = '<p class="text-xs text-red-500">Failed to load app permissions.</p>';
+        publish({ phase: 'error', grants: [] });
         return;
       }
-      if (!grants.length) {
-        list.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-500">No apps have asked to use AI yet.</p>';
-        return;
-      }
-      list.innerHTML = '';
-      for (const g of grants) list.appendChild(this._llmGrantRow(g));
+      publish({ phase: 'ready', grants: grants.map((g) => this._grantView(g)) });
     },
 
-    _llmGrantRow(g) {
-      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-      }[c]));
-      const row = document.createElement('div');
-      row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs';
-      const revoked = g.status !== 'active';
+    // One grant, as DATA. Every branch the row template used to evaluate
+    // inline is decided here, where `this.state.hasApiKey` and the demo flag
+    // already live — see the note in ./grants-store.js. The money is
+    // pre-formatted for the same reason: cents-to-dollars is this module's
+    // rule, not the component's.
+    _grantView(g) {
       const spent = ((g.spentTodayCents || 0) + (g.byokSpentTodayCents || 0)) / 100;
       const cap = (g.dailyCapCents || 0) / 100;
+      return {
+        appId: g.appId,
+        appName: String(g.appName ?? ''),
+        revoked: g.status !== 'active',
+        spent: spent.toFixed(2),
+        cap: cap.toFixed(2),
+        capValue: cap.toFixed(2),
+        showByok: !!(this.state.hasApiKey || g.allowByok),
+        allowByok: !!g.allowByok,
+      };
+    },
 
-      if (revoked) {
-        row.innerHTML = `
-          <div class="flex items-center justify-between gap-2">
-            <span class="font-medium text-zinc-500 dark:text-zinc-500 truncate">${esc(g.appName)}</span>
-            <span class="shrink-0 rounded px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400">Revoked</span>
-          </div>`;
-        return row;
+    // A fabricated staging row. The demo grant tables are staging:private and
+    // always empty, so ?demo=1 stands in for them — and those rows must never
+    // reach the API.
+    _isDemoGrant(appId) { return appId < 0; },
+
+    // ── The three row handlers ───────────────────────────────────
+    //
+    // These were closures inside the row builder, wired with addEventListener
+    // to nodes it had just created. They are methods now, called by name from
+    // ./grants-list.tsx, because the component owns the markup and this module
+    // owns the writes. Each still reports through _setLlmGrantsStatus and
+    // re-renders on success, exactly as before.
+
+    async _onGrantCapChange(appId, value) {
+      const status = (t, k) => this._setLlmGrantsStatus(t, k);
+      if (this._isDemoGrant(appId)) { status('Demo data — changes are not saved.', 'info'); return; }
+      const cents = Math.round(parseFloat(value) * 100);
+      if (!Number.isFinite(cents) || cents <= 0) {
+        status('Enter a valid cap (at least $0.01).', 'error');
+        return;
       }
-
-      row.innerHTML = `
-        <div class="flex items-center justify-between gap-2">
-          <span class="font-medium text-zinc-700 dark:text-zinc-300 truncate">${esc(g.appName)}</span>
-          <span class="font-mono text-zinc-600 dark:text-zinc-400 shrink-0">$${spent.toFixed(2)} / $${cap.toFixed(2)} today</span>
-        </div>
-        <div class="flex items-center justify-between gap-2 mt-2 flex-wrap">
-          <label class="flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
-            Cap $<input data-role="cap" type="number" min="0.01" step="0.01" value="${cap.toFixed(2)}"
-              class="w-20 rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5 font-mono text-zinc-900 dark:text-zinc-100" />
-          </label>
-          ${this.state.hasApiKey || g.allowByok ? `
-          <label class="flex items-center gap-1 cursor-pointer select-none text-zinc-600 dark:text-zinc-400">
-            <input data-role="byok" type="checkbox" class="accent-violet-500 w-3.5 h-3.5" ${g.allowByok ? 'checked' : ''} />
-            Use my own key past the daily budget
-          </label>` : ''}
-          <button data-role="revoke"
-            class="rounded border border-red-400 dark:border-red-700 px-2 py-0.5 font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">Revoke</button>
-        </div>`;
-
-      const status = (text, kind) => this._setLlmGrantsStatus(text, kind);
-      const isDemo = g.appId < 0;
-
-      const capInput = row.querySelector('[data-role="cap"]');
-      capInput.addEventListener('change', async () => {
-        if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
-        const cents = Math.round(parseFloat(capInput.value) * 100);
-        if (!Number.isFinite(cents) || cents <= 0) {
-          status('Enter a valid cap (at least $0.01).', 'error');
-          return;
-        }
-        try {
-          const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ dailyCapCents: cents }),
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) { status(j.error || 'Failed to update cap.', 'error'); return; }
-          status('Cap updated.', 'ok');
-          this._renderLlmGrants();
-        } catch (err) {
-          status('Network error: ' + err.message, 'error');
-        }
-      });
-
-      const byokInput = row.querySelector('[data-role="byok"]');
-      if (byokInput) {
-        byokInput.addEventListener('change', async () => {
-          if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
-          try {
-            const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'same-origin',
-              body: JSON.stringify({ allowByok: byokInput.checked }),
-            });
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok) {
-              byokInput.checked = !byokInput.checked;
-              status(j.error || 'Failed to update.', 'error');
-              return;
-            }
-            status(byokInput.checked
-              ? 'This app may spill over onto your own key (still capped).'
-              : 'Spillover disabled.', 'ok');
-          } catch (err) {
-            byokInput.checked = !byokInput.checked;
-            status('Network error: ' + err.message, 'error');
-          }
+      try {
+        const r = await fetch(`/api/me/llm-grants/${appId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ dailyCapCents: cents }),
         });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to update cap.', 'error'); return; }
+        status('Cap updated.', 'ok');
+        this._renderLlmGrants();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
       }
+    },
 
-      row.querySelector('[data-role="revoke"]').addEventListener('click', async () => {
-        const ok = await ConfirmModal.show({
-          title: `Revoke AI access for "${g.appName}"?`,
-          message: 'Its next AI call will fail immediately. The app can ask for access again later.',
-          confirmLabel: 'Revoke',
-          danger: true,
+    async _onGrantByokChange(appId, checked) {
+      const status = (t, k) => this._setLlmGrantsStatus(t, k);
+      if (this._isDemoGrant(appId)) { status('Demo data — changes are not saved.', 'info'); return; }
+      try {
+        const r = await fetch(`/api/me/llm-grants/${appId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ allowByok: checked }),
         });
-        if (!ok) return;
-        if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
-        try {
-          const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
-            method: 'DELETE', credentials: 'same-origin',
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
-          status('Revoked.', 'ok');
-          this._renderLlmGrants();
-        } catch (err) {
-          status('Network error: ' + err.message, 'error');
-        }
-      });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to update.', 'error'); return; }
+        status(checked ? 'Spillover enabled.' : 'Spillover disabled.', 'ok');
+        // The checkbox is CONTROLLED by the store now, so the failure paths
+        // above leave it showing the old value on their own — where the DOM
+        // version had to flip `byokInput.checked` back by hand. On success the
+        // re-render is what makes the new value stick.
+        this._renderLlmGrants();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+        this._renderLlmGrants();
+      }
+    },
 
-      return row;
+    async _onGrantRevoke(appId, appName) {
+      const status = (t, k) => this._setLlmGrantsStatus(t, k);
+      const ok = await ConfirmModal.show({
+        title: `Revoke AI access for "${appName}"?`,
+        message: 'Its next AI call will fail immediately. The app can ask for access again later.',
+        confirmLabel: 'Revoke',
+        danger: true,
+      });
+      if (!ok) return;
+      if (this._isDemoGrant(appId)) { status('Demo data — changes are not saved.', 'info'); return; }
+      try {
+        const r = await fetch(`/api/me/llm-grants/${appId}`, {
+          method: 'DELETE', credentials: 'same-origin',
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
+        status('Revoked.', 'ok');
+        this._renderLlmGrants();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
     },
 
     _setLlmGrantsStatus(text, kind) {
       const el = document.getElementById('llm-grants-status');
       if (!el) return;
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
@@ -3561,12 +3375,11 @@
     },
 
     async _loadAgentFiles() {
-      const instrList = document.getElementById('agent-files-instructions-list');
-      const skillList = document.getElementById('agent-files-skills-list');
-      if (!instrList || !skillList) return;
-      instrList.innerHTML = '<p class="text-xs text-zinc-500">Loading…</p>';
-      skillList.innerHTML = '';
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsAgentFiles : null;
+      if (!bridge) return;
       const demo = this._agentFilesDemo();
+      bridge.publish({ phase: 'loading', files: [], demo });
       let files = [];
       try {
         const r = await fetch('/api/me/agent-files' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
@@ -3574,98 +3387,53 @@
         const j = await r.json();
         files = j.files || [];
       } catch {
-        instrList.innerHTML = '<p class="text-xs text-red-500">Failed to load your agent files.</p>';
+        bridge.publish({ phase: 'error', files: [], demo });
         return;
       }
-      const byKind = (kind) => files.filter((f) => f.kind === kind);
-      const renderList = (el, list, emptyText) => {
-        el.innerHTML = '';
-        if (!list.length) {
-          el.innerHTML = `<p class="text-xs text-zinc-500 dark:text-zinc-500">${emptyText}</p>`;
-          return;
-        }
-        for (const f of list) el.appendChild(this._agentFileRow(f, demo));
-      };
-      renderList(instrList, byKind('instruction'),
-        'No instruction files yet — upload a markdown file to guide the coding agent on every build you start.');
-      renderList(skillList, byKind('skill'),
-        'No skills yet — upload a skill file the agent can use while building for you.');
+      bridge.publish({ phase: 'ready', demo, files: files.map((f) => this._agentFileView(f)) });
     },
 
-    _agentFileRow(f, demo) {
-      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-      }[c]));
-      const row = document.createElement('div');
-      row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs';
-      // Stable hook for the #settings/agent-files rendered check — a row
-      // that stops rendering should fail checks, not shrink silently.
-      row.dataset.agentFile = f.kind || '';
-      const kb = Math.max(1, Math.round((f.size_bytes || 0) / 1024));
-      row.innerHTML = `
-        <div class="flex items-center justify-between gap-2">
-          <span class="font-mono font-medium text-zinc-700 dark:text-zinc-300 truncate">${esc(f.name)}</span>
-          <span class="shrink-0 flex items-center gap-2">
-            <span class="text-zinc-500 dark:text-zinc-500">${kb} KB</span>
-            <button data-role="view" class="text-violet-500 hover:text-violet-400 font-medium">View</button>
-            <button data-role="delete" class="text-red-600 dark:text-red-400 hover:text-red-500 font-medium">Delete</button>
-          </span>
-        </div>
-        ${f.description ? `<div class="text-zinc-500 dark:text-zinc-500 mt-1 truncate">${esc(f.description)}</div>` : ''}
-        <pre data-role="content" class="hidden mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1.5 font-mono text-[11px] text-zinc-700 dark:text-zinc-300"></pre>`;
+    // One file, as DATA. The KB rounding is this module's rule — the same
+    // reason the grant rows arrive with their dollars already formatted.
+    _agentFileView(f) {
+      return {
+        kind: String(f.kind ?? ''),
+        name: String(f.name ?? ''),
+        description: String(f.description ?? ''),
+        kb: Math.max(1, Math.round((f.size_bytes || 0) / 1024)),
+      };
+    },
 
-      const viewBtn = row.querySelector('[data-role="view"]');
-      const pre = row.querySelector('[data-role="content"]');
-      viewBtn.addEventListener('click', async () => {
-        if (!pre.classList.contains('hidden')) {
-          pre.classList.add('hidden');
-          viewBtn.textContent = 'View';
-          return;
-        }
-        if (!pre.textContent) {
-          pre.textContent = 'Loading…';
-          pre.classList.remove('hidden');
-          try {
-            const qs = `kind=${encodeURIComponent(f.kind)}&name=${encodeURIComponent(f.name)}` + (demo ? '&demo=1' : '');
-            const r = await fetch(`/api/me/agent-files/content?${qs}`, { credentials: 'same-origin' });
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(j.error || 'fetch failed');
-            pre.textContent = j.file?.content || '(empty)';
-          } catch (err) {
-            pre.textContent = 'Failed to load: ' + err.message;
-          }
-        } else {
-          pre.classList.remove('hidden');
-        }
-        viewBtn.textContent = 'Hide';
+    // Delete was a closure inside the row builder, wired with
+    // addEventListener to a node it had just created. It is a method now,
+    // called by name from ./agent-files-list.tsx — the component owns the
+    // markup, this module owns the confirm dialog, the write and the reload.
+    async _onAgentFileDelete(kind, name) {
+      const ok = await ConfirmModal.show({
+        title: `Delete "${name}"?`,
+        message: 'The coding agent stops using it from your next run. This cannot be undone.',
+        confirmLabel: 'Delete',
+        danger: true,
       });
-
-      row.querySelector('[data-role="delete"]').addEventListener('click', async () => {
-        const ok = await ConfirmModal.show({
-          title: `Delete "${f.name}"?`,
-          message: 'The coding agent stops using it from your next run. This cannot be undone.',
-          confirmLabel: 'Delete',
-          danger: true,
+      if (!ok) return;
+      if (this._agentFilesDemo()) {
+        this._setAgentFilesStatus('Demo data — changes are not saved.', 'info');
+        return;
+      }
+      try {
+        const r = await fetch('/api/me/agent-files', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ kind, name }),
         });
-        if (!ok) return;
-        if (demo) { this._setAgentFilesStatus('Demo data — changes are not saved.', 'info'); return; }
-        try {
-          const r = await fetch('/api/me/agent-files', {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ kind: f.kind, name: f.name }),
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) { this._setAgentFilesStatus(j.error || 'Failed to delete.', 'error'); return; }
-          this._setAgentFilesStatus(`Deleted "${f.name}".`, 'ok');
-          this._loadAgentFiles();
-        } catch (err) {
-          this._setAgentFilesStatus('Network error: ' + err.message, 'error');
-        }
-      });
-
-      return row;
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setAgentFilesStatus(j.error || 'Failed to delete.', 'error'); return; }
+        this._setAgentFilesStatus(`Deleted "${name}".`, 'ok');
+        this._loadAgentFiles();
+      } catch (err) {
+        this._setAgentFilesStatus('Network error: ' + err.message, 'error');
+      }
     },
 
     _setAgentFilesStatus(text, kind) {
@@ -3677,8 +3445,8 @@
         return;
       }
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
@@ -3820,8 +3588,8 @@
       const el = document.getElementById('wallet-status');
       if (!el) return;
       el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
       el.classList.add(cls);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
@@ -4098,75 +3866,6 @@
     // part of that chain answered "no". Hiding it on a "no" would hide it
     // exactly when it is wanted — the same mistake the connection panel
     // above was written to undo.
-    _renderWidgetIconsSection(parent) {
-      const diag = this._widgetIconDiagnostics();
-      if (!diag) return;
-      const box = this._unSection(parent, 'Usernode app — widget icons',
-        'What the homescreen widget was told to show, and what it reports back.');
-      if (this._widgetIconsDemo()) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
-          'Staging demo — sample data'));
-      }
-      const isWidget = diag.mechanism === 'widget';
-      this._unStatusRow(box, 'Widget shortcuts', isWidget, 'Available',
-        diag.mechanism ? `Not this device (${diag.mechanism})` : 'Not available',
-        { id: 'settings-widget-mechanism-row' });
-      this._unStatusRow(box, 'Pinned registry', diag.registryLoaded === true,
-        `Loaded — ${diag.entries.length} pinned`, 'Could not be read',
-        { id: 'settings-widget-registry-row' });
-      // Tri-state, and the third state is the point: `has()` used to
-      // collapse "couldn't say" into "no", which is what latched the
-      // single-face path for a whole page load.
-      this._unStatusRow(box, 'Dark icon capability', diag.capability === true,
-        'Advertised by the app',
-        diag.capability === false ? 'Not advertised' : 'The app couldn’t say',
-        { id: 'settings-widget-capability-row' });
-      this._unStatusRow(box, 'Confirmed by the widget',
-        diag.verdict === 'supported', 'Stores both faces',
-        diag.verdict === 'unsupported' ? 'Single face only' : 'Not confirmed yet',
-        { id: 'settings-widget-verdict-row' });
-      const sending = diag.resolved === true
-        ? 'Light + dark pair'
-        : (diag.resolved === false
-          ? `Single face (${diag.scheme})`
-          : 'Undecided — single face for now');
-      this._unStatusRow(box, 'Sending', diag.resolved === true, sending, sending,
-        { id: 'settings-widget-sending-row' });
-      const build = diag.build
-        ? `${diag.build.appVersion} (${diag.build.buildNumber || '?'})`
-        : 'unknown — the verdict is re-confirmed each time';
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
-        `Verdict bound to app version: ${build}`));
-      const healedAt = diag.lastHealAt
-        ? this._widgetIconTime(diag.lastHealAt)
-        : 'never';
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-500',
-        `Last icon check: ${healedAt}` +
-        (diag.lastHealOutcome ? ` — ${diag.lastHealOutcome}` : '')));
-      if (diag.readError) {
-        const reason = this.USERNODE_READ_ERROR_REASONS[diag.readError.kind] ||
-          this.USERNODE_READ_ERROR_FALLBACK;
-        box.appendChild(this._unEl('p',
-          'text-xs text-amber-600 dark:text-amber-400 mt-2',
-          `${diag.readError.method}: ${reason}`));
-      }
-      this._renderWidgetIconEntries(box, diag);
-      if (!this._widgetIconsDemo()) {
-        this._unButton(box, 'Re-check icons', async () => {
-          const home = window.Home;
-          if (home && typeof home._refreshWidgetItems === 'function') {
-            // Clears the one-attempt-per-load cap so the pass this
-            // triggers actually re-sends anything it finds wrong.
-            home._iconHealTried = null;
-            await home._refreshWidgetItems();
-          }
-          this._renderUsernodeBody();
-        });
-      }
-    },
 
     _widgetIconTime(ms) {
       try { return new Date(ms).toLocaleTimeString(); } catch (_) { return String(ms); }
@@ -4177,39 +3876,6 @@
     // is the difference between "SV never sent it" and "SV sent it and
     // the app didn't keep it" — which are different bugs in different
     // repositories, and were previously indistinguishable from outside.
-    _renderWidgetIconEntries(box, diag) {
-      if (!diag.entries.length) {
-        box.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
-          'No shortcuts are pinned to the widget.'));
-        return;
-      }
-      const list = this._unEl('div', 'mt-3 space-y-1');
-      list.id = 'settings-widget-icon-entries';
-      diag.entries.forEach((entry) => {
-        const flag = (v) => (v === true ? 'yes' : (v === false ? 'no' : '—'));
-        const row = this._unEl('div',
-          'flex items-center gap-2 text-xs ' +
-          'text-zinc-600 dark:text-zinc-400');
-        const healthy = entry.foreign
-          ? true
-          : entry.hasIcon !== false && entry.matches;
-        row.appendChild(this._unEl('span',
-          'w-1.5 h-1.5 rounded-full shrink-0 ' +
-          (healthy ? 'bg-emerald-500' : 'bg-amber-500')));
-        row.appendChild(this._unEl('span',
-          'text-zinc-700 dark:text-zinc-300', entry.name));
-        const note = entry.foreign
-          ? 'pinned by another app'
-          : (entry.unknownApp
-            ? 'app not loaded'
-            : `icon ${flag(entry.hasIcon)} · dark ${flag(entry.hasIconDark)} · ` +
-              `sent ${entry.matches ? 'current' : 'stale'}`);
-        row.appendChild(this._unEl('span', 'ml-auto', note));
-        list.appendChild(row);
-      });
-      box.appendChild(list);
-    },
 
     _bridgeDiagnostics() {
       if (this._bridgeDiagDemo()) return this.DEMO_BRIDGE_DIAGNOSTICS;
@@ -4283,64 +3949,6 @@
     // Rendered FIRST inside the Usernode app section and independent of
     // the settings snapshot: when the handshake is refused there is no
     // snapshot, and this panel is the only thing that can say why.
-    _renderUsernodeConnection(section) {
-      const diag = this._bridgeDiagnostics();
-      if (!diag) return null;
-      const demo = this._bridgeDiagDemo();
-      const box = this._unSection(section, 'Usernode app — connection',
-        'What this screen can reach in the app, and what to do when it can’t.');
-      box.id = 'settings-usernode-connection';
-      if (demo) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
-          'Staging demo — sample data'));
-      }
-      const state = (diag.privileged && diag.privileged.state) || 'unknown';
-      this._unStatusRow(box, 'Secure app connection', state === 'ready',
-        this.PRIVILEGED_STATE_LABELS.ready,
-        this.PRIVILEGED_STATE_LABELS[state] || 'Unavailable');
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-400 mt-2',
-        this.PRIVILEGED_STATE_REASONS[state] ||
-          this.PRIVILEGED_STATE_REASONS.unknown));
-      const buildBits = [];
-      if (diag.appVersion) {
-        buildBits.push(`App ${diag.appVersion}` +
-          (diag.buildNumber ? ` (${diag.buildNumber})` : ''));
-      }
-      buildBits.push(`Bridge v${diag.bridgeVersion}`);
-      box.appendChild(this._unEl('p',
-        'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-2 break-words',
-        buildBits.join(' · ')));
-      if (diag.privileged && diag.privileged.message) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
-          diag.privileged.message));
-      }
-      const actions = this._unEl('div');
-      const retry = this._unButton(actions, 'Try again',
-        () => this._retryUsernodeConnection());
-      retry.id = 'settings-usernode-connection-retry';
-      const copy = this._unButton(actions, 'Copy diagnostics', async () => {
-        const text = this._bridgeDiagnosticsText(diag);
-        const ok = window.PlatformUI && PlatformUI.copyText
-          ? await PlatformUI.copyText(text)
-          : false;
-        if (window.PlatformUI && PlatformUI.toast) {
-          PlatformUI.toast(ok ? 'Diagnostics copied' : 'Could not copy',
-            ok ? {} : { error: true });
-        }
-      });
-      copy.id = 'settings-usernode-connection-copy';
-      if (demo) {
-        // Read-only hook: the buttons are rendered so the screenshot shows
-        // the real panel, but they must not touch a bridge or a session.
-        retry.disabled = true;
-        copy.disabled = true;
-      }
-      box.appendChild(actions);
-      return box;
-    },
 
     // Everything a stuck device can retry from here, in one press: a fresh
     // capability probe, a fresh admission attempt, a fresh readiness
@@ -4368,8 +3976,6 @@
     },
 
     async _renderUsernodeSection() {
-      const section = document.getElementById('settings-usernode-section');
-      if (!section) return;
       // Gated on BEING IN THE APP, not on the getSettingsState capability.
       // That probe is itself a casualty of the failures this section now
       // diagnoses — a degraded getBridgeInfo answers "no capabilities", so
@@ -4383,11 +3989,13 @@
       // The gate resolves asynchronously downstream, so the "Usernode app"
       // menu row is only settled here — re-render the nav either way.
       if (!gated) {
-        section.classList.add('hidden');
+        this._usernodeGated = false;
+        this._publishUsernode();
         this._renderNavIfOpen();
         return;
       }
-      section.classList.remove('hidden');
+      this._usernodeGated = true;
+      this._publishUsernode();
       this._renderNavIfOpen();
       const token = ++this._usernodeRenderToken;
       // A fresh mount re-probes the real notification permission (below)
@@ -4401,14 +4009,15 @@
         this._unPushStatus = demo === 'ios-denied' ? 'denied' : 'undetermined';
         this._unPushProbed = true;
         this._unCanOpenNotifSettings = true;
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
         return;
       }
       if (!this._usernodeState) {
-        section.textContent = '';
-        section.appendChild(this._unEl('div',
-          'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700 ' +
-          'text-xs text-zinc-500', 'Loading Usernode app settings…'));
+        // The in-place progress line, which a retry swaps in while leaving
+        // the rest of the section up.
+        this._usernodeLoading = true;
+        this._publishUsernode();
       }
       let state = null;
       try {
@@ -4428,11 +4037,18 @@
         // The app may simply still be booting; retry itself once it reports
         // a ready identity, so the section fills in without a tap.
         this._armUsernodeAuthStatusRetry();
-        this._renderUsernodeBody(this._usernodeReadError());
+        this._usernodeLoading = false;
+        this._publishUsernode();
         return;
       }
       this._clearUsernodeAuthStatusRetry();
-      this._renderUsernodeBody();
+      this._usernodeLoading = false;
+      this._publishUsernode();
+      // Both used to be renderers that fetched into their own host and
+      // repainted it through a local closure. They fill their slice of the
+      // model instead, so the rest of the body never waits on either.
+      this._initSocialPush();
+      this._initBlockProduction();
       this._probeUnNotifPermission(token);
     },
 
@@ -4474,7 +4090,8 @@
         canOpen !== this._unCanOpenNotifSettings;
       this._unCanOpenNotifSettings = canOpen;
       if (status != null) this._unPushStatus = status;
-      if (changed) this._renderUsernodeBody();
+      if (changed) this._usernodeLoading = false;
+      this._publishUsernode();
     },
 
     // Why the snapshot came back empty, straight from the bridge's
@@ -4515,83 +4132,9 @@
       this._usernodeAuthStatusListener = null;
     },
 
-    _unEl(tag, className, text) {
-      const el = document.createElement(tag);
-      if (className) el.className = className;
-      if (text != null) el.textContent = text;
-      return el;
-    },
 
-    _unSection(parent, title, description) {
-      const box = this._unEl('div',
-        'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700');
-      box.appendChild(this._unEl('h3',
-        'text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', title));
-      if (description) {
-        box.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-500 mb-3', description));
-      }
-      parent.appendChild(box);
-      return box;
-    },
 
-    _unToggle(parent, label, checked, onChange, opts = {}) {
-      const wrap = this._unEl('label',
-        'flex items-center gap-2 cursor-pointer select-none mt-2');
-      const input = this._unEl('input', 'un-switch');
-      input.type = 'checkbox';
-      input.checked = !!checked;
-      input.addEventListener('change', async (e) => {
-        input.disabled = true;
-        try {
-          await onChange(e.target.checked);
-        } catch (err) {
-          console.warn('[settings] usernode toggle failed:', err);
-          input.checked = !e.target.checked;
-          if (window.PlatformUI) {
-            const detail = opts.includeErrorDetail && err && err.message
-              ? `: ${err.message}` : '';
-            PlatformUI.toast(this._nativeActionMessage(err,
-              `Could not save the setting${detail}`));
-          }
-        } finally {
-          input.disabled = false;
-        }
-      });
-      wrap.appendChild(input);
-      wrap.appendChild(this._unEl('span',
-        'text-sm text-zinc-800 dark:text-zinc-200', label));
-      parent.appendChild(wrap);
-      return input;
-    },
 
-    _unButton(parent, label, onClick, opts = {}) {
-      const btn = this._unEl('button',
-        'mt-3 mr-2 rounded-md border px-3 py-1.5 text-xs font-medium ' +
-        'transition-colors ' +
-        (opts.danger
-          ? 'border-red-400 dark:border-red-700 text-red-600 ' +
-            'dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950'
-          : 'border-zinc-300 dark:border-zinc-700 text-zinc-700 ' +
-            'dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
-        label);
-      btn.type = 'button';
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        try {
-          await onClick();
-        } catch (err) {
-          console.warn('[settings] usernode action failed:', err);
-          if (window.PlatformUI) {
-            PlatformUI.toast(this._nativeActionMessage(err, 'Action failed'));
-          }
-        } finally {
-          btn.disabled = false;
-        }
-      });
-      parent.appendChild(btn);
-      return btn;
-    },
 
     // `opts.onActivate` turns the row itself into a real control.
     //
@@ -4600,48 +4143,6 @@
     // rendered underneath, conditionally. On a phone the row is what a
     // thumb lands on, so the notifications row now carries the tap and the
     // chip is a second affordance rather than the only one.
-    _unStatusRow(parent, label, ok, okText, badText, opts = {}) {
-      const interactive = typeof opts.onActivate === 'function';
-      const row = this._unEl(interactive ? 'button' : 'div',
-        'flex items-center gap-2 mt-1 text-sm w-full text-left' +
-        (interactive
-          ? ' rounded-md -mx-1 px-1 py-1 transition-colors ' +
-            'hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          : ''));
-      if (opts.id) row.id = opts.id;
-      const dot = this._unEl('span',
-        'w-2 h-2 rounded-full shrink-0 ' +
-        (ok ? 'bg-emerald-500' : 'bg-amber-500'));
-      row.appendChild(dot);
-      row.appendChild(this._unEl('span',
-        'text-zinc-800 dark:text-zinc-200', label));
-      row.appendChild(this._unEl('span',
-        'ml-auto text-xs ' + (ok
-          ? 'text-emerald-600 dark:text-emerald-400'
-          : 'text-amber-600 dark:text-amber-400'),
-        ok ? okText : badText));
-      if (interactive) {
-        row.type = 'button';
-        if (opts.hint) row.setAttribute('aria-label', `${label} — ${opts.hint}`);
-        row.appendChild(this._unEl('span',
-          'text-xs text-zinc-400 dark:text-zinc-500 shrink-0', '›'));
-        row.addEventListener('click', async () => {
-          row.disabled = true;
-          try {
-            await opts.onActivate();
-          } catch (err) {
-            console.warn('[settings] usernode row action failed:', err);
-            if (window.PlatformUI) {
-              PlatformUI.toast(this._nativeActionMessage(err, 'Action failed'));
-            }
-          } finally {
-            row.disabled = false;
-          }
-        });
-      }
-      parent.appendChild(row);
-      return row;
-    },
 
     _openNativeScreen(screen, failMsg) {
       if (!window.usernode ||
@@ -4694,12 +4195,14 @@
           ? 'Opening the permission prompt…'
           : 'Opening the notification prompt…',
       };
-      this._renderUsernodeBody();
+      this._usernodeLoading = false;
+      this._publishUsernode();
       try {
         await this._runNotifPermissionTap(isAndroid);
       } finally {
         this._unRequestInFlight = false;
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
       }
     },
 
@@ -4814,7 +4317,8 @@
             ? 'Permission granted.'
             : 'Notifications are now allowed for Usernode.',
         };
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
         return;
       }
       this._unNotifDeadEnd(outcome.verdict, {
@@ -4822,7 +4326,8 @@
         settings: outcome.settings === true,
         reason: outcome.reason,
       });
-      this._renderUsernodeBody();
+      this._usernodeLoading = false;
+      this._publishUsernode();
     },
 
     // The bridge's own ceiling for requestPermissions is two minutes,
@@ -4911,27 +4416,6 @@
     // capability — a way out of a determined-denied permission. A button
     // that cannot work is worse than no button, so an inconclusive
     // capability probe (null) renders the manual instructions instead.
-    _renderNotifNotice(parent) {
-      const n = this._unNotifNotice;
-      if (!n) return;
-      const box = this._unEl('div',
-        'mt-2 rounded-md border px-3 py-2 text-xs ' +
-        (n.tone === 'warn'
-          ? 'border-amber-300 dark:border-amber-800 bg-amber-50 ' +
-            'dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
-          : n.tone === 'ok'
-            ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 ' +
-              'dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
-            : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 ' +
-              'dark:text-zinc-300'),
-        n.text);
-      box.id = 'settings-notif-notice';
-      parent.appendChild(box);
-      if (n.settings && this._unCanOpenNotifSettings === true) {
-        this._unButton(parent, 'Open notification settings', () =>
-          window.usernode.openNotificationSettings());
-      }
-    },
 
     // Awaits a bridge setter and re-renders the section from the refreshed
     // snapshot it resolves with.
@@ -4939,7 +4423,8 @@
       const state = await promise;
       if (state && typeof state === 'object') {
         this._usernodeState = state;
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
       }
     },
 
@@ -5011,7 +4496,15 @@
         }
       }
 
-      const el = (tag, cls, text) => this._unEl(tag, cls, text);
+      // A local element helper. This panel is handed to the kit
+      // (PlatformUI.sheet reparents it), so it stays imperative — it was
+      // borrowing the usernode section's `_unEl`, which converted with it.
+      const el = (tag, cls, text) => {
+        const node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text != null) node.textContent = text;
+        return node;
+      };
       const panel = el('div', 'px-4 pb-5');
       panel.appendChild(el('div', 'text-lg font-bold py-3',
         payload.title || 'Terms'));
@@ -5035,7 +4528,7 @@
       }
       if (payload.terms_link) {
         const a = el('a',
-          'block text-sm text-violet-600 dark:text-violet-400 underline mb-3',
+          'block text-sm text-violet-700 dark:text-violet-400 underline mb-3',
           'Read the full terms');
         a.href = payload.terms_link;
         a.target = '_blank';
@@ -5048,7 +4541,7 @@
       // a non-dismissible overlay with no consent buttons has no exit.
       const blocking = opts.blocking === true && !accepted;
       const statusEl = el('p', 'text-sm mb-3 ' + (accepted
-        ? 'text-emerald-600 dark:text-emerald-400'
+        ? 'text-emerald-700 dark:text-emerald-400'
         : 'text-zinc-600 dark:text-zinc-400'),
       accepted
         ? 'You accepted this version' +
@@ -5170,178 +4663,458 @@
     // activity notifications, block production, Terms, the FAQ, the native
     // diagnostics screens — still renders. A failed read used to blank the
     // whole section, turning a transient app hiccup into a dead end.
-    _renderUsernodeBody(readError, loading) {
-      const section = document.getElementById('settings-usernode-section');
+    // ── Usernode app section: view builders ────────────────────────────
+    //
+    // #1079: `_renderUsernodeBody` and eight sibling renderers built ~800
+    // lines of `document.createElement` into #settings-usernode-section.
+    // They are sections/usernode.tsx now, and what is left here is the
+    // reading: every bridge call, every fetch, every retry ladder and every
+    // staleness token stays exactly where it was, and ends in a publish.
+
+    _publishUsernode() {
+      const react = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsUsernode : null;
+      if (!react || !react.publish) return;
+      react.publish(this._usernodeView());
+    },
+
+    /** The whole section, as one plain serialisable model. */
+    _usernodeView() {
       const s = this._usernodeState;
-      if (!section) return;
-      section.textContent = '';
       const perms = (s && s.permissions) || {};
       const isAndroid = perms.platform === 'android';
+      const demo = this._unDemoMode();
+      return {
+        gated: this._usernodeGated === true,
+        connection: this._usernodeConnectionView(),
+        body: this._usernodeBodyView(),
+        // The demo link renders the permission rows and stops: everything
+        // below reads the live bridge, which a browser does not have.
+        belowDemoCut: !demo,
+        socialPush: this._socialPushView(),
+        blockProduction: this._bpView(),
+        nodeSleep: s ? {
+          label: 'Node sleep on inactivity',
+          checked: s.nodeSleepEnabled !== false,
+          action: '_setNodeSleep',
+        } : null,
+        privacy: s ? {
+          facematch: {
+            label: 'Strict facematch',
+            checked: s.facematchStrict !== false,
+            action: '_setFacematchStrict',
+          },
+          reset: { label: 'Restart ZK challenge', action: '_resetZkChallenge', danger: true },
+        } : null,
+        widgetIcons: this._widgetIconsView(),
+        diagnostics: {
+          debugMode: s ? {
+            label: 'Debug mode', checked: s.debugMode === true, action: '_setDebugMode',
+          } : null,
+          actions: [
+            { label: 'Device benchmark', action: '_openBenchmarkScreen' },
+            { label: 'HTTP debug logs', action: '_openHttpLogsScreen' },
+          ],
+        },
+        about: { notes: this._usernodeBuildNotes(), actions: [{
+          label: (s && s.termsAccepted === false)
+            ? 'Review terms (not yet accepted)' : 'Terms',
+          action: '_openTermsFromUsernode',
+        }] },
+        account: (s && s.authStatus !== 'authenticated') ? { rows: [], actions: [] } : null,
+        isAndroid,
+      };
+    },
 
-      // First, so a refused handshake explains itself above the failures
-      // it causes rather than below them.
-      this._renderUsernodeConnection(section);
-
-      if (!s) {
-        this._renderUsernodeError(section, readError, loading);
-      } else {
-        // Device permissions — mirrors the native QuickSettingsPanel.
-        // iOS maps requestPermissions() to the notification prompt and has
-        // no block production since v4 — describe each platform's real ask.
-        const permBox = this._unSection(section, 'Usernode app — device permissions',
-          isAndroid
-            ? 'Block production needs the app to wake your device at exact slot times.'
-            : 'Notifications let Usernode alert you about node and account activity.');
-        if (this._unDemoMode()) {
-          permBox.appendChild(this._unEl('p',
-            'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
-            'Staging demo — sample data'));
-        }
-        // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
-        // notification permission (there are no exact alarms on iOS), so
-        // once a request has settled through NativeChrome.settleIosPushGrant
-        // that answer is the authority — the same rule the first-run sheet
-        // in public/js/native-chrome.js applies.
-        const notifOk = !isAndroid && this._unPushStatus != null
-          ? this._unPushStatus === 'granted'
-          : !!perms.exactAlarmGranted;
-        // The row IS the control. It used to be an inert div whose only
-        // affordance was the chip below, and that chip only rendered when
-        // the (iOS-meaningless) exactAlarmGranted boolean said "not
-        // granted" — so on a build reporting it `true` there was nothing
-        // to tap at all. The row now always carries the ask.
-        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Notifications',
-          notifOk, 'Granted', 'Not granted', {
-            id: 'settings-notif-row',
-            hint: isAndroid ? 'request permissions' : 'allow notifications',
-            onActivate: () => this._unRequestPermissions(isAndroid),
-          });
-        if (!notifOk) {
-          this._unButton(permBox,
-            isAndroid ? 'Request permissions' : 'Allow notifications',
-            () => this._unRequestPermissions(isAndroid));
-        }
-        this._renderNotifNotice(permBox);
-        if (isAndroid) {
-          this._unStatusRow(permBox, 'Battery optimization',
-            perms.batteryOptDisabled === true, 'Unrestricted', 'Restricted');
-          if (perms.batteryOptDisabled !== true) {
-            this._unButton(permBox, 'Open battery settings', () =>
-              window.usernode.openBatterySettings());
-          }
-          if (perms.deviceManufacturer) {
-            permBox.appendChild(this._unEl('p',
-              'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
-              `Device: ${perms.deviceManufacturer}`));
-          }
-        }
-      }
-      // The demo link renders the permissions rows and stops: the sections
-      // below all read the live bridge, which a browser does not have.
-      if (this._unDemoMode()) return;
-      this._renderSocialPushSection(section);
-      // (The iOS keep-alive toggle is gone — thin-shell migration: block
-      // production is disabled on iOS and the keep-alive service was
-      // deleted from the app.)
-
-      // Node.
-      if (s) {
-        const nodeBox = this._unSection(section, 'Usernode app — node',
-          'The node pauses when the app has been inactive for a while and wakes on your next interaction.');
-        this._unToggle(nodeBox, 'Node sleep on inactivity',
-          s.nodeSleepEnabled !== false,
-          (v) => this._unApply(window.usernode.setNodeSleepEnabled(v)));
-      }
-
-      // Block production (onboarding flow alignment): producing blocks is
-      // a released capability. The wallet works for dapp transactions
-      // either way; this section is the "ask to produce blocks" queue.
-      this._renderBpSection(section);
-
-      // Privacy & identity.
-      if (s) {
-        const privBox = this._unSection(section, 'Usernode app — privacy & identity',
-          'Controls for the ZK passport identity flow.');
-        this._unToggle(privBox, 'Strict facematch',
-          s.facematchStrict !== false,
-          (v) => this._unApply(window.usernode.setFacematchStrict(v)));
-        this._unButton(privBox, 'Restart ZK challenge', async () => {
-          const ok = await PlatformUI.confirm({
-            title: 'Restart the ZK challenge?',
-            message: 'Your in-progress identity registration will be discarded.',
-            confirmLabel: 'Restart',
-            danger: true,
-          });
-          if (!ok) return;
-          await window.usernode.resetZkChallenge();
-          if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
-        }, { danger: true });
-      }
-
-      // Widget icons. Above the general diagnostics box because it is the
-      // one someone arrives here for: "the widget tile is the wrong
-      // colour" is a user-visible symptom, not a debugging tool.
-      this._renderWidgetIconsSection(section);
-
-      // Diagnostics. The two native screens are reachable whether or not
-      // the snapshot loaded — they are exactly what someone debugging a
-      // failed read wants — so only the Debug mode toggle is gated.
-      const diagBox = this._unSection(section, 'Usernode app — diagnostics',
-        'Debugging tools for the app and its embedded node.');
-      if (s) {
-        this._unToggle(diagBox, 'Debug mode',
-          s.debugMode === true,
-          (v) => this._unApply(window.usernode.setDebugMode(v)));
-      }
-      const diagBtns = this._unEl('div');
-      this._unButton(diagBtns, 'Device benchmark', () =>
-        this._openNativeScreen('benchmark', 'Could not open the benchmark'));
-      this._unButton(diagBtns, 'HTTP debug logs', () =>
-        this._openNativeScreen('httpLogs', 'Could not open the logs'));
-      diagBox.appendChild(diagBtns);
-
-      // About & legal. The build line needs the snapshot; Terms and the FAQ
-      // do not (terms are session-authed web routes).
-      const aboutBox = this._unSection(section, 'Usernode app — about & legal');
-      const bi = (s && s.buildInfo) || {};
-      const buildBits = [];
+    _usernodeBuildNotes() {
+      const bi = (this._usernodeState && this._usernodeState.buildInfo) || {};
+      const bits = [];
       if (bi.appVersion) {
-        buildBits.push(`App ${bi.appVersion}` +
-          (bi.buildNumber ? ` (${bi.buildNumber})` : ''));
+        bits.push(`App ${bi.appVersion}` + (bi.buildNumber ? ` (${bi.buildNumber})` : ''));
       }
-      if (bi.nodeVersion) buildBits.push(`Node ${bi.nodeVersion}`);
-      if (bi.commitHash) buildBits.push(bi.commitHash);
-      if (buildBits.length) {
-        aboutBox.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-400 font-mono',
-          buildBits.join(' · ')));
-      }
-      const termsRow = this._unEl('div');
-      // Terms render in a web sheet now (session-authed /challenges-api
-      // twins) — the native terms screen is gone. On accept, refresh the
-      // usernode snapshot so the label flips without reopening Settings.
-      this._unButton(termsRow, (s && s.termsAccepted === false)
-        ? 'Review terms (not yet accepted)' : 'Terms', () =>
-        this.showTermsSheet(() => this._renderUsernodeSection()));
-      aboutBox.appendChild(termsRow);
-      this._renderUsernodeFaq(aboutBox, isAndroid, perms.deviceManufacturer);
+      if (bi.nodeVersion) bits.push(`Node ${bi.nodeVersion}`);
+      if (bi.commitHash) bits.push(bi.commitHash);
+      return bits.length ? [{ text: bits.join(' · '), tone: 'mono' }] : [];
+    },
 
-      // Account (thin-shell migration). Platform login is the only
-      // sign-in surface: the native app's credential is provisioned from
-      // the web session by the boot handoff (native-chrome.js), so there
-      // is no separate "log in to the app" path anymore. The redundant
-      // native-only "Log out of the Usernode app" row is gone too
-      // (onboarding flow alignment): it was a no-op in practice — the
-      // boot handoff would immediately re-authenticate the native side
-      // from the still-live web session — and the main "Log out" at the
-      // top of this modal already tears down both sides at once. Only
-      // the not-yet-authenticated hint remains.
-      if (s && s.authStatus !== 'authenticated') {
-        const acctBox = this._unSection(section, 'Usernode app — account');
-        acctBox.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-400',
-          'The app signs in automatically with your platform account. ' +
-          'If this message persists, try closing and reopening the app.'));
+    _usernodeConnectionView() {
+      const diag = this._bridgeDiagnostics();
+      if (!diag) return null;
+      const state = (diag.privileged && diag.privileged.state) || 'unknown';
+      const bits = [];
+      if (diag.appVersion) {
+        bits.push(`App ${diag.appVersion}` +
+          (diag.buildNumber ? ` (${diag.buildNumber})` : ''));
+      }
+      bits.push(`Bridge v${diag.bridgeVersion}`);
+      return {
+        demo: !!this._bridgeDiagDemo(),
+        row: {
+          label: 'Secure app connection',
+          ok: state === 'ready',
+          text: state === 'ready'
+            ? this.PRIVILEGED_STATE_LABELS.ready
+            : (this.PRIVILEGED_STATE_LABELS[state] || 'Unavailable'),
+        },
+        reason: this.PRIVILEGED_STATE_REASONS[state] ||
+          this.PRIVILEGED_STATE_REASONS.unknown,
+        build: bits.join(' · '),
+        message: (diag.privileged && diag.privileged.message) || null,
+        // Read-only hook: the buttons render so the screenshot shows the real
+        // panel, but they must not touch a bridge or a session.
+        retryDisabled: !!this._bridgeDiagDemo(),
+      };
+    },
+
+    _usernodeBodyView() {
+      const s = this._usernodeState;
+      if (!s) {
+        if (this._usernodeLoading) return { kind: 'loading' };
+        const readError = this._usernodeReadError();
+        const kind = readError && readError.kind;
+        return {
+          kind: 'error',
+          reason: this.USERNODE_READ_ERROR_REASONS[kind] ||
+            this.USERNODE_READ_ERROR_FALLBACK,
+          message: (readError && readError.message) || null,
+        };
+      }
+      const perms = s.permissions || {};
+      const isAndroid = perms.platform === 'android';
+      // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
+      // notification permission (there are no exact alarms on iOS), so once a
+      // request has settled through NativeChrome.settleIosPushGrant that
+      // answer is the authority — the same rule the first-run sheet applies.
+      const notifOk = !isAndroid && this._unPushStatus != null
+        ? this._unPushStatus === 'granted'
+        : !!perms.exactAlarmGranted;
+      const n = this._unNotifNotice;
+      return {
+        kind: 'permissions',
+        demo: !!this._unDemoMode(),
+        heading: 'Usernode app — device permissions',
+        description: isAndroid
+          ? 'Block production needs the app to wake your device at exact slot times.'
+          : 'Notifications let Usernode alert you about node and account activity.',
+        // The row IS the control. It used to be an inert div whose only
+        // affordance was a chip below, rendered only when the (iOS-meaningless)
+        // exactAlarmGranted boolean said "not granted" — so on a build
+        // reporting it `true` there was nothing to tap at all.
+        row: {
+          id: 'settings-notif-row',
+          label: isAndroid ? 'Exact alarms' : 'Notifications',
+          ok: notifOk,
+          text: notifOk ? 'Granted' : 'Not granted',
+          hint: isAndroid ? 'request permissions' : 'allow notifications',
+          action: '_requestUsernodePermissions',
+        },
+        button: notifOk ? null : {
+          label: isAndroid ? 'Request permissions' : 'Allow notifications',
+          action: '_requestUsernodePermissions',
+        },
+        notice: n ? {
+          text: n.text,
+          tone: n.tone === 'warn' ? 'warn' : (n.tone === 'ok' ? 'ok' : 'plain'),
+          settings: !!(n.settings && this._unCanOpenNotifSettings === true),
+        } : null,
+        android: isAndroid ? {
+          row: {
+            label: 'Battery optimization',
+            ok: perms.batteryOptDisabled === true,
+            text: perms.batteryOptDisabled === true ? 'Unrestricted' : 'Restricted',
+          },
+          button: perms.batteryOptDisabled === true ? null : {
+            label: 'Open battery settings', action: '_openBatterySettings',
+          },
+          device: perms.deviceManufacturer ? `Device: ${perms.deviceManufacturer}` : null,
+        } : null,
+      };
+    },
+
+    _socialPushView() {
+      if (!window.SocialPush || this._socialPushSupported === false) {
+        return { kind: 'absent' };
+      }
+      const state = this._socialPushState;
+      if (state === undefined) return { kind: 'checking' };
+      if (!state) {
+        const admissionPending = window.NativeChrome &&
+          typeof NativeChrome.isSessionAdmitted === 'function' &&
+          !NativeChrome.isSessionAdmitted();
+        // "Finishing secure app sign-in…" is a lie once the handshake has been
+        // refused — nothing is finishing. Name the state and point at the
+        // panel that explains it.
+        const diag = this._bridgeDiagnostics();
+        const stuck = !!diag && diag.privileged &&
+          (diag.privileged.state === 'blocked-frame' ||
+           diag.privileged.state === 'unattached');
+        const failure = (window.NativeChrome &&
+          typeof NativeChrome.lastSessionFailure === 'function')
+          ? NativeChrome.lastSessionFailure() : null;
+        return {
+          kind: 'unavailable',
+          reason: stuck
+            ? 'The Usernode app isn’t accepting this screen’s secure ' +
+              'connection, so notifications can’t be set up. See “Usernode ' +
+              'app — connection” above.'
+            : (admissionPending
+              ? 'Finishing secure app sign-in before enabling notifications…'
+              : 'Notification settings are temporarily unavailable.'),
+          failure: (failure && failure.message) || null,
+          retry: !!(admissionPending && window.NativeChrome &&
+            typeof NativeChrome.recoverSessionAdmission === 'function'),
+        };
+      }
+      let status = 'Off on this device.';
+      if (state.deliveryActive) {
+        status = 'On — this device is registered for activity notifications.';
+      } else if (state.permissionStatus === 'denied') {
+        status = 'Notification permission is denied in the device settings.';
+      } else if (state.enabled && state.registrationStatus === 'registering') {
+        status = 'Enabling notifications…';
+      } else if (state.enabled) {
+        status = 'Enabled, but delivery is not active yet.';
+      }
+      return { kind: 'ready', enabled: !!state.enabled, status };
+    },
+
+    _bpView() {
+      const state = this._bpState;
+      if (state === undefined) return { kind: 'checking' };
+      if (!state) return { kind: 'note', text: 'Could not check block-production status right now.' };
+      if (state.bp_released) return { kind: 'note', text: 'Released — your node produces blocks when it wins slots.' };
+      if (state.bp_requested) return { kind: 'note', text: 'Request pending — you’ll start producing automatically once an admin releases your keys.' };
+      if (!state.has_platform_access) return { kind: 'note', text: 'Available once your account has platform access.' };
+      return { kind: 'ask' };
+    },
+
+    _widgetIconsView() {
+      const diag = this._widgetIconDiagnostics();
+      if (!diag) return null;
+      const sending = diag.resolved === true
+        ? 'Light + dark pair'
+        : (diag.resolved === false
+          ? `Single face (${diag.scheme})`
+          : 'Undecided — single face for now');
+      const build = diag.build
+        ? `${diag.build.appVersion} (${diag.build.buildNumber || '?'})`
+        : 'unknown — the verdict is re-confirmed each time';
+      const healedAt = diag.lastHealAt ? this._widgetIconTime(diag.lastHealAt) : 'never';
+      const notes = [
+        { text: `Verdict bound to app version: ${build}`, tone: 'muted' },
+        { text: `Last icon check: ${healedAt}` +
+          (diag.lastHealOutcome ? ` — ${diag.lastHealOutcome}` : ''), tone: 'muted' },
+      ];
+      if (diag.readError) {
+        notes.push({
+          text: `${diag.readError.method}: ` +
+            (this.USERNODE_READ_ERROR_REASONS[diag.readError.kind] ||
+              this.USERNODE_READ_ERROR_FALLBACK),
+          tone: 'warn',
+        });
+      }
+      return {
+        demo: !!this._widgetIconsDemo(),
+        rows: [
+          { id: 'settings-widget-mechanism-row', label: 'Widget shortcuts',
+            ok: diag.mechanism === 'widget',
+            text: diag.mechanism === 'widget' ? 'Available'
+              : (diag.mechanism ? `Not this device (${diag.mechanism})` : 'Not available') },
+          { id: 'settings-widget-registry-row', label: 'Pinned registry',
+            ok: diag.registryLoaded === true,
+            text: diag.registryLoaded === true
+              ? `Loaded — ${diag.entries.length} pinned` : 'Could not be read' },
+          // Tri-state, and the third state is the point: `has()` used to
+          // collapse "couldn't say" into "no".
+          { id: 'settings-widget-capability-row', label: 'Dark icon capability',
+            ok: diag.capability === true,
+            text: diag.capability === true ? 'Advertised by the app'
+              : (diag.capability === false ? 'Not advertised' : 'The app couldn’t say') },
+          { id: 'settings-widget-verdict-row', label: 'Confirmed by the widget',
+            ok: diag.verdict === 'supported',
+            text: diag.verdict === 'supported' ? 'Stores both faces'
+              : (diag.verdict === 'unsupported' ? 'Single face only' : 'Not confirmed yet') },
+          { id: 'settings-widget-sending-row', label: 'Sending',
+            ok: diag.resolved === true, text: sending },
+        ],
+        notes,
+        entries: this._widgetIconEntryViews(diag),
+        recheck: !this._widgetIconsDemo(),
+      };
+    },
+
+    /** Widget entry rows: dot + name + note, as data. */
+    _widgetIconEntryViews(diag) {
+      if (!diag.entries.length) {
+        return [{ key: 'none', ok: true, name: '', note: '',
+          empty: 'No shortcuts are pinned to the widget.' }];
+      }
+      const flag = (v) => (v === true ? 'yes' : (v === false ? 'no' : '—'));
+      return diag.entries.map((entry, i) => ({
+        key: String(entry.name || i),
+        ok: entry.foreign ? true : (entry.hasIcon !== false && entry.matches),
+        name: entry.name,
+        note: entry.foreign
+          ? 'pinned by another app'
+          : (entry.unknownApp
+            ? 'app not loaded'
+            : `icon ${flag(entry.hasIcon)} · dark ${flag(entry.hasIconDark)} · ` +
+              `sent ${entry.matches ? 'current' : 'stale'}`),
+        empty: null,
+      }));
+    },
+
+    // ── Usernode app section: the named actions the components dispatch ──
+    //
+    // Each was an inline closure passed to `_unButton` / `_unToggle` /
+    // `_unStatusRow`. They are named methods so the view model stays plain
+    // serialisable data — the components carry an action STRING, never a
+    // function. The disable/toast/re-enable wrapper each one used to repeat
+    // lives in sections/usernode-ui.tsx's `useAction`, once.
+
+    async _copyUsernodeDiagnostics() {
+      const diag = this._bridgeDiagnostics();
+      const text = this._bridgeDiagnosticsText(diag);
+      const ok = window.PlatformUI && PlatformUI.copyText
+        ? await PlatformUI.copyText(text) : false;
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(ok ? 'Diagnostics copied' : 'Could not copy',
+          ok ? {} : { error: true });
+      }
+    },
+
+    /** Swap the failure box for the progress line and re-read. */
+    async _retryUsernodeRead() {
+      this._usernodeLoading = true;
+      this._publishUsernode();
+      await this._renderUsernodeSection();
+    },
+
+    _requestUsernodePermissions() {
+      const perms = (this._usernodeState && this._usernodeState.permissions) || {};
+      return this._unRequestPermissions(perms.platform === 'android');
+    },
+
+    _openBatterySettings() { return window.usernode.openBatterySettings(); },
+    _openNotifSettings() { return window.usernode.openNotificationSettings(); },
+    _setNodeSleep(v) { return this._unApply(window.usernode.setNodeSleepEnabled(v)); },
+    _setFacematchStrict(v) { return this._unApply(window.usernode.setFacematchStrict(v)); },
+    _setDebugMode(v) { return this._unApply(window.usernode.setDebugMode(v)); },
+    _openBenchmarkScreen() {
+      return this._openNativeScreen('benchmark', 'Could not open the benchmark');
+    },
+    _openHttpLogsScreen() {
+      return this._openNativeScreen('httpLogs', 'Could not open the logs');
+    },
+    _openTermsFromUsernode() {
+      return this.showTermsSheet(() => this._renderUsernodeSection());
+    },
+
+    async _resetZkChallenge() {
+      const ok = await PlatformUI.confirm({
+        title: 'Restart the ZK challenge?',
+        message: 'Your in-progress identity registration will be discarded.',
+        confirmLabel: 'Restart',
+        danger: true,
+      });
+      if (!ok) return;
+      await window.usernode.resetZkChallenge();
+      if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
+    },
+
+    async _recheckWidgetIcons() {
+      const home = window.Home;
+      if (home && typeof home._refreshWidgetItems === 'function') {
+        // Clears the one-attempt-per-load cap so the pass this triggers
+        // actually re-sends anything it finds wrong.
+        home._iconHealTried = null;
+        await home._refreshWidgetItems();
+      }
+      this._publishUsernode();
+    },
+
+    // ── activity notifications ─────────────────────────────────────────
+    //
+    // The listener and the support probe stay here. What went away is the
+    // `box.isConnected` guard on every event and the `box.remove()` on an
+    // unsupported build: a publish to an unmounted component is a no-op, and
+    // "unsupported" is a model state the rest of the screen can read.
+
+    _initSocialPush() {
+      if (this._socialPushStateListener) {
+        window.removeEventListener(
+          'usernode:social-push-state', this._socialPushStateListener);
+        this._socialPushStateListener = null;
+      }
+      if (!window.SocialPush) { this._socialPushSupported = false; return; }
+      const onState = (event) => {
+        this._socialPushState = (event && event.detail) || null;
+        this._publishUsernode();
+      };
+      this._socialPushStateListener = onState;
+      window.addEventListener('usernode:social-push-state', onState);
+      SocialPush.isSupported().then((supported) => {
+        this._socialPushSupported = !!supported;
+        if (!supported) {
+          window.removeEventListener('usernode:social-push-state', onState);
+          this._socialPushStateListener = null;
+          this._publishUsernode();
+          return null;
+        }
+        return SocialPush.getState();
+      }).then((state) => {
+        if (this._socialPushSupported) this._socialPushState = state || null;
+        this._publishUsernode();
+      }).catch((err) => {
+        console.warn('[settings] social push state failed:', err);
+        this._socialPushState = null;
+        this._publishUsernode();
+      });
+    },
+
+    async _retrySocialPush() {
+      await NativeChrome.recoverSessionAdmission();
+      if (window.SocialPush &&
+          typeof SocialPush.retryBridgeReadiness === 'function') {
+        try { SocialPush.retryBridgeReadiness(); } catch (_) {}
+      }
+      this._socialPushState = await SocialPush.getState();
+      this._publishUsernode();
+    },
+
+    async _setSocialPushEnabled(enabled) {
+      this._socialPushState = await SocialPush.setEnabled(enabled);
+      this._publishUsernode();
+    },
+
+    // ── block production queue ─────────────────────────────────────────
+    //
+    // State comes from the session-authed /challenges-api twins; the async
+    // load fills its slice in place so the rest of the body never waits on it.
+
+    _initBlockProduction() {
+      this._bpState = undefined;
+      fetch('/challenges-api/bp/state', { credentials: 'same-origin' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => { this._bpState = (data && data.success !== false) ? data.data : null; })
+        .catch(() => { this._bpState = null; })
+        .then(() => this._publishUsernode());
+    },
+
+    async _askForBlockProduction() {
+      try {
+        const res = await fetch('/challenges-api/bp/request', {
+          method: 'POST', credentials: 'same-origin',
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || data.success === false) {
+          throw new Error((data && data.error) || 'Request failed');
+        }
+        if (window.PlatformUI) PlatformUI.toast('Request sent — an admin will release your keys');
+        this._bpState = Object.assign({}, this._bpState || {}, { bp_requested: true });
+        this._publishUsernode();
+      } catch (e) {
+        if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
       }
     },
 
@@ -5349,283 +5122,14 @@
     // stay recognisable), the mapped reason, the app's own message, and a
     // retry that stays on this screen. `loading` renders the in-place
     // progress line a retry swaps in, leaving the rest of the section up.
-    _renderUsernodeError(parent, readError, loading) {
-      const box = this._unEl('div',
-        'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700');
-      box.id = 'settings-usernode-error';
-      if (loading) {
-        box.appendChild(this._unEl('p', 'text-xs text-zinc-500',
-          'Loading Usernode app settings…'));
-        parent.appendChild(box);
-        return box;
-      }
-      box.appendChild(this._unEl('p',
-        'text-sm font-bold text-red-600 dark:text-red-400',
-        'Could not load Usernode app settings.'));
-      const kind = readError && readError.kind;
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-400 mt-1',
-        this.USERNODE_READ_ERROR_REASONS[kind] ||
-          this.USERNODE_READ_ERROR_FALLBACK));
-      if (readError && readError.message) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
-          readError.message));
-      }
-      const retry = this._unButton(box, 'Try again', async () => {
-        // Swap this box for the progress line and re-read; the rest of the
-        // section (notifications, block production, Terms, FAQ) stays put.
-        this._renderUsernodeBody(readError, true);
-        await this._renderUsernodeSection();
-      });
-      retry.id = 'settings-usernode-retry';
-      parent.appendChild(box);
-      return box;
-    },
 
-    _renderSocialPushSection(section) {
-      if (this._socialPushStateListener) {
-        window.removeEventListener(
-          'usernode:social-push-state', this._socialPushStateListener
-        );
-        this._socialPushStateListener = null;
-      }
-      if (!window.SocialPush) return;
-      const box = this._unSection(section, 'Usernode app — activity notifications',
-        'Get a device notification when a dev session or auto-solve run finishes. Notification content is loaded only after you open Social.');
-      const holder = this._unEl('div');
-      holder.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-400', 'Checking status…'));
-      box.appendChild(holder);
-
-      const render = (state) => {
-        holder.textContent = '';
-        if (!state) {
-          const admissionPending = window.NativeChrome &&
-            typeof NativeChrome.isSessionAdmitted === 'function' &&
-            !NativeChrome.isSessionAdmitted();
-          // "Finishing secure app sign-in…" is a lie once the handshake has
-          // been refused — nothing is finishing. Name the state and point
-          // at the panel that explains it.
-          const diag = this._bridgeDiagnostics();
-          const stuck = !!diag && diag.privileged &&
-            (diag.privileged.state === 'blocked-frame' ||
-             diag.privileged.state === 'unattached');
-          holder.appendChild(this._unEl('p',
-            'text-xs text-zinc-500 dark:text-zinc-400',
-            stuck
-              ? 'The Usernode app isn’t accepting this screen’s ' +
-                'secure connection, so notifications can’t be set up. ' +
-                'See “Usernode app — connection” above.'
-              : (admissionPending
-                ? 'Finishing secure app sign-in before enabling notifications…'
-                : 'Notification settings are temporarily unavailable.')));
-          const failure = (window.NativeChrome &&
-            typeof NativeChrome.lastSessionFailure === 'function')
-            ? NativeChrome.lastSessionFailure()
-            : null;
-          if (failure && failure.message) {
-            holder.appendChild(this._unEl('p',
-              'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
-              failure.message));
-          }
-          if (admissionPending &&
-              typeof NativeChrome.recoverSessionAdmission === 'function') {
-            this._unButton(holder, 'Try again', async () => {
-              await NativeChrome.recoverSessionAdmission();
-              if (window.SocialPush &&
-                  typeof SocialPush.retryBridgeReadiness === 'function') {
-                try { SocialPush.retryBridgeReadiness(); } catch (_) {}
-              }
-              render(await SocialPush.getState());
-            });
-          }
-          return;
-        }
-        this._unToggle(holder, 'Activity notifications', state.enabled,
-          async (enabled) => render(await SocialPush.setEnabled(enabled)),
-          { includeErrorDetail: true });
-        let status = 'Off on this device.';
-        if (state.deliveryActive) {
-          status = 'On — this device is registered for activity notifications.';
-        } else if (state.permissionStatus === 'denied') {
-          status = 'Notification permission is denied in the device settings.';
-        } else if (state.enabled && state.registrationStatus === 'registering') {
-          status = 'Enabling notifications…';
-        } else if (state.enabled) {
-          status = 'Enabled, but delivery is not active yet.';
-        }
-        holder.appendChild(this._unEl('p',
-          'mt-2 text-xs text-zinc-500 dark:text-zinc-400', status));
-      };
-
-      const onState = (event) => {
-        if (!box.isConnected) return;
-        render(event && event.detail);
-      };
-      this._socialPushStateListener = onState;
-      window.addEventListener('usernode:social-push-state', onState);
-
-      SocialPush.isSupported().then((supported) => {
-        if (!supported) {
-          if (this._socialPushStateListener === onState) {
-            window.removeEventListener('usernode:social-push-state', onState);
-            this._socialPushStateListener = null;
-          }
-          box.remove();
-          return null;
-        }
-        return SocialPush.getState();
-      }).then((state) => {
-        if (box.isConnected) render(state);
-      }).catch((err) => {
-        console.warn('[settings] social push state failed:', err);
-        render(null);
-      });
-    },
 
     // Block production queue (onboarding flow alignment). State comes
     // from the session-authed /challenges-api twins; the async load
     // fills the section in place so the rest of the usernode body never
     // waits on it.
-    _renderBpSection(section) {
-      const box = this._unSection(section, 'Usernode app — block production',
-        'Producing blocks earns points. Access is released manually — ask below and an admin will release your keys in batches.');
-      const holder = this._unEl('div');
-      box.appendChild(holder);
-
-      const note = (text) => {
-        holder.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-400', text));
-      };
-
-      const render = (state) => {
-        holder.textContent = '';
-        if (!state) return note('Could not check block-production status right now.');
-        if (state.bp_released) return note('Released — your node produces blocks when it wins slots.');
-        if (state.bp_requested) return note('Request pending — you\u2019ll start producing automatically once an admin releases your keys.');
-        if (!state.has_platform_access) return note('Available once your account has platform access.');
-        this._unButton(holder, 'Ask to produce blocks', async () => {
-          try {
-            const res = await fetch('/challenges-api/bp/request', {
-              method: 'POST', credentials: 'same-origin',
-            });
-            const data = await res.json().catch(() => null);
-            if (!res.ok || !data || data.success === false) throw new Error((data && data.error) || 'Request failed');
-            if (window.PlatformUI) PlatformUI.toast('Request sent — an admin will release your keys');
-            render({ ...state, bp_requested: true });
-          } catch (e) {
-            if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
-          }
-        });
-      };
-
-      note('Checking status\u2026');
-      fetch('/challenges-api/bp/state', { credentials: 'same-origin' })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => render(data && data.success !== false ? data.data : null))
-        .catch(() => render(null));
-    },
 
     // Static port of the native FaqSection copy (Help & Info tiles).
-    _renderUsernodeFaq(parent, isAndroid, deviceManufacturer) {
-      const faq = this._unEl('div', 'mt-3');
-      faq.appendChild(this._unEl('div',
-        'text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1',
-        'Help & Info'));
-
-      const addTile = (title, paragraphs) => {
-        const d = this._unEl('details',
-          'rounded-lg border border-zinc-200 dark:border-zinc-800 ' +
-          'px-3 py-2 mb-2');
-        const sum = this._unEl('summary',
-          'text-sm font-medium cursor-pointer select-none', title);
-        d.appendChild(sum);
-        for (const p of paragraphs) {
-          d.appendChild(this._unEl('p',
-            'text-xs text-zinc-500 dark:text-zinc-400 mt-2 leading-relaxed',
-            p));
-        }
-        faq.appendChild(d);
-        return d;
-      };
-
-      addTile('About', [
-        'Your device is part of a new network. It verifies, executes, and ' +
-        'contributes compute directly to the network, passively in the ' +
-        'background - with no central servers, no hidden infra. As long as ' +
-        'users keep the app running, the network will continue to operate, ' +
-        'peer to peer, with no external dependencies.',
-        "We're doing this to enable networks that can be hosted end-to-end " +
-        'by their own communities - both for decentralization, and to ' +
-        'enable a natural coordination point around participation, where ' +
-        'users who help operate and contribute to systems directly realize ' +
-        'the benefits from it.',
-        'Right now we are in testnet as we validate the core layer: block ' +
-        "production, consensus behavior, and network reliability. As these " +
-        "stabilize, we'll build upon the unique features of the platform - " +
-        'its decentralization, zero knowledge proofs, and sybil-resistant ' +
-        'identity - to introduce new activities, coordination mechanisms, ' +
-        'and tools for self-hosted, sybil-resistant communities.',
-        'Thanks for helping test at this early stage. The app right now is ' +
-        'simple, but as we prove out the core functionality, we hope to ' +
-        'make possible a new kind of community-owned network, where users ' +
-        'can directly run and benefit from the networks they use.',
-      ]);
-
-      addTile('What is Block Production?', [
-        'This feature automatically wakes your device to produce ' +
-        "blockchain blocks when your node wins a slot. Here's how it works:",
-        '1. VRF Selection — Each epoch, the network randomly selects which ' +
-        'validators will produce blocks using Verifiable Random Function ' +
-        '(VRF).',
-        '2. Slot Scheduling — When you win slots, the app schedules alarms ' +
-        'to wake your device ~1 minute before each slot.',
-        '3. Block Production — At slot time, the app monitors your node ' +
-        'and ensures the block is produced.',
-        '4. Success Tracking — Results are recorded to track your ' +
-        'reliability over time.',
-      ]);
-
-      const platformParas = isAndroid
-        ? [
-            "Uses Android's exact alarm system (AlarmManager) to wake your " +
-            'device precisely when needed for block production.',
-            'Reliability by mode: Default (Event-Driven) 90-95% — ' +
-            'battery-efficient, wakes only during slot windows. Keep-Alive ' +
-            'Mode 100% — persistent service, higher battery (~5-10%/hr).',
-          ]
-        : [
-            'Uses a combination of background tasks and keep-alive mode to ' +
-            'wake your device for block production.',
-            'Reliability by mode: Keep-Alive Mode 99% — app stays awake in ' +
-            'foreground, requires charger. Background Only 40-60% — iOS ' +
-            'controls execution, not guaranteed.',
-          ];
-      if (isAndroid && deviceManufacturer) {
-        platformParas.push(`Device: ${deviceManufacturer}`);
-      }
-      addTile('Platform & Reliability', platformParas);
-
-      addTile('Understanding VRF & Slots', [
-        'VRF (Verifiable Random Function) is how the network fairly ' +
-        'selects block producers. At the start of each epoch, the network ' +
-        'runs VRF calculations to determine which validators will produce ' +
-        'blocks in upcoming slots.',
-        'Status meanings — Pending: waiting for epoch transition to start ' +
-        'calculations. Calculating: VRF evaluation in progress (takes a ' +
-        'few hours). Complete: slot assignments are finalized and ' +
-        'scheduled.',
-        'When VRF selects your node to produce a block at a specific time, ' +
-        'you\'ve "won" that slot. Your responsibility is to have your ' +
-        'device awake and connected so the block can be produced.',
-        "Why timing matters: each slot has a ~5-seconds window. If your " +
-        "device doesn't wake up in time or loses network connectivity, the " +
-        'slot is missed and counted as "failed."',
-      ]);
-
-      parent.appendChild(faq);
-    },
   };
 
   // Published at module scope, not from the island's effect: app.js,

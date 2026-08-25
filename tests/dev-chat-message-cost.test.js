@@ -11,16 +11,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeTranscriptBridge } = require('./lib/dev-transcript-html');
+
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
 
 function makeDevChat() {
-  let captured = '';
+  // #1078: the rows are a React island. `renderMessages` publishes a view
+  // model instead of writing this element's innerHTML, so the element is only
+  // the portal's host and the markup comes back from the component.
+  const t = makeTranscriptBridge();
   const messagesEl = {
-    set innerHTML(v) { captured = v; },
-    get innerHTML() { return captured; },
+    innerHTML: '',
     querySelectorAll: () => ({ forEach: () => {} }),
     scrollTop: 0,
     scrollHeight: 0,
@@ -75,6 +79,7 @@ function makeDevChat() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
+  sandbox.UsernodeReact = { devChat: t.bridge };
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
 
@@ -86,7 +91,7 @@ function makeDevChat() {
     render(message) {
       DevChat.messages = [message];
       DevChat.renderMessages();
-      return captured;
+      return t.html();
     },
   };
 }

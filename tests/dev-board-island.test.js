@@ -140,11 +140,22 @@ test('the mount is synchronous, because the legacy caller reads the DOM next', (
 
 test('no portal outlives its surface', () => {
   // Every hand-written replacement of #app-content retires the root first.
+  // Three of them left after the topic sub-view stopped being one (below).
   const teardowns = APP_VIEW.split('AppView._teardownDevRoots();').length - 1;
-  assert.ok(teardowns >= 4,
+  assert.ok(teardowns >= 3,
     `every #app-content writer retires the portal (found ${teardowns} call sites)`);
-  assert.match(APP_VIEW, /_teardownDevRoots\(\) \{\s*\n\s*AppView\._reactDevBoard\(\)\?\.unmountAll\(\);/,
+  assert.match(APP_VIEW, /_teardownDevRoots\(\) \{[\s\S]{0,600}?AppView\._reactDevBoard\(\)\?\.unmountAll\(\);/,
     'the teardown helper sweeps every live portal');
+  // Two things the sweep alone cannot do, both added with the surfaces that
+  // needed them: a body-mounted dialog's SCRIM is not a portal, so emptying
+  // its card would leave an opaque overlay with no way out; and the App
+  // tab's placeholder store would still hold the view its swept portal was
+  // rendering.
+  const teardown = APP_VIEW.slice(APP_VIEW.indexOf('_teardownDevRoots() {'));
+  assert.match(teardown.slice(0, 700), /AppView\._dismissDevModals\(\);/,
+    'an open dialog is dismissed, not left as an empty scrim');
+  assert.match(teardown.slice(0, 700), /AppView\._reactAppStatus\(\)\?\.clear\(\);/,
+    'and the placeholder view is forgotten with its portal');
   // Including closing the app screen entirely, which blanks #app-content.
   const close = APP.indexOf('AppView._teardownDevRoots();');
   assert.ok(close !== -1, 'closeApp retires the root before blanking #app-content');
@@ -152,13 +163,25 @@ test('no portal outlives its surface', () => {
     close < APP.indexOf("content.innerHTML = ''", close),
     'the teardown runs BEFORE the node is blanked'
   );
-  // The topic sub-view is still a template, so it is the one Dev branch that
-  // must retire the root rather than re-render it.
-  assert.match(
-    APP_VIEW,
-    /if \(subTab === 'topic' && ref && ref\.kind && ref\.id\) AppView\._teardownDevRoots\(\);/,
-    'the still-templated topic branch retires the root'
-  );
+  // The topic sub-view USED to be the one Dev branch that had to retire the
+  // root rather than re-render it, because it was still an innerHTML template.
+  // It is features/dev-board/topic-frame.tsx now, so that branch is gone —
+  // and with it the one Dev navigation that threw the board frame's state
+  // away.
+  assert.doesNotMatch(APP_VIEW, /subTab === 'topic' && ref && ref\.kind && ref\.id\) AppView\._teardownDevRoots/);
+  assert.match(APP_VIEW, /mountTopicSubView\(content, \{/, 'the topic sub-view is mounted');
+
+  // What replaces it for every host a caller is NOT in a position to know
+  // about: a sub-view swap re-renders `#app-content`'s portal, and React
+  // discards `#dev-chat-body` / `#dev-topic-thread` and everything under them
+  // without telling their owners. Before this sweep, walking board → topic →
+  // board → chat left two dead entries per hop and the count climbed without
+  // bound.
+  assert.match(PORTALS, /export function pruneDetachedLegacyPortals\(keep\?: Element \| null\): boolean \{/);
+  assert.match(PORTALS, /if \(host === keep \|\| host\.isConnected\) continue;/,
+    'an entry is dropped only when its host has genuinely left the document');
+  assert.match(PORTALS, /pruneDetachedLegacyPortals\(host\);\n\s*const existing = entries\.get\(host\);/,
+    'every mount sweeps first — a mount IS a surface swap');
   // …and a leak assertion is reachable from the bridge. The name kept its
   // chunk-G spelling because app-view.js calls it; it counts live portals now.
   assert.match(MOUNT, /rootCount\(\): number/, 'the bridge exposes a live-portal count');
@@ -235,11 +258,12 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
 });
 
 test('the other legacy-owned leaves render empty or constant, never live', () => {
-  // #dev-locked-notice — the module writes its innerHTML and toggles `hidden`.
-  // React may render its className ONCE (a constant prop is never rewritten),
-  // but must not render children into it.
-  assert.match(FRAME, /<div id="dev-locked-notice" className="px-3 pt-2 hidden"><\/div>/,
-    'the locked notice is an empty leaf with a constant className');
+  // #dev-locked-notice is NOT on this list any more. It was the fragile member
+  // of it — the module wrote its innerHTML and toggled `hidden`, and that only
+  // worked because React rendered the className as a constant it never
+  // rewrote. #1191 made it a one-boolean store instead, so the node has one
+  // writer; the banner's own coverage is below.
+  assert.doesNotMatch(FRAME, /<div id="dev-locked-notice" className="px-3 pt-2 hidden"><\/div>/);
   // #dc-secrets-state — refreshDevChatSecretsState writes its textContent.
   assert.match(FRAME, /id="dc-secrets-state"[\s\S]{0,140}?><\/span>/,
     'the secrets-state slot is an empty leaf');
@@ -250,6 +274,20 @@ test('the other legacy-owned leaves render empty or constant, never live', () =>
   assert.match(SESSION_FRAME, /id="dev-section"/, '#dev-section is rendered');
   assert.ok(!/dangerouslySetInnerHTML=/.test(SESSION_FRAME),
     '#dev-section ships empty, so it needs no constant string to keep React out');
+});
+
+test('the locked-app banner has one writer', () => {
+  // The module publishes server truth (`_proposalsCtx.locked`, loaded with the
+  // feed) and the frame draws the banner or does not — including its `hidden`,
+  // which used to be the module's `classList.toggle` over React's constant.
+  assert.match(FRAME, /const \{ locked \} = useStoreState<LockedNoticeState>\(lockedNoticeStore\);/);
+  assert.match(FRAME, /id="dev-locked-notice" className=\{locked \? 'px-3 pt-2' : 'px-3 pt-2 hidden'\}/);
+  assert.match(FRAME, /App is locked — an admin must approve any proposal before it applies\./);
+  const code = APP_VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const fn = code.match(/_renderLockedNotice\(\) \{([\s\S]*?)\n {2}\},/);
+  assert.ok(fn, '_renderLockedNotice() found');
+  assert.doesNotMatch(fn[1], /innerHTML|classList/, 'the module writes neither the markup nor the class');
+  assert.match(fn[1], /publishLockedNotice\(\s*!!\(AppView\._proposalsCtx && AppView\._proposalsCtx\.locked\)\)/);
 });
 
 test('the view toggle is real React state, and the className writer is gone', () => {

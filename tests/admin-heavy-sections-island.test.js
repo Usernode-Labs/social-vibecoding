@@ -50,7 +50,11 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const ADMIN_DIR = path.join(root, 'frontend/src/features/admin');
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
-const readMod = (name) => fs.readFileSync(path.join(ADMIN_DIR, `${name}.js`), 'utf8');
+// A section is a `.js` (innerHTML) or a `.tsx` (React) module — #1120 is
+// converting them one at a time, and every rule in this file is about the
+// section's CONTRACT with the console, which the renderer does not change.
+const modExt = (name) => (fs.existsSync(path.join(ADMIN_DIR, `${name}.tsx`)) ? 'tsx' : 'js');
+const readMod = (name) => fs.readFileSync(path.join(ADMIN_DIR, `${name}.${modExt(name)}`), 'utf8');
 
 const islandTsx = read('frontend/src/features/admin/index.tsx');
 const consoleJs = readMod('admin-console');
@@ -78,14 +82,16 @@ test('each heavy section is imported by the island and reachable through window'
   for (const { key, file, global } of HEAVY) {
     // The island imports it for its side effect: evaluating the module is
     // what publishes the global.
-    assert.ok(islandTsx.includes(`import './${file}.js';`),
-      `the console island must import ${file}.js`);
+    assert.ok(islandTsx.includes(`import './${file}.${modExt(file)}';`),
+      `the console island must import ${file}.${modExt(file)}`);
     // AdminConsole._renderSection dispatches through window[modName], so the
     // publication is the actual contract — and it must be guarded, because
     // the SSG prerender pass evaluates this module in Node.
+    // `(window as any).X = X` in a converted section — same publication, the
+    // cast is only TypeScript's price for writing to the global object.
     assert.match(SRC.get(file),
-      new RegExp(`if \\(typeof window !== 'undefined'\\) window\\.${global} = ${global};`),
-      `${file}.js must publish window.${global}, guarded for the prerender pass`);
+      new RegExp(`if \\(typeof window !== 'undefined'\\) \\(?window(?: as any\\))?\\.${global} = ${global};`),
+      `${file} must publish window.${global}, guarded for the prerender pass`);
     assert.match(consoleJs, new RegExp(`${key}: '${global}'`),
       `SECTION_MODULES must still map ${key} -> ${global}`);
   }
@@ -109,7 +115,9 @@ test('every heavy section still honours the render(host) / destroy() contract', 
     // The parameter name varies across the nine (host / hostEl / sectionHost);
     // what the console's dispatcher relies on is that there is exactly one, and
     // that the section takes its root from it rather than from the document.
-    assert.match(src, /\n\s*render\(\w+\) \{/, `${file}.js must expose render(<host>)`);
+    // `render(el: Element)` in a converted section — one parameter either way.
+    assert.match(src, /\n\s*render\(\w+(?:: [\w.<>[\] |]+)?\) \{/,
+      `${file} must expose render(<host>)`);
     assert.match(src, /\n\s*destroy\(\) \{/, `${file}.js must expose destroy()`);
   }
 });
@@ -170,10 +178,12 @@ test('the anchors the chunk brief names by hand are all still rendered', () => {
   for (const [id, file] of Object.entries(NAMED)) {
     assert.ok(SRC.get(file).includes(`id="${id}"`), `${file}.js must still render #${id}`);
   }
-  // #admin-credit-balance belongs to a console-rendered section (limits), so
-  // it lives in the chassis module rather than one of the nine.
-  assert.ok(consoleJs.includes('id="admin-credit-balance"'),
-    'admin-console.js must still render #admin-credit-balance');
+  // #admin-credit-balance belonged to a console-rendered section (limits)
+  // until #1120 slice 21 moved that section out of the chassis into its own
+  // module, like the nine. The id is still the anchor; only the file moved.
+  const limits = fs.readFileSync(path.join(ADMIN_DIR, 'admin-limits.tsx'), 'utf8');
+  assert.ok(limits.includes('id="admin-credit-balance"'),
+    'admin-limits.tsx must still render #admin-credit-balance');
 });
 
 // ── 3. Lifecycle: nothing outlives its section ──────────────────────────
@@ -185,28 +195,63 @@ test('every interval a heavy section starts is cleared in its destroy()', () => 
     if (!starts) continue;
     const clears = (src.match(/clearInterval\(/g) || []).length;
     assert.ok(clears >= 1,
-      `${file}.js starts ${starts} interval(s) and never clears one — a section left `
+      `${file} starts ${starts} interval(s) and never clears one — a section left `
       + 'mounted would poll for the life of the tab (#860)');
-    // Either destroy() clears directly (status, node, campaigns) or it calls the
-    // one function that owns the timer (merges' setLive(false), which clears
-    // before deciding whether to restart). Both are the same guarantee.
     const destroy = src.slice(src.indexOf('destroy() {'));
-    assert.match(destroy.slice(0, 900), /clearInterval\(|setLive\(false\)/,
-      `${file}.js's destroy() must stop its poll`);
+    if (modExt(file) === 'tsx') {
+      // A converted section (#1120) owns its poll in an effect, so the chain
+      // is: destroy() drops the portal -> React unmounts -> the effect's
+      // cleanup clears the timer. Both links are asserted, because either one
+      // missing leaves the same 2s poll running for the life of the tab.
+      assert.match(destroy.slice(0, 900), /unmountLegacyPortal\(/,
+        `${file}'s destroy() must drop its portal — that is what unmounts the effect`);
+      assert.match(src, /return \(\) => \{[^}]*clearInterval\(/,
+        `${file} must clear its interval from an effect CLEANUP, not merely somewhere`);
+    } else {
+      // Either destroy() clears directly (status, campaigns) or it calls the
+      // one function that owns the timer (merges' setLive(false), which clears
+      // before deciding whether to restart). Both are the same guarantee.
+      assert.match(destroy.slice(0, 900), /clearInterval\(|setLive\(false\)/,
+        `${file}.js's destroy() must stop its poll`);
+    }
   }
 });
 
-test('the two body-level tooltips are removed by their own destroy()', () => {
+test('the two body-level tooltips are removed when their section goes', () => {
   // Analytics and Estimator append <div id="dc-tip"> to <body> so the tooltip
   // can escape the section's overflow. That node is OUTSIDE both the section
-  // host and every React-owned subtree, so only destroy() can reclaim it.
+  // host and every React-owned subtree, so nothing reclaims it implicitly:
+  // left behind, it lingers on the next section still showing this one's copy.
   for (const file of ['admin-analytics', 'admin-estimator']) {
     const src = SRC.get(file);
     assert.ok(src.includes('document.body.appendChild'),
-      `${file}.js is expected to escape the section host with a body-level tip`);
-    const destroy = src.slice(src.indexOf('destroy() {'), src.indexOf('destroy() {') + 700);
-    assert.match(destroy, /getElementById\('dc-tip'\)/, `${file}.js's destroy() must find the tip`);
-    assert.match(destroy, /\.remove\(\)/, `${file}.js's destroy() must remove it`);
+      `${file} is expected to escape the section host with a body-level tip`);
+    if (modExt(file) === 'tsx') {
+      // A converted section (#1120) removes it from the effect CLEANUP that
+      // installed the hover delegation — which destroy() triggers by dropping
+      // the portal. Same guarantee, one level of indirection: the teardown is
+      // attached to the thing that created the node rather than to a separate
+      // method that has to remember.
+      // Anchored on the removal itself, then walked BACK to the nearest
+      // `return () => {` — the file has several arrow-returns and the first
+      // one is not this.
+      // lastIndexOf, not indexOf: the FIRST occurrence is ensureTip() looking
+      // for a tip it may need to create.
+      const at = src.lastIndexOf("getElementById('dc-tip')");
+      assert.ok(at > 0, `${file} must still reclaim the body-level tip`);
+      const before = src.lastIndexOf('return () => {', at);
+      assert.ok(before > 0 && at - before < 400,
+        `${file} must remove the tip from an effect CLEANUP, not from arbitrary code`);
+      assert.match(src.slice(at, at + 200), /\.remove\(\)/,
+        `${file}'s effect cleanup must remove it`);
+      const destroy = src.slice(src.indexOf('destroy() {'), src.indexOf('destroy() {') + 400);
+      assert.match(destroy, /unmountLegacyPortal\(/,
+        `${file}'s destroy() must drop the portal, which runs that cleanup`);
+    } else {
+      const destroy = src.slice(src.indexOf('destroy() {'), src.indexOf('destroy() {') + 700);
+      assert.match(destroy, /getElementById\('dc-tip'\)/, `${file}.js's destroy() must find the tip`);
+      assert.match(destroy, /\.remove\(\)/, `${file}.js's destroy() must remove it`);
+    }
   }
 });
 
@@ -255,10 +300,10 @@ test('sections render into the host they are given, not by id lookup', () => {
 
 test('every client-side demo=1 passthrough survived the move, and is prerender-safe', () => {
   // The whole inventory, grepped rather than trusted: exactly six read sites
-  // across the console. Four of the nine heavy sections read the page-level
-  // flag for themselves; the other two sites are the chassis module's rollover
-  // and staging-reap reads. Health & status, Node & chain, Campaigns, Push and Mail
-  // have no demo path at all and must not grow one here.
+  // across the console, one per section that has staging fixtures. Four of
+  // the nine heavy sections read the page-level flag for themselves, and so
+  // do rollover and stale previews. Health & status, Node & chain, Campaigns,
+  // Push and Mail have no demo path at all and must not grow one here.
   const OWN_FLAG = ['admin-analytics', 'admin-estimator', 'admin-gallery', 'admin-merges'];
   for (const file of OWN_FLAG) {
     const src = SRC.get(file);
@@ -275,9 +320,19 @@ test('every client-side demo=1 passthrough survived the move, and is prerender-s
     assert.ok(!/\bdemo\b/.test(SRC.get(file)),
       `${file}.js had no demo passthrough before the move and must not have grown one`);
   }
-  const demoQS = (consoleJs.match(/const demoQS = new URLSearchParams\(location\.search\)/g) || []);
-  assert.equal(demoQS.length, 2,
-    'admin-console.js must still carry the flag onto the rollover and staging-reap reads');
+  // The other two sites were the chassis module's own rollover and
+  // staging-reap reads until #1120 slice 23 moved both sections into React;
+  // they read the same guarded module-level flag the four above do now, and
+  // the chassis carries none.
+  for (const file of ['admin-rollover', 'admin-staging-reap']) {
+    assert.match(readMod(file),
+      /const DEMO = typeof window !== 'undefined'\s*\n?\s*&& new URLSearchParams\(location\.search\)\.get\('demo'\) === '1'/,
+      `${file} must carry the flag its chassis renderer used to`);
+    assert.match(readMod(file), /DEMO \? '\?demo=1' : ''/,
+      `${file} must use DEMO to build its request`);
+  }
+  assert.ok(!/URLSearchParams\(location\.search\)\.get\('demo'\)/.test(consoleJs),
+    'and the chassis keeps no demo passthrough of its own — every section owns its read');
 });
 
 test('no section grew a server-side demo gate of its own', () => {

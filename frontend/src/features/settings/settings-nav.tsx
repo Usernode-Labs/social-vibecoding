@@ -37,7 +37,7 @@
  * label is a single expression inside its own element.
  */
 
-import { ChevronRightIcon } from '@/components/ui/icons';
+import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { settingsNavStore } from './settings-nav-store.js';
@@ -72,12 +72,13 @@ const navClick = (key: string) => {
 
 /** Carried over verbatim from the retired _navItemsHtml / _mobileMenuHtml. */
 const GROUP_SPACED = 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800';
-const NAV_HEADING = 'px-3 pb-1 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500';
-const MENU_HEADING = 'px-4 pb-1.5 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500';
-const MENU_CARD = 'rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 [&>button:last-child]:border-b-0';
-const MENU_ROW = 'settings-menu-row flex items-center gap-3 w-full text-left min-h-[44px] px-4 py-2 border-b border-zinc-100 dark:border-zinc-800 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors';
-const MENU_LABEL = 'flex-1 min-w-0 text-sm font-medium truncate';
-const CHEVRON = 'w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500';
+// The widget language labels a group in SENTENCE CASE at reading size, not as
+// a small-caps micro-caption — same treatment as SectionHeader in
+// @/components/ui/grouped-list.tsx, which is what the deck's grouped lists use.
+// The settings screen was already grouped-list shaped, so this is the last
+// thing that made it read as the old vocabulary.
+const NAV_HEADING = 'px-3 pb-1';
+const MENU_ROW = 'settings-menu-row min-h-[44px] py-2 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors';
 
 /**
  * The desktop sidebar. `className` is NOT rendered on the <nav> — it is a
@@ -91,7 +92,7 @@ export function SettingsNavDesktop() {
     <nav id="settings-nav-desktop" aria-label="Settings sections" className="space-y-1">
       {(desktop || []).map((group) => (
         <div key={group.name} className={group.first ? '' : GROUP_SPACED}>
-          <div className={NAV_HEADING}>{group.name}</div>
+          <SectionHeader className={NAV_HEADING}>{group.name}</SectionHeader>
           {group.items.map((item) => (
             <button
               key={item.key}
@@ -122,21 +123,20 @@ export function SettingsMobileMenu() {
     <div id="settings-mobile-menu-host" className="md:hidden">
       {(mobile || []).map((group) => (
         <div key={group.name} className="mb-5">
-          <div className={MENU_HEADING}>{group.name}</div>
-          <div className={MENU_CARD}>
+          <SectionHeader className="px-4 pb-1.5">{group.name}</SectionHeader>
+          <GroupedList className="mx-0">
             {group.items.map((item) => (
-              <button
+              <ListRow
                 key={item.key}
-                type="button"
+                as="button"
+                inset="text"
                 data-settings-nav={item.key}
                 className={MENU_ROW}
+                title={item.label}
                 onClick={() => navClick(item.key)}
-              >
-                <span className={MENU_LABEL}>{item.label}</span>
-                <ChevronRightIcon className={CHEVRON} aria-hidden="true" />
-              </button>
+              />
             ))}
-          </div>
+          </GroupedList>
         </div>
       ))}
     </div>

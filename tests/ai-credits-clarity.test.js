@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { renderComponent } = require('./lib/render-tsx');
 
 const root = path.join(__dirname, '..');
 const CO = require('../public/js/credit-options.js');
@@ -185,11 +186,12 @@ test('the shared-cap refusal says when it lifts (it used to say "tomorrow")', ()
 // plain script, so it is evaluated in a vm context with the globals it
 // touches stubbed and #dc-budget captured.
 function makeDevChat({ hasApiKey = false, search = '' } = {}) {
-  let budgetHtml = '';
-  const budgetEl = {
-    set innerHTML(v) { budgetHtml = v; },
-    get innerHTML() { return budgetHtml; },
-  };
+  // #1191: the meter's markup is features/dev-chat/budget-pill.tsx's, so
+  // `renderBudget()` publishes fragments. `meterHtml()` renders the component
+  // from what was published, so the assertions still read the meter as a
+  // reader sees it.
+  let published = { title: null, parts: [] };
+  const budgetEl = { innerHTML: '' };
   const sandbox = {
     console,
     escapeHtml: (s) => String(s == null ? '' : s)
@@ -214,11 +216,38 @@ function makeDevChat({ hasApiKey = false, search = '' } = {}) {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.Settings = { state: { hasApiKey, keyLast4: hasApiKey ? '1234' : null } };
+  sandbox.UsernodeReact = {
+    devChat: {
+      mountBudgetPill: () => {},
+      publishBudgetPill: (state) => { published = state; },
+      mountAttachStrip: () => {},
+      publishAttachStrip: () => {},
+    },
+  };
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/build-venues.js'), 'utf8'), sandbox);
   vm.runInContext(fs.readFileSync(path.join(root, 'public/js/credit-options.js'), 'utf8'), sandbox);
   vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
-  return { DevChat: sandbox.__DevChat, meterHtml: () => budgetHtml };
+  const DevChat = sandbox.__DevChat;
+  // Both banners' markup is features/dev-chat/banners.tsx's since the four
+  // strips converted, for the same reason the meter's is budget-pill.tsx's:
+  // the module decides, the component draws. These render the component from
+  // what the module resolved, so every assertion below still reads a banner as
+  // a reader sees it — and "no banner" is a null view now, which these report
+  // as the '' the string builders returned.
+  const draw = (view) => (view
+    ? renderComponent('frontend/src/features/dev-chat/banners.tsx', 'CreditsBanner',
+      { b: JSON.parse(JSON.stringify(view)) })
+    : '');
+  return {
+    DevChat,
+    meterHtml: () => renderComponent(
+      'frontend/src/features/dev-chat/budget-pill.tsx', 'BudgetPillView',
+      JSON.parse(JSON.stringify(published)),
+    ),
+    bannerHtml: () => draw(DevChat._creditsBannerView()),
+    lowBannerHtml: () => draw(DevChat._creditsLowBannerView()),
+  };
 }
 
 test('the composer meter is the pair and the reset, and nothing else', () => {
@@ -228,7 +257,7 @@ test('the composer meter is the pair and the reset, and nothing else', () => {
   // narrowest strip in the app — and the remainder was the half that
   // wrapped. The drawer row below still spells it out, and the low-balance
   // and exhausted banners still say it in words once it starts to matter.
-  const { DevChat, meterHtml } = makeDevChat();
+  const { DevChat, meterHtml, bannerHtml, lowBannerHtml } = makeDevChat();
   DevChat.budget = budget({ spentCents: 1000 });
   DevChat.renderBudget();
   assert.match(meterHtml(), /\$10\.00/, 'the spend/cap pair is what the meter is');
@@ -240,11 +269,11 @@ test('the composer meter is the pair and the reset, and nothing else', () => {
 });
 
 test('nearly out → the amber warning, with the same routes as the red one', () => {
-  const { DevChat } = makeDevChat();
+  const { DevChat, bannerHtml, lowBannerHtml } = makeDevChat();
   DevChat.budget = budget({ spentCents: 2000 });
   assert.equal(DevChat._creditsExhausted(), false, 'nothing is refused yet');
   assert.equal(DevChat._creditsLow(), true);
-  const html = DevChat._renderCreditsLowBannerHtml();
+  const html = lowBannerHtml();
   assert.match(html, /id="dc-credits-low-banner"/);
   assert.match(html, /Running low on free AI credits/, 'states the situation, not a failure');
   assert.match(html, /\$5\.00 of \$25\.00 left today/, 'with the actual headroom');
@@ -255,11 +284,11 @@ test('nearly out → the amber warning, with the same routes as the red one', ()
 });
 
 test('the two banners are mutually exclusive', () => {
-  const { DevChat } = makeDevChat();
+  const { DevChat, bannerHtml, lowBannerHtml } = makeDevChat();
   DevChat.budget = budget({ spentCents: 2500 });
   assert.equal(DevChat._creditsExhausted(), true);
   assert.equal(DevChat._creditsLow(), false, 'past the cap, "running low" is the wrong tense');
-  assert.equal(DevChat._renderCreditsLowBannerHtml(), '');
+  assert.equal(lowBannerHtml(), '');
 });
 
 test('the warning stays out of the way of everyone it cannot help', () => {
@@ -280,16 +309,16 @@ test('the warning stays out of the way of everyone it cannot help', () => {
 });
 
 test('the exhausted banner names the reset in rendered text', () => {
-  const { DevChat } = makeDevChat();
+  const { DevChat, bannerHtml, lowBannerHtml } = makeDevChat();
   DevChat.budget = budget({ spentCents: 2500, resetsAt: '2026-08-13T00:00:00.000Z' });
-  const html = DevChat._renderCreditsBannerHtml();
+  const html = bannerHtml();
   assert.match(html, /data-credits-reset/);
   assert.match(html, /reset at midnight UTC/);
   assert.match(html, /dc-credits-add-key/, 'still links the bring-your-own-key route');
 });
 
 test('?shot=credits-low paints the warning without a fetch or a write', () => {
-  const { DevChat, meterHtml } = makeDevChat({ search: '?shot=credits-low' });
+  const { DevChat, meterHtml, bannerHtml, lowBannerHtml } = makeDevChat({ search: '?shot=credits-low' });
   const fixture = DevChat._shotCreditsLowBudget();
   assert.ok(fixture, 'the latch answers on the deep link');
   assert.equal(fixture.spentCents / fixture.limitCents, 0.8, 'exactly at the threshold');
@@ -298,7 +327,7 @@ test('?shot=credits-low paints the warning without a fetch or a write', () => {
   assert.equal(DevChat._creditsLow(), true);
   DevChat.renderBudget();
   assert.match(meterHtml(), /\$20\.00/, 'the meter paints the fixture spend');
-  assert.match(DevChat._renderCreditsLowBannerHtml(), /\$5\.00 of \$25\.00 left today/,
+  assert.match(lowBannerHtml(), /\$5\.00 of \$25\.00 left today/,
     'and the WARNING is what states the headroom (#1353)');
 
   // Pure UI: no environment gate (a production "before" shot has to be
@@ -314,7 +343,13 @@ test('?shot=credits-low paints the warning without a fetch or a write', () => {
 // ── The drawer row ──────────────────────────────────────────────────────
 
 test('the drawer row renders the remainder and shares the reset wording', () => {
-  assert.match(AI_CREDIT_SRC, /data-credits-remaining/, 'same hook as the composer meter');
+  // #1367: the hook is rendered by features/header/ai-budget.tsx, from the
+  // `remaining` flag this module sets on that part.
+  assert.match(AI_CREDIT_SRC, /remaining: true/, 'same hook as the composer meter');
+  assert.match(
+    fs.readFileSync(path.join(root, 'frontend/src/features/header/ai-budget.tsx'), 'utf8'),
+    /'data-credits-remaining': '1'/,
+  );
   assert.match(AI_CREDIT_SRC, /money\(remaining\) \+ ' left'/, 'rendered, not tooltip-only');
   assert.match(AI_CREDIT_SRC, /CO\.resetSentence\(state\)/,
     'one wording for the boundary, shared with the dev chat');
@@ -345,7 +380,7 @@ test('?shot=credits-exhausted reaches the refusal state (#1348)', () => {
   // The two-door bar IS that state's whole interface now, so it needs a
   // route the checks and the vote screenshots can open without a reviewer
   // burning a real daily allowance.
-  const { DevChat } = makeDevChat({ search: '?shot=credits-exhausted' });
+  const { DevChat, bannerHtml, lowBannerHtml } = makeDevChat({ search: '?shot=credits-exhausted' });
   const fixture = DevChat._shotCreditsLowBudget();
   assert.ok(fixture, 'the shot answers with a fixture budget');
   assert.equal(fixture.spentCents, fixture.limitCents, 'spent meets the cap');
@@ -356,7 +391,7 @@ test('?shot=credits-exhausted reaches the refusal state (#1348)', () => {
   // And the exhausted fixture actually trips the banner.
   DevChat.budget = fixture;
   assert.equal(DevChat._creditsExhausted(), true);
-  const html = DevChat._renderCreditsBannerHtml();
+  const html = bannerHtml();
   assert.match(html, /Add API key/);
   assert.match(html, /data-credits-venue="1"/);
   assert.equal((html.match(/<button/g) || []).length, 2);

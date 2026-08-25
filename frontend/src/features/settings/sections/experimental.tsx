@@ -1,6 +1,8 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { SwitchRow } from '@/components/ui/switch';
 
+import { LocalAgentsList } from '../local-agents-list';
+
 /**
  * Experimental: AI progress estimate (default OFF). When enabled, a small
  * Haiku call skims the in-flight Claude Code progress log about once a minute
@@ -54,6 +56,7 @@ export function ExperimentalSection() {
           Machines running <span className="font-mono">social-vibecoding agent run</span>. While one is attached, that session's spec and coding turns run there on your own Claude subscription instead of on Usernode. Each turn asks in your terminal before it starts; spec turns are read-only, and after a coding turn Usernode still opens the pull request, builds the preview and runs the checks. Detaching sends the next turn back to Usernode.
         </SectionHeading>
         <div id="settings-local-agents-list" className="space-y-2">
+          <LocalAgentsList />
         </div>
         <StatusLine id="settings-local-agents-status" size="xs" />
       </div>

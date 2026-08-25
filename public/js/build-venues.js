@@ -438,39 +438,23 @@
 
   // ── The venue selector, top right of the session (#1348) ─────────
   //
-  // The control that states where this session builds AND opens the sheet
-  // that changes it. It used to be a caption above the composer — the
-  // sentence "Building in X" with a "Change how this is built" link beside
-  // it — sharing the bottom bar with the meter, the runner and the budget
-  // menu. It is a dropdown in the session header now, top right, which is
-  // where a "what kind of session is this?" control is looked for and the
-  // one place on the screen that is never swapped out: the launchpad
-  // replaces the composer for the three hand-off venues (#1281), so a
-  // control living down there is hidden by exactly the state it exists to
-  // undo.
+  // `selectorHtml` USED TO BE HERE. It built the `#dc-venue-select` button —
+  // the control that states where this session builds AND opens the sheet
+  // that changes it — as a string, and `renderChatView` interpolated it into
+  // the session header.
   //
-  // It is a menu button rather than a <select>: the sheet it opens is
-  // grouped, ticks the current venue, carries a consequence sentence per
-  // row and strikes an unavailable one through — none of which a native
-  // dropdown can render, and on touch the kit draws it as an action sheet.
-  // `data-venue-change` is the hook every caller already looked the old
-  // link up by, kept so the wiring reads the same.
-  function selectorHtml(state) {
-    var s = state || {};
-    var id = s.current || currentVenue(s);
-    var v = venue(id);
-    if (!v) return '';
-    var title = 'Building in ' + v.label + '. ' + v.blurb
-      + ' Pick a different venue — on Usernode, on your computer, or handed to'
-      + ' Claude Code or Codex on the web.';
-    return ''
-      + '<button type="button" id="dc-venue-select" class="dc-venue-select"'
-      + ' data-venue-change="1" data-venue-current="' + escapeHtml(v.id) + '"'
-      + ' aria-haspopup="menu" title="' + escapeHtml(title) + '">'
-      + '<span class="dc-venue-name">' + escapeHtml(v.label) + '</span>'
-      + '<span class="dc-venue-caret" aria-hidden="true">\u25be</span>'
-      + '</button>';
-  }
+  // The header strip is a component now
+  // (frontend/src/features/dev-chat/session-header.tsx), and this one could
+  // not survive as a string: `dapp.json` selects the button as
+  // `#dc-session-header > button#dc-venue-select…:last-child`, a DIRECT child
+  // and the last one, so feeding it through a `dangerouslySetInnerHTML` sink
+  // would have made the wrapper the direct child and the button a grandchild.
+  // It is JSX built from `venue()` — the same lookup this did — and
+  // `_headerVenue` in dev-chat.js carries the title sentence.
+  //
+  // Everything ABOUT the venue stays here: `venue`, `currentVenue`, the
+  // groups, the sheet. `noteHtml` and `chipHtml` below are still strings,
+  // because their callers still are.
 
   // The fallback sentence, which stays above the composer.
   //
@@ -733,7 +717,6 @@
     webTargetKind: webTargetKind,
     webVerb: webVerb,
     webNote: webNote,
-    selectorHtml: selectorHtml,
     noteHtml: noteHtml,
     chipHtml: chipHtml,
     fallbackNote: fallbackNote,

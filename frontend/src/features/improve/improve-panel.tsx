@@ -51,6 +51,7 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 
+import { NativeAppVersionRow } from '../header/native-app-version-row';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -63,7 +64,7 @@ const ROW_CLASS =
 const ROW_LABEL_CLASS = 'text-sm font-medium flex-1 min-w-0 truncate';
 
 const SECTION_LABEL_CLASS =
-  'px-4 pt-3 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide '
+  'px-4 pt-3 pb-1 text-[0.7rem] font-semibold '
   + 'text-zinc-500 dark:text-zinc-400';
 
 /**
@@ -215,7 +216,7 @@ export function ImprovePanel() {
           <button
             id="improve-close"
             type="button"
-            className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 un-touch-target"
+            className="text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 un-touch-target dark:text-zinc-400"
             aria-label="Close"
             onClick={close}
           >
@@ -232,9 +233,20 @@ export function ImprovePanel() {
             behaviours, no measurement, and the same trick the hamburger's own
             footer used before those rows moved here.
         */}
+        {/*
+            A COLUMN FLEX that does NOT scroll. Everything in this panel is a
+            control except the session list, and the list was the thing
+            pushing the controls off the bottom: with a handful of sessions
+            running, "Start a new session", "Developer terminal" and the
+            GitHub / Share / version footer all sat below the fold behind a
+            scroll. The list flexes and scrolls inside itself now (see the
+            wrapper below); every control is `shrink-0` and stays on screen.
+
+            `platform-safe-scroll` moves onto the scroller with the scrolling.
+        */}
         <div
           id="improve-body"
-          className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll flex flex-col"
+          className="flex-1 min-h-0 flex flex-col overflow-hidden"
         >
           {/*
               ── The two controls at the top (#1367) ────────────────────
@@ -272,24 +284,26 @@ export function ImprovePanel() {
           </div>
 
           {/*
-              THE MIDDLE BLOCK, in one `shrink-0` wrapper.
+              THE SESSION LIST — the one scrolling region in the panel.
 
-              #improve-body is a column flex now (so the footer can hug the
-              bottom), and a flex item is shrinkable by default: once the rows
-              here overflow the panel they would compress to fit instead of
-              handing the overflow to the scroller. Most of what is inside is
-              text, whose `min-height: auto` already refuses to shrink — but
-              the session rows carry an explicit `min-h-[44px]`, which REPLACES
-              that floor and is exactly the kind of thing that squeezes a
-              44px tap target down on a short viewport. One wrapper settles it
-              for everything between the header controls and the footer.
+              `flex-1 min-h-0` gives it whatever the controls above and below
+              do not use, and `overflow-y-auto` keeps a long list inside its
+              own box instead of spending the panel's height. The rows carry
+              an explicit `min-h-[44px]`, which REPLACES flexbox's automatic
+              `min-height: auto` floor and is exactly the kind of thing that
+              gets squeezed under 44px on a short viewport — `shrink-0` on the
+              rows' own wrapper inside the scroller keeps the tap target.
 
-              A wrapper and not `shrink-0` on each row, because the footer has
-              to stay a DIRECT child of #improve-body: dapp.json checks
-              `#improve-body > #improve-footer > #improve-row-github`, and
-              `mt-auto` only anchors against the flex container it is a child
-              of.
+              What is NOT in here is deliberate: "Start a new session" and
+              "Developer terminal" are actions, not list entries, and they
+              belong with the other controls that stay on screen. That does
+              move "Start a new session" below the other-apps section it used
+              to precede — actions grouped with actions.
+
+              The footer stays a DIRECT child of #improve-body: dapp.json
+              checks `#improve-body > #improve-footer > #improve-row-github`.
           */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
           <div className="shrink-0">
           <div className={SECTION_LABEL_CLASS}>Sessions</div>
           {state.loadingSessions && !state.sessionsLoaded ? (
@@ -308,15 +322,6 @@ export function ImprovePanel() {
               No sessions running on this app.
             </div>
           ) : null}
-          {state.readOnly ? null : (
-            <ImproveRow
-              id="improve-row-new-session"
-              icon={<PlusIcon className="w-5 h-5 shrink-0" />}
-              label="Start a new session"
-              onClick={() => Improve.startSession()}
-            />
-          )}
-
           {/*
               THE "DEVELOPMENT" SECTION'S TWO NAVIGATION ROWS ARE GONE (#1367).
 
@@ -337,15 +342,6 @@ export function ImprovePanel() {
           {/* The developer terminal — the header's #dev-console-btn, as a row.
               Shown on exactly the signal that used to show that button: an app
               iframe is on screen and the console has something to attach to. */}
-          {state.showTerminal ? (
-            <ImproveRow
-              id="improve-row-terminal"
-              icon={<TerminalIcon className="w-5 h-5 shrink-0" />}
-              label="Developer terminal"
-              onClick={() => Improve.openTerminal()}
-            />
-          ) : null}
-
           {/* The overflow area: sessions running on OTHER apps. Rendered only
               when there are any, so the common case — one app, one session —
               never pays for a heading it does not need. */}
@@ -359,20 +355,41 @@ export function ImprovePanel() {
           ) : null}
 
           </div>
+          </div>
+
+          {/* THE TWO ACTIONS, pinned under the list. Both were inside it and
+              scrolled away with it. */}
+          <div className="shrink-0">
+            {state.readOnly ? null : (
+              <ImproveRow
+                id="improve-row-new-session"
+                icon={<PlusIcon className="w-5 h-5 shrink-0" />}
+                label="Start a new session"
+                onClick={() => Improve.startSession()}
+              />
+            )}
+            {state.showTerminal ? (
+              <ImproveRow
+                id="improve-row-terminal"
+                icon={<TerminalIcon className="w-5 h-5 shrink-0" />}
+                label="Developer terminal"
+                onClick={() => Improve.openTerminal()}
+              />
+            ) : null}
+          </div>
 
           {/*
-              `mt-auto` (#1367) — the version, GitHub and Share block is pinned
-              to the FOOT of the panel whenever the rows above it leave free
-              space, which on a tall desktop sidebar with one session is most
-              of it. #improve-body is the column flex that makes it work; when
-              the rows DO fill the panel there is no free space to collect and
-              this degrades to "at the end of the scroll", exactly as before.
-              `mt-2` stays as the floor so the border never crowds the row
-              above it in that case.
+              The version, GitHub and Share block, at the foot of the panel
+              and always on it. It got there with `mt-auto` (#1367), which
+              collected the free space above it — and therefore stopped
+              working in the one case that mattered, a session list long
+              enough to leave none. The list is the flexing element now, so
+              this is simply the last `shrink-0` child. `pt-2` stays as the
+              floor so the border never crowds the row above it.
           */}
           <div
             id="improve-footer"
-            className="mt-auto shrink-0 pt-2 border-t border-zinc-100 dark:border-zinc-800"
+            className="shrink-0 pt-2 border-t border-zinc-100 dark:border-zinc-800 platform-safe-scroll"
           >
             {state.repoUrl ? (
               <ImproveRow
@@ -440,16 +457,7 @@ export function ImprovePanel() {
                 0.4.0/1223. Deliberately independent of the platform version
                 above and never the open app's commit. Hidden outside the
                 mobile app. */}
-            <div id="drawer-row-native-app-version" className="hidden drawer-ver-row flex items-center gap-2 px-4">
-              <span className="drawer-ver-label">
-                Mobile app version
-              </span>
-              <span
-                id="native-app-version-slot"
-                className="drawer-ver drawer-ver-value ml-auto min-w-0 justify-end"
-              >
-              </span>
-            </div>
+            <NativeAppVersionRow />
             {/* Fork lineage: the amber "⑂ Forked from <name>" label, written by
                 AppView.renderForkBadge() and revealed by
                 App.DrawerStatus.setForkVisible(). App context, not a version. */}

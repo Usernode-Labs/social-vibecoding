@@ -108,8 +108,21 @@ function kit(): any {
   return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
 }
 
-const ROW_CLASS = 'w-full text-left px-3 py-2.5 border-b border-zinc-200 '
-  + 'dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors';
+// The widget language's list row (#1191): the hairline between rows is what
+// the language keeps — a grouped list IS rows separated by rules — but it sits
+// on a white card now rather than under a bordered strip, and the row breathes
+// at the language's rhythm.
+//
+// It does NOT use ListRow from @/components/ui/grouped-list.tsx, and that is
+// deliberate rather than pending. A notification row INVERTS the primitive's
+// hierarchy: its first line is the small grey meta ("@who · 2h", the group
+// name, the unread dot) and the heavier content sits UNDER it, where ListRow
+// puts a bold title over a grey subtitle. Passing Meta as `title` would render
+// the timestamp at 17px bold and the message underneath it in grey — the
+// opposite of what either surface means. Same look, different information
+// shape; sharing the classes is not a reason to share the component.
+const ROW_CLASS = 'w-full text-left px-4 py-3 border-b border-zinc-200 '
+  + 'dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors';
 
 // Unread indicator dot. When unread it's a solid violet dot carrying an
 // accessible "Unread" label; when read it's an equal-width invisible spacer so
@@ -120,13 +133,13 @@ function UnreadDot({ unread }: { unread: boolean }): ReactNode {
     <span
       role="img"
       aria-label="Unread"
-      className="inline-block w-1.5 h-1.5 rounded-full bg-violet-500 align-middle mr-1.5 shrink-0"
+      className="inline-block w-2 h-2 rounded-full bg-zinc-900 dark:bg-zinc-100 align-middle mr-1.5 shrink-0"
     >
     </span>
   ) : (
     <span
       aria-hidden="true"
-      className="inline-block w-1.5 h-1.5 align-middle mr-1.5 shrink-0"
+      className="inline-block w-2 h-2 align-middle mr-1.5 shrink-0"
     >
     </span>
   );
@@ -167,7 +180,7 @@ function Body({ body }: { body: NotificationRowView['body'] }): ReactNode {
   return (
     <div className={cls}>
       {mentionParts(body.text).map((p, i) => (p.at
-        ? <span key={i} className="text-violet-400 font-medium">{p.text}</span>
+        ? <span key={i} className="text-violet-700 font-medium dark:text-violet-400">{p.text}</span>
         : <span key={i}>{p.text}</span>))}
     </div>
   );
@@ -212,7 +225,7 @@ function Meta({ view }: { view: NotificationRowView }): ReactNode {
     }
   });
   nodes.push(
-    <span key="time" className="text-zinc-500">{flex ? `· ${view.time}` : ` · ${view.time}`}</span>,
+    <span key="time" className="text-zinc-500 dark:text-zinc-400">{flex ? `· ${view.time}` : ` · ${view.time}`}</span>,
   );
   return <div className={metaClass(view)}>{nodes}</div>;
 }
@@ -310,11 +323,11 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
               here, because everything in this section is saved by
               definition — so the two ends of the gesture read as one
               feature. */}
-          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3 h-3 align-middle text-violet-500" />
+          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3 h-3 align-middle text-violet-700 dark:text-violet-400" />
           <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
           {' in '}
           <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
-          <span className="text-zinc-500">{` · ${view.time}`}</span>
+          <span className="text-zinc-500 dark:text-zinc-400">{` · ${view.time}`}</span>
         </div>
         <div className="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2">{view.text}</div>
       </button>
@@ -373,7 +386,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
         <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
         {` ${view.verb} `}
         <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
-        <span className="text-zinc-500">{` · ${view.time}`}</span>
+        <span className="text-zinc-500 dark:text-zinc-400">{` · ${view.time}`}</span>
       </div>
       <div className="flex gap-2">
         <Button
@@ -433,7 +446,7 @@ export function NotificationsBody(): ReactNode {
       */}
       <div id="notifications-saved" className="shrink-0 overflow-y-auto max-h-48">
         {saved.length ? (
-          <div className="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="px-3 py-1.5 text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
             Saved
           </div>
         ) : null}
@@ -448,7 +461,7 @@ export function NotificationsBody(): ReactNode {
       */}
       <div id="notifications-invites" className="shrink-0 overflow-y-auto max-h-48">
         {invites.length ? (
-          <div className="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="px-3 py-1.5 text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
             Invites
           </div>
         ) : null}
@@ -471,7 +484,7 @@ export function NotificationsBody(): ReactNode {
             id="notifications-load-more"
             type="button"
             disabled={state.loadingMore}
-            className="w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 disabled:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800"
+            className="w-full text-left px-3 py-2 text-xs text-violet-700 hover:text-violet-400 disabled:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 dark:text-violet-400"
             onClick={(e) => {
               // Same reason every other handler in this file stops the click:
               // the re-render detaches this node, and the document-level
@@ -497,8 +510,8 @@ export function NotificationsBody(): ReactNode {
       <div
         id="notifications-caught-up"
         className={state.caughtUp
-          ? 'px-4 py-6 text-sm text-zinc-500 text-center'
-          : 'hidden px-4 py-6 text-sm text-zinc-500 text-center'}
+          ? 'px-4 py-6 text-sm text-zinc-500 text-center dark:text-zinc-400'
+          : 'hidden px-4 py-6 text-sm text-zinc-500 text-center dark:text-zinc-400'}
       >
         You&rsquo;re all caught up — no new notifications.
       </div>
@@ -513,7 +526,7 @@ export function NotificationsBody(): ReactNode {
         <button
           id="notifications-older-toggle"
           type="button"
-          className="shrink-0 w-full px-4 py-2.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 border-t border-zinc-200 dark:border-zinc-800 transition-colors"
+          className="shrink-0 w-full px-4 py-2.5 text-xs font-medium text-violet-700 dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 border-t border-zinc-200 dark:border-zinc-800 transition-colors"
           aria-expanded={state.showOlder ? 'true' : 'false'}
           onClick={() => controller()?.toggleOlder()}
         >
@@ -525,8 +538,8 @@ export function NotificationsBody(): ReactNode {
       <div
         id="notifications-empty"
         className={state.empty
-          ? 'px-4 py-6 text-sm text-zinc-500 text-center'
-          : 'hidden px-4 py-6 text-sm text-zinc-500 text-center'}
+          ? 'px-4 py-6 text-sm text-zinc-500 text-center dark:text-zinc-400'
+          : 'hidden px-4 py-6 text-sm text-zinc-500 text-center dark:text-zinc-400'}
       >
         You'll get pinged here when someone proposes a change to an app you use.
       </div>

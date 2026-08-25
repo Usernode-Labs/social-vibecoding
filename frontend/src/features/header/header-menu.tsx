@@ -97,6 +97,8 @@ import { NotificationsBody } from '../notifications/notifications-list';
 // would tie a boot-time global to a screen nobody has opened yet.
 import './ai-credit.js';
 import './native-app-version.js';
+import { NodePillRow } from './node-pill-row';
+import { WalletRow } from './wallet-row';
 import './node-pill.js';
 import './wallet-sheet.js';
 import './header-menu-controller.js';
@@ -171,28 +173,25 @@ export function HeaderMenu() {
       >
         {/* Panel header with close button */}
         <div className="flex items-center justify-end px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
-          <button id="header-menu-close" className="text-zinc-400 hover:text-zinc-200" aria-label="Close menu">
+          <button id="header-menu-close" className="text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200" aria-label="Close menu">
             <XIcon className="w-5 h-5" />
           </button>
         </div>
         {/*
-            Panel body — ONE scroller, laid out as a COLUMN FLEX with its two
-            blocks anchored to OPPOSITE ENDS (#1367): notifications at the top,
-            the navigation rows at the bottom via `mt-auto`. The free space
-            between them belongs to neither, so a viewer with three
-            notifications gets their nav rows under their thumb instead of
-            stranded halfway up a tall panel.
+            Panel body — a COLUMN FLEX that does NOT scroll. The notifications
+            block above takes every pixel left over and scrolls inside itself;
+            the navigation rows below are `shrink-0`, so they are on screen at
+            every viewport height and every list length.
 
-            The column flex is the same one the retired #drawer-footer needed,
-            and it degrades the same way: when the two blocks together overflow
-            (a short viewport, an expanded list) there is no free space to
-            collect and `mt-auto` contributes nothing, so the rows simply sit
-            at the end of the scroll. One rule, both behaviours, no
-            measurement. On touch the panel fills a full-height kit side drawer
-            (.platform-panel-adopted), so the bottom really is the bottom of
-            the screen there.
+            It used to be the one scroller, with the two blocks anchored to
+            opposite ends by `mt-auto`, which is fine right up until the list
+            is long: then there is no free space, `mt-auto` contributes
+            nothing, and Profile / Messages / Settings / Admin sit below the
+            fold behind a scroll nobody expects in a menu. The rows are the
+            reason the drawer opens. Giving the scroll to the list instead
+            costs one `flex-1` and settles it at every height.
         */}
-        <div id="header-menu-rows" className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+        <div id="header-menu-rows" className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {/*
               NOTIFICATIONS, anchored to the TOP of the drawer (#1367).
 
@@ -211,17 +210,29 @@ export function HeaderMenu() {
               them belongs to neither. Both keep their ids — nothing moved
               out of the drawer, the nesting changed.
 
-              Bounded height with its own scroller, so a long list cannot
-              push the navigation rows below it off a short viewport — the
-              anchored dropdown it replaced had exactly this cap (max-h-[70vh]
-              on the panel) for the same reason.
+              THIS is the block that flexes, and the only one that scrolls.
+              `flex-1 min-h-0` hands it whatever the navigation rows below do
+              not use; `overflow-y-auto` keeps everything inside it — the
+              saved section, the invites, the list — within that height. The
+              comment here promised "bounded height with its own scroller" and
+              the element was `shrink-0`, so it had neither.
+
+              The scroll is on THIS element rather than on #notifications-list
+              deliberately. Making this a column flex and giving the list the
+              `flex-1` it already carries looks tidier and behaves worse: the
+              saved and invites sections are capped at `max-h-48` EACH, so on
+              a short viewport those two caps alone can consume the whole
+              block and leave the list at zero height — the notifications
+              themselves, invisible, in the notifications drawer. One scroller
+              over all three lets them share the space in the order they are
+              written.
           */}
           <div
             id="drawer-notifications"
-            className="shrink-0 border-b border-zinc-100 dark:border-zinc-800"
+            className="flex-1 min-h-0 overflow-y-auto border-b border-zinc-100 dark:border-zinc-800"
           >
             <div className="flex items-center gap-2 px-4 py-2">
-              <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              <span className="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">
                 Notifications
               </span>
               <span className="flex-1">
@@ -237,22 +248,21 @@ export function HeaderMenu() {
             <NotificationsBody />
           </div>
           {/*
-              THE NAVIGATION ROWS, anchored to the BOTTOM (#1367).
+              THE NAVIGATION ROWS, at the BOTTOM and always on screen.
 
-              `mt-auto` inside #header-menu-rows' column flex collects the
-              free space ABOVE this block, so the rows hug the foot of the
-              panel whenever the notifications above them leave room, and
-              degrade to "just after the list" when they do not (a short
-              viewport, an expanded list). One rule, both behaviours, no
-              measurement — the same trick the retired #drawer-footer used,
-              which is the reason #header-menu-rows was made a column flex in
-              the first place.
+              `shrink-0` is the whole rule now. They used to get there with
+              `mt-auto` collecting the free space above them, which put them
+              at the foot of the panel only while there WAS free space — the
+              case where it mattered, a long notification list, is exactly the
+              one where it did nothing. The notifications block above is
+              `flex-1` instead, so the space is spent there and these rows keep
+              their height unconditionally.
 
               On touch the panel fills a full-height kit side drawer
               (.platform-panel-adopted), so this sits at the bottom of the
               screen there too — which is where a thumb actually is.
           */}
-          <div id="drawer-main-rows" className="shrink-0 mt-auto">
+          <div id="drawer-main-rows" className="shrink-0">
             {/*
                 The theme selector used to be the first thing in this drawer,
                 and the kudos + AI-credit meters (#drawer-status-pane) sat
@@ -281,32 +291,8 @@ export function HeaderMenu() {
                 below. Tapping opens the same detail sheets the old header pill /
                 chip opened.
             */}
-            <button
-              id="drawer-row-node"
-              className="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <span id="drawer-node-dot" className="w-2.5 h-2.5 rounded-full bg-zinc-400 shrink-0" aria-hidden="true">
-              </span>
-              <span className="text-sm font-medium">
-                Node
-              </span>
-              <span id="drawer-node-status" className="ml-auto text-xs font-medium text-zinc-400">
-              </span>
-            </button>
-            <button
-              id="drawer-row-wallet"
-              className="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <WalletIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-medium">
-                Wallet
-              </span>
-              <span
-                id="drawer-wallet-balance"
-                className="ml-auto text-xs font-semibold text-violet-600 dark:text-violet-400"
-              >
-              </span>
-            </button>
+            <NodePillRow />
+            <WalletRow />
             {/*
                 Members & visibility used to be a drawer row here; #645 moved it
                 into the Dev tab's "+" menu (see AppView._wirePlusMenu).
@@ -341,10 +327,23 @@ export function HeaderMenu() {
                 both keep the glyph, and nothing requests /avatars/ until there is
                 something to request.
             */}
+            {/*
+                THE ROW HAIRLINE IS INSET past the glyph — `left-12` is this
+                row's `px-4` (1rem) plus the 20px icon plus `gap-3` (0.75rem),
+                i.e. exactly where the label starts. It is a pseudo-element
+                rather than `border-b` because a border cannot be inset.
+
+                Same treatment, same reason, as the home panels' rules and
+                @/components/ui/grouped-list.tsx: the widget language starts a
+                row separator at the content, not at the sheet's edge. The
+                drawer's own chrome boundaries (the close-button strip at the
+                top, the notifications pane's foot) keep their full-bleed
+                borders — those divide PANES, not rows.
+            */}
             <a
               id="drawer-row-profile"
               href="#profile"
-              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <UserIcon id="drawer-profile-glyph" className="w-5 h-5 shrink-0" />
               <img
@@ -362,7 +361,7 @@ export function HeaderMenu() {
             <a
               id="drawer-row-messages"
               href="#messages"
-              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
               <span className="text-sm font-medium">Messages</span>
@@ -390,7 +389,7 @@ export function HeaderMenu() {
             <a
               id="drawer-row-settings"
               href="#settings"
-              className="flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="flex items-center gap-3 px-4 min-h-[44px] w-full text-left relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <CogIcon className="w-5 h-5 shrink-0" />
               <span className="text-sm font-medium">
@@ -421,7 +420,7 @@ export function HeaderMenu() {
             <a
               id="drawer-row-admin"
               href="#admin"
-              className="hidden flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="hidden flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <ShieldCheckIcon className="w-5 h-5 shrink-0" />
               <span className="text-sm font-medium">

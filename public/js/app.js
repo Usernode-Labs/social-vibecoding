@@ -1740,10 +1740,13 @@ const App = {
         } else if (am.content !== data.text) {
           am.content = data.text;
           const displayContent = am.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
-          const els = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
-          const el = els[els.length - 1];
-          if (el && typeof DevChat._renderStreamingMarkdown === 'function') {
-            DevChat._renderStreamingMarkdown(el, displayContent);
+          // #1078: the transcript is a React island, so the streaming writer
+          // takes the MESSAGE and publishes a frame keyed to its row. It no
+          // longer resolves a content node as "the last `.dc-msg-content` on
+          // the page" — which was the PREVIOUS turn's bubble whenever this
+          // one had not been rendered yet.
+          if (typeof DevChat._renderStreamingMarkdown === 'function') {
+            DevChat._renderStreamingMarkdown(am, displayContent);
           } else {
             DevChat.renderMessages();
           }
@@ -2114,8 +2117,8 @@ const App = {
 
   bindEvents() {
     // Note: the "Create new app" entry point lives in the home feed
-    // now (see Home.wireCreateButtons) — no static header button to
-    // bind here anymore.
+    // now (the Create app section — frontend/src/features/home/panels/) —
+    // no static header button to bind here anymore.
     // The drawer's own wiring is HeaderMenu.init(), called from the React
     // island's layout effect now (#1079 chunk B) — it has to run after
     // hydration has adopted #header-menu-panel, which is earlier than this.
@@ -2323,7 +2326,7 @@ const App = {
           // Without this the title can be stuck on a previous app's
           // name if document.title was set elsewhere (e.g. a stale
           // value persisted across a Flutter WebView session).
-          App.setHeaderTitle('dApps');
+          App.setHeaderTitle('Social Vibecoding');
           Home.load();
         }
         return;
@@ -2339,7 +2342,7 @@ const App = {
           || App._inAdmin || App._inSettings || App._inBrowse || App._inMessages) {
           App.navigateHome();
         } else {
-          App.setHeaderTitle('dApps');
+          App.setHeaderTitle('Social Vibecoding');
           Home.load();
         }
         App.showCreateModal();
@@ -2593,7 +2596,7 @@ const App = {
         // Unrecognised hash: fall back to the home feed. The screen swap
         // is explicit here because the _exitX helpers are state-only
         // (#979) — without it the screen we were on would stay painted
-        // under a "dApps" title.
+        // under the platform's own name.
         App.setChromeless(false);
         if (App._inLeaderboard) App._exitLeaderboard();
         if (App._inProfile) App._exitProfile();
@@ -2603,7 +2606,7 @@ const App = {
         if (App._inBrowse) App._exitBrowse();
         App._showOnlyScreen('home-screen');
         document.getElementById('back-btn').classList.add('hidden');
-        App.setHeaderTitle('dApps');
+        App.setHeaderTitle('Social Vibecoding');
         // Home has no Improve target: clear whatever screen published one, or
         // the header button would outlive the app it was about (the lingering
         // Improve-button bug, in its unrecognised-hash variant).
@@ -3528,7 +3531,7 @@ const App = {
     // "whiteboard-abc123" — which the Flutter WebView's AppBar then
     // mirrors via document.title. Leaving the previous header title
     // in place during the brief /api/apps/:slug round-trip is much
-    // better UX: from home you see "dApps" briefly, then "Whiteboard";
+    // better UX: from home you see "Social Vibecoding" briefly, then "Whiteboard";
     // from app A to app B you see "App A" briefly, then "App B". The
     // user never sees the raw slug.
     //
@@ -3621,7 +3624,7 @@ const App = {
       // and none on a cold boot at `/`. Home.render() is what makes it
       // consistent; see Home.publishImproveTarget.
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle('dApps');
+      App.setHeaderTitle('Social Vibecoding');
     }, {
       type: App._entryTransition('zoom-out', av),
       el: av,
@@ -3679,7 +3682,7 @@ const App = {
 
   // Mirror the visible header text into both the on-screen <h1> and
   // the browser tab title so the OS/window surface reflects the
-  // current screen (home → "dApps", app open → app display name,
+  // current screen (home → "Social Vibecoding", app open → app display name,
   // leaderboard → "Kudos leaderboard"). The browser tab title is
   // also used by Notifications._updateTitle() to prepend an unread
   // count "(N) "; we re-invoke it here so a navigation that happens
@@ -3811,13 +3814,12 @@ const App = {
     // one owner for the attribute, which is the whole ownership rule.
     window.Improve?.setTab(tab);
 
-    // Tear down the cross-app active-sessions poll when leaving the
-    // Sessions sub-tab. renderDevChatTab will spin it back up on
-    // re-entry. Without this the poll keeps firing on the other
-    // surfaces even though there's no UI to update.
+    // Leaving the Sessions sub-tab. The cross-app active-sessions POLL used
+    // to be torn down here; it and the panel it drove are retired (#1367),
+    // so what is left is the two pieces of per-session state that are scoped
+    // to "the user is on the dev-chat tab".
     const onSessions = tab === 'dev' && App.currentSubTab === 'sessions';
-    if (!onSessions && typeof DevChat !== 'undefined' && DevChat.stopActiveSessionsPoll) {
-      DevChat.stopActiveSessionsPoll();
+    if (!onSessions && typeof DevChat !== 'undefined') {
       // The title status indicator (#108) is scoped to "user is on the
       // dev-chat tab" — leaving the tab clears it. Re-entering while a
       // run is live re-applies it via openSession's busy check.

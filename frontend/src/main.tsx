@@ -69,6 +69,14 @@ import { registerServiceWorker } from './lib/service-worker';
 // ./lib/legacy-portals.tsx. app-view.js can reach the API from the moment
 // DOMContentLoaded fires, which is the earliest App.switchTab() can run.
 import './features/dev-board/mount';
+
+// The group chat transcript's mount (#1191). Same shape and same reason as the
+// Dev board's above: public/js/group-chat.js is a classic script that cannot
+// import from this bundle, and #gc-messages is created at runtime by
+// AppView.renderDevChatTab — so the API has to exist before anything can reach
+// the chat tab, which means at module-evaluation time rather than from an
+// island's effect.
+import './features/group-chat/mount';
 // #1085 chunk H: publishes window.UsernodeReact.staging and .visualCompare at
 // module scope, for the same reason — app-view.js is a classic script that
 // cannot import from this bundle, and it opens the staging overlay from a user
@@ -89,6 +97,7 @@ import './features/app-frame/mount';
 // browser entry (never from Shell.tsx) keeps its 8,800 lines out of the
 // prerender graph entirely. Its `window.DevChat` publication and its
 // visibility/focus/pagehide listeners are guarded anyway.
+import './features/dev-chat/mount';
 import './features/dev-chat/dev-chat.js';
 
 registerServiceWorker();

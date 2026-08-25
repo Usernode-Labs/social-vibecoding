@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { renderComponent } = require('./lib/render-tsx');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
@@ -33,11 +34,12 @@ const BUILD_VENUES_SRC = fs.readFileSync(
 );
 
 function makeDevChat({ hasApiKey = false } = {}) {
-  let budgetHtml = '';
-  const budgetEl = {
-    set innerHTML(v) { budgetHtml = v; },
-    get innerHTML() { return budgetHtml; },
-  };
+  // #1191: the meter's markup is features/dev-chat/budget-pill.tsx's, so
+  // `renderBudget()` publishes fragments instead of assigning innerHTML.
+  // `meterHtml()` below renders the component from whatever was published, so
+  // every assertion in this file still reads the meter as a reader sees it.
+  let published = { title: null, parts: [] };
+  const budgetEl = { innerHTML: '' };
   const noopEl = {
     style: {}, classList: { add: () => {}, remove: () => {}, toggle: () => {} },
     addEventListener: () => {}, setAttribute: () => {}, removeAttribute: () => {},
@@ -66,6 +68,14 @@ function makeDevChat({ hasApiKey = false } = {}) {
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
   sandbox.Settings = { state: { hasApiKey, keyLast4: hasApiKey ? '1234' : null } };
+  sandbox.UsernodeReact = {
+    devChat: {
+      mountBudgetPill: () => {},
+      publishBudgetPill: (state) => { published = state; },
+      mountAttachStrip: () => {},
+      publishAttachStrip: () => {},
+    },
+  };
   vm.createContext(sandbox);
   // credit-options.js owns the banner's CTA row (and the same routes the
   // in-chat card and the Generate-proposal modal render). index.html loads
@@ -77,9 +87,26 @@ function makeDevChat({ hasApiKey = false } = {}) {
   vm.runInContext(BUILD_VENUES_SRC, sandbox);
   vm.runInContext(CREDIT_OPTIONS_SRC, sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
+  const DevChat = sandbox.__DevChat;
   return {
-    DevChat: sandbox.__DevChat,
-    meterHtml: () => budgetHtml,
+    DevChat,
+    meterHtml: () => renderComponent(
+      'frontend/src/features/dev-chat/budget-pill.tsx', 'BudgetPillView',
+      JSON.parse(JSON.stringify(published)),
+    ),
+    // The banner's markup is features/dev-chat/banners.tsx's since the four
+    // strips converted, for the same reason the meter's is budget-pill.tsx's:
+    // `_creditsBannerView()` decides, the component draws. This renders the
+    // component from what the module resolved, so every assertion below still
+    // reads the banner as a reader sees it — and `''` for "no banner" is now
+    // a null view, so the two empty cases read the same either way.
+    bannerHtml: () => {
+      const view = DevChat._creditsBannerView();
+      return view
+        ? renderComponent('frontend/src/features/dev-chat/banners.tsx', 'CreditsBanner',
+          { b: JSON.parse(JSON.stringify(view)) })
+        : '';
+    },
   };
 }
 
@@ -92,10 +119,10 @@ const budget = (over) => ({
 });
 
 test('allowance spent + no key → banner offers the two ways out (#1348)', () => {
-  const { DevChat } = makeDevChat();
+  const { DevChat, bannerHtml } = makeDevChat();
   DevChat.budget = budget({ spentCents: 2500 });
   assert.equal(DevChat._creditsExhausted(), true);
-  const html = DevChat._renderCreditsBannerHtml();
+  const html = bannerHtml();
   assert.match(html, /dc-credits-banner/, 'banner element present');
   assert.match(html, /free AI credits/, 'names the actual problem');
   // Two doors, not one per venue: pay for it yourself, or build it
@@ -111,40 +138,40 @@ test('allowance spent + no key → banner offers the two ways out (#1348)', () =
 });
 
 test('exhausted meter keeps the $spent/$limit pair, styled red', () => {
-  const { DevChat, meterHtml } = makeDevChat();
+  const { DevChat, meterHtml, bannerHtml } = makeDevChat();
   DevChat.budget = budget({ spentCents: 2500 });
   DevChat.renderBudget();
   assert.match(meterHtml(), /\$25\.00/, 'the spent figure stays visible');
   assert.match(meterHtml(), /\/\$25\.00/, 'the limit figure stays visible');
-  assert.match(meterHtml(), /text-red-500/, 'exhausted pair is unmistakably red');
+  assert.match(meterHtml(), /text-red-700/, 'exhausted pair is unmistakably red');
   assert.match(meterHtml(), /free daily AI credits are used up/, 'tooltip still explains the state');
   assert.doesNotMatch(meterHtml(), /free credits used up</, 'no replacement label — the numbers remain');
 });
 
 test('key saved → no banner, meter keeps the BYOK rendering', () => {
-  const { DevChat, meterHtml } = makeDevChat({ hasApiKey: true });
+  const { DevChat, meterHtml, bannerHtml } = makeDevChat({ hasApiKey: true });
   DevChat.budget = budget({ spentCents: 2500 });
   assert.equal(DevChat._creditsExhausted(), false);
-  assert.equal(DevChat._renderCreditsBannerHtml(), '');
+  assert.equal(bannerHtml(), '');
   DevChat.renderBudget();
   assert.doesNotMatch(meterHtml(), /free credits used up/);
   assert.match(meterHtml(), /limit /, 'key-holder meter unchanged');
 });
 
 test('headroom left → no banner, normal $spent/$limit meter', () => {
-  const { DevChat, meterHtml } = makeDevChat();
+  const { DevChat, meterHtml, bannerHtml } = makeDevChat();
   DevChat.budget = budget({ spentCents: 100 });
   assert.equal(DevChat._creditsExhausted(), false);
-  assert.equal(DevChat._renderCreditsBannerHtml(), '');
+  assert.equal(bannerHtml(), '');
   DevChat.renderBudget();
   assert.match(meterHtml(), /\$1\.00/, 'normal meter rendering');
 });
 
 test('global cap spent (user under) → banner with the shared-budget copy', () => {
-  const { DevChat } = makeDevChat();
+  const { DevChat, bannerHtml } = makeDevChat();
   DevChat.budget = budget({ spentCents: 100, globalSpentCents: 20000 });
   assert.equal(DevChat._creditsExhausted(), true);
-  const html = DevChat._renderCreditsBannerHtml();
+  const html = bannerHtml();
   assert.match(html, /shared daily AI budget/, 'global-cap copy variant');
   // Every route out bypasses the shared cap, so both doors stay on offer —
   // the venue one leads to all of them (#1348).
@@ -154,14 +181,14 @@ test('global cap spent (user under) → banner with the shared-budget copy', () 
 });
 
 test('no budget fetched yet → stays quiet', () => {
-  const { DevChat } = makeDevChat();
+  const { DevChat, bannerHtml } = makeDevChat();
   DevChat.budget = null;
   assert.equal(DevChat._creditsExhausted(), false);
-  assert.equal(DevChat._renderCreditsBannerHtml(), '');
+  assert.equal(bannerHtml(), '');
 });
 
 test('OpenRouter sessions ignore exhausted Claude credits and hide the Claude meter', () => {
-  const { DevChat, meterHtml } = makeDevChat();
+  const { DevChat, meterHtml, bannerHtml } = makeDevChat();
   DevChat.currentSession = {
     id: 7,
     agent_backend: 'codex_openrouter',
@@ -173,7 +200,7 @@ test('OpenRouter sessions ignore exhausted Claude credits and hide the Claude me
   });
 
   assert.equal(DevChat._creditsExhausted(), false);
-  assert.equal(DevChat._renderCreditsBannerHtml(), '');
+  assert.equal(bannerHtml(), '');
   DevChat.renderBudget();
   assert.equal(meterHtml(), '', 'Claude allowance is irrelevant to an OpenRouter turn');
 });

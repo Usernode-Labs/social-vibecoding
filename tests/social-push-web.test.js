@@ -967,7 +967,12 @@ test('settings consumes live native push state', () => {
     settingsSource,
     /addEventListener\('usernode:social-push-state', onState\)/
   );
-  assert.match(settingsSource, /render\(event && event\.detail\)/);
+  // #1079: the listener publishes a model slice instead of calling a local
+  // render closure over its own host — which is what retires the
+  // `box.isConnected` guard it used to need on every event.
+  assert.match(settingsSource,
+    /this\._socialPushState = \(event && event\.detail\) \|\| null;/);
+  assert.match(settingsSource, /this\._publishUsernode\(\);/);
 });
 
 test('opaque id lookup reuses the existing notification click router', async () => {

@@ -159,7 +159,12 @@ test('the ⋯ menu, dividers and muted cards use theme variables', () => {
   assert.match(menu, /position: fixed/, 'body-mounted so a column cannot clip it');
   assert.match(CSS, /\.dev-card-menu-item-danger \{[^}]*var\(--state-blocked\)/);
   assert.match(CSS, /\.dev-col-divider-label \{[^}]*color: var\(--text-faint\)/);
-  assert.match(CSS, /\.dev-card-muted \{[^}]*border-style: dashed/);
+  // The private-session card says "draft" with a dashed ring. The widget
+  // language's card has no hairline to switch, so the ring is an OUTLINE now —
+  // drawn outside the box, taking no layout space, so a muted card still lines
+  // up with its neighbours. Still a theme variable, which is what this test is
+  // actually about.
+  assert.match(CSS, /\.dev-card-muted \{[^}]*outline: 1px dashed var\(--border\)/);
 });
 
 test('the detail-view reason list tints by severity', () => {

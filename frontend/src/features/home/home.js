@@ -21,6 +21,8 @@
 // both are published by sibling modules the island imports BEFORE this one, and
 // every read happens at call time, long after the bundle has evaluated.
 import { AppCard } from '../apps/app-card.js';
+import { gridStore } from './grid-store';
+import { chromeStore } from './chrome-store';
 
 const Home = {
   // Can this viewer create apps right now? Derived per request by
@@ -85,7 +87,6 @@ const Home = {
     };
     window.HomePanels?.ensureLoaded()?.then(repaint);
     Home._ensureLayoutLoaded()?.then(repaint);
-    const listEl = document.getElementById('app-list');
 
     try {
       // The viewer's own proposals / active sessions used to ride along
@@ -124,14 +125,24 @@ const Home = {
         if (Home._apps.length) {
           Home.render();
         } else {
-          listEl.innerHTML = `<div class="col-span-full p-4 text-sm text-zinc-500 dark:text-zinc-400">`
-            + `You're offline — apps you've opened before will appear here once this device `
-            + `has loaded them.</div>`;
+          gridStore.set({
+            ready: true, view: 'grid', rowTemplate: '', items: [],
+            resultsHeading: null, emptyQuery: null,
+            notice: {
+              text: "You're offline — apps you've opened before will appear here once this "
+                + 'device has loaded them.',
+              tone: 'muted',
+            },
+          });
         }
         try { Offline.nudge(); } catch (_) { /* ignore */ }
         return;
       }
-      listEl.innerHTML = `<div class="col-span-full p-4 text-red-400 text-sm">Failed to load apps</div>`;
+      gridStore.set({
+        ready: true, view: 'grid', rowTemplate: '', items: [],
+        resultsHeading: null, emptyQuery: null,
+        notice: { text: 'Failed to load apps', tone: 'error' },
+      });
     }
   },
 
@@ -455,8 +466,6 @@ const Home = {
       Home._reloadPending = true;
       return;
     }
-    const listEl = document.getElementById('app-list');
-    if (!listEl) return;
     const canCreate = Home.canCreate();
     const apps = Home._apps || [];
     Home._wireSearch();
@@ -466,12 +475,10 @@ const Home = {
     // #apps browse screen (public/js/browse.js), so the old All Apps
     // section and its drag-to-add gesture are gone.
     const { yours } = Home.partitionApps(apps);
-    let html = '';
-    let canDragYours = false;
-    // Non-null only in the un-queried view: the count of "Your apps"
-    // cards. null = drag fully disabled (search results are a flat,
-    // transient ordering that must not be persisted as a reorder).
-    let yoursCount = null;
+    let items = [];
+    let view = 'grid';
+    let resultsHeading = null;
+    let emptyQuery = null;
     // The grid's explicit row tracks (#975). Empty string in the search view,
     // which clears any template a previous render left behind.
     let rowTemplate = '';
@@ -486,16 +493,15 @@ const Home = {
       // canonical ordering. The three fixed sections below the grid are
       // untouched by a search: they are outside #app-list.
       //
+      view = 'search';
       const matches = Home.filterApps(yours, query);
       if (!matches.length) {
-        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo; — clear the search and try <span class="text-violet-500">Discover</span> below.</div>`;
+        emptyQuery = query;
       } else {
-        html = `<div class="home-section-header col-span-full">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
-        html += matches.map((a) => Home.renderAppCard(a)).join('');
+        resultsHeading = `${matches.length} result${matches.length === 1 ? '' : 's'}`;
+        items = matches.map((a) => ({ kind: 'card', placement: null, app: Home.appView(a) }));
       }
     } else {
-      yoursCount = yours.length;
-      canDragYours = true;
       // FREE-FORM PLACEMENT. Every app tile is a grid item at an explicit
       // (column, row) cell the viewer chose — holes and all. There is no
       // flow: a tile's position comes from the layout model, never from its
@@ -523,13 +529,13 @@ const Home = {
         ? canvas.filter((it) => it.row <= rowBound)
         : canvas;
       const overflow = hiddenRows ? [] : HomeLayout.overflowItems(layout);
-      const parts = shown.map((it) => Home.renderGridItem(it, cols));
+      const parts = shown.map((it) => Home.gridItemView(it, cols, false));
       // Items past the 8-row canvas render after it in plain flow, packed
       // densely. The row cap bounds free PLACEMENT, never how many apps a
       // viewer may have — stranding a tile would be far worse than an
       // extra row.
-      parts.push(...overflow.map((it) => Home.renderGridItem(it, cols, true)));
-      html += parts.join('');
+      parts.push(...overflow.map((it) => Home.gridItemView(it, cols, true)));
+      items = parts.filter(Boolean);
       // The row tracks describe what is RENDERED, so a collapsed grid must not
       // declare tracks for the rows it is holding back — an explicit track
       // exists whether or not anything is in it, and naming row 2 while
@@ -542,39 +548,145 @@ const Home = {
     // canvas's fixed row height (its "N results" header and empty-state
     // line would each claim a whole 100px tile row). app.css keys the
     // auto-rows off this attribute.
-    listEl.dataset.view = query ? 'search' : 'grid';
+
     // SHORT ROWS (#968 fit rows, #975 blank rows). '' clears it, which is what
     // desktop and the search view get — app.css's grid-auto-rows is then the
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
-    listEl.style.gridTemplateRows = rowTemplate;
-    listEl.innerHTML = html;
-    Home._wireCards(listEl, canDragYours, yoursCount);
+    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null });
+    // ...and, in the same push, the two hosts outside it: "Show all N apps"
+    // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
+    // its own section, because a full-width flow item cannot coexist with the
+    // explicit cell placement #app-list uses. Its reorder recognizer is
+    // attached by ./widget-strip.tsx's effect, which calls _wireWidgetStrip —
+    // that function attaches listeners, it writes no markup.
     Home._renderAppsMore(moreCount);
-    // The iOS widget-editing strip renders ABOVE the grid, in its own
-    // section: a full-width flow item cannot coexist with explicit cell
-    // placement inside #app-list, which is where it used to live.
-    const stripSection = document.getElementById('home-widget-strip-section');
-    if (stripSection) {
-      const stripHtml = Home.renderWidgetSection();
-      stripSection.innerHTML = stripHtml;
-      stripSection.classList.toggle('hidden', !stripHtml);
-      if (stripHtml) Home._wireWidgetStrip(stripSection);
-    }
     // Discover / Challenges / Create app, painted from the widgets cache
     // (#911) — no network. Their hosts are fixed sections OUTSIDE #app-list,
     // so the grid's wholesale innerHTML re-render above cannot disturb them;
     // this call is here so a first paint fills them at the same moment.
     window.HomePanels?.render();
-    Home._maybeOpenShotMenu(listEl);
-    Home._searchReveal.sync();
-    // Screenshot-state deep link: paint the drag overlay in its resting
-    // visible state so the gesture-only surface is capturable and testable.
-    Home._maybeShowShotGrid(listEl);
     // The header's Improve button, pointed at the PLATFORM (#1367). Published
     // from render() on purpose — see publishImproveTarget for why that is the
     // one call that makes it consistent.
     Home.publishImproveTarget();
+  },
+
+
+  // One app -> the flat facts its tile renders. Every conditional the old
+  // template string evaluated inline is resolved HERE, where the `App.user`
+  // gates and the status vocabulary already live.
+  appView(app) {
+    const isAwaiting = app.status === 'awaiting_secrets';
+    const isError = app.status === 'error';
+    const isRunning = app.status === 'running';
+    // The status DOT and the active-users badge are gone from the tile face —
+    // a launcher icon should read as an app, not a dashboard row. Every
+    // non-running status still says so in words.
+    const statusLabel = isRunning ? ''
+      : app.status === 'creating' ? 'Spinning up...'
+      : isAwaiting ? 'Awaiting secrets'
+      : 'Error';
+    // Retry is the errored card's primary recovery action, gated to
+    // creator-or-full-admin (view-only admins excluded, issue #311).
+    const showRetry = isError
+      && !!(App.user?.canAdminWrite || App.user?.id === app.created_by);
+    // #416: `last_failure_reason` only rides the list payload for the app's
+    // creator / collaborators / admins, so it is simply absent for outsiders.
+    const forkName = app.forked_from && typeof app.forked_from === 'object'
+      ? (app.forked_from.name || '<deleted>') : null;
+    return {
+      slug: app.slug,
+      name: String(app.name || ''),
+      status: app.status,
+      icon: AppCard.iconViewFor(app),
+      locked: !!app.locked,
+      demo: !!app.demo,
+      statusLabel,
+      isAwaiting,
+      isError,
+      // Awaiting-secrets cards stay clickable so the viewer can open the app
+      // view + Secrets modal to fill values; other non-running statuses show
+      // no app surface.
+      clickable: isRunning || isAwaiting,
+      failureReason: isError && app.last_failure_reason ? String(app.last_failure_reason) : null,
+      showRetry,
+      forkName,
+    };
+  },
+
+  // One placed item -> its view-model entry. The string version spliced
+  // `data-yours` and the placement style INTO renderAppCard's output with two
+  // fragile `String.replace` calls (one of which silently unplaced the whole
+  // grid once by moving the anchor the other matched on). Placement is data
+  // now, so there is nothing to splice.
+  gridItemView(item, cols, overflow) {
+    const [w, h] = HomeLayout.sizeOf(item, cols);
+    const placement = overflow ? null : { col: item.col, row: item.row, w, h };
+    // The `item.type === 'widget'` branch that planted a `[data-panel-slot]`
+    // host is gone with the UI overhaul: Discover, Challenges and Create app
+    // are fixed sections below the grid now, so every item on this canvas is
+    // an app tile.
+    const app = (Home._apps || []).find((a) => a.slug === item.slug);
+    if (!app) return null;
+    return { kind: 'card', placement, app: Home.appView(app) };
+  },
+
+  // Attach / detach the kit's placement recognizer. Split out of _wireCards so
+  // app-grid.tsx can own WHEN it happens (a post-commit effect) while every
+  // callback below stays here, where the geometry lives.
+  //
+  // `enabled` is false in the search view: a flat, transient ordering must not
+  // be persisted as a reorder.
+  _attachGridPlacement(listEl, enabled) {
+    Home._detachGridPlacement();
+    if (!enabled || !window.unNative?.attachGridPlacement) return;
+    const cols = Home.currentCols();
+    Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
+      itemSelector: '.app-card[data-yours]:not([data-demo])',
+      cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
+      // canPlace runs first on every cell change and onHover right after, and
+      // both need the SAME displacement plan — so compute it once and memo it
+      // for the paint. Recomputing would risk the highlight describing a
+      // different outcome than the one that commits.
+      canPlace: (item, cell) => !!Home._planFor(item, cell, cols),
+      onLift: (item) => {
+        Home._dragActive = true;
+        Home._showGridOverlay(listEl, cols, item);
+      },
+      onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
+      // The release spring's destination. Same memoised plan again: the tile
+      // settles on the cell the tint promised, not the one it left.
+      rectForCell: (item, cell) => Home._rectForCell(item, cell, cols),
+      onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
+      onSettle: () => {
+        Home._dragActive = false;
+        Home._hideGridOverlay();
+        if (Home._reloadPending) {
+          Home._reloadPending = false;
+          Home._rerenderPending = false;
+          Home.load();
+        } else if (Home._rerenderPending) {
+          Home._rerenderPending = false;
+          Home.render();
+        }
+      },
+    });
+  },
+
+  _detachGridPlacement() {
+    if (Home._placementHandle) {
+      try { Home._placementHandle.detach(); } catch {}
+      Home._placementHandle = null;
+    }
+  },
+
+  // The errored card's Retry, lifted out of the _wireCards sweep so the button
+  // can carry its own handler as a prop.
+  async _onRetry(slug, btn) {
+    if (btn) btn.textContent = '...';
+    await fetch(`/api/apps/${slug}/retry`, { method: 'POST' });
+    Home.load();
   },
 
   // ── The home screen's Improve button (#1367) ───────────────────────
@@ -665,28 +777,20 @@ const Home = {
     } catch (err) { return false; }
   })(),
 
-  // "Show all N apps" — the two-row default's way out. Rendered into a host
-  // OUTSIDE #app-list so the grid's wholesale innerHTML rewrite cannot take
-  // the button away mid-click, and wired here rather than delegated because
-  // this host is re-rendered on every paint.
+  // "Show all N apps" and the widget strip, pushed together — they are the
+  // two hosts OUTSIDE #app-list that this same paint fills, and one store
+  // keeps them from being repainted at two different moments. The button
+  // stays outside the grid for the reason it always did: the grid's
+  // re-render must not take it away mid-click.
+  //
+  // Kept its name and its caller. It no longer touches the DOM, and the
+  // listener it used to re-attach on every paint is now attached once by
+  // ./apps-more.tsx to an element React keeps.
   _renderAppsMore(count) {
-    const host = document.getElementById('home-apps-more');
-    if (!host) return;
-    if (!count) {
-      host.innerHTML = '';
-      host.classList.add('hidden');
-      return;
-    }
-    host.innerHTML = `<button type="button" id="home-apps-more-btn"
-      class="w-full rounded-lg px-3 py-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Show all ${count} apps</button>`;
-    host.classList.remove('hidden');
-    const btn = document.getElementById('home-apps-more-btn');
-    if (btn) {
-      btn.addEventListener('click', () => {
-        Home._appsExpanded = true;
-        Home.render();
-      });
-    }
+    chromeStore.set({
+      moreCount: count || 0,
+      strip: Home.widgetSectionView(),
+    });
   },
 
   // ── The grid's row tracks (#975) ───────────────────────────────────
@@ -738,34 +842,6 @@ const Home = {
       else tracks.push('var(--home-cell-h)');
     }
     return tracks.join(' ');
-  },
-
-  // One placed item → its grid markup, carrying its cell as an INLINE
-  // style. Inline and not Tailwind classes: Tailwind here is the CDN JIT
-  // (see index.html), so per-cell arbitrary classes would be generated at
-  // runtime — and a cell that paints a frame late is a tile visibly jumping
-  // into place. `overflow` items get no placement at all so they flow.
-  renderGridItem(item, cols, overflow) {
-    const [w, h] = HomeLayout.sizeOf(item, cols);
-    const style = overflow
-      ? ''
-      : ` style="grid-column:${item.col + 1}/span ${w};grid-row:${item.row + 1}/span ${h}"`;
-    // The `item.type === 'widget'` branch that planted a
-    // `[data-panel-slot]` host here is gone: THE UI OVERHAUL made Discover,
-    // Challenges and Create app fixed sections below the grid, so every item
-    // on this canvas is an app tile.
-    const app = (Home._apps || []).find((a) => a.slug === item.slug);
-    if (!app) return '';
-    let card = Home.renderAppCard(app);
-    // ONE splice for both attributes, onto the card's root element. Two
-    // sequential replaces looked equivalent and was not: inserting
-    // `data-yours` ahead of `class=` moved the anchor the placement replace
-    // was matching on, so every app tile silently lost its cell and fell
-    // back to flowing — the grid looked plausible and was not placed at all.
-    card = card.replace('class="app-card ',
-      `data-yours="true"${style} class="app-card `);
-    card = card.replace('cursor-pointer', 'cursor-grab');
-    return card;
   },
 
   // ===== Hidden search bar (pull-to-reveal) =====
@@ -1114,119 +1190,15 @@ const Home = {
     card.addEventListener('mouseenter', warm);
   },
 
-  // `yoursCount` is the "Your apps" section size in the sectioned view
-  // (0 included — adds must work with an empty section), or null when
-  // drag is off entirely (search view). Only the kit path consumes it;
-  // the legacy path still keys off canDragYours.
-  _wireCards(listEl, canDragYours, yoursCount = null) {
-    // Cards already in the widget aren't drag-into-widget candidates —
-    // computed once per render, not per card.
-    const widgetSlugs = Home._widgetUiActive() ? Home._widgetSlugs() : null;
-    listEl.querySelectorAll('.app-card').forEach((card) => {
-      card.addEventListener('click', (e) => {
-        // A completed drag (or a long-press that opened the menu) ends
-        // with the pointer still on the card, so the browser fires a
-        // click right after pointerup — eat it so the gesture doesn't
-        // also open the app.
-        if (Home._suppressClick) {
-          Home._suppressClick = false;
-          return;
-        }
-        if (
-          e.target.closest('.retry-btn') ||
-          e.target.closest('.card-menu-btn')
-        ) return;
-        // Disabled while spinning up / errored — there's no iframe or
-        // chat history to render and the WS `app_status` handler will
-        // re-bind the card as soon as the container goes live.
-        if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
-        App.navigateToApp(card.dataset.slug);
-      });
-      Home._wirePrewarm(card);
-      // The placement recognizer (below) owns long-press-lift-drag on every
-      // card it matches. The long-press actions menu survives only where it
-      // does NOT: the search view (a transient view with no layout to write)
-      // and inert staging demo tiles. All other cards reach the menu through
-      // their "…" button.
-      if (yoursCount == null || card.dataset.demo === 'true') {
-        Home._wireCardLongPressMenu(card);
-      }
-    });
+  // NOTE: _wireCards is gone (#1191). It existed because an innerHTML
+  // assignment destroys every listener under it, so all four sweeps — card
+  // click, prewarm, long-press menu, retry and the card-menu button — had to
+  // run again after each render. React keeps the card nodes across renders,
+  // so those handlers are ordinary props on the elements that own them
+  // (features/home/app-grid.tsx) and the two gesture attachments run once per
+  // card from its ref. What was the tail of this function — the kit's
+  // placement recognizer — is _attachGridPlacement above.
 
-    // FREE-FORM PLACEMENT on the whole grid: long-press (or a desktop drag
-    // past the slop) lifts a floating ghost that tracks the finger on both
-    // axes, the real item holds its cell as a dashed slot, the grid draws
-    // itself underneath, and the drop lands in whatever cell the pointer is
-    // over — including an empty one with nothing around it. Nothing
-    // re-packs; the holes the viewer leaves are the point.
-    //
-    // The kit owns the gesture, this owns the geometry: cellFromPoint hits
-    // the overlay's own cell elements, so the highlight the user sees and
-    // the cell the drop commits to come from one code path with no
-    // arithmetic over grid-template-columns. It answers from the dragged
-    // TILE's centroid rather than the finger (see _targetCellFor), so the
-    // block that tints is the block the tile is visibly covering however it
-    // was picked up.
-    //
-    // The item selector deliberately matches EVERY widget host, including a
-    // create widget rendered in its disabled state — being unable to create
-    // apps must not make the widget unmovable.
-    if (yoursCount != null && window.unNative?.attachGridPlacement) {
-      if (Home._placementHandle) { try { Home._placementHandle.detach(); } catch {} }
-      const cols = Home.currentCols();
-      Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
-        itemSelector: '.app-card[data-yours]:not([data-demo])',
-        cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
-        // canPlace runs first on every cell change and onHover right after,
-        // and both need the SAME displacement plan — so compute it once here
-        // and memo it for the paint. Recomputing would risk the highlight
-        // describing a different outcome than the one that commits.
-        canPlace: (item, cell) => !!Home._planFor(item, cell, cols),
-        onLift: (item) => {
-          Home._dragActive = true;
-          Home._showGridOverlay(listEl, cols, item);
-        },
-        onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
-        // The release spring's destination. Same memoised plan again: the
-        // tile settles on the cell the tint promised, not on the cell it was
-        // picked up from.
-        rectForCell: (item, cell) => Home._rectForCell(item, cell, cols),
-        onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
-        onSettle: () => {
-          Home._dragActive = false;
-          Home._hideGridOverlay();
-          if (Home._reloadPending) {
-            Home._reloadPending = false;
-            Home._rerenderPending = false;
-            Home.load();
-          } else if (Home._rerenderPending) {
-            Home._rerenderPending = false;
-            Home.render();
-          }
-        },
-      });
-    }
-
-    // Retry stays visible on errored cards (it's the card's primary
-    // recovery action); it is also offered in the hamburger menu.
-    listEl.querySelectorAll('.retry-btn').forEach((btn) => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        btn.textContent = '...';
-        await fetch(`/api/apps/${btn.dataset.slug}/retry`, { method: 'POST' });
-        Home.load();
-      });
-    });
-
-    listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Pass the element itself so the kit popover can toggle closed
-        // on a re-click and manage aria-expanded.
-        Home.openCardMenu(btn.dataset.slug, btn);
-      });
-    });
-  },
 
   // Map structured drift-check result → a short, user-readable
   // message. Mirrors the status enum in main-drift-poller.js.
@@ -1339,7 +1311,7 @@ const Home = {
     // Awaiting-secrets cards stay clickable so the user can open the
     // app view + Secrets modal to fill values; other non-running
     // statuses show no app surface.
-    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
+    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed grayscale-[0.75]';
 
     // Per-tile sections, computed up front so the template stays
     // readable. Anything that may be empty is collapsed to '' so the
@@ -1360,7 +1332,7 @@ const Home = {
       ? ` title="${escapeHtml(String(app.last_failure_reason)).replace(/"/g, '&quot;')}"`
       : '';
     const warningHtml = statusLabel
-      ? `<p class="app-card-status ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}"${failureTip}>${statusLabel}</p>`
+      ? `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`
       : '';
 
     // Hamburger actions-menu trigger, rendered as a round badge
@@ -1382,7 +1354,7 @@ const Home = {
       <button class="card-add-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
         isAdded
           ? 'bg-emerald-500 border-emerald-500 text-white'
-          : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-600 dark:text-violet-400 hover:border-violet-400'
+          : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
       }" data-slug="${app.slug}" data-added="${isAdded}" title="${
         isAdded ? 'Added — tap to remove from Your apps' : 'Add to Your apps'
       }" aria-label="${
@@ -1411,7 +1383,7 @@ const Home = {
       ? `${addBadgeHtml}${wantsMenu ? hamburgerHtml('-left-1.5') : ''}`
       : hamburgerHtml('-right-1.5');
     const retryHtml = showRetry
-      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
+      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
       : '';
 
     // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
@@ -1472,12 +1444,13 @@ const Home = {
     `;
   },
 
-  // NOTE: renderCreateTile() is gone. "Create an app" is a WIDGET in the
-  // grid now (HomePanels.renderCreatePanel), present on every home screen
-  // for every account — dimmed and self-explaining where the viewer has no
-  // app quota, rather than swapped for a hint paragraph in a trailing
-  // section. Home.wireCreateButtons() below still binds its button, and
-  // CREATE_DISABLED_HINT is still the one wording of the locked case.
+  // NOTE: renderCreateTile() is gone. "Create an app" is a fixed SECTION now
+  // (features/home/panels/create.tsx), present on every home screen for every
+  // account — dimmed and self-explaining where the viewer has no app quota,
+  // rather than swapped for a hint paragraph in a trailing section. Its button
+  // carries its own handler; CREATE_DISABLED_HINT below is still the one
+  // wording of the locked case, shared by the tooltip, the tap toast and the
+  // ⋮ menu's inert note.
 
   // ── Usernode widget section (iOS in-app only) ──────────────────────
   //
@@ -1489,100 +1462,46 @@ const Home = {
   // within the session like _widgetSectionVisible.
   _widgetHelpVisible: false,
 
-  renderWidgetSection() {
-    if (!Home._widgetUiActive()) return '';
-    const items = Home._widgetItems;
-    const tiles = items.map((it) => Home.renderWidgetTile(it)).join('');
-    const hint = items.length
-      ? 'Drag tiles to reorder. Drag cards from Your apps here to add them.'
-      : 'Drag a card from Your apps here (or use its menu) to add it to the Usernode widget on your home screen.';
-    const helpPanel = Home._widgetHelpVisible
-      ? `
-      <div id="widget-help-panel" class="w-full text-[0.7rem] leading-relaxed text-zinc-600 dark:text-zinc-300 rounded-lg bg-violet-500/5 dark:bg-violet-500/10 border border-violet-500/20 px-3 py-2">
-        <span class="font-medium">Add the widget to your home screen:</span>
-        touch and hold an empty area of your iPhone home screen, tap
-        <span class="font-medium">Edit</span> → <span class="font-medium">Add Widget</span>
-        (or the <span class="font-medium">+</span>), search for
-        <span class="font-medium">Usernode</span>, pick a size and tap
-        <span class="font-medium">Add Widget</span>. The apps below appear on it automatically.
-      </div>`
-      : '';
-    return `
-      <div class="home-section-header flex items-center justify-between">
-        <span class="flex items-center gap-1.5">Usernode widget
-          <button id="widget-section-help" class="w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 dark:text-zinc-500 hover:text-violet-500 dark:hover:text-violet-400 transition-colors" title="How to add the widget to your home screen" aria-label="How to add the widget to your home screen" aria-expanded="${Home._widgetHelpVisible}">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-          </button>
-        </span>
-        <button id="widget-section-close" class="flex items-center gap-1 text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors" title="Close the widget section" aria-label="Close the widget section">Done
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-        </button>
-      </div>
-      <div id="widget-strip" class="flex flex-wrap items-start gap-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 p-3 transition-colors">
-        ${helpPanel}
-        ${tiles}
-        <div class="widget-strip-hint w-full text-[0.7rem] text-zinc-500 dark:text-zinc-400 ${items.length ? '' : 'py-3 text-center'}">${hint}</div>
-      </div>`;
+  // The strip's view model. Was `renderWidgetSection()`, an HTML string, and
+  // is the same decision as data (#1191 slice 7): ./widget-strip.tsx renders
+  // it. `active: false` is what `return ''` meant — the section is hidden and
+  // draws nothing, which is every platform but the iOS app.
+  widgetSectionView() {
+    if (!Home._widgetUiActive()) {
+      return { active: false, helpVisible: false, tiles: [] };
+    }
+    return {
+      active: true,
+      helpVisible: !!Home._widgetHelpVisible,
+      tiles: (Home._widgetItems || []).map((it) => Home.widgetTileView(it)),
+    };
   },
 
-  renderWidgetTile(item) {
+  // One pinned shortcut, as the strip draws it. Same three icon kinds as the
+  // home card, tagged with the same `kind` so the tile treatment (app.css)
+  // can single out the letter fallback for its fainter glyph colour — and
+  // resolved through AppCard.iconViewFor so the priority order has one home.
+  widgetTileView(item) {
     const slug = Home._widgetSlugFor(item);
     const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
     const name = (app && app.name) || item.name || '?';
-    // Same three kinds as the home card's iconTileFor, tagged with the
-    // same data-icon so the tile treatment (app.css) can single out the
-    // letter fallback for its fainter glyph colour.
-    let iconHtml;
-    let iconKind;
-    if (app && app.icon_url) {
-      iconKind = 'image';
-      iconHtml = `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-lg object-cover">`;
-    } else if (app && app.icon_emoji) {
-      iconKind = 'emoji';
-      iconHtml = `<span class="text-xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`;
-    } else {
-      iconKind = 'letter';
-      iconHtml = escapeHtml(String(name).charAt(0).toUpperCase());
-    }
-    // touch-pan-y + select-none for the same reason as app cards: keep
-    // vertical scroll native until the tile drag actually claims the
-    // gesture (see _onWidgetTilePointerDown).
-    return `
-      <div class="widget-tile app-card-draggable touch-pan-y relative flex flex-col items-center gap-1 w-16 cursor-grab" data-wid="${escapeHtml(item.id)}"${slug ? ` data-wslug="${escapeHtml(slug)}"` : ''}>
-        <div class="app-icon-tile w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base" data-icon="${iconKind}">${iconHtml}</div>
-        <span class="text-[0.65rem] leading-tight truncate w-full text-center">${escapeHtml(name)}</span>
-        <button class="widget-remove-btn absolute -top-1.5 right-0 w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-[0.6rem] text-zinc-500 dark:text-zinc-300 hover:text-red-500" data-wid="${escapeHtml(item.id)}" title="Remove from widget" aria-label="Remove ${escapeHtml(name)} from widget">✕</button>
-      </div>`;
+    // An entry another dapp pinned has no SV app behind it: fall back to the
+    // registry's own name for the letter, rather than iconViewFor's '?'.
+    const icon = app
+      ? AppCard.iconViewFor(app)
+      : { kind: 'letter', letter: String(name).charAt(0).toUpperCase() };
+    return { id: item.id, slug: slug || null, name, icon };
   },
 
+  // The strip's GESTURE, and only that. Done, the ⓘ help toggle and each
+  // tile's ✕ used to be wired here too, re-attached on every paint because
+  // the paint replaced the nodes they were on; they are props in
+  // ./widget-strip.tsx now, on elements React keeps. What is left attaches
+  // listeners to nodes and writes no markup, which is why the component may
+  // call it (same split app-grid.tsx makes for the canvas recognizer).
   _wireWidgetStrip(listEl) {
     const strip = listEl.querySelector('#widget-strip');
     if (!strip) return;
-    // "Done": hide the section again. State on the device is untouched —
-    // "Add/Edit in Usernode widget" brings it back.
-    const closeBtn = listEl.querySelector('#widget-section-close');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Home._widgetSectionVisible = false;
-        Home._widgetHelpVisible = false;
-        Home.render();
-      });
-    }
-    const helpBtn = listEl.querySelector('#widget-section-help');
-    if (helpBtn) {
-      helpBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Home._widgetHelpVisible = !Home._widgetHelpVisible;
-        Home.render();
-      });
-    }
-    strip.querySelectorAll('.widget-remove-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Home._removeWidgetItem(btn.dataset.wid);
-      });
-    });
     if (window.unNative && typeof window.unNative.attachReorder === 'function') {
       // The strip keeps attachREORDER, not the grid's attachGridPlacement,
       // and that is the right call: the iOS widget's pinned shortcuts are a
@@ -1717,8 +1636,8 @@ const Home = {
       Object.assign(tile.style, {
         borderWidth: '1px',
         borderStyle: 'dashed',
-        borderColor: 'rgba(139, 92, 246, 0.55)',
-        backgroundColor: 'rgba(139, 92, 246, 0.07)',
+        borderColor: 'rgba(31, 134, 255, 0.55)',
+        backgroundColor: 'rgba(31, 134, 255, 0.07)',
         borderRadius: '0.75rem',
       });
       document.body.style.userSelect = 'none';
@@ -1815,8 +1734,11 @@ const Home = {
     if (!slug) return;
     const app = (Home._apps || []).find((a) => a.slug === slug);
     if (app) app.locked = !!isLocked;
-    const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
-    if (card) card.dataset.locked = String(!!isLocked);
+    // Same as updateAppCardIcon below: `data-locked` is rendered by
+    // features/home/app-grid.tsx now, so the cache write above is the change
+    // and this publishes it. Writing the attribute here would be overwritten
+    // by the next render.
+    Home.render();
   },
 
   // ── Native homescreen-shortcut support ─────────────────────────────
@@ -2459,13 +2381,19 @@ const Home = {
       app.icon_emoji = iconEmoji || null;
       app.icon_url = iconUrl || null;
     }
-    const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
-    const tile = card?.querySelector('[data-icon]');
-    if (!tile) return;
-    const name = app?.name || card.querySelector('.font-medium')?.textContent || '?';
-    const icon = Home.iconTileFor({ icon_emoji: iconEmoji || null, icon_url: iconUrl || null, name });
-    tile.dataset.icon = icon.kind;
-    tile.innerHTML = icon.html;
+    // #1191: the tile is React-owned now, so this re-renders instead of
+    // writing into it. The cache update above IS the change; Home.render()
+    // publishes it and React repaints the one tile whose icon moved.
+    //
+    // Writing `tile.innerHTML` here would have made this a SECOND writer
+    // inside a subtree React reconciles — the exact hazard the stateful-island
+    // rule in AGENTS.md exists to prevent. It would also have been silently
+    // temporary: the next store push would paint the old icon straight back.
+    //
+    // The comment above still holds and is now free rather than hand-managed —
+    // a reconcile touches the changed tile and nothing else, so hover and
+    // scroll state on every other card survive without a special path.
+    Home.render();
   },
 
   // ===== "…" card actions menu =====
@@ -3345,6 +3273,21 @@ const Home = {
     return tracks.join(' ');
   },
 
+  // ── This appends INTO a React-owned host, and that is deliberate ───
+  //
+  // `#app-list` is features/home/app-grid.tsx's subtree, so `#home-grid-overlay`
+  // is a second writer under an owned host. Moving it out would mean
+  // re-deriving geometry that is currently free: the overlay's inset mirrors
+  // #app-list's padding exactly at both breakpoints (app.css says so, twice)
+  // and _rectForCell measures these cell elements to land a committed drop.
+  //
+  // What makes it safe is a timing invariant, not a boundary. The overlay
+  // exists only between onLift and onSettle, and React cannot reconcile
+  // #app-list in that window: render() and load() are the only publishers of
+  // the grid model and both return early while _dragActive holds.
+  // tests/home-grid-placement.test.js pins both halves — the deferral and the
+  // absence of a third publisher — because the ownership audit never drags and
+  // therefore cannot see any of this.
   _showGridOverlay(listEl, cols, liftedEl) {
     Home._hideGridOverlay();
     if (!listEl) return;
@@ -3661,29 +3604,17 @@ const Home = {
   // three can never drift.
   CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account.',
 
-  // Idempotent click-wiring for every `.home-create-btn` currently
-  // mounted (the empty-state CTA, the per-tile placeholder pill,
-  // etc.). Listeners are re-bound on every Home.load(); cloneNode
-  // swap clears any stale ones from a prior render so the modal
-  // doesn't open twice. The non-<button> branch is a defensive
-  // fallback — both current call sites use real <button> elements
-  // and get Enter/Space activation for free — but kept so future
-  // div-based variants don't silently lose keyboard support.
-  wireCreateButtons() {
-    document.querySelectorAll('.home-create-btn').forEach((btn) => {
-      const fresh = btn.cloneNode(true);
-      btn.parentNode.replaceChild(fresh, btn);
-      fresh.addEventListener('click', () => App.showCreateModal());
-      if (fresh.tagName !== 'BUTTON') {
-        fresh.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            App.showCreateModal();
-          }
-        });
-      }
-    });
-  },
+  // `wireCreateButtons()` lived here: `document.querySelectorAll('.home-create-btn')`,
+  // each button cloneNode'd and swapped for a fresh copy so a re-paint could
+  // not leave two listeners on it, then a click handler bound to the clone.
+  //
+  // Its one caller was `HomePanels._wire`, and its one matching element is now
+  // rendered by features/home/panels/create.tsx. Both halves of what it did
+  // stop applying there: React keeps the element across paints, so there are
+  // no stale listeners to clear, and the clone-and-replace is a structural DOM
+  // write inside a subtree React owns — the exact failure the ownership rule
+  // exists to prevent. Keeping it as an unused helper would leave that loaded
+  // gun pointed at the block, so it went with its caller.
 
   // Targeted deploy-state update for a single app. Called from the
   // `app_redeploy_status` WS handler (deploy END triggers a full

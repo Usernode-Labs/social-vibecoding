@@ -48,6 +48,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeComposerBridge } = require('./lib/dev-composer-html');
+
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
@@ -99,6 +101,9 @@ function makeElement(id) {
 }
 
 function makeHarness(storage = new Map()) {
+  // #1078: the hint and the save icon are two fields of the composer's view
+  // model — `_syncSaveDraftBtn` publishes rather than writes.
+  const composer = makeComposerBridge();
   const registry = new Map();
   const getEl = (id) => {
     if (!registry.has(id)) registry.set(id, makeElement(id));
@@ -143,6 +148,7 @@ function makeHarness(storage = new Map()) {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.UsernodeReact = { devChat: composer.bridge };
 
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
@@ -157,7 +163,7 @@ function makeHarness(storage = new Map()) {
   DevChat._applySyncBanner = () => {};
   DevChat.setTitleStatus = () => {};
 
-  return { DevChat, sandbox, document, getEl, storage };
+  return { DevChat, sandbox, document, getEl, storage, view: () => composer.state() };
 }
 
 const SESSION_ID = 4242;
@@ -332,36 +338,35 @@ test('once the turn has settled the shortcut sends rather than saving', () => {
 // ── The hint under the box ─────────────────────────────────────────────
 
 test('the shortcut hint names the action the keystroke currently performs', () => {
-  const { DevChat, document } = makeHarness();
+  const { DevChat, document, view } = makeHarness();
   open(DevChat);
-  const hint = document.getElementById('dc-shortcut-hint');
+  const hint = () => view().shortcutHintHtml;
   document.getElementById('dc-input').value = 'a note';
 
   DevChat._syncSaveDraftBtn();
-  assert.equal(hint.innerHTML, DevChat.SHORTCUT_HINT_SEND,
+  assert.equal(hint(), DevChat.SHORTCUT_HINT_SEND,
     'stopped chat: the keystroke sends, so the hint says send');
 
   DevChat.isStreaming = true;
   DevChat._setStreamingUI(true, 'claude');
-  assert.equal(hint.innerHTML, DevChat.SHORTCUT_HINT_SAVE,
+  assert.equal(hint(), DevChat.SHORTCUT_HINT_SAVE,
     'running chat: the keystroke saves, so the hint says save');
 
   DevChat.isStreaming = false;
   DevChat._setStreamingUI(false);
-  assert.equal(hint.innerHTML, DevChat.SHORTCUT_HINT_SEND,
+  assert.equal(hint(), DevChat.SHORTCUT_HINT_SEND,
     'and it flips back the moment the turn settles');
 });
 
 test('the save icon tooltip advertises the shortcut', () => {
-  const { DevChat, document } = makeHarness();
+  const { DevChat, document, view } = makeHarness();
   open(DevChat, { streaming: true });
   const input = document.getElementById('dc-input');
-  const btn = document.getElementById('dc-save-draft-btn');
 
   input.value = 'something worth saving';
   DevChat._syncSaveDraftBtn();
 
-  assert.match(btn.title, /Ctrl\+Enter/,
+  assert.match(view().saveDraft.title, /Ctrl\+Enter/,
     'the icon names the keystroke that does the same thing');
 });
 

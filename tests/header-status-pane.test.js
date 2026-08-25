@@ -304,14 +304,22 @@ test('the drawer constrains a long pill so it cannot widen the 15rem panel', () 
     'and their value truncates rather than overflowing');
 });
 
-// ─── One scroller, with notifications first inside it ───────────────────
+// ─── One scroller, and it is the notification list ──────────────────────
 
-test('the drawer body is one scroller, notifications leading', () => {
+test('the drawer body holds one scroller, notifications leading', () => {
   const scroller = html.match(/<div id="header-menu-rows"[^>]*>/);
   assert.ok(scroller, '#header-menu-rows exists');
-  assert.match(scroller[0], /overflow-y-auto/, 'the drawer body scrolls');
+  // The BODY does not scroll. It did, and the navigation rows below the list
+  // went with it — off the bottom of a short viewport, behind a scroll nobody
+  // expects in a menu. The list scrolls inside #drawer-notifications instead;
+  // the rows are `shrink-0` and always on screen.
+  assert.ok(!/overflow-y-auto/.test(scroller[0]),
+    'the drawer body itself must not scroll');
   assert.match(scroller[0], /min-h-0/,
-    'min-h-0 is required for a flex child to actually scroll rather than grow');
+    'min-h-0 is required for a flex child to bound its children rather than grow');
+  const notif = html.match(/<div id="drawer-notifications"[^>]*>/);
+  assert.match(notif[0], /flex-1/, 'the notifications block takes the free space');
+  assert.match(notif[0], /min-h-0/, 'and may shrink below its content, so it can scroll');
   const at = html.indexOf('id="header-menu-rows"');
   for (const id of ['drawer-notifications', 'drawer-row-admin']) {
     assert.ok(html.indexOf(`id="${id}"`) > at, `#${id} is inside the scroller`);

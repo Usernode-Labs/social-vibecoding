@@ -59,11 +59,23 @@ export function useWaitlistOptions(): WaitlistOptions | null {
 // Chip classes, verbatim from AuthScreens._chipRow — including the trailing
 // space on BASE, so a chip's class attribute is byte-identical to the one the
 // imperative version produced.
+/*
+ * The widget language's chip: a FILLED neutral at rest, and a solid near-black
+ * inversion when selected — not an outline that tints. The reasoning is
+ * @/components/ui/chip.tsx's, and these are that component's shape at a
+ * smaller size; they are not routed through it because ChipRow and ChipMulti
+ * are the shared primitive here and swapping their internals would be a
+ * refactor with test surface for no visual difference beyond this restyle.
+ *
+ * The selection is deliberately NOT the accent. The accent means
+ * "actionable/mine"; selection means "this is the one you picked", and
+ * colouring both blue collapses the two — the same argument that file makes.
+ */
 const CHIP_ON =
-  'border-violet-500 bg-violet-50 dark:bg-violet-500/10 text-zinc-900 dark:text-white';
+  'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900';
 const CHIP_OFF =
-  'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-500';
-const CHIP_BASE = 'rounded-full border px-3 py-1.5 text-xs cursor-pointer transition-colors ';
+  'bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700';
+const CHIP_BASE = 'rounded-full px-3 py-1.5 text-xs cursor-pointer transition-colors ';
 
 interface ChipRowProps {
   /** The host element's id — the chips render inside it, as before. */
@@ -154,7 +166,7 @@ export type MsgTone = 'error' | 'ok' | 'warn';
 
 export function msgClass(tone: MsgTone | null): string {
   if (!tone) return 'hidden text-sm mt-3';
-  if (tone === 'error') return 'text-sm mt-3 text-red-500 dark:text-red-400';
-  if (tone === 'warn') return 'text-sm mt-3 text-amber-600 dark:text-amber-400';
-  return 'text-sm mt-3 text-emerald-600 dark:text-emerald-400';
+  if (tone === 'error') return 'text-sm mt-3 text-red-700 dark:text-red-400';
+  if (tone === 'warn') return 'text-sm mt-3 text-amber-800 dark:text-amber-400';
+  return 'text-sm mt-3 text-emerald-700 dark:text-emerald-400';
 }

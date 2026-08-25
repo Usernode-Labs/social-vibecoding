@@ -203,7 +203,7 @@ test('render: no "All Apps" section header anywhere in home.js', () => {
 test('render: the grid places the yours partition, never rest', () => {
   const render = HOME_SRC.slice(
     HOME_SRC.indexOf('\n  render() {'),
-    HOME_SRC.indexOf('\n  renderGridItem(')
+    HOME_SRC.indexOf('\n  appView(app) {')
   );
   assert.ok(render.length > 200, 'located render()');
   assert.match(render, /const \{ yours \} = Home\.partitionApps\(apps\)/);

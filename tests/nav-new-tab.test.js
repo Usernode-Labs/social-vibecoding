@@ -37,6 +37,8 @@ const browseListTsx = read('frontend/src/features/apps/browse-list.tsx');
 const browseDetailTsx = read('frontend/src/features/apps/browse-detail.tsx');
 const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
+const topicFrameTsx = read('frontend/src/features/dev-board/topic-frame.tsx');
+const sessionHeaderTsx = read('frontend/src/features/dev-chat/session-header.tsx');
 const { HOME_SRC: homeJs } = require('./helpers/home-modules');
 const leaderboardJs = read('frontend/src/features/leaderboard/leaderboard.js');
 const kudosPaneTsx = read('frontend/src/features/leaderboard/kudos-pane.tsx');
@@ -230,26 +232,20 @@ test('the three up-one-level screens pass their own target', () => {
 // ── The converted back controls ────────────────────────────────────────
 
 const ANCHORS = [
-  {
-    label: 'back out of a dev session',
-    src: () => devChatJs, file: 'dev-chat.js',
-    markup: /<a id="dc-back"/,
-    oldTag: /<button id="dc-back"/,
-    href: /href="\$\{App\.currentApp \? `#app\/\$\{escapeHtml\(App\.currentApp\)\}\/dev` : ''\}"/,
-    handler: "document.getElementById('dc-back').addEventListener",
-  },
+  // 'back out of a dev session' is NOT in this list any more, and for the same
+  // reason as the three below: the session header strip converted, so the
+  // anchor is JSX in frontend/src/features/dev-chat/session-header.tsx and the
+  // plain-click path is DevChat.leaveSession(). It gets the same assertions by
+  // hand below.
   // 'back out of the app-wide dev chat' is NOT in this list: #1084 chunk G
   // converted that sub-view's frame to React, which splits the control across
   // two files, and every entry here has a single source. It gets the same two
   // assertions by hand below.
-  {
-    label: 'back out of an issue / proposal / governance topic',
-    src: () => appViewJs, file: 'app-view.js',
-    markup: /<a id="dev-topic-back"/,
-    oldTag: /<button id="dev-topic-back"/,
-    href: /href="\$\{AppView\._devPageHref\(\)\}"/,
-    handler: "document.getElementById('dev-topic-back').addEventListener",
-  },
+  // 'back out of an issue / proposal / governance topic' is NOT in this list
+  // any more, for the same reason as the dev general-chat link above: #1191
+  // converted the topic sub-view's frame to React
+  // (frontend/src/features/dev-board/topic-frame.tsx), which splits the
+  // control across two files. It gets the same two assertions by hand below.
   // 'back to the top-users leaderboard' is NOT in this list either, and for
   // the same reason as the dev general-chat link above: #1191 slice 6
   // conversion 6 made the Kudos pane a component, so the anchor is JSX in
@@ -293,8 +289,63 @@ test('"back out of the app-wide dev chat" is a real anchor with a real target', 
     'app-view.js must resolve that href through the same shared helper as before');
 });
 
+// The dev session's back link, split by the session-header conversion: the
+// anchor is JSX in frontend/src/features/dev-chat/session-header.tsx, and the
+// plain-click path is `DevChat.leaveSession()`, which the component calls by
+// name. Same two properties the loop above asserts for every other control —
+// a real <a> with a resolvable target, and a guard that runs BEFORE
+// preventDefault, or a ⌘-click is swallowed.
+test('"back out of a dev session" is a real anchor with a real target', () => {
+  assert.match(sessionHeaderTsx, /<a\s+id="dc-back"/,
+    'session-header.tsx: the control must be an <a>');
+  assert.ok(!/<button[^>]*id="dc-back"/.test(sessionHeaderTsx + devChatJs),
+    'the old <button> tag is gone from both the component and dev-chat.js');
+  assert.match(sessionHeaderTsx, /href=\{s\.backHref\}/,
+    'session-header.tsx: the anchor must carry the href from the model, not a bare "#"');
+  assert.match(devChatJs, /backHref: App\.currentApp \? `#app\/\$\{App\.currentApp\}\/dev` : '',/,
+    'dev-chat.js must still resolve that href from the app in scope');
+});
+
+test('"back out of a dev session" leaves a modified click to the browser', () => {
+  const body = handlerAfter(sessionHeaderTsx, 'id="dc-back"', 700);
+  const guard = body.indexOf('NavLink?.isNativeClick(e)');
+  const prevent = body.indexOf('e.preventDefault()');
+  assert.ok(guard !== -1, 'session-header.tsx: the modified-click guard went missing');
+  assert.ok(prevent !== -1, 'session-header.tsx: a plain click must still be intercepted');
+  assert.ok(guard < prevent,
+    'session-header.tsx: preventDefault ahead of the guard swallows the new tab');
+  // And the work the plain click does is still dev-chat.js's.
+  assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,900}?App\.switchTab\('dev'\)/);
+});
+
+// The topic back link, split the same way by #1191: the anchor is JSX in
+// frontend/src/features/dev-board/topic-frame.tsx, and the plain-click handler
+// is the onBackClick prop AppView._renderTopicSubView passes in. Both
+// assertions are anchored on the mount call rather than on the bare
+// `onBackClick`, because app-view.js now passes two of them.
+test('"back out of an issue / proposal / governance topic" is a real anchor with a real target', () => {
+  assert.match(topicFrameTsx, /<a\s+id="dev-topic-back"/,
+    'topic-frame.tsx: the control must be an <a>');
+  assert.ok(!/<button[^>]*id="dev-topic-back"/.test(topicFrameTsx + appViewJs),
+    'the old <button> tag is gone from both the component and app-view.js');
+  assert.match(topicFrameTsx, /href=\{backHref\}/,
+    'topic-frame.tsx: the anchor must carry the href prop, not a bare "#"');
+  assert.match(appViewJs, /mountTopicSubView\(content, \{\s*\n\s*backHref: AppView\._devPageHref\(\),/,
+    'app-view.js must resolve that href through the same shared helper as before');
+});
+
+test('"back out of an issue / proposal / governance topic" leaves a modified click to the browser', () => {
+  const body = handlerAfter(appViewJs, 'mountTopicSubView(content, {', 600);
+  const guard = body.indexOf('NavLink.isNativeClick(e)');
+  const prevent = body.indexOf('e.preventDefault()');
+  assert.ok(guard !== -1, 'app-view.js: the modified-click guard went missing');
+  assert.ok(prevent !== -1, 'app-view.js: a plain click must still be intercepted');
+  assert.ok(guard < prevent,
+    'app-view.js: preventDefault ahead of the guard swallows the new tab');
+});
+
 test('"back out of the app-wide dev chat" leaves a modified click to the browser', () => {
-  const body = handlerAfter(appViewJs, 'onBackClick: (e) => {', 400);
+  const body = handlerAfter(appViewJs, 'mountChatSubView(content, {', 600);
   const guard = body.indexOf('NavLink.isNativeClick(e)');
   const prevent = body.indexOf('e.preventDefault()');
   assert.ok(guard !== -1, 'app-view.js: the modified-click guard went missing');
@@ -412,15 +463,20 @@ const ROWS = [
     href: /#app\/\$\{encodeURIComponent\(card\.dataset\.slug\)\}\/app/,
     guards: ['card-add-btn', 'card-menu-btn', "card.dataset.demo === 'true'", 'awaiting_secrets'],
   },
-  {
-    label: 'dev-chat session rows',
-    src: () => devChatJs, file: 'dev-chat.js',
-    anchor: ".querySelectorAll('.dc-active-item')",
-    wire: /NavLink\.wireModified\(el, hrefFor, activate\)/,
-    href: /#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/sessions\/\$\{id\}/,
-    guards: ['Number.isFinite(id)'],
-  },
+  // The dev chat's cross-app "Active Sessions" rows were the second entry
+  // here. They are gone (#1367): `#dc-active-list` and `#dc-active-counter`
+  // exist in no markup, so `renderActiveSessions` resolved nothing and
+  // returned on its first line, and the 5s poll that drove it had no caller
+  // left. A modifier-click contract for rows nobody can see is not a
+  // contract — the assertion below replaces it, so the wiring cannot come
+  // back without the surface.
 ];
+
+test('the retired cross-app session rows leave no half of themselves behind', () => {
+  assert.ok(!/dc-active-item/.test(devChatJs), 'no rows');
+  assert.ok(!/dc-active-list|dc-active-counter/.test(devChatJs.replace(/\/\/[^\n]*/g, '')),
+    'and no lookups for the hosts they needed');
+});
 
 for (const r of ROWS) {
   test(`${r.label} open in a new tab under a modifier`, () => {

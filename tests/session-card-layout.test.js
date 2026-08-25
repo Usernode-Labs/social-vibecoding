@@ -27,6 +27,25 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const {
+  api, cardHtml, hasAction, listRowHtml, mySessionCardHtml, sharedSessionCardHtml,
+  transcriptHtml,
+} = require('./lib/dev-card-html');
+const { renderToHtml, createElement } = require('./lib/render-tsx');
+
+// ── Rendering the column's rows ─────────────────────────────────────────
+//
+// `_inProgressCardsHtml` / `_mySessionsBlockHtml` built these blocks as
+// strings; #1367's card chunk split each into ROWS (still here, and still
+// what this file is about: which groups, in which order) and
+// card/list-rows.tsx, which draws them. `_sessionStatusTagHtml` split the
+// same way, into a badge spec plus card/dev-card.tsx's `Badge`.
+const rowsHtml = (rows) => rows.map((row) => listRowHtml(row)).join('');
+function statusTagHtml(AppView, s) {
+  const b = AppView._sessionStatusTagSpec(s);
+  return b ? renderToHtml(createElement(api().Badge, { b })) : '';
+}
+
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -95,7 +114,10 @@ function assertOrder(html, markers) {
 const CHEVRON = 'M9 5l7 7-7 7';
 const SPINNER = 'dc-status-spinner-arc';
 // The single-row shell every card on the board shares.
-const SHELL = 'w-full flex items-center gap-3 rounded-xl';
+// `rounded-2xl` since the widget language landed (#1191): the card is a white
+// surface on the grey page ground with no hairline, so the corner carries the
+// shape the border used to.
+const SHELL = 'w-full flex items-center gap-3 rounded-2xl';
 
 // The ⋯ registry key a card emitted, or null.
 function menuKeyOf(html) {
@@ -116,7 +138,7 @@ function menuHas(AppView, html, re) {
 test('busy own card: single-row shell, wrapping title, ⋯ instead of five pills', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
-  const html = AppView._renderMySessionCard(mySess({ busy: true }));
+  const html = mySessionCardHtml(AppView, mySess({ busy: true }));
   assert.match(html, /dev-card-title/, 'title uses the shared title cell');
   assert.match(html, /dev-card-head-main/, 'and its wrapping cell in the head');
   assert.ok(html.includes(SHELL), 'uses the standard single-row card shell');
@@ -137,17 +159,17 @@ test('busy own card: single-row shell, wrapping title, ⋯ instead of five pills
 test('a PRIVATE own session carries the muted shell; a visible one does not', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
-  const priv = AppView._renderMySessionCard(mySess({}));
+  const priv = mySessionCardHtml(AppView, mySess({}));
   assert.match(priv, /dev-card-muted/, 'the muted/draft treatment IS the "only you" signal');
   assert.match(priv, /Only you can see this/, 'and the subtitle says so');
-  const vis = AppView._renderMySessionCard(mySess({ shared_at: '2026-06-01T03:00:00Z' }));
+  const vis = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
   assert.doesNotMatch(vis, /dev-card-muted/, 'a visible session is not muted');
 });
 
 test('shared card: single-row shell; noNav drops nav, chevron and the actions row', () => {
   const AppView = makeAppView();
   const s = sharedSess({ busy: true, staging_url: 'https://example.invalid' });
-  const nav = AppView._renderSharedSessionCard(s);
+  const nav = sharedSessionCardHtml(AppView, s);
   assert.match(nav, /data-shared-session-row="71"/);
   assert.ok(nav.includes(SHELL), 'uses the standard single-row card shell');
   // The preview eye is no longer a pill in the action band: it is the bottom
@@ -156,7 +178,7 @@ test('shared card: single-row shell; noNav drops nav, chevron and the actions ro
   assertOrder(nav, ['dev-card-title', SPINNER, 'dev-chat-badge', CHEVRON, 'gc-vote-btn-preview']);
   assert.match(nav, /dev-card-rail/, 'and the pair share the rail column');
 
-  const noNav = AppView._renderSharedSessionCard(s, { noNav: true });
+  const noNav = sharedSessionCardHtml(AppView, s, { noNav: true });
   assert.doesNotMatch(noNav, /data-shared-session-row/, 'noNav variant has no row hook');
   assert.ok(!noNav.includes(CHEVRON), 'noNav variant has no chevron');
   assert.doesNotMatch(noNav, /gc-card-actions/, 'noNav variant has no actions row');
@@ -165,26 +187,30 @@ test('shared card: single-row shell; noNav drops nav, chevron and the actions ro
 test('an owned imported PR is an In-progress discussion card with one promotion action', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
-  const html = AppView._renderMySessionCard(mySess({
+  const model = AppView._mySessionCardModel(mySess({
     id: 88,
     source: 'imported',
     imported_pr_author: 'octo-contributor',
     pr_number: 1165,
     shared_at: '2026-06-01T03:00:00Z',
   }));
+  const html = cardHtml(model);
   assert.match(html, /data-shared-session-row="88"/,
     'the card opens its public discussion, never a dev chat');
   assert.doesNotMatch(html, /data-session-chip=/);
   assert.match(html, /Imported PR/);
   assert.match(html, /Imported pull request by octo-contributor · not up for vote yet/);
-  assert.match(html, /promoteImportedSession\(88, this\)[^>]*>Put up for vote</);
+  // `passNode` appends the clicked button, which the model cannot hold.
+  assert.ok(hasAction(model, 'promoteImportedSession', 88), 'the promote pill is wired');
+  assert.ok(model.actions.find((a) => a.key === 'promote').passNode);
+  assert.match(html, />Put up for vote</);
   assert.doesNotMatch(html, /Make visible|>Hide<|Share chat/);
   assert.equal(menuKeyOf(html), null, 'no archive or dev-session menu is exposed');
 });
 
 test('another user’s imported PR names author and importer without owner controls', () => {
   const AppView = makeAppView();
-  const html = AppView._renderSharedSessionCard(sharedSess({
+  const html = sharedSessionCardHtml(AppView, sharedSess({
     source: 'imported', imported_pr_author: 'octo-contributor', username: 'maya',
   }));
   assert.match(html, /Imported PR/);
@@ -196,17 +222,18 @@ test('another user’s imported PR names author and importer without owner contr
 
 test('shared card: can_preview without a live staging_url still gets the icon (empty fallback)', () => {
   const AppView = makeAppView();
-  const html = AppView._renderSharedSessionCard(sharedSess({ can_preview: true, staging_url: null }));
+  const model = AppView._sharedSessionCardModel(sharedSess({ can_preview: true, staging_url: null }));
+  const html = cardHtml(model);
   assert.match(html, /gc-vote-btn-preview/);
   assert.match(html, /aria-label="Open preview"/, 'the icon carries a real accessible name');
   // Routed through ensure-staging with no last-known URL — the server
   // decides live-vs-rebuild.
-  assert.match(html, /swapToStagingForSession\(71, ''\)/);
+  assert.ok(hasAction(model, 'swapToStagingForSession', 71, ''), 'swapToStagingForSession');
 });
 
 test('shared card: no pushed changes (can_preview false) → no Preview affordance', () => {
   const AppView = makeAppView();
-  const html = AppView._renderSharedSessionCard(sharedSess({ can_preview: false, staging_url: null }));
+  const html = sharedSessionCardHtml(AppView, sharedSess({ can_preview: false, staging_url: null }));
   assert.doesNotMatch(html, /gc-vote-btn-preview/);
 });
 
@@ -214,20 +241,22 @@ test('shared card, read-only viewer: the icon requires a live staging_url', () =
   const AppView = makeAppView();
   // readOnly is a getter over appData.can_collaborate (#621).
   AppView.appData = { can_collaborate: false };
-  const rebuildOnly = AppView._renderSharedSessionCard(sharedSess({ can_preview: true, staging_url: null }));
+  const rebuildOnly = sharedSessionCardHtml(AppView, sharedSess({ can_preview: true, staging_url: null }));
   assert.doesNotMatch(rebuildOnly, /gc-vote-btn-preview/, 'read-only viewers cannot trigger a rebuild');
-  const live = AppView._renderSharedSessionCard(sharedSess({ can_preview: true, staging_url: 'https://example.invalid' }));
+  const liveModel = AppView._sharedSessionCardModel(sharedSess({ can_preview: true, staging_url: 'https://example.invalid' }));
+  const live = cardHtml(liveModel);
   assert.match(live, /gc-vote-btn-preview/, 'a live URL still opens directly');
-  assert.match(live, /swapToStagingForSession\(71, 'https:\/\/example\.invalid'\)/);
+  assert.ok(hasAction(liveModel, 'swapToStagingForSession', 71, 'https://example.invalid'));
 });
 
 test('own card: Preview gated on pr_number (a PR exists once changes are pushed)', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
-  const withPr = AppView._renderMySessionCard(mySess({ pr_number: 123 }));
+  const withPrModel = AppView._mySessionCardModel(mySess({ pr_number: 123 }));
+  const withPr = cardHtml(withPrModel);
   assert.match(withPr, /gc-vote-btn-preview/);
-  assert.match(withPr, /swapToStagingForSession\(51, ''\)/);
-  const noPr = AppView._renderMySessionCard(mySess({ pr_number: null }));
+  assert.ok(hasAction(withPrModel, 'swapToStagingForSession', 51, ''), 'swapToStagingForSession');
+  const noPr = mySessionCardHtml(AppView, mySess({ pr_number: null }));
   assert.doesNotMatch(noPr, /gc-vote-btn-preview/);
 });
 
@@ -236,7 +265,7 @@ test('own card: Preview gated on pr_number (a PR exists once changes are pushed)
 test('the "Open chat" PILL is gone; a visible session offers it from ⋯ with its count', () => {
   const AppView = makeAppView();
   AppView._sharedById = { 51: { id: 51, chat_count: 4 } };
-  const html = AppView._renderMySessionCard(mySess({ shared_at: '2026-06-01T03:00:00Z' }));
+  const html = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
   // Tapping the card opens the owner's dev chat — its working surface and
   // the card's one canonical destination. The public discussion is one ⋯
   // row rather than a second affordance on the card face.
@@ -251,7 +280,7 @@ test('the "Open chat" PILL is gone; a visible session offers it from ⋯ with it
 test('freshly-visible card (no _sharedById row yet) still offers the discussion at 0', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
-  const html = AppView._renderMySessionCard(mySess({ shared_at: '2026-06-01T03:00:00Z' }));
+  const html = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
   assert.ok(menuHas(AppView, html, /Open public discussion/),
     'offered even before the background refresh lands');
 });
@@ -259,11 +288,13 @@ test('freshly-visible card (no _sharedById row yet) still offers the discussion 
 test('private own card offers no public discussion and keeps Make visible', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
-  const html = AppView._renderMySessionCard(mySess({}));
+  const model = AppView._mySessionCardModel(mySess({}));
+  const html = cardHtml(model);
   assert.ok(!menuHas(AppView, html, /Open public discussion/),
     'nowhere for a reader to reach an invisible session from');
-  assert.match(html, /_setSessionShared\(51, true[^>]*>Make visible</,
+  assert.ok(hasAction(model, '_setSessionShared', 51, true),
     'Make visible renders, as the promoted pill');
+  assert.match(html, />Make visible</);
 });
 
 // ── Transcript sharing: the second, narrower opt-in ─────────────────────────
@@ -271,7 +302,7 @@ test('private own card offers no public discussion and keeps Make visible', () =
 test('private own card offers NO chat-sharing row (nowhere to read it from yet)', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
-  const html = AppView._renderMySessionCard(mySess({}));
+  const html = mySessionCardHtml(AppView, mySess({}));
   assert.ok(!menuHas(AppView, html, /Share chat|Chat shared/));
   assert.doesNotMatch(html, /chat readable/);
   assert.match(html, /Only you can see this/, 'subtitle names the private state');
@@ -280,7 +311,7 @@ test('private own card offers NO chat-sharing row (nowhere to read it from yet)'
 test('visible own card offers "Share chat"; the subtitle stays plain', () => {
   const AppView = makeAppView();
   AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
-  const html = AppView._renderMySessionCard(mySess({ shared_at: '2026-06-01T03:00:00Z' }));
+  const html = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
   assert.ok(menuHas(AppView, html, /^Share chat$/), 'the second opt-in is offered');
   assert.ok(!menuHas(AppView, html, /Chat shared/));
   // Visible ≠ readable: the card must not claim the chat is shared.
@@ -291,7 +322,7 @@ test('visible own card offers "Share chat"; the subtitle stays plain', () => {
 test('chat-shared own card flips to the revoke row and says so in the subtitle', () => {
   const AppView = makeAppView();
   AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
-  const html = AppView._renderMySessionCard(mySess({
+  const html = mySessionCardHtml(AppView, mySess({
     shared_at: '2026-06-01T03:00:00Z',
     transcript_shared_at: '2026-06-01T03:05:00Z',
   }));
@@ -303,7 +334,7 @@ test('chat-shared own card flips to the revoke row and says so in the subtitle',
 test('the ⋯ rows come in chat-sharing → discussion → Archive order', () => {
   const AppView = makeAppView();
   AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
-  const html = AppView._renderMySessionCard(mySess({ shared_at: '2026-06-01T03:00:00Z' }));
+  const html = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
   const labels = menuLabels(AppView, html).join('|');
   // Visibility used to lead this list; it is the promoted pill now, so the
   // menu starts at the narrower second opt-in. Archive stays last — it is the
@@ -314,19 +345,19 @@ test('the ⋯ rows come in chat-sharing → discussion → Archive order', () =>
 
 test('the "Read chat" PILL is gone — the transcript lives on the detail page', () => {
   const AppView = makeAppView();
-  const on = AppView._renderSharedSessionCard(sharedSess({ transcript_shared: true }));
+  const on = sharedSessionCardHtml(AppView, sharedSess({ transcript_shared: true }));
   assert.doesNotMatch(on, /data-read-chat/, 'no Read chat pill');
   assert.doesNotMatch(on, /Read chat/);
   // The shared transcript is hosted by the session's own detail page, which
   // is exactly where a tap on this card already goes.
   assert.match(on, /data-shared-session-row="71"/);
-  assert.match(AppView._transcriptSectionHtml(sharedSess({ transcript_shared: true })),
+  assert.match(transcriptHtml(AppView, sharedSess({ transcript_shared: true })),
     /data-transcript-section="71"/, 'the detail page hosts it');
 });
 
 test('a shared card carries no ⋯ at all (nothing left to demote)', () => {
   const AppView = makeAppView();
-  const html = AppView._renderSharedSessionCard(sharedSess({ transcript_shared: true }));
+  const html = sharedSessionCardHtml(AppView, sharedSess({ transcript_shared: true }));
   assert.equal(menuKeyOf(html), null, 'no dead ⋯ button');
 });
 
@@ -336,9 +367,9 @@ test('read-only viewers still reach a published transcript (via the detail page)
   // section (see _transcriptActionsHtml), not on this card.
   const AppView = makeAppView();
   AppView.appData = { can_collaborate: false };
-  const html = AppView._renderSharedSessionCard(sharedSess({ transcript_shared: true }));
+  const html = sharedSessionCardHtml(AppView, sharedSess({ transcript_shared: true }));
   assert.match(html, /data-shared-session-row="71"/, 'the card still navigates');
-  assert.match(AppView._transcriptSectionHtml(sharedSess({ transcript_shared: true })),
+  assert.match(transcriptHtml(AppView, sharedSess({ transcript_shared: true })),
     /read-only/);
 });
 
@@ -346,30 +377,30 @@ test('read-only viewers still reach a published transcript (via the detail page)
 
 test('transcript section renders only when the item reports the chat shared', () => {
   const AppView = makeAppView();
-  assert.strictEqual(AppView._transcriptSectionHtml({ id: 5 }), '');
-  assert.strictEqual(AppView._transcriptSectionHtml({ id: 5, transcript_shared: false }), '');
-  assert.strictEqual(AppView._transcriptSectionHtml(null), '');
+  assert.strictEqual(transcriptHtml(AppView, { id: 5 }), '');
+  assert.strictEqual(transcriptHtml(AppView, { id: 5, transcript_shared: false }), '');
+  assert.strictEqual(transcriptHtml(AppView, null), '');
 
   // Shared-session / proposal rows carry the boolean…
-  const shared = AppView._transcriptSectionHtml({ id: 5, transcript_shared: true, message_count: 9 });
+  const shared = transcriptHtml(AppView, { id: 5, transcript_shared: true, message_count: 9 });
   assert.match(shared, /data-transcript-section="5"/);
   assert.match(shared, /data-transcript-toggle="5"/);
   assert.match(shared, /data-transcript-body="5"/);
   assert.match(shared, /read-only/);
   // …the viewer's OWN rows carry the timestamp instead (the owner gets the
   // section too, as the "preview what everyone else sees" path).
-  const mine = AppView._transcriptSectionHtml({ id: 5, transcript_shared_at: '2026-07-01T00:00:00Z' });
+  const mine = transcriptHtml(AppView, { id: 5, transcript_shared_at: '2026-07-01T00:00:00Z' });
   assert.match(mine, /data-transcript-section="5"/);
 });
 
 test('transcript section starts collapsed unless the reader asked to read it', () => {
   const AppView = makeAppView();
-  const collapsed = AppView._transcriptSectionHtml({ id: 5, transcript_shared: true });
+  const collapsed = transcriptHtml(AppView, { id: 5, transcript_shared: true });
   assert.match(collapsed, /aria-expanded="false"/);
   assert.match(collapsed, /hidden/);
 
   AppView._transcriptOpen = 5;
-  const open = AppView._transcriptSectionHtml({ id: 5, transcript_shared: true });
+  const open = transcriptHtml(AppView, { id: 5, transcript_shared: true });
   assert.match(open, /aria-expanded="true"/);
   assert.doesNotMatch(open, /data-transcript-body="5" hidden/);
 });
@@ -383,16 +414,16 @@ test('an expanded transcript SURVIVES a topic-head repaint', () => {
   const item = { id: 5, transcript_shared: true, message_count: 3 };
   AppView._transcriptOpen = 5;
   for (let repaint = 0; repaint < 3; repaint++) {
-    assert.match(AppView._transcriptSectionHtml(item), /aria-expanded="true"/,
+    assert.match(transcriptHtml(AppView, item), /aria-expanded="true"/,
       'stays expanded across repaints');
   }
   // …and an explicit collapse likewise sticks across repaints.
   AppView._transcriptOpen = null;
-  assert.match(AppView._transcriptSectionHtml(item), /aria-expanded="false"/);
+  assert.match(transcriptHtml(AppView, item), /aria-expanded="false"/);
   // The flag is per-session: another session's open state never leaks.
   AppView._transcriptOpen = 5;
   assert.match(
-    AppView._transcriptSectionHtml({ id: 6, transcript_shared: true }),
+    transcriptHtml(AppView, { id: 6, transcript_shared: true }),
     /aria-expanded="false"/
   );
 });
@@ -431,7 +462,7 @@ test('kanban In progress: private → archived toggle → visible → issues →
     issueEntry(),
     { kind: 'shared-session', item: sharedSess({ id: 71 }) },
   ];
-  const html = AppView._inProgressCardsHtml(entries, false);
+  const html = rowsHtml(AppView._inProgressRows(entries));
   assertOrder(html, [
     'Yours · private',
     'data-session-chip="1"',
@@ -455,7 +486,7 @@ test('kanban In progress: no private sessions → no private caption; block stil
   const entries = [
     { kind: 'my-session', item: mySess({ id: 2, shared_at: '2026-06-01T03:00:00Z' }) },
   ];
-  const html = AppView._inProgressCardsHtml(entries, false);
+  const html = rowsHtml(AppView._inProgressRows(entries));
   assert.doesNotMatch(html, /Yours · private/);
   assertOrder(html, ['Yours · visible', 'data-session-chip="2"']);
 });
@@ -465,7 +496,7 @@ test('kanban In progress: no visible sessions → nothing below the archived tog
   AppView._sharedById = {};
   AppView._archivedSessions = [mySess({ id: 90, status: 'archived' })];
   const entries = [{ kind: 'my-session', item: mySess({ id: 1 }) }];
-  const html = AppView._inProgressCardsHtml(entries, false);
+  const html = rowsHtml(AppView._inProgressRows(entries));
   assert.doesNotMatch(html, /Yours · visible/);
   assertOrder(html, ['Yours · private', 'data-session-chip="1"', 'Show archived (1)']);
 });
@@ -485,7 +516,7 @@ test('kanban Underway: only the issue row carries the work-state chip', () => {
     issueEntry(),
     { kind: 'shared-session', item: sharedSess({ id: 71, status: 'paused' }) },
   ];
-  const html = AppView._inProgressCardsHtml(entries, false);
+  const html = rowsHtml(AppView._inProgressRows(entries));
 
   // Exactly one work-state chip in the whole column, on the issue.
   const chips = html.match(/data-work-state="[a-z_]+"/g) || [];
@@ -510,7 +541,7 @@ test('list view pinned block mirrors the split', () => {
     mySess({ id: 2, session_title: 'Visible one', shared_at: '2026-06-01T03:00:00Z' }),
   ];
   AppView._archivedSessions = [mySess({ id: 90, session_title: 'Old one', status: 'archived' })];
-  const html = AppView._mySessionsBlockHtml();
+  const html = rowsHtml(AppView._mySessionsRows());
   assertOrder(html, [
     'Yours · private',
     'data-session-chip="1"',
@@ -525,7 +556,7 @@ test('list view pinned block: only a visible session still renders (no private c
   AppView._sharedById = {};
   AppView._mySessions = [mySess({ id: 2, shared_at: '2026-06-01T03:00:00Z' })];
   AppView._archivedSessions = [];
-  const html = AppView._mySessionsBlockHtml();
+  const html = rowsHtml(AppView._mySessionsRows());
   assert.notEqual(html, '');
   assert.doesNotMatch(html, /Only you can see your active sessions/);
   assertOrder(html, ['Visible to everyone —', 'data-session-chip="2"']);
@@ -535,7 +566,7 @@ test('list view pinned block: nothing to show → empty string', () => {
   const AppView = makeAppView();
   AppView._mySessions = [];
   AppView._archivedSessions = [];
-  assert.equal(AppView._mySessionsBlockHtml(), '');
+  assert.equal(rowsHtml(AppView._mySessionsRows()), '');
 });
 
 // ── #1038: the "working…" tag is driven by live state, not by the row ────
@@ -557,34 +588,34 @@ function makeAppViewWithStore() {
 
 test('status tag: falls back to the fetched row when the store knows nothing', () => {
   const AppView = makeAppView();
-  assert.match(AppView._sessionStatusTagHtml(mySess({ busy: true })), /working…/);
-  assert.doesNotMatch(AppView._sessionStatusTagHtml(mySess({ busy: false })), /working…/);
+  assert.match(statusTagHtml(AppView, mySess({ busy: true })), /working…/);
+  assert.doesNotMatch(statusTagHtml(AppView, mySess({ busy: false })), /working…/);
 });
 
 test('status tag: an underway build names its preview/check phase and terminal verdict', () => {
   const AppView = makeAppView();
-  const building = AppView._sessionStatusTagHtml(mySess({
+  const building = statusTagHtml(AppView, mySess({
     check_state: 'pending', check_phase: 'building',
   }));
   assert.match(building, /Preparing the staging preview…/);
   assert.match(building, /dc-status-spinner-arc/);
 
-  const testing = AppView._sessionStatusTagHtml(mySess({
+  const testing = statusTagHtml(AppView, mySess({
     check_state: 'pending', check_phase: 'testing',
   }));
   assert.match(testing, /Running the automated tests…/);
 
-  const passed = AppView._sessionStatusTagHtml(mySess({ check_state: 'passing' }));
+  const passed = statusTagHtml(AppView, mySess({ check_state: 'passing' }));
   assert.match(passed, /Checks passed/);
   assert.match(passed, /ms-badge-green/);
 
-  const failing = AppView._sessionStatusTagHtml(mySess({ check_state: 'failing' }));
+  const failing = statusTagHtml(AppView, mySess({ check_state: 'failing' }));
   assert.match(failing, /Checks failing/);
 });
 
 test('shared underway cards show the same checks state', () => {
   const AppView = makeAppView();
-  const html = AppView._renderSharedSessionCard(sharedSess({
+  const html = sharedSessionCardHtml(AppView, sharedSess({
     check_state: 'pending', check_phase: 'testing',
   }));
   assert.match(html, /Running the automated tests…/);
@@ -594,10 +625,10 @@ test('shared underway cards show the same checks state', () => {
 test('status tag: a live busy event beats a fetched row that said idle', () => {
   const { AppView, SessionState } = makeAppViewWithStore();
   const s = mySess({ id: 51, busy: false });
-  assert.doesNotMatch(AppView._sessionStatusTagHtml(s), /working…/);
+  assert.doesNotMatch(statusTagHtml(AppView, s), /working…/);
 
   SessionState.applyEvent({ sessionId: 51, busy: true, status: 'active' });
-  assert.match(AppView._sessionStatusTagHtml(s), /working…/,
+  assert.match(statusTagHtml(AppView, s), /working…/,
     'the card spins on the pushed transition, not on the next fetch');
 });
 
@@ -605,16 +636,16 @@ test('status tag: a live idle event clears a spinner the fetched row still asser
   const { AppView, SessionState } = makeAppViewWithStore();
   // The stale-snapshot case — this is the phantom spinner users report.
   const s = mySess({ id: 51, busy: true });
-  assert.match(AppView._sessionStatusTagHtml(s), /working…/);
+  assert.match(statusTagHtml(AppView, s), /working…/);
 
   SessionState.applyEvent({ sessionId: 51, busy: false, status: 'paused' });
-  const html = AppView._sessionStatusTagHtml(s);
+  const html = statusTagHtml(AppView, s);
   assert.doesNotMatch(html, /working…/);
 });
 
 test('status tag: a paused session with no live entry still shows "paused"', () => {
   const { AppView } = makeAppViewWithStore();
-  const html = AppView._sessionStatusTagHtml(mySess({ busy: false, status: 'paused' }));
+  const html = statusTagHtml(AppView, mySess({ busy: false, status: 'paused' }));
   assert.match(html, /paused/);
   assert.doesNotMatch(html, /working…/);
 });
@@ -623,10 +654,10 @@ test('a shared session card picks up live busy state too', () => {
   const { AppView, SessionState } = makeAppViewWithStore();
   AppView._sharedById = {};
   const s = sharedSess({ id: 71, busy: false });
-  assert.doesNotMatch(AppView._renderSharedSessionCard(s), /working…/);
+  assert.doesNotMatch(sharedSessionCardHtml(AppView, s), /working…/);
 
   SessionState.applyEvent({ sessionId: 71, busy: true, status: 'active' });
-  assert.match(AppView._renderSharedSessionCard(s), /working…/,
+  assert.match(sharedSessionCardHtml(AppView, s), /working…/,
     "another user's shared card updates for every viewer");
 });
 

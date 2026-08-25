@@ -251,7 +251,15 @@ test('the bridge exposes openNotificationSettings, capability-gated and ' +
 
 test('the settings row is a real control, not an inert div', () => {
   assert.match(settingsSource, /id: 'settings-notif-row'/);
-  assert.match(settingsSource, /onActivate: \(\) => this\._unRequestPermissions\(isAndroid\)/);
+  // #1079: the row's model carries an ACTION, and the component renders a
+  // <button> only when one is present — so an inert row is inert by
+  // construction rather than by remembering to omit a listener.
+  assert.match(settingsSource, /action: '_requestUsernodePermissions'/);
+  const ui = fs.readFileSync(path.join(root, 'frontend', 'src', 'features',
+    'settings', 'sections', 'usernode-ui.tsx'), 'utf8');
+  assert.match(ui, /if \(!row\.action\) \{[\s\S]{0,140}<div id=\{row\.id\}/,
+    'no action means a div, never a button that does nothing');
+  assert.match(ui, /onClick=\{\(\) => run\(row\.action as string\)\}/);
 });
 
 test('the row reads the real iOS push permission BEFORE it renders, not ' +
@@ -274,10 +282,14 @@ test('every dead end leaves a console error AND a visible notice', () => {
 
 test('the screen never renders an Open notification settings button the ' +
      'app cannot honour', () => {
-  const start = settingsSource.indexOf('_renderNotifNotice(parent) {');
-  assert.ok(start !== -1, '_renderNotifNotice exists');
-  const body = settingsSource.slice(start, start + 1400);
-  assert.match(body, /n\.settings && this\._unCanOpenNotifSettings === true/);
+  // #1079: the gate is the view model's; the component renders the button
+  // only when it is set.
+  assert.match(settingsSource,
+    /settings: !!\(n\.settings && this\._unCanOpenNotifSettings === true\)/);
+  const tsx = fs.readFileSync(path.join(root, 'frontend', 'src', 'features',
+    'settings', 'sections', 'usernode.tsx'), 'utf8');
+  assert.match(tsx, /b\.notice\.settings \? \(/,
+    'the button renders only behind that gate');
 });
 
 test('a native side that never answers surfaces well inside the bridge’s ' +

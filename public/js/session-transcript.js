@@ -193,14 +193,20 @@
   // The collapsed header line the topic page shows before the reader opens
   // the transcript ("Read the dev chat (24 messages)"), plus the expanded
   // header. Kept here so the copy lives beside the renderer.
+  //
+  // The expanded line does NOT say "read-only". It used to, and the toggle it
+  // sits in renders a `.st-readonly-tag` chip saying exactly that right after
+  // it — so an opened transcript read "Dev chat by alice · 24 messages ·
+  // read-only read-only". The chip is the one that stays: it is the styled
+  // affordance, it is there in both states, and it is what the tag class was
+  // added for.
   function headerText(session, opts) {
     const s = session || {};
     const count = Number(s.message_count);
     const n = Number.isFinite(count) && count > 0 ? count : null;
     if (opts && opts.expanded) {
       return 'Dev chat by ' + (s.username || 'them')
-        + (n ? ' · ' + n + ' message' + (n === 1 ? '' : 's') : '')
-        + ' · read-only';
+        + (n ? ' · ' + n + ' message' + (n === 1 ? '' : 's') : '');
     }
     return n ? 'Read the dev chat (' + n + ' messages)' : 'Read the dev chat';
   }

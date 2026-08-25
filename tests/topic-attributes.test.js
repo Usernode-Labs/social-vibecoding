@@ -21,6 +21,10 @@ const path = require('path');
 
 // ── 1. Pure helpers ────────────────────────────────────────────────────
 const attrs = require('../src/services/topic-attributes');
+const { renderComponent } = require('./lib/render-tsx');
+
+const ROOT = path.join(__dirname, '..');
+const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 test('normalizeValue: priority accepts only low/medium/high', () => {
   assert.equal(attrs.normalizeValue('priority', 'high'), 'high');
@@ -749,14 +753,14 @@ test('server wires the topic-attributes route', () => {
 
 test('card renderer emits the three chips (priority, category, assignee)', () => {
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
-  assert.match(fe, /_attrChipsHtml\('issue'/, 'issue rows render chips');
-  assert.match(fe, /_attrChipsHtml\('proposal'/, 'proposal cards render chips');
+  assert.match(fe, /_attrChipSpecs\('issue'/, 'issue rows render chips');
+  assert.match(fe, /_attrChipSpecs\('proposal'/, 'proposal cards render chips');
   // …and the BOARD passes omitUnset, so a card with no metadata carries no
   // grey "Set priority / Set category / Unassigned" placeholders. The detail
   // view (noNav) opts out — that page is where metadata gets set.
   assert.match(fe, /omitUnset: !noNav/, 'the board omits unset chips, the detail view keeps them');
   assert.match(fe, /data-attr-chip/, 'chip carries the delegated-click hook');
-  // The three fields are a table inside _attrChipsHtml now (priority,
+  // The three fields are a table inside _attrChipSpecs now (priority,
   // assignee, category — the badge-priority order) rather than three
   // hand-written calls, so the omitUnset filter applies uniformly.
   assert.match(fe, /\['category', it\.category\]/, 'the category chip is in the field table');
@@ -769,12 +773,18 @@ test('card renderer emits the three chips (priority, category, assignee)', () =>
 // escaping on every label interpolation.
 test('category dropdown offers a text box + the app custom block', () => {
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
-  assert.match(fe, /id="attr-category-input"/, 'the type-a-category box exists');
-  assert.match(fe, /maxlength="\$\{AppView\.ATTR_CATEGORY_MAX_LEN\}"/,
+  // The dropdown's markup is features/dev-board/attr-popover.tsx since #1191;
+  // what app-view.js still decides is the SHAPE it hands over.
+  const pop = read('frontend/src/features/dev-board/attr-popover.tsx');
+  assert.match(fe, /inputId: 'attr-category-input'/, 'the type-a-category box exists');
+  assert.match(fe, /maxLength: AppView\.ATTR_CATEGORY_MAX_LEN/,
     'the box caps typed length from the mirrored constant');
   assert.match(fe, /ATTR_CATEGORY_MAX_LEN: 24/, 'FE cap mirrors the service MAX_CATEGORY_LEN');
-  assert.match(fe, /id="attr-category-add"/, 'the Add button exists');
-  assert.match(fe, /attr-pop-head-divided">Custom</, 'customs sit under a divided "Custom" heading');
+  assert.match(fe, /buttonId: 'attr-category-add'/, 'the Add button exists');
+  assert.match(pop, /maxLength=\{add\.maxLength\}/, 'the component applies that cap');
+  assert.match(fe, /head: 'Custom', divided: true/, 'customs sit under a divided "Custom" heading');
+  assert.match(pop, /'attr-pop-head attr-pop-head-divided' : 'attr-pop-head'/,
+    'and the component draws the rule above it');
   assert.match(fe, /_customCategories\(\)/, 'the custom block reads the app vocabulary');
 
   // The vocabulary is loaded once per Dev mount and refreshed from the
@@ -783,12 +793,50 @@ test('category dropdown offers a text box + the app custom block', () => {
   assert.match(fe, /topic-categories/, 'hits the vocabulary endpoint');
   assert.match(fe, /_setAppCategories\(data\.categories\)/, 'a cast adopts the refreshed vocabulary');
 
-  // Escaping: custom labels are user-supplied, so both the chip and the
-  // dropdown row must run them through escapeHtml.
-  assert.match(fe, /<span class="attr-dot \$\{meta\.cls\}"><\/span>\$\{escapeHtml\(meta\.label\)\}/,
+  // Escaping: custom labels are user-supplied. The chip is a component now
+  // (card/dev-card.tsx's `attr` badge), so its label is a TEXT CHILD and
+  // React escapes it — the property `escapeHtml` was there to give it.
+  // Rendered, not grepped, exactly like the popover row below.
+  assert.match(
+    renderComponent('tests/fixtures/dev-card-api.ts', 'Badge', {
+      b: {
+        t: 'attr', key: 'attr:category', field: 'category', targetType: 'issue',
+        targetRef: 5, cls: 'bg-sky-500/10', hover: 'hover:bg-sky-500/20',
+        title: 'Vote on this card\'s category', count: 0, readonly: false,
+        label: { kind: 'dot', cls: 'bg-sky-500/10', text: '<img src=x onerror=alert(1)>' },
+      },
+    }),
+    /&lt;img src=x onerror=alert\(1\)&gt;/,
     'category chip escapes its label');
-  assert.match(fe, /escapeHtml\(meta\.label\)/, 'popover rows escape the label');
-  assert.match(fe, /`<option value="\$\{escapeAttr\(v\)\}"/, 'filter options escape the value attribute');
+  // The popover row is a component now, so its label is a text child — the
+  // property `escapeHtml` was there to give it. Rendered, not grepped.
+  assert.match(
+    renderComponent('frontend/src/features/dev-board/attr-popover.tsx', 'AttrPopoverView', {
+      phase: 'ready',
+      field: 'category',
+      groups: [{
+        head: 'Custom',
+        divided: true,
+        options: [{ value: 'x', dot: 'bg-sky-500/10', label: '<img src=x onerror=alert(1)>', count: 0, mine: false }],
+      }],
+      emptyNote: null,
+      add: null,
+      suggestions: [],
+    }),
+    /&lt;img src=x onerror=alert\(1\)&gt;/,
+  );
+  // The filter select is features/dev-board/kanban-filters.tsx's since #1191,
+  // so a custom category's value reaches the attribute through React rather
+  // than through `escapeAttr`. Rendered, because that is the only way to say
+  // it once the string renderer is gone.
+  assert.match(
+    renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView', {
+      mounted: true, q: '', priority: '', category: '', assignee: '',
+      needsVote: false, active: false, seq: 0, assignees: [],
+      categories: [{ value: 'x" onmouseover="alert(1)', label: '<b>hi</b>' }],
+    }),
+    /<option value="x&quot; onmouseover=&quot;alert\(1\)">&lt;b&gt;hi&lt;\/b&gt;<\/option>/,
+  );
 
   // _categoryMeta must resolve unknown (custom) slugs rather than returning
   // null — every caller dereferences the result.
@@ -796,9 +844,14 @@ test('category dropdown offers a text box + the app custom block', () => {
   assert.match(fe, /CATEGORY_CUSTOM_TINTS/, 'a dedicated custom-category palette exists');
 
   // The filter bar is vocabulary-driven, and refreshes after a repaint.
-  assert.match(fe, /_kanbanCategoryOptionsHtml\(\)/, 'the category filter is vocabulary-driven');
-  assert.match(fe, /catSel\.innerHTML = AppView\._kanbanCategoryOptionsHtml\(\)/,
-    'the category select is rebuilt after a repaint so new options appear');
+  assert.match(fe, /_kanbanCategoryOptionList\(\)/, 'the category filter is vocabulary-driven');
+  // The select is re-published rather than re-innerHTML'd after a repaint, so
+  // an option created during this session shows up without a reload — and the
+  // one select the reader currently has OPEN is left alone, because rebuilding
+  // its options would close the dropdown under them.
+  assert.match(fe, /_publishKanbanFilters\(AppView\._kanbanFilterView\(except\)\)/,
+    'the selects are refreshed after a repaint so new options appear');
+  assert.match(fe, /if \(except !== 'category'\) view\.categories = AppView\._kanbanCategoryOptionList\(\);/);
 });
 
 // #780: _categoryMeta must never return null for a non-empty slug — chips,
@@ -861,13 +914,18 @@ test('app_topic_categories is declared idempotently and is NOT staging:private',
 // standalone "Assign to me" button (that approach was replaced).
 test('assignee dropdown defaults the name box to the viewer, gated on no prior vote', () => {
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
-  // The pre-fill lives in the assignee branch of _renderAttrPopoverBody:
-  // reads App.user.username, gated on !data.myValue, sets + selects the box.
+  // The pre-fill is still app-view.js's decision — it reads App.user.username
+  // and gates on !data.myValue — but it arrives as the box's `defaultValue`
+  // now rather than as a `.value` write after the paint. The SELECT stays a
+  // DOM call, because "typing replaces it" is a selection, not markup.
   assert.match(fe, /const me = \(typeof App !== 'undefined' && App\.user && App\.user\.username\)/,
     'reads the signed-in username');
-  assert.match(fe, /if \(me && !data\.myValue\) \{/, 'only pre-fills when the viewer has no current pick');
-  assert.match(fe, /input\.value = me;/, 'sets the name box to the viewer');
-  assert.match(fe, /input\.select\(\);/, 'selects the pre-filled text so typing replaces it');
+  assert.match(fe, /defaultValue: \(me && !data\.myValue\) \? me : '',/,
+    'only pre-fills when the viewer has no current pick');
+  assert.match(fe, /if \(add\.defaultValue\) input\.select\(\);/,
+    'selects the pre-filled text so typing replaces it');
+  assert.match(read('frontend/src/features/dev-board/attr-popover.tsx'),
+    /defaultValue=\{add\.defaultValue\}/, 'the field is uncontrolled, seeded from the model');
 
   // The standalone button + its plumbing are gone.
   assert.doesNotMatch(fe, /_assignToMeBtnHtml/, 'no assign-to-me button helper');
@@ -905,21 +963,28 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
   // Every chip in a card's badge row shares ONE geometry class now — the row
   // used to mix three sizes, each computing its own height from its own
   // padding + line-height. The utility classes supply only the tint.
-  assert.match(fe, /const base = 'attr-chip dev-badge'/,
+  const cardTsx = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src',
+    'features', 'dev-board', 'card', 'dev-card.tsx'), 'utf-8');
+  assert.match(cardTsx, /`attr-chip dev-badge \$\{b\.cls\}/,
     'chip base uses the shared badge geometry class');
-  for (const other of [/dev-chat-badge dev-badge /, /'dev-badge font-mono bg-violet/]) {
-    assert.match(fe, other, 'the sibling badges share it too');
-  }
+  assert.match(cardTsx, /dev-chat-badge dev-badge /, 'the 💬 badge shares it too');
+  assert.match(fe, /'dev-badge font-mono bg-violet/, 'and so do the linked-issue chips');
   // #1112: the work-state chip picks its tint from a table (it has five of
   // them now), so its class list is composed rather than a single literal —
   // but it still leads with the same shared geometry class, and every tint in
   // the table is the same `bg-<hue>-500/10 text-<hue>-…` badge recipe.
-  assert.match(fe, /class="dev-badge \$\{tone\}/, 'the work-state chip leads with dev-badge');
+  assert.match(fe, /cls: `dev-badge \$\{tone\}`/, 'the work-state chip leads with dev-badge');
   const toneTable = fe.slice(fe.indexOf('_WORK_TONE_CLS:'), fe.indexOf('_WORK_TONE_HOVER:'));
-  assert.match(toneTable, /sky: 'bg-sky-500\/10 text-sky-500'/, 'sky tint is the badge recipe');
+  assert.match(toneTable, /sky: 'bg-sky-500\/10 text-sky-700 dark:text-sky-400'/, 'sky tint is the badge recipe');
   for (const line of toneTable.split('\n')) {
-    const tint = line.match(/'(bg-[a-z]+-500\/10 text-[a-z]+-[0-9]{3})'/);
-    if (tint) assert.match(tint[1], /^bg-([a-z]+)-500\/10 text-\1-[0-9]{3}$/, `off-recipe tint: ${tint[1]}`);
+    // The contrast pass gave every light ink a dark partner, so a tint is a
+    // PAIR now. Both halves must still name the same hue — that is the
+    // recipe, and a mismatched partner is exactly the drift this guards.
+    const tint = line.match(/'(bg-[a-z]+-500\/10 text-[a-z]+-[0-9]{3}(?: dark:text-[a-z]+-[0-9]{3})?)'/);
+    if (tint) {
+      assert.match(tint[1], /^bg-([a-z]+)-500\/10 text-\1-[0-9]{3}(?: dark:text-\1-[0-9]{3})?$/,
+        `off-recipe tint: ${tint[1]}`);
+    }
   }
   assert.match(fe, /bg-zinc-500\/10 text-zinc-500/, 'muted placeholder uses the badge muted tint');
   // Hover deepens the same tint (like the linked-issue pills), not a filter.

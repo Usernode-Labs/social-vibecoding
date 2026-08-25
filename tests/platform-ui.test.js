@@ -524,23 +524,31 @@ test('the Improve panel bottom-anchors its version / GitHub / share block', () =
   const panel = read('frontend/src/features/improve/improve-panel.tsx');
   const html = read('public/index.html');
 
-  // Same `mt-auto` trick the hamburger's own footer used before these rows
-  // moved here: the free space collects ABOVE the block, so it hugs the foot
-  // of a tall sidebar and degrades to "at the end of the scroll" when the rows
-  // above it fill the panel. No measurement, one rule, both behaviours.
+  // The footer reached the foot with `mt-auto` — free space collected ABOVE
+  // it — which meant it stopped being at the foot exactly when the panel was
+  // full, i.e. when a viewer had several sessions running. Everything in this
+  // panel is a control except the session list, so the LIST is the flexing,
+  // scrolling element now and every control is `shrink-0`. The footer is
+  // simply the last of them.
   const bodyAt = html.indexOf('id="improve-body"');
   const bodyTag = html.slice(bodyAt, html.indexOf('>', bodyAt));
-  assert.match(bodyTag, /flex flex-col/,
-    '#improve-body must be the column flex the anchor needs');
-  assert.match(bodyTag, /overflow-y-auto/, 'and still the scroller');
+  assert.match(bodyTag, /flex flex-col/, '#improve-body stays the column flex');
+  assert.ok(!/overflow-y-auto/.test(bodyTag),
+    'the panel body itself must not scroll — a control must never scroll away');
 
   const footAt = html.indexOf('id="improve-footer"');
   const footTag = html.slice(footAt, html.indexOf('>', footAt));
-  assert.match(footTag, /\bmt-auto\b/, 'the footer must hug the bottom');
   assert.match(footTag, /\bshrink-0\b/,
-    'and must not be compressed by the rows above it');
+    'the footer must not be compressed by the rows above it');
+  assert.ok(!/\bmt-auto\b/.test(footTag),
+    'and must not depend on free space existing above it');
   assert.ok(bodyAt < footAt, 'the footer is inside the body it anchors within');
   assert.match(panel, /id="improve-footer"/);
+
+  // Exactly one scroller, and it is the session list.
+  const body = html.slice(bodyAt, footAt);
+  assert.equal((body.match(/overflow-y-auto/g) || []).length, 1,
+    'the session list is the only scrolling region between body and footer');
 });
 
 test('app.css drops the tab-bar rules and draws the Improve panel', () => {

@@ -32,10 +32,22 @@
 // `with`, no octal literals, no `arguments.callee`).
 //
 // renderChatView() is still a template that writes `#dc-view.innerHTML`, so
-// the chat screen is not React-owned yet: this commit makes the conversion
-// POSSIBLE by putting the module in the bundle, and does not attempt it. That
+// the chat screen is not React-owned yet: that commit made the conversion
+// POSSIBLE by putting the module in the bundle, and did not attempt it. That
 // conversion has to take the frame and the composer's streaming state
 // together — see the note at renderChatView().
+//
+// #1191 took the FIRST piece of it: the pending-upload strip is a component
+// now, shared with the group chat's composers
+// (features/attachments/pending-strip.tsx).
+//
+// IT REACHES REACT BY NAME, through `window.UsernodeReact.devChat`, even
+// though this file is in the same bundle and could import directly. That is
+// not an oversight. A dozen test files load this source into a `vm` context as
+// a SCRIPT — `vm.runInContext(SRC)` — to drive `DevChat` against a DOM stub,
+// and a top-level `import` is a syntax error there. Adding two of them turned
+// 194 tests red at once. The bridge is in ./mount.ts, published at
+// module-evaluation time like every other one.
 //
 // localStorage key for the user's last-chosen model. Single global
 // key (not per-app/per-session) so the preference is sticky wherever
@@ -125,29 +137,20 @@ const DevChat = {
   budget: null,
 
   // ----- Cross-app active sessions panel state -----
-  // Powers the "Active Sessions (x/y)" section at the top of the
-  // dev-chat tab. Lists every non-archived session the user owns
-  // across all apps, with a `busy` flag for the ones where Claude
-  // is actively running a turn right now. The point is "see all
-  // your in-progress AI work at a glance, even from other apps"
-  // so the user can hop between them without losing context.
+  // Every non-archived session the user owns across all apps, with a `busy`
+  // flag for the ones where Claude is running a turn right now.
   //
-  // Refresh model: poll every 5s while the dev-chat tab is the
-  // mounted tab; stop polling when the tab is unmounted (the
-  // `_activePollTimer` guard cleans up). 5s is a compromise — fast
-  // enough that the busy indicator feels live, slow enough that we
-  // don't hammer the cross-app endpoint just because the user is
-  // sitting on the dev-chat tab.
-  // `caps` seeds the regular-user denominators so the counter renders
-  // sanely on the very first paint, before the first poll lands; the
-  // server's per-viewer values (raised for full platform admins)
-  // replace them in loadActiveSessions.
+  // This fed an "Active Sessions (x/y)" panel at the top of the dev-chat
+  // tab, on a 5s poll. That panel's hosts are gone and its renderer and poll
+  // went with them (#1367); what the payload is FOR now is seeding
+  // `SessionState` — see loadActiveSessions — so only `.sessions` is read.
+  // The totals and caps are kept in the shape because the endpoint sends
+  // them and the seed reads the array off this object.
   activeSessions: {
     sessions: [],
     totals: { active: 0, promoted: 0, paused: 0, busy: 0, total: 0 },
     caps: { activeSessions: 3, promotedSessions: 5 },
   },
-  _activePollTimer: null,
 
   // ----- Spec viewer state -----
   // Read-only viewer for the current session's spec doc + frozen
@@ -260,20 +263,51 @@ const DevChat = {
     } catch {}
   },
 
-  // Rewrite the mounted model dropdown's options + caption from the
-  // current MODELS map, preserving the selection. No-op when no session
-  // view is mounted.
+  // #800: a server-side allowlist change (a model added or removed) has to
+  // reach an OPEN composer rather than wait for the next renderChatView. It
+  // rewrote the dropdown's `<option>`s in place and re-set its value; the
+  // options and the selection are two fields of the composer model now, so
+  // the same update is one publish and the selection cannot be lost.
   _refreshModelSelect() {
-    const sel = document.getElementById('dc-model-select');
-    if (!sel) return;
-    const options = Object.entries(DevChat.MODELS)
-      .map(([id, meta]) => {
-        const text = DevChat.modelOptionText(meta);
-        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
-      })
-      .join('');
-    sel.innerHTML = options;
-    sel.value = DevChat.selectedModel;
+    DevChat._publishComposer();
+  },
+
+  /** The chat-model picker, as data. Null on every venue that has none. */
+  _modelPickerView() {
+    if (DevChat._currentVenueId() !== 'usernode-claude') return null;
+    return {
+      options: Object.entries(DevChat.MODELS).map(([id, meta]) => ({
+        id,
+        label: DevChat.modelOptionText(meta),
+      })),
+      selected: DevChat.selectedModel,
+    };
+  },
+
+  /** The picker's `change`, which used to be an addEventListener per render. */
+  _onModelPicked(value) {
+    DevChat.selectedModel = value;
+    // Persist across refreshes + new sessions (fixes #31). Wrapped in
+    // try/catch so private-mode browsers or quota errors don't break the
+    // selector.
+    try { localStorage.setItem(MODEL_STORAGE_KEY, value); } catch {}
+    DevChat._publishComposer();
+  },
+
+  /** The OpenRouter row's "Change model", likewise. */
+  _onOpenRouterModelChange() {
+    DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
+  },
+
+  /** The OpenRouter row, as data. Null on every venue that has none. */
+  _openRouterRowView() {
+    if (DevChat._currentVenueId() !== 'usernode-openrouter') return null;
+    const model = String(DevChat.currentSession?.agent_model || '').trim();
+    return {
+      model: model || 'No model is pinned',
+      changeDisabled: !!DevChat._composerBusy,
+      note: DevChat._agentBillingNote(DevChat.currentSession),
+    };
   },
 
   // ── Session-pinned coding-agent choice ────────────────────────────
@@ -507,22 +541,13 @@ const DevChat = {
     const typed = document.querySelector('[data-flow-brief]');
     if (typed) DevChat._devFlow.brief = String(typed.value || '');
 
-    const host = document.getElementById('dc-launchpad-slot');
-    const inLaunchpad = !!DevChat._launchpadVenue();
-    const composer = document.getElementById('dc-composer-controls');
-    // If the SWAP itself changed — "Build on Usernode instead" dismissing
-    // the card, say — the whole bar has to repaint, or the composer stays
-    // hidden behind a launchpad that is no longer there.
-    if (composer && inLaunchpad !== composer.hasAttribute('hidden')) {
-      DevChat.renderChatView();
-      return;
-    }
-    if (inLaunchpad && host) {
-      host.innerHTML = DevChat._launchpadHtml();
-      DevChat._wireLaunchpad();
-      return;
-    }
-    DevChat.renderMessages();
+    // BOTH halves of #1281's swap are published now — the launchpad slot's
+    // markup and the composer's `hidden` — so a change in which of them is on
+    // screen no longer needs a whole `renderChatView` to land. That branch
+    // existed because the two were baked into one innerHTML string.
+    DevChat._publishDevView();
+    DevChat._publishComposer();
+    DevChat._wireLaunchpad();
   },
 
   _wireLaunchpad() {
@@ -750,18 +775,18 @@ const DevChat = {
             <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${openRouterModelOnly ? 'Choose an OpenRouter model' : (mode === 'switch' ? 'Where should this session build?' : 'Where should this build?')}</h2>
             <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${openRouterModelOnly ? 'Changing the model keeps this branch and conversation, but starts fresh OpenRouter context on the next turn.' : (mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.')}</p>
           </div>
-          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" aria-label="Close">✕</button>
+          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close">✕</button>
         </div>
         <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="Session AI">
           <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · OpenRouter</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Preferred. Use your included daily credits or personal key, with any available model.</span>
-            ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
+            ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
           </button>
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · Claude</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Use the platform Claude allowance instead.</span>
-            ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
+            ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
           </button>
         </div>
         <div id="dc-agent-choice-codex-options" class="mt-4 hidden rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
@@ -1094,39 +1119,30 @@ const DevChat = {
   _renderRunnerControls() {
     const host = document.getElementById('dc-runner');
     if (!host) return;
-    if (DevChat._isOpenRouterSession()) {
-      host.innerHTML = '';
-      return;
-    }
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react) return;
+    // The host is the COMPOSER's now — `RunnerControlsBar` renders the span
+    // as well as its contents, because the whole bar converted. What is left
+    // here is the state, and the DOM probe above, which is how this decides
+    // there is a composer on screen at all.
+    react.publishRunner(DevChat._runnerView());
+  },
+
+  // Which of the three states the "Run on" strip is in. An OpenRouter session
+  // has no platform runner to talk about, and neither does a session with no
+  // machine attached that has never run one — both draw nothing, which is
+  // what keeps the composer row unchanged for everyone not using this.
+  //
+  // `_runnerLabel` outlives the lease on purpose: it is the name of the
+  // machine the LAST turn ran on, which is exactly what the past-tense chip
+  // needs once that machine has detached and `_localAgent` has gone null.
+  _runnerView() {
+    if (DevChat._isOpenRouterSession()) return { kind: 'none', label: '' };
     const agent = DevChat._localAgent;
-    if (!agent && DevChat._runner !== 'local') {
-      host.innerHTML = '';
-      return;
-    }
+    if (!agent && DevChat._runner !== 'local') return { kind: 'none', label: '' };
     const label = agent?.label || DevChat._runnerLabel || 'your machine';
-    if (!agent) {
-      // A previous turn ran locally but that machine has since detached, so
-      // the next one comes back here. Say so rather than leaving the chip up
-      // and implying work is still going somewhere it isn't.
-      host.innerHTML = `<span class="dc-runner-chip dc-runner-chip-past" title="The last turn ran on ${escapeHtml(label)}. That machine has detached, so the next turn runs on Usernode.">Last turn: ${escapeHtml(label)}</span>`;
-      return;
-    }
-    host.innerHTML = `
-      <label class="text-xs text-zinc-500" for="dc-runner-select">Run on:</label>
-      <select id="dc-runner-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
-        <option value="local" selected>${escapeHtml(label)}</option>
-        <option value="platform">Usernode</option>
-      </select>
-      <span class="dc-runner-chip" title="Spec and coding turns in this session run on ${escapeHtml(label)}, using its own Claude subscription. A spec turn is read-only; after a coding turn Usernode still opens the PR, builds the preview and runs the checks.">Running on your machine</span>
-    `;
-    const select = document.getElementById('dc-runner-select');
-    if (select) {
-      select.addEventListener('change', (event) => {
-        if (event.target.value !== 'platform') return;
-        event.target.value = 'local';
-        DevChat._handBackToUsernode();
-      });
-    }
+    return { kind: agent ? 'live' : 'past', label };
   },
 
   // Release the lease from the browser. This is the escape hatch for the
@@ -1224,7 +1240,6 @@ const DevChat = {
     DevChat._lastSeenSeq = null;
     DevChat._resetSpecViewer();
     DevChat._resetStagingPanel();
-    DevChat.stopActiveSessionsPoll();
     if (DevChat._abortController) {
       try { DevChat._abortController.abort(); } catch {}
       DevChat._abortController = null;
@@ -1368,10 +1383,25 @@ const DevChat = {
     DevChat._applyCreditsLowBanner();
     const el = document.getElementById('dc-budget');
     if (!el) return;
-    if (DevChat._isOpenRouterSession()) {
-      el.innerHTML = '';
-      return;
-    }
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react) return;
+    // The host is the COMPOSER's now — `BudgetPillBar` renders the span too.
+    // A dapp.json check selects it as `#dc-venue-detail ~ #dc-budget`, so
+    // where it sits in that status line is part of the contract.
+    react.publishBudgetPill(DevChat._budgetPillView());
+  },
+
+  // The meter's nine states, as fragments. Every decision is here — the
+  // thresholds, the wording, the dollar formatting, the reset sentence, and
+  // the limit-first billing rule — and the component only draws them.
+  _budgetPillView() {
+    const NONE = { title: null, parts: [] };
+    const muted = 'text-zinc-500 dark:text-zinc-400';
+    // An OpenRouter session bills the user's own provider key, so the
+    // platform meter has nothing to say about it.
+    if (DevChat._isOpenRouterSession()) return NONE;
+
     // #593: the reset time, rendered rather than hidden in a tooltip — it
     // is what someone deciding whether to start another turn is looking
     // for, and a title attribute is invisible on touch and absent from
@@ -1382,18 +1412,31 @@ const DevChat = {
     if (state && state.level === 'locked') {
       if (hasApiKey) {
         const last4 = window.Settings.state.keyLast4 || '••••';
-        el.innerHTML = `<span title="Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available."><a href="#settings/connectors" class="text-amber-400 hover:underline">platform credits locked</a><span class="text-zinc-600"> · </span><span class="text-emerald-400">your key · ${escapeHtml(last4)}</span></span>`;
-      } else {
-        el.innerHTML = '<a href="#settings/connectors" class="text-amber-400 font-medium hover:underline" title="Connect GitHub or X to unlock $10/day">verify account · unlock $10/day</a>';
+        return {
+          title: 'Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available.',
+          parts: [
+            { text: 'platform credits locked', className: 'text-amber-800 dark:text-amber-400 hover:underline', href: '#settings/connectors' },
+            { text: ' · ', className: muted },
+            { text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400' },
+          ],
+        };
       }
-      return;
+      return {
+        title: null,
+        parts: [{
+          text: 'verify account · unlock $10/day',
+          className: 'text-amber-800 dark:text-amber-400 font-medium hover:underline',
+          href: '#settings/connectors',
+          title: 'Connect GitHub or X to unlock $10/day',
+        }],
+      };
     }
     if (state && state.level === 'unavailable') {
-      el.innerHTML = hasApiKey
-        ? '<span class="text-emerald-400" title="Platform credit eligibility is temporarily unavailable; your own key remains available.">your key available</span>'
-        : '<span class="text-amber-400" title="Platform credit eligibility could not be verified. Try again shortly.">credits temporarily unavailable</span>';
-      return;
+      return hasApiKey
+        ? { title: null, parts: [{ text: 'your key available', className: 'text-emerald-700 dark:text-emerald-400', title: 'Platform credit eligibility is temporarily unavailable; your own key remains available.' }] }
+        : { title: null, parts: [{ text: 'credits temporarily unavailable', className: 'text-amber-800 dark:text-amber-400', title: 'Platform credit eligibility could not be verified. Try again shortly.' }] };
     }
+
     // #1353: no "· $X left" alongside the pair. The remainder is $limit
     // minus $spent — both of which are right there, two characters apart —
     // so the meter was stating the same fact twice on the narrowest strip
@@ -1408,47 +1451,65 @@ const DevChat = {
     // thresholds as everyone else) and a "your key $X" figure only once
     // spillover billing to their key has actually started today. The
     // BYOK figure never gets threshold coloring — no cap applies to it.
-    if (window.Settings?.state?.hasApiKey) {
+    if (hasApiKey) {
       const last4 = window.Settings.state.keyLast4 || '••••';
       if (!DevChat.budget) {
         // Budget fetch hasn't landed yet — static badge until it does.
-        el.innerHTML = `<span class="text-emerald-400" title="Using your Anthropic API key">your key · ${last4}</span>`;
-        return;
+        return {
+          title: null,
+          parts: [{ text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400', title: 'Using your Anthropic API key' }],
+        };
       }
       const byokCents = DevChat.budget.byokSpentCents || 0;
       const byok = (byokCents / 100).toFixed(2);
       const spent = (DevChat.budget.spentCents / 100).toFixed(2);
       const limit = (DevChat.budget.limitCents / 100).toFixed(2);
       const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
-      const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
-      const tip = `Today: $${spent} of your $${limit} platform daily limit`
-        + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
-        + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. `
-        + (resetTip || 'Resets at midnight UTC.');
-      let html = `<span class="text-zinc-600">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+      const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
+      const parts = [
+        { text: 'limit ', className: muted },
+        { text: `$${spent}`, className: color },
+        { text: `/$${limit}`, className: muted },
+      ];
       if (byokCents > 0) {
-        html += `<span class="text-zinc-600"> · </span><span class="text-emerald-400">your key $${byok}</span>`;
+        parts.push({ text: ' · ', className: muted });
+        parts.push({ text: `your key $${byok}`, className: 'text-emerald-700 dark:text-emerald-400' });
       }
-      el.innerHTML = `<span title="${escapeHtml(tip)}">${html}</span>`;
-      return;
+      return {
+        title: `Today: $${spent} of your $${limit} platform daily limit`
+          + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
+          + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. `
+          + (resetTip || 'Resets at midnight UTC.'),
+        parts,
+      };
     }
-    if (!DevChat.budget) return;
+
+    if (!DevChat.budget) return NONE;
     const spent = (DevChat.budget.spentCents / 100).toFixed(2);
     const limit = (DevChat.budget.limitCents / 100).toFixed(2);
     // #463: exhausted (no key saved) keeps the familiar $spent/$limit
     // pair — just unmistakably red, with the tooltip pointing at the
     // BYOK escape hatch. The banner carries the wordy explanation.
     if (DevChat._creditsExhausted()) {
-      const tip = `Your free daily AI credits are used up. ${
-        resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`;
-      el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit}</span></span>`;
-      return;
+      return {
+        title: `Your free daily AI credits are used up. ${
+          resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`,
+        parts: [
+          { text: `$${spent}`, className: 'text-red-700 font-semibold dark:text-red-400' },
+          { text: `/$${limit}`, className: 'text-red-700 dark:text-red-400' },
+        ],
+      };
     }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
-    const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
-    const tip = `Today: $${spent} of your $${limit} free daily AI credits. ${
-      resetTip || 'Resets at midnight UTC.'}`;
-    el.innerHTML = `<span title="${escapeHtml(tip)}"><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span></span>`;
+    const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
+    return {
+      title: `Today: $${spent} of your $${limit} free daily AI credits. ${
+        resetTip || 'Resets at midnight UTC.'}`,
+      parts: [
+        { text: `$${spent}`, className: color },
+        { text: `/$${limit}`, className: muted },
+      ],
+    };
   },
 
   // #463: true when the signed-in user is out of free credits AND has no
@@ -1474,83 +1535,80 @@ const DevChat = {
     return userOut || globalOut;
   },
 
-  // #463: the credits-exhausted banner (sibling of the sync banner,
-  // #dc-sync-banner). Empty string when the show-condition doesn't hold.
-  _renderCreditsBannerHtml() {
-    if (!DevChat._creditsExhausted()) return '';
+  // #463: the credits-exhausted banner. Null when the show-condition does
+  // not hold; otherwise a `CreditsBannerView` (features/dev-chat/
+  // banners-store.ts) in one of its three reasons.
+  //
+  // The copy is RAW text, not entities: React escapes what it renders, and a
+  // `&rsquo;` in the model would arrive on screen as those seven characters.
+  _creditsBannerView() {
+    if (!DevChat._creditsExhausted()) return null;
     const b = DevChat.budget;
     const state = DevChat._creditState();
+    const actions = (over) => (window.CreditOptions
+      ? CreditOptions.bannerActionsHtml({
+        hasApiKey: false,
+        globalOut: false,
+        externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+        sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
+        ...over,
+      })
+      : '');
+    const base = {
+      id: 'dc-credits-banner',
+      leadTagged: false,
+      reset: null,
+      // #1348: blocked, so the sheet marks the venue that just refused the
+      // turn instead of offering it as a way out of its own refusal.
+      blockedVenue: true,
+    };
     if (state && state.level === 'locked') {
-      return `
-        <div id="dc-credits-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-          <svg class="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>
-          </svg>
-          <span class="text-amber-900 dark:text-amber-200 flex-1 min-w-[14rem]"><span class="font-semibold">Connect GitHub or X to unlock $10/day of Usernode credits.</span> Either account unlocks the same tier; connecting both does not stack credits.</span>
-          ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
-            hasApiKey: false,
-            verificationRequired: true,
-            globalOut: false,
-            externalFlowsAvailable: DevChat._externalFlowsAvailable(),
-            sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
-          }) : ''}
-        </div>`;
+      return {
+        ...base,
+        tone: 'amber',
+        icon: 'person',
+        lead: 'Connect GitHub or X to unlock $10/day of Usernode credits.',
+        tail: ' Either account unlocks the same tier; connecting both does not stack credits.',
+        actionsHtml: actions({ verificationRequired: true }),
+      };
     }
     if (state && state.level === 'unavailable') {
-      return `
-        <div id="dc-credits-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-          <span class="text-amber-900 dark:text-amber-200 flex-1 min-w-[14rem]"><span class="font-semibold">Credit eligibility could not be verified.</span> Try again shortly, or use your own API key or another build venue.</span>
-          ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
-            hasApiKey: false,
-            verificationRequired: false,
-            globalOut: false,
-            externalFlowsAvailable: DevChat._externalFlowsAvailable(),
-            sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
-          }) : ''}
-        </div>`;
+      return {
+        ...base,
+        tone: 'amber',
+        icon: null,
+        lead: 'Credit eligibility could not be verified.',
+        tail: ' Try again shortly, or use your own API key or another build venue.',
+        actionsHtml: actions({ verificationRequired: false }),
+      };
     }
     const userOut = b.spentCents >= b.limitCents;
-    const lead = userOut
-      ? 'You&rsquo;ve used up today&rsquo;s free AI credits.'
-      : 'The platform&rsquo;s shared daily AI budget is used up.';
-    return `
-      <div id="dc-credits-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/50 text-xs">
-        <svg class="w-4 h-4 text-red-500 dark:text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
-        </svg>
-        <span class="text-red-800 dark:text-red-200 flex-1 min-w-[14rem]"><span class="font-semibold">${lead}</span> <span data-credits-reset="1">${escapeHtml(DevChat._creditResetSentence() || 'Free credits reset at midnight UTC.')}</span> Or keep working right now ${DevChat._externalFlowsAvailable()
-          ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
-          : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'}</span>
-        ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
-          hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
-          globalOut: !userOut,
-          externalFlowsAvailable: DevChat._externalFlowsAvailable(),
-          sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
-        }) : ''}
-      </div>`;
+    return {
+      ...base,
+      tone: 'red',
+      icon: 'warn',
+      lead: userOut
+        ? 'You\u2019ve used up today\u2019s free AI credits.'
+        : 'The platform\u2019s shared daily AI budget is used up.',
+      reset: DevChat._creditResetSentence() || 'Free credits reset at midnight UTC.',
+      tail: ' Or keep working right now ' + (DevChat._externalFlowsAvailable()
+        ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
+        : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'),
+      actionsHtml: actions({
+        hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
+        globalOut: !userOut,
+      }),
+    };
   },
 
-  // Swap/insert/remove the banner in place (mirror of _applySyncBanner,
-  // minus the full re-render fallback: the banner slot sits directly
-  // above .dc-session-body, so we can insert without re-rendering and
-  // avoid disturbing an in-flight stream).
+  // The banner's own repaint. It read the live element, swapped its
+  // `outerHTML`, `remove()`d it or `insertAdjacentHTML`'d it back before
+  // `.dc-session-body` — three code paths for "say something different here"
+  // — precisely so a banner could change mid-session without re-rendering the
+  // transcript under an in-flight stream. A publish does that by
+  // construction, and the message list is not in the subtree.
   _applyCreditsBanner() {
-    const existing = document.getElementById('dc-credits-banner');
-    const html = DevChat.currentSession ? DevChat._renderCreditsBannerHtml() : '';
-    if (existing) {
-      if (html) {
-        existing.outerHTML = html;
-        DevChat._wireCreditsBanner();
-      } else {
-        existing.remove();
-      }
-    } else if (html) {
-      const body = document.querySelector('.dc-session-body');
-      if (body) {
-        body.insertAdjacentHTML('beforebegin', html);
-        DevChat._wireCreditsBanner();
-      }
-    }
+    DevChat._publishBanners();
   },
 
   // ── The proactive low-balance warning (#593) ───────────────────────
@@ -1579,60 +1637,36 @@ const DevChat = {
 
   // Amber sibling of the red banner, same slot and the same route buttons
   // — nothing has been refused yet, so the copy states the headroom and
-  // the boundary instead of announcing a failure.
-  _renderCreditsLowBannerHtml() {
-    if (!DevChat._creditsLow()) return '';
+  // the boundary instead of announcing a failure. ONE shape with it
+  // (features/dev-chat/banners-store.ts): they are one banner in two tenses,
+  // and writing them as two templates is what let their copy drift.
+  _creditsLowBannerView() {
+    if (!DevChat._creditsLow()) return null;
     const CO = window.CreditOptions;
-    if (!CO) return '';
+    if (!CO) return null;
     const state = DevChat._creditState();
-    return `
-      <div id="dc-credits-low-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-        <svg class="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
-        <span class="text-amber-900 dark:text-amber-200 flex-1 min-w-[14rem]"><span class="font-semibold" data-credits-low-lead="1">${escapeHtml(CO.lowLead(state))}</span> <span data-credits-reset="1">${escapeHtml(CO.resetSentence(state))}</span> Set up another way to keep building before it runs out mid-change.</span>
-        ${CO.bannerActionsHtml({
-    hasApiKey: false,
-    globalOut: false,
-    externalFlowsAvailable: DevChat._externalFlowsAvailable(),
-    sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
-  })}
-      </div>`;
+    return {
+      id: 'dc-credits-low-banner',
+      tone: 'amber',
+      icon: 'clock',
+      lead: CO.lowLead(state),
+      leadTagged: true,
+      reset: CO.resetSentence(state),
+      tail: ' Set up another way to keep building before it runs out mid-change.',
+      actionsHtml: CO.bannerActionsHtml({
+        hasApiKey: false,
+        globalOut: false,
+        externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+        sessionBridgeEnabled: DevChat._sessionBridgeEnabled(),
+      }),
+      // NOT blocked: credits are low, not gone — the in-chat venue still
+      // works, and marking it unavailable would be a lie told early.
+      blockedVenue: false,
+    };
   },
 
-  // Same insert/swap/remove dance as _applyCreditsBanner, and the same
-  // reason for it: the slot sits directly above .dc-session-body, so the
-  // banner can appear mid-session without re-rendering the transcript
-  // under an in-flight stream.
   _applyCreditsLowBanner() {
-    const existing = document.getElementById('dc-credits-low-banner');
-    const html = DevChat.currentSession ? DevChat._renderCreditsLowBannerHtml() : '';
-    if (existing) {
-      if (html) {
-        existing.outerHTML = html;
-        DevChat._wireCreditsLowBanner();
-      } else {
-        existing.remove();
-      }
-    } else if (html) {
-      const body = document.querySelector('.dc-session-body');
-      if (body) {
-        body.insertAdjacentHTML('beforebegin', html);
-        DevChat._wireCreditsLowBanner();
-      }
-    }
-  },
-
-  _wireCreditsLowBanner() {
-    const banner = document.getElementById('dc-credits-low-banner');
-    if (banner && window.CreditOptions) {
-      CreditOptions.wire(banner, {
-        onFlow: (flow) => DevChat._devFlowFromCredits(flow),
-        // NOT blocked: credits are low, not gone — the in-chat venue still
-        // works, and marking it unavailable would be a lie told early.
-        onVenue: (button) => DevChat.openVenueSheet(button),
-      });
-    }
+    DevChat._publishBanners();
   },
 
   // Screenshot-state deep link `?shot=credits-low` (#593).
@@ -1694,22 +1728,6 @@ const DevChat = {
   // "no" rather than briefly offering a venue the user never enabled.
   _sessionBridgeEnabled() {
     return !!(typeof App !== 'undefined' && App.user && App.user.sessionBridgeEnabled);
-  },
-
-  _wireCreditsBanner() {
-    // Every route is rendered and wired by CreditOptions, which does the hash
-    // navigation — real navigations, so the browser / device back gesture
-    // returns the user to this chat. The two #1049 entries are handled in
-    // place instead: they start the walkthrough right here.
-    const banner = document.getElementById('dc-credits-banner');
-    if (banner && window.CreditOptions) {
-      CreditOptions.wire(banner, {
-        onFlow: (flow) => DevChat._devFlowFromCredits(flow),
-        // #1348: blocked, so the sheet marks the venue that just refused
-        // the turn instead of offering it as a way out of its own refusal.
-        onVenue: (button) => DevChat.openVenueSheet(button, { blocked: true }),
-      });
-    }
   },
 
   // Best-effort: a failed save must not block the venue the user just chose.
@@ -2729,223 +2747,18 @@ const DevChat = {
       if (typeof window !== 'undefined' && window.SessionState) {
         SessionState.seed(DevChat.activeSessions.sessions, issuedAt);
       }
-      DevChat.renderActiveSessions();
     } catch {}
   },
 
-  // Start the 5s poll that drives the active-sessions panel. Safe
-  // to call multiple times — it tears down any previous timer
-  // before installing a new one, which keeps double-mounts (e.g.
-  // restoreFromHash → renderDevChatTab during navigation) from
-  // stacking.
-  startActiveSessionsPoll() {
-    DevChat.stopActiveSessionsPoll();
-    DevChat.loadActiveSessions();
-    DevChat._activePollTimer = setInterval(() => {
-      DevChat.loadActiveSessions();
-    }, 5000);
-  },
-
-  stopActiveSessionsPoll() {
-    if (DevChat._activePollTimer) {
-      clearInterval(DevChat._activePollTimer);
-      DevChat._activePollTimer = null;
-    }
-  },
-
-  renderActiveSessions() {
-    const container = document.getElementById('dc-active-list');
-    const counter = document.getElementById('dc-active-counter');
-    if (!container || !counter) return;
-
-    const { sessions, totals, caps } = DevChat.activeSessions;
-    // Counter shows running-vs-cap on the left and the promoted/paused
-    // backlogs on the right. Both denominators come from the server
-    // (`caps` on /api/me/active-sessions) and are per-viewer — full
-    // platform admins get raised caps — so the display can't drift from
-    // the ceiling actually enforced by /api/apps/:slug/sessions,
-    // /api/sessions/:id/resume and /api/sessions/:id/promote. (It used to
-    // be a hardcoded "/3", which lied the moment an operator retuned
-    // MAX_USER_SESSIONS.)
-    //
-    // The numerator counts only 'active' sessions (#193): promoted ones
-    // (PR in a merge vote) are un-pausable and exempt from the
-    // active-session cap, so they're surfaced as their own
-    // " · N/M in vote" segment against their own budget instead of
-    // inflating the numerator. Paused sessions are unlimited so they're
-    // surfaced separately too. Zero-count segments are omitted to keep
-    // the common case clean.
-    const activeCap = (caps && caps.activeSessions) || 3;
-    const promotedCap = (caps && caps.promotedSessions) || 5;
-    const segments = [`(${totals.active}/${activeCap})`];
-    if (totals.promoted > 0) segments.push(`${totals.promoted}/${promotedCap} in vote`);
-    if (totals.paused > 0) segments.push(`${totals.paused} paused`);
-    counter.textContent = segments.join(' · ');
-
-    if (totals.total === 0) {
-      container.innerHTML = `
-        <div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">
-          No open dev sessions yet.
-        </div>`;
-      return;
-    }
-
-    // Sort: busy → other active → paused, then most-recent within
-    // each bucket. Surfaces in-flight work first, paused at the
-    // bottom where it's still visible but doesn't compete with the
-    // sessions the user is actively working on.
-    const rank = (s) => (s.busy ? 0 : s.status === 'paused' ? 2 : 1);
-    const sorted = sessions.slice().sort((a, b) => {
-      const dr = rank(a) - rank(b);
-      if (dr !== 0) return dr;
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    });
-
-    const currentSlug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) || '';
-
-    container.innerHTML = sorted.map((s) => {
-      const title = escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session');
-      const appName = escapeHtml(s.app_name || s.app_slug || '');
-      const isOtherApp = s.app_slug && s.app_slug !== currentSlug;
-      // Dot color tracks lifecycle:
-      //   active   → emerald
-      //   promoted → violet
-      //   paused   → zinc/gray (no warm container)
-      // Busy modifier adds a pulse ring on top, only meaningful
-      // for active/promoted (paused sessions can't be busy).
-      let statusClass;
-      let dotTitle;
-      // Preserve the legacy Claude tooltip byte-for-byte; only OpenRouter rows
-      // need a different provider name.
-      const runningAgent = DevChat._activityAgentBackend(s) === 'codex_openrouter'
-        ? 'OpenRouter'
-        : 'Claude';
-      if (s.status === 'paused') { statusClass = 'dc-active-dot-paused'; dotTitle = 'Paused'; }
-      else if (s.status === 'promoted') {
-        statusClass = 'dc-active-dot-promoted';
-        // #405: "Promoted (merged)" was ambiguous (a promoted PR is in a
-        // vote, NOT merged). Use the canonical lifecycle label instead.
-        const pLife = (window.MergeStatus && MergeStatus.lifecycle) ? MergeStatus.lifecycle(s) : null;
-        const pLabel = (pLife && pLife.label) || 'Proposed';
-        dotTitle = s.busy ? `${runningAgent} is running · ${pLabel}` : pLabel;
-      }
-      else { statusClass = 'dc-active-dot-active'; dotTitle = s.busy ? `${runningAgent} is running` : 'Active'; }
-      const busyClass = s.busy ? ' dc-active-dot-busy' : '';
-      const isPaused = s.status === 'paused';
-      // Primary action toggles between Pause and Resume. Archive is
-      // a secondary, quieter affordance for the "really delete this"
-      // case. data-action lets the click handler dispatch.
-      const primaryAction = isPaused ? 'resume' : 'pause';
-      const primaryLabel = isPaused ? 'Resume' : 'Pause';
-      return `
-        <div class="dc-active-item" data-id="${s.id}" data-slug="${escapeHtml(s.app_slug || '')}">
-          <span class="dc-active-dot ${statusClass}${busyClass}" title="${dotTitle}"></span>
-          <span class="dc-active-title" title="${title}">${title}</span>
-          ${isOtherApp ? `<span class="dc-active-app" title="${appName}">${appName}</span>` : ''}
-          <button class="dc-active-action ${isPaused ? 'dc-active-action-resume' : 'dc-active-action-pause'}" data-id="${s.id}" data-action="${primaryAction}">${primaryLabel}</button>
-          <button class="dc-active-archive" data-id="${s.id}" data-name="${title}" title="Archive (frees the slot; restorable for a while)">Archive</button>
-          <svg class="dc-active-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-        </div>`;
-    }).join('');
-
-    container.querySelectorAll('.dc-active-item').forEach((el) => {
-      // #1036: the row can't BE an anchor (it wraps the Pause/Resume
-      // button and a PR link), so cmd/middle-click is intercepted
-      // instead — it opens the same address the plain click routes to.
-      const hrefFor = () => {
-        const id = parseInt(el.dataset.id, 10);
-        const slug = el.dataset.slug;
-        if (!Number.isFinite(id) || !slug) return null;
-        return `#app/${encodeURIComponent(slug)}/dev/sessions/${id}`;
-      };
-      const activate = () => {
-        const id = parseInt(el.dataset.id, 10);
-        const slug = el.dataset.slug;
-        if (!Number.isFinite(id) || !slug) return;
-        // Same-app click: keep the in-memory state warm by routing
-        // through openSession + renderChatView, then sync the URL.
-        // Cross-app click: just set the hash and let restoreFromHash
-        // handle the full app+tab+session restore — that path also
-        // closes the previous app cleanly via App.openApp.
-        if (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug === slug) {
-          DevChat.openSession(id, { userOpened: true }).then(() => {
-            DevChat.renderChatView();
-            if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
-          });
-        } else {
-          location.hash = `#app/${slug}/dev/sessions/${id}`;
-        }
-      };
-      if (window.NavLink) NavLink.wireModified(el, hrefFor, activate);
-      else el.addEventListener('click', activate);
-    });
-
-    // Pause / Resume primary action. Stop propagation so the row's
-    // navigate-to-session click doesn't fire alongside the toggle.
-    container.querySelectorAll('.dc-active-action').forEach((btn) => {
-      btn.addEventListener('click', async (ev) => {
-        ev.stopPropagation();
-        const id = parseInt(btn.dataset.id, 10);
-        const action = btn.dataset.action;
-        const original = btn.textContent;
-        btn.textContent = action === 'pause' ? 'Pausing…' : 'Resuming…';
-        btn.disabled = true;
-        let body = {};
-        try {
-          const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
-          body = await resp.json().catch(() => ({}));
-          if (!resp.ok) {
-            PlatformUI.toast(body.error || `Failed to ${action} session`);
-            btn.textContent = original;
-            btn.disabled = false;
-            return;
-          }
-        } catch {
-          btn.textContent = original;
-          btn.disabled = false;
-          return;
-        }
-        // Deliberate pause of the session that's open in the chat view:
-        // sync the local copy so the heartbeat's refocus auto-resume
-        // (which only heals *sweeper* pauses the client doesn't know
-        // about) doesn't silently undo it (#193). keptPromoted means the
-        // server left the status 'promoted', so don't mislabel it.
-        if (action === 'pause' && !body.keptPromoted
-            && DevChat.currentSession && Number(DevChat.currentSession.id) === id) {
-          DevChat.currentSession.status = 'paused';
-        }
-        await DevChat._refreshSessionListsAfterMutation();
-      });
-    });
-
-    // Archive (destructive, irreversible — drops Claude's memory,
-    // destroys the warm worker + CC volume, and closes the PR). Gate
-    // behind ConfirmModal (a webview-safe replacement for native
-    // window.confirm, which is no-op'd in several mobile/in-app
-    // browsers the platform runs in). data-name carries the PR/branch
-    // title (escapeHtml'd at render time) so the prompt can name the
-    // thing being archived.
-    container.querySelectorAll('.dc-active-archive').forEach((btn) => {
-      btn.addEventListener('click', async (ev) => {
-        ev.stopPropagation();
-        const name = btn.dataset.name || 'this session';
-        const ok = await ConfirmModal.show({
-          title: `Archive "${name}"?`,
-          message: "This closes the PR and frees the slot. You can Unarchive it later from the app's session list (chat memory is kept for 30 days).",
-          confirmLabel: 'Archive',
-          danger: true,
-        });
-        if (!ok) return;
-        btn.textContent = '...';
-        btn.disabled = true;
-        const id = parseInt(btn.dataset.id, 10);
-        try {
-          await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
-        } catch {}
-        await DevChat._refreshSessionListsAfterMutation();
-      });
-    });
-  },
+  // `startActiveSessionsPoll` / `stopActiveSessionsPoll` /
+  // `renderActiveSessions` are retired (#1367). They drove an
+  // "Active Sessions (x/y)" panel whose hosts — `#dc-active-list` and
+  // `#dc-active-counter` — no longer exist in any markup, so the renderer
+  // resolved nothing and returned on its first line, and the 5s poll had no
+  // caller left at all. `loadActiveSessions` STAYS: five callers depend on
+  // it, and its real job now is seeding `SessionState` with the per-row busy
+  // flags that payload carries. The `.dc-active-*` rules in app.css go with
+  // them.
 
   // Shared post-mutation refresh for pause/resume/archive: pull the
   // cross-app panel data, and if we're currently viewing the same
@@ -3279,8 +3092,8 @@ const DevChat = {
         DevChat.specViewer.viewVersionContent = null;
         DevChat.specViewer.activeTab = 'user';
         // Don't await — caller's renderChatView shouldn't block on
-        // the fetch. _loadSpecViewer calls _renderSpecViewer when it
-        // resolves, which patches the body in place.
+        // the fetch. _loadSpecViewer publishes when it resolves, which
+        // repaints the body in place.
         DevChat._loadSpecViewer({ force: true });
       }
       // Q/A chip selection is per-question-turn — never carry one across
@@ -3495,7 +3308,7 @@ const DevChat = {
             }
             // #990: and re-arm the trailing dots for the same reason — a tab
             // that loads mid-fetch must not render a transcript that looks
-            // finished. _activityHtml() re-checks the live-CC-run gate, so a
+            // finished. `_activitySpec` re-checks the live-CC-run gate, so a
             // reload during a coding run still suppresses them.
             DevChat._activity = { label: null };
             // #937: rebuild the stopping row and its escalation ladder from
@@ -3768,9 +3581,7 @@ const DevChat = {
                   // line and throttles to one paint/frame so checkbox rows
                   // don't blink as partial markdown re-parses.
                   const displayContent = assistantMsg.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
-                  const msgEls = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
-                  const lastEl = msgEls[msgEls.length - 1];
-                  if (lastEl) DevChat._renderStreamingMarkdown(lastEl, displayContent);
+                  DevChat._renderStreamingMarkdown(assistantMsg, displayContent);
                 }
                 DevChat.scrollToBottom();
                 break;
@@ -4198,17 +4009,25 @@ const DevChat = {
         // No assistant message yet for this turn → push a fresh one.
         // The user message is already in DevChat.messages so insertion
         // order is correct.
+        let freshBubble = false;
         if (!am || am._finalized) {
           DevChat._deactivateStatusForFreshBubble();
           am = { role: 'assistant', content: '', created_at: new Date().toISOString() };
           DevChat.messages.push(am);
-          DevChat.renderMessages();
+          freshBubble = true;
         }
         am.content += data.text;
         const displayContent = am.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
-        const els = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
-        const el = els[els.length - 1];
-        if (el) DevChat._renderStreamingMarkdown(el, displayContent);
+        // The first token of a fresh bubble arrives through a full render, not
+        // through the streaming writer — the same order the POST-SSE path
+        // above uses, and for a reason that only became visible once the
+        // writer stopped guessing its target: the model SKIPS an assistant row
+        // with no content, so rendering the placeholder before the append put
+        // no bubble on screen for this turn. The old writer then resolved
+        // `querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content')
+        // [length - 1]` — the PREVIOUS turn's bubble — and wrote into it.
+        if (freshBubble) DevChat.renderMessages();
+        else DevChat._renderStreamingMarkdown(am, displayContent);
         DevChat.scrollToBottom();
         break;
       }
@@ -4237,10 +4056,7 @@ const DevChat = {
           // still runs when a new bubble is pushed above.
           am.content = data.text;
           const displayContent = am.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
-          const els = document.querySelectorAll('#dc-messages .dc-msg-assistant .dc-msg-content');
-          const el = els[els.length - 1];
-          if (el) DevChat._renderStreamingMarkdown(el, displayContent);
-          else DevChat.renderMessages();
+          DevChat._renderStreamingMarkdown(am, displayContent);
         }
         DevChat.scrollToBottom();
         break;
@@ -4591,7 +4407,15 @@ const DevChat = {
     } catch (_) {}
   },
 
+  // The composer's PAINT state, latched here rather than read from
+  // `isStreaming`. They are not the same question: the `?shot=busy` capture
+  // paints a mid-turn composer with no turn running at all (#801), and the
+  // finish path calls this with `false` on the line before the flag drops.
+  // `renderChatView` resets it, which is what the idle template used to do.
+  _composerBusy: false,
+
   _setStreamingUI(streaming, phase = null, { stoppable = true } = {}) {
+    DevChat._composerBusy = !!streaming;
     if (streaming) DevChat._streamingPhase = phase;
     else DevChat._streamingPhase = null;
     // #1378: kept alongside the phase so every repaint that only knows the
@@ -4621,77 +4445,29 @@ const DevChat = {
     // the composer placeholder, the saved-drafts list, the sync banner —
     // must still resync on a streaming transition even in the rare case
     // where the send button isn't mounted.
-    const btn = document.getElementById('dc-send-btn');
-    if (btn && streaming) {
-      const isWrapUp = phase === 'mayor2';
-      // #1378: same spinner, different reason. A turn the server can't stop
-      // (no in-process handle — typically one adopted across a restart) must
-      // not paint a live red Stop: the click would reach the server, match
-      // nothing, and leave the user believing the turn was ending.
-      const notStoppable = stoppable === false;
-      // #889: a requested-but-not-yet-landed stop outranks both of the
-      // states below — the turn is still streaming (so we can't paint
-      // Send), but the red Stop square is a lie: pressing it again does
-      // nothing. Muted spinner + "Stopping…" instead.
-      if (DevChat._stopping) {
-        btn.disabled = true;
-        btn.classList.remove('dc-btn-stop');
-        btn.classList.remove('dc-btn-streaming');
-        btn.classList.add('dc-btn-stopping');
-        btn.setAttribute('aria-label', 'Stopping');
-        btn.title = 'Stopping…';
-        btn.innerHTML = '<span class="dc-send-spinner"></span><span class="dc-btn-stopping-label">Stopping…</span>';
-      } else if (isWrapUp || notStoppable) {
-        btn.disabled = true;
-        btn.classList.remove('dc-btn-stop');
-        btn.classList.remove('dc-btn-stopping');
-        btn.classList.add('dc-btn-streaming');
-        const unstoppable = notStoppable && !isWrapUp;
-        btn.setAttribute('aria-label', unstoppable ? 'Working' : 'Finishing up');
-        btn.title = unstoppable
-          ? 'This turn is still running but can’t be stopped from here'
-          : 'Finishing up…';
-        btn.innerHTML = '<span class="dc-send-spinner"></span>';
-      } else {
-        btn.disabled = false;
-        btn.classList.remove('dc-btn-streaming');
-        btn.classList.remove('dc-btn-stopping');
-        btn.classList.add('dc-btn-stop');
-        btn.setAttribute('aria-label', 'Stop');
-        btn.title = 'Stop';
-        btn.innerHTML = '<span class="dc-stop-icon" aria-hidden="true"></span>';
-      }
-    } else if (btn) {
-      btn.disabled = false;
-      btn.classList.remove('dc-btn-streaming');
-      btn.classList.remove('dc-btn-stop');
-      btn.classList.remove('dc-btn-stopping');
-      btn.setAttribute('aria-label', 'Send');
-      btn.title = 'Send';
-      btn.textContent = 'Send';
-    }
-
-    // #798: the box stays TYPABLE while the agent works — the user can
-    // write the next instruction and park it as a draft (the save icon)
-    // instead of holding it in their head. It used to be `disabled` here.
-    // Sending is still impossible mid-turn: the submit handler routes to
-    // Stop while streaming and _submitFromInput bails on isStreaming, so
-    // nothing typed here can leak into the running turn.
-    const input = document.getElementById('dc-input');
-    if (input) {
-      input.disabled = false;
-      input.placeholder = streaming
-        ? DevChat._busyComposerPlaceholder()
-        : DevChat.COMPOSER_PLACEHOLDER;
-    }
+    // The send button's four states and the field's placeholder are the
+    // composer model's now — see `_sendButtonView`. This wrote `disabled`,
+    // three state classes, `aria-label`, `title` and `innerHTML` on the
+    // button by hand, and the placeholder on the field.
+    //
+    // #798: the box stays TYPABLE while the agent works — the user can write
+    // the next instruction and park it as a draft (the save icon) instead of
+    // holding it in their head. Sending is still impossible mid-turn: the
+    // submit handler routes to Stop while streaming and `_submitFromInput`
+    // bails on `isStreaming`, so nothing typed here can leak into the
+    // running turn. Nothing renders `disabled` on the field for the same
+    // reason nothing writes it any more.
+    DevChat._publishComposer();
     // #1086: the venue control replaced the coding-agent button that used
     // to sit here, and inherits its guard — a turn in flight holds the
     // worker, so the venue cannot move until it lands. #1348 moved the
-    // control to the header; the guard follows it.
-    const venueChange = document.getElementById('dc-venue-select');
-    if (venueChange) venueChange.disabled = !!streaming;
-    const openRouterModelChange = document.getElementById('dc-openrouter-model-change');
-    if (openRouterModelChange) openRouterModelChange.disabled = !!streaming;
+    // control to the header, and the header is a component: the guard is
+    // `_headerVenue`'s `disabled` now, so this republishes the strip rather
+    // than writing the attribute React would overwrite on its next paint.
+    DevChat._repaintSessionHeader();
+    // The OpenRouter row's "Change model" is guarded by the same rule and
+    // rides in on the publish above — it used to be a `disabled` written by
+    // hand here, which is a write React would clobber on its next paint.
     DevChat._syncSaveDraftBtn();
     // Re-render the saved-drafts list so each row's Send button picks up
     // the new busy state (disabled while thinking, live once idle).
@@ -4699,8 +4475,11 @@ const DevChat = {
 
     // #252: the sync banner's button disables (with a hint) while a
     // chat turn holds the worker — keep it in step with every
-    // streaming transition. Cheap no-op when no banner is mounted.
-    if (document.getElementById('dc-sync-banner')) DevChat._applySyncBanner();
+    // streaming transition. The `#dc-sync-banner` guard is gone with the
+    // element lookup it protected: a publish with no banner to draw costs one
+    // shallow render of an empty fragment, and asking the DOM whether there is
+    // a banner is now asking the wrong owner.
+    DevChat._publishBanners();
 
     // #285: hide the quick-reply pills while a turn is streaming (they're
     // stale until the new reply lands), restore them when it settles.
@@ -5046,27 +4825,6 @@ const DevChat = {
   // renderMessages (as part of the single innerHTML write) and from
   // _syncActivityNode (for the imperative show/hide path) so both produce
   // byte-identical DOM.
-  _activityHtml() {
-    if (!DevChat.isStreaming || !DevChat._activity) return '';
-    // Suppressed while a coding agent's own live log is what's painting
-    // progress: that row already carries a scrolling log and an ETA, so
-    // dots pinned underneath read as noise rather than reassurance. The
-    // pre-log gap ("Spinning up coding agent…") is still covered, because
-    // that status line is not a live CC run yet.
-    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-      const m = DevChat.messages[i];
-      if (!m || m.role !== 'system') continue;
-      if (!m._active) continue;
-      if (DevChat._isLiveCcRun(m)) return '';
-      break;
-    }
-    const label = DevChat._activity.label
-      ? `<span class="dc-activity-label">${DevChat._escActivity(DevChat._activity.label)}</span>`
-      : '';
-    return '<div id="dc-spinner" class="dc-status-line dc-activity-line">'
-      + '<div class="dc-streaming-dots"><span></span><span></span><span></span></div>'
-      + `${label}</div>`;
-  },
 
   // #990: a fresh assistant bubble opening means the step the ladder still
   // shows as live ("Thinking about what came back…") has in fact finished —
@@ -5102,13 +4860,10 @@ const DevChat = {
   // in both directions, so callers may show/hide freely and may (or may not)
   // follow up with renderMessages().
   _syncActivityNode() {
-    const container = document.getElementById('dc-messages');
-    if (!container) return;
-    const existing = document.getElementById('dc-spinner');
-    const html = DevChat._activityHtml();
-    if (!html) { if (existing) existing.remove(); return; }
-    if (existing) return;
-    container.insertAdjacentHTML('beforeend', html);
+    // It appended `#dc-spinner` to `#dc-messages` (or removed it) so a
+    // show/hide need not re-render the list. The dots are a field of the
+    // transcript model now, so both directions are one publish.
+    DevChat._publishTranscript();
   },
 
   // Retained as the single legacy entry point: every existing call site
@@ -5271,54 +5026,21 @@ const DevChat = {
   // Targeted DOM update so we don't rebuild the whole message list on every
   // streamed line (which would flicker and reset scroll). Falls back to a
   // full renderMessages() if the collapsible hasn't been rendered yet.
+  // A progress line just arrived. This found the `<pre>` by persist-id and
+  // wrote `textContent` into it, then patched three sibling spans — because a
+  // full `renderMessages` used to mean rebuilding `#dc-messages`' innerHTML
+  // mid-run, re-parsing every message in it.
+  //
+  // That cost is gone: a republish is a reconcile, and React touches the one
+  // `<pre>` whose text changed. So both patches are one publish, and the four
+  // summary spans re-derive from `summarizeCcProgress` in the model exactly
+  // as they did in `_patchProgressSummary`.
+  //
+  // The auto-scroll the old code did on the `<pre>` goes with it: the
+  // container's own MutationObserver (`initScrollTracking`) already follows
+  // the transcript to the bottom while the reader is locked there.
   _patchProgressDom(msg) {
-    const pid = DevChat._detailsId(msg, 'progress');
-    // The element with this pid is either:
-    //   - the inner <pre> in the merged "Claude Code is running"
-    //     <details> (current shape — no surrounding box), OR
-    //   - the legacy gray-box <details> wrapping a <pre> (orphan
-    //     progress messages persisted in the DB before the merge).
-    const target = document.querySelector(`#dc-messages [data-persist-id="${CSS.escape(pid)}"]`);
-    if (!target) {
-      DevChat.renderMessages();
-      return;
-    }
-    const text = msg.progressLog.join('\n');
-    if (target.tagName === 'PRE') {
-      target.textContent = text;
-      target.scrollTop = target.scrollHeight;
-      DevChat._patchProgressSummary(target, msg);
-      return;
-    }
-    // Legacy details-wrapping element: keep updating the inner pre
-    // and the line-count summary so old timeline entries still work.
-    const summary = target.querySelector('.dc-cc-log-toggle');
-    const pre = target.querySelector('.dc-cc-log-content');
-    if (summary) summary.textContent = `${DevChat._activityAgentName(msg)} output (${msg.progressLog.length} lines)`;
-    if (pre) {
-      pre.textContent = text;
-      pre.scrollTop = pre.scrollHeight;
-    }
-  },
-
-  // #50: keep the running summary's live-activity snippet + step counter in
-  // sync as progress lines stream in, without a full re-render. `target` is
-  // the inner <pre> _patchProgressDom just updated; the spans live in the
-  // enclosing <details>' summary. Covers both the live-append path
-  // (_appendProgressLine) and the polling fallback (_replaceProgressLog),
-  // since both funnel through _patchProgressDom.
-  _patchProgressSummary(target, msg) {
-    if (typeof summarizeCcProgress !== 'function') return;
-    const details = target.closest ? target.closest('details.dc-cc-attached') : null;
-    if (!details) return;
-    const summ = summarizeCcProgress(msg.progressLog || []);
-    const cur = details.querySelector('.dc-cc-current');
-    if (cur) cur.textContent = summ.currentLabel ? `— ${summ.currentLabel}` : '';
-    const steps = details.querySelector('.dc-cc-steps');
-    if (steps) steps.textContent = summ.steps ? `· ${summ.steps} steps` : '';
-    // #892: the deterministic stage label moves as phase markers land.
-    const phase = details.querySelector('.dc-cc-phase');
-    if (phase) phase.textContent = summ.phaseLabel ? `· ${summ.phaseLabel}` : '';
+    DevChat._publishTranscript();
   },
 
   // Experimental AI progress estimate (opt-in, server-gated). Stores the
@@ -5354,23 +5076,17 @@ const DevChat = {
     return base + n * 1000;
   },
 
-  // The trailing live count-down span (#359, replacing the static "· ~X
-  // left" suffix from #50). Carries an absolute `data-countdown-to`
-  // end-timestamp that _tickElapsed recomputes each second; empty (no span)
-  // when there's no numeric guess to count down from. The initial
-  // textContent is filled here so the span isn't blank for the up-to-1s
-  // before the first tick.
-  _countdownSpanHtml(countdownTo) {
-    if (countdownTo == null || typeof formatCountdown !== 'function') return '';
-    const initial = formatCountdown(countdownTo, Date.now());
-    return `<span class="dc-cc-countdown" data-countdown-to="${countdownTo}">${initial}</span>`;
-  },
-
   // Wipe every trace of an AI guess from the timeline (#891). Called on an
-  // explicit cleared cc_estimate, when /status stops carrying one (the
-  // coding run reached its terminal marker), and when no live coding run
-  // exists to own the guess. Blanks the spans directly rather than waiting
-  // for a full re-render, since the wrap-up can run for minutes without one.
+  // explicit cleared cc_estimate, when /status stops carrying one (the coding
+  // run reached its terminal marker), and when no live coding run exists to
+  // own the guess.
+  //
+  // It used to walk `#dc-messages` for `.dc-cc-estimate` and blank each span's
+  // innerHTML, because the wrap-up can run for minutes without a re-render and
+  // waiting for one would leave a dead guess on screen. That is the same
+  // trade `_patchProgressDom` was making, and it has the same answer: a
+  // republish is a reconcile, so clearing the flags and publishing touches the
+  // one span whose text changed.
   _clearEstimate() {
     DevChat._pendingEstimate = null;
     DevChat._lastEstimateAt = null;
@@ -5380,8 +5096,7 @@ const DevChat = {
       delete m._estimateRemaining;
       delete m._countdownTo;
     }
-    const spans = document.querySelectorAll('#dc-messages .dc-cc-estimate');
-    for (let i = 0; i < spans.length; i++) spans[i].innerHTML = '';
+    DevChat._publishTranscript();
   },
 
   // Is this message the row of a coding run that is CURRENTLY running?
@@ -5449,16 +5164,14 @@ const DevChat = {
       nextTarget = target._countdownTo;
     }
     target._countdownTo = nextTarget;
-    // Patch in place within THIS run's own DOM node (keyed by persist-id)
-    // rather than the last estimate span on the page, so a prior collapsed
-    // run's span can't be mis-targeted (#323). There is deliberately NO
-    // "last span on the page" fallback (#891): that fallback is what
-    // painted the guess onto an already-finished Claude Code card.
-    const pid = DevChat._detailsId(target, 'ccrun');
-    const span = document.querySelector(`#dc-messages [data-persist-id="${pid}"] .dc-cc-estimate`);
-    // innerHTML (not textContent): the count-down lives in a child span the
-    // ticker patches in place. The phrase is escaped because it's model output.
-    if (span) span.innerHTML = `· ✦ AI guess: ${escapeHtml(clean)}${DevChat._countdownSpanHtml(target._countdownTo)}`;
+    // The guess belongs to THIS run's row and no other. It used to be written
+    // into that row's `.dc-cc-estimate` by persist-id — deliberately not "the
+    // last estimate span on the page" (#323/#891), because that fallback is
+    // what painted a guess onto an already-finished Claude Code card. The
+    // model carries it on the row it belongs to now, which makes the same
+    // guarantee structural: a publish can only paint the run whose message
+    // object holds `_estimate`.
+    DevChat._publishTranscript();
   },
 
   // ── #50: elapsed-time ticker ────────────────────────────────
@@ -5493,78 +5206,30 @@ const DevChat = {
     if (any) DevChat._tickElapsed();
   },
 
+  // The 1s heartbeat. It used to walk `#dc-messages` three times — for
+  // `[data-elapsed-since]`, `[data-countdown-to]` and `[data-cohort-since]` —
+  // and write `textContent` into each match. All three spans are the
+  // transcript component's now and re-derive their own text, so what is left
+  // is publishing the clock they derive from. Three writers, one store.
+  //
+  // The DOM query stays, for the one thing it was ALSO deciding: whether
+  // anything on screen still ticks, and therefore whether the timer should
+  // keep running. The component renders the same `data-*` anchors precisely
+  // so this answer does not need a second source.
   _tickElapsed() {
-    const els = document.querySelectorAll('#dc-messages [data-elapsed-since]');
-    // #359: count-down spans share this loop — anchored to an absolute
-    // target end-timestamp and floored at 30s (formatCountdown), so a
-    // late-firing tick under tab throttling still shows the right value.
-    const downs = document.querySelectorAll('#dc-messages [data-countdown-to]');
-    // #892: the population-context line crosses its 10 min / 30 min
-    // thresholds mid-run, so it ticks on the same heartbeat.
-    const cohorts = document.querySelectorAll('#dc-messages [data-cohort-since]');
-    if (!els.length && !downs.length && !cohorts.length) {
+    const any = document.querySelector(
+      '#dc-messages [data-elapsed-since], #dc-messages [data-countdown-to], #dc-messages [data-cohort-since]'
+    );
+    if (!any) {
       if (DevChat._elapsedTimer) {
         clearInterval(DevChat._elapsedTimer);
         DevChat._elapsedTimer = null;
       }
       return;
     }
-    const now = Date.now();
-    if (typeof formatElapsed === 'function') {
-      els.forEach((el) => {
-        const since = parseInt(el.dataset.elapsedSince, 10);
-        if (!Number.isFinite(since)) return;
-        el.textContent = formatElapsed(Math.max(0, now - since));
-      });
-    }
-    if (typeof formatCountdown === 'function') {
-      downs.forEach((el) => {
-        const to = parseInt(el.dataset.countdownTo, 10);
-        if (!Number.isFinite(to)) return;
-        el.textContent = formatCountdown(to, now);
-      });
-    }
-    if (typeof runCohortHint === 'function') {
-      cohorts.forEach((el) => {
-        const since = parseInt(el.dataset.cohortSince, 10);
-        if (!Number.isFinite(since)) return;
-        const elapsed = Math.max(0, now - since);
-        // #906: resolved HERE, on every tick, from live state only. The
-        // retired `data-cohort-gated` flag was the second input to this
-        // decision and the frozen one — stamped at render from msg._estimate
-        // and never refreshed — which is why the range blurb kept rendering
-        // beside a live AI countdown for the rest of the run. Elapsed is the
-        // only input left, and runCohortHint owns the whole rule: '' below
-        // ten minutes (so the slot stays empty unless a real estimate fills
-        // it), long-run context above. An empty hint writes an empty span,
-        // never a dangling separator.
-        const hint = runCohortHint(elapsed);
-        el.textContent = hint ? ' \u00b7 ' + hint : '';
-      });
-    }
-  },
-
-  // The elapsed/duration suffix for a system status row:
-  //   - `_active` rows get the live ticker span (filled by _tickElapsed);
-  //   - finished rows show a static "(took Xm Ys)" from the server's
-  //     persisted durationMs (reload-safe) or the client-side freeze
-  //     stamped by _deactivateLastStatus (live-session only).
-  _statusElapsedHtml(msg) {
-    // A server-persisted duration wins even while the row is still
-    // `_active` (e.g. "Claude Code finished" arriving mid-turn): the row
-    // describes a completed step, so a fresh ticker would be misleading.
-    if (msg.durationMs != null && typeof formatElapsed === 'function') {
-      return `<span class="dc-status-elapsed">(took ${formatElapsed(Math.max(0, msg.durationMs))})</span>`;
-    }
-    if (msg._active && msg.created_at) {
-      const since = new Date(msg.created_at).getTime();
-      if (!Number.isFinite(since)) return '';
-      return `<span class="dc-status-elapsed" data-elapsed-since="${Math.min(since, Date.now())}"></span>`;
-    }
-    if (msg._elapsedFinalMs != null && typeof formatElapsed === 'function') {
-      return `<span class="dc-status-elapsed">(took ${formatElapsed(Math.max(0, msg._elapsedFinalMs))})</span>`;
-    }
-    return '';
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (react && react.publishNow) react.publishNow(Date.now());
   },
 
   // Re-apply the arc spinner to a trailing `stagingBuild: 'running'` row
@@ -5697,27 +5362,31 @@ const DevChat = {
     }
   },
 
-  async promotePR(btn = null) {
+  // #558's in-flight state, as the id of the session being proposed.
+  //
+  // It was `btn.disabled` plus a swapped `btn.innerHTML`, written onto the
+  // button the click arrived on — a second author on a node the card renders
+  // now. That is not merely untidy here: `renderMessages` runs on every 3s
+  // status poll, so a repaint mid-request would have restored the label AND
+  // cleared the re-entry guard, which is the double-submit #558 exists to
+  // stop. Keyed by session, so switching sessions mid-flight cannot leave the
+  // next one's card spinning.
+  _proposing: null,
+
+  async promotePR() {
     if (!DevChat.currentSession?.id) return;
-    // #558: disable + spinner the moment the button is clicked so a slow
-    // request can't be double-submitted by impatient clicking. Re-entry
-    // guard (an already-disabled button means a request is in flight),
-    // then swap the label for a spinner while preserving the original
-    // text so the failure paths can restore it (success re-renders the
-    // whole card, so only failures need cleanup).
-    let originalLabel = null;
-    if (btn) {
-      if (btn.disabled) return;
-      originalLabel = btn.innerHTML;
-      btn.disabled = true;
-      btn.setAttribute('aria-busy', 'true');
-      btn.innerHTML = '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span> Proposing…';
-    }
+    const sessionId = DevChat.currentSession.id;
+    // #558: the spinner goes up the moment the button is clicked so a slow
+    // request can't be double-submitted by impatient clicking, and an
+    // in-flight request for THIS session is the re-entry guard.
+    if (Number(DevChat._proposing) === Number(sessionId)) return;
+    DevChat._proposing = sessionId;
+    DevChat._publishTranscript();
+    // Back to a pressable button. Only the failure paths need it — success
+    // re-renders a card that no longer offers Propose at all.
     const restoreBtn = () => {
-      if (!btn) return;
-      btn.disabled = false;
-      btn.removeAttribute('aria-busy');
-      if (originalLabel != null) btn.innerHTML = originalLabel;
+      DevChat._proposing = null;
+      DevChat._publishTranscript();
     };
     // #707: the request keeps running through navigation (no abort
     // signal — the server does the work regardless, so let it finish),
@@ -5727,7 +5396,6 @@ const DevChat = {
     // the await used to throw into the catch below and surface a
     // spurious "Network error" alert on whatever page the user had
     // moved to.
-    const sessionId = DevChat.currentSession.id;
     const stillCurrent = () => Number(DevChat.currentSession?.id) === Number(sessionId);
     try {
       const res = await fetch(`/api/sessions/${sessionId}/promote`, { method: 'POST' });
@@ -5787,9 +5455,15 @@ const DevChat = {
         PlatformUI.toast('Network error');
         restoreBtn();
       } else {
-        // Stale rejection: swallow (the button node is detached DOM).
+        // Stale rejection: swallow. The card it belongs to is not on screen.
         console.warn('Propose request failed after leaving the session:', err?.message || err);
       }
+    } finally {
+      // Whatever happened, this session is no longer proposing. The REPAINT is
+      // the failure paths' job above (`restoreBtn`), because on success the
+      // card has already been re-rendered without the button; this only makes
+      // sure a stale outcome cannot leave the flag set for a later re-entry.
+      DevChat._proposing = null;
     }
   },
 
@@ -5868,9 +5542,119 @@ const DevChat = {
     return ` · reply $${(cents / 100).toFixed(3)}`;
   },
 
-  renderMessages() {
-    const container = document.getElementById('dc-messages');
-    if (!container) return;
+  // ── The transcript, as a MODEL ────────────────────────────────────
+  //
+  // `renderMessages` built one `innerHTML` string for `#dc-messages` and then
+  // five other things wrote into what it had just painted: the streaming
+  // bubble at 60fps, a 1s ticker over three kinds of span, the AI-estimate
+  // spans, the `<details>` open-state restore, and two delegated-listener
+  // scans. Each is gone or scoped — see features/dev-chat/transcript-store.ts.
+  //
+  // What did NOT move: every rule about WHICH row is which, and every string
+  // another module owns (`renderMarkdown`, `AppView.visualsTilesHtml`,
+  // `CreditOptions.cardHtml`, `DevFlowSelect`). This carries their answers.
+  _rowKey(msg, msgIdx) {
+    return String(msg.id || msg._slug || `i${msgIdx}`);
+  },
+
+  /** The stamp every row carries: "<id> <epoch ms>". */
+  _rowStamp(msg) {
+    const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
+    return `${msg.id || msg._slug || ''} ${ts}`;
+  },
+
+  _detailsSpec(msg, kind, defaultOpen) {
+    return { persistId: DevChat._detailsId(msg, kind), defaultOpen: !!defaultOpen };
+  },
+
+  /**
+   * The elapsed/duration suffix for a status row, in its three shapes:
+   *   - a server-persisted `durationMs` wins even while the row is still
+   *     `_active` ("Claude Code finished" arriving mid-turn describes a
+   *     COMPLETED step, so a fresh ticker would be misleading);
+   *   - an `_active` row hands over its start epoch and the row re-derives
+   *     its own label from `nowStore` on the 1s heartbeat;
+   *   - a finished row shows the client-side freeze `_deactivateLastStatus`
+   *     stamped (live sessions only — a reload has the server's duration).
+   */
+  _elapsedSpec(msg) {
+    const fmtEl = typeof formatElapsed === 'function' ? formatElapsed : null;
+    if (msg.durationMs != null && fmtEl) {
+      return { kind: 'fixed', label: `(took ${fmtEl(Math.max(0, msg.durationMs))})` };
+    }
+    if (msg._active && msg.created_at) {
+      const since = new Date(msg.created_at).getTime();
+      if (!Number.isFinite(since)) return null;
+      return { kind: 'since', since: Math.min(since, Date.now()) };
+    }
+    if (msg._elapsedFinalMs != null && fmtEl) {
+      return { kind: 'fixed', label: `(took ${fmtEl(Math.max(0, msg._elapsedFinalMs))})` };
+    }
+    return null;
+  },
+
+  /**
+   * A status row. `html` rather than `text` where the old template
+   * interpolated `msg.content` UNESCAPED — those rows carry platform-authored
+   * copy with markup in it, and escaping them now would be a visible change.
+   */
+  _statusRow(msg, msgIdx, over) {
+    return {
+      t: 'status',
+      key: DevChat._rowKey(msg, msgIdx),
+      icon: msg._active ? 'spinner' : 'check',
+      text: msg.content || '',
+      html: msg.content || '',
+      elapsed: DevChat._elapsedSpec(msg),
+      stamp: DevChat._rowStamp(msg),
+      ...over,
+    };
+  },
+
+  // The attachment strip inside a user bubble. It is a SIBLING of the
+  // rendered markdown, never part of it: the DOMPurify allowlist strips
+  // `<img>` and must keep doing so for untrusted markdown, so an image
+  // attachment can only reach the page from outside that pass. Optimistic
+  // sends carry `objectUrl` until the reload swaps in the server URL.
+  _attachmentRows(msg) {
+    const atts = msg.attachments;
+    if (!Array.isArray(atts) || !atts.length) return undefined;
+    const sid = DevChat.currentSession?.id;
+    const out = [];
+    for (const a of atts) {
+      const idOk = typeof a.id === 'string' && /^[a-f0-9]{32}$/.test(a.id);
+      const url = a.objectUrl || (idOk && sid ? `/api/sessions/${sid}/attachments/${a.id}` : null);
+      if (!url) continue;
+      const name = String(a.filename || 'file');
+      if (a.kind === 'image') out.push({ kind: 'image', href: url, name });
+      else {
+        out.push({
+          kind: 'file', href: url, name, download: true,
+          badgeHtml: DevChat._attachKindBadgeHtml(a),
+          size: DevChat._humanSize(a.sizeBytes),
+        });
+      }
+    }
+    return out.length ? out : undefined;
+  },
+
+  _qaSpec(msg) {
+    const groups = msg.suggestions;
+    const multi = groups.length > 1;
+    return {
+      multi,
+      groups: groups.map((g, gi) => ({
+        label: multi && g.question ? g.question : '',
+        answers: (g.answers || []).map((a, ai) => ({
+          text: a,
+          suggested: ai === 0,
+          selected: multi && DevChat._qaSelection[gi] === ai,
+        })),
+      })),
+    };
+  },
+
+  _transcriptView() {
     const session = DevChat.currentSession;
 
     // Drain a pending AI progress estimate (#323): an estimate can arrive
@@ -5970,6 +5754,7 @@ const DevChat = {
       }
     }
 
+
     // Q/A mode (#32): suggested-answer chips render only under the LAST
     // non-system message — and only when the session is one the viewer
     // can still act in. Once the user replies (chip or typed), the
@@ -5981,509 +5766,376 @@ const DevChat = {
     }
     const qaInteractive = !!session && (session.status === 'active' || session.status === 'promoted');
 
-    container.innerHTML = DevChat.messages.map((msg, msgIdx) => {
-      // System messages — each is a single immutable status line
+    // The one row a live turn is writing into: the last assistant row while a
+    // turn is in flight. Only it subscribes to `streamStore`, which is what
+    // keeps a 60fps publish from re-rendering the list.
+    let liveIdx = -1;
+    if (DevChat.isStreaming || DevChat._streamKey) {
+      for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+        const m = DevChat.messages[i];
+        if (m.role === 'system') continue;
+        if (m.role === 'assistant' && !m.creditsCard) liveIdx = i;
+        break;
+      }
+    }
+
+    const rows = [];
+    DevChat.messages.forEach((msg, msgIdx) => {
+      const key = DevChat._rowKey(msg, msgIdx);
+      const stamp = DevChat._rowStamp(msg);
+
       if (msg.role === 'system') {
-        // Inline spec preview card. The Mayor's scout dispatch
-        // emits this metadata alongside the status line; clicking the
-        // card opens the read-only spec viewer (side panel on wide
-        // viewports, fullscreen modal on narrow). We clip the snippet
-        // server-side (~400 chars) and again here client-side so the
-        // card stays compact in the timeline.
+        // Inline spec preview card. The Mayor's scout dispatch emits this
+        // metadata alongside the status line; clicking the card opens the
+        // read-only spec viewer.
         if (msg.specPreview) {
-          const sTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
-          const sId = msg.id || msg._slug || '';
-          const lineCount = msg.specLines || (msg.specPreview.split('\n').length);
-          // Clip the snippet to WHOLE LINES only, so a partial task item is
-          // never half-included: as a scout redraft shifts the text, a
-          // `- [ ]` line near the boundary would otherwise pop in and out
-          // (its checkbox flickering) between drafts. clipSpecSnippet drops
-          // any line the 200-char boundary would bisect; it falls back to
-          // the old whitespace-boundary clip only for a single over-long
-          // line with no newline in range (no task item to bisect there).
+          const lineCount = msg.specLines || msg.specPreview.split('\n').length;
+          // Clip to WHOLE LINES, so a partial task item is never half-included:
+          // as a scout redraft shifts the text, a `- [ ]` line near the
+          // boundary would otherwise pop in and out between drafts.
           const snippet = typeof clipSpecSnippet === 'function'
-            ? clipSpecSnippet(msg.specPreview, 200)
-            : msg.specPreview;
-          const versionAttr = msg.specVersion != null ? msg.specVersion : 'latest';
-          const headerLabel = msg.specVersion != null
-            ? `Spec v${msg.specVersion} · ${lineCount} lines`
-            : `Spec drafted · ${lineCount} lines`;
-          return `
-            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} ${DevChat._statusElapsedHtml(msg)}<span style="font-size:9px;opacity:0.4;margin-left:auto">${sId} ${sTs}</span></div>
-            <div class="dc-spec-preview-card" data-spec-version="${versionAttr}" role="button" tabindex="0" aria-label="Open spec viewer">
-              <div class="dc-spec-preview-header">
-                <span class="dc-spec-preview-title">${escapeHtml(headerLabel)}</span>
-                <span class="dc-spec-preview-cta">View full spec →</span>
-              </div>
-              <div class="dc-spec-preview-snippet">${DevChat.renderMarkdown(snippet, { breaks: false })}</div>
-            </div>`;
+            ? clipSpecSnippet(msg.specPreview, 200) : msg.specPreview;
+          rows.push({
+            t: 'spec', key,
+            status: DevChat._statusRow(msg, msgIdx, { icon: 'check', elapsed: DevChat._elapsedSpec(msg) }),
+            version: msg.specVersion != null ? String(msg.specVersion) : 'latest',
+            header: msg.specVersion != null
+              ? `Spec v${msg.specVersion} · ${lineCount} lines`
+              : `Spec drafted · ${lineCount} lines`,
+            snippetHtml: DevChat.renderMarkdown(snippet, { breaks: false }),
+          });
+          return;
         }
-        // Issue-report draft card (human gate). Two sources: the build
-        // agent escalating a platform-level blocker on its own initiative,
-        // and (#1037) the Mayor answering an explicit "create an issue for
-        // this" from the user. Nothing is filed until a user taps the
-        // confirm button; Dismiss kills the draft. Both buttons need the
-        // DB msgId — a live-pushed draft carries it in the event, a
-        // rehydrated one gets it from the row id.
+        // Issue-report draft card (human gate). Nothing is filed until a user
+        // taps confirm; Dismiss kills the draft.
         if (msg.platformIssueDraft) {
           const d = msg.platformIssueDraft;
-          // #1037: a draft carries `target` ('platform' | 'app'). Drafts
-          // written before that (and the staging fixture's legacy rows)
-          // have no target and are platform-destined, so the default here
-          // must stay the platform copy.
+          // #1037: a draft carries `target`. Rows written before that (and the
+          // staging fixture's legacy ones) have none and are platform-destined.
           const isAppTarget = d.target === 'app';
-          const destLabel = isAppTarget
-            ? `Issue draft — ${d.appName || 'this app'}`
-            : 'Suggested platform report';
-          const confirmLabel = isAppTarget ? 'File issue' : 'Report to platform';
-          const pTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
-          const pId = msg.id || msg._slug || '';
-          // #699: bodies longer than the 300-char preview render as a
-          // <details>: the summary holds the preview plus a "Show full
-          // report" cue (hidden while open), the content holds the
-          // remainder, so the open state reads as one continuous text.
-          // data-persist-id keeps the open state across the full-innerHTML
-          // re-renders renderMessages does mid-turn (and across reloads).
           const fullBody = String(d.body || '');
-          let bodyHtml = '';
+          let body = { kind: 'none' };
           if (fullBody.length > 300) {
-            // Back the clip up to the last whitespace before 300 (when one
-            // exists past 200) so the collapsed cut — and the seam between
-            // summary and remainder when open — falls between words.
+            // #699: back the clip up to the last whitespace before 300 (when
+            // one exists past 200) so the collapsed cut — and the seam when
+            // open — falls between words.
             let clip = 300;
-            const ws = Math.max(
-              fullBody.lastIndexOf(' ', 300), fullBody.lastIndexOf('\n', 300));
+            const ws = Math.max(fullBody.lastIndexOf(' ', 300), fullBody.lastIndexOf('\n', 300));
             if (ws > 200) clip = ws;
-            const pid = DevChat._detailsId(msg, 'pireport');
-            bodyHtml = `<details class="dc-pi-report" data-persist-id="${pid}"><summary class="dc-pi-report-summary">${escapeHtml(fullBody.slice(0, clip))}<span class="dc-pi-report-cue">… Show full report</span></summary><div class="dc-pi-report-rest">${escapeHtml(fullBody.slice(clip))}</div></details>`;
+            body = {
+              kind: 'details',
+              details: DevChat._detailsSpec(msg, 'pireport', false),
+              summary: fullBody.slice(0, clip),
+              rest: fullBody.slice(clip),
+            };
           } else if (fullBody) {
-            bodyHtml = `<div style="font-size:13px;color:var(--text-muted);white-space:pre-wrap;margin-bottom:6px">${escapeHtml(fullBody)}</div>`;
+            body = { kind: 'plain', text: fullBody };
           }
-          let actionsHtml = '';
+          let action = { kind: 'none' };
           if (d.status === 'filed' && d.issueUrl) {
-            actionsHtml = `<a href="${escapeHtml(d.issueUrl)}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">Reported — issue #${d.issueNumber}</a>`;
+            action = { kind: 'link', href: d.issueUrl, label: `Reported — issue #${d.issueNumber}` };
           } else if (d.status === 'filed') {
-            actionsHtml = `<span style="color:var(--text-muted);font-size:12px">${isAppTarget ? 'Filed on this app\'s repo' : 'Reported to the platform'}</span>`;
+            action = { kind: 'note', text: isAppTarget ? "Filed on this app's repo" : 'Reported to the platform' };
           } else if (d.status === 'dismissed') {
-            actionsHtml = '<span style="color:var(--text-muted);font-size:12px">Dismissed</span>';
+            action = { kind: 'note', text: 'Dismissed' };
           } else if (d.msgId) {
-            actionsHtml = `
-              <button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'confirm', this)">${escapeHtml(confirmLabel)}</button>
-              <button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'dismiss', this)">Dismiss</button>`;
+            action = { kind: 'buttons', confirmLabel: isAppTarget ? 'File issue' : 'Report to platform' };
           }
-          return `
-            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#9873;</span> ${escapeHtml(msg.content || 'The AI suggests reporting this to the platform')}<span style="font-size:9px;opacity:0.4;margin-left:auto">${pId} ${pTs}</span></div>
-            <div class="dc-pr-card" data-platform-issue-msg="${d.msgId || ''}">
-              <div class="dc-pr-card-header">
-                <span style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${escapeHtml(destLabel)}</span>
-              </div>
-              <div style="font-weight:600;margin:4px 0 2px">${escapeHtml(d.title || '')}</div>
-              ${bodyHtml}
-              <div class="dc-pr-card-actions">${actionsHtml}</div>
-            </div>`;
+          rows.push({
+            t: 'issueDraft', key,
+            status: {
+              t: 'status', key: `${key}:s`, icon: 'flag',
+              text: msg.content || 'The AI suggests reporting this to the platform',
+              elapsed: null, stamp,
+            },
+            msgId: d.msgId || null,
+            destLabel: isAppTarget ? `Issue draft — ${d.appName || 'this app'}` : 'Suggested platform report',
+            title: d.title || '',
+            body, action,
+          });
+          return;
         }
         if (msg.ccLog) {
-          const pid = DevChat._detailsId(msg, 'cclog');
-          return `<details class="dc-cc-log" data-persist-id="${pid}"><summary class="dc-cc-log-toggle">${DevChat._activityAgentName(msg)} log</summary><pre class="dc-cc-log-content">${msg.ccLog.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></details>`;
+          rows.push({
+            t: 'ccLog', key,
+            details: DevChat._detailsSpec(msg, 'cclog', false),
+            label: DevChat._activityAgentName(msg),
+            log: msg.ccLog,
+          });
+          return;
         }
         if (msg.progressLog?.length) {
-          // Already merged into a parent "Claude Code is running"
-          // status line by the pre-pass above — nothing to render here.
-          if (mergedProgress.has(msg)) return '';
-          // Orphan progress message — old DB rows that didn't have a
-          // matching predecessor status line. Render in the SAME new
-          // attached style (not the legacy gray box) with a synthetic
-          // status line, so the visual stays consistent across the
-          // timeline regardless of how the row was originally written.
-          const logText = msg.progressLog.join('\n').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          const innerPid = DevChat._detailsId(msg, 'progress');
-          const outerPid = DevChat._detailsId(msg, 'ccrunorphan');
-          const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
-          const id = msg.id || msg._slug || '';
-          const icon = '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>';
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="dc-status-line dc-cc-attached-summary">${icon} ${DevChat._activityAgentName(msg)} output<span class="dc-cc-attached-chevron" aria-hidden="true"></span><span style="font-size:9px;opacity:0.4;margin-left:auto">${id} ${ts}</span></summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+          // Already merged into a parent "Claude Code is running" status line
+          // by the pre-pass — nothing to render here.
+          if (mergedProgress.has(msg)) return;
+          // Orphan progress message — old DB rows with no matching
+          // predecessor status line. Rendered in the SAME attached style with
+          // a synthetic status line, so the timeline stays consistent.
+          rows.push({
+            t: 'attached', key,
+            details: DevChat._detailsSpec(msg, 'ccrunorphan', DevChat._ccDefaultOpen(msg)),
+            icon: 'check',
+            text: `${DevChat._activityAgentName(msg)} output`,
+            elapsed: null, stamp,
+            body: {
+              kind: 'log',
+              persistId: DevChat._detailsId(msg, 'progress'),
+              text: msg.progressLog.join('\n'),
+            },
+          });
+          return;
         }
-        // #361: the "Changes ready" card renders whenever the turn produced
-        // a reviewable commit — i.e. either a preview built (msg.stagingUrl)
-        // OR the staging-independent marker (msg.changesReady) is set on the
-        // message (staging-failed turns, rehydrated metadata, cloned rows).
-        // Staging is an ENRICHMENT of the card, not its on/off switch: when
-        // the preview is absent, the Preview button is shown disabled with a
-        // short "rebuild on propose" note (surfacing the missing-secret hint
-        // when that was the cause), while Propose still works — promote
-        // lazily creates the PR and rebuilds staging itself (routes/votes.js).
+        // #361: the "Changes ready" card renders whenever the turn produced a
+        // reviewable commit — a preview built (stagingUrl) OR the
+        // staging-independent marker. Staging is an ENRICHMENT of the card,
+        // not its on/off switch.
         if (msg.stagingUrl || msg.changesReady) {
-          const stgTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
-          const stgId = msg.id || msg._slug || '';
-          // Once the PR merges (or is mid-merge), the merge path tears down
-          // the staging container, so this historical preview link is dead —
-          // clicking it lands on a 502/blank page. Disable it instead, with a
-          // tooltip pointing the user at the now-live app.
-          const previewGone = !!session && (session.status === 'merged' || session.status === 'merging' || !!session.merged_at);
-          // #439: the Preview button is ACTIVE whenever this card represents
-          // reviewable work that isn't merged. Clicking always routes through
-          // DevChat.previewStaging → ensure-staging, which opens a live
-          // preview as-is OR rebuilds a torn-down one on demand (idle GC /
-          // lost container) — no more dead links or "proposing will rebuild
-          // it" dead-ends. It renders disabled only once the change is merged
-          // (previewGone), when the preview is intentionally gone and the
-          // change is live in the app.
+          // Once the PR merges the merge path tears down the staging
+          // container, so the historical preview link is dead.
+          const previewGone = !!session
+            && (session.status === 'merged' || session.status === 'merging' || !!session.merged_at);
           const canPreview = !previewGone;
-          // Best-known URL handed to the opener as a fallback. ensure-staging
-          // keys off the session id and prefers the session's live
-          // staging_url, so this is only used for the already-live fast path;
-          // prefer the session row over the (possibly stale) message URL.
+          // Prefer the session row over the (possibly stale) message URL.
           const liveUrl = (session && session.staging_url) || msg.stagingUrl || '';
-          // #127: bot-emitted testing guidance lives on the session row
-          // (testing_md / testing_path). When present, offer a "Test this
-          // change" button that opens the preview at the deep link with the
-          // instructions panel showing. The markdown is looked up at click
-          // time (DevChat.previewStaging) — never inlined in the attribute.
+          // #127: bot-emitted testing guidance lives on the session row. The
+          // markdown is looked up at click time, never inlined.
           const hasTesting = !!(session?.testing_md || session?.testing_path);
-          // Active Test button whenever a preview can be opened/rebuilt; the
-          // disabled "Test this change" only once the merge tore it down.
-          const testBtn = !hasTesting ? '' : (canPreview
-            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${liveUrl}', true)">Test this change</button>`
-            : `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="Preview removed after merge — this change is now live in the app">Test this change</button>`);
-          // Disabled tooltip only applies to the merged case now — a missing/
-          // failed-build preview is rebuilt on click and surfaces any reason
-          // (missing secret, etc.) in the preview loader, not here.
-          const previewBtnTitle = 'Preview removed after merge — this change is now live in the app';
-          const previewBtnHtml = canPreview
-            ? `<button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.previewStaging('${liveUrl}', false)">Preview staging</button>`
-            : `<button class="dc-pr-btn dc-pr-btn-preview" disabled title="${escapeHtml(previewBtnTitle)}">Preview staging</button>`;
-          // #439: no inline "proposing will rebuild it" note anymore — the
-          // Preview button itself rebuilds on click.
-          const previewNote = '';
-          // PR link prefers the session row, falling back to the marker the
-          // message carries (so a rehydrated/cloned failure card still links
-          // out even before the session refetch lands).
-          const prUrl = session?.pr_url || msg.prUrl || null;
-          const prNumber = session?.pr_number || msg.prNumber || null;
-          // #195: before/after capture tiles. Visuals are latest-set-per-
-          // session, so only the NEWEST staging card carries them — older
-          // cards from earlier turns would just repeat the same media. The
-          // scan recognizes changesReady cards too so a later success card
-          // still wins; visuals only attach to a card that has a live URL.
+          // #195: before/after tiles. Visuals are latest-set-per-session, so
+          // only the NEWEST staging card carries them.
           let visualsHtml = '';
           if (window.AppView && session?.visuals) {
-            let latestStagingMsg = null;
+            let latest = null;
             for (let vi = DevChat.messages.length - 1; vi >= 0; vi--) {
-              if (DevChat.messages[vi].stagingUrl || DevChat.messages[vi].changesReady) { latestStagingMsg = DevChat.messages[vi]; break; }
+              if (DevChat.messages[vi].stagingUrl || DevChat.messages[vi].changesReady) {
+                latest = DevChat.messages[vi]; break;
+              }
             }
-            if (latestStagingMsg === msg && msg.stagingUrl) visualsHtml = AppView.visualsTilesHtml(session.visuals);
+            if (latest === msg && msg.stagingUrl) visualsHtml = AppView.visualsTilesHtml(session.visuals);
           }
-          // #405: the change card's status used to freeze on "Proposed!"
-          // and never reflect the later merge stages. Drive it from the
-          // shared lifecycle helper so it tracks In vote → Passed → Merging…
-          // → ✓ Merged; the merged case gets a friendlier, self-explanatory
-          // label that doubles as the reason the preview link is gone.
-          let cardStatusHtml = '';
+          // #405: driven by the shared lifecycle helper so the card tracks
+          // In vote → Passed → Merging… → ✓ Merged rather than freezing on
+          // "Proposed!".
+          let status2 = { kind: 'none' };
           if (session && session.status !== 'active' && window.MergeStatus && MergeStatus.lifecycle) {
-            const cardLife = MergeStatus.lifecycle(session);
-            if (cardLife && cardLife.key === 'merged') {
-              cardStatusHtml = '<span class="ms-badge ms-badge-violet" title="This change is merged and now live in the app.">✓ Merged — now live in the app</span>';
-            } else if (cardLife && cardLife.label) {
-              cardStatusHtml = MergeStatus.badgeHtml(cardLife);
-            }
+            const life = MergeStatus.lifecycle(session);
+            if (life && life.key === 'merged') status2 = { kind: 'merged' };
+            else if (life && life.label) status2 = { kind: 'badge', html: MergeStatus.badgeHtml(life) };
           }
-          return `
-            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${stgId} ${stgTs}</span></div>
-            <div class="dc-pr-card" id="dc-pr-card">
-              <div class="dc-pr-card-header">
-                ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-link">PR #${prNumber}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
-                ${(session?.session_title || session?.pr_title) ? `<span class="dc-pr-title">${escapeHtml(session.session_title || session.pr_title)}</span>` : ''}
-                ${window.AppView ? AppView.closesPillHtml(session) : ''}
-                <span style="font-size:9px;opacity:0.4;margin-left:8px">${stgId} ${stgTs}</span>
-              </div>
-              ${visualsHtml ? `<div class="dc-pr-card-visuals" style="margin:6px 0 2px">${visualsHtml}</div>` : ''}
-              <div class="dc-pr-card-actions">
-                ${previewBtnHtml}
-                ${testBtn}
-                ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
-                ${session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR(this)">Propose to group</button>` : ''}
-                ${cardStatusHtml}
-              </div>
-              ${previewNote}
-            </div>`;
+          rows.push({
+            t: 'changes', key,
+            status: { t: 'status', key: `${key}:s`, icon: 'check', html: msg.content || '', text: msg.content || '', elapsed: null, stamp },
+            prUrl: session?.pr_url || msg.prUrl || null,
+            prNumber: session?.pr_number || msg.prNumber || null,
+            title: session?.session_title || session?.pr_title || '',
+            closesHtml: window.AppView ? AppView.closesPillHtml(session) : '',
+            stamp,
+            visualsHtml,
+            preview: { enabled: canPreview, url: liveUrl, title: '' },
+            test: hasTesting ? { enabled: canPreview, url: liveUrl } : null,
+            canPropose: session?.status === 'active',
+            // #558's in-flight spinner, which used to be written onto the
+            // button element the click came from. See `promotePR`.
+            proposePending: Number(DevChat._proposing) === Number(session?.id),
+            status2,
+          });
+          return;
         }
-        const sTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
-        const sId = msg.id || msg._slug || '';
-        // While `_active`, show a CSS arc spinner (clearly rotating, unlike
-        // the near-symmetric gear glyph). Once done, swap to a check mark
-        // so the user can see at a glance which steps have completed.
-        const iconHtml = msg._active
-          ? '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>'
-          : '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>';
 
-        const sumClass = 'dc-status-line dc-cc-attached-summary';
-        const chevron = '<span class="dc-cc-attached-chevron" aria-hidden="true"></span>';
-        const tsSpan = `<span style="font-size:9px;opacity:0.4;margin-left:auto">${sId} ${sTs}</span>`;
-        // #50: live elapsed ticker while `_active`, static "(took …)" once
-        // the step finishes (server durationMs or client-side freeze).
-        const elapsedHtml = DevChat._statusElapsedHtml(msg);
-
-        // Attached live progress log? Render the status line as the
-        // <summary> of an open-by-default <details>, with the
-        // streaming log block inline below. No box, slightly muted
-        // monospaced text — clicking the summary collapses the log
-        // (preserved across renders via _applyDetailsPersistence).
+        const elapsed = DevChat._elapsedSpec(msg);
+        // Attached live progress log? The status line becomes the <summary> of
+        // an open-by-default <details>, with the streaming log inline below.
         const attachedProgress = progressByStatus.get(msg);
         if (attachedProgress) {
-          const logText = (attachedProgress.progressLog || []).join('\n')
-            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          const outerPid = DevChat._detailsId(msg, 'ccrun');
-          // Inner pre keeps the legacy progress pid so
-          // _patchProgressDom() can target it directly when streaming
-          // appends new lines mid-run.
-          const innerPid = DevChat._detailsId(attachedProgress, 'progress');
-          // #50: live activity snippet + step counter, visible even when
-          // the log is collapsed. The spans render unconditionally (even
-          // empty) so _patchProgressSummary can patch them in place as
-          // lines stream in.
           const summ = typeof summarizeCcProgress === 'function'
             ? summarizeCcProgress(attachedProgress.progressLog || [])
-            : { currentLabel: '', steps: 0 };
-          const currentSpan = `<span class="dc-cc-current">${summ.currentLabel ? `— ${escapeHtml(summ.currentLabel)}` : ''}</span>`;
-          const stepsSpan = `<span class="dc-cc-steps">${summ.steps ? `· ${summ.steps} steps` : ''}</span>`;
-          // #892: the DETERMINISTIC stage readout, derived from the phase
-          // markers the run genuinely emits (Syncing with main / Claude is
-          // working / Committing / Pushing / Finished). Unlike the AI guess
-          // beside it, this cannot be wrong — it is what the user has to
-          // look at when the estimate is uncertain.
-          const phaseSpan = `<span class="dc-cc-phase">${summ.phaseLabel ? `· ${escapeHtml(summ.phaseLabel)}` : ''}</span>`;
-          // #892: long-run context, from the measured distribution of 880
-          // real runs — a statement about the population, not a prediction
-          // about this one, so it can never be individually wrong.
-          //
-          // #906: NO VISIBILITY FLAG. This span used to carry
-          // `data-cohort-gated`, computed once here from msg._estimate to
-          // mean "an AI countdown owns the slot, stay quiet until 10 min".
-          // msg._estimate is necessarily falsy at first render — the first
-          // guess is a full 60s estimator tick away — and neither
-          // _applyEstimate nor _patchProgressSummary ever refreshed the
-          // attribute, so every run rendered gated="0" and the range blurb
-          // sat beside the live countdown for the whole run. The rule now
-          // lives entirely in runCohortHint, evaluated fresh on every tick
-          // from the one input that is actually live: elapsed time.
+            : { currentLabel: '', steps: 0, phaseLabel: '' };
           const cohortSince = msg._active && msg.created_at
-            ? new Date(msg.created_at).getTime() : NaN;
-          const cohortSpan = Number.isFinite(cohortSince)
-            ? `<span class="dc-cc-cohort" data-cohort-since="${Math.min(cohortSince, Date.now())}"></span>`
-            : '';
-          // Experimental AI progress estimate: rendered unconditionally
-          // (even empty) so _applyEstimate can patch it in place; only
-          // populated while the server emits cc_estimate for this run.
-          // #359: the remaining-time portion is a live count-down child span
-          // (data-countdown-to) the shared ticker decrements; the phrase stays
-          // plain escaped text. Empty when there's no numeric guess.
-          const estimateSpan = `<span class="dc-cc-estimate" title="Experimental: a small AI model's rough guess from the progress log. May be wrong.">${msg._estimate ? `· ✦ AI guess: ${escapeHtml(msg._estimate)}${DevChat._countdownSpanHtml(msg._countdownTo)}` : ''}</span>`;
-          // #647: the open default follows the STATUS row (the one whose id
-          // supplies the ccrun persist-id), not the attached progress row.
-          // After the clone marker both carry the flag; keying off `msg`
-          // keeps the default aligned with the persisted state's key.
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${phaseSpan}${elapsedHtml}${estimateSpan}${cohortSpan}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+            ? Math.min(new Date(msg.created_at).getTime(), Date.now()) : NaN;
+          rows.push({
+            t: 'attached', key,
+            // #647: the open default follows the STATUS row, not the attached
+            // progress row — keying off `msg` keeps it aligned with the
+            // persisted state's key.
+            details: DevChat._detailsSpec(msg, 'ccrun', DevChat._ccDefaultOpen(msg)),
+            icon: msg._active ? 'spinner' : 'check',
+            html: msg.content || '', text: msg.content || '',
+            elapsed, stamp,
+            progress: {
+              current: summ.currentLabel || '',
+              steps: summ.steps || 0,
+              phase: summ.phaseLabel || '',
+              estimate: msg._estimate || '',
+              countdownTo: msg._countdownTo != null ? msg._countdownTo : null,
+              cohortSince: Number.isFinite(cohortSince) ? cohortSince : null,
+            },
+            body: {
+              kind: 'log',
+              // The inner pre keeps the legacy progress pid so a streaming
+              // append can still target it.
+              persistId: DevChat._detailsId(attachedProgress, 'progress'),
+              text: (attachedProgress.progressLog || []).join('\n'),
+            },
+          });
+          return;
         }
-
-        // Post-turn ccOutput (the markdown summary that the worker
-        // emits when the run finishes — typically attached to a
-        // "Claude Code finished" status line). Same merged shape as
-        // the live-progress case: status line is the <summary>,
-        // markdown body inline below in muted text. We use a
-        // dedicated body class because the content is rendered
-        // markdown HTML, not a monospaced log dump — different font
-        // and indentation than .dc-cc-attached-log.
+        // Post-turn ccOutput — the markdown summary the worker emits when the
+        // run finishes. Same merged shape, a markdown body rather than a log.
         if (msg.ccOutput) {
-          const outerPid = DevChat._detailsId(msg, 'ccout');
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${elapsedHtml}${chevron}${tsSpan}</summary><div class="dc-cc-attached-md">${DevChat.renderMarkdown(msg.ccOutput)}</div></details>`;
+          rows.push({
+            t: 'attached', key,
+            details: DevChat._detailsSpec(msg, 'ccout', DevChat._ccDefaultOpen(msg)),
+            icon: msg._active ? 'spinner' : 'check',
+            html: msg.content || '', text: msg.content || '',
+            elapsed, stamp,
+            body: { kind: 'md', html: DevChat.renderMarkdown(msg.ccOutput) },
+          });
+          return;
         }
-
-        // #664: mid-turn payer switch onto the user's own API key. A
-        // subtle inline notice — key glyph instead of the pipeline
-        // check mark, so it reads as an FYI rather than a completed
-        // build step.
+        // #664: mid-turn payer switch onto the user's own API key. A key glyph
+        // instead of the pipeline check, so it reads as an FYI.
         if (msg.billingSwitch) {
-          return `<div class="dc-status-line" style="opacity:0.8"><span class="dc-status-icon" aria-hidden="true">&#128273;</span> ${escapeHtml(msg.content)}${tsSpan}</div>`;
+          rows.push({ t: 'status', key, icon: 'key', text: msg.content || '', elapsed: null, stamp, dim: true });
+          return;
         }
-
-        // #937: the stop-escalation row. Once the stop has been pending
-        // long enough that it is clearly not landing (the ladder's 40s
-        // rung sets `_forceOffered`), the row grows a Force stop button —
-        // the user's only way out of what was otherwise a permanent
-        // "Stopping…". Same inline-onclick shape as the other in-row
-        // actions (the platform-issue draft card above).
+        // #937: once a stop is clearly not landing, the row grows a Force stop
+        // button — the user's only way out of a permanent "Stopping…".
         if (msg._stopping && msg._forceOffered) {
-          return `<div class="dc-status-line">${iconHtml} ${escapeHtml(msg.content)} ${elapsedHtml}`
-            + '<button class="dc-force-stop-btn" onclick="DevChat._forceStopTurn(this)">Force stop</button>'
-            + `${tsSpan}</div>`;
+          rows.push({
+            t: 'status', key, icon: msg._active ? 'spinner' : 'check',
+            text: msg.content || '', elapsed, stamp, forceStop: true,
+          });
+          return;
         }
-
-        return `<div class="dc-status-line">${iconHtml} ${msg.content} ${elapsedHtml}${tsSpan}</div>`;
+        rows.push({
+          t: 'status', key, icon: msg._active ? 'spinner' : 'check',
+          html: msg.content || '', text: msg.content || '', elapsed, stamp,
+        });
+        return;
       }
 
-      // Out-of-credits card: the dev chat's reply to a 429
-      // { code: 'budget_exceeded' }. Replaces the assistant bubble entirely
-      // with the three routes out — own API key / a coding tool on your
-      // computer / a connected Claude.ai or ChatGPT subscription. Markup,
-      // copy and destinations all live in public/js/credit-options.js so
-      // the card, the red banner and the Generate-proposal modal can't
-      // drift apart. Client-only and never persisted: the refusal wrote no
-      // server row.
-      //
-      // MUST come before the empty-assistant skip below: this row carries
-      // no `content` by design (the card IS the message), so the skip would
-      // otherwise swallow it.
+      // Out-of-credits card: the dev chat's reply to a 429. MUST come before
+      // the empty-assistant skip — this row carries no `content` by design.
       if (msg.creditsCard) {
-        return window.CreditOptions ? CreditOptions.cardHtml(msg.creditsCard) : '';
+        if (window.CreditOptions) rows.push({ t: 'credits', key, html: CreditOptions.cardHtml(msg.creditsCard) });
+        return;
       }
-
       // Skip truly empty assistant placeholders that exist only as the
-      // streaming-target before any tokens arrived. Once content is present
-      // (even if just a [CHAT_ONLY] marker with no body) we always render so
-      // the user can see the reasoning collapsible.
-      if (msg.role === 'assistant' && !msg.content) return '';
+      // streaming target before any tokens arrived.
+      if (msg.role === 'assistant' && !msg.content) return;
 
       const isUser = msg.role === 'user';
       const isCCOutput = (msg.model || '').startsWith('claude-code/');
-      const costLabel = DevChat._messageCostLabel(msg);
-      const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
-      const idLabel = msg.id ? `#${msg.id}` : '';
       const rawContent = msg.content || '';
       const hadChatOnly = /^\[CHAT_ONLY\]/i.test(rawContent);
       const content = rawContent.replace(/^\[CHAT_ONLY\]\s*/i, '');
-      const displayContent = content.trim()
-        ? DevChat.renderMarkdown(content)
-        : `<span style="color:var(--text-muted);font-style:italic">(no visible reply — see reasoning below)</span>`;
-      // For any assistant message that carried a [CHAT_ONLY] tag, surface the
-      // raw output in a collapsible so nothing is ever invisibly swallowed.
-      const reasoningDetail = hadChatOnly
-        ? `<details class="dc-cc-log" style="margin-top:6px" data-persist-id="${DevChat._detailsId(msg, 'mayorraw')}"><summary class="dc-cc-log-toggle">Mayor reasoning (raw)</summary><pre class="dc-cc-log-content">${rawContent.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></details>`
-        : '';
+      const idLabel = msg.id ? `#${msg.id}` : '';
+      const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
+      const msgStamp = `${idLabel} ${ts}`;
 
       if (isCCOutput) {
-        // Extract summary (first line or paragraph) vs full details
         const lines = content.replace(/^\*\*Claude Code output:\*\*\n?/i, '').trim();
         const firstPara = lines.split('\n\n')[0] || lines.split('\n')[0];
-        const hasMore = lines.length > firstPara.length + 10;
-        return `
-          <div class="dc-msg dc-msg-assistant">
-            <div class="dc-msg-header">
-              <span class="text-emerald-400">Claude Code</span>
-              <span style="color:var(--text-muted);font-size:9px;opacity:0.5">${idLabel} ${ts}</span>
-            </div>
-            <div class="dc-msg-content">${DevChat.renderMarkdown(firstPara)}</div>
-            ${hasMore ? `<details class="dc-cc-log" style="margin-top:6px" data-persist-id="${DevChat._detailsId(msg, 'ccfull')}"><summary class="dc-cc-log-toggle">Full output</summary><div class="dc-msg-content" style="padding:8px 10px">${DevChat.renderMarkdown(lines)}</div></details>` : ''}
-          </div>`;
+        rows.push({
+          t: 'msg', key, who: 'cc', model: '', stamp: msgStamp,
+          contentHtml: DevChat.renderMarkdown(firstPara),
+          ...(lines.length > firstPara.length + 10
+            ? { more: { details: DevChat._detailsSpec(msg, 'ccfull', false), html: DevChat.renderMarkdown(lines) } }
+            : null),
+        });
+        return;
       }
 
-      // Q/A chips (#32): only on the latest assistant message of an
-      // interactive session. Rendered even mid-stream (the 'done' event
-      // re-renders before isStreaming flips, so gating on it here would
-      // hide the chips forever) — taps are guarded by isStreaming in the
-      // click handlers instead.
-      const qaChips = (!isUser
-        && msgIdx === qaLastConvoIdx
-        && qaInteractive
-        && Array.isArray(msg.suggestions) && msg.suggestions.length)
-        ? DevChat._qaChipsHtml(msg)
-        : '';
+      // Q/A chips (#32): only on the latest non-system row of an interactive
+      // session. Rendered even mid-stream — the 'done' event re-renders before
+      // isStreaming flips, so gating on it here would hide them forever; taps
+      // are guarded by isStreaming in the click handlers instead.
+      const wantsQa = !isUser && msgIdx === qaLastConvoIdx && qaInteractive
+        && Array.isArray(msg.suggestions) && msg.suggestions.length;
 
-      return `
-        <div class="dc-msg ${isUser ? 'dc-msg-user' : 'dc-msg-assistant'}">
-          <div class="dc-msg-header">
-            <span class="${isUser ? 'text-violet-400' : 'text-emerald-400'}">${isUser ? 'You' : 'AI'}</span>
-            ${msg.model ? `<span style="color:var(--text-muted)">${msg.model.split('-').slice(0, 2).join('-')}${costLabel}</span>` : ''}
-            <span style="color:var(--text-muted);font-size:9px;opacity:0.5">${idLabel} ${ts}</span>
-          </div>
-          <div class="dc-msg-content">${isUser ? DevChat.renderMarkdown(content) : displayContent}</div>
-          ${isUser ? DevChat._attachmentsRowHtml(msg) : ''}
-          ${isUser ? '' : reasoningDetail}
-          ${qaChips}
-        </div>`;
-      // #1049: the flow picker / walkthrough sits at the END of the
-      // transcript, so on an empty session it is the only thing in the pane
-      // and on a resumed walkthrough it stays next to the composer the user
-      // is typing their brief into. Part of the SAME assignment rather than
-      // an insertAdjacentHTML afterwards — one write to innerHTML is one
-      // repaint, and it keeps the card inside the string the rest of this
-      // method's tests render through. Returns '' for every session that is
-      // already under way.
-      // #990: the trailing activity indicator is part of the SAME
-      // assignment for the same reason the flow card is — one write, one
-      // repaint — and because an appended-afterwards node is exactly what
-      // used to get wiped by every re-render.
-    }).join('')
+      rows.push({
+        t: 'msg', key, who: isUser ? 'user' : 'ai',
+        model: msg.model ? `${msg.model.split('-').slice(0, 2).join('-')}${DevChat._messageCostLabel(msg)}` : '',
+        stamp: msgStamp,
+        contentHtml: content.trim()
+          ? DevChat.renderMarkdown(content)
+          : '<span style="color:var(--text-muted);font-style:italic">(no visible reply — see reasoning below)</span>',
+        ...(msgIdx === liveIdx ? { live: true } : null),
+        ...(isUser ? { attachments: DevChat._attachmentRows(msg) } : null),
+        // For any assistant message that carried a [CHAT_ONLY] tag, surface
+        // the raw output so nothing is ever invisibly swallowed.
+        ...(!isUser && hadChatOnly
+          ? { reasoning: { details: DevChat._detailsSpec(msg, 'mayorraw', false), raw: rawContent } }
+          : null),
+        ...(wantsQa ? { qa: DevChat._qaSpec(msg) } : null),
+      });
+    });
+
+    return {
+      rows,
       // #1281: in a hand-off venue the walkthrough IS the launchpad and
-      // renders in the composer's place instead of at the end of the
-      // transcript — rendering it here as well would show it twice.
-      + (DevChat._launchpadVenue() ? '' : DevChat._devFlowHtml())
-      + DevChat._activityHtml();
+      // renders in the composer's place instead — rendering it here as well
+      // would show it twice.
+      devFlowHtml: DevChat._launchpadVenue() ? '' : DevChat._devFlowHtml(),
+      activity: DevChat._activitySpec(),
+    };
+  },
 
+  /** #990's trailing dots, as data. */
+  _activitySpec() {
+    if (!DevChat.isStreaming || !DevChat._activity) return null;
+    // Suppressed while a coding agent's own live log is painting progress:
+    // that row already carries a scrolling log and an ETA, so dots pinned
+    // underneath read as noise. The pre-log gap is still covered, because
+    // that status line is not a live CC run yet.
+    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+      const m = DevChat.messages[i];
+      if (!m || m.role !== 'system') continue;
+      if (!m._active) continue;
+      if (DevChat._isLiveCcRun(m)) return null;
+      break;
+    }
+    return { label: DevChat._activity.label || '' };
+  },
+
+  renderMessages() {
+    const container = document.getElementById('dc-messages');
+    if (!container) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishTranscript) return;
+    react.publishTranscript(DevChat._transcriptView());
+
+    // The two FOREIGN cards in the transcript — `DevFlowSelect`'s walkthrough
+    // and `CreditOptions`' out-of-credits card — are handed to their own
+    // module's `wire()`, which only adds a delegated listener and is
+    // idempotent per element. Unconditional, and after every render rather
+    // than once per mount: a card that appears in a later publish would
+    // otherwise go unwired, which is the #1304 failure. Safe on the line
+    // after the publish because `transcriptStore` flushes synchronously — the
+    // cards are in the document by now, exactly as they were when the line
+    // above was an `innerHTML` assignment. `_bindDevFlowVisibility` in
+    // particular must NOT be gated on the walkthrough rendering here: in a
+    // hand-off venue it renders in the composer's place instead, and that
+    // path wires the card but not the visibility re-check.
     DevChat._wireDevFlowCard();
     DevChat._bindDevFlowVisibility();
-
-    // Delegated hash navigation for any out-of-credits card just rendered
-    // (idempotent per node, so repeated renders never stack handlers).
     DevChat._wireCreditsCards();
 
-    DevChat._applyDetailsPersistence();
-    // #50: start/stop the shared elapsed ticker based on whether this
-    // render left any active status line in the DOM.
+    // #50: start/stop the shared heartbeat based on whether this render left
+    // any ticking span. The spans are the component's now and re-derive their
+    // own text from `nowStore`; what is left here is the timer that publishes
+    // the clock.
     DevChat._syncElapsedTicker();
-    // #285: keep the quick-reply pill bar in sync with the latest message
-    // (it clears once a sent user row becomes the last message).
+    // #285: keep the quick-reply pill bar in sync with the latest message.
     DevChat._renderQuickReplies();
   },
 
-  // ── Q/A mode: suggested-answer chips (#32) ─────────────────
-  //
-  // `suggestions` is [{ question, answers }] — sanitized server-side
-  // (the Mayor's suggest_answers tool) and persisted as
-  // metadata.suggestions on the assistant row. Single question: tapping
-  // a chip sends that answer immediately. Multiple questions: taps
-  // select one answer per group (held in _qaSelection, keyed by group
-  // index) and "Send answers" / "Use the suggested defaults" compose a
-  // numbered reply. The textarea stays usable throughout — chips are a
-  // shortcut, never a constraint.
-
-  _qaSelection: {},
-
-  _qaChipsHtml(msg) {
-    const groups = msg.suggestions;
-    const multi = groups.length > 1;
-    const groupsHtml = groups.map((g, gi) => {
-      const chips = (g.answers || []).map((a, ai) => {
-        const selected = multi && DevChat._qaSelection[gi] === ai;
-        const cls = `dc-qa-chip${ai === 0 ? ' dc-qa-chip-default' : ''}${selected ? ' dc-qa-chip-selected' : ''}`;
-        const hint = ai === 0 ? '<span class="dc-qa-chip-hint">suggested</span>' : '';
-        return `<button type="button" class="${cls}" data-qa-group="${gi}" data-qa-answer="${ai}">${escapeHtml(a)}${hint}</button>`;
-      }).join('');
-      const label = multi && g.question
-        ? `<div class="dc-qa-group-label">${escapeHtml(g.question)}</div>`
-        : '';
-      return `<div class="dc-qa-group">${label}<div class="dc-qa-chip-row">${chips}</div></div>`;
-    }).join('');
-    const actions = multi
-      ? `<div class="dc-qa-actions">
-          <button type="button" class="dc-qa-send" data-qa-send="1">Send answers</button>
-          <button type="button" class="dc-qa-defaults" data-qa-defaults="1">Use the suggested defaults</button>
-        </div>`
-      : '';
-    return `<div class="dc-qa-chips">${groupsHtml}${actions}</div>`;
-  },
-
-  // The chips on screen always belong to the last non-system message
-  // (renderMessages gates rendering to exactly that row), so handlers
-  // resolve the suggestion groups from it rather than trusting the DOM.
-  _qaCurrentGroups() {
-    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-      const m = DevChat.messages[i];
-      if (m.role === 'system') continue;
-      return (m.role === 'assistant' && Array.isArray(m.suggestions) && m.suggestions.length)
-        ? m.suggestions
-        : null;
-    }
-    return null;
+  /** Republish the transcript without re-mounting — every patch path's end. */
+  _publishTranscript() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishTranscript) return;
+    react.publishTranscript(DevChat._transcriptView());
   },
 
   _onQaChipClick(chip) {
@@ -6665,18 +6317,15 @@ const DevChat = {
   },
 
   _renderQuickReplies() {
-    const bar = document.getElementById('dc-quick-replies');
-    if (!bar) return;
-    const replies = DevChat._currentQuickReplies();
-    if (!replies || !replies.length) {
-      bar.innerHTML = '';
-      bar.classList.remove('dc-quick-replies-active');
-      return;
-    }
-    bar.innerHTML = replies.map((r, i) =>
-      `<button type="button" class="dc-quick-pill" data-quick-reply-idx="${i}">${escapeHtml(r)}</button>`
-    ).join('');
-    bar.classList.add('dc-quick-replies-active');
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react) return;
+    // The bar element AND its `dc-quick-replies-active` are the composer's
+    // now — `QuickRepliesBar` derives the class from the same list it draws,
+    // so there is one answer to "are there pills" instead of two. The
+    // delegated click `_wireQuickReplies` binds on that element still reads
+    // each pill's `data-quick-reply-idx`.
+    react.publishQuickReplies({ replies: DevChat._currentQuickReplies() || [] });
   },
 
   // Bind the pill-bar click delegation once per renderChatView (the bar
@@ -6690,6 +6339,34 @@ const DevChat = {
       if (!pill) return;
       DevChat._onQuickReplyClick(pill);
     });
+  },
+
+  // Fill `#dc-session-header`. The element is `renderChatView`'s and is
+  // rebuilt on every render, so this mounts per render and the previous
+  // host's portal entry is swept as detached (lib/legacy-portals.tsx).
+  //
+  // The rows ride in WITH the mount rather than in a publish after it: an
+  // empty strip for one frame is a visible flicker on the one row that is
+  // supposed to be the constant on this screen.
+  // Fill `#dc-banners`, the display:contents host `renderChatView` writes.
+  // Mounted per render like the other strips, with the state riding in so a
+  // banner that has something to say never blinks in a frame late.
+  _renderBanners() {
+    const host = document.getElementById('dc-banners');
+    if (!host) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishBanners) return;
+    react.publishBanners(DevChat._bannersView());
+  },
+
+  _renderSessionHeader() {
+    const host = document.getElementById('dc-session-header');
+    if (!host) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishSessionHeader) return;
+    react.publishSessionHeader(DevChat._sessionHeaderView());
   },
 
   // True when the device's PRIMARY pointer is coarse (finger) — i.e. a
@@ -6781,16 +6458,6 @@ const DevChat = {
     return !(msg && msg.inherited);
   },
 
-  // Attribute pair for a dc-cc-attached <details>. The bare `open` is
-  // emitted only when the block should start expanded: relying on
-  // _applyDetailsPersistence to close it after paint would flash the full
-  // log for a frame and fire a spurious toggle.
-  _ccOpenAttrs(msg) {
-    return DevChat._ccDefaultOpen(msg)
-      ? 'data-default-open="1" open'
-      : 'data-default-open="0"';
-  },
-
   // ── <details> open/closed persistence ─────────────────────
   //
   // renderMessages() blows away the DOM on every re-render, so native <details>
@@ -6816,34 +6483,36 @@ const DevChat = {
     catch {}
   },
 
-  _applyDetailsPersistence() {
+  // ── The <details> open state, which survives a repaint ────────────
+  //
+  // `_applyDetailsPersistence` walked `#dc-messages` after EVERY render, set
+  // `.open` from the stored map and bound a `toggle` listener to write it
+  // back. Both halves are the component's now, and these are what it asks:
+  // `_detailsOpen` for the initial state, `_detailsToggled` when the reader
+  // changes it. The storage convention is unchanged —
+  //
+  //   state[key] === 1 → the reader opened a default-closed widget
+  //   state[key] === 0 → the reader closed a default-open widget
+  //   missing          → the widget's own default
+  //
+  // — which is what keeps a session's disclosures where the reader left them
+  // across a reload, not just across a repaint.
+  _detailsOpen(persistId, defaultOpen) {
     const sid = DevChat.currentSession?.id;
-    if (!sid) return;
+    if (!sid || !persistId) return !!defaultOpen;
     const state = DevChat._readDetailsState(sid);
-    document.querySelectorAll('#dc-messages [data-persist-id]').forEach((el) => {
-      // The persistence layer applies to <details> only — the inner
-      // <pre> we tag with a persist-id (so live progress updates can
-      // find it) isn't a disclosure widget and has no toggle event.
-      if (el.tagName !== 'DETAILS') return;
-      const key = el.dataset.persistId;
-      const defaultOpen = el.dataset.defaultOpen === '1';
-      // Storage convention:
-      //   state[key] === 1 → user explicitly opened a default-closed widget
-      //   state[key] === 0 → user explicitly closed a default-open widget
-      //   missing          → use the widget's default
-      if (state[key] === 1) el.open = true;
-      else if (state[key] === 0) el.open = false;
-      else el.open = defaultOpen;
-      el.addEventListener('toggle', () => {
-        const s = DevChat._readDetailsState(sid);
-        if (el.open === defaultOpen) {
-          delete s[key]; // back to default — drop the override
-        } else {
-          s[key] = el.open ? 1 : 0;
-        }
-        DevChat._writeDetailsState(sid, s);
-      });
-    });
+    if (state[persistId] === 1) return true;
+    if (state[persistId] === 0) return false;
+    return !!defaultOpen;
+  },
+
+  _detailsToggled(persistId, defaultOpen, open) {
+    const sid = DevChat.currentSession?.id;
+    if (!sid || !persistId) return;
+    const s = DevChat._readDetailsState(sid);
+    if (!!open === !!defaultOpen) delete s[persistId]; // back to default
+    else s[persistId] = open ? 1 : 0;
+    DevChat._writeDetailsState(sid, s);
   },
 
   // Render markdown to sanitized HTML.
@@ -7016,45 +6685,70 @@ const DevChat = {
     });
   },
 
-  // Stabilized updater for the LIVE streaming assistant bubble. Replaces the
-  // old per-token `el.innerHTML = renderMarkdown(partialContent)` with three
+  // ── The live bubble (#dc-messages' one 60fps writer) ──────────────
+  //
+  // The stabilized updater for a streaming assistant bubble, with three
   // anti-flicker behaviours (see the proposal/dev-session spec):
   //   • Holds back the trailing incomplete line — only the completed portion
   //     is parsed as markdown, the in-progress final line is appended as
   //     escaped plaintext. A `- [ ]` fragment never momentarily renders as a
   //     checkbox; the row appears once, when its line is finished.
-  //   • Throttles DOM writes to one paint per animation frame, so rows above
-  //     the cursor don't redraw on every token.
-  //   • Swaps idempotently — the rendered HTML is cached on the element and
-  //     the innerHTML assignment is skipped when it hasn't changed.
-  // `el` is the .dc-msg-content node; `fullText` is the full display content
-  // so far; `opts.breaks` honours the caller's chat-vs-spec line-break mode.
-  _renderStreamingMarkdown(el, fullText, opts = {}) {
-    if (!el) return;
-    el._streamPending = { fullText, breaks: opts.breaks !== false };
-    DevChat._streamEl = el;
-    if (el._streamRaf != null) return; // a flush is already scheduled
+  //   • Throttles to one paint per animation frame, so rows above the cursor
+  //     don't redraw on every token.
+  //   • Publishes idempotently — the rendered HTML is cached in `_streamHtml`
+  //     and an unchanged frame is dropped.
+  //
+  // It used to throw `el.innerHTML` at the last `.dc-msg-assistant
+  // .dc-msg-content` in the transcript, found by `querySelectorAll(…)[length
+  // - 1]`. The transcript is a component now, so it publishes into
+  // `streamStore` instead — a store exactly ONE row subscribes to, which is
+  // what keeps a per-frame publish from re-rendering the whole list (see
+  // features/dev-chat/transcript-store.ts).
+  //
+  // `_streamKey` is the row it belongs to. Non-null means "a turn is writing
+  // right now", which is also how `_transcriptView` decides which row is live.
+  // `fullText` is the display content so far; `opts.breaks` honours the
+  // caller's chat-vs-spec line-break mode.
+  _streamKey: null,
+  _streamPending: null,
+  _streamRaf: null,
+  _streamRafKind: null,
+  _streamHtml: null,
+
+  _renderStreamingMarkdown(msg, fullText, opts = {}) {
+    const key = DevChat._liveRowKey(msg);
+    if (!key) return;
+    DevChat._streamPending = { key, fullText, breaks: opts.breaks !== false };
+    DevChat._streamKey = key;
+    if (DevChat._streamRaf != null) return; // a flush is already scheduled
     const flush = () => {
-      el._streamRaf = null;
-      const pend = el._streamPending;
+      DevChat._streamRaf = null;
+      const pend = DevChat._streamPending;
       if (!pend) return;
-      el._streamPending = null;
-      DevChat._writeStreamingHtml(el, pend.fullText, pend.breaks, false);
+      DevChat._streamPending = null;
+      DevChat._writeStreamingHtml(pend.key, pend.fullText, pend.breaks, false);
     };
     if (typeof requestAnimationFrame === 'function') {
-      el._streamRaf = requestAnimationFrame(flush);
-      el._streamRafKind = 'raf';
+      DevChat._streamRaf = requestAnimationFrame(flush);
+      DevChat._streamRafKind = 'raf';
     } else {
-      el._streamRaf = setTimeout(flush, 16);
-      el._streamRafKind = 'timeout';
+      DevChat._streamRaf = setTimeout(flush, 16);
+      DevChat._streamRafKind = 'timeout';
     }
   },
 
-  // Compute the bubble HTML (held-back tail unless `final`) and assign it
-  // only when it differs from the last write, eliminating redundant node
-  // churn. `final` renders the FULL content with no held-back line so a
-  // finished bubble is byte-exact.
-  _writeStreamingHtml(el, fullText, breaks, final) {
+  /** The transcript row a message occupies, by the same rule the model uses. */
+  _liveRowKey(msg) {
+    if (!msg) return null;
+    const idx = DevChat.messages.indexOf(msg);
+    return DevChat._rowKey(msg, idx < 0 ? DevChat.messages.length - 1 : idx);
+  },
+
+  // Compute the bubble HTML (held-back tail unless `final`) and publish it
+  // only when it differs from the last write, eliminating redundant renders.
+  // `final` renders the FULL content with no held-back line so a finished
+  // bubble is byte-exact.
+  _writeStreamingHtml(key, fullText, breaks, final) {
     let html;
     if (final) {
       html = fullText ? DevChat.renderMarkdown(fullText, { breaks }) : '';
@@ -7068,9 +6762,11 @@ const DevChat = {
       // Helper script failed to load — degrade to the plain full render.
       html = DevChat.renderMarkdown(fullText, { breaks });
     }
-    if (el._streamHtml === html) return;
-    el._streamHtml = html;
-    el.innerHTML = html;
+    if (DevChat._streamHtml === html) return;
+    DevChat._streamHtml = html;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (react && react.publishStream) react.publishStream({ key, html });
   },
 
   // Flush any pending throttled render and re-render the active streaming
@@ -7078,20 +6774,26 @@ const DevChat = {
   // done / stopped / assistant_message_end / _finishStreaming so the sealed
   // bubble is exact even if a frame was still queued.
   _flushStreamingFinal() {
-    const el = DevChat._streamEl;
-    if (!el) return;
-    DevChat._streamEl = null;
-    if (el._streamRaf != null) {
-      if (el._streamRafKind === 'raf' && typeof cancelAnimationFrame === 'function') {
-        cancelAnimationFrame(el._streamRaf);
+    const key = DevChat._streamKey;
+    if (!key) return;
+    // Cleared FIRST, and that is the whole seam: `renderMessages` runs on the
+    // very next line of the `done` handler, and `_transcriptView` reads this
+    // to decide which row is live. A row that is no longer being written must
+    // render its content from the model — `msg.content` is authoritative by
+    // then — or the sealed text would vanish on the render that follows.
+    DevChat._streamKey = null;
+    if (DevChat._streamRaf != null) {
+      if (DevChat._streamRafKind === 'raf' && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(DevChat._streamRaf);
       } else {
-        clearTimeout(el._streamRaf);
+        clearTimeout(DevChat._streamRaf);
       }
-      el._streamRaf = null;
+      DevChat._streamRaf = null;
     }
-    const pend = el._streamPending;
-    el._streamPending = null;
-    if (pend) DevChat._writeStreamingHtml(el, pend.fullText, pend.breaks, true);
+    const pend = DevChat._streamPending;
+    DevChat._streamPending = null;
+    if (pend) DevChat._writeStreamingHtml(pend.key, pend.fullText, pend.breaks, true);
+    DevChat._streamHtml = null;
   },
 
   _lockedToBottom: true,
@@ -7185,188 +6887,181 @@ const DevChat = {
   },
 
   // ── Session list ──────────────────────────────────────────
+  //
+  // Builds the row models; features/dev-chat/session-list.tsx draws them.
+  // The HOST stays ours (renderChatView's template writes `#dc-session-list`
+  // with the pane's scroll geometry) and its CHILDREN are React's.
+  //
+  // Which buttons a row gets is the substance here, and none of it follows
+  // from the status alone — see ./session-list-store.ts's header for the
+  // three rules, and why Archive is gated independently of the rest.
+  _sessionRow(s) {
+    const title = s.session_title || s.pr_title || s.branch_name || 'Session';
+    // #1038: this list is the one session surface that never had a working
+    // indicator — GET /api/apps/:slug/sessions returns `warm` (a container
+    // exists) but no `busy`. The live store supplies it client-side, so the
+    // row matches the board and the cog drawer without widening that payload.
+    const busy = (typeof window !== 'undefined' && window.SessionState)
+      ? SessionState.isBusy(s.id, false) : false;
+    // Promoted sessions can't be demoted to 'paused' (their PR must stay
+    // votable), but a warm worker can still be freed — same endpoint, server
+    // keeps status 'promoted' (keptPromoted). Once the worker is gone
+    // (`warm` false) there's nothing left to free, so no button.
+    const actions = [];
+    if (s.status === 'active') {
+      actions.push({
+        key: 'pause', label: 'Pause', busy: 'Pausing…', tone: 'quiet',
+        fn: '_sessionListPause', args: [s.id, 'pause'],
+      });
+    }
+    if (s.status === 'promoted' && s.warm) {
+      actions.push({
+        key: 'free', label: 'Free worker', busy: 'Freeing…', tone: 'quiet',
+        title: 'Frees the AI worker. The PR stays up for voting.',
+        fn: '_sessionListPause', args: [s.id, 'pause'],
+      });
+    }
+    if (s.status === 'paused') {
+      actions.push({
+        key: 'resume', label: 'Resume', busy: 'Resuming…', tone: 'go',
+        fn: '_sessionListPause', args: [s.id, 'resume'],
+      });
+    }
+    if (s.status === 'archived') {
+      actions.push({
+        key: 'unarchive', label: 'Unarchive', busy: '...', tone: 'go',
+        title: 'Restore this session (reopens the PR)',
+        fn: '_sessionListUnarchive', args: [s.id],
+      });
+    }
+    // Archive is gated INDEPENDENTLY of the three above: the backend
+    // archives any open session (active/promoted/paused) regardless of warm
+    // state, so a cold promoted proposal keeps its Archive button even
+    // though it has nothing left to Free. (Re-coupling this to the others is
+    // the regression this restores.)
+    if (s.status === 'active' || s.status === 'promoted' || s.status === 'paused') {
+      actions.push({
+        key: 'archive', label: 'Archive', busy: '...', tone: 'danger',
+        title: 'Archive (frees the slot; restorable for a while)',
+        fn: '_sessionListArchive', args: [s.id, title],
+      });
+    }
+    return {
+      id: s.id,
+      status: s.status,
+      statusTone: (s.status === 'active' || s.status === 'promoted' || s.status === 'paused')
+        ? s.status : 'other',
+      title,
+      branch: s.branch_name || '',
+      busy,
+      pr: s.pr_url ? { url: s.pr_url, number: s.pr_number } : null,
+      date: new Date(s.created_at).toLocaleDateString(),
+      actions,
+    };
+  },
 
   renderSessionList() {
     const container = document.getElementById('dc-session-list');
     if (!container) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react) return;
+    react.publishSessionList({
+      rows: DevChat.sessions.map((s) => DevChat._sessionRow(s)),
+    });
+  },
 
-    if (DevChat.sessions.length === 0) {
-      container.innerHTML = `
-        <div class="text-center px-6 py-12">
-          <p class="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">Want to change this app? Just ask.</p>
-          <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-3 max-w-xs mx-auto">
-            Describe what you'd like different in plain English — an AI writes the code and opens a
-            real pull request. No coding required. The app's users then vote it in.
-          </p>
-          <p class="text-xs text-zinc-500 dark:text-zinc-500">
-            Hit <span class="font-medium text-emerald-600 dark:text-emerald-400">+ New Session</span>
-            above to start, e.g. <span class="italic">"make the header dark blue"</span>.
-          </p>
-        </div>`;
-      return;
+  // ── What the rows' buttons do ─────────────────────────────
+  //
+  // The list used to bind these per render, by class, over markup it had
+  // just written. They are named calls now (the component dispatches by
+  // name — dev-chat.js cannot be imported, see ./mount.ts), and each
+  // returns the label to FLASH on the button or null to restore it. That is
+  // the whole of what the DOM writes in here used to do.
+
+  async openSessionFromList(id) {
+    await DevChat.openSession(parseInt(id), { userOpened: true });
+    DevChat.renderChatView();
+    App.updateHash();
+    return null;
+  },
+
+  // Reload this app's sessions and repaint the list. Every action ends here.
+  async _reloadSessionList() {
+    if (AppView.appData) {
+      await DevChat.loadSessions(AppView.appData.slug);
+      DevChat.renderSessionList();
     }
+    await DevChat.loadActiveSessions();
+  },
 
-    container.innerHTML = DevChat.sessions.map((s) => {
-      const statusColor =
-        s.status === 'active' ? 'text-emerald-400' :
-        s.status === 'promoted' ? 'text-violet-400' :
-        s.status === 'paused' ? 'text-zinc-400' :
-        'text-zinc-500';
-      // #1038: this list is the one session surface that never had a
-      // working indicator — GET /api/apps/:slug/sessions returns `warm`
-      // (a container exists) but no `busy`. The live store supplies it
-      // client-side, so the row matches the board and the cog drawer
-      // without widening that payload.
-      const busy = (typeof window !== 'undefined' && window.SessionState)
-        ? SessionState.isBusy(s.id, false) : false;
-      const busyTag = busy
-        ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
-        : '';
-      // Promoted sessions can't be demoted to 'paused' (their PR must
-      // stay votable), but a warm worker can still be freed — same
-      // endpoint, server keeps status 'promoted' (keptPromoted). Once
-      // the worker is gone (`warm` false) there's nothing left to free,
-      // so no button.
-      const isPausable = s.status === 'active';
-      const isFreeable = s.status === 'promoted' && s.warm;
-      const isPaused = s.status === 'paused';
-      const isArchived = s.status === 'archived';
-      const isActionable = isPausable || isFreeable || isPaused;
-      // Archive is gated independently of isActionable: the backend
-      // archives any open session (active/promoted/paused) regardless of
-      // warm state, so a cold promoted proposal must keep its Archive
-      // button even though it has nothing left to Free. (Re-coupling this
-      // to isActionable is the regression this restores.)
-      const isArchivable = s.status === 'active' || s.status === 'promoted' || s.status === 'paused';
-      const date = new Date(s.created_at).toLocaleDateString();
-      return `
-        <div class="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-800/50 flex items-center gap-2" data-id="${s.id}">
-          <span class="text-xs ${statusColor} font-mono">${s.status}</span>
-          <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}</span>
-          ${busyTag}
-          ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
-          ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
-          ${isFreeable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" data-freeing="1" title="Frees the AI worker. The PR stays up for voting." onclick="event.stopPropagation()">Free worker</button>` : ''}
-          ${isPaused ? `<button class="dc-pause-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" data-action="resume" onclick="event.stopPropagation()">Resume</button>` : ''}
-          ${isArchived ? `<button class="dc-unarchive-btn text-xs text-emerald-400 hover:text-emerald-300" data-id="${s.id}" onclick="event.stopPropagation()" title="Restore this session (reopens the PR)">Unarchive</button>` : ''}
-          ${isArchivable ? `<button class="dc-archive-btn text-xs text-zinc-500 hover:text-red-400" data-id="${s.id}" data-name="${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}" title="Archive (frees the slot; restorable for a while)" onclick="event.stopPropagation()">Archive</button>` : ''}
-          <span class="text-xs text-zinc-600">${date}</span>
-        </div>`;
-    }).join('');
+  // Pause / Free-worker / Resume. One method, dispatched on `action`, so we
+  // don't have near-identical handlers ("Free worker" is the pause endpoint
+  // hitting a promoted session — the server frees the worker and answers
+  // keptPromoted). On 4xx (e.g. cap reached on resume), surface the server's
+  // error message rather than silently failing.
+  async _sessionListPause(id, action) {
+    let body = {};
+    try {
+      const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
+      body = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        PlatformUI.toast(body.error || `Failed to ${action} session`);
+        return null;
+      }
+    } catch {
+      return null;
+    }
+    // Same deliberate-pause sync as the cross-app panel (#193): keep the
+    // local currentSession copy honest so the refocus auto-resume doesn't
+    // silently re-activate a session the user just paused. keptPromoted =
+    // server left the status 'promoted'; don't mislabel.
+    if (action === 'pause' && !body.keptPromoted
+        && DevChat.currentSession && Number(DevChat.currentSession.id) === Number(id)) {
+      DevChat.currentSession.status = 'paused';
+    }
+    await DevChat._reloadSessionList();
+    // The row re-renders without the button (warm flips false), so flash the
+    // outcome here, where the user just clicked.
+    return body.keptPromoted ? 'Worker freed' : null;
+  },
 
-    container.querySelectorAll('.dc-session-item').forEach((el) => {
-      el.addEventListener('click', async () => {
-        await DevChat.openSession(parseInt(el.dataset.id), { userOpened: true });
-        DevChat.renderChatView();
-        App.updateHash();
-      });
+  // Archive. Reversible: it frees the active-session slot, tears down
+  // staging + worker, and closes the PR, but keeps Claude's memory and the
+  // branch so Unarchive can restore it (until the retention GC eventually
+  // purges memory). Wording reflects that it's recoverable.
+  async _sessionListArchive(id, name) {
+    const ok = await ConfirmModal.show({
+      title: `Archive "${name || 'this session'}"?`,
+      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
+      confirmLabel: 'Archive',
+      danger: true,
     });
+    if (!ok) return null;
+    await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
+    await DevChat._reloadSessionList();
+    return null;
+  },
 
-    // Pause / Free-worker / Resume buttons. All share the .dc-pause-btn
-    // class and dispatch via data-action so we don't have near-identical
-    // handlers ("Free worker" is the pause endpoint hitting a promoted
-    // session — the server frees the worker and answers keptPromoted).
-    // On 4xx (e.g. cap reached on resume), surface the server's error
-    // message rather than silently failing.
-    container.querySelectorAll('.dc-pause-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = btn.dataset.id;
-        const action = btn.dataset.action;
-        const freeing = !!btn.dataset.freeing;
-        const original = btn.textContent;
-        btn.textContent = action === 'pause' ? (freeing ? 'Freeing…' : 'Pausing…') : 'Resuming…';
-        btn.disabled = true;
-        let body = {};
-        try {
-          const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
-          body = await resp.json().catch(() => ({}));
-          if (!resp.ok) {
-            PlatformUI.toast(body.error || `Failed to ${action} session`);
-            btn.textContent = original;
-            btn.disabled = false;
-            return;
-          }
-          const data = await resp.json().catch(() => ({}));
-          // The row will re-render without the button (warm flips false),
-          // so flash the outcome here where the user just clicked.
-          if (data.keptPromoted) btn.textContent = 'Worker freed';
-        } catch {
-          btn.textContent = original;
-          btn.disabled = false;
-          return;
-        }
-        // Same deliberate-pause sync as the cross-app panel (#193): keep
-        // the local currentSession copy honest so the refocus auto-resume
-        // doesn't silently re-activate a session the user just paused.
-        // keptPromoted = server left the status 'promoted'; don't mislabel.
-        if (action === 'pause' && !body.keptPromoted
-            && DevChat.currentSession && Number(DevChat.currentSession.id) === Number(id)) {
-          DevChat.currentSession.status = 'paused';
-        }
-        if (AppView.appData) {
-          await DevChat.loadSessions(AppView.appData.slug);
-          DevChat.renderSessionList();
-        }
-        await DevChat.loadActiveSessions();
-      });
-    });
-
-    // Archive. Reversible now: it frees the active-session slot, tears
-    // down staging + worker, and closes the PR, but keeps Claude's memory
-    // and the branch so Unarchive can restore it (until the retention GC
-    // eventually purges memory). Wording reflects that it's recoverable.
-    container.querySelectorAll('.dc-archive-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const name = btn.dataset.name || 'this session';
-        const ok = await ConfirmModal.show({
-          title: `Archive "${name}"?`,
-          message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
-          confirmLabel: 'Archive',
-          danger: true,
-        });
-        if (!ok) return;
-        btn.textContent = '...';
-        await fetch(`/api/sessions/${btn.dataset.id}/archive`, { method: 'POST' });
-        if (AppView.appData) {
-          await DevChat.loadSessions(AppView.appData.slug);
-          DevChat.renderSessionList();
-        }
-        await DevChat.loadActiveSessions();
-      });
-    });
-
-    // Unarchive. Restores an archived session to 'paused' (opening it then
-    // auto-resumes) and best-effort reopens its PR. If the retention GC
-    // already purged the CC volume, we warn that Claude starts fresh.
-    container.querySelectorAll('.dc-unarchive-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const original = btn.textContent;
-        btn.textContent = '...';
-        btn.disabled = true;
-        try {
-          const resp = await fetch(`/api/sessions/${btn.dataset.id}/unarchive`, { method: 'POST' });
-          const data = await resp.json().catch(() => ({}));
-          if (!resp.ok) {
-            PlatformUI.toast(data.error || 'Failed to unarchive session');
-            btn.textContent = original;
-            btn.disabled = false;
-            return;
-          }
-          if (data.ccPurged) {
-            PlatformUI.alert({ title: 'Session restored', message: "Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch." });
-          }
-        } catch {
-          btn.textContent = original;
-          btn.disabled = false;
-          return;
-        }
-        if (AppView.appData) {
-          await DevChat.loadSessions(AppView.appData.slug);
-          DevChat.renderSessionList();
-        }
-        await DevChat.loadActiveSessions();
-      });
-    });
+  // Unarchive. Restores an archived session to 'paused' (opening it then
+  // auto-resumes) and best-effort reopens its PR. If the retention GC
+  // already purged the CC volume, we warn that Claude starts fresh.
+  async _sessionListUnarchive(id) {
+    try {
+      const resp = await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        PlatformUI.toast(data.error || 'Failed to unarchive session');
+        return null;
+      }
+      if (data.ccPurged) {
+        PlatformUI.alert({ title: 'Session restored', message: "Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch." });
+      }
+    } catch {
+      return null;
+    }
+    await DevChat._reloadSessionList();
+    return null;
   },
 
   // ── Sync-with-main banner (#8, progress #252) ─────────────
@@ -7416,23 +7111,108 @@ const DevChat = {
   // merge_conflict_state / behind_main, plus yes_count + majority (added for
   // this feature) so the in-vote tally and the "Passed — merging shortly"
   // state resolve exactly as on the feed.
-  _renderHeaderStatusPill(session) {
-    return `<span id="dc-status-pill">${DevChat._statusPillInnerHtml(session)}</span>`;
-  },
-
-  _statusPillInnerHtml(session) {
-    if (!session || !(window.MergeStatus && MergeStatus.lifecycle)) return '';
+  // The lifecycle descriptor the header pill draws, or null when this
+  // session has none worth drawing (paused, archived, …). `MergeStatus`
+  // owns every rule that decides it; this only carries the answer, which is
+  // already a plain object and so crosses the store unchanged.
+  _headerLife(session) {
+    if (!session || !(window.MergeStatus && MergeStatus.lifecycle)) return null;
     const life = MergeStatus.lifecycle(session);
-    if (!life || !life.label) return '';
-    return MergeStatus.pillHtml(life);
+    return (life && life.label) ? life : null;
   },
 
-  // #405: patch the header pill in place (used while a turn is streaming, so
-  // we don't re-render the whole view and disrupt the live message stream).
-  _patchHeaderStatusPill() {
-    const el = document.getElementById('dc-status-pill');
-    if (!el) return;
-    el.innerHTML = DevChat._statusPillInnerHtml(DevChat.currentSession);
+  // #1348's dropdown, as the spec the component draws. `BuildVenues.venue()`
+  // is the same lookup `selectorHtml` did before this chunk retired it; the
+  // title sentence is that builder's, moved here whole.
+  _headerVenue(session) {
+    if (!window.BuildVenues || !BuildVenues.venue) return null;
+    const v = BuildVenues.venue(DevChat._currentVenueId());
+    if (!v) return null;
+    return {
+      id: v.id,
+      label: v.label,
+      title: 'Building in ' + v.label + '. ' + v.blurb
+        + ' Pick a different venue — on Usernode, on your computer, or handed to'
+        + ' Claude Code or Codex on the web.',
+      // Mid-turn the venue is not changeable: a running turn holds the
+      // worker, and moving it under itself is the failure the old
+      // `agentSelect.disabled` guarded against. Same rule, new control.
+      disabled: !!DevChat.isStreaming,
+    };
+  },
+
+  // `currentSession`, not an argument: `_headerVenue` resolves the venue
+  // through `_currentVenueId()`, which is deliberately the ONE place every
+  // input to "which venue is this?" meets. A session passed in here would be a
+  // second answer to that question, and both callers pass the same row anyway.
+  _sessionHeaderView() {
+    const session = DevChat.currentSession;
+    const s = session || {};
+    return {
+      backHref: App.currentApp ? `#app/${App.currentApp}/dev` : '',
+      title: s.session_title || s.pr_title || s.branch_name || 'Session',
+      branch: s.branch_name || '',
+      pr: s.pr_number || null,
+      prTitle: s.pr_number
+        ? `This session's pull request — every change in this chat goes to PR #${s.pr_number}. `
+          + 'Use “Start a new change” for separate work.'
+        : '',
+      newChangeTitle: 'This chat is one change → one pull request. A PR opens after the first build.',
+      life: DevChat._headerLife(session),
+      venue: DevChat._headerVenue(session),
+    };
+  },
+
+  // Repaint the header strip WITHOUT re-rendering the view.
+  //
+  // This was `_patchHeaderStatusPill`, and it existed because #405's
+  // lifecycle pill had to advance mid-turn (In vote → Passed → Merging…)
+  // while a live message stream was on screen, and a full `renderChatView`
+  // would have thrown that stream away. It wrote `#dc-status-pill.innerHTML`
+  // in place; the strip is its own portal now, so republishing it re-renders
+  // the header ALONE and touches nothing below it — which is what let the
+  // second in-place write on this strip go too (`_setStreamingUI` used to set
+  // `#dc-venue-select.disabled` by hand, and a rendered `disabled` would have
+  // clobbered it on the next paint anyway).
+  _repaintSessionHeader() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishSessionHeader) return;
+    react.publishSessionHeader(DevChat._sessionHeaderView());
+  },
+
+  // The two header controls that used to be wired by id after the paint.
+  // Named, because the component dispatches by name into `window.DevChat`
+  // rather than holding a closure over a render that is already gone.
+
+  /** "PR #123" — jump to the change card below and flash it. */
+  revealPrCard() {
+    const card = document.getElementById('dc-pr-card');
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.add('dc-pr-card-highlight');
+    setTimeout(() => card.classList.remove('dc-pr-card-highlight'), 1500);
+  },
+
+  /** The back control's plain-click path — the modified-click guard is the
+   *  component's, because only it has the event. */
+  leaveSession() {
+    // #771: leaving the session unmounts the staging panel slot — close
+    // a docked preview with it (fullscreen previews float independently
+    // and are unaffected).
+    DevChat._resetStagingPanel();
+    DevChat.currentSession = null;
+    DevChat.messages = [];
+    // The title marker describes the session we just left — drop it
+    // so the forum doesn't claim to be thinking / done.
+    DevChat.setTitleStatus(null);
+    // Forum revision: backing out of a session returns to the dev
+    // forum page (there is no session-list screen anymore).
+    if (typeof App !== 'undefined' && App.switchTab) {
+      App.switchTab('dev');
+    } else {
+      DevChat.renderChatView();
+    }
   },
 
   // #405: re-read the open session's lifecycle fields after a vote_update /
@@ -7469,73 +7249,31 @@ const DevChat = {
       if (session.test_results !== undefined) DevChat.currentSession.test_results = session.test_results;
       if (session.conflict_files !== undefined) DevChat.currentSession.conflict_files = session.conflict_files;
       if (!changed) return;
-      if (DevChat.isStreaming) DevChat._patchHeaderStatusPill();
+      if (DevChat.isStreaming) DevChat._repaintSessionHeader();
       else DevChat.renderChatView();
     } catch { /* network blip — ignore, next event/reload reconciles */ }
   },
 
-  _renderSyncBannerHtml(session) {
-    const behind = session && Number(session.behind_main) || 0;
+  // The sync-with-main banner, as a view (features/dev-chat/banners-store.ts)
+  // in its four states. Which state is entirely `_syncStateFor`'s and
+  // `behind_main`'s; this carries the answer.
+  _syncBannerView(session) {
+    const behind = (session && Number(session.behind_main)) || 0;
     const sync = DevChat._syncStateFor(session);
-    if (behind <= 0 && !sync) return '';
-
-    const warnIcon = `<svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
-        </svg>`;
-    const btnCls = 'rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 text-xs font-medium text-white transition-colors shrink-0';
-    const chatBusy = !!DevChat.isStreaming;
-    const busyAttr = chatBusy
-      ? 'disabled title="Claude is busy with a turn — sync will be available when it finishes"'
-      : '';
-
-    // In flight — spinner + phase text, disabled button.
+    if (behind <= 0 && !sync) return null;
+    // Mid-turn a sync is refused by the route anyway (409, "a chat turn holds
+    // the worker"), so the button says so before the click rather than after.
+    const busy = !!DevChat.isStreaming;
     if (sync && !sync.terminal) {
-      return `
-      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-        <svg class="w-4 h-4 animate-spin text-amber-600 dark:text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-        </svg>
-        <span class="text-amber-800 dark:text-amber-200 flex-1">${escapeHtml(DevChat._syncPhaseLabel(sync.phase))}</span>
-        <button id="dc-sync-btn" type="button" disabled class="${btnCls}">Syncing…</button>
-      </div>`;
+      return { kind: 'inflight', message: DevChat._syncPhaseLabel(sync.phase) };
     }
-
-    // Terminal success — green confirmation; auto-dismissed by the
-    // timer in _setSyncTerminal (the behind_main → 0 broadcast removes
-    // the banner anyway).
     if (sync && sync.terminal && sync.ok) {
-      return `
-      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-200 dark:border-emerald-900/50 text-xs">
-        <svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
-        </svg>
-        <span class="text-emerald-800 dark:text-emerald-200 flex-1">${escapeHtml(sync.message || 'Synced with main.')}</span>
-      </div>`;
+      return { kind: 'ok', message: sync.message || 'Synced with main.' };
     }
-
-    // Terminal failure (unresolved conflict, budget/infra error, or the
-    // 409 chat-turn-busy notice) — the message stays put with a
-    // re-enabled Try again button. No alert() popups.
     if (sync && sync.terminal && !sync.ok) {
-      return `
-      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-        ${warnIcon}
-        <span class="text-amber-800 dark:text-amber-200 flex-1">${escapeHtml(sync.message || 'Sync with main failed.')}</span>
-        <button id="dc-sync-btn" type="button" ${busyAttr} class="${btnCls}">Try again</button>
-      </div>`;
+      return { kind: 'failed', message: sync.message || 'Sync with main failed.', busy };
     }
-
-    // Idle — behind main, nothing in flight.
-    const noun = behind === 1 ? 'commit' : 'commits';
-    return `
-      <div id="dc-sync-banner" class="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs">
-        ${warnIcon}
-        <span class="text-amber-800 dark:text-amber-200 flex-1">
-          main has moved <span class="font-semibold">${behind}</span> ${noun} ahead of this branch.
-        </span>
-        <button id="dc-sync-btn" type="button" ${busyAttr} class="${btnCls}">Sync with main</button>
-      </div>`;
+    return { kind: 'behind', behind, busy };
   },
 
   // A session maps to exactly one branch + one PR. Once that PR exists
@@ -7546,67 +7284,115 @@ const DevChat = {
   // already has a PR and it's past the active-editing stage
   // (promoted / merging / merged). Active sessions with a PR don't get
   // the banner — the user is presumably still refining that change.
-  _renderNewChangeBannerHtml(session) {
-    if (!session || !session.pr_number) return '';
+  _newChangeBannerView(session) {
+    if (!session || !session.pr_number) return null;
     const status = session.status;
-    if (status !== 'promoted' && status !== 'merging' && status !== 'merged') return '';
+    if (status !== 'promoted' && status !== 'merging' && status !== 'merged') return null;
     const proposed = status === 'promoted' || status === 'merging';
-    const stateLabel = proposed
-      ? `proposed to the group (PR #${session.pr_number})`
-      : `merged (PR #${session.pr_number})`;
-    return `
-      <div id="dc-new-change-banner" class="flex items-center gap-2 px-3 py-2 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-900/50 text-xs">
-        <svg class="w-4 h-4 text-violet-600 dark:text-violet-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
-        </svg>
-        <span class="text-violet-800 dark:text-violet-200 flex-1">
-          This change has been ${stateLabel}. New work in this chat is added to the same PR — start a new change to keep PRs focused.
-        </span>
-        <button id="dc-new-change-btn" type="button"
-          class="rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 text-xs font-medium text-white transition-colors shrink-0">
-          Start a new change
-        </button>
-      </div>`;
+    return {
+      stateLabel: proposed
+        ? `proposed to the group (PR #${session.pr_number})`
+        : `merged (PR #${session.pr_number})`,
+      pending: !!DevChat._newChangePending,
+    };
   },
 
   // Spin up a fresh session (new branch → new PR) for the same app and
   // open it. Reuses createSession's per-user active-session cap (whatever
   // the server resolves for this viewer — see `caps`) + error alerting. Intentionally does NOT carry over Claude's memory or
   // the spec — a new change starts clean on its own branch.
+  // The button's own busy state. It was `btn.disabled` + `btn.textContent`
+  // written onto the element by id — a second author on a node the banners
+  // component renders now, so it is a published flag instead.
+  _newChangePending: false,
+
   async startNewChange() {
     const slug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
       || (DevChat.currentSession && DevChat.currentSession.app_slug);
     if (!slug) return;
-    const btn = document.getElementById('dc-new-change-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+    DevChat._newChangePending = true;
+    DevChat._publishBanners();
     const session = await DevChat.createSession(slug);
     if (!session) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Start a new change'; }
+      DevChat._newChangePending = false;
+      DevChat._publishBanners();
       return;
     }
+    DevChat._newChangePending = false;
     await DevChat.openSession(session.id, { userOpened: true });
     DevChat.renderChatView();
     if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
     if (typeof DevChat.loadActiveSessions === 'function') DevChat.loadActiveSessions();
   },
 
-  // Replace just the banner element if the rest of the chat view is
-  // mounted; otherwise full re-render so the new element lands in the
-  // right slot. Shared by every path that mutates banner-relevant
-  // state (behind_main updates, sync_status events, the click handler).
+  // Every path that changes banner-relevant state — a behind_main update, a
+  // sync_status event, the click handler — ends here.
+  //
+  // It used to read the live `#dc-sync-banner`, swap its `outerHTML`,
+  // `remove()` it, or fall through to a whole `renderChatView` when the
+  // element was not there to swap. That last branch was the expensive one: it
+  // rebuilt the transcript to make a strip appear. All four banners publish
+  // into one store now, so appearing, changing and vanishing are the same act
+  // and none of them touches the message list.
   _applySyncBanner() {
-    const existing = document.getElementById('dc-sync-banner');
-    const html = DevChat.currentSession
-      ? DevChat._renderSyncBannerHtml(DevChat.currentSession) : '';
-    if (existing) {
-      if (html) {
-        existing.outerHTML = html;
-        DevChat._wireSyncBanner();
+    DevChat._publishBanners();
+  },
+
+  // The one publish, from the four models.
+  _publishBanners() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishBanners) return;
+    react.publishBanners(DevChat._bannersView());
+  },
+
+  _bannersView() {
+    const session = DevChat.currentSession;
+    return {
+      sync: session ? DevChat._syncBannerView(session) : null,
+      newChange: session ? DevChat._newChangeBannerView(session) : null,
+      credits: session ? DevChat._creditsBannerView() : null,
+      creditsLow: session ? DevChat._creditsLowBannerView() : null,
+    };
+  },
+
+  // Start a sync, from the banner's button. Named, because the component
+  // dispatches by name rather than holding a closure over a render.
+  async startSyncWithMain() {
+    const st = DevChat._syncState;
+    if (st && !st.terminal) return; // already in flight
+    const sessionId = DevChat.currentSession?.id;
+    if (!sessionId) return;
+    // Optimistic in-flight state; the WS sync_status events and the
+    // poll fallback take over from here. If a sync is already
+    // running server-side this POST coalesces onto it and returns
+    // the same final result.
+    DevChat._setSyncInFlight(sessionId, 'starting');
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/sync-main`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        // 409 = a chat turn holds the worker (friendly message from
+        // the route); anything else is a real failure. Either way:
+        // inline banner text, never alert().
+        DevChat._setSyncTerminal(sessionId, {
+          ok: false,
+          message: data.error || `Sync failed (HTTP ${resp.status}).`,
+        });
       } else {
-        existing.remove();
+        // The POST response is the authoritative final result —
+        // applied idempotently with the WS terminal event. Refresh
+        // the session record so behind_main + the system note pick
+        // up the new state even if the tab missed the WS events.
+        DevChat._setSyncTerminal(sessionId, {
+          ok: data.ok !== false,
+          message: data.message,
+        });
+        await DevChat.openSession(sessionId);
+        DevChat.renderChatView();
       }
-    } else if (html) {
-      DevChat.renderChatView();
+    } catch (err) {
+      DevChat._setSyncTerminal(sessionId, { ok: false, message: `Sync failed: ${err.message}` });
     }
   },
 
@@ -7706,48 +7492,6 @@ const DevChat = {
     }
   },
 
-  _wireSyncBanner() {
-    const btn = document.getElementById('dc-sync-btn');
-    if (!btn) return;
-    btn.addEventListener('click', async () => {
-      const st = DevChat._syncState;
-      if (st && !st.terminal) return; // already in flight
-      const sessionId = DevChat.currentSession?.id;
-      if (!sessionId) return;
-      // Optimistic in-flight state; the WS sync_status events and the
-      // poll fallback take over from here. If a sync is already
-      // running server-side this POST coalesces onto it and returns
-      // the same final result.
-      DevChat._setSyncInFlight(sessionId, 'starting');
-      try {
-        const resp = await fetch(`/api/sessions/${sessionId}/sync-main`, { method: 'POST' });
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-          // 409 = a chat turn holds the worker (friendly message from
-          // the route); anything else is a real failure. Either way:
-          // inline banner text, never alert().
-          DevChat._setSyncTerminal(sessionId, {
-            ok: false,
-            message: data.error || `Sync failed (HTTP ${resp.status}).`,
-          });
-        } else {
-          // The POST response is the authoritative final result —
-          // applied idempotently with the WS terminal event. Refresh
-          // the session record so behind_main + the system note pick
-          // up the new state even if the tab missed the WS events.
-          DevChat._setSyncTerminal(sessionId, {
-            ok: data.ok !== false,
-            message: data.message,
-          });
-          await DevChat.openSession(sessionId);
-          DevChat.renderChatView();
-        }
-      } catch (err) {
-        DevChat._setSyncTerminal(sessionId, { ok: false, message: `Sync failed: ${err.message}` });
-      }
-    });
-  },
-
   // Called by App.handleSessionUpdate when an action='behind_main'
   // event arrives. Patches currentSession + re-renders the banner
   // without tearing down the rest of the chat view. No-op if the
@@ -7768,9 +7512,146 @@ const DevChat = {
 
   // ── Chat view ─────────────────────────────────────────────
 
+  /**
+   * `#dc-composer-bar`'s children, as one view model.
+   *
+   * Six writers used to reach into this bar and every one of them was asking
+   * the same two questions — is a turn running, and where is this session
+   * built. See features/dev-chat/composer-store.ts for the list.
+   */
+  _composerView() {
+    return {
+      // Latched by the render that shows it, not read per publish: the note
+      // explains a venue you did NOT get, and it must survive every keystroke
+      // in the box while still not re-explaining a settled fact on the next
+      // full render. See `renderChatView`.
+      venueNoteHtml: DevChat._venueNoteForRender || '',
+      hidden: !!DevChat._launchpadVenue(),
+      models: DevChat._modelPickerView(),
+      openRouter: DevChat._openRouterRowView(),
+      drafts: DevChat._savedDraftsView(),
+      attachError: DevChat._attachError,
+      placeholder: DevChat._composerBusy
+        ? DevChat._busyComposerPlaceholder()
+        : DevChat.COMPOSER_PLACEHOLDER,
+      saveDraft: DevChat._saveDraftView(),
+      send: DevChat._sendButtonView(),
+      shortcutHintHtml: DevChat._chatBusyForPaint()
+        ? DevChat.SHORTCUT_HINT_SAVE
+        : DevChat.SHORTCUT_HINT_SEND,
+    };
+  },
+
+  /**
+   * The send button, as data — the four shapes `_setStreamingUI` painted by
+   * hand. Every input is module state, so any caller can repaint it without
+   * knowing which transition it is in the middle of.
+   */
+  _sendButtonView() {
+    if (!DevChat._composerBusy) return { kind: 'send' };
+    // #889: a requested-but-not-yet-landed stop outranks both states below —
+    // the turn is still streaming (so Send is wrong), but the red Stop square
+    // is a lie: pressing it again does nothing.
+    if (DevChat._stopping) return { kind: 'stopping' };
+    const isWrapUp = DevChat._streamingPhase === 'mayor2';
+    // #1378: same spinner, different reason. A turn the server can't stop (no
+    // in-process handle — typically one adopted across a restart) must not
+    // paint a live red Stop: the click would reach the server, match nothing,
+    // and leave the user believing the turn was ending.
+    const notStoppable = DevChat._streamingStoppable === false;
+    if (!isWrapUp && !notStoppable) return { kind: 'stop' };
+    const unstoppable = notStoppable && !isWrapUp;
+    return {
+      kind: 'busy',
+      label: unstoppable ? 'Working' : 'Finishing up',
+      title: unstoppable
+        ? 'This turn is still running but can’t be stopped from here'
+        : 'Finishing up…',
+    };
+  },
+
+  /** Mount `#dc-composer-bar`'s children. The BAR stays the template's. */
+  _renderComposer() {
+    const bar = document.getElementById('dc-composer-bar');
+    if (!bar) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishComposer) return;
+    react.publishComposer(DevChat._composerView());
+  },
+
+  /** Republish without re-mounting — every one of the six writers' end. */
+  _publishComposer() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishComposer) return;
+    react.publishComposer(DevChat._composerView());
+  },
+
+  /** The venue sentence this render is showing. See `_composerView`. */
+  _venueNoteForRender: '',
+
+  /**
+   * `#dc-view`'s children, as one view model.
+   *
+   * The skeleton was the last string in this file: an `innerHTML` assignment
+   * that wrote five hosts and then mounted a portal into each. They are
+   * ordinary children of one component now — see
+   * features/dev-chat/view-store.ts.
+   */
+  _devViewState() {
+    if (!DevChat.currentSession) return { kind: 'none' };
+    const viewerOpen = !!DevChat.specViewer.open;
+    const stagingOpen = !!DevChat.stagingPanel.open;
+    return {
+      kind: 'session',
+      // #1281: a hand-off venue swaps the composer for the launchpad. The
+      // venue dropdown lives in the header, outside the swap, which is what
+      // makes it reversible — it is the way back to a chat.
+      launchpadHtml: DevChat._launchpadHtml(),
+      // Is there anything left in the bottom bar to draw a border around?
+      // The composer is hidden in a launchpad and the venue note is usually
+      // absent, and an empty bordered strip reads as a broken composer.
+      barEmpty: !!DevChat._launchpadVenue() && !DevChat._venueNoteForRender,
+      // Saved widths from a previous drag. CSS clamps to a min/max, so a
+      // stale value can't make the chat unusably narrow.
+      spec: { open: viewerOpen, width: DevChat._readSpecViewerWidth() || null },
+      // #771: same width-persistence pattern, separate key (previews want
+      // to be wider).
+      staging: { open: stagingOpen, width: DevChat._readStagingPanelWidth() || null },
+      proposalHint: !!DevChat._proposalHint,
+    };
+  },
+
+  /**
+   * #194's one-shot hint, set by the "+" menu's "Propose a change".
+   *
+   * public/js/app-view.js used to `insertAdjacentHTML('afterbegin')` it in
+   * front of this subtree, which is a second author on nodes React
+   * reconciles. It is a field, latched for the life of the render that shows
+   * it — `renderChatView` clears it — so a republish keeps it and the next
+   * full render drops it, exactly as the one-shot flag meant.
+   */
+  _proposalHint: false,
+
+  showProposalHint() {
+    DevChat._proposalHint = true;
+    DevChat._publishDevView();
+  },
+
+  _publishDevView() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishDevView) return;
+    react.publishDevView(DevChat._devViewState());
+  },
+
   renderChatView() {
     const content = document.getElementById('dc-view');
     if (!content) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.mountDevView) return;
 
     // The dev-chat tab's meta strip (Edit shortcuts + sessions header)
     // takes up vertical space we want to reclaim once the user is
@@ -7784,241 +7665,55 @@ const DevChat = {
       // #771: the staging panel slot only exists inside a session view —
       // leaving the session closes a docked preview with it.
       if (DevChat.stagingPanel.open) DevChat._resetStagingPanel();
-      content.innerHTML = `
-        <div id="dc-session-list" class="divide-y divide-zinc-800 platform-safe-scroll" style="flex:1;overflow-y:auto;min-height:0"></div>`;
+      // No session, no pane — and no reason to keep a spec's markdown alive
+      // in the store until one opens again.
+      DevChat._publishSpecViewer();
+      react.mountDevView(content, DevChat._devViewState());
       DevChat.renderSessionList();
       return;
     }
 
     if (meta) meta.classList.add('hidden');
 
-    const modelOptions = Object.entries(DevChat.MODELS)
-      .map(([id, meta]) => {
-        const text = DevChat.modelOptionText(meta);
-        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
-      })
-      .join('');
-    const viewerOpen = !!DevChat.specViewer.open;
-    // Saved viewer width from a previous drag. Applied as inline style
-    // on the side panel; CSS clamps to a min/max so a stale value
-    // can't make the chat unusably narrow.
-    const savedWidth = DevChat._readSpecViewerWidth();
-    const viewerStyle = viewerOpen && savedWidth
-      ? ` style="width:${savedWidth}px"`
-      : '';
-
-    // #771: staging preview panel slot — same width-persistence pattern
-    // as the spec viewer, separate key (previews want to be wider).
-    const stagingOpen = !!DevChat.stagingPanel.open;
-    const stagingSavedWidth = DevChat._readStagingPanelWidth();
-    const stagingStyle = stagingOpen && stagingSavedWidth
-      ? ` style="width:${stagingSavedWidth}px"`
-      : '';
-    const agentBillingNote = DevChat._agentBillingNote(DevChat.currentSession);
-    const venueId = DevChat._currentVenueId();
     // #1348: the venue control is the header dropdown, top right. What is
     // left down by the composer is the fallback sentence alone — reported
     // once, on the paint after creation, when the server resolved a venue
-    // other than the one the user's default named. Cleared below so a later
-    // repaint of the same session doesn't keep re-explaining a settled fact.
+    // other than the one the user's default named. Latched for the life of
+    // THIS render rather than read per publish: the composer republishes on
+    // every keystroke, and re-reading a reason that clears itself would make
+    // the sentence vanish on the first one.
     const venueFallbackReason =
       DevChat._venueFallbackReason || DevChat._shotVenueFallbackReason();
-    const venueSelectHtml = window.BuildVenues
-      ? BuildVenues.selectorHtml({ current: venueId })
-      : '';
-    const venueNoteHtml = window.BuildVenues
+    DevChat._venueNoteForRender = window.BuildVenues
       ? BuildVenues.noteHtml({ fallbackReason: venueFallbackReason })
       : '';
     DevChat._venueFallbackReason = null;
-    // #1281: a hand-off venue swaps the composer for the launchpad. The
-    // venue dropdown lives in the header, outside the swap, which is what
-    // makes it reversible — it is the way back to a chat.
-    const launchpadHtml = DevChat._launchpadHtml();
-    const inLaunchpad = !!DevChat._launchpadVenue();
-    // Is there anything left in the bottom bar to draw a border around?
-    // The composer is hidden in a launchpad and the venue note is usually
-    // absent, and an empty bordered strip reads as a broken composer.
-    const barEmpty = inLaunchpad && !venueNoteHtml;
-    const claudeVenue = venueId === 'usernode-claude';
-    const openRouterVenue = venueId === 'usernode-openrouter';
-    const openRouterModel = String(DevChat.currentSession.agent_model || '').trim();
+    // #194's hint is one-shot: `app-view.js` sets it on the line AFTER this
+    // render, so clearing it here is what makes the next render drop it —
+    // which is exactly what the innerHTML write it replaces did to the node.
+    DevChat._proposalHint = false;
+    // The composer's paint state starts idle, which is what the template's
+    // own markup used to assert; the two calls at the bottom re-arm it.
+    DevChat._composerBusy = false;
 
-    content.innerHTML = `
-      <div id="dc-session-header" class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-        <a id="dc-back" class="text-zinc-400 hover:text-zinc-200 text-sm" href="${App.currentApp ? `#app/${escapeHtml(App.currentApp)}/dev` : ''}">&larr;</a>
-        <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.session_title || DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
-        ${DevChat.currentSession.pr_number
-          ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
-          : '<span class="text-xs text-zinc-500" title="This chat is one change → one pull request. A PR opens after the first build.">New change</span>'}
-        ${DevChat._renderHeaderStatusPill(DevChat.currentSession)}
-        <!-- #1348: where this session is built, top right of the session
-             area. It states the venue and opens the sheet that changes it,
-             which is the pair the composer caption used to carry. Here it
-             survives the launchpad swap below, and it is not competing with
-             the meter, the runner and the budget menu for the same strip. -->
-        ${venueSelectHtml}
-      </div>
-      ${DevChat._renderSyncBannerHtml(DevChat.currentSession)}
-      ${DevChat._renderNewChangeBannerHtml(DevChat.currentSession)}
-      ${DevChat._renderCreditsBannerHtml()}
-      ${DevChat._renderCreditsLowBannerHtml()}
-      <div class="dc-session-body flex-1 flex min-h-0">
-        <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
-            <!-- #1348: the launchpad is PINNED TO THE TOP of the chat area.
-                 It stood in the composer's place at the bottom (#1281),
-                 which is where you look to type — but a launchpad is not a
-                 composer: it is the screen's subject, a walkthrough you
-                 work down while the transcript behind it is the reference.
-                 At the bottom the first step sat furthest from the eye and
-                 a long card pushed itself off the fold. Above the
-                 scroller it holds still while the transcript moves under
-                 it, and step 1 is the first thing on screen.
+    // ONE mount, with the whole screen's state riding in. Everything below
+    // resolves controls inside it by id, and the store flushes synchronously
+    // — the same contract they had when this line was an innerHTML write.
+    react.mountDevView(content, DevChat._devViewState());
 
-                 It stays OUTSIDE #dc-messages on purpose: inside, it would
-                 scroll away with the transcript and stop being a
-                 launchpad. The slot collapses when empty
-                 (.dc-launchpad-slot:empty), so an ordinary session's chat
-                 pane is exactly what it was. -->
-          <div id="dc-launchpad-slot" class="dc-launchpad-slot">${launchpadHtml}</div>
-          <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
-          <!-- No backticks in the comment below: it lives inside a
-               template literal, and one would close it. -->
-          <!-- platform-safe-bar (app.css): this block is the bottom of
-               the screen on a phone, so it carries the home-indicator
-               inset on top of its own p-2 — the strip below the Send row
-               is part of this bar rather than dead space under it. The
-               message scroller above keeps the height that used to be
-               reserved on #app-view.
-
-               In a launchpad the composer is hidden and the venue note is
-               usually absent, which would leave a bordered, padded strip
-               framing nothing — so those are dropped when there is nothing
-               to frame. The SAFE-AREA INSET is not: this is still the
-               bottom of the screen, and the transcript must not run under
-               the home indicator. Written as a conditional class rather
-               than a CSS override because app.css loses equal-specificity
-               conflicts to Tailwind (see AGENTS.md), so the p-2 utility
-               would win. -->
-          <div id="dc-composer-bar" class="shrink-0 platform-safe-bar${barEmpty ? '' : ' border-t border-zinc-200 dark:border-zinc-800 p-2'}">
-            <!-- What is left of the venue statement (#1086) once the
-                 control itself moved to the header (#1348): the sentence
-                 explaining a venue you did NOT get. It is a whole
-                 explanation rather than a label, so it stays here where it
-                 can wrap, and the slot collapses (.dc-venue-slot:empty) in
-                 the ordinary case where there is nothing to confess. -->
-            <div id="dc-venue-slot" class="dc-venue-slot">${venueNoteHtml}</div>
-            <!-- #1281: the launchpad stands INSTEAD of the composer when
-                 the work is happening somewhere else — it renders at the
-                 top of the pane now (#1348), and the composer is HIDDEN
-                 here rather than removed: every public/js/** and
-                 chat-helper module below looks its controls up by id
-                 (#dc-input, #dc-form, #dc-budget, #dc-runner…), and a
-                 getElementById that starts returning null would throw on a
-                 route the checks load — a console error fails them. -->
-            <div id="dc-composer-controls"${inLaunchpad ? ' hidden' : ''}>
-            <!-- #1353: ONE status line. It used to be two — the runner and
-                 the meter on top, the model picker and a sentence about
-                 billing on a second row underneath — for two controls and
-                 one number that all answer "what is about to run, and on
-                 whose money". The model select sits in it now, on the left
-                 where the strip starts, and the meter stays right. What
-                 left with the second row: the "⋯" that duplicated the
-                 header's venue door beside two Settings links, the billing
-                 sentence (the meter IS the billing statement), and the
-                 model caption, whose text is on the option you picked. -->
-            <div class="flex flex-wrap items-center gap-2 mb-2">
-              <!-- The venue's own settings. Claude and OpenRouter are
-                   deliberately separate: Claude gets the platform chat-model
-                   picker; OpenRouter gets the exact model pinned to the
-                   whole session and a direct way to reopen the OpenRouter
-                   catalog. Local and web venues have no model setting here,
-                   and OpenRouter's pair is too wide for this strip, so it
-                   keeps its own row below. -->
-              ${claudeVenue ? `
-              <div id="dc-venue-detail" class="dc-venue-detail dc-venue-detail-inline">
-                <label class="text-xs text-zinc-500" for="dc-model-select">Chat model:</label>
-                <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
-                  ${modelOptions}
-                </select>
-              </div>` : ''}
-              <!-- #907: where the next coding turn runs. Painted empty and
-                   filled by _renderRunnerControls() from the session status
-                   poll, so a reload lands on the truth rather than on a
-                   guess the page made before it asked. -->
-              <span id="dc-runner" class="dc-runner"></span>
-              <span class="flex-1"></span>
-              <span id="dc-budget" class="text-xs font-mono"></span>
-            </div>
-            ${openRouterVenue ? `
-            <div id="dc-venue-detail" class="dc-venue-detail">
-              <span class="text-xs text-zinc-500">OpenRouter model:</span>
-              <span id="dc-openrouter-model" class="dc-openrouter-model" title="${escapeHtml(openRouterModel || 'No model is pinned')}">${escapeHtml(openRouterModel || 'No model is pinned')}</span>
-              <button type="button" id="dc-openrouter-model-change" class="dc-openrouter-model-change" ${DevChat.isStreaming ? 'disabled' : ''}>Change model</button>
-              <div id="dc-agent-note" class="basis-full text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
-            </div>` : ''}
-            <div id="dc-drafts" class="dc-drafts"></div>
-            <!-- #1353: the attach button rides with the suggested replies,
-                 one line above the send row. It sat in the status strip at
-                 the top of the composer, which is the furthest point in the
-                 block from the text box it attaches to; here the three
-                 things you reach for while writing a message — a pill, a
-                 file, the send button — are the three lines nearest your
-                 thumb. The pills scroll horizontally inside their own
-                 element (.dc-quick-replies), so the button is a sibling
-                 rather than a child: a child would scroll away with them. -->
-            <div class="dc-composer-actions">
-              <input type="file" id="dc-file-input" class="hidden" multiple>
-              <button type="button" id="dc-attach-btn" title="Attach files — images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB), or any other file (≤10 MB); up to 4 per message" aria-label="Attach files"
-                class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-              </button>
-              <div id="dc-quick-replies" class="dc-quick-replies"></div>
-            </div>
-            <div id="dc-attachments" class="dc-attach-strip"></div>
-            <div id="dc-attach-error" class="dc-attach-error hidden"></div>
-            <form id="dc-form" class="flex gap-2 items-end">
-              <textarea
-                id="dc-input"
-                rows="1"
-                placeholder="${escapeHtml(DevChat.COMPOSER_PLACEHOLDER)}"
-                autocomplete="off"
-                class="dc-textarea flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none"
-              ></textarea>
-              <!-- #810: starts hidden — the icon only exists while a turn
-                   runs, which is the rarer state, so painting it hidden and
-                   letting _syncSaveDraftBtn reveal it avoids a flash of the
-                   icon on every fresh render of a stopped chat. -->
-              <button type="button" id="dc-save-draft-btn" class="dc-save-draft-btn shrink-0" hidden disabled
-                title="${escapeHtml(DevChat.SAVE_DRAFT_TITLE)}" aria-label="Save as draft">
-                ${DevChat._SAVE_ICON_SVG}
-              </button>
-              <button type="submit" id="dc-send-btn" class="dc-send-btn rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">
-                Send
-              </button>
-            </form>
-            <!-- #920: the idle copy is the render-time default; the
-                 running variant ("…to save as draft") is swapped in by
-                 _syncShortcutHint, which every _syncSaveDraftBtn call
-                 site reaches. Sourced from the constant so the two can
-                 never drift apart. -->
-            <div class="text-xs text-zinc-600 mt-1 text-right" id="dc-shortcut-hint">${DevChat.SHORTCUT_HINT_SEND}</div>
-            </div>
-          </div>
-        </div>
-        <div id="dc-spec-resizer" class="dc-spec-resizer ${viewerOpen ? 'dc-spec-resizer-open' : ''}" role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"></div>
-        <div id="dc-spec-viewer" class="dc-spec-viewer ${viewerOpen ? 'dc-spec-viewer-open' : ''}"${viewerStyle}></div>
-        <div id="dc-staging-resizer" class="dc-staging-resizer ${stagingOpen ? 'dc-staging-resizer-open' : ''}" role="separator" aria-orientation="vertical" aria-label="Resize staging preview"></div>
-        <div id="dc-staging-panel" class="dc-staging-panel ${stagingOpen ? 'dc-staging-panel-open' : ''}"${stagingStyle}></div>
-      </div>`;
-
+    // The five regions inside it publish their own state. Order still
+    // matters for the LISTENERS below, not for the markup: `renderMessages`
+    // is what starts the elapsed heartbeat and wires the quick-reply bar.
+    DevChat._renderSessionHeader();
+    DevChat._renderComposer();
     DevChat.renderMessages();
     DevChat._renderQuickReplies();
     DevChat._wireQuickReplies();
-    // #463: the template above may have rendered the credits banner from
-    // the cached budget — wire its button now; refreshBudget() re-syncs
-    // banner + meter once fresh figures land.
-    DevChat._wireCreditsBanner();
-    DevChat._wireCreditsLowBanner();
+    // #463: the banners may have something to say from the CACHED budget, so
+    // they mount with it; refreshBudget() re-syncs banner + meter once fresh
+    // figures land. Their buttons are the component's, and CreditOptions'
+    // delegated click is bound from its own ref.
+    DevChat._renderBanners();
     DevChat._wireLaunchpad();
     DevChat.refreshBudget();
     // Attach tracker first so the scroll set below is observed, then
@@ -8035,7 +7730,11 @@ const DevChat = {
     PlatformUI.attachScreenFx(
       'dev-chat',
       document.getElementById('dc-messages'),
-      document.getElementById('dc-back')?.closest('div'),
+      // The header ELEMENT, by name. It used to be reached as
+      // `#dc-back`'s parent, which was true and is now indirect: the back
+      // control is rendered by the header's component, so a lookup through it
+      // would depend on the portal having mounted. This does not.
+      document.getElementById('dc-session-header'),
     );
     DevChat._setupAttachments();
     DevChat._restoreDraft();
@@ -8067,79 +7766,23 @@ const DevChat = {
     DevChat._closeSessionOptions();
     DevChat._maybeOpenShotOptions(optionsWereOpen);
 
-    const venueChange = document.getElementById('dc-venue-select');
-    if (venueChange) {
-      // Mid-turn the venue is not changeable: a running turn holds the
-      // worker, and moving it under itself is the failure the old
-      // `agentSelect.disabled` guarded against. Same rule, new control.
-      venueChange.disabled = DevChat.isStreaming;
-      venueChange.addEventListener('click', () => DevChat.openVenueSheet(venueChange));
-    }
+    // The venue dropdown's `disabled` and its click are the component's now
+    // (`_headerVenue` resolves the one, `VenueSelect` holds the other). What
+    // stays here is the screenshot deep link, which resolves the button by id
+    // exactly as it always did.
     DevChat._maybeOpenShotVenueSheet();
 
-    const openRouterModelChange = document.getElementById('dc-openrouter-model-change');
-    if (openRouterModelChange) {
-      openRouterModelChange.disabled = DevChat.isStreaming;
-      openRouterModelChange.addEventListener('click', () => {
-        DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
-      });
-    }
+    // The chat-model picker's `change` and the OpenRouter row's "Change
+    // model" were two addEventListener calls here, re-bound on every render
+    // because the elements were new each time. They are the component's
+    // onChange / onClick now, dispatching into `_onModelPicked` and
+    // `_onOpenRouterModelChange` by name.
 
-    // Null unless this session is using Usernode · Claude. OpenRouter has
-    // one model for both chat and coding, changed through the catalog above.
-    const modelSelect = document.getElementById('dc-model-select');
-    if (modelSelect) {
-      modelSelect.addEventListener('change', (e) => {
-        DevChat.selectedModel = e.target.value;
-        // Persist across refreshes + new sessions (fixes #31). Wrapped
-        // in try/catch so private-mode browsers or quota errors don't
-        // break the selector.
-        try { localStorage.setItem(MODEL_STORAGE_KEY, e.target.value); } catch {}
-      });
-    }
+    // `#dc-pr-header-link` and `#dc-back` are the header component's too —
+    // `revealPrCard()` and `leaveSession()` above are what they call.
 
-    const prHeaderLink = document.getElementById('dc-pr-header-link');
-    if (prHeaderLink) {
-      prHeaderLink.addEventListener('click', () => {
-        const card = document.getElementById('dc-pr-card');
-        if (card) {
-          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          card.classList.add('dc-pr-card-highlight');
-          setTimeout(() => card.classList.remove('dc-pr-card-highlight'), 1500);
-        }
-      });
-    }
-
-    document.getElementById('dc-back').addEventListener('click', (e) => {
-      // #1036: this is a real <a href="#app/<slug>/dev"> now — a
-      // cmd/ctrl/shift/middle click opens the dev page in a new tab and
-      // must leave THIS session mounted exactly as it is.
-      if (window.NavLink && NavLink.isNativeClick(e)) return;
-      e.preventDefault();
-      // #771: leaving the session unmounts the staging panel slot — close
-      // a docked preview with it (fullscreen previews float independently
-      // and are unaffected).
-      DevChat._resetStagingPanel();
-      DevChat.currentSession = null;
-      DevChat.messages = [];
-      // The title marker describes the session we just left — drop it
-      // so the forum doesn't claim to be thinking / done.
-      DevChat.setTitleStatus(null);
-      // Forum revision: backing out of a session returns to the dev
-      // forum page (there is no session-list screen anymore).
-      if (typeof App !== 'undefined' && App.switchTab) {
-        App.switchTab('dev');
-      } else {
-        DevChat.renderChatView();
-      }
-    });
-
-    DevChat._wireSyncBanner();
-
-    const newChangeBtn = document.getElementById('dc-new-change-btn');
-    if (newChangeBtn) {
-      newChangeBtn.addEventListener('click', () => DevChat.startNewChange());
-    }
+    // `#dc-sync-btn` and `#dc-new-change-btn` are the banners component's —
+    // `startSyncWithMain()` and `startNewChange()` are what they call.
 
     document.getElementById('dc-form').addEventListener('submit', (e) => {
       e.preventDefault();
@@ -8153,12 +7796,11 @@ const DevChat = {
       DevChat._submitFromInput();
     });
 
-    // Render the spec viewer if it was open before this re-render
-    // (toggling layout, version selection, etc. all re-enter via
-    // renderChatView).
-    if (DevChat.specViewer.open) {
-      DevChat._renderSpecViewer();
-    }
+    // The spec reader publishes unconditionally: a CLOSE has to reach it
+    // too. The pane used to be rebuilt empty by the innerHTML above, so a
+    // closed panel needed no statement at all; the pane reconciles now, and
+    // silence would leave the last session's spec standing inside it.
+    DevChat._publishSpecViewer();
 
     // Wire up the draggable divider between chat pane and viewer. Idempotent —
     // we re-bind on every renderChatView since the resizer element gets
@@ -8390,16 +8032,14 @@ const DevChat = {
     DevChat._renderAttachStrip();
   },
 
+  // The line under the pending strip. It wrote `textContent` and toggled
+  // `hidden` on the element; both are one field of the composer model, which
+  // is also what makes the message survive a repaint — the old one did not.
+  _attachError: null,
+
   _setAttachError(msg) {
-    const el = document.getElementById('dc-attach-error');
-    if (!el) return;
-    if (msg) {
-      el.textContent = msg;
-      el.classList.remove('hidden');
-    } else {
-      el.textContent = '';
-      el.classList.add('hidden');
-    }
+    DevChat._attachError = msg || null;
+    DevChat._publishComposer();
   },
 
   _humanSize(bytes) {
@@ -8410,61 +8050,50 @@ const DevChat = {
   },
 
   // Small kind badge for zip/binary chips ("ZIP · 214 files", "BIN").
-  // '' for image/text, which stay visually as before.
-  _attachKindBadgeHtml(a) {
+  // Null for image/text, which carry no tag.
+  _attachKindBadge(a) {
     if (a.kind === 'zip') {
       const count = a.meta && Number.isFinite(Number(a.meta.entryCount))
         ? ` · ${a.meta.entryCount} files` : '';
-      return `<span class="dc-attach-kind">ZIP${count}</span>`;
+      return `ZIP${count}`;
     }
-    if (a.kind === 'binary') return '<span class="dc-attach-kind">BIN</span>';
-    return '';
+    if (a.kind === 'binary') return 'BIN';
+    return null;
   },
 
+  // …and its HTML spelling, for the message-bubble row, which is still a
+  // string renderer. One source of truth for the label either way.
+  _attachKindBadgeHtml(a) {
+    const label = DevChat._attachKindBadge(a);
+    return label ? `<span class="dc-attach-kind">${label}</span>` : '';
+  },
+
+  // The strip is features/attachments/pending-strip.tsx's, shared with the
+  // group chat's two composers. `renderChatView` rebuilds `#dc-attachments`
+  // on every chat-view render, so this mounts per publish; the previous host's
+  // portal entry is swept as detached (lib/legacy-portals.tsx).
+  //
+  // The ELEMENT stays ours — the template writes it and this toggles its
+  // `dc-attach-strip-active` (the class that gives the strip its height and
+  // border) — and only its ROWS are React's.
   _renderAttachStrip() {
-    const strip = document.getElementById('dc-attachments');
-    if (!strip) return;
-    const items = DevChat.pendingAttachments;
-    if (!items.length) {
-      strip.innerHTML = '';
-      strip.classList.remove('dc-attach-strip-active');
-      return;
-    }
-    strip.classList.add('dc-attach-strip-active');
-    strip.innerHTML = items.map((a, i) => {
-      const name = escapeHtml(a.filename);
-      const removeBtn = a.uploading
-        ? '<span class="dc-attach-uploading">…</span>'
-        : `<button type="button" class="dc-attach-remove" data-attach-idx="${i}" title="Remove" aria-label="Remove ${name}">&times;</button>`;
-      if (a.kind === 'image' && a.objectUrl) {
-        return `<div class="dc-attach-item"><img class="dc-attach-thumb" src="${a.objectUrl}" alt="${name}" title="${name}">${removeBtn}</div>`;
-      }
-      return `<div class="dc-attach-item dc-attach-chip" title="${name}">${DevChat._attachKindBadgeHtml(a)}<span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span>${removeBtn}</div>`;
-    }).join('');
-    strip.querySelectorAll('.dc-attach-remove').forEach((btn) => {
-      btn.addEventListener('click', () => DevChat._removeAttachment(Number(btn.dataset.attachIdx)));
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react) return;
+    // The strip ELEMENT and its `dc-attach-strip-active` are the composer's
+    // now: it renders `<PendingStrip>`, the shared file's export that owns
+    // the element, rather than portalling rows into a host this wrote.
+    react.publishAttachStrip({
+      items: DevChat.pendingAttachments.map((a, i) => ({
+        key: a.id || `p${i}:${a.filename}`,
+        name: a.filename || 'file',
+        kind: a.kind,
+        badge: DevChat._attachKindBadge(a),
+        size: DevChat._humanSize(a.sizeBytes),
+        thumbUrl: a.objectUrl || null,
+        uploading: !!a.uploading,
+      })),
     });
-  },
-
-  // Attachment row inside a user bubble. Rendered OUTSIDE renderMarkdown
-  // (the DOMPurify allowlist strips <img>, and must keep doing so for
-  // untrusted markdown). Optimistic sends carry objectUrl until the
-  // reload swaps in the server URL.
-  _attachmentsRowHtml(msg) {
-    const atts = msg.attachments;
-    if (!Array.isArray(atts) || !atts.length) return '';
-    const sid = DevChat.currentSession?.id;
-    const items = atts.map((a) => {
-      const name = escapeHtml(String(a.filename || 'file'));
-      const idOk = typeof a.id === 'string' && /^[a-f0-9]{32}$/.test(a.id);
-      const url = a.objectUrl || (idOk && sid ? `/api/sessions/${sid}/attachments/${a.id}` : null);
-      if (!url) return '';
-      if (a.kind === 'image') {
-        return `<a href="${url}" target="_blank" rel="noopener" title="${name} — open full size"><img class="dc-msg-att-img" src="${url}" alt="${name}" loading="lazy"></a>`;
-      }
-      return `<a class="dc-msg-att-chip" href="${url}" download="${name}" title="Download ${name}">${DevChat._attachKindBadgeHtml(a)}<span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span></a>`;
-    }).filter(Boolean).join('');
-    return items ? `<div class="dc-msg-attachments">${items}</div>` : '';
   },
 
   _setupTextareaResize() {
@@ -8858,11 +8487,7 @@ const DevChat = {
   // under) so the `?shot=busy-drafts` capture shows the running copy;
   // the keystroke's real routing reads the honest isStreaming flag.
   _syncShortcutHint() {
-    const hint = document.getElementById('dc-shortcut-hint');
-    if (!hint) return;
-    hint.innerHTML = DevChat._chatBusyForPaint()
-      ? DevChat.SHORTCUT_HINT_SAVE
-      : DevChat.SHORTCUT_HINT_SEND;
+    DevChat._publishComposer();
   },
 
   // Show the save icon only while a TURN IS RUNNING (#810 — the inverse of
@@ -8886,65 +8511,59 @@ const DevChat = {
   // its click listener is bound once per render behind `_sdWired`, so a
   // removed-and-recreated button would come back unwired.
   _syncSaveDraftBtn() {
-    // Piggy-backs on this function's call sites (every streaming
-    // transition, every keystroke in the box, every render) rather than
-    // adding listeners of its own — the hint flips on exactly the same
-    // events the save icon does.
-    DevChat._syncShortcutHint();
-    const btn = document.getElementById('dc-save-draft-btn');
-    if (!btn) return;
-    const busy = DevChat._chatBusyForPaint();
-    if (!busy) {
-      btn.hidden = true;
-      btn.disabled = true;
-      return;
+    // One publish for both: the hint under the box flips on exactly the
+    // events the save icon does, which is why this function was the hint's
+    // only caller. `_saveDraftView` is where the rule lives now.
+    DevChat._publishComposer();
+  },
+
+  /**
+   * #810's save icon, as data.
+   *
+   * The rule follows the send button: while the chat is stopped the user can
+   * just SEND what they typed, so a "save it for later" control is noise; the
+   * moment the button flips to Stop, sending is impossible and parking the
+   * text as a draft is the only thing to do with it. So the icon is present
+   * for exactly as long as the stop sign is.
+   *
+   * `hasText` is read off the LIVE field, which is the one thing here that
+   * cannot come from a model: the textarea is uncontrolled (the draft
+   * restore and the auto-grow both write it directly), so its value lives in
+   * the DOM and nowhere else.
+   */
+  _saveDraftView() {
+    if (!DevChat._chatBusyForPaint()) {
+      return { hidden: true, disabled: true, title: DevChat.SAVE_DRAFT_TITLE };
     }
-    btn.hidden = false;
     const input = document.getElementById('dc-input');
     const hasText = !!(input && input.value.trim());
-    btn.disabled = !hasText;
-    btn.title = hasText
-      ? DevChat.SAVE_DRAFT_TITLE
-      : 'Type something first, then save it as a draft for later';
+    return {
+      hidden: false,
+      disabled: !hasText,
+      title: hasText
+        ? DevChat.SAVE_DRAFT_TITLE
+        : 'Type something first, then save it as a draft for later',
+    };
   },
 
   _renderSavedDrafts() {
-    const box = document.getElementById('dc-drafts');
-    if (!box) return;
+    // The rows, the head and the `dc-drafts-active` class were one innerHTML
+    // assignment; they are three fields of the composer model now. The
+    // delegated click below is unchanged — it reads `data-draft-action` off
+    // whichever button was hit and the row's `data-draft-id`.
+    DevChat._publishComposer();
+  },
+
+  /** The saved-drafts list, as data. `busy` disables each row's Send. */
+  _savedDraftsView() {
     const session = DevChat.currentSession;
     const drafts = session ? DevChat._getSavedDrafts(session.id) : [];
-    if (!drafts.length) {
-      box.innerHTML = '';
-      box.classList.remove('dc-drafts-active');
-      return;
-    }
-    // Paint-only predicate so `?shot=busy-drafts` renders the mid-turn
-    // rows; _sendSavedDraft still refuses on the real isStreaming flag.
-    const busy = DevChat._chatBusyForPaint();
-    const sendAttrs = busy
-      ? ' disabled title="Claude is still working — you can send this when the turn finishes"'
-      : ' title="Send this draft now"';
-    box.innerHTML = `
-      <div class="dc-drafts-head">
-        <span>Saved drafts (${drafts.length}) <span class="dc-drafts-hint">· on all your devices</span></span>
-        ${busy ? '<span class="dc-drafts-hint">sending unlocks when Claude finishes</span>' : ''}
-      </div>
-      ${drafts.map((d) => `
-        <div class="dc-draft-row" data-draft-id="${escapeHtml(d.id)}">
-          <span class="dc-draft-text" title="${escapeHtml(d.text)}">${escapeHtml(d.text)}</span>
-          <span class="dc-draft-actions">
-            <button type="button" class="dc-draft-btn dc-draft-send" data-draft-action="send" aria-label="Send this draft"${sendAttrs}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
-            </button>
-            <button type="button" class="dc-draft-btn dc-draft-edit" data-draft-action="edit" aria-label="Edit this draft" title="Put this draft back in the box to edit">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
-            </button>
-            <button type="button" class="dc-draft-btn dc-draft-trash" data-draft-action="trash" aria-label="Delete this draft" title="Delete this draft">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-            </button>
-          </span>
-        </div>`).join('')}`;
-    box.classList.add('dc-drafts-active');
+    return {
+      rows: drafts.map((d) => ({ id: String(d.id), text: d.text })),
+      // Paint-only predicate so `?shot=busy-drafts` renders the mid-turn
+      // rows; `_sendSavedDraft` still refuses on the real isStreaming flag.
+      busy: DevChat._chatBusyForPaint(),
+    };
   },
 
   // Click delegation, bound once per renderChatView (the container node is
@@ -9418,7 +9037,7 @@ const DevChat = {
     if (DevChat.specViewer.isLoading && !opts.force) return;
 
     DevChat.specViewer.isLoading = true;
-    DevChat._renderSpecViewer();
+    DevChat._publishSpecViewer();
 
     try {
       // ?demo=1 rides along (same pass-through as /status) so a staging
@@ -9435,19 +9054,48 @@ const DevChat = {
       console.warn('loadSpecViewer failed:', err);
     } finally {
       DevChat.specViewer.isLoading = false;
-      DevChat._renderSpecViewer();
+      DevChat._publishSpecViewer();
     }
   },
 
-  _renderSpecViewer() {
-    const pane = document.getElementById('dc-spec-viewer');
-    if (!pane || !DevChat.currentSession) return;
-    if (!DevChat.specViewer.open) return;
+  /**
+   * The version the panel is showing.
+   *
+   * `'latest'` is a SENTINEL, not a number: it follows the highest version as
+   * Mayor edits create new ones. An unknown selection falls back to the
+   * latest rather than to nothing, which is also what makes the lazy fetch
+   * below terminate — a version that cannot be resolved is never fetched.
+   */
+  _selectedSpecVersion() {
+    const versions = DevChat.specViewer.versions; // DESC sorted
+    if (!versions.length) return null;
+    const latest = versions[0];
+    if (DevChat.specViewer.viewVersion === 'latest') return latest;
+    return versions.find((v) => String(v.version) === String(DevChat.specViewer.viewVersion))
+      || latest;
+  },
+
+  /**
+   * `#dc-spec-viewer`'s children, as one view model.
+   *
+   * This was `_renderSpecViewer`: an `innerHTML` assignment followed by six
+   * `addEventListener` calls onto the nodes it had just written. The markup
+   * is features/dev-chat/spec-viewer.tsx now and so is every listener; what
+   * is left here is the reading of `DevChat.specViewer`, which stays one
+   * global slot because five other places read and write it.
+   */
+  _specViewerView() {
+    if (!DevChat.currentSession) return { kind: 'closed' };
+    if (!DevChat.specViewer.open) return { kind: 'closed' };
     // #233 fail-closed guard: never render another session's spec. Any
     // path that forgets to reset the global specViewer slot on a
-    // session switch gets a blank panel, not stale content.
+    // session switch gets a blank panel, not stale content. It has to SAY
+    // closed rather than decline to speak: the pane reconciles now, so a
+    // bare `return` would leave the previous session's panel standing.
     if (DevChat.specViewer.sessionId != null
-        && Number(DevChat.specViewer.sessionId) !== Number(DevChat.currentSession.id)) return;
+        && Number(DevChat.specViewer.sessionId) !== Number(DevChat.currentSession.id)) {
+      return { kind: 'closed' };
+    }
 
     // Sharing back out (to the group, to a user) and dispatching a build
     // are the OWNER's affordances; a non-owner viewer reaches this panel
@@ -9462,18 +9110,10 @@ const DevChat = {
     // For a non-owner the server substitutes the newest SHARED version's
     // content as `spec` and filters the list, so "latest" reads as
     // "latest visible to you" (version numbers may be non-contiguous).
-    // 'latest' is a sentinel that follows the highest version as new
-    // ones are auto-created on each Mayor spec edit.
     const versions = DevChat.specViewer.versions; // DESC sorted
     const hasVersions = versions.length > 0;
     const latest = hasVersions ? versions[0] : null;
-
-    let selectedVersion;
-    if (DevChat.specViewer.viewVersion === 'latest') {
-      selectedVersion = latest;
-    } else {
-      selectedVersion = versions.find((v) => String(v.version) === String(DevChat.specViewer.viewVersion)) || latest;
-    }
+    const selectedVersion = DevChat._selectedSpecVersion();
     const isLatest = !!(selectedVersion && latest && selectedVersion.version === latest.version);
 
     // Latest content lives in draftContent (== spec_md); older versions
@@ -9482,50 +9122,36 @@ const DevChat = {
       ? DevChat.specViewer.draftContent
       : (DevChat.specViewer.viewVersionContent || '');
 
-    const versionOptions = versions.map((v) => {
+    const options = versions.map((v) => {
       const built = v.built_at ? new Date(v.built_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
       const isThisLatest = latest && v.version === latest.version;
       // The latest option carries the 'latest' value so re-selecting it
       // resumes following new versions; older options carry their number.
-      const optValue = isThisLatest ? 'latest' : String(v.version);
-      const sel = selectedVersion && v.version === selectedVersion.version ? 'selected' : '';
-      const label = `v${v.version}${isThisLatest ? ' (latest)' : ''}${built ? ` · ${built}` : ''}${v.pr_number ? ` · PR #${v.pr_number}` : ''}`;
-      return `<option value="${optValue}" ${sel}>${label}</option>`;
-    }).join('');
+      return {
+        value: isThisLatest ? 'latest' : String(v.version),
+        label: `v${v.version}${isThisLatest ? ' (latest)' : ''}${built ? ` · ${built}` : ''}${v.pr_number ? ` · PR #${v.pr_number}` : ''}`,
+      };
+    });
 
-    // Header action: [Share to group] for the selected version (any
-    // version is shareable now — the redundant draft/Save-version step
-    // was removed in #69). Disabled + "Shared" once already posted.
-    // Owner-only: the share routes are owner-scoped server-side, so for
-    // a non-owner the button could only ever fail.
+    // The three header actions share one gate. `blank` is the disabled,
+    // id-less placeholder: no version, or nothing in the one selected.
+    // Both share routes are owner-scoped server-side, so for a non-owner
+    // the buttons could only ever fail — they are absent instead.
     const isEmpty = !displayContent || !displayContent.trim();
-    const alreadyShared = !!(selectedVersion && selectedVersion.shared_to_group_at);
-    const shareBtnHtml = !isOwner
-      ? ''
-      : (!selectedVersion || isEmpty)
-        ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
-        : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
-
-    // (#1012) Copy the WHOLE selected version as raw markdown — both
-    // halves and the marker headings, regardless of which tab is open
-    // (see the click handler below). Disabled with the same posture as
-    // the share buttons while there is nothing to copy; the lazy
-    // frozen-version fetch at the bottom of this method re-renders and
-    // enables it once older content lands.
-    const copyBtnHtml = isEmpty
-      ? `<button class="dc-spec-action-btn dc-spec-copy-btn" disabled title="No spec to copy yet">Copy markdown</button>`
-      : `<button id="dc-spec-viewer-copy" class="dc-spec-action-btn dc-spec-copy-btn" title="Copy the whole spec (both sections) as markdown">Copy markdown</button>`;
-
-    // (#86) Private share: send this version to ONE person, who gets a
-    // notification deep-linking to the read-only spec panel. Repeatable
-    // (no alreadyShared disabling — the owner can share with several
-    // people one at a time) and independent of the group-share state.
-    // Owner-only, same as the group share above.
-    const shareUserBtnHtml = !isOwner
-      ? ''
-      : (!selectedVersion || isEmpty)
-        ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to user</button>`
-        : `<button id="dc-spec-viewer-share-user" class="dc-spec-action-btn" title="Privately share this spec version with one person">Share to user</button>`;
+    const blank = !selectedVersion || isEmpty;
+    const groupShare = !isOwner
+      ? { kind: 'absent' }
+      : blank
+        ? { kind: 'blank' }
+        // Any version is shareable (#69 removed the draft/Save-version
+        // step); once posted the button reads "Shared" and stops.
+        : { kind: 'live', shared: !!selectedVersion.shared_to_group_at };
+    // (#86) Private share: repeatable, and independent of the group-share
+    // state — the owner can send it to several people one at a time.
+    const userShare = !isOwner ? { kind: 'absent' } : blank ? { kind: 'blank' } : { kind: 'live' };
+    // (#1012) Copy is not owner-gated: anyone who can read the panel can
+    // copy what it shows.
+    const copy = isEmpty ? { kind: 'blank' } : { kind: 'live' };
 
     // #196: a conforming spec (BOTH marker headings present — see
     // public/js/spec-sections.js) renders as two tabs so non-technical
@@ -9534,129 +9160,110 @@ const DevChat = {
     // A null split — legacy or non-conforming doc — renders the single
     // untabbed body exactly as before.
     const split = displayContent ? splitSpecSections(displayContent) : null;
-    let specBodyHtml = '';
-    if (split) {
-      const activeTab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';
-      const activeHalf = activeTab === 'tech' ? split.technical : split.userFacing;
-      const tabBtn = (key, label) =>
-        `<button class="dc-spec-viewer-tab${activeTab === key ? ' dc-spec-viewer-tab-active' : ''}" role="tab" aria-selected="${activeTab === key}" data-spec-tab="${key}">${label}</button>`;
-      // An empty-but-present half still gets its tab (with a muted
-      // placeholder) so the toggle doesn't appear/disappear between
-      // versions.
-      specBodyHtml = `${split.preamble ? `<div class="dc-spec-viewer-body dc-spec-viewer-preamble">${DevChat.renderMarkdown(split.preamble, { breaks: false })}</div>` : ''}
-        <div class="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
-          ${tabBtn('user', 'User-facing')}
-          ${tabBtn('tech', 'Technical')}
-        </div>
-        <div class="dc-spec-viewer-body" role="tabpanel">${
-          activeHalf
-            ? DevChat.renderMarkdown(activeHalf, { breaks: false })
-            : '<p class="dc-spec-tab-empty">Nothing in this section.</p>'
-        }</div>`;
-    } else if (displayContent) {
-      specBodyHtml = `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent, { breaks: false })}</div>`;
-    }
-    // Non-owners can't ask the AI in someone else's session, so their
-    // empty state says what actually gates them: nothing shared yet.
-    const emptyCopy = isOwner
-      ? 'No spec yet. Ask the AI to draft one.'
-      : 'No spec has been shared for this session yet.';
-    const bodyHtml = DevChat.specViewer.isLoading && !displayContent
-      ? `<div class="p-4 text-sm text-zinc-500">Loading spec…</div>`
-      : displayContent
-        ? specBodyHtml
-        : `<div class="p-4 text-sm text-zinc-500">${emptyCopy}</div>`;
-
-    // Spec planning and building are two separate steps: drafting a spec
-    // does NOT build anything. Make the handoff explicit so a finished
-    // spec doesn't read as a finished change (there is no in-UI build
-    // button — the user asks the Mayor in chat). Only shown to the OWNER
-    // (dispatching a build is theirs to do) while viewing the non-empty
-    // latest version, where the next action is to dispatch a build.
-    const buildHintHtml = isOwner && isLatest && !isEmpty
-      ? `<div class="dc-spec-viewer-build-hint">This is a plan, not a built change. Ready? Ask the AI in chat to build it.</div>`
-      : '';
-
-    pane.innerHTML = `
-      <div class="dc-spec-viewer-header">
-        <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1" ${hasVersions ? '' : 'disabled'}>
-          ${hasVersions ? versionOptions : '<option>No versions yet</option>'}
-        </select>
-        ${copyBtnHtml}
-        ${shareUserBtnHtml}
-        ${shareBtnHtml}
-        <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
-        ${isOwner ? `<div id="dc-spec-share-pop" class="dc-spec-share-pop hidden">
-          <input id="dc-spec-share-input" class="dc-spec-share-input" type="text"
-                 placeholder="Username…" autocomplete="off" spellcheck="false" maxlength="32" />
-          <div id="dc-spec-share-suggestions" class="dc-spec-share-suggestions"></div>
-          <div id="dc-spec-share-error" class="dc-spec-share-error hidden"></div>
-          <button id="dc-spec-share-send" class="dc-spec-action-btn dc-spec-share-send">Send</button>
-        </div>` : ''}
-      </div>
-      <div class="dc-spec-viewer-body-wrap">
-        ${bodyHtml}
-      </div>
-      ${buildHintHtml}`;
-
-    const versionSel = pane.querySelector('#dc-spec-viewer-version');
-    if (versionSel) {
-      versionSel.addEventListener('change', (e) => {
-        DevChat._switchSpecViewerVersion(e.target.value);
-      });
+    let body;
+    if (DevChat.specViewer.isLoading && !displayContent) {
+      body = { kind: 'loading' };
+    } else if (!displayContent) {
+      // Non-owners can't ask the AI in someone else's session, so their
+      // empty state says what actually gates them: nothing shared yet.
+      body = {
+        kind: 'empty',
+        copy: isOwner
+          ? 'No spec yet. Ask the AI to draft one.'
+          : 'No spec has been shared for this session yet.',
+      };
+    } else if (split) {
+      const tab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';
+      const half = tab === 'tech' ? split.technical : split.userFacing;
+      body = {
+        kind: 'split',
+        preambleHtml: split.preamble
+          ? DevChat.renderMarkdown(split.preamble, { breaks: false })
+          : '',
+        tab,
+        halfHtml: half ? DevChat.renderMarkdown(half, { breaks: false }) : '',
+      };
+    } else {
+      body = { kind: 'plain', html: DevChat.renderMarkdown(displayContent, { breaks: false }) };
     }
 
-    const closeBtn = pane.querySelector('#dc-spec-viewer-close');
-    if (closeBtn) closeBtn.addEventListener('click', () => DevChat.closeSpecViewer());
+    return {
+      kind: 'open',
+      versions: options,
+      selected: selectedVersion ? (isLatest ? 'latest' : String(selectedVersion.version)) : '',
+      version: selectedVersion ? selectedVersion.version : null,
+      // #1012: the WHOLE selected version, raw — both halves and the marker
+      // headings — so "Copy markdown" can never become the rendered half or
+      // the active tab's slice.
+      raw: displayContent,
+      body,
+      copy,
+      userShare,
+      groupShare,
+      // Spec planning and building are two separate steps: drafting a spec
+      // does NOT build anything. Make the handoff explicit so a finished
+      // spec doesn't read as a finished change (there is no in-UI build
+      // button — the user asks the Mayor in chat).
+      buildHint: isOwner && isLatest && !isEmpty,
+    };
+  },
 
-    // (#1012) Copy the ENTIRE document: displayContent is the raw
-    // markdown of the selected version, so the copy deliberately ignores
-    // `split` and `activeTab` — "copy the whole thing" means both halves
-    // plus their marker headings, verbatim, with nothing added.
-    // The label flash is fire-and-forget: a spec_updated re-render can
-    // replace this button mid-flash, leaving the restore timer pointed at
-    // a detached node. Harmless (the fresh button renders with the
-    // default label), so it needs no bookkeeping.
-    const copyBtn = pane.querySelector('#dc-spec-viewer-copy');
-    if (copyBtn) {
-      copyBtn.addEventListener('click', async () => {
-        const ok = await PlatformUI.copyText(displayContent);
-        copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
-        if (!ok) PlatformUI.toast('Couldn\'t copy — select the text and copy it manually');
-        setTimeout(() => { copyBtn.textContent = 'Copy markdown'; }, 1500);
-      });
-    }
+  /**
+   * Six writers used to rebuild the pane; they all land here.
+   *
+   * The lazy frozen-version fetch sits AFTER the publish rather than inside
+   * `_specViewerView`, which is the rule the transcript's conversion wrote
+   * down: a loader a renderer calls per paint must not re-enter that
+   * renderer. It terminates on the cache check — `_loadSpecVersion` fills
+   * `viewVersionContent` and publishes once.
+   */
+  _publishSpecViewer() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishSpecViewer) return;
+    react.publishSpecViewer(DevChat._specViewerView());
 
-    const shareBtn = pane.querySelector('#dc-spec-viewer-share');
-    if (shareBtn && selectedVersion) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(selectedVersion.version));
+    if (!DevChat.specViewer.open || DevChat.specViewer.viewVersionContent) return;
+    const versions = DevChat.specViewer.versions;
+    if (!versions.length) return;
+    const selected = DevChat._selectedSpecVersion();
+    if (!selected || selected.version === versions[0].version) return;
+    DevChat._loadSpecVersion(selected.version).catch(() => {});
+  },
 
-    const shareUserBtn = pane.querySelector('#dc-spec-viewer-share-user');
-    if (shareUserBtn && selectedVersion) DevChat._bindSpecSharePopover(pane, shareUserBtn, selectedVersion.version);
+  // #196: tab switches are pure re-renders of cached content — no
+  // refetch. The selection lives in specViewer.activeTab so it
+  // survives version switches and spec_updated refreshes within the
+  // panel's lifetime.
+  _setSpecTab(tab) {
+    const next = tab === 'tech' ? 'tech' : 'user';
+    if (DevChat.specViewer.activeTab === next) return;
+    DevChat.specViewer.activeTab = next;
+    DevChat._publishSpecViewer();
+  },
 
-    // #196: tab switches are pure re-renders of cached content — no
-    // refetch. The selection lives in specViewer.activeTab so it
-    // survives version switches and spec_updated refreshes within the
-    // panel's lifetime.
-    pane.querySelectorAll('.dc-spec-viewer-tab').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const tab = btn.dataset.specTab === 'tech' ? 'tech' : 'user';
-        if (DevChat.specViewer.activeTab === tab) return;
-        DevChat.specViewer.activeTab = tab;
-        DevChat._renderSpecViewer();
-      });
-    });
-
-    // Lazy-fetch frozen content when an older (non-latest) version is
-    // selected and we don't have it cached.
-    if (selectedVersion && !isLatest && !DevChat.specViewer.viewVersionContent) {
-      DevChat._loadSpecVersion(selectedVersion.version).catch(() => {});
+  // (#86) Mention candidates for the private-share popover — the same
+  // endpoint the group chat's @mention autocomplete uses. Best-effort by
+  // construction: an exact username still works without it, so every
+  // failure resolves to an empty list rather than surfacing an error.
+  async _loadSpecMentionSuggestions() {
+    if (typeof AppView === 'undefined' || !AppView.appData || !AppView.appData.slug) return [];
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/mention-suggestions`);
+      if (!res.ok) return [];
+      const { users } = await res.json();
+      return Array.isArray(users)
+        ? users.map((u) => (u && u.username) || '').filter(Boolean)
+        : [];
+    } catch {
+      return [];
     }
   },
 
   _switchSpecViewerVersion(value) {
     DevChat.specViewer.viewVersion = value === 'latest' ? 'latest' : value;
     DevChat.specViewer.viewVersionContent = null;
-    DevChat._renderSpecViewer();
+    DevChat._publishSpecViewer();
   },
 
   async _loadSpecVersion(version) {
@@ -9670,7 +9277,7 @@ const DevChat = {
       // Bail if the user picked another version while we were fetching.
       if (String(DevChat.specViewer.viewVersion) !== String(version)) return;
       DevChat.specViewer.viewVersionContent = data.spec.content || '';
-      DevChat._renderSpecViewer();
+      DevChat._publishSpecViewer();
     } catch (err) {
       console.warn('loadSpecVersion failed:', err);
     }
@@ -9689,109 +9296,10 @@ const DevChat = {
       // group chat side.
       const v = DevChat.specViewer.versions.find((x) => x.version === Number(version));
       if (v) v.shared_to_group_at = new Date().toISOString();
-      DevChat._renderSpecViewer();
+      DevChat._publishSpecViewer();
     } catch (err) {
       console.warn('shareSpecVersion failed:', err);
     }
-  },
-
-  // (#86) Wire the "Share to user" button + its popover. The popover
-  // lives inside the freshly-rendered pane, so all state here is local
-  // to this render pass — a re-render (version switch, spec update)
-  // simply closes it. Suggestions come from the same endpoint the
-  // group-chat @mention autocomplete uses, fetched once per open and
-  // prefix-filtered client-side as the user types.
-  _bindSpecSharePopover(pane, btn, version) {
-    const pop = pane.querySelector('#dc-spec-share-pop');
-    const input = pane.querySelector('#dc-spec-share-input');
-    const sugBox = pane.querySelector('#dc-spec-share-suggestions');
-    const errBox = pane.querySelector('#dc-spec-share-error');
-    const sendBtn = pane.querySelector('#dc-spec-share-send');
-    if (!pop || !input || !sugBox || !errBox || !sendBtn) return;
-
-    let suggestions = [];
-
-    const setError = (msg) => {
-      errBox.textContent = msg || '';
-      errBox.classList.toggle('hidden', !msg);
-    };
-
-    const renderSuggestions = () => {
-      const q = input.value.trim().toLowerCase();
-      const matches = suggestions
-        .filter((name) => !q || name.toLowerCase().startsWith(q))
-        .slice(0, 6);
-      sugBox.innerHTML = matches
-        .map((name) => `<button type="button" class="dc-spec-share-sug" data-username="${escapeHtml(name)}">@${escapeHtml(name)}</button>`)
-        .join('');
-      sugBox.querySelectorAll('.dc-spec-share-sug').forEach((s) => {
-        s.addEventListener('click', () => {
-          input.value = s.dataset.username;
-          sugBox.innerHTML = '';
-          input.focus();
-        });
-      });
-    };
-
-    const close = () => {
-      pop.classList.add('hidden');
-      document.removeEventListener('pointerdown', onOutside, true);
-    };
-    const onOutside = (e) => {
-      if (pop.contains(e.target) || e.target === btn) return;
-      close();
-    };
-
-    btn.addEventListener('click', async () => {
-      if (!pop.classList.contains('hidden')) { close(); return; }
-      pop.classList.remove('hidden');
-      setError(null);
-      input.value = '';
-      sugBox.innerHTML = '';
-      input.focus();
-      document.addEventListener('pointerdown', onOutside, true);
-      // Lazy one-shot fetch of mention candidates for this app.
-      if (!suggestions.length
-          && typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) {
-        try {
-          const res = await fetch(`/api/apps/${AppView.appData.slug}/mention-suggestions`);
-          if (res.ok) {
-            const { users } = await res.json();
-            suggestions = Array.isArray(users)
-              ? users.map((u) => (u && u.username) || '').filter(Boolean)
-              : [];
-            if (!pop.classList.contains('hidden')) renderSuggestions();
-          }
-        } catch { /* suggestions are best-effort; exact usernames still work */ }
-      }
-    });
-
-    input.addEventListener('input', () => { setError(null); renderSuggestions(); });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); sendBtn.click(); }
-      if (e.key === 'Escape') close();
-    });
-
-    sendBtn.addEventListener('click', async () => {
-      const username = input.value.trim().replace(/^@/, '');
-      if (!username) { setError('Enter a username'); return; }
-      sendBtn.disabled = true;
-      sendBtn.textContent = 'Sending…';
-      const result = await DevChat._shareSpecToUser(version, username);
-      sendBtn.disabled = false;
-      sendBtn.textContent = 'Send';
-      if (!result.ok) {
-        setError(result.error || 'Failed to share');
-        return;
-      }
-      // Transient confirmation, then reset for the next share.
-      setError(null);
-      sugBox.innerHTML = '';
-      const sentName = (result.recipient && result.recipient.username) || username;
-      btn.textContent = `Sent to @${sentName}`;
-      close();
-      setTimeout(() => { btn.textContent = 'Share to user'; }, 2500);
-    });
   },
 
   // POST the private share; returns the parsed response (or an {ok:false,

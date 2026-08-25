@@ -35,12 +35,12 @@ export interface TextareaProps
 // attributes in prop order, and the hand-written markup writes `id` and
 // `rows` ahead of `class`.
 const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className, spacing, width, box, hint, mono, ring, text, ...props }, ref) => (
+  ({ className, lead, spacing, width, box, hint, mono, ring, text, ...props }, ref) => (
     <textarea
       ref={ref}
       {...props}
       className={cn(
-        inputVariants({ spacing, width, box, hint, mono, ring, text }),
+        inputVariants({ lead, spacing, width, box, hint, mono, ring, text }),
         className,
       )}
     />

@@ -110,9 +110,9 @@ export function RenameAppDialog() {
         <h2 className="text-lg font-bold mb-1">
           Rename app
         </h2>
-        <p className="text-xs text-zinc-500 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
           Current app name:
-          <span id="rename-current" className="font-mono text-zinc-300">
+          <span id="rename-current" className="font-mono text-zinc-500 dark:text-zinc-400">
             {currentName}
           </span>
         </p>
@@ -137,7 +137,7 @@ export function RenameAppDialog() {
               ring="seamless"
               placeholder="a better name"
             />
-            <p className="text-xs text-zinc-500 mt-1">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
               3–64 characters. This is the app's display name — the URL won't change. Opens a PR that edits
               <span className="font-mono">
                 dapp.json
@@ -152,7 +152,7 @@ export function RenameAppDialog() {
             <button
               type="button"
               id="rename-cancel"
-              className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={() => dialog.close()}
             >
               Cancel

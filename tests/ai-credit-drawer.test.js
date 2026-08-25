@@ -45,8 +45,22 @@ test('the shell still carries the renderer, now via the React bundle', () => {
     'the header-menu island must import it, or nothing defines window.AiCredit');
 });
 
-test('the renderer resolves its slot by the shell-owned id', () => {
-  assert.match(creditJs, /getElementById\('ai-budget-slot'\)/);
+test('the renderer publishes into the store the row reads', () => {
+  // #1367: the module no longer resolves the slot by id — the row IS the
+  // component (features/header/ai-budget.tsx), and that is what renders
+  // `#drawer-row-ai-budget` / `#ai-budget-slot` now.
+  assert.match(creditJs, /import \{ aiBudgetStore \} from '\.\/ai-budget-store\.js'/);
+  assert.match(creditJs, /aiBudgetStore\.set\(/);
+  const row = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/ai-budget.tsx'), 'utf8');
+  assert.match(row, /id="drawer-row-ai-budget"/);
+  assert.match(row, /id="ai-budget-slot"/);
+  // …and the section that hosts it renders the component rather than an
+  // empty slot for something else to fill.
+  const section = fs.readFileSync(
+    path.join(root, 'frontend/src/features/settings/sections/api-key.tsx'), 'utf8');
+  assert.match(section, /<AiBudgetRow \/>/);
+  assert.doesNotMatch(section, /id="ai-budget-slot"/, 'exactly one renderer');
 });
 
 test('the authed boot initialises the renderer', () => {
@@ -106,8 +120,11 @@ test('the budget row carries no global spend or cap', () => {
 test('the pill carries the class hook the dapp.json check asserts on', () => {
   // The sidebar reorg (#913) renamed the hook from ai-budget-pill to
   // ai-budget-meter and updated dapp.json's rendered check to match;
-  // keep this pin aligned with the selector dapp.json asserts on.
-  assert.match(creditJs, /ai-budget-meter/, '#ai-budget-slot meter has a stable hook class');
+  // keep this pin aligned with the selector dapp.json asserts on. It moved
+  // to the component with the markup.
+  const row = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/ai-budget.tsx'), 'utf8');
+  assert.match(row, /ai-budget-meter/, '#ai-budget-slot meter has a stable hook class');
 });
 
 test('?shot=menu opens the drawer and is not env-gated', () => {
@@ -121,10 +138,15 @@ test('?shot=menu opens the drawer and is not env-gated', () => {
   assert.match(appJs, /App\._applyMenuShot\(\);/, 'called from the authed boot');
 });
 
-test('tooltips are attribute-escaped', () => {
-  // The tooltip interpolates server-provided values into a title="".
-  assert.match(creditJs, /function escapeAttr/, 'escapeAttr helper is present');
-  const titles = creditJs.match(/title="'\s*\+\s*escapeAttr/g) || [];
-  assert.ok(titles.length >= 1,
-    `every title="" goes through escapeAttr (found ${titles.length})`);
+test('tooltips need no escaping, because nothing builds an attribute string', () => {
+  // The tooltip interpolates server-provided values, and used to do it into
+  // a hand-built `title=""`. React sets the attribute, so the escaping is
+  // structural — and the two helpers that did it by hand are retired rather
+  // than left as a second, unused escaper to reach for.
+  assert.doesNotMatch(creditJs, /function escapeAttr/);
+  assert.doesNotMatch(creditJs, /function escapeHtml/);
+  assert.doesNotMatch(creditJs, /innerHTML/, 'the module writes no markup at all');
+  const row = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/ai-budget.tsx'), 'utf8');
+  assert.match(row, /title=\{view\.title\}/, 'the tooltip is a prop');
 });

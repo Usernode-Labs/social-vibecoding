@@ -142,15 +142,45 @@ const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>(
 TabsTrigger.displayName = 'TabsTrigger';
 
 /** The underlined-strip variant: container, then the trigger's three parts. */
+/*
+ * The strip is a SEGMENTED CONTROL now, not an underlined tab row.
+ *
+ * The underline — a rule under the whole strip with a thicker accent segment
+ * under the active label — is the shape the widget language replaces
+ * everywhere: it separates by RULE, and the language separates by
+ * figure/ground. The selected state is the language's one high-contrast
+ * treatment (near-black fill, page-coloured ink), the same inversion
+ * @/components/ui/chip.tsx documents and features/improve/view-toggle.tsx
+ * already ships. Two strips in one product reading the same way is the point.
+ *
+ * Deliberately NOT routed through Chip: these are tabs. Chip's header explains
+ * why sharing the LOOK is not a reason to share the SEMANTICS — a chip is a
+ * toggle and says `aria-pressed`, a tab is selected and says `aria-current`.
+ * This strip keeps every attribute it had; only the classes changed, so
+ * dapp.json's checks on the `data-*` keys are untouched.
+ *
+ * The track is `inline-flex` rather than `flex` so it shrinks to its labels
+ * instead of spanning the page: a full-width track under a `max-w-5xl` table
+ * would read as a header bar rather than as a control.
+ */
+/*
+ * WHITE track, not zinc-100. In this palette zinc-100 IS the page ground
+ * (#eaeaea), and a recessed grey track is a shape that only exists on a white
+ * card — on the ground itself it disappears and the strip reads as three loose
+ * labels with one of them blacked out. The language's controls FLOAT on the
+ * ground, so the track is a raised white surface, like the header's hamburger
+ * disc and an unselected chip.
+ */
 export const SECTION_TABS_LIST =
-  'flex gap-2 border-b border-zinc-200 dark:border-zinc-800 mb-4';
+  'inline-flex items-center gap-0.5 rounded-full bg-white dark:bg-zinc-900 p-0.5 mb-4';
 
-export const SECTION_TAB_BASE = 'px-3 py-2 text-sm font-semibold border-b-2 -mb-px';
+export const SECTION_TAB_BASE =
+  'inline-flex items-center justify-center h-8 px-4 rounded-full text-sm font-semibold transition-colors';
 
-export const SECTION_TAB_ACTIVE = 'border-violet-500 text-violet-700 dark:text-violet-300';
+export const SECTION_TAB_ACTIVE = 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900';
 
 export const SECTION_TAB_INACTIVE =
-  'border-transparent text-zinc-500 dark:text-zinc-400 '
-  + 'hover:text-zinc-800 dark:hover:text-zinc-200';
+  'text-zinc-500 dark:text-zinc-400 '
+  + 'hover:text-zinc-900 dark:hover:text-zinc-100';
 
 export { Tabs, TabsList, TabsTrigger };

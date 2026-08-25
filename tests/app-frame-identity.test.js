@@ -165,6 +165,13 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
   const stagingBridgeMod = await import(
     new URL('../frontend/src/features/staging/staging-bridge.js', `file://${__filename}`).href
   );
+  // The App tab's placeholder states publish a view model into this store
+  // (features/app-frame/app-status.tsx renders it). Plain JS, like the two
+  // above, so this harness can hold the real one.
+  const statusStoreMod = await import(
+    new URL('../frontend/src/features/app-frame/app-status-store.js', `file://${__filename}`).href
+  );
+  statusStoreMod.appStatusStore.set({ view: null });
 
   // The stores are module-scope singletons, like the islands they feed: reset
   // them to the prerendered state between cases.
@@ -307,6 +314,14 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
     appFrame: bridgeMod.appFrameBridge,
     staging: stagingBridgeMod.stagingBridge,
     visualCompare: stagingBridgeMod.visualCompareBridge,
+    // The mount half of the placeholder bridge is React's (it mounts a
+    // portal); the STORE is the seam, and what this harness is about is
+    // which view app-view.js publishes into it.
+    appStatus: {
+      mount: (_host, view) => statusStoreMod.appStatusStore.set({ view }),
+      unmount: () => statusStoreMod.appStatusStore.set({ view: null }),
+      clear: () => statusStoreMod.appStatusStore.set({ view: null }),
+    },
   };
   if (offlineReady) {
     sandbox.localStorage.setItem(
@@ -335,6 +350,8 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
     mounts: () => bridge.stats().mounts - baseline.mounts,
     navigations: () => bridge.stats().navigations - baseline.navigations,
     surface: () => outside['app-view'].getAttribute('data-app-surface'),
+    /** The placeholder currently published, or null when a frame is up. */
+    status: () => statusStoreMod.appStatusStore.get().view,
   };
 }
 
@@ -600,7 +617,59 @@ test('leaving the app drops the frame; a non-running app never gets one', async 
   AppView.renderAppTab();
   assert.equal(bridge.frame(), null, 'the creating placeholder has no frame');
   assert.equal(h.surface(), 'platform', 'and keeps the platform clearance');
-  assert.match(h.outside['app-content'].innerHTML, /spinning up/, 'the placeholder is in #app-content');
+  assert.match(h.status().message, /spinning up/, 'the placeholder is published');
+});
+
+// ── canEagerLaunch is a PREDICATE ────────────────────────────────────────
+//
+// It answers "would an eager launch mount the same frame renderAppTab would
+// build?", and it answers no far more often than yes: a demo card, a
+// self-hosted app, a non-app tab, and every app that is not running. It used
+// to tear down the interim React roots that own `#app-content` on its way to
+// that answer, which was invisible while the App tab's placeholders were
+// hand-written innerHTML — `unmountAllLegacyPortals` cannot touch those.
+//
+// #1085 chunk H made the placeholders a portal, and the side effect became a
+// blank App tab on exactly the apps the predicate refuses: `renderAppTab`
+// painted "App failed to start · View build log", `beginLaunch` asked the
+// predicate milliseconds later, and the answer arrived with the placeholder
+// already swept away. A declared check reported the build-log button missing
+// from a page that had rendered it.
+
+test('asking whether an app can eager-launch does not disturb the placeholder', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+
+  for (const status of ['error', 'creating', 'awaiting_secrets']) {
+    // Both sources say the app is not running: `renderAppTab` reads
+    // `appData`, `canEagerLaunch` reads the HOME list record.
+    h.sandbox.Home._apps[0].status = status;
+    h.sandbox.Home._apps[0].url = null;
+    AppView.appData = { slug: SLUG, status, url: null, lastFailure: { reason: 'boom' } };
+    AppView.renderAppTab();
+    const painted = h.status();
+    assert.ok(painted, `${status}: the placeholder is published`);
+
+    // The answer is no for every one of these — there is no running app to
+    // launch onto — and asking must not cost the surface that IS on screen.
+    assert.equal(AppView.canEagerLaunch(SLUG, 'app'), false, `${status}: no eager launch`);
+    assert.equal(h.status(), painted, `${status}: the placeholder survives the question`);
+    assert.equal(bridge.frame(), null, `${status}: and no frame appears`);
+  }
+});
+
+test('a refused beginLaunch leaves the screen exactly as it found it', async () => {
+  const h = await makeHarness();
+  const { AppView } = h;
+
+  h.sandbox.Home._apps[0].status = 'error';
+  h.sandbox.Home._apps[0].url = null;
+  AppView.appData = { slug: SLUG, status: 'error', url: null, lastFailure: { reason: 'boom' } };
+  AppView.renderAppTab();
+  const painted = h.status();
+
+  assert.equal(AppView.beginLaunch(SLUG, 'app'), false, 'nothing to launch onto');
+  assert.equal(h.status(), painted, 'the placeholder is still the one on screen');
 });
 
 test('offline shows the placeholder and drops the frame — for an app with no worker of its own', async () => {
@@ -608,7 +677,7 @@ test('offline shows the placeholder and drops the frame — for an app with no w
   const { AppView, bridge } = h;
   AppView.renderAppTab();
   assert.equal(bridge.frame(), null, 'no cross-origin frame while offline');
-  assert.match(h.outside['app-content'].innerHTML, /needs a connection/, 'placeholder instead');
+  assert.match(h.status().message, /needs a connection/, 'placeholder instead');
   assert.equal(h.surface(), 'platform', 'platform surface');
   assert.equal(AppView.canEagerLaunch(SLUG, 'app'), false, 'and no eager launch either');
 });
@@ -628,8 +697,7 @@ test('offline MOUNTS the frame for an app that announced its own service worker'
 
   const el = bridge.frame();
   assert.ok(el, 'the offline-capable app gets its frame');
-  assert.doesNotMatch(h.outside['app-content'].innerHTML, /needs a connection/,
-    'and no placeholder');
+  assert.equal(h.status(), null, 'and no placeholder');
   assert.equal(h.surface(), 'app', 'the app surface, not the platform one');
   // No mint is possible offline, so the app boots token-less and recovers
   // its identity from its own storage (that is the app-side contract).
@@ -702,12 +770,11 @@ test('the offline-app screenshot states are self-contained — no running app re
   assert.equal(h.surface(), 'app', 'on the app surface');
   assert.equal(bridge.frame().src, 'https://platform.example/health',
     "pointed at the shell's own /health, not a fabricated cross-origin app");
-  assert.doesNotMatch(h.outside['app-content'].innerHTML, /needs a connection/,
-    'and no placeholder underneath it');
+  assert.equal(h.status(), null, 'and no placeholder underneath it');
 
   AppView.showOfflineAppShot(false);
   assert.equal(bridge.frame(), null, 'the blocked state drops the frame again');
-  assert.match(h.outside['app-content'].innerHTML, /needs a connection/,
+  assert.match(h.status().message, /needs a connection/,
     'and paints the placeholder the unchanged path still produces');
   assert.equal(h.surface(), 'platform', 'back on the platform surface');
 });

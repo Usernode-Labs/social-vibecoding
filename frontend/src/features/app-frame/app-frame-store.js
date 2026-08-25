@@ -35,8 +35,8 @@ import { createStore } from '../../lib/plain-store.js';
  * each cover field is.
  *
  * @typedef {{
- *   iconKind: string, iconHtml: string, name: string, note: string,
- *   spinner: boolean, out: boolean,
+ *   iconKind: string, iconHtml: string, name: string,
+ *   note: string, spinner: boolean, out: boolean,
  * }} LaunchCoverState
  * @typedef {{
  *   slug: string, active: boolean, faded: boolean, cover: LaunchCoverState | null,

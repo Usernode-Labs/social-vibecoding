@@ -68,10 +68,11 @@ test('/admin#campaign-<id> deep-links the campaign instead of losing the id', ()
     'admin.html matches the legacy #campaign-<id> fragment');
   assert.match(src, /'#admin\/campaigns\/' \+ m\[1\]/,
     'and maps it onto #admin/campaigns/<id>');
-  // The consuming side owns that second hash level.
-  const campaigns = read('frontend/src/features/admin/admin-campaigns.js');
+  // The consuming side owns that second hash level. `.tsx` since #1120 slice
+  // 11 — the section renders in React now, and still owns its sub-hash.
+  const campaigns = read('frontend/src/features/admin/admin-campaigns.tsx');
   assert.match(campaigns, /#admin\\\/campaigns\\\/\(\\d\+\)/,
-    'admin-campaigns.js reads the campaign id back out of the hash');
+    'admin-campaigns.tsx reads the campaign id back out of the hash');
 });
 
 test('the server still serves each stub, before the SPA fallback', () => {

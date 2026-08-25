@@ -84,10 +84,50 @@ test('the glyphs live in the module, not inline beside it', () => {
     // table at render time, and <Glyph> is the escape hatch it uses.
     if (/\sd="M/.test(src)) offenders.push(file);
   }
+  // The admin console's own two glyphs — the panel ✕ and a nested screen's
+  // back chevron — are the one exception. They are PORTS, not new glyphs, and
+  // importing from @/components/ui/icons.tsx is not the alternative:
+  // AGENTS.md's density boundary forbids an admin source from reaching into
+  // the shell's primitives, and tests/admin-ui-registry.test.js enforces it.
+  //
+  // These were checkable byte for byte against admin-topochain.js's own
+  // _panel() / detail renderer while those existed. #1120 slice 35 retired
+  // the last of them — that module renders no markup at all now — so the
+  // anchor is structural instead, and it is the one that protects what is
+  // left: exactly two paths, each exported as a component, and no other admin
+  // source inlining one. A second offender in this list is a copy that will
+  // drift, not a third legitimate port.
+  const PORTED = 'frontend/src/features/admin/topochain/ui.tsx';
+  if (offenders.includes(PORTED)) {
+    const src = read(PORTED);
+    const ported = src.match(/\sd="(M[^"]*)"/g) || [];
+    assert.equal(ported.length, 2,
+      `${PORTED} may carry exactly the two ported glyphs — the ✕ and the back chevron`);
+    for (const fn of ['CloseButton', 'BackButton']) {
+      assert.match(src, new RegExp(`export function ${fn}\\(`),
+        `${fn} is exported, so the screens have something to import instead of copying`);
+    }
+    // And they are actually used through those components, not re-declared.
+    const screens = fs.readdirSync(path.join(ROOT, 'frontend/src/features/admin/topochain'))
+      .filter((f) => f.endsWith('.tsx') && f !== 'ui.tsx');
+    for (const f of screens) {
+      const s2 = read(`frontend/src/features/admin/topochain/${f}`);
+      assert.ok(!/\sd="M/.test(s2), `${f} imports the glyph rather than inlining it`);
+    }
+    offenders.splice(offenders.indexOf(PORTED), 1);
+  }
   assert.deepEqual(offenders, [],
     'these files inline SVG path data — move the glyph into '
     + 'frontend/@/components/ui/icons.tsx and import it:\n  ' + offenders.join('\n  '));
-  assert.deepEqual(featureFiles().filter((f) => svgTags(read(f)).length > 0), [],
+  // The blanket "no raw <svg>" half is the SHELL's rule. The admin console
+  // draws its own data charts and always has — admin-analytics.js,
+  // admin-estimator and admin-topochain each emit an <svg> of <rect>s and
+  // <line>s — and a bar chart is not a glyph that escaped the module. Those
+  // files only became visible here when #1120 started converting console
+  // sections to .tsx; the inline-path-data rule above still covers them, which
+  // is the half that actually catches a glyph.
+  const shellFiles = featureFiles().filter((f) => !f.startsWith('frontend/src/features/admin/'));
+  assert.deepEqual(shellFiles.filter((f) => svgTags(read(f)).length > 0), [],
     'a raw <svg> in a feature file is a glyph that escaped the module');
 });
 
@@ -138,8 +178,30 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // its detail page's Open pill (#1191 slice 6). Both render from row/detail
     // descriptors that are null until the first fetch lands, so the prerendered
     // #browse-list and #browse-detail are empty by contract, not by accident.
+    // CheckIcon gained a second call site with the widget strip's Done button,
+    // which is behind the same iOS-only gate as InfoCircleIcon below.
     'M5 13l4 4L19 7',
     'M13 7l5 5m0 0l-5 5m5-5H6',
+    // The home panels' three glyphs, all behind the same gate: Discover,
+    // Challenges and Create app render from the /api/home-panels cache, which
+    // is FETCHED, so the prerendered sections are empty by contract (see
+    // panels-store.ts's `painted`).
+    //
+    // TrophyOutlineIcon — the Challenges bar's leaderboard link and its
+    // standings footer.
+    'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
+    // ChevronDownIcon — the Challenges footer's expand caret.
+    'M19 9l-7 7-7-7',
+    // PlusWideIcon — Discover's add badge and the Create app tile. Its other
+    // call site is an HTML string in features/home/home.js's card menu, which
+    // is not rendered by <Shell/> either.
+    'M12 4v16m8-8H4',
+    // InfoCircleIcon — the widget strip's ⓘ help toggle. The strip is iOS
+    // in-app only: `Home.widgetSectionView()` reports `active: false` unless
+    // the bridge answered `mechanism: 'widget'` AND the viewer opened the
+    // section, so the prerendered `#home-widget-strip-section` is the empty,
+    // hidden host and this glyph has no other call site.
+    'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
     // The thread header and composer render only after a conversation is
     // selected. The static Messages screen therefore ships only its new-
     // conversation plus glyph; these five remain behind route state.
@@ -148,6 +210,31 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M21.4 11.6l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.4-8.4',
     'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
     'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
+    // ── The Dev card's glyphs (#1367's card chunk) ──────────────────
+    // The card family renders inside #dev-feed / #dev-kanban-board /
+    // #gc-thread-head, all of which app-view.js mounts at runtime on the Dev
+    // route — none is in <Shell/>, so none of the four prerenders. The eye,
+    // the ⋯ dots and the drag grip are circles rather than paths, so they
+    // never appear in this list at all.
+    // PencilSquareIcon — the author-only inline title edit on a topic head.
+    'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+    // ── The dev chat's banner glyphs ────────────────────────────────
+    // All four render inside `#dc-banners`, which `renderChatView` writes on
+    // the dev-chat route — not in <Shell/> — and each is additionally behind
+    // its own condition: a branch behind main, a proposed PR, an exhausted
+    // allowance, a nearly-exhausted one. The prerendered document has no
+    // session open at all, so none of them can be there.
+    // PlusThinIcon — the new-change banner.
+    'M12 4.5v15m7.5-7.5h-15',
+    // ClockIcon — the low-credits warning.
+    'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z',
+    // WarningTriangleIcon — the sync banner's idle and failed states, and the
+    // exhausted-credits banner.
+    'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z',
+    // CheckLongIcon — the sync banner's settled success.
+    'M4.5 12.75l6 6 9-13.5',
+    // UserCircleIcon — the credits banner's connect-an-account variant.
+    'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z',
     // ── Retired by THE UI OVERHAUL, with their surfaces ─────────────
     // GitHubIcon and ShareIcon left the hamburger drawer's footer for the
     // Improve panel — which IS in <Shell/>, so they would still be here…
@@ -193,6 +280,22 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // App tab). New with the toggle, so it has never prerendered.
     'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
     'M4 9.5h16',
+    // ── The dev chat composer's five glyphs ─────────────────────────
+    // None of them can prerender: the composer is written into #dc-view at
+    // runtime by `renderChatView`, and the prerendered document ships that
+    // element empty. The three draft-row actions are further behind state —
+    // a row exists only once something is saved.
+    'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
+    'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
+    'M17 21v-8H7v8',
+    'M7 3v5h8',
+    'M22 2 11 13',
+    'M22 2 15 22l-4-9-9-4z',
+    'M12 20h9',
+    'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
+    'M3 6h18',
+    'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2',
+    'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

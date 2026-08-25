@@ -28,7 +28,8 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
 
-const { HOME_SRC } = require('./helpers/home-modules');
+const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
+const { installGridStore } = require('./helpers/home-grid-store');
 
 function makeHome(user) {
   return makeHomeEnv(user).Home;
@@ -110,7 +111,12 @@ function makeHomeEnv(user) {
   // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.
   // It imports them; this declares what the stripped import would have bound.
   installAppCard(sandbox);
-  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  // #1191: Home.render() no longer bails when #app-list is absent — it
+  // publishes a view model instead of assigning innerHTML, so it now runs
+  // for real here and needs both the geometry module it lays out against
+  // and the store binding ./helpers/home-modules strips the import for.
+  installGridStore(sandbox);
+  vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return { Home: sandbox.__Home, sandbox };
 }
 
@@ -327,7 +333,10 @@ test('missing secrets: key names never render; the chip lives in the menu header
   assert.doesNotMatch(card, /Missing secrets/, 'no chip on the card face');
   assert.doesNotMatch(card, /STRIPE_SECRET_KEY|SENDGRID_API_KEY/, 'key names stay off the card');
   const header = Home.renderMenuHeaderHtml(app);
-  assert.match(header, /bg-red-500\/10 text-red-500[^>]*>Missing secrets</, 'red chip in the header');
+  // The chip's INK moved a step darker for the light theme (a -500 on a 10%
+  // tint of itself measured 2.3:1 there); the tint behind it is unchanged, and
+  // the assertion is still that this chip is the RED one.
+  assert.match(header, /bg-red-500\/10 text-red-700[^>]*>Missing secrets</, 'red chip in the header');
   assert.doesNotMatch(header, /STRIPE_SECRET_KEY|SENDGRID_API_KEY/, 'key names stay out of the header too');
 });
 
@@ -710,29 +719,44 @@ test('menu: shortcut item becomes "Edit in Usernode widget" once added', () => {
 
 // ── Usernode widget section ───────────────────────────────────────
 //
-// renderWidgetSection is the iOS-only strip above "Your apps". It must
-// render nothing unless BOTH the bridge reported mechanism 'widget' AND
-// the registry fetch succeeded (_widgetItems is an array) — old app
-// builds time out to null and plain browsers never probe, so the
-// section (and its management calls) can't appear where they'd fail.
+// The iOS-only strip above "Your apps". It must render nothing unless BOTH
+// the bridge reported mechanism 'widget' AND the registry fetch succeeded
+// (_widgetItems is an array) — old app builds time out to null and plain
+// browsers never probe, so the section (and its management calls) can't
+// appear where they'd fail.
+//
+// #1191 split the one `renderWidgetSection()` these were written against into
+// the two halves the React conversion makes: `Home.widgetSectionView()`
+// decides (it is where all three gates above still live) and
+// features/home/widget-strip.tsx's `WidgetStripBody` draws. `sectionHtml`
+// runs both, so every assertion below still executes the rendering rather
+// than grepping for it — and `''` still means "nothing", because the body
+// returns null for an inactive strip.
+const { renderComponent } = require('./lib/render-tsx');
+
+const WIDGET_STRIP = 'frontend/src/features/home/widget-strip.tsx';
+
+function sectionHtml(Home) {
+  return renderComponent(WIDGET_STRIP, 'WidgetStripBody', { strip: Home.widgetSectionView() });
+}
 
 test('widget section: hidden unless revealed + widget mechanism + registry', () => {
   const Home = makeHome({ id: ME });
-  assert.equal(Home.renderWidgetSection(), '', 'no probe → nothing');
+  assert.equal(sectionHtml(Home), '', 'no probe → nothing');
   Home._shortcutSupport = { mechanism: 'widget' };
   Home._widgetItems = [
     { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },
   ];
   // Everything supported and fetched, but the user hasn't clicked
   // "Add to Usernode widget" yet → still hidden by default.
-  assert.equal(Home.renderWidgetSection(), '', 'hidden until revealed');
+  assert.equal(sectionHtml(Home), '', 'hidden until revealed');
   Home._widgetSectionVisible = true;
-  assert.match(Home.renderWidgetSection(), /id="widget-strip"/, 'revealed');
+  assert.match(sectionHtml(Home), /id="widget-strip"/, 'revealed');
   Home._widgetItems = null;
-  assert.equal(Home.renderWidgetSection(), '', 'no registry fetched → nothing');
+  assert.equal(sectionHtml(Home), '', 'no registry fetched → nothing');
   Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
   Home._widgetItems = [];
-  assert.equal(Home.renderWidgetSection(), '', 'Android pins → no section');
+  assert.equal(sectionHtml(Home), '', 'Android pins → no section');
 });
 
 test('menu click: reveals the section and auto-adds when there is room', async () => {
@@ -781,7 +805,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
     { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },
     { id: 'w2', name: 'Other Dapp', url: 'https://elsewhere.test/thing' },
   ];
-  const html = Home.renderWidgetSection();
+  const html = sectionHtml(Home);
   assert.match(html, /Usernode widget/, 'section header');
   assert.match(html, /id="widget-section-close"/, 'header has a Done/close button');
   assert.match(html, /id="widget-strip"/);
@@ -796,7 +820,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   assert.doesNotMatch(html, /data-wslug="other/i);
   // Empty registry still renders the strip as a drop target.
   Home._widgetItems = [];
-  const empty = Home.renderWidgetSection();
+  const empty = sectionHtml(Home);
   assert.match(empty, /id="widget-strip"/);
   assert.doesNotMatch(empty, /widget-tile /);
   // The hint names "Your apps" as the drag source now: the home grid holds
@@ -809,11 +833,11 @@ test('widget section: help icon toggles the add-widget instructions', () => {
   Home._shortcutSupport = { mechanism: 'widget' };
   Home._widgetSectionVisible = true;
   Home._widgetItems = [];
-  let html = Home.renderWidgetSection();
+  let html = sectionHtml(Home);
   assert.match(html, /id="widget-section-help"/, 'header has the info button');
   assert.doesNotMatch(html, /widget-help-panel/, 'panel hidden by default');
   Home._widgetHelpVisible = true;
-  html = Home.renderWidgetSection();
+  html = sectionHtml(Home);
   assert.match(html, /id="widget-help-panel"/, 'panel shown after toggle');
   assert.match(html, /Add Widget/, 'panel explains the iOS add-widget flow');
 });

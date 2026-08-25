@@ -33,7 +33,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const { HOME_SRC: HOME, PANELS_SRC: SRC } = require('./helpers/home-modules');
+const { HOME_SRC: HOME, PANELS_SRC: SRC, PANELS_RAW } = require('./helpers/home-modules');
+const { installPanelsStore } = require('./helpers/home-grid-store');
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const INDEX = read('public/index.html');
 const ISLAND = read('frontend/src/features/home/index.tsx');
 const SW = read('public/sw.js');
@@ -64,9 +66,16 @@ function makeSection() {
   };
 }
 
-// A `[data-panel-slot]` host, the shape Home.render() plants in #app-list.
-// Tracks the attributes render() stamps on it so the "state on the HOST"
-// contract can be asserted (see _stampState).
+// A `[data-panel-slot]` host.
+//
+// It used to be a stub the module PAINTED INTO: render() assigned its
+// innerHTML, toggled `hidden` on it and mirrored the block's state attributes
+// up onto it. The host is ./panels/sections.tsx's own markup now, so this is a
+// RECORD of one instead — `paintHosts` renders the section component for the
+// state render() pushed and fills these fields in from the result, which keeps
+// every assertion below reading the same three things it always read
+// (innerHTML, the class list, the stamped attributes) while what produces them
+// has moved.
 function makeSlot(key) {
   const attrs = { 'data-panel-slot': key };
   const classes = new Set(['hidden']);
@@ -144,8 +153,48 @@ function makeHomePanels({
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // home-panels.js imports its view-model store; ./helpers/home-modules strips
+  // the line so the source runs as classic script text, and this supplies the
+  // binding it would have made.
+  installPanelsStore(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__HP = HomePanels;`, sandbox);
   return { HP: sandbox.__HP, section, sandbox };
+}
+
+// ── What render() pushed, as the markup the browser gets ──────────────
+//
+// `HomePanels.render()` computes three view models; ./panels/sections.tsx
+// renders each host from them. This runs the second half against the first, so
+// the tests below still assert on real markup produced by the real components
+// rather than on a description of it.
+const SECTIONS = 'frontend/src/features/home/panels/sections.tsx';
+// The renderers, as text, for the handful of assertions that are about the
+// SOURCE rather than the output (a class that must be written as a literal, a
+// helper that must be reached through Home).
+const PANEL_SOURCES = ['ui', 'challenges', 'discover', 'create', 'sections']
+  .map((n) => [`panels/${n}.tsx`, read(`frontend/src/features/home/panels/${n}.tsx`)]);
+const PANELS_TSX = PANEL_SOURCES.map(([, src]) => src).join('\n');
+const SECTION_VIEWS = {
+  discover: 'DiscoverSectionView',
+  challenges: 'ChallengesSectionView',
+  create: 'CreateSectionView',
+};
+
+function paintHosts(sandbox, hosts) {
+  const mod = loadTsx(SECTIONS);
+  const state = sandbox.panelsStore.get();
+  for (const host of hosts) {
+    const key = host.dataset.panelSlot;
+    const html = renderToHtml(createElement(mod[SECTION_VIEWS[key]], state));
+    const openEnd = html.indexOf('>') + 1;
+    const open = html.slice(0, openEnd);
+    host.innerHTML = html.slice(openEnd, html.lastIndexOf('</section>'));
+    for (const name of Object.keys(host.attrs)) delete host.attrs[name];
+    for (const m of open.matchAll(/([a-zA-Z-]+)="([^"]*)"/g)) host.attrs[m[1]] = m[2];
+    host._classes.clear();
+    for (const c of (host.attrs.class || '').split(/\s+/)) if (c) host._classes.add(c);
+  }
+  return hosts.map((h) => h.innerHTML).join('');
 }
 
 // Menu rows come back from the vm realm, whose Array fails deepStrictEqual's
@@ -184,23 +233,43 @@ const panel = (over = {}) => ({
 // three concatenated. Every assertion below is a substring or shape check
 // over that text, so joining is faithful: it is the same markup, from the same
 // renderers, in the same order.
+// One block, end to end: a registry entry is all `panelFor` needs for the two
+// MARKER widgets (discover and create build no server payload), so this covers
+// the same ground `HP.renderDiscoverPanel({key})` covered before the renderers
+// moved — with the real render() and the real component in between.
+const MARKER_TITLES = { discover: 'Discover', create: 'Create app' };
+
+function renderBlock(key, opts = {}) {
+  const host = makeSlot(key);
+  const { HP, sandbox } = makeHomePanels({ ...opts, slots: [host] });
+  HP._data = {
+    registry: [{ key, title: MARKER_TITLES[key], removable: key !== 'discover' }],
+    hidden: [],
+    panels: [],
+  };
+  HP.render();
+  const html = paintHosts(sandbox, [host]);
+  return { html, host, HP, sandbox };
+}
+
 function renderWith(data, opts = {}) {
   const hosts = ['discover', 'challenges', 'create'].map(makeSlot);
   const { HP, section, sandbox } = makeHomePanels({ ...opts, slots: hosts });
   HP._data = data;
   HP.render();
+  const html = paintHosts(sandbox, hosts);
   return {
     HP,
-    html: hosts.map((h) => h.innerHTML).join(''),
+    html,
     hosts,
     host: (key) => hosts.find((h) => h.dataset.panelSlot === key),
     section,
     sandbox,
-    // Re-paint into the SAME hosts, so a test can assert on what a second
-    // render left behind (an optimistic hide that failed, say).
+    // Re-paint the SAME hosts, so a test can assert on what a second render
+    // left behind (an optimistic hide that failed, say).
     rerender() {
       HP.render();
-      return hosts.map((h) => h.innerHTML).join('');
+      return paintHosts(sandbox, hosts);
     },
   };
 }
@@ -350,8 +419,10 @@ test('render: a done row gets the ✓ glyph, not a chip or an earned-points line
     })],
   });
   const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
-  assert.match(html, /&#10003;/);
-  assert.match(html, /text-emerald-500/);
+  // The literal character, not `&#10003;`: React writes a text child as text
+  // and the string renderer wrote the entity. Same glyph on screen.
+  assert.match(html, /✓/);
+  assert.match(html, /text-emerald-700/);
   assert.doesNotMatch(html, /You earned/, 'dropped — the row is one line now');
   assert.doesNotMatch(html, /Done<\/span>/);
 });
@@ -480,7 +551,7 @@ test('a numeric challenge at full target draws a full bar AND the ✓', () => {
   assert.match(html, /width:100%/);
   assert.match(html, /aria-valuenow="5"[^>]*aria-valuemax="5"/);
   assert.match(html, /5\/5/);
-  assert.match(html, /home-panel-glyph[^>]*text-emerald-500[^>]*>&#10003;</);
+  assert.match(html, /home-panel-glyph[^>]*text-emerald-700[^>]*>✓</);
 });
 
 test('both glyph states occupy the same 10px box the bar aligns to', () => {
@@ -528,11 +599,19 @@ test('render: organiser text is escaped in text AND attribute contexts', () => {
     })],
   });
   const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
+  // The CONTRACT is unchanged and still the point: a goal lands in text nodes
+  // (the row's label), in `title="…"` and in `aria-label="…"`, so & < > alone
+  // was never enough — an unescaped `"` would break out and inject attributes.
+  // `HomePanels.esc` did it by hand; React does it by construction, and spells
+  // the apostrophe `&#x27;` where esc() spelled it `&#39;`.
   assert.doesNotMatch(html, /aria-label="[^"]*"out"/, 'no raw quote inside an attribute');
   assert.match(html, /&quot;out&quot;/);
   assert.match(html, /&lt;it&gt;/);
   assert.match(html, /&amp;/);
-  assert.match(html, /&#39;quote&#39;/);
+  assert.match(html, /&#x27;quote&#x27;/);
+  // …in both places, which is the half a text-only escape would pass.
+  assert.match(html, /title="[^"]*&quot;out&quot;[^"]*"/, 'the tooltip is escaped');
+  assert.match(html, /aria-label="[^"]*&quot;out&quot;[^"]*"/, 'so is the bar label');
 });
 
 test('render: the footer carries the expand toggle and the way out', () => {
@@ -560,11 +639,11 @@ test('render: the footer carries the expand toggle and the way out', () => {
 test('render: expanded lifts the cap, shows everything, and flips the toggle', () => {
   const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
   const hosts = ['challenges'].map(makeSlot);
-  const { HP } = makeHomePanels({ slots: hosts });
+  const { HP, sandbox } = makeHomePanels({ slots: hosts });
   HP._data = { registry: [], hidden: [], panels: [panel({ total: 9, challenges: nine })] };
   HP._expanded.challenges = true;
   HP.render();
-  const html = hosts[0].innerHTML;
+  const html = paintHosts(sandbox, hosts);
   assert.match(html, /home-panel--expanded/, 'the class app.css hangs max-height: none on');
   assert.equal((html.match(/data-challenge-id/g) || []).length, 9,
     'every row the server sent, past the four-slot budget');
@@ -649,7 +728,7 @@ test('render: the empty state renders for EVERY viewer, compact and footer-less'
 // challenges and would repopulate a block that should read as quiet.
 test('render: an empty payload clears the in-place expanded flag', () => {
   const hosts = ['challenges'].map(makeSlot);
-  const { HP } = makeHomePanels({ slots: hosts });
+  const { HP, sandbox } = makeHomePanels({ slots: hosts });
   HP._expanded.challenges = true;
   HP._data = {
     registry: [], hidden: [],
@@ -657,7 +736,7 @@ test('render: an empty payload clears the in-place expanded flag', () => {
   };
   HP.render();
   assert.equal(HP._expanded.challenges, false);
-  assert.match(hosts[0].innerHTML, /No challenges are running right now/);
+  assert.match(paintHosts(sandbox, hosts), /No challenges are running right now/);
 });
 
 test('setHidden drops the panel optimistically and restores it on failure', async () => {
@@ -784,7 +863,12 @@ test('the title bar and the footer controls are single-line too', () => {
   const { html } = renderWith(data, AT_DESKTOP);
   // Title + counter: the counter must not push the title to a second line.
   assert.match(html, /home-panel-title[^"]*truncate whitespace-nowrap/);
-  assert.match(html, /normal-case tracking-normal whitespace-nowrap/);
+  // The summary run appended after the separator. It used to carry
+  // `normal-case tracking-normal` to undo the title's small caps; the widget
+  // language labels a group in sentence case at reading size, so there is no
+  // small caps left to undo. `whitespace-nowrap` is the load-bearing half and
+  // is what this line has always been about.
+  assert.match(html, /<span class="whitespace-nowrap"> · /);
   // The bar carries the way out BESIDE that title (#968, now the leaderboard
   // link of #980), so it is the one place a long summary and a control
   // compete for the same row: the control is shrink-0 and nowrap, and the
@@ -908,10 +992,28 @@ test('Discover cannot be hidden, from either end', async () => {
 });
 
 test('home.js places every item at an explicit cell, with no flow fallback', () => {
-  // Each item carries its own grid-column / grid-row. Inline, because the
-  // page's Tailwind is the CDN JIT and a per-cell arbitrary class would be
-  // generated at runtime — a tile visibly jumping into place.
-  assert.match(HOME, /grid-column:\$\{item\.col \+ 1\}\/span \$\{w\};grid-row:\$\{item\.row \+ 1\}\/span \$\{h\}/);
+  // Placement is DATA now: home.js hands each item a `{col,row,w,h}` and
+  // app-grid.tsx spells the cell. `overflow` is the one case with no cell —
+  // items past the 8-row canvas flow, rather than being stranded.
+  assert.match(HOME, /const placement = overflow \? null : \{ col: item\.col, row: item\.row, w, h \}/);
+
+  // The cell is written as an ATTRIBUTE, and that is load-bearing. React sets
+  // styles through the CSSOM one longhand at a time, and `grid-column` +
+  // `grid-row` together cover all four longhands of `grid-area` — so the
+  // browser re-serializes the block as the SHORTHAND and the text `grid-row`
+  // vanishes from the attribute. dapp.json's declared check for placed tiles
+  // selects on `.app-card[data-yours="true"][style*="grid-row"]`, so a
+  // `style` prop would break it invisibly: the tiles land in the right cells
+  // and the check reports "selector not found".
+  const GRID_TSX = fs.readFileSync(path.join(
+    __dirname, '..', 'frontend', 'src', 'features', 'home', 'app-grid.tsx'), 'utf8');
+  assert.match(GRID_TSX, /grid-column:\$\{p\.col \+ 1\}\/span \$\{p\.w\};grid-row:\$\{p\.row \+ 1\}\/span \$\{p\.h\}/);
+  assert.match(GRID_TSX, /el\.setAttribute\('style', style\)/);
+  assert.doesNotMatch(GRID_TSX, /style=\{style\}/,
+    'the style prop would go back through the CSSOM and fold the shorthand');
+  const check = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8')).tests || [])
+    .find((t) => /\[style\*="grid-row"\]/.test(t.expectSelector || ''));
+  assert.ok(check, 'and the declared check that depends on it is still there');
   // ONE layout array, and it is app tiles all the way down now.
   assert.match(HOME, /HomeLayout\.canvasItems\(layout\)/);
   assert.match(HOME, /HomeLayout\.overflowItems\(layout\)/);
@@ -1064,13 +1166,20 @@ test('the grab cursor is gone from app.css, and stays gone', () => {
 });
 
 test('the block wires no drag recognizer of its own', () => {
-  const wire = SRC.match(/_wire\(section\) \{[\s\S]*?\n {2}\},/)[0];
-  assert.doesNotMatch(wire, /'pointerdown'/,
-    'no recognizer can see these sections, so nothing has to be stopped from it');
-  // …and none was bolted on to replace what was removed. (HTML5
-  // `draggable="false"` on an <img> is the opposite of a recognizer — it
-  // suppresses the browser's own drag — so it is not what this guards.)
-  assert.doesNotMatch(SRC, /attach(Reorder|GridPlacement)\(|draggable="true"|'dragstart'/);
+  // This used to read `_wire`, whose `pointerdown` guard on
+  // `.home-panel button` was the thing being checked for: the blocks were grid
+  // items, the recognizer listened on #app-list, and the event bubbles — so
+  // stopping it AT the button was what kept a press on ⋮ from arming a drag.
+  // The guard went with the placement, `_wire` went with the conversion, and
+  // what is left to guard is that nothing has crept back into EITHER half.
+  for (const [name, src] of [['home-panels.js', SRC], ...PANEL_SOURCES]) {
+    assert.doesNotMatch(src, /'pointerdown'|onPointerDown/,
+      `${name}: no recognizer can see these sections, so nothing listens for one`);
+    // (HTML5 `draggable={false}` on an <img> is the opposite of a recognizer —
+    // it suppresses the browser's own drag — so it is not what this guards.)
+    assert.doesNotMatch(src, /attach(Reorder|GridPlacement)\(|draggable=\{true\}|'dragstart'/,
+      `${name}: and none was bolted on to replace what was removed`);
+  }
 });
 
 // ── The widget menu ───────────────────────────────────────────────
@@ -1423,18 +1532,16 @@ test('the Discover widget renders the curated tiles when Home is reachable', () 
     { slug: 'alpha', name: 'Alpha', icon_emoji: '🅰', featured: true },
     { slug: 'beta', name: 'Beta', featured: true },
   ];
-  const { HP } = makeHomePanels({
+  const { html } = renderBlock('discover', {
     home: { featuredApps: () => featured, isYours: () => false, _apps: featured },
   });
-  const html = HP.renderDiscoverPanel({ key: 'discover', title: 'Discover' });
   assert.match(html, /home-discover-tiles/, 'the tile row, not the empty note');
   assert.match(html, /class="app-card home-discover-tile[^"]*" data-slug="alpha"/);
   assert.match(html, /Browse all apps/, 'and the browse control is always there');
   assert.doesNotMatch(html, /Nothing featured right now/);
 
   // With Home genuinely absent it still renders — the note, not a crash.
-  const bare = makeHomePanels().HP
-    .renderDiscoverPanel({ key: 'discover', title: 'Discover' });
+  const bare = renderBlock('discover').html;
   assert.match(bare, /Nothing featured right now/);
   assert.match(bare, /Browse all apps/);
 });
@@ -1456,8 +1563,7 @@ const discoverHome = (over = {}) => ({
   ...over,
 });
 
-const renderDiscover = (over) => makeHomePanels({ home: discoverHome(over) }).HP
-  .renderDiscoverPanel({ key: 'discover', title: 'Discover' });
+const renderDiscover = (over) => renderBlock('discover', { home: discoverHome(over) }).html;
 
 test('Discover draws the Popular lane at every width', () => {
   const html = renderDiscover();
@@ -1470,9 +1576,10 @@ test('Discover draws the Popular lane at every width', () => {
   // first, then what everyone else is actually using.
   assert.ok(html.indexOf('data-slug="alpha"') < html.indexOf('data-slug="pop"'));
 
-  // Nothing in the renderer consults the column count any more — the whole
+  // Nothing in either half consults the column count any more — the whole
   // reason the module's own currentCols() helper is gone.
-  assert.doesNotMatch(SRC, /renderDiscoverPanel[\s\S]{0,900}currentCols/);
+  assert.doesNotMatch(SRC, /discoverView[\s\S]{0,900}currentCols/);
+  assert.doesNotMatch(PANELS_TSX, /currentCols/);
 });
 
 test('Discover never draws a footer; the browse control is in the title bar', () => {
@@ -1516,47 +1623,50 @@ test('Discover stamps both lane counts, and render() mirrors them onto the host'
   assert.match(empty, /data-featured="0"/);
   assert.match(empty, /data-popular="0"/);
 
-  // The checks select on [data-panel-slot="discover"][data-featured="0"],
-  // so the value has to reach the HOST, not just the article inside it.
-  const slot = makeSlot('discover');
-  const { HP } = makeHomePanels({
+  // The checks select on [data-panel-slot="discover"][data-featured="0"], so
+  // the value has to reach the HOST, not just the article inside it. It used
+  // to get there by a mirroring pass over the painted markup; the host and the
+  // block render from one view model now, so a value that reaches one reaches
+  // both by construction — which is what this pins.
+  const { host } = renderBlock('discover', {
     home: discoverHome({ featuredApps: () => [], popularApps: () => [] }),
-    slots: [slot],
   });
-  HP._data = { registry: [{ key: 'discover', title: 'Discover', removable: false }],
-    hidden: [], panels: [{ key: 'discover', title: 'Discover' }] };
-  HP.render();
-  assert.equal(slot.getAttribute('data-featured'), '0');
-  assert.equal(slot.getAttribute('data-popular'), '0');
+  assert.equal(host.getAttribute('data-featured'), '0');
+  assert.equal(host.getAttribute('data-popular'), '0');
 
-  // A widget that stamps neither leaves the host clean rather than keeping a
-  // stale value from a previous paint.
-  const other = makeSlot('challenges');
-  other.setAttribute('data-featured', '3');
-  const h2 = makeHomePanels({ slots: [other] });
-  h2.HP._data = { registry: [{ key: 'challenges', title: 'Challenges', removable: true }],
-    hidden: [], panels: [{ key: 'challenges', title: 'Challenges', challenges: [], total: 0 }] };
-  h2.HP.render();
-  assert.equal(other.hasAttribute('data-featured'), false);
+  // A block that stamps neither leaves its host clean rather than carrying an
+  // attribute nothing set.
+  const challenges = renderWith(
+    { registry: [], hidden: [], panels: [panel({ total: 0, challenges: [] })] },
+  ).host('challenges');
+  assert.equal(challenges.hasAttribute('data-featured'), false);
 });
 
 // A lane whose tiles were never wired looks IDENTICAL in a screenshot while
 // every tap and every + badge in it is dead — so this is asserted on the
 // source, which is where the singular querySelector bug would live.
-test('_wire hands EVERY discovery lane to Home._wireDiscoveryCards', () => {
-  assert.match(SRC, /querySelectorAll\('\.home-discover-tiles'\)[\s\S]{0,220}?_wireDiscoveryCards\(tiles\)/);
-  assert.doesNotMatch(SRC, /querySelector\('\.home-discover-tiles'\)/,
-    'singular would wire the featured lane and leave Popular inert');
+test('every discovery lane is handed to Home._wireDiscoveryCards', () => {
+  // `_wire` used to sweep `querySelectorAll('.home-discover-tiles')`, and the
+  // singular form was the bug this guarded: it would bind the featured lane
+  // and leave Popular inert. The lane is a COMPONENT now, so the sweep is
+  // structural — one `<Lane/>` per rendered lane, each binding its own element
+  // from its own effect — and there is no selector left to get wrong.
+  const [, discoverSrc] = PANEL_SOURCES.find(([n]) => n.endsWith('discover.tsx'));
+  const lane = discoverSrc.slice(discoverSrc.indexOf('function Lane('));
+  assert.match(lane, /useEffect\([\s\S]{0,200}?_wireDiscoveryCards\?\.\(el\)/,
+    'the lane binds its own element');
+  // Both call sites go through it — the featured lane and Popular.
+  assert.equal((discoverSrc.match(/<Lane\b/g) || []).length, 2);
+  assert.doesNotMatch(discoverSrc, /querySelector/,
+    'nothing reaches across the lane boundary to find tiles');
 });
 
 test('the Create widget reads the viewer’s quota through Home', () => {
-  const enabled = makeHomePanels({ home: { canCreate: () => true } }).HP
-    .renderCreatePanel({ key: 'create' });
+  const enabled = renderBlock('create', { home: { canCreate: () => true } }).html;
   assert.match(enabled, /data-create-enabled="true"/);
   assert.doesNotMatch(enabled, /aria-disabled/);
 
-  const locked = makeHomePanels({ home: { canCreate: () => false } }).HP
-    .renderCreatePanel({ key: 'create' });
+  const locked = renderBlock('create', { home: { canCreate: () => false } }).html;
   assert.match(locked, /data-create-enabled="false"/);
   assert.match(locked, /aria-disabled="true"/);
   assert.doesNotMatch(locked, /\sdisabled[=\s>]/, 'never the disabled ATTRIBUTE');
@@ -1569,8 +1679,7 @@ test('the Create widget reads the viewer’s quota through Home', () => {
 // width, so only the row shape is left — the stacked variant existed for a
 // ~150px cell that no longer exists.
 test('the Create block lays out as a row at every width', () => {
-  const html = makeHomePanels({ home: { canCreate: () => true } }).HP
-    .renderCreatePanel({ key: 'create' });
+  const { html } = renderBlock('create', { home: { canCreate: () => true } });
   const btn = html.match(/class="home-create-btn[^"]*"/)[0];
   assert.match(btn, /\bflex-row\b/, 'icon beside label');
   assert.doesNotMatch(btn, /\bsm:flex-col\b/, 'and never stacked again at 640px');
@@ -1591,32 +1700,23 @@ test('the Create block lays out as a row at every width', () => {
 // screenshot assertions write it —
 // `[data-panel-slot="create"][data-create-enabled="true"]` asks for both
 // attributes on ONE element and matched nothing at all.
-test('render() mirrors the create state onto the [data-panel-slot] host', () => {
-  const slot = makeSlot('create');
-  const { HP } = makeHomePanels({ home: { canCreate: () => true }, slots: [slot] });
-  HP._data = { registry: [{ key: 'create', title: 'Create app', removable: true }],
-    hidden: [], panels: [{ key: 'create', title: 'Create app' }] };
-  HP.render();
-  assert.equal(slot.getAttribute('data-create-enabled'), 'true',
+test('the create state reaches the [data-panel-slot] host as well as the block', () => {
+  const enabled = renderBlock('create', { home: { canCreate: () => true } });
+  assert.equal(enabled.host.getAttribute('data-create-enabled'), 'true',
     'the host carries the state the checks select on');
-  assert.match(slot.innerHTML, /class="home-create-btn/);
+  assert.match(enabled.host.innerHTML, /class="home-create-btn/);
+  assert.match(enabled.host.innerHTML, /data-create-enabled="true"/,
+    'and so does the block — one selector reaches either');
 
-  const locked = makeSlot('create');
-  const h2 = makeHomePanels({ home: { canCreate: () => false }, slots: [locked] });
-  h2.HP._data = { registry: [{ key: 'create', title: 'Create app', removable: true }],
-    hidden: [], panels: [{ key: 'create', title: 'Create app' }] };
-  h2.HP.render();
-  assert.equal(locked.getAttribute('data-create-enabled'), 'false');
+  const locked = renderBlock('create', { home: { canCreate: () => false } });
+  assert.equal(locked.host.getAttribute('data-create-enabled'), 'false');
 
-  // A widget with no such state leaves the host clean rather than inheriting
-  // a stale value from a previous paint.
-  const other = makeSlot('challenges');
-  other.setAttribute('data-create-enabled', 'true');
-  const h3 = makeHomePanels({ slots: [other] });
-  h3.HP._data = { registry: [{ key: 'challenges', title: 'Challenges', removable: true }],
-    hidden: [], panels: [{ key: 'challenges', title: 'Challenges', challenges: [], total: 0 }] };
-  h3.HP.render();
-  assert.equal(other.hasAttribute('data-create-enabled'), false);
+  // A block with no such state leaves its host clean rather than carrying an
+  // attribute nothing set.
+  const challenges = renderWith(
+    { registry: [], hidden: [], panels: [panel({ total: 0, challenges: [] })] },
+  ).host('challenges');
+  assert.equal(challenges.hasAttribute('data-create-enabled'), false);
 });
 
 // The three selectors the checks actually run, asserted against the exact
@@ -1628,8 +1728,8 @@ test('dapp.json’s home-widget checks describe markup this module emits', () =>
   const create = find('[data-panel-slot="create"][data-create-enabled="true"]');
   assert.ok(create, 'the enabled-create check is declared');
   assert.match(create.expectSelector, /\.home-create-btn/);
-  assert.match(makeHomePanels({ home: { canCreate: () => true } }).HP
-    .renderCreatePanel({ key: 'create' }), /class="home-create-btn/);
+  assert.match(renderBlock('create', { home: { canCreate: () => true } }).html,
+    /class="home-create-btn/);
 
   // ONE Discover check covers the populated widget (#949). It selects the
   // SECOND lane, which only exists once the whole block has painted, so it
@@ -1692,7 +1792,7 @@ test('the Discover lanes fit the cells their footprint buys', () => {
   assert.match(css, /\.home-discover-icon-wrap \{[^}]*width: 100%/);
   assert.match(css, /\.home-discover-icon-wrap \{[^}]*max-width: 2\.5rem/);
   assert.match(css, /\.home-discover-icon \{[^}]*aspect-ratio: 1 \/ 1/);
-  assert.match(SRC, /class="home-discover-icon-wrap relative"/,
+  assert.match(PANELS_TSX, /className="home-discover-icon-wrap relative"/,
     'and the markup gives that wrapper its class');
 
   // .app-card's own padding must NOT apply to a discovery tile: the lane
@@ -1739,7 +1839,7 @@ function makeDesktop(data, opts = {}) {
   });
   HP._data = data;
   HP.render();
-  return { HP, html: slot.innerHTML, slot, sandbox };
+  return { HP, html: paintHosts(sandbox, [slot]), slot, sandbox };
 }
 
 // The board as src/routes/home-panels.js sends it: a `kind`, a `label`, rows
@@ -1960,10 +2060,21 @@ test('the module no longer reads the column count at all', () => {
 });
 
 test('fill rows are excluded from the challenges click wiring', () => {
-  // The row handler must not sweep up leaderboard rows — they go to the
-  // Leaderboard screen, not to the Challenges tab.
-  assert.match(SRC, /querySelectorAll\('\.home-panel-row:not\(\.home-panel-lb-row\)'\)/);
-  assert.match(SRC, /goToLeaderboard/);
+  // A leaderboard line and a challenge line are both `.home-panel-row`, and a
+  // tap on "#1 alice" must not land on the Challenges tab. `_wire` expressed
+  // that as `querySelectorAll('.home-panel-row:not(.home-panel-lb-row)')` — one
+  // selector, and the `:not()` was the whole guard. The two rows are separate
+  // COMPONENTS now, so the guard is that each names its own destination.
+  const [, src] = PANEL_SOURCES.find(([n]) => n.endsWith('challenges.tsx'));
+  const row = src.slice(src.indexOf('function ChallengeRow('), src.indexOf('function FillRow('));
+  const fillRow = src.slice(src.indexOf('function FillRow('), src.indexOf('function FillBlock('));
+  assert.match(row, /onClick=\{\(\) => panels\(\)\?\.goToChallenges\?\.\(\)\}/);
+  assert.doesNotMatch(row, /goToLeaderboard/, 'a challenge row never goes to the board');
+  assert.match(fillRow, /onClick=\{\(\) => panels\(\)\?\.goToLeaderboard\?\.\(kind\)\}/);
+  assert.doesNotMatch(fillRow, /goToChallenges/, 'and a board row never goes to Challenges');
+  // …and the class the CSS and the checks select on is still on the fill row,
+  // which is what makes the two distinguishable from outside.
+  assert.match(fillRow, /home-panel-row home-panel-lb-row/);
 });
 
 // Each board previews a DIFFERENT tab, and every clickable element of the
@@ -1990,8 +2101,14 @@ test('the fill navigates to the tab that shows the board it previewed', () => {
   });
   assert.match(zero.html, /home-panel-lb-open[^>]*data-lb-kind="kudos"/,
     'the zero-state footer follows its rows');
-  assert.match(SRC,
-    /goToLeaderboard\((?:row|btn)\.dataset\.lbKind\)/);
+  // The kind reaches the handler as a value rather than through
+  // `dataset.lbKind`: the row renders the attribute AND closes over the same
+  // `kind`, so a tap can no longer disagree with what the element says.
+  const [, src] = PANEL_SOURCES.find(([n]) => n.endsWith('challenges.tsx'));
+  assert.match(src, /data-lb-kind=\{kind\}[\s\S]{0,200}?goToLeaderboard\?\.\(kind\)/);
+  const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));
+  assert.match(ui, /data-lb-kind=\{kind\}[\s\S]{0,400}?goToLeaderboard\?\.\(kind\)/,
+    'the footer control too');
 });
 
 // ── The phone shape (#968) is gone ────────────────────────────────
@@ -2026,8 +2143,10 @@ test('the block draws all four rows, its footer and its toggle — at any width'
     'inside the bar, before the ⋮ menu');
   assert.match(html, /home-panel-lb-browse[^>]*title="Open the Leaderboard screen"/);
   assert.match(html, /<span class="whitespace-nowrap">Open leaderboard<\/span>/);
-  assert.match(SRC, /querySelectorAll\('\.home-panel-lb-browse'\)/, 'and that class is wired');
-  assert.doesNotMatch(SRC, /'Leaderboard' : 'Open leaderboard'/,
+  const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));
+  assert.match(ui, /home-panel-lb-browse[\s\S]{0,700}?goToLeaderboard\?\.\(\)/,
+    'and that control is wired — with NO kind, so it lands on the bare hash');
+  assert.doesNotMatch(ui, /'Leaderboard' : 'Open leaderboard'/,
     'the two-label branch went with the shape that needed the short one');
 });
 
@@ -2054,13 +2173,14 @@ test('an expansion is honoured at every width now', () => {
   // painted an expanded season over the app tiles below. A section grows.
   const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
   const slot = makeSlot('challenges');
-  const { HP } = makeHomePanels({ slots: [slot] });
+  const { HP, sandbox } = makeHomePanels({ slots: [slot] });
   HP._expanded.challenges = true;
   HP._data = { registry: [], hidden: [], panels: [panel({ total: 9, challenges: nine })] };
   HP.render();
-  assert.match(slot.innerHTML, /home-panel--expanded/,
+  const html = paintHosts(sandbox, [slot]);
+  assert.match(html, /home-panel--expanded/,
     'the class app.css hangs max-height: none on');
-  assert.equal((slot.innerHTML.match(/data-challenge-id/g) || []).length, 9);
+  assert.equal((html.match(/data-challenge-id/g) || []).length, 9);
 });
 
 // The per-cell BUDGETS the phone shape was designed against went with it:

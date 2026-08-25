@@ -25,6 +25,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { mergedCardHtml, proposalCardHtml } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -556,7 +557,7 @@ const MY_IMPORT = {
 
 test('proposal card: my own IMPORTED proposal renders the pill and no Open session', () => {
   const AppView = cardHarness();
-  const html = AppView._renderProposalCard(MY_IMPORT);
+  const html = proposalCardHtml(AppView, MY_IMPORT);
   assert.match(html, /gc-explore-chat-btn/, 'the pill is the owner\'s only AI affordance here');
   assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
   assert.ok(!menuHas(AppView, html, /Open session/),
@@ -568,7 +569,7 @@ test('proposal card: my own IMPORTED proposal renders the pill and no Open sessi
 
 test('proposal card: my own NATIVE proposal is unchanged — Open session, no pill', () => {
   const AppView = cardHarness();
-  const html = AppView._renderProposalCard({ ...MY_IMPORT, source: undefined, imported_pr_author: undefined });
+  const html = proposalCardHtml(AppView, { ...MY_IMPORT, source: undefined, imported_pr_author: undefined });
   assert.doesNotMatch(html, /gc-explore-chat-btn/, 'no pill on the face');
   assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'and no ⋯ row either');
   assert.ok(menuHas(AppView, html, /Open session/), 'Open session is the ⋯ door to the same chat');
@@ -576,7 +577,7 @@ test('proposal card: my own NATIVE proposal is unchanged — Open session, no pi
 
 test('merged card: my own IMPORTED completed proposal renders the pill', () => {
   const AppView = cardHarness();
-  const html = AppView._renderMergedCard({ ...MY_IMPORT, status: 'merged' }, 1);
+  const html = mergedCardHtml(AppView, { ...MY_IMPORT, status: 'merged' }, 1);
   // On a merged card the action band belongs to kudos, so Explore is a ⋯ row.
   assert.ok(menuHas(AppView, html, /Explore in dev chat/),
     'Explore offered from ⋯ on my own imported completed proposal');
@@ -584,7 +585,7 @@ test('merged card: my own IMPORTED completed proposal renders the pill', () => {
 
 test('merged card: my own NATIVE completed proposal still renders no pill', () => {
   const AppView = cardHarness();
-  const html = AppView._renderMergedCard(
+  const html = mergedCardHtml(AppView, 
     { ...MY_IMPORT, source: undefined, imported_pr_author: undefined, status: 'merged' }, 1
   );
   assert.doesNotMatch(html, /gc-explore-chat-btn/);

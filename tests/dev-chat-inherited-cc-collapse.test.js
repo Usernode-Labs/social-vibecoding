@@ -27,6 +27,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeTranscriptBridge } = require('./lib/dev-transcript-html');
+
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
@@ -42,10 +44,12 @@ const SUMMARY_SRC = fs.readFileSync(
 );
 
 function makeDevChat() {
-  let captured = '';
+  // #1078: the rows are a React island. `renderMessages` publishes a view
+  // model instead of writing this element's innerHTML, so the element is only
+  // the portal's host and the markup comes back from the component.
+  const t = makeTranscriptBridge();
   const messagesEl = {
-    set innerHTML(v) { captured = v; },
-    get innerHTML() { return captured; },
+    innerHTML: '',
     querySelectorAll: () => ({ forEach: () => {} }),
     scrollTop: 0, scrollHeight: 0,
   };
@@ -90,6 +94,7 @@ function makeDevChat() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
+  sandbox.UsernodeReact = { devChat: t.bridge };
   vm.createContext(sandbox);
   vm.runInContext(`${SUMMARY_SRC}\n${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -100,8 +105,9 @@ function makeDevChat() {
       DevChat.messages = messages;
       DevChat.currentSession = session || null;
       DevChat.renderMessages();
-      return captured;
+      return t.html();
     },
+    rows: () => t.state().rows,
   };
 }
 
@@ -125,14 +131,17 @@ function attachedTag(html) {
   return m[0];
 }
 
+// React serializes a boolean attribute as `open=""` rather than as the bare
+// `open` the template literal wrote. Same attribute, same DOM property; only
+// the source text differs, so the two guards below match either form.
 function assertCollapsed(tag) {
   assert.match(tag, /data-default-open="0"/, 'default-open flag is 0');
-  assert.doesNotMatch(tag, /\sopen(\s|>)/, 'no bare open attribute');
+  assert.doesNotMatch(tag, /\sopen(=|\s|>)/, 'no open attribute');
 }
 
 function assertExpanded(tag) {
   assert.match(tag, /data-default-open="1"/, 'default-open flag is 1');
-  assert.match(tag, /\sopen>/, 'bare open attribute present');
+  assert.match(tag, /\sopen(=""|)>/, 'open attribute present');
 }
 
 // ── inherited rows collapse ────────────────────────────────

@@ -62,6 +62,12 @@ const GroupChat = {
   _reactBar: null,
   _reactBarDismiss: null,
   _reactBarOpenedAt: 0,
+  // The bar's two moving parts, mirrored here because they are published
+  // rather than toggled in place: whether the `＋` grid is expanded, and
+  // whether the pointed-at row offers Edit. See
+  // frontend/src/features/group-chat/reaction-bar-store.ts.
+  _reactBarGridOpen: false,
+  _reactBarEditable: false,
   // Shell-injected staging iframe token, captured at script load so SPA
   // history rewrites can't lose it before a (re)connect needs it.
   _bootToken: new URLSearchParams(location.search).get('token'),
@@ -451,7 +457,12 @@ const GroupChat = {
         // has scrolled up to read the topic body or older replies.
         const nearBottom =
           scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
-        el.insertAdjacentHTML('beforeend', GroupChat.renderMessageHtml(msg));
+        // Appended to the MODEL. #gc-thread-messages is the same React
+        // transcript #gc-messages is (mounted with the 'thread' key a few
+        // methods down), so the insertAdjacentHTML this replaces was legacy
+        // markup spliced into a reconciled tree: the row carried none of the
+        // component's handlers and the next store update erased it.
+        GroupChat._react()?.appendTranscriptMessage(GroupChat._messageView(msg), 'thread');
         if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
         return;
       }
@@ -466,12 +477,11 @@ const GroupChat = {
   },
 
   _renderThreadTyping(username) {
-    const el = document.getElementById('gc-thread-typing');
-    if (!el || username === App.user?.username) return;
-    el.textContent = `${username} is typing...`;
+    if (username === App.user?.username) return;
+    GroupChat._publishComposer('thread', { status: `${username} is typing...` });
     clearTimeout(GroupChat._threadTypingTimer);
     GroupChat._threadTypingTimer = setTimeout(() => {
-      if (el.isConnected) el.textContent = '';
+      GroupChat._publishComposer('thread', { status: '' });
     }, 3000);
   },
 
@@ -550,16 +560,104 @@ const GroupChat = {
     GroupChat.typingTimeout = setTimeout(() => { GroupChat.typingTimeout = null; }, 2000);
   },
 
+  // ── The transcript's view model (#1191) ────────────────────────────
+  //
+  // One message -> the flat facts its row renders. Every branch the template
+  // string evaluated inline is resolved HERE, where App.user, AppView.voteState
+  // and the message-kind vocabulary already live; features/group-chat/
+  // transcript.tsx renders it and is the only writer below #gc-messages.
+  //
+  // `bodyHtml` stays markup: renderMessageBody runs the content through
+  // DevChat.renderMarkdown and a sanitizer, and a second copy of that pipeline
+  // in React is exactly how the two drift apart.
+  _messageView(msg) {
+    const kindRaw = msg.msgType || msg.msg_type || 'message';
+    const meta = msg.metadata || msg.meta || {};
+    const isVote = kindRaw === 'vote';
+    const isSpecShare = kindRaw === 'spec_share' && !!meta.specShare;
+    // A spec_share whose snapshot context is missing — an older server, or a
+    // share whose metadata did not survive — degrades to a SYSTEM line, which
+    // is what the string renderer's `if (!meta)` branch did. Without this
+    // clause it fell through to `message`, and the row acquired an avatar, an
+    // author name and a trip through the markdown pipeline it was never meant
+    // to have.
+    const isSystem = kindRaw === 'system' || (kindRaw === 'spec_share' && !isSpecShare);
+    const kind = isSpecShare ? 'spec_share' : (isVote ? 'vote' : (isSystem ? 'system' : 'message'));
+    const username = msg.username || 'System';
+    const me = App.user && App.user.username;
+    const editedAt = msg.editedAt || msg.edited_at;
+    const q = meta.quote;
+    const atts = meta.attachments;
+    return {
+      id: msg.id == null ? null : Number(msg.id),
+      kind,
+      username,
+      time: new Date(msg.createdAt || msg.created_at)
+        .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      bodyHtml: kind === 'message' ? renderMessageBody(msg.content) : '',
+      systemText: kind === 'message' ? '' : String(msg.content == null ? '' : msg.content),
+      mine: msg.userId === App.user?.id || msg.user_id === App.user?.id,
+      editedTitle: editedAt ? GroupChat._editedTitle(editedAt) : null,
+      unread: !!msg.has_unread_notification,
+      bookmarked: !!(msg.saved || msg.bookmarked),
+      canEdit: msg.userId === App.user?.id || msg.user_id === App.user?.id,
+      // The three header controls, gated exactly as the string template gated
+      // them: edit is your own message and not read-only (#621), react is not
+      // read-only, save needs a signed-in viewer.
+      showEdit: kind === 'message'
+        && (msg.userId === App.user?.id || msg.user_id === App.user?.id)
+        && !GroupChat._readOnly(),
+      showReact: !GroupChat._readOnly(),
+      showBookmark: !!(window.App && App.user),
+      quote: q ? {
+        icon: q.source === 'pr' ? '\u{1F500}' : (q.source === 'spec' ? '\u{1F4CB}' : '\u21A9'),
+        username: q.author || (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system'),
+        excerpt: GroupChat._collapseSnippet(q.snippet).slice(0, 160),
+        source: q.source || '',
+        href: q.source === 'pr' ? (q.href || '') : null,
+        targetId: q.refMsgId == null ? null : Number(q.refMsgId),
+      } : null,
+      // Set by a jump-to-original and cleared 1.5s later; never true on a
+      // freshly built row.
+      flash: false,
+      reactions: ((msg.reactions) || []).map((r) => {
+        const users = Array.isArray(r.users) ? r.users : [];
+        return { emoji: r.emoji, count: r.count, users, mine: !!(me && users.includes(me)) };
+      }),
+      attachments: GroupChat._attachmentsView(msg),
+      voteRowClass: isVote
+        ? GroupChat._rowVoteClass(GroupChat._resolvePr(...GroupChat._voteRef(msg))) : '',
+      // The controls host is module-filled, but only the message knows WHICH
+      // pull request it is about — so the pair rides on the view model and
+      // lands on the host as the two data-* attributes refreshVoteControls
+      // reads back.
+      voteRef: isVote
+        ? (([sessionId, prNumber]) => ({ sessionId, prNumber }))(GroupChat._voteRef(msg))
+        : null,
+      specShare: isSpecShare ? GroupChat._specShareView(meta.specShare, msg) : null,
+    };
+  },
+
+  // The React bridge, or null before the bundle has evaluated. Reached by name
+  // because this file is a classic script that loads before it.
+  _react() {
+    return (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.groupChat : null;
+  },
+
   render() {
     const container = document.getElementById('gc-messages');
     if (!container) return;
-    container.innerHTML = GroupChat.messages.map(GroupChat.renderMessageHtml).join('');
+    // (Re)establish the portal: #gc-messages is created fresh by
+    // AppView.renderDevChatTab on every tab switch, so the previous mount is
+    // pointing at a detached node by now.
+    GroupChat._react()?.mountTranscript(container);
+    GroupChat._react()?.publishTranscript(GroupChat.messages.map(GroupChat._messageView));
   },
 
   appendMessage(msg) {
-    const container = document.getElementById('gc-messages');
-    if (!container) return;
-    container.insertAdjacentHTML('beforeend', GroupChat.renderMessageHtml(msg));
+    if (!document.getElementById('gc-messages')) return;
+    GroupChat._react()?.appendTranscriptMessage(GroupChat._messageView(msg));
   },
 
   // ── #194: thread chat (mounted inside Issues / Proposals accordions) ─
@@ -599,49 +697,27 @@ const GroupChat = {
     // (the topic sub-view paints into #gc-thread-head after mount). Off by
     // default, so the general-chat path and any legacy caller are unaffected.
     const withHeader = fill && !!opts.withHeader;
-    // `platform-safe-bar` (app.css) on BOTH variants: in fill mode this
-    // block is the bottom of the screen, so it carries the
-    // home-indicator inset above its own padding. The read-only notice
-    // replaces the composer and needs the identical clearance. In the
-    // legacy boxed layout the bar isn't screen-bottom-anchored, so the
-    // inset is inert there — harmless, and it keeps one class per role.
-    const composerHtml = opts.readOnly
-      ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800 shrink-0 platform-safe-bar">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
-      : `<div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
-          <div id="gc-thread-reply-preview" class="hidden"></div>
-          <div id="gc-thread-attach-error" class="dc-attach-error hidden"></div>
-          <div id="gc-thread-attachments" class="dc-attach-strip"></div>
-          <form id="gc-thread-form" class="flex gap-2 items-end">
-            <button type="button" id="gc-thread-attach-btn" title="Attach files" aria-label="Attach files" class="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 ${fill ? 'py-2' : 'py-1.5'} text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors">&#128206;</button>
-            <input type="file" id="gc-thread-file-input" class="hidden" multiple>
-            <textarea id="gc-thread-input" maxlength="${GC_MAX_MESSAGE_LEN}" rows="1" autocomplete="off"
-              placeholder="${escapeHtml(opts.placeholder || 'Reply in thread…')}"
-              class="gc-composer-input flex-1 min-w-0 resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 ${fill ? 'py-2' : 'py-1.5'} text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"></textarea>
-            <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 ${fill ? 'px-4 py-2' : 'px-3 py-1.5'} text-sm font-medium text-white transition-colors shrink-0">Send</button>
-          </form>
-        </div>`;
-    // #363: fill mode wraps an optional header slot + the messages list in a
-    // SINGLE scroll container (#gc-thread-scroll), so a topic's card/body and
-    // its discussion scroll as one area (matching the general chat, where only
-    // the composer is pinned). The messages list itself no longer scrolls; the
-    // typing slot and composer stay as pinned shrink-0 siblings outside the
-    // scroller. The legacy (non-fill) boxed layout keeps the messages list as
-    // its own 40vh scroller.
-    const headSlot = withHeader ? '<div id="gc-thread-head"></div>' : '';
-    container.innerHTML = fill
-      ? `<div class="dev-thread flex flex-col h-full min-h-0">
-          <div id="gc-thread-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3">
-            ${headSlot}
-            <div id="gc-thread-messages" class="py-2 space-y-0.5"></div>
-          </div>
-          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
-          ${composerHtml}
-        </div>`
-      : `<div class="dev-thread border border-zinc-200 dark:border-zinc-800 rounded-xl flex flex-col bg-zinc-50/50 dark:bg-zinc-900/40">
-          <div id="gc-thread-messages" class="overflow-y-auto px-2 py-1 space-y-0.5" style="max-height:40vh;min-height:60px"></div>
-          <div id="gc-thread-typing" class="px-3 text-xs text-zinc-500 h-4 shrink-0"></div>
-          ${composerHtml}
-        </div>`;
+    // The SHELL is features/group-chat/thread-shell.tsx's — scroller,
+    // messages host, typing slot and composer — mounted as a portal where
+    // this used to be one `container.innerHTML` string. Its shape is fixed for
+    // the life of a mount, so it travels as props rather than through a store.
+    //
+    // The transcript's own portal points INTO `#gc-thread-messages`, so drop
+    // it before re-rendering the shell: React usually preserves that element,
+    // but a layout flip recreates it, and a portal left pointing at a detached
+    // node keeps its subtree and its store subscription alive. (The
+    // `innerHTML` this replaces destroyed the node without telling React at
+    // all — rule 1 in lib/legacy-portals.tsx, quietly broken.)
+    const previousList = container.querySelector('#gc-thread-messages');
+    if (previousList) GroupChat._react()?.unmountTranscript(previousList);
+    GroupChat._react()?.mountThreadShell(container, {
+      fill,
+      withHeader,
+      readOnly: !!opts.readOnly,
+      notice: opts.notice || 'This thread is read-only.',
+      placeholder: opts.placeholder || 'Reply in thread…',
+      maxLength: GC_MAX_MESSAGE_LEN,
+    });
 
     // Kit polish: keyboard avoidance on the unified thread scroller
     // (fill mode only — the legacy boxed layout scrolls inside a card).
@@ -767,6 +843,13 @@ const GroupChat = {
   // #363: the element that actually scrolls a mounted thread. In the unified
   // topic layout it's the wrapper holding the header + messages; in the legacy
   // boxed layout the messages list is itself the scroller.
+  // Called by the transcript's "Load earlier" control, which knows it is in a
+  // thread but not WHICH — that is this module's state.
+  loadThreadHistoryForOpen() {
+    const a = GroupChat.activeThread;
+    if (a) GroupChat.loadThreadHistory(a.type, a.ref);
+  },
+
   _threadScrollEl() {
     return document.getElementById('gc-thread-scroll')
       || document.getElementById('gc-thread-messages');
@@ -787,17 +870,18 @@ const GroupChat = {
     const prevTop = scroll ? scroll.scrollTop : 0;
     const wasLoaded = el.dataset.loaded === '1';
 
-    const earlier = (st.loaded && st.hasMore && st.messages.length)
-      ? '<div class="text-center py-1"><button id="gc-thread-earlier" class="gc-vote-btn">Load earlier</button></div>'
-      : '';
-    const empty = (st.loaded && !st.messages.length)
-      ? '<div class="text-xs text-zinc-500 px-2 py-2">No messages yet — start the thread.</div>'
-      : (!st.loaded ? '<div class="text-xs text-zinc-500 px-2 py-2">Loading…</div>' : '');
-    el.innerHTML = earlier + empty + st.messages.map(GroupChat.renderMessageHtml).join('');
+    GroupChat._react()?.mountTranscript(el, 'thread');
+    GroupChat._react()?.publishTranscript(
+      st.messages.map(GroupChat._messageView),
+      'thread',
+      {
+        earlier: !!(st.loaded && st.hasMore && st.messages.length),
+        placeholder: st.loaded
+          ? (st.messages.length ? null : 'No messages yet — start the thread.')
+          : 'Loading…',
+      },
+    );
     el.dataset.loaded = st.loaded ? '1' : '';
-
-    const btn = document.getElementById('gc-thread-earlier');
-    if (btn) btn.addEventListener('click', () => GroupChat.loadThreadHistory(a.type, a.ref));
 
     if (!scroll) return;
     if (wasLoaded) {
@@ -843,31 +927,21 @@ const GroupChat = {
   // Render (or clear) the composer's "Replying to …" preview chip —
   // into the thread composer's slot when a topic is open, else the
   // general composer's (only one of the two is ever in the DOM).
+  // Published to BOTH scopes, which is what it always meant. `replyDraft` is
+  // one value — entering a thread clears it (see mountThread) — and only one
+  // of the two composers is ever in the DOM, so "write into whichever host is
+  // present" and "tell both slots" describe the same behaviour. Saying it this
+  // way removes the question of which one wins.
   _renderQuotePreview() {
-    const el = document.getElementById('gc-thread-reply-preview')
-      || document.getElementById('gc-reply-preview');
-    if (!el) return;
     const q = GroupChat.replyDraft;
-    if (!q) {
-      el.classList.add('hidden');
-      el.innerHTML = '';
-      return;
-    }
-    const label = q.source === 'pr'
-      ? `PR #${q.prNumber || ''}`.trim()
-      : (q.author ? `@${q.author}` : 'message');
-    const snippet = GroupChat._collapseSnippet(q.snippet).slice(0, 120);
-    el.classList.remove('hidden');
-    el.innerHTML =
-      `<div class="gc-reply-preview-inner">` +
-        `<div class="gc-reply-preview-body">` +
-          `<span class="gc-reply-preview-label">\u21A9 Replying to ${escapeHtml(label)}</span>` +
-          `<span class="gc-reply-preview-snippet">${escapeHtml(snippet)}</span>` +
-        `</div>` +
-        `<button type="button" id="gc-reply-cancel" class="gc-reply-preview-x" aria-label="Cancel reply">\u2715</button>` +
-      `</div>`;
-    const x = document.getElementById('gc-reply-cancel');
-    if (x) x.onclick = () => GroupChat.clearQuote();
+    const view = q ? {
+      label: q.source === 'pr'
+        ? `PR #${q.prNumber || ''}`.trim()
+        : (q.author ? `@${q.author}` : 'message'),
+      snippet: GroupChat._collapseSnippet(q.snippet).slice(0, 120),
+    } : null;
+    GroupChat._publishComposer('general', { quote: view });
+    GroupChat._publishComposer('thread', { quote: view });
   },
 
   // True only for a clean tap: pointer barely moved AND no text is
@@ -938,12 +1012,15 @@ const GroupChat = {
     const target = container && container.querySelector(`[data-msg-id="${ref}"]`);
     if (!target) return;
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    target.classList.add('gc-msg-flash');
-    setTimeout(() => target.classList.remove('gc-msg-flash'), 1500);
+    // The highlight is `flash` on the model, not a class written onto a row
+    // React renders — the next repaint would have taken it off mid-animation.
+    GroupChat._react()?.patchTranscriptMessage(ref, { flash: true });
+    setTimeout(() => GroupChat._react()?.patchTranscriptMessage(ref, { flash: false }), 1500);
   },
 
   // Delegated tap-to-quote + quote-jump + reactions on the messages
-  // container. Bound once (idempotent), mirroring _attachSpecCardHandlers.
+  // container. Bound once (idempotent) — the same shape the spec card's own
+  // delegate had before its button became a React control (see openSharedSpec).
   //
   // Interaction model (#15 + #25, mobile-first):
   //   • quick tap         → quote the row (#15)
@@ -1002,14 +1079,12 @@ const GroupChat = {
     container.addEventListener('pointercancel', endPress, true);
 
     container.addEventListener('click', (e) => {
-      // Reaction pill → toggle that emoji for the viewer.
-      const pill = e.target.closest('.gc-react-pill');
-      if (pill) {
-        const row = pill.closest('[data-msg-id]');
-        const id = row && parseInt(row.dataset.msgId || '', 10);
-        if (id) GroupChat.sendReact(id, pill.dataset.emoji);
-        return;
-      }
+      // A reaction pill is NOT dispatched here. The reskin draws it with
+      // @/components/ui/feed's `ReactionPill`, so no node carries
+      // `.gc-react-pill` any more and this branch had nothing to match; the
+      // pill calls `GroupChat.sendReact` from an onClick in
+      // features/group-chat/transcript.tsx instead. It is a <button>, so the
+      // tap-to-quote tail below already declines it.
       // #1280: save/unsave button → toggle this message in the viewer's
       // own saved list. Handled before tap-to-quote (like Edit below) so
       // the click doesn't also stage a reply.
@@ -1113,95 +1188,29 @@ const GroupChat = {
   },
 
   // ── #25: reaction rendering ─────────────────────────────────────────
+  //
+  // `_renderReactionPills` and `_renderReactionsHtml` lived here — the pills
+  // and their (possibly empty) container as an HTML string. Both are
+  // features/group-chat/transcript.tsx's `<Reactions>` now, and the empty
+  // container is still always rendered so `.gc-reactions:empty` keeps
+  // collapsing its margin.
 
-  _renderReactionPills(msg) {
-    const rx = (msg && msg.reactions) || [];
-    if (!rx.length) return '';
-    const me = App.user && App.user.username;
-    return rx.map((r) => {
-      const users = Array.isArray(r.users) ? r.users : [];
-      const mine = me && users.includes(me);
-      return `<button class="gc-react-pill${mine ? ' gc-react-mine' : ''}" data-emoji="${escapeHtml(r.emoji)}" title="${escapeHtml(users.join(', '))}">` +
-        `<span class="gc-react-emoji">${escapeHtml(r.emoji)}</span>` +
-        `<span class="gc-react-count">${r.count}</span>` +
-        `</button>`;
-    }).join('');
-  },
-
-  // Always render the (possibly empty) container so live updates have a
-  // stable target to patch without re-rendering the whole row.
-  _renderReactionsHtml(msg) {
-    return `<div class="gc-reactions" id="gc-react-${msg.id || ''}">${GroupChat._renderReactionPills(msg)}</div>`;
-  },
-
-  // Desktop hover affordance to open the reaction bar. tabindex -1 keeps it
-  // out of the tab order; touch devices use long-press instead (CSS hides
-  // it where there's no hover).
-  _renderReactAddBtn(_msg) {
-    if (GroupChat._readOnly()) return ''; // #621: no reactions read-only
-    return `<button class="gc-react-add" title="React" aria-label="Add reaction" tabindex="-1">\u{1F642}</button>`;
-  },
+  // `_renderReactAddBtn` lived here — the desktop hover affordance that opens
+  // the bar. It is transcript.tsx's `RowActions` now, gated by the same
+  // `showReact` (#621: no reactions read-only) and still `tabindex="-1"` so it
+  // stays out of the tab order; touch devices long-press instead, and CSS
+  // hides it where there is no hover.
 
   // ── #1280: save (bookmark) a message ────────────────────────────────
 
-  // The save toggle that sits beside the react button in a message's
-  // header. A saved message pins to the "Saved" section at the top of the
-  // notifications drawer until it is unsaved — from here, or from there.
-  //
-  // NOT gated on _readOnly(), unlike the react and edit affordances beside
-  // it: a save writes nothing to the app, only to the viewer's own private
-  // list, so a #621 read-only viewer may save what they can read (which is
-  // exactly what the route's 'view' gate allows). It IS gated on being
-  // signed in — there is no personal list to save into otherwise.
-  //
-  // Unlike the react button this stays in the tab order and is visible
-  // whenever it is ON: a saved message has to look saved without hovering
-  // it, or the only way to find out what you saved is to open the drawer.
-  _renderBookmarkBtn(msg) {
-    if (!(window.App && App.user)) return '';
-    const on = !!(msg && msg.bookmarked);
-    // The state lives in the SHAPE — hollow when it isn't saved, solid when
-    // it is — which is legible at 12px, in a screenshot, and to anyone who
-    // cannot tell 30% opacity from 100%. The faded/full-strength weighting
-    // stays as a second signal; the accessible name and aria-pressed carry
-    // the same state for anyone not looking at it.
-    return `<button class="gc-msg-save${on ? ' gc-msg-saved' : ''}"`
-      + ` title="${on ? 'Saved — click to unsave' : 'Save to your notifications'}"`
-      + ` aria-label="${on ? 'Unsave message' : 'Save message'}"`
-      + ` aria-pressed="${on ? 'true' : 'false'}">${GroupChat._bookmarkSvg(on)}</button>`;
-  },
-
-  // The bookmark mark itself: a rectangle with a notch cut out of its
-  // bottom edge, the "save for later" shape every product uses. Drawn
-  // rather than typed because NO character draws it — U+1F516 is the
-  // ribbon-and-tag bookmark, which turns to mud at this size — and the
-  // outline/solid pair is the whole reason this button doesn't have to
-  // signal its state through opacity alone.
-  //
-  // These are the shell's own glyphs: Heroicons v2, the set
-  // frontend/@/components/ui/icons.tsx exports as BookmarkIcon and
-  // BookmarkSolidIcon (drawn for stroke-width 1.5, hence the value below).
-  // This file is a classic script and cannot import that module, so the two
-  // paths are duplicated here on purpose — the ONLY duplication in the set,
-  // and tests/notifications-saved-section.test.js reads them out of the
-  // module and asserts these still match, so redrawing one end fails rather
-  // than quietly shipping two different bookmarks.
-  _BOOKMARK_PATH: 'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
-  _BOOKMARK_SOLID_PATH: 'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
-
-  _bookmarkSvg(on) {
-    // Solid is a FILL with no stroke and outline is the reverse, exactly as
-    // the module's two factories render them — the pair is not one path with
-    // its fill flipped.
-    return '<svg viewBox="0 0 24 24" aria-hidden="true"'
-      + (on
-        ? ' fill="currentColor">'
-          + `<path d="${GroupChat._BOOKMARK_SOLID_PATH}"></path>`
-        : ' fill="none" stroke="currentColor" stroke-width="1.5">'
-          + '<path stroke-linecap="round" stroke-linejoin="round"'
-          + ` d="${GroupChat._BOOKMARK_PATH}"></path>`)
-      + '</svg>';
-  },
+  // `_renderBookmarkBtn`, `_bookmarkSvg` and the two Heroicons path constants
+  // lived here. The button is transcript.tsx's `<RowActions>` now, drawing
+  // frontend/@/components/ui/icons.tsx's BookmarkIcon / BookmarkSolidIcon
+  // directly — so the duplicated path data this file used to carry, and the
+  // test that kept the two copies in step, are both gone rather than stale.
+  // What stays is the RULE the button ran on: `showBookmark` in `_messageView`
+  // (a signed-in viewer, and no `_readOnly()` gate — #621, saving writes
+  // nothing to the app) and the optimistic flip in `_paintBookmark` below.
 
   // Toggle the save state of one message. Optimistic: the button flips
   // immediately (a save is a personal, instantly-reversible act, and a
@@ -1236,19 +1245,19 @@ const GroupChat = {
 
   // Patch just the button(s) for one message — the row may be rendered
   // twice (general stream and a mounted thread), so every match is painted.
+  //
+  // It writes the MODEL, not the button. The button lives inside #gc-messages,
+  // which features/group-chat/transcript.tsx owns end to end, so the
+  // classList / setAttribute / innerHTML writes this replaces were a second
+  // author in a reconciled tree — they worked until the next store update
+  // repainted the row from the model and silently reverted them.
+  //
+  // patchTranscriptMessage patches EVERY transcript by design, which is
+  // exactly what the two-selector sweep was doing by hand.
   _paintBookmark(messageId, on) {
-    document.querySelectorAll(
-      `#gc-messages [data-msg-id="${messageId}"] .gc-msg-save,`
-      + ` #gc-thread-messages [data-msg-id="${messageId}"] .gc-msg-save`
-    ).forEach((btn) => {
-      btn.classList.toggle('gc-msg-saved', !!on);
-      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-      btn.setAttribute('aria-label', on ? 'Unsave message' : 'Save message');
-      btn.setAttribute('title', on ? 'Saved — click to unsave' : 'Save to your notifications');
-      // The mark is hollow or solid, so a class toggle alone would leave
-      // the icon showing the state it had before the click.
-      btn.innerHTML = GroupChat._bookmarkSvg(!!on);
-    });
+    const gc = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.groupChat : null;
+    if (gc && gc.patchTranscriptMessage) gc.patchTranscriptMessage(messageId, { bookmarked: !!on });
   },
 
   // Apply a fresh reaction aggregate (from the WS 'reaction' broadcast or
@@ -1263,8 +1272,14 @@ const GroupChat = {
       }
     }
     if (msg) msg.reactions = reactions || [];
-    const el = document.getElementById(`gc-react-${messageId}`);
-    if (el) el.innerHTML = GroupChat._renderReactionPills(msg || { reactions: reactions || [] });
+    // A field update, not a targeted innerHTML write into a row React owns.
+    const me = App.user && App.user.username;
+    GroupChat._react()?.patchTranscriptMessage(Number(messageId), {
+      reactions: ((msg && msg.reactions) || reactions || []).map((r) => {
+        const users = Array.isArray(r.users) ? r.users : [];
+        return { emoji: r.emoji, count: r.count, users, mine: !!(me && users.includes(me)) };
+      }),
+    });
   },
 
   // Toggle an emoji on a message for the current user (server decides
@@ -1309,12 +1324,10 @@ const GroupChat = {
     return `edited ${date}, ${time}`;
   },
 
-  // Hover affordance (desktop) to edit own message. Hidden on touch via CSS
-  // (long-press bar carries the Edit action there), mirroring gc-react-add.
-  _renderEditBtn(_msg) {
-    if (GroupChat._readOnly()) return ''; // #621: no edits read-only
-    return `<button class="gc-msg-edit" title="Edit" aria-label="Edit message" tabindex="-1">✏️</button>`;
-  },
+  // `_renderEditBtn` lived here — the desktop hover pencil for your own
+  // message, hidden on touch via CSS because the long-press bar carries Edit
+  // there. It is transcript.tsx's `RowActions` now, gated by the same
+  // `showEdit` (#621: no edits read-only).
 
   // Locate a message (and its containing thread state, if any) by id across
   // the general stream and every cached thread.
@@ -1420,8 +1433,7 @@ const GroupChat = {
     }
     // Optimistically paint the new content so there's no flash; the
     // authoritative content + "edited" marker arrive via the broadcast.
-    const contentEl = row.querySelector('.gc-msg-content');
-    if (contentEl) contentEl.innerHTML = renderMessageBody(content);
+    GroupChat._patchBody(id, content);
     GroupChat._cancelEdit(row);
   },
 
@@ -1438,26 +1450,31 @@ const GroupChat = {
     // If the author had this open in an editor, close it — the broadcast is
     // authoritative.
     GroupChat._cancelEdit(row);
-    const contentEl = row.querySelector('.gc-msg-content');
-    if (contentEl) contentEl.innerHTML = renderMessageBody(content);
-    GroupChat._patchEditedMarker(row, editedAt);
+    GroupChat._patchBody(messageId, content, editedAt);
   },
 
-  // Insert or refresh the "edited" marker after a row's timestamp.
-  _patchEditedMarker(row, editedAt) {
-    if (!editedAt) return;
-    const timeEl = row.querySelector('.gc-msg-header .gc-msg-time');
-    if (!timeEl) return;
-    const title = GroupChat._editedTitle(editedAt);
-    let marker = row.querySelector('.gc-msg-header .gc-msg-edited');
-    if (marker) {
-      marker.title = title;
-    } else {
-      timeEl.insertAdjacentHTML(
-        'afterend',
-        `<span class="gc-msg-edited" title="${escapeHtml(title)}">edited</span>`
-      );
-    }
+  // Patch a message's rendered body — and, when an edit produced it, the
+  // "edited" marker — through the transcript store.
+  //
+  // This replaces three DOM writes that all landed inside #gc-messages, which
+  // features/group-chat/transcript.tsx owns: two `contentEl.innerHTML`
+  // assignments and an `insertAdjacentHTML` that spliced the marker in after
+  // the timestamp. The last of those has no equivalent here BECAUSE it needs
+  // none — `editedTitle` is a field on the message, and the component renders
+  // the marker from it.
+  //
+  // Writing the DOM was not merely redundant. `Body` memoises its
+  // `{__html}` wrapper on the string, so React leaves the node alone while
+  // the model says the old content — and repaints the row from that stale
+  // model the next time anything else about it changes. An edit followed by
+  // a reaction reverted the text on screen.
+  _patchBody(messageId, content, editedAt) {
+    const gc = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.groupChat : null;
+    if (!gc || !gc.patchTranscriptMessage) return;
+    const patch = { bodyHtml: renderMessageBody(content) };
+    if (editedAt) patch.editedTitle = GroupChat._editedTitle(editedAt);
+    gc.patchTranscriptMessage(messageId, patch);
   },
 
   // ── #25: reaction bar (WhatsApp-style quick row + curated grid) ──────
@@ -1467,20 +1484,6 @@ const GroupChat = {
     const bar = document.createElement('div');
     bar.id = 'gc-react-bar';
     bar.className = 'gc-react-bar hidden';
-    const quick = GroupChat.QUICK_REACTIONS
-      .map((e) => `<button class="gc-react-bar-emoji" data-emoji="${escapeHtml(e)}">${escapeHtml(e)}</button>`)
-      .join('');
-    const grid = GroupChat.GRID_REACTIONS
-      .map((e) => `<button class="gc-react-bar-emoji" data-emoji="${escapeHtml(e)}">${escapeHtml(e)}</button>`)
-      .join('');
-    bar.innerHTML =
-      `<div class="gc-react-bar-quick">${quick}` +
-        `<button class="gc-react-bar-more" aria-label="More emoji">\uFF0B</button>` +
-        // Touch-only Edit action for own ordinary messages (desktop uses the
-        // hover pencil). Visibility is toggled per-row in _openReactionBar.
-        `<button class="gc-react-bar-edit hidden" aria-label="Edit message">\u270F\uFE0F</button>` +
-      `</div>` +
-      `<div class="gc-react-bar-grid hidden">${grid}</div>`;
     bar.addEventListener('click', (e) => {
       const em = e.target.closest('.gc-react-bar-emoji');
       if (em) { GroupChat._reactFromBar(em.dataset.emoji); return; }
@@ -1491,12 +1494,28 @@ const GroupChat = {
         return;
       }
       if (e.target.closest('.gc-react-bar-more')) {
-        bar.querySelector('.gc-react-bar-grid').classList.toggle('hidden');
+        GroupChat._reactBarGridOpen = !GroupChat._reactBarGridOpen;
+        GroupChat._publishReactBar();
       }
     });
     document.body.appendChild(bar);
+    // The HOST stays ours — position:fixed, appended to the body, pointed at a
+    // row and placed by measurement on every open — and its CHILDREN are
+    // features/group-chat/reaction-bar.tsx's, mounted once here. The emoji sets
+    // ride along as props because they never change.
+    window.UsernodeReact?.groupChat?.mountReactionBar?.(bar, {
+      quick: GroupChat.QUICK_REACTIONS,
+      grid: GroupChat.GRID_REACTIONS,
+    });
     GroupChat._reactBar = bar;
     return bar;
+  },
+
+  _publishReactBar() {
+    window.UsernodeReact?.groupChat?.publishReactionBar?.({
+      gridOpen: !!GroupChat._reactBarGridOpen,
+      editable: !!GroupChat._reactBarEditable,
+    });
   },
 
   _openReactionBar(row) {
@@ -1505,11 +1524,14 @@ const GroupChat = {
     if (!id) return;
     const bar = GroupChat._ensureReactionBar();
     bar.dataset.msgId = String(id);
-    bar.querySelector('.gc-react-bar-grid').classList.add('hidden');
-    // Offer Edit only on the viewer's own ordinary messages.
-    const editable = row.classList.contains('gc-msg') && row.classList.contains('gc-msg-self');
-    const editBtn = bar.querySelector('.gc-react-bar-edit');
-    if (editBtn) editBtn.classList.toggle('hidden', !editable);
+    // Every open starts collapsed, and Edit is offered only on the viewer's
+    // own ordinary messages. Publishing goes through flushSync
+    // (features/group-chat/mount.ts), so the pencil is in or out of the DOM
+    // before the measurement below decides where the bar fits.
+    GroupChat._reactBarGridOpen = false;
+    GroupChat._reactBarEditable = row.classList.contains('gc-msg')
+      && row.classList.contains('gc-msg-self');
+    GroupChat._publishReactBar();
     bar.classList.remove('hidden');
     GroupChat._reactBarOpenedAt = Date.now();
 
@@ -1572,14 +1594,12 @@ const GroupChat = {
 
   // ── per-message unread dot ──────────────────────────────────────────
 
-  // Dot markup for a message this user has an unread mention/reply/
-  // reaction notification for. Driven by the server's
-  // has_unread_notification flag on loaded history; live messages never
-  // carry it (a brand-new message can't yet have a notification for you).
-  _unreadDotHtml(msg) {
-    if (!msg || !msg.has_unread_notification) return '';
-    return `<span class="gc-unread-dot" data-unread-dot="${msg.id || ''}" aria-label="Unread mention"></span>`;
-  },
+  // `_unreadDotHtml` lived here. The dot is `unread` on the row's view model
+  // now (features/group-chat/transcript.tsx renders it beside the name), and
+  // both paths below patch that field instead of adding and removing a span.
+  // Driven by the server's has_unread_notification flag on loaded history;
+  // live messages never carry it (a brand-new message can't yet have a
+  // notification for you).
 
   // Clear the dot for one message (the "click a dotted message" path):
   // optimistically drop it locally, then confirm read on the server by
@@ -1589,8 +1609,7 @@ const GroupChat = {
     const msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
     if (!msg || !msg.has_unread_notification) return;
     msg.has_unread_notification = false;
-    const dot = document.querySelector(`[data-unread-dot="${messageId}"]`);
-    if (dot) dot.remove();
+    GroupChat._react()?.patchTranscriptMessage(Number(messageId), { unread: false });
     fetch('/api/notifications/read', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1625,13 +1644,9 @@ const GroupChat = {
       const unread = state.get(msg.id);
       if (!!msg.has_unread_notification === unread) continue;
       msg.has_unread_notification = unread;
-      const existing = document.querySelector(`[data-unread-dot="${msg.id}"]`);
-      if (unread && !existing) {
-        const row = document.querySelector(`.gc-msg[data-msg-id="${msg.id}"] .gc-msg-header`);
-        if (row) row.insertAdjacentHTML('afterbegin', GroupChat._unreadDotHtml(msg));
-      } else if (!unread && existing) {
-        existing.remove();
-      }
+      // A field update on whichever transcripts hold the message, not an
+      // insertAdjacentHTML into a row React renders.
+      GroupChat._react()?.patchTranscriptMessage(Number(msg.id), { unread });
     }
   },
 
@@ -1826,6 +1841,10 @@ const GroupChat = {
       }
       const entry = {
         scope: key,
+        // Stable identity for the strip's rows. `id` arrives only when the
+        // upload finishes, and the filename is not unique — two shots pasted
+        // in a row are both `pasted-image-<n>.png` only by luck.
+        key: `p${(GroupChat._attachSeq += 1)}`,
         uploading: true,
         id: null,
         kind: classified.kind,
@@ -1857,6 +1876,28 @@ const GroupChat = {
     }
   },
 
+  // The React bridge for one composer. Both are one renderer in
+  // features/group-chat/composer.tsx, so every writer below names a SCOPE
+  // ('general' | 'thread') where it used to pick an element id.
+  _publishComposer(scope, patch) {
+    GroupChat._react()?.publishComposer?.(scope, patch);
+  },
+
+  // The scope for a `thread` argument, which is how every attachment path
+  // spells the same choice.
+  _composerScope(thread) {
+    return thread ? 'thread' : 'general';
+  },
+
+  _attachSeq: 0,
+
+  // Remove by INDEX, because that is what a serialisable view model can carry:
+  // the live entry holds a File and an object URL and never leaves this module.
+  _removeAttachmentAt(index, scope) {
+    const thread = scope === 'thread' ? GroupChat.activeThread : null;
+    GroupChat._removeAttachment(GroupChat._pendingFor(thread)[index], thread);
+  },
+
   _removeAttachment(entry, thread) {
     if (!entry || entry.uploading) return;
     GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => a !== entry);
@@ -1866,16 +1907,11 @@ const GroupChat = {
     GroupChat._renderAttachStrip(thread);
   },
 
+  // The error line above the composer. Its `hidden` follows from the text now
+  // — the component draws the row either way, so the module has one thing to
+  // say rather than two to keep in step.
   _setAttachError(msg, thread) {
-    const el = document.getElementById(thread ? 'gc-thread-attach-error' : 'gc-attach-error');
-    if (!el) return;
-    if (msg) {
-      el.textContent = msg;
-      el.classList.remove('hidden');
-    } else {
-      el.textContent = '';
-      el.classList.add('hidden');
-    }
+    GroupChat._publishComposer(GroupChat._composerScope(thread), { attachError: msg || null });
   },
 
   _humanAttSize(bytes) {
@@ -1885,98 +1921,80 @@ const GroupChat = {
     return `${n} B`;
   },
 
-  // Attribute-safe escape for filenames. escapeHtml (the div trick)
-  // deliberately mirrors browser text-node escaping, which leaves `"`
-  // alone — fine for text content, NOT fine inside a double-quoted
-  // attribute, where a crafted filename could break out and inject
-  // attributes. Filenames are the one fully user-controlled string these
-  // rows put into attributes, so they go through this instead.
-  _escAttr(s) {
-    return escapeHtml(String(s)).replace(/"/g, '&quot;');
-  },
+  // `_escAttr` lived here — an attribute-safe escape for filenames, because
+  // `escapeHtml` (the div trick) mirrors browser TEXT-node escaping and
+  // leaves `"` alone, which a crafted filename could break out of inside a
+  // double-quoted attribute. React escapes text and attributes alike, and
+  // both places that put a filename into markup are components now, so the
+  // hazard and its guard go together.
+  //
+  // `_attachKindBadgeHtml` went with the composer strip it wrapped. The label
+  // itself stays, because both strips read it.
 
-  // Small kind badge for chips ("MD", "HTML", "BIN"). '' for image/text.
-  _attachKindBadgeHtml(a) {
-    if (a.kind === 'markdown') return '<span class="dc-attach-kind">MD</span>';
-    if (a.kind === 'html') return '<span class="dc-attach-kind">HTML</span>';
-    if (a.kind === 'binary') return '<span class="dc-attach-kind">BIN</span>';
-    return '';
+  // Small kind badge for chips ("MD", "HTML", "BIN"). Null for image/text.
+  _attachKindBadge(a) {
+    if (a.kind === 'markdown') return 'MD';
+    if (a.kind === 'html') return 'HTML';
+    if (a.kind === 'binary') return 'BIN';
+    return null;
   },
 
   _renderAttachStrip(thread) {
-    const strip = document.getElementById(thread ? 'gc-thread-attachments' : 'gc-attachments');
-    if (!strip) return;
-    const items = GroupChat._pendingFor(thread);
-    if (!items.length) {
-      strip.innerHTML = '';
-      strip.classList.remove('dc-attach-strip-active');
-      return;
-    }
-    strip.classList.add('dc-attach-strip-active');
-    strip.innerHTML = items.map((a, i) => {
-      const name = GroupChat._escAttr(a.filename);
-      const removeBtn = a.uploading
-        ? '<span class="dc-attach-uploading">…</span>'
-        : `<button type="button" class="dc-attach-remove" data-attach-idx="${i}" title="Remove" aria-label="Remove ${name}">&times;</button>`;
-      if (a.kind === 'image' && a.objectUrl) {
-        return `<div class="dc-attach-item"><img class="dc-attach-thumb" src="${a.objectUrl}" alt="${name}" title="${name}">${removeBtn}</div>`;
-      }
-      return `<div class="dc-attach-item dc-attach-chip" title="${name}">${GroupChat._attachKindBadgeHtml(a)}<span class="dc-attach-name">${name}</span><span class="dc-attach-size">${GroupChat._humanAttSize(a.sizeBytes)}</span>${removeBtn}</div>`;
-    }).join('');
-    strip.querySelectorAll('.dc-attach-remove').forEach((btn) => {
-      btn.addEventListener('click', () => GroupChat._removeAttachment(items[Number(btn.dataset.attachIdx)], thread));
+    GroupChat._publishComposer(GroupChat._composerScope(thread), {
+      attachments: GroupChat._pendingFor(thread).map((a) => ({
+        key: a.key || `p${a.id || a.filename}`,
+        name: a.filename || 'file',
+        kind: a.kind,
+        badge: GroupChat._attachKindBadge(a),
+        size: GroupChat._humanAttSize(a.sizeBytes),
+        thumbUrl: a.objectUrl || null,
+        uploading: !!a.uploading,
+      })),
     });
   },
 
-  // Attachments row inside a message bubble, from the server-derived
-  // metadata.attachments summary. Rendered OUTSIDE renderMessageBody —
-  // the DOMPurify allowlist strips <img> from untrusted markdown, and
-  // must keep doing so; these elements only ever point at the app-gated
-  // attachments routes. Per kind: image → inline thumbnail linking to
-  // full size; markdown → chip opening the side panel (+ download);
-  // html → chip with sandboxed Preview (+ download); text/binary →
-  // download chip.
-  _attachmentsRowHtml(msg) {
-    const meta = msg.metadata || msg.meta || {};
+  // The files on a message, from the server-derived metadata.attachments
+  // summary, as the view model features/group-chat/transcript.tsx draws.
+  //
+  // Resolved OUTSIDE the message body on purpose — the DOMPurify allowlist
+  // strips <img> from untrusted markdown and must keep doing so; these
+  // elements only ever point at the app-gated attachments routes, and the id
+  // check below is what keeps them there. Per kind: image → inline thumbnail
+  // linking to full size; markdown → chip opening the side panel (+
+  // download); html → chip with sandboxed Preview (+ download); text/binary
+  // → download chip.
+  //
+  // `_attachmentsRowHtml` lived here and built that as an HTML string. It had
+  // NO CALLERS after the transcript conversion, which is why a message with
+  // files was rendering an empty `[data-gc-attachments]` host and nothing
+  // else — the same way the spec-share card went missing. `_escAttr` is not
+  // needed on this path any more (React escapes both text and attributes);
+  // the composer strip still uses it.
+  //
+  // `_attImgError` went with it. A thumbnail whose bytes are missing — a
+  // staging clone copies chat_messages but not attachment blobs
+  // (staging:private) — degraded by rewriting the anchor's className and
+  // textContent in place, which is a write into a row React owns. The
+  // component holds that as its own state instead.
+  _attachmentsView(msg) {
+    const meta = (msg && (msg.metadata || msg.meta)) || {};
     const atts = meta.attachments;
-    if (!Array.isArray(atts) || !atts.length) return '';
+    if (!Array.isArray(atts) || !atts.length) return [];
     const slug = GroupChat._attachSlug();
-    if (!slug) return '';
+    if (!slug) return [];
     GroupChat._ensureAttachClickHandler();
-    const items = atts.map((a) => {
-      if (typeof a.id !== 'string' || !/^[a-f0-9]{32}$/.test(a.id)) return '';
-      const name = GroupChat._escAttr(a.filename || 'file');
-      const url = `/api/apps/${encodeURIComponent(slug)}/chat-attachments/${a.id}`;
-      const size = `<span class="dc-attach-size">${GroupChat._humanAttSize(a.sizeBytes)}</span>`;
-      const badge = GroupChat._attachKindBadgeHtml(a);
-      if (a.kind === 'image') {
-        // onerror: staging clones copy chat_messages but not attachment
-        // bytes (staging:private), so a broken thumbnail degrades to a
-        // plain chip instead of a broken-image icon.
-        return `<a href="${url}" target="_blank" rel="noopener" title="${name} — open full size"><img class="dc-msg-att-img" src="${url}" alt="${name}" loading="lazy" onerror="GroupChat._attImgError(this)"></a>`;
-      }
-      if (a.kind === 'markdown') {
-        return `<span class="dc-msg-att-chip">${badge}` +
-          `<button type="button" class="dc-attach-name gc-att-open" data-att-md="${url}" data-att-name="${name}" title="View ${name}">${name}</button>${size}` +
-          `<a class="gc-att-action" href="${url}" download="${name}" title="Download ${name}">&#8595;</a></span>`;
-      }
-      if (a.kind === 'html') {
-        return `<span class="dc-msg-att-chip">${badge}<span class="dc-attach-name">${name}</span>${size}` +
-          `<a class="gc-att-action" href="${url}/view" target="_blank" rel="noopener" title="Open sandboxed preview of ${name}">Preview</a>` +
-          `<a class="gc-att-action" href="${url}" download="${name}" title="Download ${name}">&#8595;</a></span>`;
-      }
-      return `<a class="dc-msg-att-chip" href="${url}" download="${name}" title="Download ${name}">${badge}<span class="dc-attach-name">${name}</span>${size}</a>`;
-    }).filter(Boolean).join('');
-    return items ? `<div class="dc-msg-attachments">${items}</div>` : '';
-  },
-
-  // Broken image thumbnail (missing bytes in a staging clone, or a
-  // deleted row) → degrade the wrapping link to a plain chip.
-  _attImgError(img) {
-    const a = img.closest ? img.closest('a') : null;
-    if (!a) return;
-    a.className = 'dc-msg-att-chip';
-    a.textContent = `\u{1F5BC} ${img.alt || 'image'}`;
+    return atts
+      // A filename is user-controlled; an id must be exactly what the server
+      // minted, or the URL it builds is not one of ours.
+      .filter((a) => a && typeof a.id === 'string' && /^[a-f0-9]{32}$/.test(a.id))
+      .map((a) => ({
+        id: a.id,
+        kind: a.kind,
+        name: a.filename || 'file',
+        url: `/api/apps/${encodeURIComponent(slug)}/chat-attachments/${a.id}`,
+        size: GroupChat._humanAttSize(a.sizeBytes),
+        badge: GroupChat._attachKindBadge(a),
+      }));
   },
 
   // One document-level delegated handler for markdown-chip clicks —
@@ -2017,96 +2035,25 @@ const GroupChat = {
     }
   },
 
-  renderMessageHtml(msg) {
-    const time = new Date(msg.createdAt || msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const username = msg.username || 'System';
-    const isSystem = msg.msgType === 'system' || msg.msg_type === 'system';
-    const isVote = msg.msgType === 'vote' || msg.msg_type === 'vote';
-    const isSpecShare = msg.msgType === 'spec_share' || msg.msg_type === 'spec_share';
-    const isSelf = msg.userId === App.user?.id || msg.user_id === App.user?.id;
+  // `renderMessageHtml` lived here: one HTML string per row, dispatching on
+  // msgType to a spec-share card, a system/vote line or an ordinary message.
+  // The transcript conversion replaced it with `_messageView` +
+  // features/group-chat/transcript.tsx and left it with NO CALLERS — which is
+  // how the spec-share card came to render as an empty `[data-gc-spec-share]`
+  // host that nothing filled. Its last live branch is `_specShareView` below;
+  // the rest was already duplicated by the view builder, so keeping a second
+  // copy of it would only be a second thing to keep in step.
 
-    if (isSpecShare) {
-      // Server attaches the full snapshot context in `metadata.specShare`.
-      // Older browsers (or older servers) might miss the metadata —
-      // fall back to a plain system line in that case so the row still
-      // renders rather than vanishing.
-      const meta = (msg.metadata || msg.meta || {}).specShare;
-      if (!meta) {
-        return `<div class="gc-msg-system">${escapeHtml(msg.content)}</div>`;
-      }
-      return GroupChat.renderSpecShareCard(msg, meta, time);
-    }
-
-    if (isSystem || isVote) {
-      // Vote-activity rows (promote / vote cast) render live vote buttons
-      // inline next to the text — wired to the same AppView.castVote /
-      // castAdminMerge / swapToStaging the vote panel uses. We always emit
-      // the wrapper (carrying the precise metadata session id when present
-      // AND the "PR #N" parsed from the text) so refreshVoteControls() can
-      // fill it once AppView.voteState is ready — even when the chat
-      // renders before the vote panel finishes its first fetch.
-      const inlineControls = isVote ? GroupChat._voteControlsHtml(msg) : '';
-      // Tint the row text by the viewer's vote status on this PR: faded
-      // (--accent-light) once they've voted, full-strength (--accent) while
-      // their vote is still outstanding, so unvoted rows draw the eye.
-      const voteRowClass = isVote ? GroupChat._rowVoteClass(GroupChat._resolvePr(...GroupChat._voteRef(msg))) : '';
-      return `<div class="gc-msg-system ${isVote ? 'gc-msg-vote' : ''}${voteRowClass ? ' ' + voteRowClass : ''}" data-msg-id="${msg.id || ''}">` +
-        `<span class="gc-msg-system-text">${escapeHtml(msg.content)}</span>` +
-        inlineControls +
-        GroupChat._renderBookmarkBtn(msg) +
-        GroupChat._renderReactAddBtn(msg) +
-        GroupChat._renderReactionsHtml(msg) +
-        `</div>`;
-    }
-
-    // #15: a user message may carry a quote (reply) in metadata. Render the
-    // quoted block above the content; data-msg-id lets a reply elsewhere
-    // scroll back to this row. #25: reactions + the hover react button.
-    const quotedHtml = GroupChat._renderQuotedBlock(msg.metadata || msg.meta);
-    // Editing: an "edited" marker (with the full edit timestamp in its
-    // tooltip) once edited_at is set, and an Edit affordance on the user's
-    // OWN ordinary messages (hover on desktop; long-press bar on touch).
-    const editedAt = msg.editedAt || msg.edited_at;
-    const editedMarker = editedAt
-      ? `<span class="gc-msg-edited" title="${escapeHtml(GroupChat._editedTitle(editedAt))}">edited</span>`
-      : '';
-    const editBtn = isSelf ? GroupChat._renderEditBtn(msg) : '';
-    return `
-      <div class="gc-msg ${isSelf ? 'gc-msg-self' : ''}" data-msg-id="${msg.id || ''}" data-username="${escapeHtml(username)}">
-        <div class="gc-msg-header">
-          ${GroupChat._unreadDotHtml(msg)}
-          <span class="gc-msg-username ${isSelf ? 'gc-msg-username-self' : ''}">${escapeHtml(username)}</span>
-          <span class="gc-msg-time">${time}</span>
-          ${editedMarker}
-          ${editBtn}
-          ${GroupChat._renderBookmarkBtn(msg)}
-          ${GroupChat._renderReactAddBtn(msg)}
-        </div>
-        ${quotedHtml}
-        <div class="gc-msg-content">${renderMessageBody(msg.content)}</div>
-        ${GroupChat._attachmentsRowHtml(msg)}
-        ${GroupChat._renderReactionsHtml(msg)}
-      </div>`;
-  },
-
-  // Inline vote buttons for a "promoted / voted" activity row. State comes
-  // from AppView.voteState (populated by AppView.loadVotePanel), so the
-  // buttons reflect live counts / my_vote and collapse to nothing once the
-  // PR leaves the votable set (merged / closed). The wrapper carries
-  // data-session-id so refreshVoteControls() can re-fill it in place when
-  // votes change, without re-rendering the whole chat.
-  // Wrapper for a vote-activity row. Carries the precise metadata session
-  // id (new server) when present AND the "PR #N" parsed from the row text,
-  // so the buttons can be (re)resolved against AppView.voteState at fill
-  // time. data-session-id / data-pr-number let refreshVoteControls() patch
-  // it in place without re-rendering the chat.
-  _voteControlsHtml(msg) {
-    const [sid, prNum] = GroupChat._voteRef(msg);
-    if (sid === '' && prNum === '') return '';
-    return `<span class="gc-vote-inline" data-vote-controls data-session-id="${sid}" data-pr-number="${prNum}">`
-      + GroupChat._voteInnerHtml(GroupChat._resolvePr(sid, prNum))
-      + `</span>`;
-  },
+  // `_voteControlsHtml` lived here — the `.gc-vote-inline` wrapper plus its
+  // first fill, as one string. The wrapper is transcript.tsx's now (it is a
+  // vote row's markup, and the row is React's); the FILL is still
+  // `refreshVoteControls` below, because it comes from AppView's vote
+  // renderers and arrives on the vote panel's schedule.
+  //
+  // Retiring it left the host with the wrong attribute for a while:
+  // `[data-gc-vote-controls]` is not `[data-vote-controls]`, the selector
+  // below matched nothing, and every vote row rendered an empty span where
+  // its Yes/No pair and tally pill belonged.
 
   // [sessionId, prNumber] ref for a vote-activity row: the precise metadata
   // session id (new server) when present, plus the "PR #N" parsed from the
@@ -2172,149 +2119,142 @@ const GroupChat = {
         el.getAttribute('data-session-id') || '',
         el.getAttribute('data-pr-number') || ''
       );
+      // The host's CONTENTS stay ours — this is AppView's markup, and the
+      // element is rendered once as an empty span it never looks inside.
       el.innerHTML = GroupChat._voteInnerHtml(pr);
-      const row = el.closest('.gc-msg-vote');
-      if (row) {
-        row.classList.remove('gc-vote-voted', 'gc-vote-unvoted');
-        const cls = GroupChat._rowVoteClass(pr);
-        if (cls) row.classList.add(cls);
+      // The row's TINT is not: `voteRowClass` is on the view model and React
+      // renders it, so a classList write here would be undone by the next
+      // repaint. Patch the model instead — and only when it moved, or the
+      // effect that calls this after each render would publish forever.
+      const row = el.closest('.gc-msg-vote[data-msg-id]');
+      const id = row && parseInt(row.dataset.msgId || '', 10);
+      if (id) {
+        GroupChat._react()?.patchTranscriptMessage(id, { voteRowClass: GroupChat._rowVoteClass(pr) });
       }
     });
   },
 
-  // #15: the quote block shown on a message that is itself a reply. Click
-  // handling (jump-to-original / open PR) is delegated in
-  // _attachQuoteHandlers.
-  _renderQuotedBlock(metadata) {
-    const q = (metadata || {}).quote;
-    if (!q) return '';
-    const who = q.author
-      ? escapeHtml(q.author)
-      : (q.source === 'pr' ? `PR #${q.prNumber || ''}`.trim() : 'system');
-    const snippet = escapeHtml(GroupChat._collapseSnippet(q.snippet).slice(0, 160));
-    const icon = q.source === 'pr' ? '\u{1F500}' : (q.source === 'spec' ? '\u{1F4CB}' : '\u21A9');
-    const data = q.source === 'pr'
-      ? `data-quote-source="pr" data-quote-href="${escapeHtml(q.href || '')}"`
-      : `data-quote-source="${escapeHtml(q.source || '')}" data-quote-ref="${q.refMsgId || ''}"`;
-    return `<div class="gc-quoted" ${data}>` +
-      `<span class="gc-quoted-author">${icon} ${who}</span>` +
-      `<span class="gc-quoted-snippet">${snippet}</span>` +
-      `</div>`;
-  },
+  // `_renderQuotedBlock` lived here — the `.gc-quoted` block on a message
+  // that is itself a reply, as an HTML string. It is transcript.tsx's
+  // `QuoteBlock` now, drawn from the same four facts and carrying the same
+  // class and `data-quote-*` attributes, because `_handleQuotedClick` above
+  // is still what a click on it goes through.
+  //
+  // What the transcript conversion had put in its place drew a
+  // `ThreadReplySummary` — the widget language's "N replies" affordance for a
+  // thread, which is a different thing — so a quoted reply read "1 reply
+  // alice", lost its snippet and its icon entirely, and did nothing when
+  // clicked: the block carried none of the attributes the handler dispatches
+  // on, and the onClick it did carry called a `scrollToMessage` that is not a
+  // method of this module.
 
-  renderSpecShareCard(msg, meta, time) {
-    const sharedBy = meta.sharedBy?.username || msg.username || 'Someone';
-    const built = meta.builtAt ? new Date(meta.builtAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-    const prLink = meta.prNumber
-      ? `<a class="gc-spec-pr" href="#" data-pr="${meta.prNumber}">PR #${meta.prNumber}</a>`
-      : '';
-    // `meta.title` is set by the share endpoint when the spec content
-    // starts with an H1; older shares predate that field and fall
-    // back to "Spec v<n>". The snippet is rendered as markdown so the
-    // preview matches what the user sees in the dev-chat spec viewer
-    // (shared markdown helper from DevChat).
-    //
-    // Reach DevChat via a bare reference and `typeof` guard rather
-    // than `window.DevChat` — DevChat is declared with `const` at
-    // dev-chat.js's top level, which does NOT install it as a
-    // property on `window` (only `var` / function declarations do).
-    // It IS visible as a global identifier across <script> tags
-    // because both files share the same script-scope, so a bare
-    // `DevChat.renderMarkdown(...)` works; the `typeof` keeps things
-    // safe if dev-chat.js ever fails to load.
-    const title = meta.title || `Spec v${meta.version}`;
+  // The shared-spec card, as data.
+  //
+  // Was `renderSpecShareCard`, reached from `renderMessageHtml` — which the
+  // transcript conversion left with no callers, so the card had quietly
+  // stopped rendering at all: the transcript emitted `[data-gc-spec-share]`
+  // as an empty host and nothing filled it. This is what fills it, through
+  // features/group-chat/transcript.tsx, and the row is markup again.
+  //
+  // `meta.title` is set by the share endpoint when the spec content starts
+  // with an H1; older shares predate that field and fall back to
+  // "Spec v<n>". The snippet is rendered as markdown so the preview matches
+  // what the user sees in the dev-chat spec viewer (shared markdown helper
+  // from DevChat).
+  //
+  // Reach DevChat via a bare reference and a `typeof` guard rather than
+  // `window.DevChat` — DevChat is declared with `const` at dev-chat.js's top
+  // level, which does NOT install it as a property on `window` (only `var` /
+  // function declarations do). It IS visible as a global identifier across
+  // <script> tags because both files share the same script scope, so a bare
+  // `DevChat.renderMarkdown(...)` works; the `typeof` keeps things safe if
+  // dev-chat.js ever fails to load.
+  _specShareView(meta, msg) {
     const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown
-      ? (s) => DevChat.renderMarkdown(s)
-      : (s) => escapeHtml(s);
-    const snippetHtml = meta.snippet ? renderMd(meta.snippet) : '';
-    const titleAttr = meta.title || `spec v${meta.version}`;
-    return `
-      <div class="gc-spec-card" data-msg-id="${msg.id || ''}" data-spec-title="${escapeHtml(titleAttr)}" data-session-id="${meta.sessionId || ''}" data-shared-by="${escapeHtml(sharedBy)}">
-        <div class="gc-spec-card-header">
-          <span class="gc-spec-card-icon">📋</span>
-          <span class="gc-spec-card-title">${escapeHtml(title)}</span>
-          <span class="gc-msg-time">${time}</span>
-        </div>
-        <div class="gc-spec-card-attribution">
-          Shared by <strong>${escapeHtml(sharedBy)}</strong> · v${meta.version}${built ? ' · ' + escapeHtml(built) : ''}${prLink ? ' · ' + prLink : ''}
-        </div>
-        ${snippetHtml ? `<div class="gc-spec-card-snippet">${snippetHtml}</div>` : ''}
-        <div class="gc-spec-card-actions">
-          <button class="gc-spec-card-view" data-session-id="${meta.sessionId}" data-version="${meta.version}">View full spec</button>
-        </div>
-        ${GroupChat._renderReactionsHtml(msg)}
-        ${GroupChat._renderBookmarkBtn(msg)}
-        ${GroupChat._renderReactAddBtn(msg)}
-      </div>`;
+      ? (str) => DevChat.renderMarkdown(str)
+      : null;
+    const built = meta.builtAt
+      ? new Date(meta.builtAt).toLocaleString([],
+        { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : null;
+    return {
+      title: meta.title || `Spec v${meta.version}`,
+      // The preview title the panel header shows while the fetch is in
+      // flight. It was a `data-spec-title` attribute the click delegate read
+      // back off the card; it is a field now, so nothing has to round-trip
+      // through the DOM to find it.
+      previewTitle: meta.title || `spec v${meta.version}`,
+      sharedBy: meta.sharedBy?.username || msg.username || 'Someone',
+      version: meta.version,
+      built,
+      prNumber: meta.prNumber || null,
+      sessionId: meta.sessionId || null,
+      // Markdown, so `dangerouslySetInnerHTML`; null when the share carried
+      // no snippet, or when dev-chat.js is not loaded to render one.
+      snippetHtml: meta.snippet && renderMd ? renderMd(meta.snippet) : null,
+      // …and the raw text as the fallback, escaped by React as a text child.
+      snippetText: meta.snippet && !renderMd ? String(meta.snippet) : null,
+    };
   },
 
-  // Click delegate: View full spec → modal with the frozen content.
-  // Bound once to the messages container in attachScrollHandlers; idempotent.
-  _attachSpecCardHandlers(container) {
-    if (container._gcSpecHandlersBound) return;
-    container._gcSpecHandlersBound = true;
-    container.addEventListener('click', async (e) => {
-      const btn = e.target.closest('.gc-spec-card-view');
-      if (!btn) return;
-      e.preventDefault();
-      const sessionId = btn.dataset.sessionId;
-      const version = btn.dataset.version;
-      if (!sessionId || !version) return;
-      btn.disabled = true;
-      btn.textContent = 'Loading…';
-      // Title preview from the card so the modal header isn't empty
-      // while the network request is in flight. Falls back to the
-      // version label if the card's data attribute is missing (older
-      // shares, or unusual DOM states).
-      const card = btn.closest('.gc-spec-card');
-      const previewTitle = (card && card.dataset.specTitle) || `Spec v${version}`;
-      // Persist the open state so a refresh re-opens this same
-      // spec automatically. Per-app keying ensures switching apps
-      // doesn't drag this open state along with you.
-      GroupChat._writeSpecPanelOpen(GroupChat.appSlug, {
-        sessionId: parseInt(sessionId, 10),
-        version: parseInt(version, 10),
-        title: previewTitle,
-      });
-      try {
-        const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}${GroupChat._specDemoQS()}`);
-        // After #6, the server allows any authed user to read a spec
-        // version that was explicitly shared into the group chat. A
-        // 404 here therefore means the share was withdrawn or the
-        // version row is gone (rare — would require manual DB edits
-        // or a session DELETE CASCADE) rather than the routine
-        // "not the owner" case it used to mean.
-        if (!resp.ok) {
-          GroupChat._showSpecPanel({
-            title: previewTitle,
-            version,
-            content: resp.status === 404
-              ? 'This spec is no longer available. The sharer may have deleted the session.'
-              : `Failed to load spec (HTTP ${resp.status}).`,
-            isError: true,
-          });
-          return;
-        }
-        const data = await resp.json();
+  // Open a shared spec in the side panel.
+  //
+  // Was the body of `_attachSpecCardHandlers`, a click delegate bound to the
+  // messages container that read the button's `data-session-id` /
+  // `data-version` and then wrote `disabled` and `textContent` back onto it.
+  // Those two writes were the problem: the card is React's since #1191, and
+  // the button's in-flight state is the component's own — so this returns a
+  // promise and the component brackets it. The address bookkeeping, the fetch
+  // and every failure wording stay here.
+  //
+  // `previewTitle` fills the panel header while the request is in flight, so
+  // the panel is never a blank box; it falls back to the version label for an
+  // older share that predates `metadata.specShare.title`.
+  async openSharedSpec(sessionId, version, previewTitle) {
+    if (!sessionId || !version) return;
+    const title = previewTitle || `Spec v${version}`;
+    // Persist the open state so a refresh re-opens this same spec
+    // automatically. Per-app keying ensures switching apps doesn't drag this
+    // open state along with you.
+    GroupChat._writeSpecPanelOpen(GroupChat.appSlug, {
+      sessionId: parseInt(sessionId, 10),
+      version: parseInt(version, 10),
+      title,
+    });
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}${GroupChat._specDemoQS()}`);
+      // After #6, the server allows any authed user to read a spec version
+      // that was explicitly shared into the group chat. A 404 here therefore
+      // means the share was withdrawn or the version row is gone (rare —
+      // would require manual DB edits or a session DELETE CASCADE) rather
+      // than the routine "not the owner" case it used to mean.
+      if (!resp.ok) {
         GroupChat._showSpecPanel({
-          title: previewTitle,
+          title,
           version,
-          content: data.spec.content || '(empty spec)',
-          builtAt: data.spec.built_at,
-          prNumber: data.spec.pr_number,
-        });
-      } catch (err) {
-        GroupChat._showSpecPanel({
-          title: previewTitle,
-          version,
-          content: `Error: ${err.message}`,
+          content: resp.status === 404
+            ? 'This spec is no longer available. The sharer may have deleted the session.'
+            : `Failed to load spec (HTTP ${resp.status}).`,
           isError: true,
         });
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'View full spec';
+        return;
       }
-    });
+      const data = await resp.json();
+      GroupChat._showSpecPanel({
+        title,
+        version,
+        content: data.spec.content || '(empty spec)',
+        builtAt: data.spec.built_at,
+        prNumber: data.spec.pr_number,
+      });
+    } catch (err) {
+      GroupChat._showSpecPanel({
+        title,
+        version,
+        content: `Error: ${err.message}`,
+        isError: true,
+      });
+    }
   },
 
   // (#1012) Raw markdown currently displayed in the spec panel, kept in
@@ -2360,58 +2300,54 @@ const GroupChat = {
 
     // Render markdown for normal content; error / 404 messages are
     // plain text so we don't accidentally turn an error into a
-    // misleadingly-formatted bit of markup. See the renderSpecShareCard
+    // misleadingly-formatted bit of markup. See the _specShareView
     // comment for why we use a bare `DevChat` reference + `typeof`
     // guard rather than `window.DevChat` (const-declared globals don't
     // attach to window).
-    const bodyHtml = isError
-      ? `<div class="gc-spec-panel-error">${escapeHtml(content)}</div>`
+    // An error renders as TEXT and a spec as markdown, and that split is
+    // deliberate: formatting a 404 message turns it into something that looks
+    // like a document. It used to be two branches of one HTML string; it is
+    // two tags in features/group-chat/spec-panel.tsx now, so the error path
+    // cannot acquire markup by accident. See the _specShareView comment
+    // for why this is a bare `DevChat` reference behind a `typeof` guard
+    // rather than `window.DevChat` (const-declared globals don't attach).
+    const body = isError
+      ? { kind: 'error', text: String(content == null ? '' : content) }
       : (typeof DevChat !== 'undefined' && DevChat.renderMarkdown
-          ? DevChat.renderMarkdown(content)
-          : escapeHtml(content));
+        ? { kind: 'markdown', html: DevChat.renderMarkdown(content) }
+        : { kind: 'error', text: String(content == null ? '' : content) });
 
-    // (#1012) Copy the whole document as raw markdown. Suppressed for an
-    // error body (a 404 message is not a spec) and for a caller that
-    // opted out via canCopy — the reload-restore skeleton, whose
-    // placeholder "Loading…" must never be copyable.
-    const copyBtnHtml = (canCopy && !isError && content)
-      ? `<button class="gc-spec-panel-copy" aria-label="Copy the whole spec as markdown" title="Copy the whole spec as markdown">Copy markdown</button>`
-      : '';
-
-    panel.innerHTML = `
-      <div class="gc-spec-panel-header">
-        <div class="gc-spec-panel-titlewrap">
-          <div class="gc-spec-panel-title">${escapeHtml(title)}</div>
-          ${subtitle ? `<div class="gc-spec-panel-subtitle">${escapeHtml(subtitle)}</div>` : ''}
-        </div>
-        ${copyBtnHtml}
-        <button class="gc-spec-panel-close" aria-label="Close spec panel">×</button>
-      </div>
-      <div class="gc-spec-panel-body">${bodyHtml}</div>`;
+    GroupChat._react()?.mountSpecPanel?.(panel);
+    GroupChat._react()?.publishSpecPanel?.({
+      open: true,
+      title: String(title == null ? '' : title),
+      subtitle: subtitle || null,
+      // (#1012) Copy the whole document as raw markdown. Suppressed for an
+      // error body (a 404 message is not a spec) and for a caller that opted
+      // out via canCopy — the reload-restore skeleton, whose placeholder
+      // "Loading…" must never be copyable.
+      canCopy: !!(canCopy && !isError && content),
+      body,
+    });
+    // The HOST's class stays ours: it is the AUTHORITATIVE open state that the
+    // resizer and the width restore both read.
     panel.classList.add('gc-spec-side-panel-open');
     GroupChat._applySavedSpecPanelWidth();
 
     const handle = document.getElementById('gc-spec-resizer');
     if (handle) handle.classList.add('gc-spec-resizer-open');
-
-    panel.querySelector('.gc-spec-panel-close').addEventListener('click', () => GroupChat._closeSpecPanel());
-
-    const copyBtn = panel.querySelector('.gc-spec-panel-copy');
-    if (copyBtn) {
-      copyBtn.addEventListener('click', async () => {
-        const ok = await PlatformUI.copyText(GroupChat._specPanelRaw);
-        copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
-        if (!ok) PlatformUI.toast('Couldn\'t copy — select the text and copy it manually');
-        setTimeout(() => { copyBtn.textContent = 'Copy markdown'; }, 1500);
-      });
-    }
   },
 
   _closeSpecPanel() {
     const panel = document.getElementById('gc-spec-side-panel');
     if (!panel) return;
     panel.classList.remove('gc-spec-side-panel-open');
-    panel.innerHTML = '';
+    // Publish "closed" rather than clearing the host: its subtree is React's,
+    // and an innerHTML wipe behind React's back is the write the ownership
+    // rule forbids. The portal stays mounted and draws nothing.
+    GroupChat._react()?.publishSpecPanel?.({
+      open: false, title: '', subtitle: null, canCopy: false, body: null,
+    });
     // Don't leave a closed panel's document copyable.
     GroupChat._specPanelRaw = null;
     if (panel._gcKeyHandler) {
@@ -2627,26 +2563,21 @@ const GroupChat = {
   // misleading. When connected, the typing-users line owns the slot
   // exactly as before.
   _renderStatusLine() {
-    const el = document.getElementById('gc-typing');
-    if (!el) return;
-
     const wsOpen = GroupChat.ws && GroupChat.ws.readyState === 1;
     if (!wsOpen && GroupChat.appSlug) {
       const queued = GroupChat._pendingOutgoing.length;
-      el.textContent = queued > 0
-        ? `Reconnecting… (${queued} queued)`
-        : 'Reconnecting…';
+      GroupChat._publishComposer('general', {
+        status: queued > 0 ? `Reconnecting… (${queued} queued)` : 'Reconnecting…',
+      });
       return;
     }
 
     const names = [...GroupChat.typingUsers.values()].filter((n) => n !== App.user?.username);
-    if (names.length === 0) {
-      el.textContent = '';
-      return;
-    }
-    el.textContent = names.length === 1
-      ? `${names[0]} is typing...`
-      : `${names.join(', ')} are typing...`;
+    GroupChat._publishComposer('general', {
+      status: names.length === 0 ? ''
+        : names.length === 1 ? `${names[0]} is typing...`
+          : `${names.join(', ')} are typing...`,
+    });
   },
 
   scrollToBottom() {
@@ -2671,7 +2602,6 @@ const GroupChat = {
   attachScrollHandlers() {
     const container = document.getElementById('gc-messages');
     if (!container) return;
-    GroupChat._attachSpecCardHandlers(container);
     GroupChat._attachQuoteHandlers(container);
     if (container._gcScrollBound) return;
     container._gcScrollBound = true;
@@ -3035,21 +2965,32 @@ const MentionAutocomplete = {
       MentionAutocomplete.accept(opt.dataset.username);
     });
     document.body.appendChild(menu);
+    // The HOST stays ours — it is position:fixed, appended to the body,
+    // measured against the composer on every render — and its CHILDREN are
+    // features/group-chat/autocomplete.tsx's, mounted once here.
+    window.UsernodeReact?.groupChat?.mountMentionMenu?.(menu);
     MentionAutocomplete._menu = menu;
     return menu;
   },
 
+  _publish() {
+    const me = (App.user?.username || '').toLowerCase();
+    window.UsernodeReact?.groupChat?.publishMentionMenu?.(
+      MentionAutocomplete._items.map((name) => ({
+        username: name,
+        // Decided here, where the viewer is known.
+        you: name.toLowerCase() === me,
+      })),
+      MentionAutocomplete._active
+    );
+  },
+
   _render() {
     const menu = MentionAutocomplete._ensureMenu();
-    const me = (App.user?.username || '').toLowerCase();
-    menu.innerHTML = MentionAutocomplete._items.map((name, i) => {
-      const isMe = name.toLowerCase() === me;
-      const active = i === MentionAutocomplete._active ? ' gc-mention-option-active' : '';
-      return `<div class="gc-mention-option${active}" role="option" data-username="${escapeHtml(name)}" data-index="${i}">` +
-        `<span class="gc-mention-option-at">@</span>${escapeHtml(name)}` +
-        (isMe ? `<span class="gc-mention-option-you">you</span>` : '') +
-        `</div>`;
-    }).join('');
+    // Publishing goes through flushSync (features/group-chat/mount.ts), so the
+    // rows exist before _position() measures the menu's height on the line
+    // after next — the synchronous contract the innerHTML assignment gave.
+    MentionAutocomplete._publish();
 
     if (!MentionAutocomplete._open) {
       menu.classList.remove('hidden');
@@ -3095,7 +3036,7 @@ const MentionAutocomplete = {
     MentionAutocomplete._tokenStart = -1;
     if (MentionAutocomplete._menu) {
       MentionAutocomplete._menu.classList.add('hidden');
-      MentionAutocomplete._menu.innerHTML = '';
+      MentionAutocomplete._publish();
     }
     if (MentionAutocomplete._dismissBound) {
       document.removeEventListener('mousedown', MentionAutocomplete._dismissBound, true);
@@ -3105,16 +3046,15 @@ const MentionAutocomplete = {
     }
   },
 
+  // An arrow key moves the highlight and nothing else. It used to walk every
+  // option element toggling a class and scrolling the winner into view; the
+  // class follows from the render now, and the scroll is an effect in
+  // features/group-chat/autocomplete.tsx keyed on this index.
   _move(delta) {
     const n = MentionAutocomplete._items.length;
     if (!n) return;
     MentionAutocomplete._active = (MentionAutocomplete._active + delta + n) % n;
-    const menu = MentionAutocomplete._menu;
-    if (!menu) return;
-    menu.querySelectorAll('.gc-mention-option').forEach((el, i) => {
-      el.classList.toggle('gc-mention-option-active', i === MentionAutocomplete._active);
-      if (i === MentionAutocomplete._active) el.scrollIntoView({ block: 'nearest' });
-    });
+    MentionAutocomplete._publish();
   },
 
   // Capture-phase keydown. Consumes the event (preventing the composer's
@@ -3341,24 +3281,29 @@ const RefAutocomplete = {
       RefAutocomplete.accept(opt.dataset.kind, opt.dataset.number);
     });
     document.body.appendChild(menu);
+    // Same split as the mention menu: ours to place, React's to fill.
+    window.UsernodeReact?.groupChat?.mountRefMenu?.(menu);
     RefAutocomplete._menu = menu;
     return menu;
   },
 
+  _publish() {
+    window.UsernodeReact?.groupChat?.publishRefMenu?.(
+      RefAutocomplete._items.map((item) => ({
+        kind: item.kind,
+        number: item.number,
+        title: item.title || '',
+      })),
+      RefAutocomplete._active
+    );
+  },
+
   _render() {
     const menu = RefAutocomplete._ensureMenu();
-    menu.innerHTML = RefAutocomplete._items.map((item, i) => {
-      const active = i === RefAutocomplete._active ? ' gc-mention-option-active' : '';
-      // The badge reuses the message-chip classes so the dropdown teaches
-      // the rendering: violet PR#N, emerald #N.
-      const badge = item.kind === 'pr'
-        ? `<span class="gc-ref gc-ref-pr">PR#${item.number}</span>`
-        : `<span class="gc-ref gc-ref-issue">#${item.number}</span>`;
-      return `<div class="gc-mention-option gc-ref-option${active}" role="option" data-kind="${item.kind}" data-number="${item.number}" data-index="${i}">`
-        + badge
-        + `<span class="gc-ref-option-title">${escapeHtml(item.title || '')}</span>`
-        + `</div>`;
-    }).join('');
+    // Publishing goes through flushSync (features/group-chat/mount.ts), so the
+    // rows exist before _position() measures the menu's height on the line
+    // after next — the synchronous contract the innerHTML assignment gave.
+    RefAutocomplete._publish();
 
     if (!RefAutocomplete._open) {
       menu.classList.remove('hidden');
@@ -3404,7 +3349,7 @@ const RefAutocomplete = {
     RefAutocomplete._tokenStart = -1;
     if (RefAutocomplete._menu) {
       RefAutocomplete._menu.classList.add('hidden');
-      RefAutocomplete._menu.innerHTML = '';
+      RefAutocomplete._publish();
     }
     if (RefAutocomplete._dismissBound) {
       document.removeEventListener('mousedown', RefAutocomplete._dismissBound, true);
@@ -3414,16 +3359,13 @@ const RefAutocomplete = {
     }
   },
 
+  // Same as the mention menu's: the index is the state, the class and the
+  // scroll follow from it.
   _move(delta) {
     const n = RefAutocomplete._items.length;
     if (!n) return;
     RefAutocomplete._active = (RefAutocomplete._active + delta + n) % n;
-    const menu = RefAutocomplete._menu;
-    if (!menu) return;
-    menu.querySelectorAll('.gc-mention-option').forEach((el, i) => {
-      el.classList.toggle('gc-mention-option-active', i === RefAutocomplete._active);
-      if (i === RefAutocomplete._active) el.scrollIntoView({ block: 'nearest' });
-    });
+    RefAutocomplete._publish();
   },
 
   // Capture-phase keydown. Consumes the event only when the menu is open
