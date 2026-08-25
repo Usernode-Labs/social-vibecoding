@@ -43,7 +43,13 @@ import { improveStore } from '../improve/improve-store.js';
 
 export function HeaderTitleTab({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
   const { text } = useStoreState(headerTitleStore);
-  const { target, slug } = useStoreState(improveStore);
+  const { target, slug, tab, subTab } = useStoreState(improveStore);
+  // A SESSION carries no centre title: the board puts the change's name in the
+  // strip below the bar, and the bar itself is ← + status on the left and the
+  // doing/seeing pair on the right. The <h1> still renders — it is what
+  // use-header-layout measures, and its className is the constant that hook
+  // toggles `.is-centered` on — but it stays empty there.
+  const onSession = tab === 'dev' && subTab === 'sessions';
   // Same gate as #improve-btn: a context exists when something improvable is
   // on screen. The platform's own self-hosted row counts — its context sheet
   // is how home reaches the platform's Activity and Board.
@@ -55,7 +61,7 @@ export function HeaderTitleTab({ titleRef }: { titleRef: RefObject<HTMLHeadingEl
       id="header-title"
       className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-left"}
     >
-      {interactive ? (
+      {onSession ? null : interactive ? (
         <button
           id="header-title-tab"
           type="button"

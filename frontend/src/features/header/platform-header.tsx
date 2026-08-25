@@ -131,6 +131,14 @@ function MenuIndicators() {
 }
 
 export function PlatformHeader() {
+  // A SESSION screen replaces the hamburger with the back arrow, and carries
+  // no centre tab at all — the board draws its session bar as
+  // `← ⟳ Checks run…` on the left and the doing/seeing pair on the right, with
+  // the change's own name in the strip below. Anywhere else the hamburger
+  // leads, because the drawer is how you move around the app.
+  const { tab: headerTab, subTab: headerSubTab } = useStoreState(improveStore);
+  const onSession = headerTab === 'dev' && headerSubTab === 'sessions';
+
   // The four elements the centering measurement needs. Passing them as refs
   // replaces the classic script's document.querySelector('header') +
   // previousElementSibling / nextElementSibling walk.
@@ -223,7 +231,9 @@ export function PlatformHeader() {
         <div ref={leftGroupRef} className="h-7 shrink-0 flex items-center gap-1">
           <button
             id="header-menu-btn"
-            className="relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+            className={onSession
+              ? 'hidden relative w-7 h-7 items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
+              : 'relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'}
             aria-label="Open menu"
             aria-expanded="false"
           >
