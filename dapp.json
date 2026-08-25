@@ -2493,9 +2493,9 @@
       "expectSelector": "#platform-header #header-status-pill"
     },
     {
-      "name": "A cold session deep link titles the bar with the app, not the previous screen (Streamlined Concept)",
+      "name": "A session bar carries no centre title tab — the change's name is the strip's (Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
-      "expectSelector": "#header-title #header-title-tab"
+      "expectSelector": "#platform-header:not(:has(#header-title-tab)) #back-btn:not(.hidden)"
     },
     {
       "name": "Inside an app's detail page the header arrow links back to the list (#1036)",
