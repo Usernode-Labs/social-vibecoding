@@ -261,6 +261,11 @@ test('the light and dark palettes declare the same variables', () => {
     //
     // Layout insets (env(safe-area-inset-*)), not colours.
     '--platform-safe-top', '--platform-safe-bottom',
+    // The mobile install strip's content-row height (#1372) — a length, and
+    // the one number both `body`'s reserved padding and the strip's own
+    // height read, so that the space held open and the space drawn cannot
+    // drift apart. A height does not invert with the page.
+    '--install-strip-h',
   ]);
   const missing = [...light].filter((n) => !dark.has(n) && !THEME_INVARIANT.has(n)).sort();
   assert.deepEqual(missing, [],

@@ -283,6 +283,41 @@ function publicApiRoutes(config) {
     }
   });
 
+  // GET /api/public/mobile-app — where a phone browser can install the native
+  // app, per OS. Backs the install banner (#1372); anonymous, because the
+  // banner shows on the landing screen too.
+  //
+  // The URL is `app_version_configs.update_url`, which already exists, is
+  // already editable in the admin console (App version), and is already the
+  // place the native update gate sends a user to. A store listing is the same
+  // destination whether you are updating or arriving, so this needs no new
+  // setting and no second thing for an operator to keep in sync — the day a
+  // listing goes live, one field turns the banner on.
+  //
+  // NOT a reuse of POST /api/v4/app-version/check: that route records a
+  // version check for analytics, so answering this from it would file a check
+  // for a build that does not exist on every mobile pageview.
+  router.get('/api/public/mobile-app', async (_req, res) => {
+    // Both keys are always present, so the client has one shape to read.
+    const urls = { ios: null, android: null };
+    try {
+      const { rows } = await pool.query(
+        `SELECT os, update_url FROM app_version_configs
+          WHERE is_active = TRUE AND os IN ('ios', 'android')`
+      );
+      for (const row of rows) {
+        const url = String(row.update_url || '').trim();
+        if (url && Object.prototype.hasOwnProperty.call(urls, row.os)) urls[row.os] = url;
+      }
+    } catch (err) {
+      // Degrade to "no offer" rather than 500. This is an upsell strip on an
+      // otherwise-working page, and a failed request here would put a console
+      // error on every mobile route — which fails proposal checks.
+      log.error('public-api', 'mobile app install urls failed', { message: err.message });
+    }
+    res.json(urls);
+  });
+
   return router;
 }
 

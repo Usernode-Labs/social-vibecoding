@@ -104,6 +104,15 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #1372: the mobile-browser install strip ──────────────────────
+  // A visitor on a phone browser is offered the native app. The strip is
+  // always in the document and starts `hidden` (the island rule: data loads
+  // in effects, so the first render must match the prerender), which is why
+  // these ids are present here even on a build where no store listing has
+  // been published and the strip can never show.
+  'mobile-install-banner': 'The phone-browser strip offering the native app (#1372). Sits under #offline-banner and stacks with it.',
+  'mobile-install-open': 'The store link. href comes from app_version_configs.update_url via GET /api/public/mobile-app, per OS.',
+  'mobile-install-dismiss': 'Dismisses the strip for good; the answer is kept in localStorage.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
