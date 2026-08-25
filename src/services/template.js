@@ -234,6 +234,26 @@ for the whole story, including what to do if you are still being prompted
 (usually: your connector is registered under a different name than the rules
 assume).
 
+## Starter template
+
+The screen this app currently ships — the hero, the "What's already
+working" card, and the Press! example (the demo markup in
+\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
+the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
+from the Usernode starter template, not product intent.
+
+When the user asks for their first real feature, REPLACE the template
+screen rather than building alongside it:
+
+- remove the \`usernode-starter-notice@1\` block in \`public/index.html\`
+  (both sentinel comments and everything between them),
+- remove or repurpose the "Try the example" card, its demo endpoints and
+  the \`presses\` table as appropriate,
+- rewrite \`README.md\` to describe the actual app.
+
+Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
+HTML — that block is platform infrastructure, not template content.
+
 If a rule below this line conflicts with the hosted conventions, the
 hosted conventions win. This file is **app-specific** — write down
 things about *this* app that belong in the repo: product intent,
@@ -252,6 +272,37 @@ shared understanding of what this app is for)_
 _(optional — e.g. "all currency values stored as integer cents, not
 floats"; "the \`posts\` table is append-only"; "avoid adding new
 dependencies"; etc.)_
+`,
+    },
+    {
+      path: 'README.md',
+      content: `# ${appName}
+
+> **Starter template** — this repo was scaffolded by Usernode Social
+> Vibecoding. Everything in it is placeholder example code until the
+> app's first real feature is built.
+
+The scaffold is a small working demo that proves the plumbing works:
+
+- **Sign-in** — the server verifies the platform-issued user token
+  (an RS256 JWT) on every request, so the app already knows who is
+  using it. No accounts to build.
+- **Database** — the app has its own private Postgres database; the
+  demo stores button presses in a \`presses\` table.
+- **Live API** — two example routes (\`/api/press\`,
+  \`/api/leaderboard\`) read and write through a real Express server.
+- **Styling** — Tailwind CSS, precompiled by the Dockerfile on every
+  deploy, so there is nothing to rebuild by hand.
+
+## Replacing the template
+
+Open the app on Usernode, tap **Improve** in the header, and describe
+the app you want in plain English — Claude will replace this template
+with it. You can also run Claude Code against this repo directly;
+start with \`CLAUDE.md\`, which carries the app-specific notes and
+points at the platform rules.
+
+Once the real app exists, rewrite this README to describe it.
 `,
     },
     {
@@ -578,19 +629,67 @@ start().catch(err => { console.error(err); process.exit(1); });
        <script src="${PLATFORM_BASE_URL}/usernode-tailwind/v1/tailwind.js"></script> -->
   <link rel="stylesheet" href="/tailwind.css">
 </head>
-<body class="bg-zinc-950 text-zinc-100 min-h-screen flex flex-col items-center justify-center gap-8 p-4">
-  <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+  <main class="max-w-md mx-auto px-4 py-10 flex flex-col gap-6">
 
-  <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
-    Press!
-  </button>
+    <!-- usernode-starter-notice@1 — starter-template messaging. When building
+         the user's real app, replace this whole screen and delete this block,
+         both sentinel comments included. -->
+    <section class="rounded-2xl border border-violet-500/30 bg-gradient-to-b from-violet-600/20 to-transparent p-6 text-center flex flex-col items-center gap-3">
+      <span class="inline-block rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
+      <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
+      <p class="text-sm text-zinc-300 leading-relaxed">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
+      <p class="text-sm text-zinc-300 leading-relaxed">Tap <strong class="text-violet-300 font-semibold">Improve</strong> in the header, describe what you'd like in plain English, and Claude will turn this into your real app.</p>
+    </section>
 
-  <div id="count" class="text-lg text-zinc-400">0 total presses</div>
+    <section>
+      <h2 class="text-sm font-medium text-zinc-500 mb-2 px-1">What's already working</h2>
+      <div class="rounded-xl border border-zinc-800 bg-zinc-900/60 divide-y divide-zinc-800">
+        <div class="flex items-start gap-3 p-4">
+          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <div>
+            <p class="text-sm font-semibold text-zinc-100">Sign-in</p>
+            <p class="text-sm text-zinc-400">You're signed in through Usernode automatically — no accounts to build.</p>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-4">
+          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <div>
+            <p class="text-sm font-semibold text-zinc-100">Database</p>
+            <p class="text-sm text-zinc-400">Your app has its own private database, ready to store things.</p>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-4">
+          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <div>
+            <p class="text-sm font-semibold text-zinc-100">Live API</p>
+            <p class="text-sm text-zinc-400">The example below talks to a real server — try it.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+    <!-- /usernode-starter-notice@1 -->
 
-  <div class="w-full max-w-sm">
-    <h2 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h2>
-    <div id="leaderboard" class="space-y-1"></div>
-  </div>
+    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-5">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
+        Press!
+      </button>
+
+      <div id="count" class="text-lg text-zinc-400">0 total presses</div>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
+        <div id="leaderboard" class="space-y-1"></div>
+      </div>
+    </section>
+
+    <p class="text-center text-xs text-zinc-600">Built on Usernode — this template screen disappears once you build your real app.</p>
+  </main>
 
   <script>
     const params = new URLSearchParams(window.location.search);

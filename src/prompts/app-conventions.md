@@ -2503,6 +2503,25 @@ feature):
   without console errors — it does **not** prove behaviour, so
   behavioural regressions slip through unless you add a test for them.
 
+## Starter-template notice — meant to be deleted
+
+Freshly scaffolded apps ship `public/index.html` as a template welcome
+screen — a "Starter template" hero and a "What's already working" card —
+wrapped in sentinel comments:
+
+- opens with `<!-- usernode-starter-notice@1 … -->`
+- closes with `<!-- /usernode-starter-notice@1 -->`
+
+Unlike the dev-console forwarder block above, this one is **meant to be
+deleted**: the whole screen is placeholder content, not product intent.
+When the user asks for their first real feature, replace the template
+screen rather than building alongside it — remove the sentinel block
+(both comments and everything between them), remove or repurpose the
+"Try the example" card and its demo endpoints (`/api/press`,
+`/api/leaderboard`, the `presses` table) as appropriate, and rewrite the
+scaffolded `README.md` to describe the actual app. Keep the dev-console
+forwarder `<script>` when rewriting the HTML.
+
 ## Platform-level problems & missing capabilities: escalate, don't file workarounds
 
 You can only edit and push **this app's** repo. Some things the app
