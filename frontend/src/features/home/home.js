@@ -694,29 +694,6 @@ const Home = {
     Home.load();
   },
 
-  // ── The home screen's Improve button (#1367) ───────────────────────
-  //
-  // "Improve" on home means the PLATFORM: the same panel every app gets,
-  // scoped to Social Vibecoding's own self-hosted row. Feedback, its dev
-  // sessions, its kanban and feed, its repo — all of it already works on that
-  // row, which is why this is a target publish and not a second surface.
-  //
-  // ── Why this is called from render(), and why that matters ─────────
-  //
-  // THE UI OVERHAUL shipped this once and #1363 pulled it back out, and that
-  // bug is worth naming because it is the whole design constraint here: the old
-  // version re-targeted the platform row on the RETURN paths only —
-  // navigateHome() after backing out of an app. A cold boot at `/` never
-  // published anything, so the button appeared only after you had visited an
-  // app and vanished again on refresh, which read as a stale leftover of the
-  // app just closed rather than as a feature.
-  //
-  // render() is the fix because it is the one call every path already funnels
-  // through: the cold boot's first paint, the WS app events, a search
-  // keystroke, and the return from an app. Publishing the same target
-  // repeatedly is free — improveStore.set() is a no-op when nothing changed,
-  // and setTarget only re-buckets sessions when the slug actually moves.
-  //
   // Make sure this document has SEEN a /api/apps payload, for callers that
   // need the platform row but are not the home screen (#1406).
   //
@@ -760,6 +737,29 @@ const Home = {
     })();
   },
 
+  // ── The home screen's Improve button (#1367) ───────────────────────
+  //
+  // "Improve" on home means the PLATFORM: the same panel every app gets,
+  // scoped to Social Vibecoding's own self-hosted row. Feedback, its dev
+  // sessions, its kanban and feed, its repo — all of it already works on that
+  // row, which is why this is a target publish and not a second surface.
+  //
+  // ── Why this is called from render(), and why that matters ─────────
+  //
+  // THE UI OVERHAUL shipped this once and #1363 pulled it back out, and that
+  // bug is worth naming because it is the whole design constraint here: the old
+  // version re-targeted the platform row on the RETURN paths only —
+  // navigateHome() after backing out of an app. A cold boot at `/` never
+  // published anything, so the button appeared only after you had visited an
+  // app and vanished again on refresh, which read as a stale leftover of the
+  // app just closed rather than as a feature.
+  //
+  // render() is the fix because it is the one call every path already funnels
+  // through: the cold boot's first paint, the WS app events, a search
+  // keystroke, and the return from an app. Publishing the same target
+  // repeatedly is free — improveStore.set() is a no-op when nothing changed,
+  // and setTarget only re-buckets sessions when the slug actually moves.
+  //
   // ── The two gates ──────────────────────────────────────────────────
   //
   // HOME HAS TO BE THE SCREEN ON SHOW. render() also runs while an app is
