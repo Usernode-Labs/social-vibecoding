@@ -2207,6 +2207,9 @@ const App = {
       // Browse's detail level (#apps/<slug>) claims the button as "up to
       // the list"; on the list itself it declines and we leave the screen.
       if (App._inBrowse && window.Browse?.handleBack?.()) return;
+      // A dev SESSION claims it as "back to the Board" (Streamlined
+      // Concept); declines when no session is open.
+      if (App.currentApp && window.DevChat?.handleBack?.()) return;
       App.navigateHome();
     });
 
@@ -3961,6 +3964,10 @@ const App = {
     }
 
     if (tab === 'app') {
+      // The session screen's ← is renderDevView's; leaving Dev for the app
+      // itself must take it back down (sub-view hops never pass
+      // _showOnlyScreen, the usual owner of this reset).
+      App.setBackIcon('home');
       AppView.renderAppTab();
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);

@@ -7171,7 +7171,10 @@ const DevChat = {
     const session = DevChat.currentSession;
     const s = session || {};
     return {
-      backHref: App.currentApp ? `#app/${App.currentApp}/dev` : '',
+      // Streamlined Concept: the strip's Building chip. `_composerBusy` is
+      // set synchronously by _setStreamingUI — which also repaints this
+      // strip — so the chip tracks every turn transition without a new hook.
+      busy: !!DevChat._composerBusy,
       title: s.session_title || s.pr_title || s.branch_name || 'Session',
       branch: s.branch_name || '',
       pr: s.pr_number || null,
@@ -7216,8 +7219,20 @@ const DevChat = {
     setTimeout(() => card.classList.remove('dc-pr-card-highlight'), 1500);
   },
 
+  /**
+   * The platform header's ← on a session screen (Streamlined Concept) — the
+   * in-content #dc-back retired in its favour. Same decline contract as
+   * Settings/Admin/Browse's handleBack: true means "handled, stay put",
+   * false means the caller keeps walking its chain.
+   */
+  handleBack() {
+    if (!DevChat.currentSession) return false;
+    DevChat.leaveSession();
+    return true;
+  },
+
   /** The back control's plain-click path — the modified-click guard is the
-   *  component's, because only it has the event. */
+   *  header's own listener in app.js, which owns the event. */
   leaveSession() {
     // #771: leaving the session unmounts the staging panel slot — close
     // a docked preview with it (fullscreen previews float independently

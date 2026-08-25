@@ -250,6 +250,18 @@ const Improve = {
   },
 
   /**
+   * Whether a staging preview is on screen right now — the "seeing" half of
+   * the doing↔seeing loop. AppView.ensureStaging publishes true (every
+   * preview open funnels through it, #439); AppView.closeStagingOverlay
+   * publishes false. Drives the eye/pencil pair and the Preview chip.
+   */
+  setPreviewActive(on) {
+    if (improveStore.get().previewActive !== !!on) {
+      improveStore.set({ previewActive: !!on });
+    }
+  },
+
+  /**
    * The App/Feed/Kanban toggle's first segment: back to the app itself.
    *
    * The counterpart of openDev below. It does NOT go through _withApp, which

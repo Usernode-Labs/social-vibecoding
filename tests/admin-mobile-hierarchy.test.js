@@ -155,8 +155,8 @@ test('route() is idempotent, so a duplicate dispatch never repaints twice', () =
 test('the header back button defers to the console, then goes home', () => {
   const handler = appJs.slice(appJs.indexOf("document.getElementById('back-btn').addEventListener"));
   // Wide enough for every screen hook the handler chains (admin, settings,
-  // browse) plus the navigateHome fallthrough below them.
-  const body = handler.slice(0, 800);
+  // browse, the dev session) plus the navigateHome fallthrough below them.
+  const body = handler.slice(0, 1000);
   assert.match(body, /App\._inAdmin && window\.AdminConsole\?\.handleBack\?\.\(\)/,
     'the console only gets a say while the admin screen is actually mounted');
   assert.match(body, /App\.navigateHome\(\)/,

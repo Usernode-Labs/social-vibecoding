@@ -47,7 +47,7 @@
 
 import { useRef } from 'react';
 
-import { EyeIcon } from '@/components/ui/icons';
+import { EyeIcon, PencilSparklesIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -70,8 +70,9 @@ const IMPROVE_BTN_CLASS =
   + 'transition-colors un-touch-target';
 
 export function ImproveButton() {
-  const { target, open, tab, subTab, previewSessionId, previewUrl } =
-    useStoreState(improveStore);
+  const {
+    target, open, tab, subTab, previewSessionId, previewUrl, previewActive,
+  } = useStoreState(improveStore);
   // "this app" is wrong on home, where the target is the platform itself
   // (#1367). The visible label stays the single word "Improve" at both — what
   // is being improved is named in the panel's own header.
@@ -98,6 +99,7 @@ export function ImproveButton() {
     // screen shows the eye at all.
   }, [target, tab, subTab, previewUrl]);
 
+
   // Streamlined Concept: the Improve pill belongs to the app's DEFAULT (use)
   // state only. On the Dev screens — Activity, Board, a session — the slot
   // renders the EYE instead. Client-only states both (the prerender has no
@@ -121,28 +123,70 @@ export function ImproveButton() {
   // explicit that Improve does not belong. The slot is simply empty there.
   const pill = !!target && tab !== 'dev';
 
+  if (eye && onSession) {
+    // ── The doing↔seeing PAIR (Streamlined Concept) ────────────────────
+    //
+    // The Figma session bar's quick loop: the EYE opens the staging preview
+    // (seeing), the PENCIL brings the chat back (doing), and whichever mode
+    // is CURRENT wears a filled disc — amber for seeing (the Preview chip's
+    // colour), violet for doing (the Building chip's). The pair renders only
+    // once a preview exists — the owner-reviewed gate above — because with
+    // nothing to see there is no loop to draw.
+    const seeing = !!previewActive;
+    return (
+      <span className="flex items-center gap-1 mr-2.5">
+        <button
+          id="app-eye-btn"
+          type="button"
+          className={'w-7 h-7 flex items-center justify-center rounded-full un-touch-target '
+            + (seeing
+              ? 'bg-amber-400/25 text-amber-600 dark:text-amber-400'
+              : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200')}
+          aria-label="Preview this change"
+          aria-pressed={seeing ? 'true' : 'false'}
+          title="Preview this change on staging"
+          onClick={() => {
+            if (seeing) return;
+            (window as unknown as {
+              AppView?: { swapToStagingForSession?: (id: number, url: string) => void };
+            }).AppView?.swapToStagingForSession?.(previewSessionId as number, previewUrl as string);
+          }}
+        >
+          <EyeIcon className="w-5 h-5" aria-hidden="true" />
+        </button>
+        <button
+          id="session-build-btn"
+          type="button"
+          className={'w-7 h-7 flex items-center justify-center rounded-full un-touch-target '
+            + (seeing
+              ? 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
+              : 'bg-violet-500/15 text-violet-600 dark:text-violet-400')}
+          aria-label="Back to building"
+          aria-pressed={seeing ? 'false' : 'true'}
+          title="Back to the session chat"
+          onClick={() => {
+            if (!seeing) return;
+            (window as unknown as {
+              AppView?: { closeStagingOverlay?: () => void };
+            }).AppView?.closeStagingOverlay?.();
+          }}
+        >
+          <PencilSparklesIcon className="w-5 h-5" aria-hidden="true" />
+        </button>
+      </span>
+    );
+  }
+
   if (eye) {
     return (
       <button
         id="app-eye-btn"
         type="button"
         className={'w-7 h-7 mr-2.5 flex items-center justify-center un-touch-target '
-          + (onSession
-            ? 'text-violet-600 dark:text-violet-400 hover:text-violet-500'
-            : 'text-zinc-400 hover:text-zinc-200')}
-        aria-label={onSession ? 'Preview this change' : 'Use the app'}
-        title={onSession
-          ? 'Preview this change on staging'
-          : 'View and use the app'}
-        onClick={() => {
-          if (onSession) {
-            (window as unknown as {
-              AppView?: { swapToStagingForSession?: (id: number, url: string) => void };
-            }).AppView?.swapToStagingForSession?.(previewSessionId as number, previewUrl as string);
-            return;
-          }
-          Improve.openApp();
-        }}
+          + 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'}
+        aria-label="Use the app"
+        title="View and use the app"
+        onClick={() => Improve.openApp()}
       >
         <EyeIcon className="w-5 h-5" aria-hidden="true" />
       </button>

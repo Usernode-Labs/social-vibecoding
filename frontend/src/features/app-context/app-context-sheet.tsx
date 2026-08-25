@@ -160,7 +160,7 @@ export function AppContextSheet() {
           <button
             id="app-context-close"
             type="button"
-            className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 un-touch-target"
+            className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 un-touch-target"
             aria-label="Close"
             onClick={close}
           >

@@ -86,6 +86,7 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {'forum'|'chat'|'sessions'|'topic'|null} subTab
  * @property {number|null} previewSessionId
  * @property {string|null} previewUrl
+ * @property {boolean} previewActive
  */
 
 /** @type {ImproveState} */
@@ -206,6 +207,15 @@ const INITIAL = {
    */
   previewSessionId: null,
   previewUrl: null,
+  /**
+   * True while a staging preview is actually ON SCREEN — the "seeing" half
+   * of the board's doing↔seeing loop. Set by AppView.ensureStaging (the one
+   * funnel every preview open goes through, #439) and cleared by
+   * AppView.closeStagingOverlay. Distinct from previewUrl, which says a
+   * preview EXISTS; this says the viewer is looking at it — it drives the
+   * eye/pencil pair's active state and the session strip's Preview chip.
+   */
+  previewActive: false,
 };
 
 export const improveStore = createStore(INITIAL);
