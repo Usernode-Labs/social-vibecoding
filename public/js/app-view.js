@@ -9169,7 +9169,7 @@ const AppView = {
     // ── Actions: the state-driven primary + the claim toggle ──
     const actions = [];
     if (!AppView.readOnly) {
-      const primary = AppView._issuePrimaryActionSpec(issue);
+      const primary = AppView._issuePrimaryActionSpec(issue, { noNav });
       if (primary) actions.push(primary);
       // Promoted off the ⋯ menu: claiming an issue is what a reader does
       // with it before writing any code, and the chip it toggles is right
@@ -9280,14 +9280,18 @@ const AppView = {
   //   run ready, outcome question  → Answer & regenerate       (ONE button:
   //                                  it opens the issue's discussion where
   //                                  the questions were posted, from which
-  //                                  the ⋯ "Generate proposal" re-runs)
+  //                                  the ⋯ "Generate proposal" re-runs.
+  //                                  BOARD ONLY — on the topic head that
+  //                                  destination is the current view, so
+  //                                  the head draws no primary here)
   //   run ready, other outcomes    → Review spec / Review solution /
   //                                  Changes ready — review & start session
   //
   // "Generate proposal" for a never-run issue lives in the ⋯ menu: starting
   // a headless run spends the viewer's credits, so it should be a chosen
   // action rather than the card's most prominent button.
-  _issuePrimaryActionSpec(issue) {
+  _issuePrimaryActionSpec(issue, opts) {
+    const noNav = !!(opts && opts.noNav);
     const n = issue.number;
     const h = issue.headless;
     if (h && h.status === 'generating') {
@@ -9305,6 +9309,15 @@ const AppView = {
         };
       }
       if (h.outcome === 'question') {
+        // This one is a NAVIGATION, not an action — which makes it the only
+        // branch that has nothing to say on the topic head, because the head
+        // IS the issue's discussion. Drawn there it re-rendered the view it
+        // sat on, which reads as a dead button. The head is not left without
+        // the re-run: _detailActionsView spells "Generate proposal" out in
+        // full below the card, and that is deliberately the ONLY copy —
+        // putting one on the head card too is #150's two-competing-actions
+        // bug, which tests/issue-generate-proposal-dedup.test.js pins.
+        if (noNav) return null;
         // One button, not two. It lands on the issue's discussion, where the
         // run posted its questions; re-running is the ⋯ menu's Generate
         // proposal row once they're answered.

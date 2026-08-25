@@ -20,7 +20,9 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('node:vm');
-const { cardHtml, hasAction, issueCardHtml } = require('./lib/dev-card-html');
+const {
+  cardHtml, hasAction, issueCardHtml, detailActionsHtml,
+} = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -126,4 +128,49 @@ test('every other outcome also yields exactly one primary', () => {
   const fresh = AppView._issueCardModel(issue(null));
   assert.equal(primaryCount(fresh), 1);
   assert.ok(hasAction(fresh, 'createPrForIssue', 5));
+});
+
+// ── The topic head is not the board ────────────────────────────────────
+//
+// The same _issueCardModel draws the board card AND the topic head
+// (app-view.js's _renderTopicHead calls it with { noNav: true }). On the
+// board, the question-outcome primary is a real navigation: "Answer &
+// regenerate" opens the issue's discussion, which is where the run posted
+// its questions. On the head you are ALREADY in that discussion, so the
+// same spec becomes a button whose whole action is to re-render the view
+// it is drawn on — it looks broken because nothing visibly happens.
+//
+// The head is not left without the action: _detailActionsView already
+// spells "Generate proposal" out in full there, which is the re-run the
+// board's button was only pointing at. That is also why the head must not
+// grow its own copy — two Generate affordances is this file's subject.
+
+test('the topic head does not draw a primary that navigates to itself', () => {
+  const AppView = makeAppView();
+  const head = AppView._issueCardModel(
+    issue({ status: 'ready', outcome: 'question', sessionId: 91 }),
+    { noNav: true }
+  );
+  const acts = (head.actions || []).map((a) => a.act).filter(Boolean);
+  assert.ok(!acts.some((a) => a.fn === 'openTopic'),
+    'the head\'s own card must not offer "open this issue" — it IS this issue');
+  assert.ok(!cardHtml(head).includes('Answer &amp; regenerate'),
+    'the board\'s wording promises a navigation the head cannot perform');
+});
+
+test('the board card keeps it — the fix is scoped to the head', () => {
+  const AppView = makeAppView();
+  const board = AppView._issueCardModel(issue({ status: 'ready', outcome: 'question', sessionId: 91 }));
+  assert.ok(hasAction(board, 'openTopic', 'issue', 5), 'still a real navigation on the board');
+  assert.match(cardHtml(board), /Answer &amp; regenerate/);
+});
+
+test('the head still offers exactly one Generate affordance, in its detail actions', () => {
+  const AppView = makeAppView();
+  const item = issue({ status: 'ready', outcome: 'question', sessionId: 91 });
+  const head = AppView._issueCardModel(item, { noNav: true });
+  assert.ok(!hasAction(head, 'confirmAutoSession'),
+    'the head card must not grow its own re-run — the detail list owns it');
+  assert.match(detailActionsHtml(AppView, 'issue', item), />Generate proposal</,
+    'and the detail list does offer it');
 });
