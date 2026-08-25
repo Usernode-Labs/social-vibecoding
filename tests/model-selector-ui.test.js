@@ -28,6 +28,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+
+const { makeComposerBridge } = require('./lib/dev-composer-html');
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
 
 const SRC = fs.readFileSync(
@@ -97,6 +99,11 @@ function makeElement(id) {
 }
 
 function makeHarness() {
+  // #1078: the whole composer is features/dev-chat/composer.tsx's, so
+  // `renderChatView` writes an empty `#dc-composer-bar` and publishes a view
+  // model into it. `html` below is the template's markup PLUS the rendered
+  // composer, which is what a reader actually sees.
+  const composer = makeComposerBridge();
   const registry = new Map();
   // #1191: the runner strip's markup is
   // features/dev-chat/composer-chrome.tsx's, so `_renderRunnerControls()`
@@ -171,6 +178,13 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  // The runner strip publishes through the composer bridge too, so its own
+  // capture below rides on the same object.
+  sandbox.UsernodeReact = Object.assign({}, sandbox.UsernodeReact, {
+    devChat: Object.assign({}, composer.bridge, {
+      publishRunner: (v) => { runnerView = v; composer.bridge.publishRunner(v); },
+    }),
+  });
 
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
@@ -192,6 +206,7 @@ function makeHarness() {
   return {
     DevChat,
     getEl,
+    composer,
     runnerView: () => JSON.parse(JSON.stringify(runnerView)),
     runnerHtml: () => renderComponent(
       'frontend/src/features/dev-chat/composer-chrome.tsx', 'RunnerControlsView',
@@ -240,7 +255,11 @@ function render(overrides) {
     ? 'usernode-openrouter'
     : 'usernode-claude';
   h.DevChat.renderChatView();
-  return { ...h, html: h.getEl('dc-view').innerHTML };
+  return {
+    ...h,
+    html: h.getEl('dc-view').innerHTML + h.composer.html(),
+    view: () => h.composer.state(),
+  };
 }
 
 // ── 1. no price text anywhere ───────────────────────────────────────
@@ -317,7 +336,11 @@ test('the OpenRouter model button opens the provider-locked catalog', () => {
   h.DevChat._switchCurrentCodingAgent = (...args) => { calledWith = args; };
 
   h.DevChat.renderChatView();
-  h.getEl('dc-openrouter-model-change')._fire('click');
+  // #1078: the button is the composer component's, so its click dispatches
+  // into DevChat by NAME rather than through a listener bound per render.
+  assert.match(h.composer.html(), /id="dc-openrouter-model-change"/,
+    'the button renders');
+  h.DevChat._onOpenRouterModelChange();
 
   assert.ok(calledWith, 'the Change model button was not wired');
   assert.equal(calledWith[0], null);
@@ -394,9 +417,14 @@ test('the caption text itself survives, for the picker that is met once', () => 
 });
 
 test('the dropdown still follows the selection without a caption to update', () => {
-  const { DevChat, getEl } = render({ selected: 'claude-opus-5' });
-  getEl('dc-model-select')._fire('change', { target: { value: 'claude-fable-5' } });
+  // The picker's `change` is the component's onChange now, dispatching into
+  // `_onModelPicked` — which also republishes, so the model carries the new
+  // selection rather than the element keeping it.
+  const { DevChat, view } = render({ selected: 'claude-opus-5' });
+  assert.equal(view().models.selected, 'claude-opus-5');
+  DevChat._onModelPicked('claude-fable-5');
   assert.equal(DevChat.selectedModel, 'claude-fable-5');
+  assert.equal(view().models.selected, 'claude-fable-5');
 });
 
 test('the Fable option owns difficult coding without displacing Opus as the general pick', () => {

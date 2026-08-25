@@ -108,13 +108,16 @@ test('the selector survives the launchpad swap that hides the composer', () => {
   // #1281 hides #dc-composer-controls for the three hand-off venues. A
   // venue control inside it would be hidden by exactly the state it exists
   // to undo, stranding the session in its launchpad.
-  // The control is in the HEADER's subtree, and the header is written before
-  // the composer region opens — so it is outside the swap by construction.
-  const header = DEV_CHAT_SRC.indexOf('id="dc-session-header"');
-  const swap = DEV_CHAT_SRC.indexOf('id="dc-composer-controls"');
-  assert.ok(header !== -1 && swap !== -1);
-  assert.ok(header < swap, 'the strip that carries the selector is outside the swapped region');
-  assert.match(HEADER_TSX, /<VenueSelect/, 'and the selector is in that strip');
+  // The control is in the HEADER's subtree; the swap is inside the composer,
+  // which is a different component in a different file — so "outside the
+  // swap" is structural rather than positional.
+  assert.match(DEV_CHAT_SRC, /id="dc-session-header"/);
+  const COMPOSER_TSX = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
+  assert.ok(COMPOSER_TSX.includes('id="dc-composer-controls"'), 'the swap is the composer\'s');
+  assert.doesNotMatch(COMPOSER_TSX, /dc-venue-select/,
+    'and the selector is not inside the thing it exists to undo');
+  assert.match(HEADER_TSX, /<VenueSelect/, 'it is in the header strip');
 });
 
 test('the selector is painted from the session row, so first paint is right', () => {
@@ -159,28 +162,25 @@ test('each in-chat provider gets its own model control, and other venues get non
   // Claude and OpenRouter do not share a selector: the former picks the
   // platform chat model, while an OpenRouter session pins one catalog model
   // to chat and coding. Local / web / imported venues render neither.
-  assert.match(DEV_CHAT_SRC, /const claudeVenue = venueId === 'usernode-claude'/);
-  assert.match(DEV_CHAT_SRC, /const openRouterVenue = venueId === 'usernode-openrouter'/);
-  assert.match(DEV_CHAT_SRC, /\$\{claudeVenue \? `/,
-    'the Claude detail block is provider-specific');
-  assert.match(DEV_CHAT_SRC, /openRouterVenue \? `/,
-    'the OpenRouter detail block is provider-specific');
-  assert.match(DEV_CHAT_SRC, /id="dc-openrouter-model"/,
+  // #1078: each control is a NULLABLE field of the composer's model, which
+  // is the same provider split expressed where it can be read as data —
+  // and it is what removes the null-guard this test used to look for: an
+  // absent control is `null` in the model, not a getElementById that has to
+  // be checked before an addEventListener.
+  assert.match(DEV_CHAT_SRC, /if \(DevChat\._currentVenueId\(\) !== 'usernode-claude'\) return null;/,
+    'the Claude picker is provider-specific');
+  assert.match(DEV_CHAT_SRC, /if \(DevChat\._currentVenueId\(\) !== 'usernode-openrouter'\) return null;/,
+    'the OpenRouter row is provider-specific');
+  const COMPOSER_TSX = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
+  assert.match(COMPOSER_TSX, /id="dc-openrouter-model"/,
     'the pinned OpenRouter model is visible');
-  assert.match(DEV_CHAT_SRC, /id="dc-openrouter-model-change"/,
+  assert.match(COMPOSER_TSX, /id="dc-openrouter-model-change"/,
     'the OpenRouter catalog can be reopened directly');
   assert.match(
     DEV_CHAT_SRC,
     /_switchCurrentCodingAgent\(null, \{ fixedBackend: 'codex_openrouter' \}\)/,
     'changing the model keeps the chooser locked to OpenRouter',
-  );
-
-  // #dc-model-select is absent outside Claude, so its wiring must survive
-  // that. An unguarded addEventListener would throw on every other venue.
-  assert.ok(
-    /const modelSelect = document\.getElementById\('dc-model-select'\);[\s\S]{0,200}?if \(modelSelect\)/.test(DEV_CHAT_SRC)
-      || /getElementById\('dc-model-select'\)\?\./.test(DEV_CHAT_SRC),
-    'the model-select wiring is null-guarded'
   );
 });
 

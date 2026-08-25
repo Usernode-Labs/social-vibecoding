@@ -206,13 +206,16 @@ Two things from the home conversion are worth reading before the next screen:
   mounted once. All three stores install `setFlush(flushSync)`, because in each
   case the module measures the host on the line after it publishes.
 
-  **What is left is the composer, and it is the Dev screen's boundary.** The
-  reply preview, the attach-error line and the attachment strip each exist
-  TWICE — a general variant in a host `public/js/app-view.js` owns, and a
-  thread variant inside the React shell — drawn by one renderer from one CSS
-  rule. `.gc-quoted` shares its rules with `.gc-reply-preview-inner` the same
-  way. Converting either half alone splits a deliberate pair, so they go with
-  the Dev screen.
+  **The composer went too, as ONE component with a `scope`.** The reply
+  preview, the attach-error line and the attachment strip each existed TWICE —
+  a general variant in a host `public/js/app-view.js` owned, and a thread
+  variant inside the React shell — drawn by one renderer from one CSS rule.
+  Splitting that into a thread component and a general one would have been the
+  first time the two could disagree, so `features/group-chat/composer.tsx`
+  takes a `scope`, which is the same ternary in the same one place. The
+  pending-upload strip came out of it into `features/attachments/`, shared
+  with the DEV chat's composer — the first component either screen took from
+  the other, and the reason that one converted cleanly months later.
 
 ### Read this before the next screen: an empty host fails silently
 
@@ -603,7 +606,7 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    the Dev chat below.
 
 2. **Dev chat — `frontend/src/features/dev-chat/dev-chat.js`, about 9,700
-   lines. Started at the composer.** Eight regions have converted:
+   lines. Started at the composer.** Nine regions have converted:
 
    | converted | host |
    | --- | --- |
@@ -615,9 +618,12 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    | **the session header strip** | `#dc-session-header` |
    | **the four banners** | `#dc-banners` |
    | **the transcript** | `#dc-messages` |
+   | **the whole composer** | `#dc-composer-bar` |
 
-   All eight are in the ownership audit's `OWNED`; it reports **0 legacy
-   writes** with `#dc-messages` in the list.
+   FIVE entries cover the nine in the ownership audit's `OWNED`: the composer
+   absorbed four hosts of its own (`#dc-attachments`, `#dc-quick-replies`,
+   `#dc-runner` and `#dc-budget` are inside it now), so one line does what
+   four did. It reports **0 legacy writes**.
 
    ### Two orphaned surfaces, and what to do with each
 
@@ -659,9 +665,9 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    Two big renderers and a handful of small ones:
 
    - **`renderChatView`** (~420 lines) — **its header strip and its four
-     banners are done**; what is left is the launchpad slot, the panes and the
-     composer wrapper. (`renderMessages`, the other big renderer, is done —
-     see below.)
+     banners are done**, and so is the COMPOSER (see below); what is left is
+     the launchpad slot and the panes. (`renderMessages`, the other big
+     renderer, is done too.)
 
      The strip was the natural first boundary and it carried three traps,
      all three of which generalise:
@@ -748,6 +754,69 @@ Two traps in writing that browser sweep, both of which hid a real failure:
      primary action's fill, and an amber `variant` would be a value invented
      for one call site in a table whose discipline is that every value is
      transcribed from a button that already exists.
+   - ~~**the composer**~~ — **done.** `#dc-composer-bar`'s children: the venue
+     sentence, the two provider model controls, the saved drafts, the attach
+     row, the pending strip, the error line, the form and the shortcut hint.
+
+     **It looked like six independent controls and was one state.** Six
+     writers reached into the bar, and every one of them was reading the same
+     two questions — is a turn running, and where is this session built:
+     `_setStreamingUI` (the send button's `disabled`, three state classes,
+     `aria-label`, `title` and `innerHTML`; the field's `placeholder`; the
+     OpenRouter row's `disabled`), `_syncSaveDraftBtn` (three more, plus
+     `_syncShortcutHint`, whose only caller it was), `_renderSavedDrafts`,
+     `_setAttachError` and `_refreshModelSelect`. Six stores would have been
+     six copies of "is the chat busy"; one publish answers it once. **When
+     several writers into one region are all reading the same predicate, that
+     region is one chunk, however unrelated the controls look.**
+
+     Four things worth copying:
+
+     - **A converted region can ABSORB the islands inside it.**
+       `#dc-attachments`, `#dc-quick-replies`, `#dc-runner` and `#dc-budget`
+       were four portal hosts written by this template. Once the composer owns
+       the markup they are ordinary children, so their `mount*` bridge methods
+       went and only `publish*` crossed the seam. Each store's component grew
+       a `*Bar` sibling that renders the ELEMENT as well as its contents —
+       exactly the split `pending-strip.tsx` already had — which also folds
+       away the two hand-toggled `*-active` classes: the class now comes from
+       the same list that draws the rows, so there is one answer to "is this
+       strip empty" instead of two that could disagree.
+     - **A paint flag is not `isStreaming`.** `_setStreamingUI(true, …)` is
+       called by the `?shot=busy` capture with no turn running at all (#801),
+       and by the finish path with `false` on the line before the flag drops.
+       The composer latches its own `_composerBusy` for that reason, and
+       `renderChatView` resets it — which is what the idle template used to do
+       implicitly.
+     - **A cleared-per-render input has to be LATCHED for the publish era.**
+       The venue-fallback sentence is reported once and then cleared, so a
+       repaint does not re-explain a settled fact. Reading it inside
+       `_composerView` would have cleared it on the first keystroke — the save
+       icon and the hint republish on every one. It is latched into
+       `_venueNoteForRender` by the render that shows it.
+     - **The field stays UNCONTROLLED, and that is a rule with two authors
+       behind it.** `_restoreDraft` and `_editSavedDraft` set `.value`;
+       `_setupTextareaResize` grows `style.height` on every keystroke. Neither
+       is rendered as a prop, so React never diffs them away — the same
+       tolerated overlap the group chat's composer documents. Verified in a
+       browser: the node survives a streaming repaint with its value and its
+       grown height intact.
+
+     Two shell rules bit, both predictable from the banner chunk's note:
+     `tests/shell-primitive-adoption.test.js` forced the send button and the
+     textarea through `<Button>` and `<Textarea>`, and the rendered class
+     attribute did NOT move — `button.tsx` gained a `lead` group (the same
+     group, for the same reason, that `input.tsx` already had: an app.css
+     class that LEADS the string, where className cannot go) carrying
+     `.dc-send-btn`, and `input.tsx` gained a `devComposer` lead and box. And
+     `tests/shell-icon-set.test.js` forced the paperclip, the save floppy and
+     the three draft-row actions into `icons.tsx`. Their FRAME is normalised
+     onto the existing `stroked` factory — the templates put
+     `stroke-linecap` on the `<svg>`, the factory puts it on each `<path>`;
+     both inherit, and a fourth renderer to hold five glyphs' attribute
+     placement is not worth it. None of the five prerenders, so all five are
+     in that test's expected-absent list with the reason.
+
    - ~~**`renderMessages`**~~ — **done.** The transcript was one 560-line
      `container.innerHTML = …` with SIX writers on top of it, each of which
      existed because a full repaint mid-turn was too expensive: the streaming
@@ -879,11 +948,11 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    time and bails when it is absent. Both files' headers say so, and the test
    above asserts it.
 
-   What is left is `renderChatView`'s launchpad slot, its panes and the
-   composer wrapper — the composer being the boundary the group chat's own
-   composer is waiting on, because the reply preview, the attach-error line
-   and the attachment strip each exist twice and are drawn by one renderer
-   from one CSS rule.
+   What is left is `renderChatView`'s own SKELETON: the launchpad slot, the
+   `.dc-session-body` / `#dc-tab-chat` pane frame, the two resizers and the
+   spec-viewer and staging-panel hosts. That is one boundary — `#dc-view` —
+   and converting it absorbs the five portals that remain inside it, the same
+   way the composer absorbed its four.
 
 3. ~~Admin interior~~ — **done**. See "The admin console: done" above.
 

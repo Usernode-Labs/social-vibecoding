@@ -216,6 +216,37 @@ export const WarningTriangleIcon = stroked(
   'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z'
 );
 
+// Five more ports, from `renderChatView`'s composer and `_renderSavedDrafts`'
+// three row actions, moved here when that block converted. Each is the path
+// the template carried, unchanged.
+//
+// Their FRAME is normalised onto `stroked`, which is a real DOM difference
+// and a deliberate one: the templates wrote `stroke-linecap` and
+// `stroke-linejoin` on the `<svg>`, this factory writes them on each `<path>`.
+// Both inherit, so nothing draws differently — and the alternative is a
+// fourth renderer whose only job is to hold five glyphs' attribute placement.
+// Size still comes from `width`/`height` attributes, which is how the
+// composer wrote them (every other call site in the shell uses a class).
+export const PaperclipIcon = stroked(
+  'PaperclipIcon',
+  'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48'
+);
+export const SaveDraftIcon = stroked('SaveDraftIcon', [
+  'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
+  'M17 21v-8H7v8',
+  'M7 3v5h8',
+]);
+export const DraftSendIcon = stroked('DraftSendIcon', ['M22 2 11 13', 'M22 2 15 22l-4-9-9-4z']);
+export const DraftEditIcon = stroked('DraftEditIcon', [
+  'M12 20h9',
+  'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
+]);
+export const DraftTrashIcon = stroked('DraftTrashIcon', [
+  'M3 6h18',
+  'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2',
+  'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6',
+]);
+
 /**
  * The spinning arc, as the sync banner draws it.
  *

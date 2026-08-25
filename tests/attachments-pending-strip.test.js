@@ -108,25 +108,32 @@ test('removal reports an index, and each module resolves it', () => {
     /onRemove=\{\(index\) => controller\(\)\?\._removeAttachment\?\.\(index\)\}/);
 });
 
-test('the group chat owns its strip element; the dev chat rents one', () => {
-  // The group chat's strip is part of a React tree, so it takes the element
-  // and its `dc-attach-strip-active` class from the shared file. The dev
-  // chat's is written by `renderChatView`'s template and portalled into, so
-  // the element stays that module's — host is mine, children are React's.
-  const withElement = renderComponent(STRIP, 'PendingStrip', {
-    id: 'gc-attachments', items: [item()], onRemove: () => {},
-  });
-  assert.match(withElement, /^<div id="gc-attachments" class="dc-attach-strip dc-attach-strip-active">/);
-  assert.match(
-    renderComponent(STRIP, 'PendingStrip', { id: 'gc-attachments', items: [], onRemove: () => {} }),
-    /^<div id="gc-attachments" class="dc-attach-strip"><\/div>$/,
-  );
-  // …and the rows-only export emits no wrapper at all, which is what keeps
-  // the dev chat from nesting a second #dc-attachments inside its own.
+test('both composers own their strip element, and the class comes with it', () => {
+  // Both strips are part of a React tree now: the group chat's always was,
+  // and the dev chat's element used to be written by `renderChatView`'s
+  // template and portalled into. Its whole composer converted, so it takes
+  // the element and its `dc-attach-strip-active` class from the shared file
+  // too — which means ONE answer to "are there attachments" instead of a
+  // rendered list and a hand-toggled class that could disagree.
+  for (const id of ['gc-attachments', 'dc-attachments']) {
+    const withElement = renderComponent(STRIP, 'PendingStrip', {
+      id, items: [item()], onRemove: () => {},
+    });
+    assert.match(withElement, new RegExp(`^<div id="${id}" class="dc-attach-strip dc-attach-strip-active">`));
+    assert.match(
+      renderComponent(STRIP, 'PendingStrip', { id, items: [], onRemove: () => {} }),
+      new RegExp(`^<div id="${id}" class="dc-attach-strip"></div>$`),
+    );
+  }
+  // …and the rows-only export still emits no wrapper at all, which is what
+  // keeps a caller that already has a host from nesting a second one.
   assert.ok(!rows([item()]).includes('dc-attach-strip'));
 
+  // The hand-toggled class is gone with the host it was written onto. Matched
+  // as a code form: the comments explaining what was retired name it.
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.match(devChat, /strip\.classList\.toggle\('dc-attach-strip-active', DevChat\.pendingAttachments\.length > 0\)/);
+  assert.doesNotMatch(devChat, /classList\.toggle\('dc-attach-strip-active'/,
+    'the class travels with the element the component renders');
 });
 
 test('dev-chat.js stays import-free, because a dozen tests load it as a script', () => {

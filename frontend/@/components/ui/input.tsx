@@ -63,7 +63,13 @@ const inputVariants = cva('', {
      * multi-line box the auto-grow produces. Call site:
      * features/group-chat/composer.tsx.
      */
-    lead: { composer: 'gc-composer-input', none: '' },
+    /**
+     * `devComposer` is `.dc-textarea` — the dev chat's composer field, whose
+     * rule is a `max-height` cap and the scroll that goes with it, tuned
+     * against the same auto-grow. Call site:
+     * features/dev-chat/composer.tsx.
+     */
+    lead: { composer: 'gc-composer-input', devComposer: 'dc-textarea', none: '' },
     // Leads the string on the two fields inside #agent-files-form, which sit
     // under their own label text rather than beside it.
     spacing: { mt1: 'mt-1', none: '' },
@@ -132,6 +138,15 @@ const inputVariants = cva('', {
         'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
       composerTight:
         'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100',
+      // The DEV chat's composer. The same fill and box as `composer` above —
+      // it sits on a chat pane too — but the two shape utilities are written
+      // at the very END of its string rather than in front of the radius, so
+      // they ride in through className there and this value carries neither.
+      // Transcribed rather than normalised onto `composer`: folding them
+      // would move the rendered class attribute on the one field it exists
+      // for. Call site: features/dev-chat/composer.tsx.
+      devComposer:
+        'rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
     },
     // The placeholder colour, written between the box and the focus ring in
     // every string that has it. Named `hint`, not `placeholder`, because

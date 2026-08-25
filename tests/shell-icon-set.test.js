@@ -280,6 +280,22 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // App tab). New with the toggle, so it has never prerendered.
     'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
     'M4 9.5h16',
+    // ── The dev chat composer's five glyphs ─────────────────────────
+    // None of them can prerender: the composer is written into #dc-view at
+    // runtime by `renderChatView`, and the prerendered document ships that
+    // element empty. The three draft-row actions are further behind state —
+    // a row exists only once something is saved.
+    'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
+    'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
+    'M17 21v-8H7v8',
+    'M7 3v5h8',
+    'M22 2 11 13',
+    'M22 2 15 22l-4-9-9-4z',
+    'M12 20h9',
+    'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
+    'M3 6h18',
+    'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2',
+    'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6',
   ];
   assert.deepEqual(absent.sort(), expected.sort());
 });

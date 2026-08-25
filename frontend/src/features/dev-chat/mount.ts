@@ -23,12 +23,11 @@
 import { createElement } from 'react';
 import { flushSync } from 'react-dom';
 
-import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
-import { DevAttachStrip } from './attach-strip';
+import { mountLegacyPortal } from '../../lib/legacy-portals';
 import { attachStripStore, type AttachStripState } from './attach-strip-store';
-import { BudgetPill } from './budget-pill';
 import { budgetPillStore, type BudgetPillState } from './budget-pill-store';
-import { QuickReplies, RunnerControls } from './composer-chrome';
+import { DevComposer } from './composer';
+import { composerStore, type ComposerState } from './composer-store';
 import {
   quickRepliesStore,
   runnerStore,
@@ -51,15 +50,15 @@ import {
 } from './transcript-store';
 
 export interface DevChatBridge {
-  mountAttachStrip(host: Element | null): void;
-  unmountAttachStrip(host: Element | null): void;
+  // Four strips that used to mount into hosts `renderChatView` wrote. The
+  // whole composer is one island now, so it renders their elements too and
+  // only their STATE crosses the seam.
   publishAttachStrip(state: AttachStripState): void;
-  mountBudgetPill(host: Element | null): void;
   publishBudgetPill(state: BudgetPillState): void;
-  mountQuickReplies(host: Element | null): void;
   publishQuickReplies(state: QuickRepliesState): void;
-  mountRunnerControls(host: Element | null): void;
   publishRunner(state: RunnerState): void;
+  mountComposer(host: Element | null, state: ComposerState): void;
+  publishComposer(state: ComposerState): void;
   mountSessionList(host: Element | null, state: SessionListState): void;
   publishSessionList(state: SessionListState): void;
   mountSessionHeader(host: Element | null, state: SessionHeaderState): void;
@@ -82,6 +81,13 @@ export interface DevChatBridge {
 sessionHeaderStore.setFlush(flushSync);
 bannersStore.setFlush(flushSync);
 
+// The composer flushes for the same reason and one more of its own:
+// `_syncSaveDraftBtn` reads the textarea's live `value` to decide whether the
+// save icon is pressable, so the field has to exist by the time the line
+// after the mount runs. `_setupAttachments`, `_restoreDraft` and the form's
+// submit listener resolve their controls by id on the same lines.
+composerStore.setFlush(flushSync);
+
 // The transcript and its live bubble flush for the same reason, and it is the
 // sharpest case on the screen: `DevChat.scrollToBottom()` runs on the line
 // after `renderMessages()` in nineteen places, and again after every streamed
@@ -97,52 +103,41 @@ transcriptStore.setFlush(flushSync);
 streamStore.setFlush(flushSync);
 
 export const devChatBridge: DevChatBridge = {
-  // `renderChatView` rebuilds `#dc-attachments` on every chat-view render, so
-  // this mounts per publish; the previous host's entry is swept as detached
-  // (lib/legacy-portals.tsx). Only the ROWS are React's — the element and its
-  // `dc-attach-strip-active` class stay the module's, because the template
-  // writes the element.
-  mountAttachStrip(host) {
+  // `#dc-composer-bar`'s children — the whole composer. The BAR is
+  // `renderChatView`'s, because its own class run is a decision that template
+  // makes (in a launchpad it drops the border and the padding, since there is
+  // nothing left to frame); everything between its edges is the component's.
+  //
+  // The state rides in WITH the mount: `_setupAttachments`, `_restoreDraft`
+  // and the form's submit listener all resolve controls inside it by id on
+  // the lines after, and an empty composer for one frame is a visible blink
+  // on every chat-view render.
+  mountComposer(host, state) {
     if (!host) return;
-    mountLegacyPortal(host, createElement(DevAttachStrip));
+    composerStore.set(state);
+    mountLegacyPortal(host, createElement(DevComposer));
   },
 
-  unmountAttachStrip(host) {
-    if (!host) return;
-    unmountLegacyPortal(host);
+  // Six writers land here: `_setStreamingUI`, `_syncSaveDraftBtn`,
+  // `_syncShortcutHint`, `_renderSavedDrafts`, `_setAttachError` and
+  // `_refreshModelSelect`. Every one of them was reading the same two
+  // questions — is a turn running, and where is this session built.
+  publishComposer(state) {
+    composerStore.set(state);
   },
 
+  // The four strips INSIDE it. Their elements are the composer's markup now,
+  // so what is left of each seam is its state.
   publishAttachStrip(state) {
     attachStripStore.set(state);
-  },
-
-  // The credit meter. `#dc-budget` is written by `renderChatView`'s template
-  // and a dapp.json check selects it as a SIBLING of `#dc-venue-detail`, so
-  // the element stays the module's and only its children are React's.
-  mountBudgetPill(host) {
-    if (!host) return;
-    mountLegacyPortal(host, createElement(BudgetPill));
   },
 
   publishBudgetPill(state) {
     budgetPillStore.set(state);
   },
 
-  // The suggestion pills. The bar and its active class stay the module's —
-  // one delegated click is bound on that element per `renderChatView`.
-  mountQuickReplies(host) {
-    if (!host) return;
-    mountLegacyPortal(host, createElement(QuickReplies));
-  },
-
   publishQuickReplies(state) {
     quickRepliesStore.set(state);
-  },
-
-  // The "Run on" strip, which draws nothing at all in the common case.
-  mountRunnerControls(host) {
-    if (!host) return;
-    mountLegacyPortal(host, createElement(RunnerControls));
   },
 
   publishRunner(state) {

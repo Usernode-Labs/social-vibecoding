@@ -45,6 +45,27 @@ export function QuickReplies() {
   return <QuickRepliesView {...useStoreState<QuickRepliesState>(quickRepliesStore)} />;
 }
 
+/**
+ * The pills WITH their bar, for a caller whose element is React's.
+ *
+ * `dc-quick-replies-active` is what gives the strip a height; an empty bar
+ * keeps the node — `_wireQuickReplies` finds it by id and binds the delegated
+ * click there — and no class. Same split as ../attachments/pending-strip.tsx's
+ * two exports, and the same reason: the composer owns the element now, the
+ * transcript-era portal host did not.
+ */
+export function QuickRepliesBar() {
+  const { replies } = useStoreState<QuickRepliesState>(quickRepliesStore);
+  return (
+    <div
+      id="dc-quick-replies"
+      className={replies.length ? 'dc-quick-replies dc-quick-replies-active' : 'dc-quick-replies'}
+    >
+      <QuickRepliesView replies={replies} />
+    </div>
+  );
+}
+
 const PAST_TITLE = (label: string) =>
   `The last turn ran on ${label}. That machine has detached, so the next turn runs on Usernode.`;
 
@@ -94,4 +115,16 @@ export function RunnerControlsView({ kind, label }: RunnerState) {
 
 export function RunnerControls() {
   return <RunnerControlsView {...useStoreState<RunnerState>(runnerStore)} />;
+}
+
+/**
+ * The strip WITH its host span, for a caller whose element is React's.
+ *
+ * `#dc-runner` renders even in the `none` state, which is most sessions: it
+ * is what `_renderRunnerControls` looks up to decide there is a composer at
+ * all, and `.dc-runner:empty` collapses it — so the ordinary composer row is
+ * exactly what it was, with an empty span in it that draws nothing.
+ */
+export function RunnerControlsBar() {
+  return <span id="dc-runner" className="dc-runner"><RunnerControls /></span>;
 }

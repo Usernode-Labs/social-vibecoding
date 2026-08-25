@@ -212,14 +212,22 @@ test('the composer is HIDDEN, never removed', () => {
   // started returning null would throw on a route the checks load, and a
   // console error on any route fails proposal checks — so the composer is
   // hidden beside the launchpad rather than replaced by it.
-  assert.match(DEV_CHAT_SRC, /id="dc-composer-controls"\$\{inLaunchpad \? ' hidden' : ''\}/);
+  // #1078: the composer is a component, so the swap is a `hidden` FIELD of
+  // its model rather than an interpolation in the template. Same guarantee,
+  // read on both halves of the seam.
+  assert.match(DEV_CHAT_SRC, /hidden: !!DevChat\._launchpadVenue\(\),/,
+    'the model carries the swap');
   assert.match(DEV_CHAT_SRC, /id="dc-launchpad-slot"/);
-  // Both always render, so neither id ever disappears from the document.
-  assert.doesNotMatch(
-    DEV_CHAT_SRC,
-    /\$\{inLaunchpad \? '' : `[\s\S]{0,80}id="dc-form"/,
-    'the form must not be rendered conditionally',
-  );
+  const COMPOSER_TSX = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
+  assert.match(COMPOSER_TSX, /id="dc-composer-controls" hidden=\{s\.hidden \|\| undefined\}/);
+  // Both always render, so neither id ever disappears from the document —
+  // which is what the `hidden` attribute buys over a conditional subtree.
+  const at = COMPOSER_TSX.indexOf('id="dc-composer-controls"');
+  const body = COMPOSER_TSX.slice(at);
+  assert.ok(body.includes('id="dc-form"'), 'the form is inside it');
+  assert.doesNotMatch(body.slice(0, body.indexOf('id="dc-form"')), /s\.hidden \?/,
+    'and is not rendered conditionally on the same flag');
 });
 
 test('the venue control stays outside the swap — it is the way back', () => {
@@ -230,10 +238,15 @@ test('the venue control stays outside the swap — it is the way back', () => {
   // The strip is a component now (features/dev-chat/session-header.tsx) and
   // the button is one of its children, so "outside the swap" is a property of
   // where the HEADER is written rather than of where the string landed.
-  const header = DEV_CHAT_SRC.indexOf('id="dc-session-header"');
-  const swap = DEV_CHAT_SRC.indexOf('id="dc-composer-controls"');
-  assert.ok(header !== -1, 'the session header is painted');
-  assert.ok(header < swap, 'before the composer wrapper opens, so no venue swaps it out');
+  // The header is written by `renderChatView`; the swap is inside the
+  // composer, which is a different file entirely — so the two cannot be
+  // compared by position any more, and the guarantee is stronger for it.
+  assert.match(DEV_CHAT_SRC, /id="dc-session-header"/, 'the session header is painted');
+  const COMPOSER_TSX = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
+  assert.ok(COMPOSER_TSX.includes('id="dc-composer-controls"'), 'the swap is the composer\'s');
+  assert.doesNotMatch(COMPOSER_TSX, /dc-venue-select/,
+    'and the venue selector is not inside the thing it exists to undo');
   const headerTsx = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'session-header.tsx'), 'utf8');
   assert.match(headerTsx, /<VenueSelect/, 'and the venue selector is in that strip');

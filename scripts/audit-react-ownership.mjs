@@ -245,16 +245,16 @@ const OWNED = [
     sel: '.gc-chat-pane',
     except: ['#gc-messages'],
   },
-  // The dev chat composer's four strips. Each HOST is dev-chat.js's — its
-  // `renderChatView` template writes them, and each carries a class the module
-  // toggles for the strip's height (`dc-quick-replies-active`,
-  // `dc-attach-strip-active`) — but the CHILDREN are React's, so an innerHTML
-  // or an append below one is a second author. Swept on the session route
-  // above; the composer is on screen for every dev-chat session.
-  { sel: '#dc-attachments' },                // features/attachments/pending-strip.tsx
-  { sel: '#dc-quick-replies' },              // features/dev-chat/composer-chrome.tsx
-  { sel: '#dc-runner' },                     // ditto
-  { sel: '#dc-budget' },                     // features/dev-chat/budget-pill.tsx
+  // The dev chat's whole composer. The BAR is dev-chat.js's — its
+  // `renderChatView` template writes the element, and its own class run is a
+  // decision that template makes — but everything between its edges is
+  // React's: the venue sentence, the model pickers, the saved drafts, the
+  // attach row, the pending strip, the error line, the form and the hint.
+  // The four strips that used to be their own hosts (`#dc-attachments`,
+  // `#dc-quick-replies`, `#dc-runner`, `#dc-budget`) are inside it now, so
+  // this one entry covers them. Swept on the session route above; the
+  // composer is on screen for every dev-chat session.
+  { sel: '#dc-composer-bar' },               // features/dev-chat/composer.tsx
   // The session header strip. The HOST is dev-chat.js's for a different
   // reason from the four above — `PlatformUI.attachScreenFx` writes a hairline
   // class onto the element once the chat scrolls — but the split is the same:

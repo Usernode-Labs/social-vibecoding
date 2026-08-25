@@ -263,20 +263,51 @@ const DevChat = {
     } catch {}
   },
 
-  // Rewrite the mounted model dropdown's options + caption from the
-  // current MODELS map, preserving the selection. No-op when no session
-  // view is mounted.
+  // #800: a server-side allowlist change (a model added or removed) has to
+  // reach an OPEN composer rather than wait for the next renderChatView. It
+  // rewrote the dropdown's `<option>`s in place and re-set its value; the
+  // options and the selection are two fields of the composer model now, so
+  // the same update is one publish and the selection cannot be lost.
   _refreshModelSelect() {
-    const sel = document.getElementById('dc-model-select');
-    if (!sel) return;
-    const options = Object.entries(DevChat.MODELS)
-      .map(([id, meta]) => {
-        const text = DevChat.modelOptionText(meta);
-        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
-      })
-      .join('');
-    sel.innerHTML = options;
-    sel.value = DevChat.selectedModel;
+    DevChat._publishComposer();
+  },
+
+  /** The chat-model picker, as data. Null on every venue that has none. */
+  _modelPickerView() {
+    if (DevChat._currentVenueId() !== 'usernode-claude') return null;
+    return {
+      options: Object.entries(DevChat.MODELS).map(([id, meta]) => ({
+        id,
+        label: DevChat.modelOptionText(meta),
+      })),
+      selected: DevChat.selectedModel,
+    };
+  },
+
+  /** The picker's `change`, which used to be an addEventListener per render. */
+  _onModelPicked(value) {
+    DevChat.selectedModel = value;
+    // Persist across refreshes + new sessions (fixes #31). Wrapped in
+    // try/catch so private-mode browsers or quota errors don't break the
+    // selector.
+    try { localStorage.setItem(MODEL_STORAGE_KEY, value); } catch {}
+    DevChat._publishComposer();
+  },
+
+  /** The OpenRouter row's "Change model", likewise. */
+  _onOpenRouterModelChange() {
+    DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
+  },
+
+  /** The OpenRouter row, as data. Null on every venue that has none. */
+  _openRouterRowView() {
+    if (DevChat._currentVenueId() !== 'usernode-openrouter') return null;
+    const model = String(DevChat.currentSession?.agent_model || '').trim();
+    return {
+      model: model || 'No model is pinned',
+      changeDisabled: !!DevChat._composerBusy,
+      note: DevChat._agentBillingNote(DevChat.currentSession),
+    };
   },
 
   // ── Session-pinned coding-agent choice ────────────────────────────
@@ -1100,9 +1131,10 @@ const DevChat = {
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react) return;
-    // The HOST stays ours — the template writes it — and its CHILDREN are
-    // features/dev-chat/composer-chrome.tsx's.
-    react.mountRunnerControls(host);
+    // The host is the COMPOSER's now — `RunnerControlsBar` renders the span
+    // as well as its contents, because the whole bar converted. What is left
+    // here is the state, and the DOM probe above, which is how this decides
+    // there is a composer on screen at all.
     react.publishRunner(DevChat._runnerView());
   },
 
@@ -1363,10 +1395,9 @@ const DevChat = {
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react) return;
-    // The HOST stays ours — the template writes it, and a dapp.json check
-    // selects it as `#dc-venue-detail ~ #dc-budget`, so where it sits is part
-    // of the contract. Its CHILDREN are features/dev-chat/budget-pill.tsx's.
-    react.mountBudgetPill(el);
+    // The host is the COMPOSER's now — `BudgetPillBar` renders the span too.
+    // A dapp.json check selects it as `#dc-venue-detail ~ #dc-budget`, so
+    // where it sits in that status line is part of the contract.
     react.publishBudgetPill(DevChat._budgetPillView());
   },
 
@@ -4385,7 +4416,15 @@ const DevChat = {
     } catch (_) {}
   },
 
+  // The composer's PAINT state, latched here rather than read from
+  // `isStreaming`. They are not the same question: the `?shot=busy` capture
+  // paints a mid-turn composer with no turn running at all (#801), and the
+  // finish path calls this with `false` on the line before the flag drops.
+  // `renderChatView` resets it, which is what the idle template used to do.
+  _composerBusy: false,
+
   _setStreamingUI(streaming, phase = null, { stoppable = true } = {}) {
+    DevChat._composerBusy = !!streaming;
     if (streaming) DevChat._streamingPhase = phase;
     else DevChat._streamingPhase = null;
     // #1378: kept alongside the phase so every repaint that only knows the
@@ -4415,69 +4454,19 @@ const DevChat = {
     // the composer placeholder, the saved-drafts list, the sync banner —
     // must still resync on a streaming transition even in the rare case
     // where the send button isn't mounted.
-    const btn = document.getElementById('dc-send-btn');
-    if (btn && streaming) {
-      const isWrapUp = phase === 'mayor2';
-      // #1378: same spinner, different reason. A turn the server can't stop
-      // (no in-process handle — typically one adopted across a restart) must
-      // not paint a live red Stop: the click would reach the server, match
-      // nothing, and leave the user believing the turn was ending.
-      const notStoppable = stoppable === false;
-      // #889: a requested-but-not-yet-landed stop outranks both of the
-      // states below — the turn is still streaming (so we can't paint
-      // Send), but the red Stop square is a lie: pressing it again does
-      // nothing. Muted spinner + "Stopping…" instead.
-      if (DevChat._stopping) {
-        btn.disabled = true;
-        btn.classList.remove('dc-btn-stop');
-        btn.classList.remove('dc-btn-streaming');
-        btn.classList.add('dc-btn-stopping');
-        btn.setAttribute('aria-label', 'Stopping');
-        btn.title = 'Stopping…';
-        btn.innerHTML = '<span class="dc-send-spinner"></span><span class="dc-btn-stopping-label">Stopping…</span>';
-      } else if (isWrapUp || notStoppable) {
-        btn.disabled = true;
-        btn.classList.remove('dc-btn-stop');
-        btn.classList.remove('dc-btn-stopping');
-        btn.classList.add('dc-btn-streaming');
-        const unstoppable = notStoppable && !isWrapUp;
-        btn.setAttribute('aria-label', unstoppable ? 'Working' : 'Finishing up');
-        btn.title = unstoppable
-          ? 'This turn is still running but can’t be stopped from here'
-          : 'Finishing up…';
-        btn.innerHTML = '<span class="dc-send-spinner"></span>';
-      } else {
-        btn.disabled = false;
-        btn.classList.remove('dc-btn-streaming');
-        btn.classList.remove('dc-btn-stopping');
-        btn.classList.add('dc-btn-stop');
-        btn.setAttribute('aria-label', 'Stop');
-        btn.title = 'Stop';
-        btn.innerHTML = '<span class="dc-stop-icon" aria-hidden="true"></span>';
-      }
-    } else if (btn) {
-      btn.disabled = false;
-      btn.classList.remove('dc-btn-streaming');
-      btn.classList.remove('dc-btn-stop');
-      btn.classList.remove('dc-btn-stopping');
-      btn.setAttribute('aria-label', 'Send');
-      btn.title = 'Send';
-      btn.textContent = 'Send';
-    }
-
-    // #798: the box stays TYPABLE while the agent works — the user can
-    // write the next instruction and park it as a draft (the save icon)
-    // instead of holding it in their head. It used to be `disabled` here.
-    // Sending is still impossible mid-turn: the submit handler routes to
-    // Stop while streaming and _submitFromInput bails on isStreaming, so
-    // nothing typed here can leak into the running turn.
-    const input = document.getElementById('dc-input');
-    if (input) {
-      input.disabled = false;
-      input.placeholder = streaming
-        ? DevChat._busyComposerPlaceholder()
-        : DevChat.COMPOSER_PLACEHOLDER;
-    }
+    // The send button's four states and the field's placeholder are the
+    // composer model's now — see `_sendButtonView`. This wrote `disabled`,
+    // three state classes, `aria-label`, `title` and `innerHTML` on the
+    // button by hand, and the placeholder on the field.
+    //
+    // #798: the box stays TYPABLE while the agent works — the user can write
+    // the next instruction and park it as a draft (the save icon) instead of
+    // holding it in their head. Sending is still impossible mid-turn: the
+    // submit handler routes to Stop while streaming and `_submitFromInput`
+    // bails on `isStreaming`, so nothing typed here can leak into the
+    // running turn. Nothing renders `disabled` on the field for the same
+    // reason nothing writes it any more.
+    DevChat._publishComposer();
     // #1086: the venue control replaced the coding-agent button that used
     // to sit here, and inherits its guard — a turn in flight holds the
     // worker, so the venue cannot move until it lands. #1348 moved the
@@ -4485,8 +4474,9 @@ const DevChat = {
     // `_headerVenue`'s `disabled` now, so this republishes the strip rather
     // than writing the attribute React would overwrite on its next paint.
     DevChat._repaintSessionHeader();
-    const openRouterModelChange = document.getElementById('dc-openrouter-model-change');
-    if (openRouterModelChange) openRouterModelChange.disabled = !!streaming;
+    // The OpenRouter row's "Change model" is guarded by the same rule and
+    // rides in on the publish above — it used to be a `disabled` written by
+    // hand here, which is a write React would clobber on its next paint.
     DevChat._syncSaveDraftBtn();
     // Re-render the saved-drafts list so each row's Send button picks up
     // the new busy state (disabled while thinking, live once idle).
@@ -5989,10 +5979,8 @@ const DevChat = {
             },
             body: {
               kind: 'log',
-              // The inner pre keeps the legacy progress pid. Nothing targets
-              // it any more — a streamed line is a republish — but it is the
-              // id the row has always carried, and it names the PROGRESS row
-              // while the disclosure around it names the STATUS row.
+              // The inner pre keeps the legacy progress pid so a streaming
+              // append can still target it.
               persistId: DevChat._detailsId(attachedProgress, 'progress'),
               text: (attachedProgress.progressLog || []).join('\n'),
             },
@@ -6338,19 +6326,15 @@ const DevChat = {
   },
 
   _renderQuickReplies() {
-    const bar = document.getElementById('dc-quick-replies');
-    if (!bar) return;
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react) return;
-    const replies = DevChat._currentQuickReplies() || [];
-    // The bar and its `dc-quick-replies-active` (the class that gives it a
-    // height) stay ours; the PILLS are the component's, and the delegated
-    // click `_wireQuickReplies` binds on this element still reads their
-    // `data-quick-reply-idx`.
-    react.mountQuickReplies(bar);
-    react.publishQuickReplies({ replies });
-    bar.classList.toggle('dc-quick-replies-active', replies.length > 0);
+    // The bar element AND its `dc-quick-replies-active` are the composer's
+    // now — `QuickRepliesBar` derives the class from the same list it draws,
+    // so there is one answer to "are there pills" instead of two. The
+    // delegated click `_wireQuickReplies` binds on that element still reads
+    // each pill's `data-quick-reply-idx`.
+    react.publishQuickReplies({ replies: DevChat._currentQuickReplies() || [] });
   },
 
   // Bind the pill-bar click delegation once per renderChatView (the bar
@@ -7537,6 +7521,85 @@ const DevChat = {
 
   // ── Chat view ─────────────────────────────────────────────
 
+  /**
+   * `#dc-composer-bar`'s children, as one view model.
+   *
+   * Six writers used to reach into this bar and every one of them was asking
+   * the same two questions — is a turn running, and where is this session
+   * built. See features/dev-chat/composer-store.ts for the list.
+   */
+  _composerView() {
+    return {
+      // Latched by the render that shows it, not read per publish: the note
+      // explains a venue you did NOT get, and it must survive every keystroke
+      // in the box while still not re-explaining a settled fact on the next
+      // full render. See `renderChatView`.
+      venueNoteHtml: DevChat._venueNoteForRender || '',
+      hidden: !!DevChat._launchpadVenue(),
+      models: DevChat._modelPickerView(),
+      openRouter: DevChat._openRouterRowView(),
+      drafts: DevChat._savedDraftsView(),
+      attachError: DevChat._attachError,
+      placeholder: DevChat._composerBusy
+        ? DevChat._busyComposerPlaceholder()
+        : DevChat.COMPOSER_PLACEHOLDER,
+      saveDraft: DevChat._saveDraftView(),
+      send: DevChat._sendButtonView(),
+      shortcutHintHtml: DevChat._chatBusyForPaint()
+        ? DevChat.SHORTCUT_HINT_SAVE
+        : DevChat.SHORTCUT_HINT_SEND,
+    };
+  },
+
+  /**
+   * The send button, as data — the four shapes `_setStreamingUI` painted by
+   * hand. Every input is module state, so any caller can repaint it without
+   * knowing which transition it is in the middle of.
+   */
+  _sendButtonView() {
+    if (!DevChat._composerBusy) return { kind: 'send' };
+    // #889: a requested-but-not-yet-landed stop outranks both states below —
+    // the turn is still streaming (so Send is wrong), but the red Stop square
+    // is a lie: pressing it again does nothing.
+    if (DevChat._stopping) return { kind: 'stopping' };
+    const isWrapUp = DevChat._streamingPhase === 'mayor2';
+    // #1378: same spinner, different reason. A turn the server can't stop (no
+    // in-process handle — typically one adopted across a restart) must not
+    // paint a live red Stop: the click would reach the server, match nothing,
+    // and leave the user believing the turn was ending.
+    const notStoppable = DevChat._streamingStoppable === false;
+    if (!isWrapUp && !notStoppable) return { kind: 'stop' };
+    const unstoppable = notStoppable && !isWrapUp;
+    return {
+      kind: 'busy',
+      label: unstoppable ? 'Working' : 'Finishing up',
+      title: unstoppable
+        ? 'This turn is still running but can’t be stopped from here'
+        : 'Finishing up…',
+    };
+  },
+
+  /** Mount `#dc-composer-bar`'s children. The BAR stays the template's. */
+  _renderComposer() {
+    const bar = document.getElementById('dc-composer-bar');
+    if (!bar) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.mountComposer) return;
+    react.mountComposer(bar, DevChat._composerView());
+  },
+
+  /** Republish without re-mounting — every one of the six writers' end. */
+  _publishComposer() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishComposer) return;
+    react.publishComposer(DevChat._composerView());
+  },
+
+  /** The venue sentence this render is showing. See `_composerView`. */
+  _venueNoteForRender: '',
+
   renderChatView() {
     const content = document.getElementById('dc-view');
     if (!content) return;
@@ -7561,12 +7624,6 @@ const DevChat = {
 
     if (meta) meta.classList.add('hidden');
 
-    const modelOptions = Object.entries(DevChat.MODELS)
-      .map(([id, meta]) => {
-        const text = DevChat.modelOptionText(meta);
-        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
-      })
-      .join('');
     const viewerOpen = !!DevChat.specViewer.open;
     // Saved viewer width from a previous drag. Applied as inline style
     // on the side panel; CSS clamps to a min/max so a stale value
@@ -7583,8 +7640,6 @@ const DevChat = {
     const stagingStyle = stagingOpen && stagingSavedWidth
       ? ` style="width:${stagingSavedWidth}px"`
       : '';
-    const agentBillingNote = DevChat._agentBillingNote(DevChat.currentSession);
-    const venueId = DevChat._currentVenueId();
     // #1348: the venue control is the header dropdown, top right. What is
     // left down by the composer is the fallback sentence alone — reported
     // once, on the paint after creation, when the server resolved a venue
@@ -7592,7 +7647,11 @@ const DevChat = {
     // repaint of the same session doesn't keep re-explaining a settled fact.
     const venueFallbackReason =
       DevChat._venueFallbackReason || DevChat._shotVenueFallbackReason();
-    const venueNoteHtml = window.BuildVenues
+    // Latched for the life of THIS render rather than read per publish: the
+    // composer republishes on every keystroke (the save icon and the hint
+    // flip on them), and re-reading a reason that clears itself would make
+    // the sentence vanish on the first one.
+    DevChat._venueNoteForRender = window.BuildVenues
       ? BuildVenues.noteHtml({ fallbackReason: venueFallbackReason })
       : '';
     DevChat._venueFallbackReason = null;
@@ -7604,10 +7663,7 @@ const DevChat = {
     // Is there anything left in the bottom bar to draw a border around?
     // The composer is hidden in a launchpad and the venue note is usually
     // absent, and an empty bordered strip reads as a broken composer.
-    const barEmpty = inLaunchpad && !venueNoteHtml;
-    const claudeVenue = venueId === 'usernode-claude';
-    const openRouterVenue = venueId === 'usernode-openrouter';
-    const openRouterModel = String(DevChat.currentSession.agent_model || '').trim();
+    const barEmpty = inLaunchpad && !DevChat._venueNoteForRender;
 
     content.innerHTML = `
       <!-- The header's CHILDREN are React's (features/dev-chat/session-header
@@ -7644,12 +7700,17 @@ const DevChat = {
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
           <!-- No backticks in the comment below: it lives inside a
                template literal, and one would close it. -->
-          <!-- platform-safe-bar (app.css): this block is the bottom of
-               the screen on a phone, so it carries the home-indicator
-               inset on top of its own p-2 — the strip below the Send row
-               is part of this bar rather than dead space under it. The
-               message scroller above keeps the height that used to be
-               reserved on #app-view.
+          <!-- The whole composer is React's (features/dev-chat/composer
+               .tsx): the venue sentence, the model pickers, the saved
+               drafts, the attach row, the pending strip, the error line, the
+               form and the shortcut hint. The BAR stays here, because its
+               own class run is a decision this template makes.
+
+               platform-safe-bar (app.css): this block is the bottom of the
+               screen on a phone, so it carries the home-indicator inset on
+               top of its own p-2 — the strip below the Send row is part of
+               this bar rather than dead space under it. The message scroller
+               above keeps the height that used to be reserved on #app-view.
 
                In a launchpad the composer is hidden and the venue note is
                usually absent, which would leave a bordered, padded strip
@@ -7660,111 +7721,7 @@ const DevChat = {
                than a CSS override because app.css loses equal-specificity
                conflicts to Tailwind (see AGENTS.md), so the p-2 utility
                would win. -->
-          <div id="dc-composer-bar" class="shrink-0 platform-safe-bar${barEmpty ? '' : ' border-t border-zinc-200 dark:border-zinc-800 p-2'}">
-            <!-- What is left of the venue statement (#1086) once the
-                 control itself moved to the header (#1348): the sentence
-                 explaining a venue you did NOT get. It is a whole
-                 explanation rather than a label, so it stays here where it
-                 can wrap, and the slot collapses (.dc-venue-slot:empty) in
-                 the ordinary case where there is nothing to confess. -->
-            <div id="dc-venue-slot" class="dc-venue-slot">${venueNoteHtml}</div>
-            <!-- #1281: the launchpad stands INSTEAD of the composer when
-                 the work is happening somewhere else — it renders at the
-                 top of the pane now (#1348), and the composer is HIDDEN
-                 here rather than removed: every public/js/** and
-                 chat-helper module below looks its controls up by id
-                 (#dc-input, #dc-form, #dc-budget, #dc-runner…), and a
-                 getElementById that starts returning null would throw on a
-                 route the checks load — a console error fails them. -->
-            <div id="dc-composer-controls"${inLaunchpad ? ' hidden' : ''}>
-            <!-- #1353: ONE status line. It used to be two — the runner and
-                 the meter on top, the model picker and a sentence about
-                 billing on a second row underneath — for two controls and
-                 one number that all answer "what is about to run, and on
-                 whose money". The model select sits in it now, on the left
-                 where the strip starts, and the meter stays right. What
-                 left with the second row: the "⋯" that duplicated the
-                 header's venue door beside two Settings links, the billing
-                 sentence (the meter IS the billing statement), and the
-                 model caption, whose text is on the option you picked. -->
-            <div class="flex flex-wrap items-center gap-2 mb-2">
-              <!-- The venue's own settings. Claude and OpenRouter are
-                   deliberately separate: Claude gets the platform chat-model
-                   picker; OpenRouter gets the exact model pinned to the
-                   whole session and a direct way to reopen the OpenRouter
-                   catalog. Local and web venues have no model setting here,
-                   and OpenRouter's pair is too wide for this strip, so it
-                   keeps its own row below. -->
-              ${claudeVenue ? `
-              <div id="dc-venue-detail" class="dc-venue-detail dc-venue-detail-inline">
-                <label class="text-xs text-zinc-500 dark:text-zinc-400" for="dc-model-select">Chat model:</label>
-                <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
-                  ${modelOptions}
-                </select>
-              </div>` : ''}
-              <!-- #907: where the next coding turn runs. Painted empty and
-                   filled by _renderRunnerControls() from the session status
-                   poll, so a reload lands on the truth rather than on a
-                   guess the page made before it asked. -->
-              <span id="dc-runner" class="dc-runner"></span>
-              <span class="flex-1"></span>
-              <span id="dc-budget" class="text-xs font-mono"></span>
-            </div>
-            ${openRouterVenue ? `
-            <div id="dc-venue-detail" class="dc-venue-detail">
-              <span class="text-xs text-zinc-500 dark:text-zinc-400">OpenRouter model:</span>
-              <span id="dc-openrouter-model" class="dc-openrouter-model" title="${escapeHtml(openRouterModel || 'No model is pinned')}">${escapeHtml(openRouterModel || 'No model is pinned')}</span>
-              <button type="button" id="dc-openrouter-model-change" class="dc-openrouter-model-change" ${DevChat.isStreaming ? 'disabled' : ''}>Change model</button>
-              <div id="dc-agent-note" class="basis-full text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
-            </div>` : ''}
-            <div id="dc-drafts" class="dc-drafts"></div>
-            <!-- #1353: the attach button rides with the suggested replies,
-                 one line above the send row. It sat in the status strip at
-                 the top of the composer, which is the furthest point in the
-                 block from the text box it attaches to; here the three
-                 things you reach for while writing a message — a pill, a
-                 file, the send button — are the three lines nearest your
-                 thumb. The pills scroll horizontally inside their own
-                 element (.dc-quick-replies), so the button is a sibling
-                 rather than a child: a child would scroll away with them. -->
-            <div class="dc-composer-actions">
-              <input type="file" id="dc-file-input" class="hidden" multiple>
-              <button type="button" id="dc-attach-btn" title="Attach files — images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB), or any other file (≤10 MB); up to 4 per message" aria-label="Attach files"
-                class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-              </button>
-              <div id="dc-quick-replies" class="dc-quick-replies"></div>
-            </div>
-            <div id="dc-attachments" class="dc-attach-strip"></div>
-            <div id="dc-attach-error" class="dc-attach-error hidden"></div>
-            <form id="dc-form" class="flex gap-2 items-end">
-              <textarea
-                id="dc-input"
-                rows="1"
-                placeholder="${escapeHtml(DevChat.COMPOSER_PLACEHOLDER)}"
-                autocomplete="off"
-                class="dc-textarea flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none"
-              ></textarea>
-              <!-- #810: starts hidden — the icon only exists while a turn
-                   runs, which is the rarer state, so painting it hidden and
-                   letting _syncSaveDraftBtn reveal it avoids a flash of the
-                   icon on every fresh render of a stopped chat. -->
-              <button type="button" id="dc-save-draft-btn" class="dc-save-draft-btn shrink-0" hidden disabled
-                title="${escapeHtml(DevChat.SAVE_DRAFT_TITLE)}" aria-label="Save as draft">
-                ${DevChat._SAVE_ICON_SVG}
-              </button>
-              <button type="submit" id="dc-send-btn" class="dc-send-btn rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">
-                Send
-              </button>
-            </form>
-            <!-- #920: the idle copy is the render-time default; the
-                 running variant ("…to save as draft") is swapped in by
-                 _syncShortcutHint, which every _syncSaveDraftBtn call
-                 site reaches. Sourced from the constant so the two can
-                 never drift apart. -->
-            <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1 text-right" id="dc-shortcut-hint">${DevChat.SHORTCUT_HINT_SEND}</div>
-            </div>
-          </div>
+          <div id="dc-composer-bar" class="shrink-0 platform-safe-bar${barEmpty ? '' : ' border-t border-zinc-200 dark:border-zinc-800 p-2'}"></div>
         </div>
         <div id="dc-spec-resizer" class="dc-spec-resizer ${viewerOpen ? 'dc-spec-resizer-open' : ''}" role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"></div>
         <div id="dc-spec-viewer" class="dc-spec-viewer ${viewerOpen ? 'dc-spec-viewer-open' : ''}"${viewerStyle}></div>
@@ -7777,6 +7734,11 @@ const DevChat = {
     // `attachScreenFx` measures the strip. The store flushes synchronously,
     // so both find what they are looking for on the next line.
     DevChat._renderSessionHeader();
+    // The composer BEFORE the transcript: `_setupAttachments`, `_restoreDraft`
+    // and the form's submit listener below all resolve controls inside it by
+    // id, and the store flushes synchronously, so they find them.
+    DevChat._composerBusy = false;
+    DevChat._renderComposer();
     DevChat.renderMessages();
     DevChat._renderQuickReplies();
     DevChat._wireQuickReplies();
@@ -7843,26 +7805,11 @@ const DevChat = {
     // exactly as it always did.
     DevChat._maybeOpenShotVenueSheet();
 
-    const openRouterModelChange = document.getElementById('dc-openrouter-model-change');
-    if (openRouterModelChange) {
-      openRouterModelChange.disabled = DevChat.isStreaming;
-      openRouterModelChange.addEventListener('click', () => {
-        DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
-      });
-    }
-
-    // Null unless this session is using Usernode · Claude. OpenRouter has
-    // one model for both chat and coding, changed through the catalog above.
-    const modelSelect = document.getElementById('dc-model-select');
-    if (modelSelect) {
-      modelSelect.addEventListener('change', (e) => {
-        DevChat.selectedModel = e.target.value;
-        // Persist across refreshes + new sessions (fixes #31). Wrapped
-        // in try/catch so private-mode browsers or quota errors don't
-        // break the selector.
-        try { localStorage.setItem(MODEL_STORAGE_KEY, e.target.value); } catch {}
-      });
-    }
+    // The chat-model picker's `change` and the OpenRouter row's "Change
+    // model" were two addEventListener calls here, re-bound on every render
+    // because the elements were new each time. They are the component's
+    // onChange / onClick now, dispatching into `_onModelPicked` and
+    // `_onOpenRouterModelChange` by name.
 
     // `#dc-pr-header-link` and `#dc-back` are the header component's too —
     // `revealPrCard()` and `leaveSession()` above are what they call.
@@ -8119,16 +8066,14 @@ const DevChat = {
     DevChat._renderAttachStrip();
   },
 
+  // The line under the pending strip. It wrote `textContent` and toggled
+  // `hidden` on the element; both are one field of the composer model, which
+  // is also what makes the message survive a repaint — the old one did not.
+  _attachError: null,
+
   _setAttachError(msg) {
-    const el = document.getElementById('dc-attach-error');
-    if (!el) return;
-    if (msg) {
-      el.textContent = msg;
-      el.classList.remove('hidden');
-    } else {
-      el.textContent = '';
-      el.classList.add('hidden');
-    }
+    DevChat._attachError = msg || null;
+    DevChat._publishComposer();
   },
 
   _humanSize(bytes) {
@@ -8166,13 +8111,12 @@ const DevChat = {
   // `dc-attach-strip-active` (the class that gives the strip its height and
   // border) — and only its ROWS are React's.
   _renderAttachStrip() {
-    const strip = document.getElementById('dc-attachments');
-    if (!strip) return;
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react) return;
-    react.mountAttachStrip(strip);
-    strip.classList.toggle('dc-attach-strip-active', DevChat.pendingAttachments.length > 0);
+    // The strip ELEMENT and its `dc-attach-strip-active` are the composer's
+    // now: it renders `<PendingStrip>`, the shared file's export that owns
+    // the element, rather than portalling rows into a host this wrote.
     react.publishAttachStrip({
       items: DevChat.pendingAttachments.map((a, i) => ({
         key: a.id || `p${i}:${a.filename}`,
@@ -8577,11 +8521,7 @@ const DevChat = {
   // under) so the `?shot=busy-drafts` capture shows the running copy;
   // the keystroke's real routing reads the honest isStreaming flag.
   _syncShortcutHint() {
-    const hint = document.getElementById('dc-shortcut-hint');
-    if (!hint) return;
-    hint.innerHTML = DevChat._chatBusyForPaint()
-      ? DevChat.SHORTCUT_HINT_SAVE
-      : DevChat.SHORTCUT_HINT_SEND;
+    DevChat._publishComposer();
   },
 
   // Show the save icon only while a TURN IS RUNNING (#810 — the inverse of
@@ -8605,65 +8545,59 @@ const DevChat = {
   // its click listener is bound once per render behind `_sdWired`, so a
   // removed-and-recreated button would come back unwired.
   _syncSaveDraftBtn() {
-    // Piggy-backs on this function's call sites (every streaming
-    // transition, every keystroke in the box, every render) rather than
-    // adding listeners of its own — the hint flips on exactly the same
-    // events the save icon does.
-    DevChat._syncShortcutHint();
-    const btn = document.getElementById('dc-save-draft-btn');
-    if (!btn) return;
-    const busy = DevChat._chatBusyForPaint();
-    if (!busy) {
-      btn.hidden = true;
-      btn.disabled = true;
-      return;
+    // One publish for both: the hint under the box flips on exactly the
+    // events the save icon does, which is why this function was the hint's
+    // only caller. `_saveDraftView` is where the rule lives now.
+    DevChat._publishComposer();
+  },
+
+  /**
+   * #810's save icon, as data.
+   *
+   * The rule follows the send button: while the chat is stopped the user can
+   * just SEND what they typed, so a "save it for later" control is noise; the
+   * moment the button flips to Stop, sending is impossible and parking the
+   * text as a draft is the only thing to do with it. So the icon is present
+   * for exactly as long as the stop sign is.
+   *
+   * `hasText` is read off the LIVE field, which is the one thing here that
+   * cannot come from a model: the textarea is uncontrolled (the draft
+   * restore and the auto-grow both write it directly), so its value lives in
+   * the DOM and nowhere else.
+   */
+  _saveDraftView() {
+    if (!DevChat._chatBusyForPaint()) {
+      return { hidden: true, disabled: true, title: DevChat.SAVE_DRAFT_TITLE };
     }
-    btn.hidden = false;
     const input = document.getElementById('dc-input');
     const hasText = !!(input && input.value.trim());
-    btn.disabled = !hasText;
-    btn.title = hasText
-      ? DevChat.SAVE_DRAFT_TITLE
-      : 'Type something first, then save it as a draft for later';
+    return {
+      hidden: false,
+      disabled: !hasText,
+      title: hasText
+        ? DevChat.SAVE_DRAFT_TITLE
+        : 'Type something first, then save it as a draft for later',
+    };
   },
 
   _renderSavedDrafts() {
-    const box = document.getElementById('dc-drafts');
-    if (!box) return;
+    // The rows, the head and the `dc-drafts-active` class were one innerHTML
+    // assignment; they are three fields of the composer model now. The
+    // delegated click below is unchanged — it reads `data-draft-action` off
+    // whichever button was hit and the row's `data-draft-id`.
+    DevChat._publishComposer();
+  },
+
+  /** The saved-drafts list, as data. `busy` disables each row's Send. */
+  _savedDraftsView() {
     const session = DevChat.currentSession;
     const drafts = session ? DevChat._getSavedDrafts(session.id) : [];
-    if (!drafts.length) {
-      box.innerHTML = '';
-      box.classList.remove('dc-drafts-active');
-      return;
-    }
-    // Paint-only predicate so `?shot=busy-drafts` renders the mid-turn
-    // rows; _sendSavedDraft still refuses on the real isStreaming flag.
-    const busy = DevChat._chatBusyForPaint();
-    const sendAttrs = busy
-      ? ' disabled title="Claude is still working — you can send this when the turn finishes"'
-      : ' title="Send this draft now"';
-    box.innerHTML = `
-      <div class="dc-drafts-head">
-        <span>Saved drafts (${drafts.length}) <span class="dc-drafts-hint">· on all your devices</span></span>
-        ${busy ? '<span class="dc-drafts-hint">sending unlocks when Claude finishes</span>' : ''}
-      </div>
-      ${drafts.map((d) => `
-        <div class="dc-draft-row" data-draft-id="${escapeHtml(d.id)}">
-          <span class="dc-draft-text" title="${escapeHtml(d.text)}">${escapeHtml(d.text)}</span>
-          <span class="dc-draft-actions">
-            <button type="button" class="dc-draft-btn dc-draft-send" data-draft-action="send" aria-label="Send this draft"${sendAttrs}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
-            </button>
-            <button type="button" class="dc-draft-btn dc-draft-edit" data-draft-action="edit" aria-label="Edit this draft" title="Put this draft back in the box to edit">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
-            </button>
-            <button type="button" class="dc-draft-btn dc-draft-trash" data-draft-action="trash" aria-label="Delete this draft" title="Delete this draft">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-            </button>
-          </span>
-        </div>`).join('')}`;
-    box.classList.add('dc-drafts-active');
+    return {
+      rows: drafts.map((d) => ({ id: String(d.id), text: d.text })),
+      // Paint-only predicate so `?shot=busy-drafts` renders the mid-turn
+      // rows; `_sendSavedDraft` still refuses on the real isStreaming flag.
+      busy: DevChat._chatBusyForPaint(),
+    };
   },
 
   // Click delegation, bound once per renderChatView (the container node is

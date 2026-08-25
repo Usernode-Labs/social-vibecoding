@@ -41,3 +41,14 @@ export function BudgetPillView({ title, parts }: BudgetPillState) {
 export function BudgetPill() {
   return <BudgetPillView {...useStoreState<BudgetPillState>(budgetPillStore)} />;
 }
+
+/**
+ * The meter WITH its host span, for a caller whose element is React's.
+ *
+ * `#dc-budget` renders whether or not there are figures to show: a dapp.json
+ * check selects it as `#dc-venue-detail ~ #dc-budget`, so its POSITION in the
+ * status line is part of the contract, and `refreshBudget` finds it by id.
+ */
+export function BudgetPillBar() {
+  return <span id="dc-budget" className="text-xs font-mono"><BudgetPill /></span>;
+}

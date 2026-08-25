@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils';
  * in the order those strings were written in. Every primary button in the
  * shell is written in exactly this order:
  *
- *   [layout] [radius + surface] [disabled] [padding + weight] [ink]
+ *   [lead] [layout] [radius + surface] [disabled] [padding + weight] [ink]
  *   shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm
  *   font-medium text-white transition-colors
  *
@@ -66,6 +66,18 @@ import { cn } from '@/lib/utils';
  */
 const buttonVariants = cva('', {
   variants: {
+    /**
+     * A styling class from app.css that LEADS the string, ahead of everything
+     * else this table draws — the same group, for the same reason, that
+     * input.tsx's `lead` carries. It is a variant rather than a `className`
+     * because className lands LAST and this does not.
+     *
+     * `devSend` is `.dc-send-btn`, whose whole rule is a 64px min-width, a
+     * 38px height and a centring flex — the send button has to keep its box
+     * while its label swaps between a word, a square and a spinner. Call
+     * site: features/dev-chat/composer.tsx.
+     */
+    lead: { devSend: 'dc-send-btn', none: '' },
     /**
      * Utilities the shell writes BEFORE the box. Every value here leads a
      * real class string; there is no combinatorial expansion, only the pairs
@@ -231,6 +243,7 @@ const buttonVariants = cva('', {
     },
   },
   defaultVariants: {
+    lead: 'none',
     layout: 'none',
     variant: 'default',
     disabledStyle: 'off',
@@ -257,13 +270,13 @@ export interface ButtonProps
 // call site, which a like-for-like conversion does not do — `type` simply
 // rides along in `props`.
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, layout, variant, disabledStyle, size, ink, disabled, ...props }, ref) => (
+  ({ className, lead, layout, variant, disabledStyle, size, ink, disabled, ...props }, ref) => (
     <button
       ref={ref}
       {...props}
       disabled={disabled}
       className={cn(
-        buttonVariants({ layout, variant, disabledStyle, size, ink }),
+        buttonVariants({ lead, layout, variant, disabledStyle, size, ink }),
         className,
       )}
     />
