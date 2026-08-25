@@ -119,11 +119,20 @@ export function HomeScreen() {
           input must keep its focus/caret through those re-renders. Wired
           once by Home._wireSearch().
       */}
-      <div id="home-search-bar" data-revealed="false" className="bg-white dark:bg-zinc-950">
+      {/*
+          NO background of its own. It carried `bg-white dark:bg-zinc-950`,
+          and in light mode that painted a white band across a #eaeaea page —
+          a slab around the input rather than a field sitting on the ground.
+          The bar is a real scroll-space child and never sticky, so nothing
+          passes underneath it and there is nothing for an opaque fill to
+          hide. Letting the page ground show through is both the correct
+          colour and the one that cannot drift if the ground ever moves.
+      */}
+      <div id="home-search-bar" data-revealed="false">
         {/*
-            The bar's BACKGROUND stays full-bleed; only its content sits in
-            the 1024px column, and the px-3 gutter lives here (not on the
-            bar) so this column's content edges match #home-body's exactly.
+            The bar's box stays full-bleed; only its content sits in the
+            1024px column, and the px-3 gutter lives here (not on the bar) so
+            this column's content edges match #home-body's exactly.
         */}
         <div className="home-column px-3 pt-3 pb-2">
           <div className="relative max-w-xl">

@@ -254,11 +254,11 @@ test('the light and dark palettes declare the same variables', () => {
   // Two documented exceptions, and the point of listing them here is that a
   // THIRD one has to be argued for rather than merely omitted.
   const THEME_INVARIANT = new Set([
-    // An app's identity tint is its ICON, and an icon does not invert with the
-    // page — see the header of frontend/@/components/ui/icon-tile.tsx. The ink
-    // on them is pinned near-black in both themes for the same reason.
-    '--tile-lime', '--tile-sky', '--tile-amber', '--tile-rose', '--tile-lilac',
-    '--tile-sand', '--tile-ink',
+    // The seven `--tile-*` app-identity tints used to sit here, exempt because
+    // an icon does not invert with the page. They are gone — the per-app tint
+    // was removed and the tile is one neutral face now — so the exemption went
+    // with them rather than outliving its subject.
+    //
     // Layout insets (env(safe-area-inset-*)), not colours.
     '--platform-safe-top', '--platform-safe-bottom',
   ]);

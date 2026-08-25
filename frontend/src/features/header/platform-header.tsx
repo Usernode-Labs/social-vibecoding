@@ -142,7 +142,7 @@ export function PlatformHeader() {
           id="header-title"
           className={"flex-1 min-w-0 text-lg font-bold pointer-events-none truncate\n               text-left"}
         >
-          dApps
+          Social Vibecoding
         </h1>
         <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center">
           {/*
@@ -239,7 +239,15 @@ export function PlatformHeader() {
             aria-label="Open menu"
             aria-expanded="false"
           >
-            <Bars3Icon className="w-6 h-6" />
+            {/*
+                16px, not 24px. The disc is 28px — the header content row's
+                ceiling, so it cannot grow — and a 24px glyph left 2px of ring
+                on each side, which reads as a bar crammed into a circle rather
+                than as a control on a disc. 16px is also exactly the glyph
+                size its neighbour uses (#improve-btn's lightbulb at the same
+                h-7), so the two controls now share one optical weight.
+            */}
+            <Bars3Icon className="w-4 h-4" />
             {/*
                 The green "an AI turn or a merge step is in flight for YOU"
                 badge, moved here from the retired work cog. It keeps its id

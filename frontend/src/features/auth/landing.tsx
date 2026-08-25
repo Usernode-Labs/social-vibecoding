@@ -34,7 +34,6 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
-import { tintFor } from '@/components/ui/icon-tile';
 
 import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
 
@@ -162,7 +161,6 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
         {app.icon_url ? (
           <div
             className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
-            data-tint={tintFor(app.slug || app.name || "")}
             data-icon="image"
           >
             <img
@@ -176,7 +174,6 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
         ) : app.icon_emoji ? (
           <div
             className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
-            data-tint={tintFor(app.slug || app.name || "")}
             data-icon="emoji"
           >
             <span className="text-3xl leading-none" aria-hidden="true">
@@ -186,7 +183,6 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
         ) : (
           <div
             className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
-            data-tint={tintFor(app.slug || app.name || "")}
             data-icon="letter"
           >
             {(app.name || '?').charAt(0).toUpperCase()}

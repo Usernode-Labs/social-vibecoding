@@ -57,43 +57,55 @@ test('the feed wraps each entry, and the card builders stay shared', () => {
     'and every one of them is pushed as an ordinary card row');
 });
 
-test('the de-carding is scoped to the feed, so the kanban keeps its cards', () => {
-  // Every rule that strips chrome must be under #dev-feed. A bare
-  // `.gc-vote-item { border: 0 }` would flatten the board too.
-  const stripRules = CSS.match(/^[^\n{]*\.gc-vote-item[^{]*\{[^}]*border:\s*0[^}]*\}/gm) || [];
-  assert.ok(stripRules.length > 0, 'the card chrome is stripped somewhere');
-  for (const rule of stripRules) {
-    assert.match(rule, /#dev-feed/,
-      `chrome-stripping rule is not scoped to the feed: ${rule.slice(0, 80)}`);
+test('the feed draws CARDS, and nothing strips the shared tile treatment', () => {
+  // The feed used to de-card its rows — `border: 0; border-radius: 0;
+  // background: transparent` — to read as a stream. It was removed: the same
+  // component renders `v.block` OUTSIDE .dev-feed-entry, so those rows kept
+  // their card face and sat directly above the flattened ones, and one list
+  // in two visual languages is what a reader actually sees. The de-carded
+  // half also gave up the white surface the language separates figure from
+  // ground with.
+  //
+  // So no rule anywhere may strip the row's fill or its corner. The kanban
+  // reads the SAME class, which is why this was scoped to #dev-feed in the
+  // first place — a bare `.gc-vote-item { border: 0 }` would flatten the
+  // board too, and now there is no scoped version either.
+  const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  const strip = rules.match(/[^\n{]*\.gc-vote-item[^{]*\{[^}]*\}/g) || [];
+  for (const rule of strip) {
+    assert.doesNotMatch(rule, /border-radius:\s*0/, `a rule still flattens the corner: ${rule.slice(0, 70)}`);
+    assert.doesNotMatch(rule, /background:\s*transparent/, `a rule still clears the fill: ${rule.slice(0, 70)}`);
   }
-  // And the shared class itself still carries the tile treatment, because the
-  // board reads it. Since the widget language landed (#1191) the tile is drawn
-  // by SURFACE rather than by hairline — a white card on the grey page ground,
-  // with the corner carrying the shape the border used to. The feed's strip
-  // rule above is unaffected: it zeroes `border-radius` and clears `background`
-  // as well as the border, so it still flattens the card into a stream row.
+  // And the shared class itself carries the tile treatment, because both the
+  // board and the feed read it. Since the widget language landed (#1191) the
+  // tile is drawn by SURFACE rather than by hairline — a white card on the
+  // grey page ground, with the corner carrying the shape the border used to.
   assert.match(APP_VIEW, /DEV_CARD_CLS: '[^']*rounded-2xl[^']*bg-white[^']*'/,
-    'DEV_CARD_CLS still draws a distinct tile for the kanban');
+    'DEV_CARD_CLS draws the tile both surfaces use');
+  // Cards need a gap where the stream had a separator.
+  assert.match(CSS, /#dev-feed \.dev-feed-entry \+ \.dev-feed-entry \{[^}]*margin-top:\s*0\.5rem/,
+    'entries are spaced like the block above them (space-y-2)');
+  assert.doesNotMatch(rules, /#dev-feed \.dev-feed-entry \{[^}]*margin-left:\s*-0\.75rem/,
+    'entries no longer pull out through the body gutter');
 });
 
-test('the merge bar runs the full width of the column', () => {
-  // "Full-length" is the whole point: the row pulls back out through
-  // #dev-body's gutter so its edge and its separator reach the container
-  // edge, instead of floating with a gap at each end.
-  assert.match(CSS, /#dev-feed \.dev-feed-entry \{[^}]*margin-left:\s*-0\.75rem/,
-    'entries cancel the body gutter to go full-bleed');
-
+test('a landed change still reads as a marker, as a tinted card', () => {
   // Completed work is marked by the CARD BUILDER (both kinds), so the feed
-  // can draw it as a bar without knowing which builder produced the row.
+  // can draw it differently without knowing which builder produced the row.
   const marked = APP_VIEW.match(/'data-completed': '1'/g) || [];
   assert.equal(marked.length, 2,
     'both completed builders — merged PR and applied issue-close — are marked');
 
-  // …and the bar itself: an emerald edge along its length, tighter than a row.
+  // The emerald edge and the tint survive the change from band to card; the
+  // edge follows the corner now instead of running flush to the column edge.
   assert.match(CSS, /\[data-completed\]\s*\{[^}]*border-left:\s*3px solid/,
-    'the completed row carries a full-length edge');
+    'the completed row carries an emerald edge');
   assert.match(CSS, /\[data-completed\]\s*\{[^}]*background:/,
     'and a tint that separates it from the in-flight entries');
+  // The edge eats 3px, so the padding gives it back — otherwise a merged
+  // row's text sits 3px right of every row above it.
+  assert.match(CSS, /\[data-completed\]\s*\{[^}]*padding-left:\s*calc\(0\.875rem - 3px\)/,
+    'content stays aligned with the un-edged rows');
 });
 
 test('inline comments load lazily, per row, off the existing endpoint', () => {

@@ -29,7 +29,6 @@
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { tintFor } from '@/components/ui/icon-tile';
 import { ArrowRightShortIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
@@ -179,7 +178,6 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
       <div className="flex items-start gap-4">
         <div
           className="app-icon-tile w-16 h-16 shrink-0 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-2xl"
-          data-tint={tintFor(view.slug)}
           data-icon={appIconKind(view.app)}
         >
           <AppIconContent app={view.app} />

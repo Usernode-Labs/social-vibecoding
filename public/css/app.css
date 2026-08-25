@@ -35,31 +35,6 @@
   /* The agent bubble's surface — see the .dark counterpart. */
   --bubble-bg: #ffffff;
 
-  /* ── App identity tints (the widget language) ──────────────────────
-     An app's tile colour. DELIBERATELY OUTSIDE the zinc/violet ramps:
-     those two are the shell's neutral and its accent, and an app's
-     identity is neither — folding six shades into the accent ramp would
-     make every one of them read as a state.
-
-     Declared here rather than in tailwind.config.js because BOTH systems
-     need them: `.app-icon-tile[data-tint]` below styles the launcher
-     tiles that app.css already owns, and the cva table in
-     frontend/@/components/ui/icon-tile.tsx reads the same variables
-     through `bg-[var(--tile-…)]`. One source, two readers, no drift.
-
-     Eyedropped from the design screenshots and expected to be corrected
-     against the real source tokens — a value edit here, nothing else.
-
-     NOT redefined under .dark on purpose: a tinted tile is an app's
-     ICON, and an icon does not invert with the page. That is also why
-     the glyph on it is pinned near-black in both themes. */
-  --tile-lime: #c5e86c;
-  --tile-sky: #bfe9f5;
-  --tile-amber: #fcefc0;
-  --tile-rose: #f8c9cd;
-  --tile-lilac: #d9d2f9;
-  --tile-sand: #ecdcc4;
-  --tile-ink: #0a0a0a;
 
   /* ── Safe-area tokens ────────────────────────────────────
      THE single source of truth for the shell's own safe-area
@@ -1046,44 +1021,26 @@ html, body {
   border: 1px solid var(--border-light);
   color: var(--text-secondary);
 }
-/* A tile carrying an app's identity tint: the widget language's launcher
-   face. The border goes — the language separates by figure/ground, and a
-   hairline around a filled tile reads as a frame around an icon rather
-   than as the icon itself. The glyph is pinned near-black in BOTH themes
-   for the same reason the tints are not redefined under .dark above.
-   An image icon covers the whole face, so its tint never shows; the
-   attribute is still set, so a slow-loading icon shows the app's colour
-   rather than an empty box. */
-.app-icon-tile[data-tint] {
-  border-color: transparent;
-  color: var(--tile-ink);
-}
-.app-icon-tile[data-tint="lime"]  { background-color: var(--tile-lime); }
-.app-icon-tile[data-tint="sky"]   { background-color: var(--tile-sky); }
-.app-icon-tile[data-tint="amber"] { background-color: var(--tile-amber); }
-.app-icon-tile[data-tint="rose"]  { background-color: var(--tile-rose); }
-.app-icon-tile[data-tint="lilac"] { background-color: var(--tile-lilac); }
-.app-icon-tile[data-tint="sand"]  { background-color: var(--tile-sand); }
+/* THE PER-APP IDENTITY TINT IS GONE. The reskin hashed each app's slug into
+   one of six pastels and painted the tile with it (`--tile-lime` and friends,
+   `.app-icon-tile[data-tint="…"]`). A launcher of six unrelated pastels reads
+   as six unrelated things rather than as one shelf, and an app's icon is its
+   own artwork — the tile should hold it, not compete with it. One neutral
+   face everywhere, which is what the rule above already draws.
+
+   Nothing sets `data-tint` any more, so the `:not([data-tint])` guards that
+   protected the two rules below from it are gone with it: the specificity
+   trap they described — both selectors at (0,2,0), source order deciding —
+   cannot recur without the attribute. */
 /* The first-letter fallback specifically — one step fainter than the base
    glyph colour so a name initial reads as a quiet placeholder rather than as
    content. Tiles tag their kind with data-icon, so this never touches emoji
    tiles (whose colour glyphs ignore `color` anyway) or image tiles. Both modes
-   step to the same faint token.
-
-   Scoped to :not([data-tint]) since the widget language landed: on a tinted
-   face the near-black ink above is what reads, and the faint token on a pastel
-   would be close to invisible. */
-.app-icon-tile[data-icon="letter"]:not([data-tint]) {
+   step to the same faint token. */
+.app-icon-tile[data-icon="letter"] {
   color: var(--text-faint);
 }
-/* :not([data-tint]) is load-bearing. This rule and
-   `.app-icon-tile[data-tint="…"]` are both (0,2,0), so at equal specificity
-   source order decides — and this one is later, which meant every tinted
-   launcher tile lost its colour in dark mode AND kept the near-black glyph
-   the tint exists to carry, leaving the letter almost invisible on a dark
-   face. A tinted tile is an app's icon and does not follow the page in either
-   direction. */
-.dark .app-icon-tile:not([data-tint]) {
+.dark .app-icon-tile {
   /* --bg-primary is near-black in dark mode; one step up so the tile
      reads as a surface sitting on the page rather than a hole in it. */
   background-color: var(--bg-secondary);
@@ -7823,49 +7780,35 @@ body.is-offline [data-offline-disabled] {
    renderer draw a tile on the board and a stream row here with no branch
    in the JS and no second set of markup to keep in step.
 
-   THE ROWS ARE FULL-BLEED. #dev-body carries `px-3`, so each row pulls
-   itself back out to the container edge and re-applies the gutter as its
-   own padding. That is what makes a separator run the full width of the
-   column instead of floating with a gap at each end — the thing that most
-   makes a stack of tiles read as a stream. */
-#dev-feed .dev-feed-entry {
-  margin-left: -0.75rem;   /* cancel #dev-body's px-3 … */
-  margin-right: -0.75rem;
-  border-bottom: 1px solid rgb(228 228 231); /* zinc-200 */
-}
-.dark #dev-feed .dev-feed-entry {
-  border-bottom-color: rgb(39 39 42); /* zinc-800 */
-}
-#dev-feed .dev-feed-entry:last-child { border-bottom: 0; }
+   THE ROWS ARE CARDS, like every other row on this screen.
 
-/* The card chrome comes off: no border, no radius, no fill. The row keeps
-   its own padding (…re-applying the gutter the wrapper just cancelled) so
-   the content still lines up with everything else in the column. */
-#dev-feed .dev-feed-entry > .gc-vote-item {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding-left: 0.75rem;
-  padding-right: 0.75rem;
-}
-#dev-feed .dev-feed-entry > .gc-vote-item:hover {
-  background: rgb(250 250 250); /* zinc-50 — a row highlight, not a border */
-}
-.dark #dev-feed .dev-feed-entry > .gc-vote-item:hover {
-  background: rgb(24 24 27); /* zinc-900 */
+   They were full-bleed: the wrapper cancelled #dev-body's `px-3` so a
+   separator could run edge to edge, and the three rules below stripped the
+   row's border, radius and fill — on the argument that a stack of tiles
+   reads better as a stream. On screen it did not. dev-feed.tsx renders
+   `v.block` (the "Yours" section) OUTSIDE these wrappers, so those rows kept
+   their card face and appeared directly above a de-carded stream: one list,
+   two visual languages, a few pixels apart. The de-carded half also gave up
+   the white surface this language separates figure from ground with, which
+   on the #eaeaea page ground left the rows reading as bare text.
+
+   So the utilities the row already carries — `rounded-2xl bg-white
+   dark:bg-zinc-900 px-3.5 py-3 hover:bg-zinc-50` — now draw it, unopposed,
+   and the only thing left here is the gap between cards. 0.5rem is
+   `space-y-2`, the same gap the block above uses. */
+#dev-feed .dev-feed-entry + .dev-feed-entry {
+  margin-top: 0.5rem;
 }
 
-/* THE MERGE BAR. A landed change is not another thing to read — it is a
-   marker that the stream crossed a line. So it is a slim full-width band
-   rather than a row: tinted, quieter type, and an emerald edge running its
-   whole length, which is the "full-length" part. Sitting flush against its
-   neighbours (the wrapper's negative margins) is what makes it a bar. */
+/* A LANDED CHANGE still reads differently — it is a marker that the stream
+   crossed a line, not another thing to read — but as a tinted CARD now
+   rather than a full-bleed band. The emerald edge stays and follows the
+   card's corner; the padding compensates for its 3px so the content of a
+   merged row still lines up with the row above it. */
 #dev-feed .dev-feed-entry > .gc-vote-item[data-completed] {
   background: rgb(236 253 245); /* emerald-50 */
   border-left: 3px solid rgb(16 185 129); /* emerald-500 */
-  padding-top: 0.4rem;
-  padding-bottom: 0.4rem;
-  padding-left: calc(0.75rem - 3px);
+  padding-left: calc(0.875rem - 3px); /* px-3.5, less the edge */
 }
 .dark #dev-feed .dev-feed-entry > .gc-vote-item[data-completed] {
   background: rgba(6, 78, 59, 0.28); /* emerald-900 at low alpha */

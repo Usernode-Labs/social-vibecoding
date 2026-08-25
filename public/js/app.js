@@ -2326,7 +2326,7 @@ const App = {
           // Without this the title can be stuck on a previous app's
           // name if document.title was set elsewhere (e.g. a stale
           // value persisted across a Flutter WebView session).
-          App.setHeaderTitle('dApps');
+          App.setHeaderTitle('Social Vibecoding');
           Home.load();
         }
         return;
@@ -2342,7 +2342,7 @@ const App = {
           || App._inAdmin || App._inSettings || App._inBrowse || App._inMessages) {
           App.navigateHome();
         } else {
-          App.setHeaderTitle('dApps');
+          App.setHeaderTitle('Social Vibecoding');
           Home.load();
         }
         App.showCreateModal();
@@ -2596,7 +2596,7 @@ const App = {
         // Unrecognised hash: fall back to the home feed. The screen swap
         // is explicit here because the _exitX helpers are state-only
         // (#979) — without it the screen we were on would stay painted
-        // under a "dApps" title.
+        // under the platform's own name.
         App.setChromeless(false);
         if (App._inLeaderboard) App._exitLeaderboard();
         if (App._inProfile) App._exitProfile();
@@ -2606,7 +2606,7 @@ const App = {
         if (App._inBrowse) App._exitBrowse();
         App._showOnlyScreen('home-screen');
         document.getElementById('back-btn').classList.add('hidden');
-        App.setHeaderTitle('dApps');
+        App.setHeaderTitle('Social Vibecoding');
         // Home has no Improve target: clear whatever screen published one, or
         // the header button would outlive the app it was about (the lingering
         // Improve-button bug, in its unrecognised-hash variant).
@@ -3531,7 +3531,7 @@ const App = {
     // "whiteboard-abc123" — which the Flutter WebView's AppBar then
     // mirrors via document.title. Leaving the previous header title
     // in place during the brief /api/apps/:slug round-trip is much
-    // better UX: from home you see "dApps" briefly, then "Whiteboard";
+    // better UX: from home you see "Social Vibecoding" briefly, then "Whiteboard";
     // from app A to app B you see "App A" briefly, then "App B". The
     // user never sees the raw slug.
     //
@@ -3624,7 +3624,7 @@ const App = {
       // and none on a cold boot at `/`. Home.render() is what makes it
       // consistent; see Home.publishImproveTarget.
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle('dApps');
+      App.setHeaderTitle('Social Vibecoding');
     }, {
       type: App._entryTransition('zoom-out', av),
       el: av,
@@ -3682,7 +3682,7 @@ const App = {
 
   // Mirror the visible header text into both the on-screen <h1> and
   // the browser tab title so the OS/window surface reflects the
-  // current screen (home → "dApps", app open → app display name,
+  // current screen (home → "Social Vibecoding", app open → app display name,
   // leaderboard → "Kudos leaderboard"). The browser tab title is
   // also used by Notifications._updateTitle() to prepend an unread
   // count "(N) "; we re-invoke it here so a navigation that happens

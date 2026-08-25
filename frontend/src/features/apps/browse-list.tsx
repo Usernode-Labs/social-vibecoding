@@ -27,7 +27,6 @@ import type { ReactNode } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
 import { ListRow } from '@/components/ui/grouped-list';
-import { tintFor } from '@/components/ui/icon-tile';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
@@ -105,7 +104,6 @@ function Row({ view }: { view: RowView }): ReactNode {
           // app that is a lilac tile on Home was a blank white square here,
           // which is the one thing a launcher icon must never be: different
           // per screen. app.css turns the attribute into the colour.
-          data-tint={tintFor(view.slug)}
         >
           <AppIconContent app={view.app} />
         </div>

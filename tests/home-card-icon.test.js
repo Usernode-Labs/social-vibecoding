@@ -195,18 +195,26 @@ test('app.css steps the letter glyph down to the faint token', () => {
     path.join(__dirname, '..', 'public', 'css', 'app.css'),
     'utf8'
   );
-  // Scoped to :not([data-tint]) since the widget language landed: an untinted
-  // tile still steps its letter down, but on an app's identity tint the
-  // near-black ink is what reads and the faint token would be near-invisible.
   assert.match(
     css,
-    /\.app-icon-tile\[data-icon="letter"\]:not\(\[data-tint\]\)\s*\{\s*color:\s*var\(--text-faint\);/,
-    'untinted letter tiles use --text-faint, one step fainter than the base glyph'
+    /\.app-icon-tile\[data-icon="letter"\]\s*\{\s*color:\s*var\(--text-faint\);/,
+    'letter tiles use --text-faint, one step fainter than the base glyph'
   );
   // The base tile colour stays where it is — only the letter steps down.
   assert.match(css, /\.app-icon-tile \{[^}]*color: var\(--text-secondary\);/);
-  // And a tinted face drops the hairline and pins the glyph, in both themes.
-  assert.match(css, /\.app-icon-tile\[data-tint\]\s*\{[^}]*color: var\(--tile-ink\);/);
+  // THE PER-APP TINT IS GONE, and this is the guard that keeps it gone: it
+  // was six slug-hashed pastels painting the tile face, and a launcher of six
+  // unrelated pastels reads as six unrelated things rather than as one shelf.
+  // Nothing may reintroduce the attribute or the variables it read.
+  //
+  // Comments are stripped first, deliberately: the block that records WHY the
+  // tint went names `[data-tint]` several times, and a guard that cannot tell
+  // a selector from the prose explaining its absence would fire on its own
+  // documentation.
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(rules, /\[data-tint[\]=]/, 'no rule selects on data-tint');
+  assert.doesNotMatch(rules, /--tile-(lime|sky|amber|rose|lilac|sand|ink)\s*:/,
+    'the tint variables are not declared');
 });
 
 // --border-light is inverted between the palettes (fainter than
@@ -233,15 +241,10 @@ test('the tile hairline steps down to --border in dark mode', () => {
     /\.widget-tile \.app-icon-tile\s*\{/,
     'strip tiles take the shared face, not a scoped one'
   );
-  // Scoped :not([data-tint]) since the widget language landed. This rule and
-  // `.app-icon-tile[data-tint="…"]` are both (0,2,0), and this one is later —
-  // unscoped it won, so every tinted launcher tile lost its colour in dark
-  // mode while keeping the near-black glyph the tint exists to carry. A
-  // tinted tile is an app's icon and follows neither theme.
   assert.match(
     css,
-    /\.dark \.app-icon-tile:not\(\[data-tint\]\) \{[^}]*border-color: var\(--border\);/,
-    'dark mode steps the UNTINTED hairline down to --border'
+    /\.dark \.app-icon-tile \{[^}]*border-color: var\(--border\);/,
+    'dark mode steps the hairline down to --border'
   );
 });
 

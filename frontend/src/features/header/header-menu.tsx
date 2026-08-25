@@ -178,23 +178,20 @@ export function HeaderMenu() {
           </button>
         </div>
         {/*
-            Panel body — ONE scroller, laid out as a COLUMN FLEX with its two
-            blocks anchored to OPPOSITE ENDS (#1367): notifications at the top,
-            the navigation rows at the bottom via `mt-auto`. The free space
-            between them belongs to neither, so a viewer with three
-            notifications gets their nav rows under their thumb instead of
-            stranded halfway up a tall panel.
+            Panel body — a COLUMN FLEX that does NOT scroll. The notifications
+            block above takes every pixel left over and scrolls inside itself;
+            the navigation rows below are `shrink-0`, so they are on screen at
+            every viewport height and every list length.
 
-            The column flex is the same one the retired #drawer-footer needed,
-            and it degrades the same way: when the two blocks together overflow
-            (a short viewport, an expanded list) there is no free space to
-            collect and `mt-auto` contributes nothing, so the rows simply sit
-            at the end of the scroll. One rule, both behaviours, no
-            measurement. On touch the panel fills a full-height kit side drawer
-            (.platform-panel-adopted), so the bottom really is the bottom of
-            the screen there.
+            It used to be the one scroller, with the two blocks anchored to
+            opposite ends by `mt-auto`, which is fine right up until the list
+            is long: then there is no free space, `mt-auto` contributes
+            nothing, and Profile / Messages / Settings / Admin sit below the
+            fold behind a scroll nobody expects in a menu. The rows are the
+            reason the drawer opens. Giving the scroll to the list instead
+            costs one `flex-1` and settles it at every height.
         */}
-        <div id="header-menu-rows" className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+        <div id="header-menu-rows" className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {/*
               NOTIFICATIONS, anchored to the TOP of the drawer (#1367).
 
@@ -213,14 +210,26 @@ export function HeaderMenu() {
               them belongs to neither. Both keep their ids — nothing moved
               out of the drawer, the nesting changed.
 
-              Bounded height with its own scroller, so a long list cannot
-              push the navigation rows below it off a short viewport — the
-              anchored dropdown it replaced had exactly this cap (max-h-[70vh]
-              on the panel) for the same reason.
+              THIS is the block that flexes, and the only one that scrolls.
+              `flex-1 min-h-0` hands it whatever the navigation rows below do
+              not use; `overflow-y-auto` keeps everything inside it — the
+              saved section, the invites, the list — within that height. The
+              comment here promised "bounded height with its own scroller" and
+              the element was `shrink-0`, so it had neither.
+
+              The scroll is on THIS element rather than on #notifications-list
+              deliberately. Making this a column flex and giving the list the
+              `flex-1` it already carries looks tidier and behaves worse: the
+              saved and invites sections are capped at `max-h-48` EACH, so on
+              a short viewport those two caps alone can consume the whole
+              block and leave the list at zero height — the notifications
+              themselves, invisible, in the notifications drawer. One scroller
+              over all three lets them share the space in the order they are
+              written.
           */}
           <div
             id="drawer-notifications"
-            className="shrink-0 border-b border-zinc-100 dark:border-zinc-800"
+            className="flex-1 min-h-0 overflow-y-auto border-b border-zinc-100 dark:border-zinc-800"
           >
             <div className="flex items-center gap-2 px-4 py-2">
               <span className="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">
@@ -239,22 +248,21 @@ export function HeaderMenu() {
             <NotificationsBody />
           </div>
           {/*
-              THE NAVIGATION ROWS, anchored to the BOTTOM (#1367).
+              THE NAVIGATION ROWS, at the BOTTOM and always on screen.
 
-              `mt-auto` inside #header-menu-rows' column flex collects the
-              free space ABOVE this block, so the rows hug the foot of the
-              panel whenever the notifications above them leave room, and
-              degrade to "just after the list" when they do not (a short
-              viewport, an expanded list). One rule, both behaviours, no
-              measurement — the same trick the retired #drawer-footer used,
-              which is the reason #header-menu-rows was made a column flex in
-              the first place.
+              `shrink-0` is the whole rule now. They used to get there with
+              `mt-auto` collecting the free space above them, which put them
+              at the foot of the panel only while there WAS free space — the
+              case where it mattered, a long notification list, is exactly the
+              one where it did nothing. The notifications block above is
+              `flex-1` instead, so the space is spent there and these rows keep
+              their height unconditionally.
 
               On touch the panel fills a full-height kit side drawer
               (.platform-panel-adopted), so this sits at the bottom of the
               screen there too — which is where a thumb actually is.
           */}
-          <div id="drawer-main-rows" className="shrink-0 mt-auto">
+          <div id="drawer-main-rows" className="shrink-0">
             {/*
                 The theme selector used to be the first thing in this drawer,
                 and the kudos + AI-credit meters (#drawer-status-pane) sat

@@ -49,7 +49,6 @@ const ALLOW = 'clipboard-write; pointer-lock';
 function LaunchCover({
   iconKind,
   iconHtml,
-  iconTint,
   name,
   note,
   spinner,
@@ -57,8 +56,6 @@ function LaunchCover({
 }: {
   iconKind: string;
   iconHtml: string;
-  /** The app's slug-derived identity tint — see AppView._coverDescriptor. */
-  iconTint?: string;
   name: string;
   note: string;
   spinner: boolean;
@@ -79,7 +76,6 @@ function LaunchCover({
       <div
         className="app-icon-tile app-launch-cover-icon"
         data-icon={iconKind}
-        {...(iconTint ? { 'data-tint': iconTint } : null)}
         dangerouslySetInnerHTML={{ __html: iconHtml }}
       >
       </div>
@@ -132,7 +128,6 @@ const AppFrame = memo(function AppFrame(_props: { slug: string }): ReactNode {
         <LaunchCover
           iconKind={cover.iconKind}
           iconHtml={cover.iconHtml}
-          iconTint={cover.iconTint}
           name={cover.name}
           note={cover.note}
           spinner={cover.spinner}

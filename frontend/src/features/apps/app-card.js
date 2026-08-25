@@ -26,7 +26,6 @@
 // legacy module has its own copy: it is three lines, and a shared import would
 // be a load-order dependency between classic scripts that don't have one.
 
-import { tintFor } from '../../lib/app-tint.js';
 
 function escapeHtml(str) {
   const div = document.createElement('div');
@@ -174,15 +173,8 @@ export function renderAppPillsHtml(app) {
   return `${chipsHtml}${visChipHtml}`;
 }
 
-// `tintFor` is re-exported, not reimplemented: the canonical hash lives in
-// ../../lib/app-tint.js, and a second copy here would be a second answer to
-// "what colour is this app". The classic scripts reach it through
-// `window.AppCard` below, which is exactly what that global was left in place
-// for — public/js/app-view.js needs it for the launch cover.
-export { tintFor };
-
 export const AppCard = {
-  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor, tintFor,
+  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor,
 };
 
 // Published for the legacy half of the split. Both in-bundle consumers

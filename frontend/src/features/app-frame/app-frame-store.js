@@ -35,7 +35,7 @@ import { createStore } from '../../lib/plain-store.js';
  * each cover field is.
  *
  * @typedef {{
- *   iconKind: string, iconHtml: string, iconTint: string, name: string,
+ *   iconKind: string, iconHtml: string, name: string,
  *   note: string, spinner: boolean, out: boolean,
  * }} LaunchCoverState
  * @typedef {{
@@ -72,12 +72,6 @@ export const appFrameStore = createStore(/** @type {AppFrameState} */ ({
 export const COVER_DEFAULTS = {
   iconKind: 'letter',
   iconHtml: '',
-  /**
-   * The app's slug-derived identity tint (`lime` | `sky` | … ), which app.css
-   * turns into the tile's fill. Empty means "no tint" — the neutral tile the
-   * shell drew before, which is what an app with no slug in hand still gets.
-   */
-  iconTint: '',
   name: '',
   note: 'Opening…',
   /** The 500ms rung of the reveal ladder. */
