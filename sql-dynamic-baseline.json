@@ -145,7 +145,7 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "ee6527c5eafba31903a2",
+      "fingerprint": "6addf75e8851124809f5",
       "count": 1,
       "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
     },

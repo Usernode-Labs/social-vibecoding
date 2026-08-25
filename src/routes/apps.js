@@ -126,6 +126,12 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // no app_icons blob needs to exist in the clone (the client renders
 // whatever icon_url it's given).
 const DEMO_ICON_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=';
+// Relative ISO timestamp for the demo rows below, so their ages read the
+// same however long the staging container has been up.
+function demoAgo(hours) {
+  return new Date(Date.now() - hours * 3600 * 1000).toISOString();
+}
+
 function demoIconApps() {
   const base = {
     status: 'running',
@@ -148,6 +154,9 @@ function demoIconApps() {
     is_collaborator: false,
     open_prs: 0,
     active_sessions: 0,
+    merged_prs: 0,
+    merged_prs_recent: 0,
+    last_merged_at: null,
     open_issues: 0,
     icon_emoji: null,
     icon_url: null,
@@ -226,21 +235,34 @@ function demoIconApps() {
     // their real counts, but a check runs against a fresh database.
     // Numbers here where production sends bigint STRINGS; the client
     // coerces either, and tests cover both shapes.
+    //
+    // The four also carry deliberately DIFFERENT merged-proposal and age
+    // profiles, so the #apps sort control (#1383) puts a different row on
+    // top under each of its five orders instead of looking broken against
+    // an otherwise uniform fixture set. Read them as: 1 = popular but
+    // dormant, 2 = the workhorse, 3 = brand new and busy, 4 = neither.
     {
       ...base, id: 900008, slug: 'staging-demo-popular-1',
       name: 'Staging demo popular 1', icon_emoji: '🔥', active_users: 12,
+      merged_prs: 3, merged_prs_recent: 0, last_merged_at: demoAgo(90 * 24),
+      created_at: demoAgo(200 * 24), last_deploy_at: demoAgo(60 * 24),
     },
     {
       ...base, id: 900009, slug: 'staging-demo-popular-2',
       name: 'Staging demo popular 2', icon_emoji: '📈', active_users: 9,
+      merged_prs: 41, merged_prs_recent: 11, last_merged_at: demoAgo(2),
+      created_at: demoAgo(120 * 24), last_deploy_at: demoAgo(2),
     },
     {
       ...base, id: 900010, slug: 'staging-demo-popular-3',
       name: 'Staging demo popular 3', icon_emoji: '🎧', active_users: 7,
+      merged_prs: 6, merged_prs_recent: 5, last_merged_at: demoAgo(24),
+      created_at: demoAgo(3 * 24), last_deploy_at: demoAgo(24),
     },
     {
       ...base, id: 900011, slug: 'staging-demo-popular-4',
       name: 'Staging demo popular 4', icon_emoji: '🗺️', active_users: 5,
+      created_at: demoAgo(400 * 24), last_deploy_at: demoAgo(300 * 24),
     },
   ];
 }
@@ -542,6 +564,12 @@ function appRoutes(config) {
           (me.user_id IS NOT NULL) AS is_collaborator,
           COALESCE(dev.open_prs, 0) AS open_prs,
           COALESCE(dev.active_sessions, 0) AS active_sessions,
+          -- "How actively developed is this app?" (#1383). All three ride
+          -- the dev subquery's existing unfiltered scan of chat_sessions,
+          -- so the sort control costs no extra query and no new index.
+          COALESCE(dev.merged_prs, 0) AS merged_prs,
+          COALESCE(dev.merged_prs_recent, 0) AS merged_prs_recent,
+          dev.last_merged_at AS last_merged_at,
           COALESCE(iss.open_issues, 0) AS open_issues
         FROM apps a
         LEFT JOIN (
@@ -577,7 +605,19 @@ function appRoutes(config) {
         LEFT JOIN (
           SELECT app_id,
             COUNT(*) FILTER (WHERE status IN ('promoted', 'merging')) AS open_prs,
-            COUNT(*) FILTER (WHERE status = 'active') AS active_sessions
+            COUNT(*) FILTER (WHERE status = 'active') AS active_sessions,
+            -- A merged chat_session IS an accepted community proposal —
+            -- the same definition contributors.js and the gallery use.
+            -- merged_at was added by a later ALTER TABLE and is NULL on
+            -- every row merged before it existed, so COALESCE to
+            -- created_at rather than dropping that history on the floor.
+            COUNT(*) FILTER (WHERE status = 'merged') AS merged_prs,
+            COUNT(*) FILTER (
+              WHERE status = 'merged'
+                AND COALESCE(merged_at, created_at) > NOW() - INTERVAL '30 days'
+            ) AS merged_prs_recent,
+            MAX(COALESCE(merged_at, created_at)) FILTER (WHERE status = 'merged')
+              AS last_merged_at
           FROM chat_sessions
           GROUP BY app_id
         ) dev ON dev.app_id = a.id
@@ -707,6 +747,9 @@ function appRoutes(config) {
           featured_order: a.featured_order ?? null,
           open_prs: parseInt(a.open_prs, 10) || 0,
           active_sessions: parseInt(a.active_sessions, 10) || 0,
+          merged_prs: parseInt(a.merged_prs, 10) || 0,
+          merged_prs_recent: parseInt(a.merged_prs_recent, 10) || 0,
+          last_merged_at: a.last_merged_at || null,
           open_issues: parseInt(a.open_issues, 10) || 0,
           ...accessFlags(a, req.user, a.is_collaborator, adminAppIds),
         };

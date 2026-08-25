@@ -81,6 +81,10 @@ async function migrate(config) {
   await seedStagingReadonlyDevTab(pool);
   await seedStagingYourApps(pool, config);
   await seedStagingBrowseCardBranches(pool, config);
+  // #1383: must run AFTER seedStagingBrowseCardBranches (it ranks that
+  // fixture's four apps) and AFTER seedStagingMergedPrs, which owns the
+  // self-app's merged history.
+  await seedStagingAppSortSignals(pool);
   // Must run AFTER seedStagingYourApps — it features that fixture's apps.
   await seedStagingFeaturedApps(pool);
   await seedStagingAppQuotaUsers(pool);
@@ -4872,6 +4876,105 @@ async function seedStagingBrowseCardBranches(pool, config) {
     log.info('db', 'Staging browse-card fixtures seeded', { viewers: viewerRows.length });
   } catch (err) {
     log.warn('db', 'Staging browse-card seeding failed', { message: err.message });
+  }
+}
+
+// Sort signals for the #apps directory's Sort control (#1383).
+//
+// `chat_sessions` is `staging:private` — the clone gets the SCHEMA and none
+// of the rows — so merged-proposal counts are ZERO for every app in every
+// preview, on which four of the five orders are indistinguishable from each
+// other and from the fifth. The declared checks and the before/after captures
+// would all be shot against a list nothing had ranked.
+//
+// So this gives the four browse-card fixture apps (900201-900204, from
+// seedStagingBrowseCardBranches) four deliberately DIFFERENT development
+// histories, and stamps their ages to match:
+//
+//   900201  image   the workhorse       — most merged in 30d, 2nd newest
+//   900202  emoji   deep but dormant    — most merged all-time, nothing recent
+//   900203  gated   brand new and busy  — newest, a couple of fresh merges
+//   900204  letter  neither             — old, quiet, never merged anything
+//
+// which puts a different row on top under every order. The rows carry an
+// EXPLICIT merged_at: it was added by a later ALTER TABLE, so the older
+// seedStagingMergedPrs fixtures leave it NULL and /api/apps has to
+// COALESCE to created_at — this fixture exercises the populated arm.
+//
+// Fake identities only (owned by staging-demo-user, never the viewer),
+// idempotent on (app_id, branch_name), try/catch so a fixture bug can't
+// block boot, strict no-op outside staging.
+async function seedStagingAppSortSignals(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // hoursAgo per merged proposal; the app's own age and last deploy beside it.
+  const PROFILES = [
+    {
+      appId: 900201, createdDaysAgo: 200, deployedDaysAgo: 1,
+      merged: [2, 30, 5 * 24, 11 * 24, 19 * 24, 27 * 24, 120 * 24, 150 * 24, 190 * 24],
+    },
+    {
+      appId: 900202, createdDaysAgo: 400, deployedDaysAgo: 60,
+      merged: [60, 95, 130, 170, 200, 240, 275, 300, 320, 340, 355, 365, 372, 380]
+        .map((d) => d * 24),
+    },
+    { appId: 900203, createdDaysAgo: 2, deployedDaysAgo: 0, merged: [6, 30] },
+    { appId: 900204, createdDaysAgo: 300, deployedDaysAgo: 250, merged: [] },
+  ];
+
+  try {
+    const { rows: ownerRows } = await pool.query(
+      'SELECT id FROM users WHERE username = $1', ['staging-demo-user']
+    );
+    const ownerId = ownerRows[0]?.id;
+    if (!ownerId) {
+      log.warn('db', 'Staging sort-signal fixtures skipped: staging-demo-user missing');
+      return;
+    }
+
+    let inserted = 0;
+    for (const p of PROFILES) {
+      // The fixture apps are all created within milliseconds of each other on
+      // the boot that first seeds them, so "Newest" could not tell them apart
+      // without this. Re-stamped every boot (rather than ON CONFLICT skipped)
+      // so the ages stay relative to now, the way the browse-card seed
+      // re-stamps anon_shell for its own reason.
+      const { rowCount } = await pool.query(
+        `UPDATE apps
+            SET created_at = NOW() - ($2::int * INTERVAL '1 day'),
+                last_deploy_at = NOW() - ($3::int * INTERVAL '1 day')
+          WHERE id = $1`,
+        [p.appId, p.createdDaysAgo, p.deployedDaysAgo]
+      );
+      if (!rowCount) continue; // browse-card fixtures absent — nothing to rank
+
+      for (let i = 0; i < p.merged.length; i++) {
+        const hoursAgo = p.merged[i];
+        const branch = `staging-fixture/sort-signal-${p.appId}-${i + 1}`;
+        const { rows: existing } = await pool.query(
+          'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+          [p.appId, branch]
+        );
+        if (existing.length) continue;
+        await pool.query(
+          `INSERT INTO chat_sessions
+             (app_id, user_id, branch_name, pr_number, pr_title, pr_summary_md,
+              status, votes_required, created_at, merged_at)
+           VALUES
+             ($1, $2, $3, $4, $5, $6, 'merged', 1,
+              NOW() - ($7::int * INTERVAL '1 hour'),
+              NOW() - ($7::int * INTERVAL '1 hour'))`,
+          [p.appId, ownerId, branch, 9300 + (p.appId - 900200) * 20 + i,
+            `[staging fixture] Accepted community change ${i + 1}`,
+            'In plain terms: a completed change the community voted in.',
+            hoursAgo]
+        );
+        inserted++;
+      }
+    }
+    log.info('db', 'Staging app sort-signal fixtures seeded', { inserted });
+  } catch (err) {
+    log.warn('db', 'Staging sort-signal seeding failed', { message: err.message });
   }
 }
 

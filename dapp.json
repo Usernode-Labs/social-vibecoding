@@ -2686,6 +2686,23 @@
       "name": "Real sessions still render beside it, each on its own destination (#1417)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#improve-panel[data-open] [data-improve-row=\"session\"][href*=\"/dev/sessions/\"]"
+    },
+    {
+      "name": "The all-apps directory offers a Sort control, defaulting to Recommended (#1383)",
+      "path": "/#apps",
+      "expectSelector": "#browse-search-bar #browse-sort-select",
+      "expectText": "Recommended"
+    },
+    {
+      "name": "?sort= orders the directory on arrival (#1383)",
+      "path": "/?sort=new#apps",
+      "expectSelector": "#browse-list[data-sort=\"new\"] .browse-row"
+    },
+    {
+      "name": "Sorting by activity shows what it sorted on (#1383)",
+      "path": "/?demo=1&sort=active#apps",
+      "expectSelector": "#browse-list[data-sort=\"active\"] .browse-row",
+      "expectText": "merged in 30d"
     }
   ],
   "governance": {

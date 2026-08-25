@@ -17,6 +17,13 @@
 //   `empty`     — was classList + textContent on #browse-empty.
 //   `showClear` — was a classList.toggle on #browse-search-clear.
 //
+// #1383 added a fourth, `sort`: the directory's Sort control. It is the one
+// field the controller reads back out (#browse-sort-select is CONTROLLED off
+// it, unlike the search field), and 'recommended' is its prerender value — the
+// remembered choice and the ?sort= override are resolved on screen entry, not
+// during render, because neither localStorage nor location.search exists in
+// the SSG pass.
+//
 // The SEARCH FIELD stays uncontrolled: nothing re-renders its value, so the
 // caret cannot jump mid-word — the same property the old wire-once discipline
 // bought. Keystrokes go to Browse.setQuery, which still coalesces them on the
@@ -38,6 +45,8 @@
 
 import { useRef } from 'react';
 
+import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { SearchIcon } from '@/components/ui/icons';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
@@ -53,6 +62,23 @@ function browse(): any {
   return (typeof window !== 'undefined' ? (window as any).Browse : null) || null;
 }
 
+// The five orders of the Sort control (#1383), as the <option> list.
+//
+// A COPY of Browse.SORTS rather than a read of it, and deliberately so:
+// ./browse.js publishes itself on `window.Browse`, which does not exist in the
+// SSG prerender pass, so reading the controller here would prerender an empty
+// <select> and hydrate a full one — a mismatch, and therefore a console.error
+// on a route that has a declared check. The controller stays the authority on
+// what a key MEANS (resolveSort, the comparators); this is only the labelling.
+// tests/browse-screen.test.js asserts the two lists never drift apart.
+const SORT_OPTIONS: Array<{ key: string; label: string }> = [
+  { key: 'recommended', label: 'Recommended' },
+  { key: 'users', label: 'Most users' },
+  { key: 'active', label: 'Most active' },
+  { key: 'merged', label: 'Most changes merged' },
+  { key: 'new', label: 'Newest' },
+];
+
 export function BrowseScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -65,6 +91,7 @@ export function BrowseScreen() {
     error: boolean;
     detail: any;
     showClear?: boolean;
+    sort: string;
   };
   const onDetail = state.level === 'detail';
 
@@ -124,6 +151,31 @@ export function BrowseScreen() {
             &times;
           </button>
         </div>
+        {/*
+            Sort (#1383). Rides the search bar rather than sitting in its own
+            strip: both narrow the same list, and one sticky row costs the
+            phone less of the fold than two would.
+
+            CONTROLLED, off the store — so a ?sort= deep link, the remembered
+            choice and a hand change all show the same value in the field, and
+            the field can never disagree with the rows below it. `w-auto`
+            overrides the cva's `w-full` through cn's twMerge (the control
+            should be as wide as its longest label, not as wide as the bar).
+        */}
+        <div id="browse-sort-bar" className="mt-2 flex items-center gap-2 max-w-xl">
+          <Label htmlFor="browse-sort-select" className="shrink-0">Sort</Label>
+          <Select
+            id="browse-sort-select"
+            className="w-auto py-1.5"
+            aria-label="Sort apps"
+            value={state.sort}
+            onChange={(e) => browse()?.setSort(e.currentTarget.value)}
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>{o.label}</option>
+            ))}
+          </Select>
+        </div>
       </div>
       {/*
           Level 1: the app-store list. ONE row markup, two layouts, and the
@@ -140,6 +192,10 @@ export function BrowseScreen() {
         */}
         <div
           id="browse-list"
+          // The rendering anchor for the declared ?sort= checks: it names the
+          // order the rows below were actually built with, which a screenshot
+          // of a <select> cannot be asserted on.
+          data-sort={state.sort}
           // Phone: ONE white card holding hairline-separated rows — the
           // language's grouped list, and the shape Settings and the home
           // panels already draw. The rows used to run full-bleed on the grey
