@@ -87,24 +87,89 @@ import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
     // Five writes across two elements — the dot's class, the label's text and
     // the label's class — become one publish. The row and the sheet read the
     // same model, so they cannot disagree for a frame.
+    //
+    // It publishes RESOLVED values: the four `_*For` helpers above run here,
+    // once, rather than in the component. A view model carries answers.
     _render() {
       const s = NodePill._status || {};
+      const networkBestHeight = NodePill._networkHeightFor(s);
+      const readyPeers = NodePill._readyPeersFor(s);
       nodePillStore.set({
         visible: NodePill._visible,
         status: typeof s.status === 'string' ? s.status : 'unavailable',
+        chain: typeof s.chain === 'string' ? s.chain : '',
         localBestHeight: s.localBestHeight == null ? null : s.localBestHeight,
-        networkBestHeight: s.networkBestHeight == null ? null : s.networkBestHeight,
-        connectedPeers: s.connectedPeers == null ? null : s.connectedPeers,
+        tipAge: NodePill._tipAgeFor(s),
+        networkBestHeight: networkBestHeight == null ? null : networkBestHeight,
+        readyPeers: readyPeers == null ? null : readyPeers,
         totalPeers: s.totalPeers == null ? null : s.totalPeers,
+        warnings: NodePill._warningMessagesFor(s),
       });
     },
 
     // -- detail sheet ---------------------------------------------------
 
+    // #1402's four derivations live here, because each is a DECISION — which
+    // clock, which height counts as the network's, what is worth warning
+    // about — and the module owns decisions. Its `_sheetRow` and
+    // `_sheetWarnings` do NOT come across: those built markup, and markup is
+    // ./node-pill-sheet.tsx's.
+    //
+    // They stay named methods rather than folding into `_render` so that the
+    // tests upstream wrote against them keep their subject.
+
+    _networkHeightFor(s) {
+      // Once synced, our own best tip is the height the network has reached.
+      // While catching up, the peer-derived height is the node's sync target.
+      return s.status === 'synced' ? s.localBestHeight : s.networkBestHeight;
+    },
+
+    _readyPeersFor(s) {
+      return s.readyPeers == null ? s.connectedPeers : s.readyPeers;
+    },
+
+    _tipAgeFor(s, nowMs = Date.now()) {
+      const timestampMs = Number(s.localBestTimestampMs);
+      if (!Number.isFinite(timestampMs) || timestampMs <= 0) return null;
+      const driftMs = Number(s.clockDriftMs);
+      const nodeNowMs = Number(nowMs) -
+        (Number.isFinite(driftMs) ? driftMs : 0);
+      const seconds = Math.max(0, Math.floor((nodeNowMs - timestampMs) / 1000));
+      if (seconds < 5) return 'just now';
+      if (seconds < 60) return `${seconds} seconds ago`;
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) {
+        return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+      }
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+      const days = Math.floor(hours / 24);
+      return `${days} day${days === 1 ? '' : 's'} ago`;
+    },
+
+    _warningMessagesFor(s) {
+      const warnings = [];
+      if (NodePill._readyPeersFor(s) === 0) {
+        warnings.push('No connected peers.');
+      }
+      if (s.syncStalled === true) {
+        warnings.push('Sync appears stalled.');
+      }
+      const driftMs = Number(s.clockDriftMs);
+      if (Number.isFinite(driftMs) && Math.abs(driftMs) > 5000) {
+        warnings.push('Node clock is out of sync.');
+      }
+      if (s.walletDataHydrating === true) {
+        warnings.push('Wallet-data hydration is still running.');
+      }
+      return warnings;
+    },
+
     // `_sheetRow` and `_renderSheetBody` built six nodes imperatively and
     // blanked them with `body.textContent = ''` on every status event. The
     // body is a portal now (./node-pill-sheet.tsx) and the store repaints it,
-    // so an event arriving mid-sheet updates the numbers in place.
+    // so an event arriving mid-sheet updates the numbers in place — including
+    // #1402's tip age, which is why nothing here needs a timer.
     _renderSheetBody() {
       NodePill._render();
     },

@@ -136,6 +136,13 @@ function deps(over = {}, log = {}) {
         (log.push = log.push || []).push(args);
         return { ok: true, headSha: FORK_HEAD, credential: { source: 'bot' } };
       },
+      // The lease-less create. Real one is external-agent-head.mirrorForkBranch,
+      // which the pr-import rung has always used and which the first landing
+      // of a shared session now reaches too.
+      mirrorForkBranch: async (args) => {
+        (log.mirror = log.mirror || []).push(args);
+        return { ok: true, branch: args.targetBranch, headSha: FORK_HEAD, credential: 'pat' };
+      },
     }, over.head),
     votes: Object.assign({
       reconcileNativeReviewedHead: async (args) => {
@@ -491,6 +498,9 @@ test('a lease the remote refused is reported as branch_moved, not as a platform 
 
 test('an unreadable proposal head refuses rather than pushing without a lease', async () => {
   const log = {};
+  // None of these is GitHub saying the branch is NOT THERE — that is a 404
+  // STATUS, and it is a first landing (below), not a failure. An error whose
+  // message merely reads '404' is an unread head like any other.
   for (const getBranchSha of [
     async () => { throw new Error('404'); },
     async () => null,
@@ -501,6 +511,165 @@ test('an unreadable proposal head refuses rather than pushing without a lease', 
     assert.equal(result.code, 'platform_unavailable');
     assert.equal(log.push, undefined);
   }
+});
+
+// ── 5b. The FIRST landing (#1347's share) ──────────────────────────────
+//
+// A shared session's row is written before its commits reach the app
+// repository, so the branch it names does not exist yet. Everything this
+// function does before a push exists to protect a head that is already there
+// — the lease against a concurrent revision, the ancestry check against the
+// reviewed commit — and neither has anything to guard when there is no head.
+// So a 404 is a CREATE, and the two guards that have nothing to guard are the
+// only things it skips.
+
+const notFound = () => Object.assign(new Error('Not Found'), { status: 404 });
+const missingBranch = { getBranchSha: async () => { throw notFound(); } };
+
+// The row #1347's share route writes: no `source`, a branch minted into the
+// platform's OWN namespace, and no commits behind it yet.
+const SHARE_BRANCH = 'usernode/from-u7-s1a2b3c4d';
+const sharedRow = (over) => nativeSession(Object.assign({
+  source: null,
+  branch_name: SHARE_BRANCH,
+  pr_number: null,
+  pr_url: null,
+  shared_at: '2026-08-24T00:00:00Z',
+}, over));
+const shared = (over = {}, log = {}) => {
+  const session = sharedRow();
+  return run({ session, pool: fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 0 }]],
+  ]), ...over }, {}, log);
+};
+
+test('a proposal branch that does not exist yet is created, not reported unreadable', async () => {
+  const log = {};
+  const result = await shared({ gh: missingBranch }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.updated, true);
+  assert.equal(result.headSha, FORK_HEAD);
+  assert.equal(result.previousHeadSha, null, 'there was no previous head to name');
+  assert.equal(log.push, undefined, 'no lease-checked push — there is nothing to lease against');
+  assert.equal(log.mirror.length, 1);
+  assert.equal(log.mirror[0].targetBranch, SHARE_BRANCH,
+    'the branch the ROW recorded, not one the mirror minted for itself');
+});
+
+test('a first landing makes no ancestry comparison, because there is nothing to be ahead of', async () => {
+  const log = {};
+  let compared = 0;
+  const result = await shared({
+    gh: { ...missingBranch, compareCommitAncestry: async () => { compared += 1; return { status: 'diverged' }; } },
+  }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(compared, 0, 'a diverged answer cannot refuse a branch with no reviewed head');
+});
+
+test('the attribution gate still runs on a first landing, twice', async () => {
+  const log = {};
+  await shared({ gh: missingBranch }, log);
+  // Once here, for the caller's answer...
+  assert.equal(log.verify.length, 1);
+  assert.equal(log.verify[0].expectedLogin, 'evan-gh');
+  // ...and once inside the push itself, which is the load-bearing run. The
+  // real mirrorForkBranch opens with verifyForkBranch; asserted on the source
+  // because a stub cannot show it.
+  assert.match(
+    fs.readFileSync(path.join(__dirname, '../src/services/external-agent-head.js'), 'utf8'),
+    /async function mirrorForkBranch\(\{[\s\S]*?const verified = await verifyForkBranch\(/,
+    'the mirror re-runs the gate itself'
+  );
+});
+
+test("a fork branch that is not the caller's is refused on a first landing too", async () => {
+  const log = {};
+  const result = await shared({
+    gh: missingBranch,
+    head: { verifyForkBranch: async () => ({ ok: false, code: 'fork_mismatch', message: 'not yours' }) },
+  }, log);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'not_your_fork', 'renamed for the caller, as on every other path');
+  assert.equal(log.mirror, undefined, 'nothing is created for a branch that failed the gate');
+});
+
+test('only a 404 is a first landing — every other read failure still refuses', async () => {
+  const log = {};
+  for (const status of [403, 500, 502, undefined]) {
+    const result = await shared({
+      gh: { getBranchSha: async () => { throw Object.assign(new Error('nope'), { status }); } },
+    }, log);
+    assert.equal(result.ok, false, `status ${String(status)}`);
+    assert.equal(result.code, 'platform_unavailable');
+  }
+  assert.equal(log.mirror, undefined);
+  assert.equal(log.push, undefined);
+});
+
+test('and a missing branch outside the platform namespace is still unreadable, not a create', async () => {
+  // A `dev/…` head absent from the app repository is a different story with a
+  // different cause: routes/sessions.js creates that branch best-effort, so a
+  // session whose creation failed can have a pull request — and a tally —
+  // pinned to a branch that is not there. Re-creating it underneath the
+  // proposal from whatever a caller pushed is not this function's call.
+  const log = {};
+  const result = await run({ gh: missingBranch }, {}, log);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'platform_unavailable');
+  assert.equal(result.retryable, true);
+  assert.equal(log.mirror, undefined);
+});
+
+test('expectedHeadSha cannot refuse a first landing — no head has moved', async () => {
+  // It names the commit the caller believes the proposal is at. On a first
+  // share there is no such commit, so there is nothing for it to disagree
+  // with; refusing here would be refusing the caller's optimism.
+  const log = {};
+  const session = sharedRow();
+  const result = await run({ session, gh: missingBranch, pool: fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 0 }]],
+  ]) }, { expectedHeadSha: OTHER_HEAD }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(log.mirror.length, 1);
+});
+
+test('a first landing on an active session ends in the SAME tail as any other push', async () => {
+  // Which is the point of putting it here rather than in the share route: the
+  // shared card gets its checks marked pending and its staging pipeline
+  // started, exactly as a session that took a second commit does.
+  const log = {};
+  const session = sessionRow('active', {
+    source: null,
+    branch_name: 'usernode/from-u7-s1a2b3c4d',
+    checks_commit_sha: null,
+    shared_at: '2026-08-24T00:00:00Z',
+  });
+  const result = await runSession('active', { session, gh: missingBranch }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.previewRebuilding, true);
+  assert.equal(result.votesCleared, 0, 'nobody is voting on a shared card');
+  assert.equal(log.started.length, 1);
+  assert.equal(log.started[0].headSha, FORK_HEAD);
+  assert.equal(log.mirror[0].targetBranch, 'usernode/from-u7-s1a2b3c4d');
+  // pr_votes is never read for a row that cannot have any.
+  assert.equal(sqlsOf(log).some((sql) => sql.includes('FROM pr_votes')), false);
+});
+
+test('the mirror is the existing rung, not a second push implementation', () => {
+  // The create and the advance are the same push with the same gate in front
+  // of it. If this ever grows its own fetch/push here, the attribution gate
+  // has a second place to be subtly wrong — the thing this whole service
+  // exists to avoid.
+  assert.match(CODE, /firstLanding[\s\S]*?head\.mirrorForkBranch\(\{/);
+  assert.doesNotMatch(CODE, /git\(\[.?fetch/, 'no git plumbing in this file');
 });
 
 // ── 6. Nothing to do ───────────────────────────────────────────────────

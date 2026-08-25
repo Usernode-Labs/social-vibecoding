@@ -90,6 +90,21 @@ function loadNodePill({ hasNodeStatus, snapshot = null, isNative = true }) {
     get status() { return rowParts().status; },
     get sheetHtml() { return sheetHtml(); },
     get statusReads() { return statusReads; },
+    // #1402's four derivations. They are DECISIONS, so the merge kept them in
+    // the module rather than moving them into the component — which also
+    // keeps upstream's tests for them pointed at their original subject.
+    networkHeightFor(detail) {
+      return sandbox.window.NodePill._networkHeightFor(detail);
+    },
+    readyPeersFor(detail) {
+      return sandbox.window.NodePill._readyPeersFor(detail);
+    },
+    tipAgeFor(detail, nowMs) {
+      return sandbox.window.NodePill._tipAgeFor(detail, nowMs);
+    },
+    warningMessagesFor(detail) {
+      return Array.from(sandbox.window.NodePill._warningMessagesFor(detail));
+    },
     dispatchNodeStatus(detail) {
       if (windowListeners['usernode:node-status']) {
         windowListeners['usernode:node-status']({ detail });
@@ -197,7 +212,7 @@ test('the detail sheet renders from the same status the row does', () => {
   assert.match(html, /1,234/);
   assert.match(html, /Network block height/);
   assert.match(html, /5,678/);
-  assert.match(html, /8 connected \/ 42 known/);
+  assert.match(html, /8 ready \/ 42 known/);
   // The row agrees, from the same publish.
   assert.equal(loaded.status.textContent, 'Syncing');
 });
@@ -208,6 +223,137 @@ test('unknown numbers render an em dash, never a zero', () => {
   const html = loaded.sheetHtml;
   // An unknown height and a height of zero are different facts.
   assert.doesNotMatch(html, />0</);
-  assert.equal((html.match(/—/g) || []).length, 3, 'three unknown figures');
+  // Four now, not three: #1402 added the chain, and an unknown chain is a
+  // fact worth showing rather than a blank row.
+  assert.equal((html.match(/—/g) || []).length, 4, 'four unknown figures');
   assert.match(html, /Offline/);
+});
+
+// ── #1402, merged from upstream/main ────────────────────────────────────
+//
+// The four derivations below are unchanged from the commit that added them —
+// they are decisions and they stayed in the module. The sheet test is not: it
+// walked `sheetBody.children[n].children[m].textContent` through a DOM stub,
+// and there is no such stub any more. It asserts the same six facts against
+// the markup the component actually renders.
+
+test('Network block height follows the node sync state', async () => {
+  const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
+  await settle();
+
+  assert.equal(loaded.networkHeightFor({
+    status: 'synced',
+    localBestHeight: 120,
+    networkBestHeight: 130,
+  }), 120, 'a synced node uses its own best tip');
+  assert.equal(loaded.networkHeightFor({
+    status: 'syncing',
+    localBestHeight: 120,
+    networkBestHeight: 130,
+  }), 130, 'a syncing node uses its target best tip');
+});
+
+test('ready peers use the explicit field with legacy fallback', async () => {
+  const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
+  await settle();
+
+  assert.equal(loaded.readyPeersFor({
+    readyPeers: 4,
+    connectedPeers: 3,
+  }), 4);
+  assert.equal(loaded.readyPeersFor({ connectedPeers: 3 }), 3);
+});
+
+test('best-tip age is corrected for node clock drift', async () => {
+  const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
+  await settle();
+
+  assert.equal(loaded.tipAgeFor({
+    localBestTimestampMs: 100000,
+    clockDriftMs: 2000,
+  }, 120000), '18 seconds ago');
+  assert.equal(loaded.tipAgeFor({
+    localBestTimestampMs: 100000,
+  }, 220000), '2 minutes ago');
+});
+
+test('node warnings are conditional and ordered', async () => {
+  const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
+  await settle();
+
+  assert.deepEqual(loaded.warningMessagesFor({
+    readyPeers: 0,
+    syncStalled: true,
+    clockDriftMs: -6000,
+    walletDataHydrating: true,
+  }), [
+    'No connected peers.',
+    'Sync appears stalled.',
+    'Node clock is out of sync.',
+    'Wallet-data hydration is still running.',
+  ]);
+  assert.deepEqual(loaded.warningMessagesFor({
+    readyPeers: 2,
+    syncStalled: false,
+    clockDriftMs: 5000,
+    walletDataHydrating: false,
+  }), []);
+});
+
+test('Node sheet puts chain first and labels ready peers', async () => {
+  const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
+  await settle();
+
+  loaded.dispatchNodeStatus({
+    status: 'syncing',
+    chain: 'testnet',
+    localBestHeight: 120,
+    networkBestHeight: 130,
+    readyPeers: 4,
+    totalPeers: 7,
+    syncStalled: true,
+  });
+
+  const html = loaded.sheetHtml;
+  assert.ok(html.indexOf('Chain') < html.indexOf('Your block height'),
+    'the chain row comes first');
+  assert.match(html, /Chain<\/span><span[^>]*>testnet</);
+  assert.match(html, /Your block height<\/span><span[^>]*>120</);
+  assert.match(html, /Network block height<\/span><span[^>]*>130</,
+    'a syncing node shows its target tip, not its own');
+  assert.match(html, /4 ready \/ 7 known/);
+  assert.match(html, /role="status"/);
+  assert.match(html, /Sync appears stalled\./);
+});
+
+test('a healthy node draws no warning box at all', async () => {
+  const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
+  await settle();
+
+  loaded.dispatchNodeStatus({
+    status: 'synced',
+    chain: 'testnet',
+    localBestHeight: 130,
+    readyPeers: 4,
+    totalPeers: 7,
+  });
+
+  const html = loaded.sheetHtml;
+  assert.doesNotMatch(html, /role="status"/,
+    'an empty warning list renders nothing, not an empty box');
+  // A synced node's own tip IS the network height — the same number twice.
+  assert.match(html, /Network block height<\/span><span[^>]*>130</);
+});
+
+test('a known tip age rides along with the height, in one row', async () => {
+  const loaded = loadNodePill({ hasNodeStatus: Promise.resolve(false) });
+  await settle();
+
+  loaded.dispatchNodeStatus({
+    status: 'synced',
+    localBestHeight: 12480,
+    localBestTimestampMs: Date.now() - 4 * 60 * 1000,
+  });
+
+  assert.match(loaded.sheetHtml, /12,480 · 4 minutes ago/);
 });

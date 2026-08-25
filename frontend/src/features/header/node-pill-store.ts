@@ -30,23 +30,57 @@ export interface NodePillState {
   visible: boolean;
   status: NodeStatusKind;
   /**
+   * The chain the node is on. Empty renders an em dash rather than a blank
+   * row — an unknown chain is a fact worth showing.
+   */
+  chain: string;
+  /**
    * The sheet's numbers. Null renders an em dash — the pill's events only fire
    * on state transitions, so these are stale between flips and the sheet
    * re-reads them on open.
    */
   localBestHeight: number | null;
+  /**
+   * How old the local tip is, ALREADY WORDED ('just now', '4 minutes ago').
+   *
+   * #1402 derives it from `localBestTimestampMs` and `clockDriftMs`, which
+   * makes it a decision — which clock, what wording, what counts as "just
+   * now" — and decisions stay in the module. It is recomputed on each publish,
+   * which is exactly the cadence the imperative version repainted at: per
+   * status event and on sheet open. It does NOT tick on its own.
+   */
+  tipAge: string | null;
+  /**
+   * The height to show as the network's. #1402: once we are synced our own tip
+   * IS the height the network has reached, and only while catching up is the
+   * peer-derived number a separate thing (the sync target). The module picks
+   * between them; this field is the answer, not the input.
+   */
   networkBestHeight: number | null;
-  connectedPeers: number | null;
+  /**
+   * Peers whose P2P connection has reached ready. The bridge sends
+   * `connectedPeers` as a compatibility alias on older builds, so the module
+   * resolves the two before publishing.
+   */
+  readyPeers: number | null;
   totalPeers: number | null;
+  /**
+   * Health notices, already worded, in display order. Empty renders no box at
+   * all — see ./node-pill-sheet.tsx.
+   */
+  warnings: string[];
 }
 
 export const NODE_PILL_EMPTY: NodePillState = {
   visible: false,
   status: 'unavailable',
+  chain: '',
   localBestHeight: null,
+  tipAge: null,
   networkBestHeight: null,
-  connectedPeers: null,
+  readyPeers: null,
   totalPeers: null,
+  warnings: [],
 };
 
 export const nodePillStore = createStore<NodePillState>(NODE_PILL_EMPTY);
