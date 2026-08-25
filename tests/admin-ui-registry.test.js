@@ -76,6 +76,9 @@ test('registry values are complete literals (no template placeholders)', () => {
 // See the "Two design systems, one bundle" section in AGENTS.md.
 
 const UI_DIR = path.join(__dirname, '..', 'frontend', '@', 'components', 'ui');
+// The whole shell, and the classic scripts that still write class strings —
+// see the scope note in the one-palette test below.
+const PUBLIC_JS_DIR = path.join(__dirname, '..', 'public', 'js');
 const SRC_DIR = path.join(__dirname, '..', 'frontend', 'src');
 
 /** Every .ts/.tsx/.js under `dir`, as repo-relative paths. */
@@ -149,15 +152,35 @@ test('one palette across the product — no gray or indigo anywhere', () => {
   // their names while their hues moved), so a stray `bg-gray-100` renders
   // stock Tailwind grey next to the platform's — a difference no reviewer
   // spots in a diff of class strings.
-  const scoped = [...sourcesUnder(UI_DIR), ...ADMIN_FILES.map((f) => path.join(JS_DIR, f))];
+  // The scope is EVERY source file that can carry a class string, not the two
+  // directories the split-palette version of this rule policed. That gap was
+  // real: this test was already named "anywhere" and AGENTS.md already said
+  // the scales "appear NOWHERE in either system", while the loop below reached
+  // only frontend/@/components/ui/** and the admin modules. Two survivors sat
+  // outside it — a settings card and a category tint — for exactly as long as
+  // the name and the scan disagreed. A rule that names a stronger property
+  // than it checks is worse than a narrower one honestly stated.
+  const scoped = [
+    ...sourcesUnder(UI_DIR),
+    ...sourcesUnder(SRC_DIR),
+    ...sourcesUnder(PUBLIC_JS_DIR),
+  ];
+  const offenders = [];
   for (const file of scoped) {
     const src = code(fs.readFileSync(file, 'utf8'));
     for (const token of ['gray-', 'indigo-']) {
-      assert.ok(!src.includes(token),
-        `${path.basename(file)} uses the ${token.slice(0, -1)} scale — the platform is `
-        + 'zinc/violet everywhere since the widget-language reskin');
+      // Word-boundaried: `bg-gray-100` is the revert this catches, while a
+      // `--text-gray-ish` custom property or a `grayscale` filter is not.
+      if (new RegExp(`\\b(?:bg|text|border|ring|from|via|to|divide|placeholder|decoration|outline|shadow|accent|caret|fill|stroke)-${token}[0-9]`).test(src)) {
+        offenders.push(`${path.relative(path.join(__dirname, '..'), file)} (${token.slice(0, -1)})`);
+      }
     }
   }
+  assert.deepStrictEqual(offenders, [],
+    'these files use the gray or indigo scale — the platform is zinc/violet '
+    + 'everywhere since the widget-language reskin, and both of those keys are '
+    + 'OVERRIDDEN in tailwind.config.js, so a stray one renders an untuned '
+    + `stock hue next to the platform's:\n${offenders.join('\n')}`);
   // And the registry is IN that language rather than merely free of the old
   // one: an empty file would pass the loop above.
   const registry = fs.readFileSync(path.join(JS_DIR, 'admin-console.js'), 'utf8');

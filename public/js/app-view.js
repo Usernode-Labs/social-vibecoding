@@ -8216,12 +8216,22 @@ const AppView = {
   // the six built-ins don't use so a custom chip never reads as a built-in
   // one. Picked by a stable string hash (see _categoryTint) so a given
   // category is always the same colour across the board, list and filter.
+  //
+  // The fifth was `indigo` until the widget-language reskin, and the swap to
+  // `purple` is that reskin finishing its own job rather than a taste change.
+  // Indigo was picked when `violet-*` really was violet: purple sat right
+  // beside the accent and indigo was the nearest free hue. `violet-*` is the
+  // BLUE accent now (see tailwind.config.js), which frees the purple end of
+  // the spectrum and leaves indigo stranded between two families that ARE in
+  // use — the accent and `sky` (Improvement). It also removes the last
+  // stock-`indigo-` class in the tree, so the one-palette rule can be
+  // enforced across every source file instead of two directories.
   CATEGORY_CUSTOM_TINTS: [
     { cls: 'bg-teal-500/10 text-teal-500', hover: 'hover:bg-teal-500/20' },
     { cls: 'bg-cyan-500/10 text-cyan-500', hover: 'hover:bg-cyan-500/20' },
     { cls: 'bg-fuchsia-500/10 text-fuchsia-500', hover: 'hover:bg-fuchsia-500/20' },
     { cls: 'bg-lime-500/10 text-lime-600', hover: 'hover:bg-lime-500/20' },
-    { cls: 'bg-indigo-500/10 text-indigo-400', hover: 'hover:bg-indigo-500/20' },
+    { cls: 'bg-purple-500/10 text-purple-400', hover: 'hover:bg-purple-500/20' },
     { cls: 'bg-orange-500/10 text-orange-500', hover: 'hover:bg-orange-500/20' },
   ],
 

@@ -96,7 +96,9 @@ function fmtTime(ms: number | null | undefined): string {
 
 function StatusBadge({ status }: { status?: string }) {
   const s = String(status || 'unknown');
-  let cls = AdminUI.badge.default;
+  // Annotated, not inferred: without it TypeScript narrows `cls` to the
+  // `default` recipe's literal string and every branch below is an error.
+  let cls: string = AdminUI.badge.default;
   if (s === 'Synced' || s === 'ok') cls = AdminUI.badge.success;
   else if (s === 'Syncing' || s === 'Connected') cls = AdminUI.badge.secondary;
   else if (s === 'Connecting' || s === 'bad_response' || s === 'degraded') cls = AdminUI.badge.warn;

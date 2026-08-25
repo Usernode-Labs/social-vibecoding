@@ -131,8 +131,11 @@ between them is about the SURFACE each is drawn for, not about styling.
 
 - **The platform shell** — `frontend/@/components/ui/**`. shadcn primitives,
   hand-rolled, `cssVariables: false`, in the platform's `zinc`/`violet`
-  palette. Twelve modules today: `alert`, `anchored-panel`, `button`, `dialog`,
-  `field`, `icons`, `input`, `label`, `select`, `switch`, `tabs`, `textarea`.
+  palette. Eighteen modules today: `alert`, `anchored-panel`, `button`, `chat`,
+  `chip`, `dialog`, `feed`, `field`, `grouped-list`, `icon-tile`, `icons`,
+  `input`, `label`, `page-header`, `select`, `switch`, `tabs`, `textarea`.
+  Count them in the directory rather than trusting this line — it has been
+  stale before, and a primitive nobody knows exists gets hand-written instead.
   Variants are `cva` tables; every class in them is a complete literal, because
   Tailwind's extractor is a regex over source text and a computed class name is
   a class name that never gets compiled.
@@ -146,9 +149,14 @@ between them is about the SURFACE each is drawn for, not about styling.
 The console used to be a genuinely separate design system — the topochain
 admin's `gray`/`indigo`, deliberately not the shell's `zinc`/`violet`. The
 widget-language reskin folded it in: same scales, same figure/ground, same
-filled controls, same radii. `gray-*` and `indigo-*` now appear NOWHERE in
-either system, and `tests/admin-ui-registry.test.js` enforces that as one rule
-across both rather than as a split.
+filled controls, same radii. `gray-*` and `indigo-*` now appear NOWHERE in the
+product, and `tests/admin-ui-registry.test.js` enforces that as one rule over
+`frontend/@/components/ui/**`, `frontend/src/**` and `public/js/**` rather than
+as a split. It is worth knowing WHY that rule is absolute: `zinc` and `violet`
+are overridden in `tailwind.config.js` — `violet-*` is the BLUE accent now, not
+a violet — so a stray `bg-gray-100` or `bg-indigo-500` renders an untuned stock
+hue beside the platform's, which is a difference no reviewer spots in a diff of
+class strings.
 
 **Do not cross the surfaces.** What is left after the reskin is a density
 boundary, and it does not dissolve as sections convert to React: a 44px tap

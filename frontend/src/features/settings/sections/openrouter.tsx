@@ -21,7 +21,7 @@ export function OpenRouterSection() {
       <div id="settings-openrouter-beta-gated" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs text-zinc-600 dark:text-zinc-400 mb-3">
         Codex/OpenRouter is being rolled out gradually and isn't available for your account yet.
       </div>
-      <div id="settings-openrouter-managed-card" className="hidden rounded-lg border border-indigo-200 dark:border-indigo-900 bg-indigo-50 dark:bg-indigo-950/30 px-3 py-3 mb-3">
+      <div id="settings-openrouter-managed-card" className="hidden rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/30 px-3 py-3 mb-3">
         <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Included OpenRouter key</div>
         <div id="settings-openrouter-managed-message" className="mt-1 text-xs text-zinc-600 dark:text-zinc-400"></div>
         <Button id="settings-openrouter-claim" className="hidden mt-3" size="narrow">
@@ -34,7 +34,7 @@ export function OpenRouterSection() {
         <div className="mt-2 flex gap-2">
           <Input id="settings-openrouter-revealed-key" type="text" readOnly width="flex" className="font-mono" />
           <Button id="settings-openrouter-copy" layout="shrink" size="narrow">Copy</Button>
-          <Button id="settings-openrouter-dismiss-reveal" layout="shrink" variant="secondary" size="narrow">Done</Button>
+          <Button id="settings-openrouter-dismiss-reveal" layout="shrink" variant="neutral" ink="neutral" size="narrow">Done</Button>
         </div>
       </div>
       <div id="settings-openrouter-key-display" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">

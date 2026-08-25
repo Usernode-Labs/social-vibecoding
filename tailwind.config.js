@@ -75,15 +75,21 @@ module.exports = {
   //     `text-violet-400`). Re-keying them to `neutral-*`/`blue-*` would be a
   //     rename touching every one of those literals — an enormous diff whose
   //     rendered output is identical to this four-line one.
-  //   * tests/admin-ui-registry.test.js keeps the two design systems apart BY
-  //     PALETTE NAME: the shell must read `zinc-`/`violet-` and the admin
-  //     console `gray-`/`indigo-`. Re-keying the shell's scales would erase
-  //     the boundary that test exists to defend.
   //
   // So the scale name is now an IDENTITY ("the shell's neutral", "the shell's
-  // accent"), not a hue. Read the hex, not the key. The admin console is
-  // untouched and stays gray/indigo — see the "Two design systems" rule in
-  // AGENTS.md.
+  // accent"), not a hue. Read the hex, not the key.
+  //
+  // WHAT USED TO BE HERE, because it is the thing most likely to be
+  // reintroduced: this note used to say the admin console "is untouched and
+  // stays gray/indigo", and that tests/admin-ui-registry.test.js kept the two
+  // systems apart BY PALETTE NAME. Both stopped being true when the
+  // widget-language reskin folded the console into this vocabulary. That test
+  // now asserts the OPPOSITE — `gray-` and `indigo-` appear nowhere in
+  // frontend/@/components/ui/**, frontend/src/** or public/js/** — because the
+  // two keys below are overridden and a stray stock `bg-gray-100` renders an
+  // untuned hue beside the platform's. The boundary between the two systems is
+  // a DENSITY one now, and it lives in AGENTS.md's "One language, two
+  // surfaces" rule.
   //
   // Values are eyedropped from the design screenshots and are EXPECTED TO BE
   // CORRECTED against the real source tokens; they are anchored deliberately
