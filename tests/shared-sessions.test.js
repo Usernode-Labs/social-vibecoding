@@ -147,9 +147,21 @@ test('shared-sessions WHERE clause is the privacy contract', async () => {
     // Card data: owner name + discussion stats ride along…
     assert.match(q.sql, /u\.username/);
     assert.match(q.sql, /chat_count/);
-    // #689: can_preview is DERIVED from pr_number (a PR exists once the
-    // first commit is pushed) so the card can offer an on-demand rebuild…
-    assert.match(q.sql, /\(cs\.pr_number IS NOT NULL\) AS can_preview/);
+    // can_preview is DERIVED — "this branch has pushed changes" — so the
+    // card can offer an on-demand rebuild after the idle GC nulls
+    // staging_url.
+    //
+    // It was `pr_number IS NOT NULL` alone (#689), which was a fine proxy
+    // while every shared session was a proposal in waiting. A session
+    // shared with `share: true` has a preview and NO pull request, so that
+    // read false for exactly the sessions this endpoint exists to serve —
+    // and their cards offered nothing at all once the preview slept, to
+    // their own author as much as to anyone else. checks_commit_sha is the
+    // second half: it records the commit a checks run described, so it is
+    // only set once a real commit on this branch has been BUILT, and
+    // teardownStaging does not clear it the way it clears staging_url.
+    assert.match(q.sql,
+      /\(cs\.pr_number IS NOT NULL OR cs\.checks_commit_sha IS NOT NULL\)\s*AS can_preview/);
     // …but nothing that opens the owner's dev chat — pr_number itself is
     // never selected bare, only inside the boolean above.
     assert.doesNotMatch(q.sql, /pr_url/);

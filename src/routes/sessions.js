@@ -1537,7 +1537,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows } = await pool.query(
         `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
                 created_from_issue_number, agent_backend, agent_model, source, external_agent,
-                (spec_md IS NOT NULL AND spec_md <> '') AS has_spec
+                (spec_md IS NOT NULL AND spec_md <> '') AS has_spec,
+                -- The same derivation the shared-session list uses, so the
+                -- owner's own card and everyone else's card agree about
+                -- whether a slept preview can be woken. Without it
+                -- _cardPreviewSpec fell back to pr_number, which is null for
+                -- a share-only session and left the owner with no affordance
+                -- at all once the idle GC nulled staging_url.
+                (pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL)
+                  AS can_preview
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
          ORDER BY created_at DESC`,
@@ -1582,10 +1590,28 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   open the owner's dev chat" is enforced by authorization, not just
   //   missing UI. staging_url IS included (same exposure /promoted
   //   already grants proposals) so viewers get a Preview affordance,
-  //   plus a derived can_preview boolean (#689: pr_number IS NOT NULL,
-  //   i.e. the branch has pushed changes) so the card can offer an
-  //   on-demand rebuild via ensure-staging even after the idle staging
-  //   GC has nulled staging_url. pr_number itself stays withheld.
+  //   plus a derived can_preview boolean — "the branch has pushed
+  //   changes" — so the card can offer an on-demand rebuild via
+  //   ensure-staging even after the idle staging GC has nulled
+  //   staging_url. pr_number itself stays withheld.
+  //
+  //   That boolean was `pr_number IS NOT NULL` (#689), which was a fine
+  //   proxy while every shared session was a proposal in waiting. It is
+  //   not one for a session shared with `share: true`: that lands in the
+  //   in-progress area with a preview and NO pull request, so pr_number
+  //   is null, can_preview was false, and the card offered nothing at all
+  //   the moment the preview went to sleep — to its own author as much as
+  //   to anyone else. Meanwhile POST /api/sessions/:id/ensure-staging has
+  //   authorized exactly this case all along ("Explicitly-shared sessions
+  //   … get the same member-wide access"): the server said yes and the
+  //   affordance never asked.
+  //
+  //   checks_commit_sha is the durable half of the answer. It records the
+  //   commit a checks run described, so it is only ever set once a real
+  //   commit on this branch has been built — and unlike staging_url,
+  //   staging_image_ref and staging_build_ref, teardownStaging does not
+  //   clear it. It survives exactly the event that used to strand the
+  //   card.
   //   chat_count / last_message_at mirror the /promoted subqueries: the
   //   discussion thread is the same chat_messages ('session', id) key
   //   the proposal card will inherit on promotion. linked_issues IS
@@ -1614,7 +1640,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       const { rows } = await pool.query(
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
-                cs.staging_url, (cs.pr_number IS NOT NULL) AS can_preview,
+                cs.staging_url,
+                (cs.pr_number IS NOT NULL OR cs.checks_commit_sha IS NOT NULL)
+                  AS can_preview,
                 cs.linked_issues, cs.source, cs.imported_pr_author,
                 cs.check_state, cs.check_phase,
                 (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
@@ -1685,6 +1713,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // branch has pushed changes — the pill still renders and routes
           // through ensure-staging. Clicking it in a demo 404s (fake id)
           // into the "could not be rebuilt" loader, same as 990002.
+          //
+          // Worth knowing: this row modelled a state a REAL share-only
+          // session could not be in. `can_preview: true` with no
+          // staging_url was reachable only for a session with a pull
+          // request, because the derivation above was `pr_number IS NOT
+          // NULL` — so the demo board showed a rebuild affordance that the
+          // thing it demonstrates never got. The fixture was right and the
+          // derivation was wrong; the derivation now also reads
+          // checks_commit_sha, and this row is honest.
           {
             id: 990003, session_title: '[Mock] Shared session, preview asleep (rebuild on click)',
             pr_title: null, branch_name: 'mock/shared-preview-asleep', status: 'paused',
