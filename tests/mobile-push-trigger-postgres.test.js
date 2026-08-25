@@ -227,7 +227,19 @@ pgTest('the closed kind policy and account preferences gate enqueue at insert ti
 
   const { rows: policy } = await client.query(
     'SELECT kind, default_enabled FROM mobile_push_kind_categories ORDER BY kind');
-  assert.equal(policy.length, 19, 'the seed carries the reviewed closed set');
+  // 19 -> 21: #1405's two connector kinds. This number is a TRIPWIRE, not
+  // bookkeeping — a new push-eligible kind has to be looked at rather than
+  // merely added, which is what it just forced. Both land in
+  // `developer_sessions` beside session_done and auto_solve_done, both
+  // default_enabled, and that is the whole point of the feature: "your agent
+  // submitted work" and "your agent is waiting on you" are exactly the
+  // moments somebody is away from the screen.
+  //
+  // Bumping it weakens nothing. The loop below fires a notification for
+  // EVERY row this query returns and asserts the delivery count matches
+  // default_enabled, so the two new kinds gain real coverage from the same
+  // assertion the existing nineteen have.
+  assert.equal(policy.length, 21, 'the seed carries the reviewed closed set');
   for (const { kind, default_enabled: enabled } of policy) {
     const row = await notify(client, { userId: alice, kind });
     assert.equal((await deliveriesFor(client, row.id)).length, enabled ? 1 : 0,
