@@ -4,6 +4,7 @@ import * as api from './api';
 import { edit, react, setReply } from './store';
 import type { ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
+import { useAutoGrow } from '../../lib/use-auto-grow';
 
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '😢', '🙏', '🔥'];
 type ReportReason = 'harassment' | 'spam' | 'threats' | 'hate' | 'sexual_content' | 'other';
@@ -31,6 +32,10 @@ export function MessageRow({ message, conversationId }: { message: ConversationM
   const [reportReason, setReportReason] = useState<ReportReason>('spam');
   const [reportDetail, setReportDetail] = useState('');
   const longPress = useRef<number | null>(null);
+  // #1408: the edit box grows with the message being edited, same as the
+  // composer it visually replaces.
+  const editRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(editRef, editValue);
 
   async function saveEdit() {
     const content = editValue.trim();
@@ -73,7 +78,7 @@ export function MessageRow({ message, conversationId }: { message: ConversationM
         <div className="messages-message-head"><span className={mine ? 'text-violet-700 dark:text-violet-300' : ''}>@{message.sender.username}</span><time title={fullTime(message.createdAt)}>{new Date(message.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</time>{message.editedAt ? <span title={fullTime(message.editedAt)}>edited</span> : null}{message.pending ? <span>sending…</span> : null}{message.failed ? <span className="text-red-700 dark:text-red-400">not sent</span> : null}</div>
         {message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>@{message.reply.sender.username}</span><p>{message.reply.content || 'Attachment'}</p></button> : null}
         {editing ? (
-          <div className="messages-edit"><textarea value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
+          <div className="messages-edit"><textarea ref={editRef} value={editValue} onChange={(event) => setEditValue(event.target.value.slice(0, 8000))} rows={2} maxLength={8000} autoFocus onKeyDown={(event) => { if (event.key === 'Escape') setEditing(false); if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void saveEdit(); } }} /><div><button type="button" disabled={busy} onClick={() => void saveEdit()}>Save</button><button type="button" onClick={() => setEditing(false)}>Cancel</button></div></div>
         ) : message.content ? <MessageMarkdown content={message.content} /> : null}
         {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}
         {message.objects.length ? <div className="messages-object-list">{message.objects.map((object, index) => <ObjectCard key={`${object.type}-${index}`} object={object} />)}</div> : null}

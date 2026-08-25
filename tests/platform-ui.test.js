@@ -397,12 +397,23 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
   assert.ok(!/slug:\s*['"]usernode/.test(publish),
     'never a hardcoded platform slug');
 
-  // 3. Both gates. Publishing while an app is open would overwrite that app's
-  //    own target, so the header button would describe the wrong thing.
+  // 3. Both gates, and what #1406 changed about the second one.
+  //
+  //    The first is unchanged: publishing while an app is open would overwrite
+  //    that app's own target, so the header button would describe the wrong
+  //    thing.
+  //
+  //    The second used to require HOME specifically, which is precisely why
+  //    the improve button and the view selector vanished on settings, profile
+  //    and messages. Those screens now call this too, so the gate asks the
+  //    question that actually matters — is an app on screen — rather than
+  //    naming the one screen that used to be allowed.
   assert.ok(publish.includes('currentApp'),
     'must not publish while an app is open');
-  assert.ok(publish.includes("_isScreenVisible('home-screen')"),
-    'must not publish while another screen is on show');
+  assert.ok(publish.includes("_isScreenVisible('app-view')"),
+    'and not while the app view is on show — the other half of the same guard');
+  assert.ok(!publish.includes("!App._isScreenVisible('home-screen')"),
+    'but no longer refuses every screen that is not home');
 
   // 4. navigateHome still CLEARS the app's target first, then republishes
   //    home's — in that order, so nothing inherits the closed app's facts.
@@ -505,8 +516,16 @@ test('the view toggle renders in BOTH homes, and CSS picks which one shows', () 
   assert.match(toggle, /data-view-segment="app"/,
     'data-view-segment stays "app" on both rows — it is the selector contract');
   const controller = read('frontend/src/features/improve/improve-controller.js');
-  assert.match(controller, /if \(selfHosted\) \{\s*\n\s*if \(window\.App\.currentApp\) window\.App\.navigateHome\(\);/,
-    'openApp() sends the self-hosted row home, and no-ops when it is already there');
+  // #1406 widened where this segment is reachable from. It used to be true
+  // that "no app open" meant "already home", because every other screen
+  // cleared the target and unrendered the control — so a no-op was correct.
+  // Those screens keep the control now, so the guard has to be the home screen
+  // itself; left as it was, clicking Home from Settings would have done
+  // nothing at all.
+  assert.match(controller, /_isScreenVisible\('home-screen'\)/,
+    'openApp() asks whether it is ALREADY home, not whether an app is open');
+  assert.match(controller, /if \(!onHome\) window\.App\.navigateHome\(\);/,
+    'and navigates home from anywhere that is not home');
 
   // Active state comes from two stores because it genuinely lives in two
   // places — which HALF of the app is on screen, and which dev view.

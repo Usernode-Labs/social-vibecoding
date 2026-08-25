@@ -22,13 +22,25 @@
 // more often than it used to — but it still VARIES (the dev-console icon
 // only appears once an app logs an error), so the measurement stays.
 //
-// This hook restores true viewport-centering when there's enough room
-// for it, by switching the title to absolute positioning at left:50%.
-// "Enough room" means the title's natural (un-truncated) width fits
-// inside the header with symmetric clearance equal to the wider of the
-// two side groups, plus a small breathing gap on each side. When the
-// title is too wide to satisfy that, we leave it in flex flow where it
-// truncates cleanly from the right.
+// This hook switches the title to absolute positioning, centred in the space
+// the two side groups leave — NOT at the viewport's middle (#1407).
+//
+// It used to centre on the viewport, requiring symmetric clearance equal to
+// the WIDER group on both sides. That was the wrong target twice over. The
+// groups are lopsided — a ~20px back button against a right group holding the
+// view selector, the improve button and the hamburger — so a title at viewport
+// centre sits visibly off-centre within the gap it actually occupies, drifting
+// toward the narrow side. And demanding the wider group's width as clearance on
+// BOTH sides throws away the room the narrow side has, so titles that would fit
+// comfortably fell back to left-aligned for want of space that was there all
+// along.
+//
+// Centring between the groups fixes both: the anchor is the midpoint of
+// [leftW, headerW - rightW], and the fit test asks only whether the title fits
+// in that gap. When it does not, we leave it in flex flow where it truncates
+// cleanly from the right — the "centred if room, left-aligned otherwise"
+// contract is unchanged, and there is still no state where a truncated title
+// is also centred.
 //
 // Why JS and not pure CSS: there's no CSS expression that means "make
 // these two elements' margins equal to the wider of two third-party
@@ -109,18 +121,30 @@ export function useHeaderLayout(
       const leftW = leftGroup!.offsetWidth;
       const rightW = rightGroup!.offsetWidth;
 
-      // For the title to sit at viewport center without overlapping the
-      // wider of the two side groups, the clearance from viewport center
-      // to the title's edge needs to be at least as wide as that group.
-      // Geometric centering is symmetric, so the same clearance applies
-      // on both sides. The constraint reduces to:
-      //   titleNaturalW <= headerW - 2 * max(leftW, rightW) - 2 * GAP
-      const sideClearance = Math.max(leftW, rightW) + SIDE_GAP_PX;
-      const availableForCenter = headerW - 2 * sideClearance;
+      // The gap between the two groups, and its midpoint. This is the whole
+      // change from the viewport-centred version: the title is centred on the
+      // space it actually has rather than on the header, so the lopsidedness
+      // of the groups moves the anchor instead of wasting the narrow side.
+      const gapStart = leftW + SIDE_GAP_PX;
+      const gapEnd = headerW - rightW - SIDE_GAP_PX;
+      const availableForCenter = gapEnd - gapStart;
 
       const titleNaturalW = measureTitleNaturalWidth();
 
-      const canCenter = titleNaturalW + JITTER_SLACK_PX <= availableForCenter;
+      const canCenter = availableForCenter > 0
+        && titleNaturalW + JITTER_SLACK_PX <= availableForCenter;
+
+      // Published as a custom property rather than an inline `left` so the
+      // positioning rule stays in the stylesheet with the rest of the title's
+      // geometry — this hook supplies the one number CSS cannot compute.
+      // Written only when it is going to be used, so a left-aligned title
+      // carries no stale offset from a width it no longer has.
+      if (canCenter) {
+        const centre = gapStart + availableForCenter / 2;
+        title!.style.setProperty('--header-title-centre', `${Math.round(centre)}px`);
+      } else {
+        title!.style.removeProperty('--header-title-centre');
+      }
 
       title!.classList.toggle('is-centered', canCenter);
     }

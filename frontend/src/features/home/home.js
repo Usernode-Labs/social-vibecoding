@@ -733,8 +733,16 @@ const Home = {
     // header. Both checks — app.js's own currentApp and the screen itself —
     // because a repaint can land either side of the transition.
     if (window.App?.currentApp) return;
+    // #1406: the gate is now "an app is not on screen", not "home is". It used
+    // to require home specifically, which is why the improve button and the
+    // view selector vanished on settings, profile and messages — those screens
+    // clear the app's target through _enterScreenChrome and nothing put the
+    // PLATFORM's back. They call this now, so the check has to let them
+    // through while still refusing to fire over an open app: the currentApp
+    // check above and this one are the two halves of that, because a repaint
+    // can land either side of the transition.
     if (window.App && typeof App._isScreenVisible === 'function'
-        && !App._isScreenVisible('home-screen')) return;
+        && App._isScreenVisible('app-view')) return;
     const self = (Home._apps || []).find((a) => a && a.self_hosted);
     // No row in this viewer's payload → leave the target exactly as
     // navigateHome's setAppOpen(false) left it: cleared, no button. NOT a

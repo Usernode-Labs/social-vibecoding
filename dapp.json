@@ -1363,6 +1363,21 @@
       "expectSelector": "#improve-btn:not(.hidden)"
     },
     {
+      "name": "The Improve button survives onto Settings (#1406)",
+      "path": "/#settings",
+      "expectSelector": "#improve-btn:not(.hidden)"
+    },
+    {
+      "name": "The view selector survives onto Settings too (#1406)",
+      "path": "/#settings",
+      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"]"
+    },
+    {
+      "name": "On Settings the selector claims no segment — you are on none of them (#1406)",
+      "path": "/#settings",
+      "expectSelector": "#improve-view-toggle:not(:has([aria-selected=\"true\"]))"
+    },
+    {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-btn"

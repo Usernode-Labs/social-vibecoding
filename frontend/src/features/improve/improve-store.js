@@ -55,7 +55,7 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {boolean} readOnly
  * @property {boolean} showTerminal
  * @property {boolean} canShare
- * @property {'app'|'dev'} tab
+ * @property {'app'|'dev'|'other'} tab
  * @property {ImproveSession[]} sessions
  * @property {ImproveSession[]} otherSessions
  * @property {boolean} loadingSessions
@@ -88,6 +88,12 @@ const INITIAL = {
    * sit in switchTab for exactly this reason, noting "there is no control in
    * the header reflecting which tab is active any more"; there is again, so
    * the fact is published as store state rather than repainted by hand.
+   *
+   * #1406 added a third value, 'other': a platform screen that is neither half
+   * of an app — settings, profile, messages. Those screens now keep the improve
+   * button and the view selector, and none of the selector's three segments is
+   * where you are, so the control has to be able to say "none of these" rather
+   * than claiming the one it would otherwise default to.
    *
    * 'app' in the initial value because that is `App.currentTab`'s own initial
    * value, so the prerender and the first client render agree.

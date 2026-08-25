@@ -2855,6 +2855,23 @@ const App = {
     // Improve panel rows now, and setAppOpen(false) below clears the panel's
     // target — which retires them for the same reason and in one move.
     App.DrawerStatus.setAppOpen(false);
+    // #1406: …and then the PLATFORM's own row goes back, so the improve button
+    // and the view selector survive onto settings, profile, messages and the
+    // rest instead of disappearing the moment you leave home.
+    //
+    // The clear above still has to happen first: it is what drops the OPEN
+    // APP's target, and these screens are reached from inside an app as often
+    // as from home. So this is a swap, exactly as it already is on home — the
+    // same call, from the one function every non-home platform screen enters
+    // through, which is why it lands in one place rather than six.
+    if (typeof Home !== 'undefined' && Home.publishImproveTarget) {
+      Home.publishImproveTarget();
+    }
+    // …and say which of the selector's segments is current: none of them. This
+    // screen is not home, not the app tab and not the dev area, so a control
+    // whose job is saying where you are must not mark one. Published AFTER the
+    // target, because setTab is a no-op while there is no slug.
+    window.Improve?.setTab?.('other');
   },
 
   // Show the Leaderboard screen. Sibling to navigateToApp/navigateHome —
