@@ -9218,7 +9218,7 @@ const AppView = {
     // ── Actions: the state-driven primary + the claim toggle ──
     const actions = [];
     if (!AppView.readOnly) {
-      const primary = AppView._issuePrimaryActionSpec(issue);
+      const primary = AppView._issuePrimaryActionSpec(issue, { noNav });
       if (primary) actions.push(primary);
       // Promoted off the ⋯ menu: claiming an issue is what a reader does
       // with it before writing any code, and the chip it toggles is right
@@ -9326,17 +9326,21 @@ const AppView = {
   //   no run, I have a session     → Create new proposal
   //   run generating               → Generating proposal…      (disabled)
   //   run ready, I cloned it       → Go to session
-  //   run ready, outcome question  → Answer & regenerate       (ONE button:
-  //                                  it opens the issue's discussion where
-  //                                  the questions were posted, from which
-  //                                  the ⋯ "Generate proposal" re-runs)
+  //   run ready, outcome question  → Answer & regenerate       (ONE button.
+  //                                  YOUR run: opens the run's own session,
+  //                                  which is where it asked. Somebody
+  //                                  else's: that transcript is owner-scoped
+  //                                  and unopenable, so it falls back to the
+  //                                  issue discussion — board only, since
+  //                                  the head already IS that discussion)
   //   run ready, other outcomes    → Review spec / Review solution /
   //                                  Changes ready — review & start session
   //
   // "Generate proposal" for a never-run issue lives in the ⋯ menu: starting
   // a headless run spends the viewer's credits, so it should be a chosen
   // action rather than the card's most prominent button.
-  _issuePrimaryActionSpec(issue) {
+  _issuePrimaryActionSpec(issue, opts) {
+    const noNav = !!(opts && opts.noNav);
     const n = issue.number;
     const h = issue.headless;
     if (h && h.status === 'generating') {
@@ -9354,12 +9358,38 @@ const AppView = {
         };
       }
       if (h.outcome === 'question') {
-        // One button, not two. It lands on the issue's discussion, where the
-        // run posted its questions; re-running is the ⋯ menu's Generate
-        // proposal row once they're answered.
+        // Where the question actually IS decides where this button goes.
+        //
+        // A headless run does not post its questions to the issue: it drafts
+        // its spec and asks in ITS OWN transcript, then waits (#1372's run
+        // ends "reply with the URL(s) ... then tell me to build the spec").
+        // So for the person who started the run, the destination that lets
+        // them do what the label promises is that session — the spec viewer
+        // and the reply box are both there, and answering in it is what
+        // makes the agent regenerate.
+        //
+        // This button used to send everyone to the issue's discussion
+        // instead. On the board that at least moved; on the topic head the
+        // destination WAS the current view, so the click re-rendered what
+        // was already on screen and the button read as broken.
+        if (h.mine && h.sessionId) {
+          return {
+            key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
+            title: 'Your auto-solve run is waiting on an answer — open its session to read the question and reply',
+            act: { fn: 'openAutoRunSession', args: [h.sessionId] },
+          };
+        }
+        // Somebody else's run. Dev chats are owner-scoped by authorization,
+        // not just by missing UI (see /api/apps/:slug/shared-sessions), so
+        // its transcript is genuinely not navigable here and sending them
+        // there would only swap one dead button for another. The issue's
+        // discussion is the one place they can contribute — a real
+        // navigation from the board, and nothing at all from the head,
+        // which already IS that discussion.
+        if (noNav) return null;
         return {
           key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
-          title: 'The auto-solve run has a question for you — answer it on this issue, then use ⋯ → Generate proposal to re-run',
+          title: 'This auto-solve run has a question — answer it on this issue, then use ⋯ → Generate proposal to re-run',
           act: { fn: 'openTopic', args: ['issue', n] },
         };
       }
@@ -10354,6 +10384,23 @@ const AppView = {
   // again. No DevChat.sessions.unshift needed: the switchTab path reloads
   // the session list itself before opening the session.
   async goToAutoSessionClone(sessionId) {
+    if (typeof DevChat === 'undefined') return;
+    if (typeof App !== 'undefined' && App.switchTab) {
+      await App.switchTab('dev', sessionId, 'sessions');
+    }
+  },
+
+  // "Answer & regenerate" — open the headless auto-run's OWN session, where
+  // it drafted its spec and asked its question. Only ever wired for a run
+  // the viewer started: /api/sessions/:id is owner-scoped, and openSession
+  // returns silently on a non-ok response, so pointing anyone else here
+  // would produce exactly the dead button this replaced. Same navigation as
+  // goToAutoSessionClone — the switchTab path loads the session itself, so
+  // it does not matter that headless rows are excluded from the session
+  // LIST (/api/sessions filters is_headless = FALSE); openSession fetches
+  // /api/sessions/:id directly and resumes the row if it is paused, which a
+  // finished run always is.
+  async openAutoRunSession(sessionId) {
     if (typeof DevChat === 'undefined') return;
     if (typeof App !== 'undefined' && App.switchTab) {
       await App.switchTab('dev', sessionId, 'sessions');
