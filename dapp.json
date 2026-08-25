@@ -2707,19 +2707,19 @@
       "expectSelector": "body.bg-zinc-100"
     },
     {
-      "name": "A connector work order shows in the Improve panel (#1417)",
-      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel[data-open] #improve-body [data-improve-row=\"task\"]"
+      "name": "A connector work order shows in the app-context sheet (#1417, Streamlined Concept)",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#app-context-sheet[data-open] #app-context-body [data-improve-row=\"task\"]"
     },
     {
       "name": "The work-order row points at its request, not a session page (#1417)",
-      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel[data-open] [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#app-context-sheet[data-open] [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
     },
     {
       "name": "Real sessions still render beside it, each on its own destination (#1417)",
-      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel[data-open] [data-improve-row=\"session\"][href*=\"/dev/sessions/\"]"
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#app-context-sheet[data-open] [data-improve-row=\"session\"][href*=\"/dev/sessions/\"]"
     }
   ],
   "governance": {
