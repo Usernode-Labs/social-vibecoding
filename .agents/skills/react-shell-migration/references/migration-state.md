@@ -7,6 +7,7 @@
 - Remaining legacy-owned hosts
 - The admin console: done
 - Step 3 sequence
+- The theme, and what a contrast sweep is for
 - Staging fixtures
 
 ## Step 2 closeout
@@ -1143,6 +1144,47 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    writes into a subtree React owns.
 
 3. ~~Admin interior~~ — **done**. See "The admin console: done" above.
+
+## The theme, and what a contrast sweep is for
+
+The reskin's palette is theme-following, and the STATIC guards
+(`tests/theme-ink-guards.test.js`) are the cheap half of checking it. They
+assert spellings. They cannot see what surface a node is actually drawn on, so
+the thorough half is a Playwright sweep over the running app that computes each
+text node's real contrast against the colour behind it. Every rule in that test
+file exists because the sweep measured a live failure of that exact shape; the
+numbers in each rule are what it reported before the fix.
+
+Three things that pass are worth carrying forward.
+
+**The biggest cause was a token.** `zinc-500` — the secondary ink — was
+eyedropped at `#6c6c70`, which is 4.35:1 on `zinc-100`, the page ground those
+labels sit on. 63 distinct failing styles came from that one value and none of
+them was a mistake at the call site. Correcting the ramp to `#68686c` cleared
+67 failures without touching a component. Before respelling N call sites, check
+whether the ramp value itself is the bug: that is what a token table is for.
+The alternative here (`text-zinc-500` → `text-zinc-600`) is 7.58:1, which is
+not a secondary ink any more.
+
+**Darkening a light ink without a `dark:` partner makes dark mode worse.** A
+first pass moved 572 status inks down the ramp and took dark-mode failures from
+51 to 89 — `text-amber-800` is 2.4:1 on a near-black page, and 37 of the 89
+were self-inflicted. Every darkened run needs its partner in the same edit.
+Rule 2b bans the unpaired case for `zinc-400` outright.
+
+**A class string is not always a class string.** The pairing pass appended
+` dark:text-red-400` inside `el.classList.remove('text-red-500')`, where the
+argument is one DOMTokenList TOKEN, not a class attribute —
+`InvalidCharacterError` at the first status message the settings screen writes.
+43 sites, and all 9,725 tests passed: they render components and read markup,
+and no vm DOM stub in the repo implements DOMTokenList's validation. It
+surfaced in a browser, and a console error on any route fails proposal checks.
+Rule 2c bans a multi-token `classList` argument now.
+
+Where it stands after that pass — shell light 43, shell dark 49, console light
+6, console dark 23. The residue is `opacity-60` text, cases the sweep
+attributes to an inherited parent colour, and seven `text-white`-on-light bugs.
+Those need reading one at a time; there is no mapping for them.
 
 ## Staging fixtures
 
