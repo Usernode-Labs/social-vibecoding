@@ -12,7 +12,37 @@ const { appIdentityEnv } = require('./app-identity-env');
 const deployFailure = require('./deploy-failure');
 const { getTemplateFiles, getConnectorScaffoldFiles } = require('./template');
 const { getPool } = require('../db/pool');
-const { pushAppStatusUpdate } = require('./ws');
+const appCreationPhase = require('./app-creation-phase');
+const { pushAppStatusUpdate, pushAppCreationPhase } = require('./ws');
+
+// Record which step of creation is running, and tell the connected
+// clients. Two sinks for one fact: the in-memory store answers
+// GET /api/apps/:slug (so a mid-creation page refresh recovers the step)
+// and the broadcast drives the create dialog live. Neither is allowed to
+// affect the outcome — this is display state, so nothing here throws.
+function reportPhase(appId, slug, phase) {
+  try {
+    appCreationPhase.markPhase(slug, phase);
+    pushAppCreationPhase({ id: appId, slug, phase });
+  } catch (err) {
+    // Swallowed on purpose. reportPhase runs inside createApp's try
+    // block, so an exception here would be caught by the outer handler
+    // and flip a perfectly healthy app to status='error' — a progress
+    // indicator sinking the creation it was only meant to narrate.
+    log.warn('app-creator', 'Phase report failed', { appId, slug, phase, err: err.message });
+  }
+}
+
+// Creation reached a terminal status; stop claiming a phase. Called on
+// every exit path — success, awaiting_secrets and both failure catches —
+// so a finished app never leaves a step spinning in the dialog.
+function endPhases(slug) {
+  try {
+    appCreationPhase.clear(slug);
+  } catch (err) {
+    log.warn('app-creator', 'Phase clear failed', { slug, err: err.message });
+  }
+}
 
 async function createApp(config, appRow) {
   const pool = getPool(config);
@@ -39,6 +69,7 @@ async function createApp(config, appRow) {
     // future deploys / restarts / staging clones can reconstruct the
     // per-role URL without the shared superuser credential. See
     // SELF-HOSTING.md "Per-app postgres roles".
+    reportPhase(appId, slug, 'database');
     const dbName = dbManager.appDbName(slug);
     const { password: dbPassword } = await dbManager.createDatabase(dbName);
     await pool.query(
@@ -53,6 +84,7 @@ async function createApp(config, appRow) {
     //      record useGitHub=true so the clone block below runs.
     //    - New-app path: create a fresh repo under the bot's account and
     //      seed it with the template (existing behavior).
+    reportPhase(appId, slug, 'repository');
     let repoUrl = appRow.repo_url || null;
     let useGitHub = !!repoUrl;
 
@@ -204,11 +236,18 @@ async function createApp(config, appRow) {
     const failure = deployFailure.record(err);
     await recordFailure(pool, appId, failure);
     await updateStatus(pool, appId, 'error');
+    endPhases(slug);
     pushAppStatusUpdate({ id: appId, slug, status: 'error', errorReason: failure.reason });
   }
 }
 
 // Shared deploy tail used by BOTH createApp and app-forker.forkApp.
+// Note that means a FORK also reports the 'build' and 'deploy' phases
+// (never 'database'/'repository' — the forker stages those itself). That
+// is inert today: the fork dialog still closes on its 201, and the
+// progress store only records broadcasts for the slug it was explicitly
+// pointed at. It is deliberately left that way rather than gated, so
+// giving fork-app.tsx the same progress view is a frontend-only change.
 // Preconditions: the app's working tree is on disk at `tempDir`, its
 // per-app Postgres DB exists and `dbUrl` connects to it, and (for a
 // fork) any copied non-private secrets are already in app_secrets. This
@@ -289,12 +328,14 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
         [repoUrl || null, mainSha || null, appId]
       );
       await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
+      endPhases(slug);
       pushAppStatusUpdate({
         id: appId, slug, status: 'awaiting_secrets', missingSecrets: merge.missingRequired,
       });
       return;
     }
 
+    reportPhase(appId, slug, 'build');
     const build = await applicationRuntime.build(config, {
       app: { id: appId, slug, repo_url: repoUrl },
       revision: mainSha,
@@ -308,6 +349,7 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
     // LLM-proxy env pair (URL + per-app token, generated lazily here on
     // first deploy) so the app can call the platform's app-LLM proxy.
     // Staging deploys deliberately don't (see services/app-llm-env.js).
+    reportPhase(appId, slug, 'deploy');
     const llmEnv = await appLlmEnv.productionLlmEnv(pool, appId);
     // Likewise the app-storage env pair (#752) — production only.
     const storageEnv = await appStorageEnv.productionStorageEnv(pool, appId);
@@ -343,6 +385,7 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
        deployed.runtimeName, appId]
     );
 
+    endPhases(slug);
     pushAppStatusUpdate({ id: appId, slug, status: 'running', url: appUrl });
     log.info('app-creator', 'App created successfully', { appId, slug, hostname, appUrl, repoUrl });
   } catch (err) {
@@ -350,6 +393,7 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
     const failure = deployFailure.record(err, { sha: mainSha || null });
     await recordFailure(pool, appId, failure);
     await updateStatus(pool, appId, 'error');
+    endPhases(slug);
     pushAppStatusUpdate({ id: appId, slug, status: 'error', errorReason: failure.reason });
   }
 }

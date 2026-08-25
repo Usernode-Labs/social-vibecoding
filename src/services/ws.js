@@ -998,6 +998,29 @@ function pushAppStatusUpdate(app) {
   }, { appId: app.id, appSlug: app.slug });
 }
 
+// Push one creation-phase update for an app that is still 'creating'.
+//
+// Rides the SAME `app_status` message the terminal transitions above
+// use — clients already receive and dispatch it — with `phase` as the
+// only new field. Scoped identically to pushAppStatusUpdate, which is
+// the whole reason this does not live in app-deploy-status.js: that
+// module broadcasts unscoped, and a brand-new app may be view-private.
+//
+// `status` is pinned to 'creating' rather than read off the row: the
+// caller is inside createApp, where that is the only status the row can
+// have, and a stale read here would race the terminal update.
+function pushAppCreationPhase(app) {
+  broadcastGlobalScoped({
+    type: 'app_status',
+    appId: app.id,
+    slug: app.slug,
+    status: 'creating',
+    url: null,
+    errorReason: null,
+    phase: app.phase,
+  }, { appId: app.id, appSlug: app.slug });
+}
+
 function pushSessionUpdate(data) {
   broadcastGlobalScoped({ type: 'session_update', ...data },
     { appId: data.appId, appSlug: data.appSlug });
@@ -1175,4 +1198,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushToUser, pushConversationEvent, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushToUser, pushConversationEvent, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };

@@ -192,7 +192,41 @@ const Home = {
       if (y.favorite_order == null) return -1;
       return x.favorite_order - y.favorite_order;
     });
+    Home.hoistNewestOwned(yours);
     return { yours, rest };
+  },
+
+  // Move the app you most recently CREATED to the front of `list`, in
+  // place. Exactly one row moves and everything else keeps its relative
+  // order, so the favorite_order run above stays intact below it.
+  //
+  // Why it is needed at all: the server orders by 7-day chat messages +
+  // seconds-spent (routes/apps.js), and an app created a moment ago has
+  // neither — it sorts LAST, which is the opposite of where you want to
+  // look right after creating it.
+  //
+  // Scope: this reorders the array that feeds Home.presentIds →
+  // HomeLayout.deriveDefault, i.e. the DERIVED default grid. A user who
+  // has dragged their tiles has a stored arrangement that wins in
+  // Home.currentLayout, and we deliberately leave it alone rather than
+  // shoving their layout around; their new app still lands in the first
+  // free cell via HomeLayout.repair.
+  hoistNewestOwned(list) {
+    const me = window.App && App.user ? App.user.id : null;
+    if (me == null || !Array.isArray(list) || list.length < 2) return list;
+    let bestIndex = -1;
+    let bestAt = -Infinity;
+    for (let i = 0; i < list.length; i += 1) {
+      const app = list[i];
+      if (!app || app.created_by !== me) continue;
+      // A row with no parseable created_at cannot be "the newest"; skip
+      // it rather than letting NaN win a comparison.
+      const at = Date.parse(app.created_at);
+      if (!Number.isFinite(at)) continue;
+      if (at > bestAt) { bestAt = at; bestIndex = i; }
+    }
+    if (bestIndex > 0) list.unshift(list.splice(bestIndex, 1)[0]);
+    return list;
   },
 
   // Case-insensitive substring match on name and slug. An empty /

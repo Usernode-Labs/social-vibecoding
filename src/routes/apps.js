@@ -1098,12 +1098,22 @@ function appRoutes(config) {
       const canSeeFailure = !!req.user?.isAdmin
         || !!isCollaborator
         || (req.user?.id != null && appRow.created_by === req.user.id);
+      // Which step of createApp is running right now, for a client that
+      // loaded (or reloaded) mid-creation and so missed the WS
+      // broadcasts. Null whenever there is nothing to report — a
+      // finished app, or one whose platform process restarted mid-run —
+      // which the dialog renders as "in progress, step unknown".
+      const appCreationPhase = require('../services/app-creation-phase');
+      const phaseEntry = appRow.status === 'creating'
+        ? appCreationPhase.read(appRow.slug) : null;
+
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
         last_failure: undefined,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
           ? appRow.last_failure : null,
         url,
+        creationPhase: phaseEntry ? phaseEntry.phase : null,
         missingSecrets,
         ...accessFlags(appRow, req.user, isCollaborator,
           await appAdmins.getAdminAppIdsForUser(pool, req.user?.id)),
