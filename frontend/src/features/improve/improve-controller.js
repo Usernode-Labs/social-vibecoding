@@ -155,7 +155,11 @@ const Improve = {
    */
   setTab(tab) {
     if (!improveStore.get().slug) return;
-    improveStore.set({ tab: tab === 'dev' ? 'dev' : 'app' });
+    // #1406: 'other' is a platform screen that is neither half of an app. It
+    // is passed explicitly by App._enterScreenChrome and never inferred, so
+    // anything unrecognised still collapses to 'app' exactly as before.
+    const next = tab === 'dev' ? 'dev' : (tab === 'other' ? 'other' : 'app');
+    improveStore.set({ tab: next });
   },
 
   /**
@@ -175,18 +179,32 @@ const Improve = {
    * from. So the segment renders there too and lands home, which closes the
    * one-way trip the toggle exists to fix.
    *
-   * Already home — no app open — is the state that segment renders as ACTIVE,
-   * so there is nowhere to go and the click is a no-op rather than a pointless
-   * re-entry transition. Those are the only two states this can be reached in:
-   * every screen other than home and an open app clears the target outright
-   * (setAppOpen(false)), which unrenders the whole control.
+   * ── #1406 widened where this can be reached from ──────────────────
+   *
+   * That used to be true of exactly two states — home, and an open app —
+   * because every other screen cleared the target outright and unrendered the
+   * control. #1406 republishes the platform's row on settings, profile,
+   * messages and the rest, so the segment is now reachable from a screen that
+   * is NEITHER home nor an app.
+   *
+   * So "no app open" no longer means "already home", and the guard is the home
+   * screen itself rather than the absence of a slug. Left as it was, this
+   * would have silently done nothing from Settings — a segment rendering as
+   * inactive, clicked, and no navigation.
    */
   openApp() {
     Improve.close();
     const { slug, selfHosted } = improveStore.get();
     if (!slug || !window.App) return;
     if (selfHosted) {
-      if (window.App.currentApp) window.App.navigateHome();
+      // Home is where this goes, from wherever it is clicked. The only state
+      // with nothing to do is being on home ALREADY, which is the state the
+      // segment renders as active — and `_isScreenVisible` is what answers
+      // that now, since an open app is no longer the only other possibility.
+      const onHome = typeof window.App._isScreenVisible === 'function'
+        ? window.App._isScreenVisible('home-screen')
+        : !window.App.currentApp;
+      if (!onHome) window.App.navigateHome();
       return;
     }
     if (window.App.currentApp === slug) window.App.switchTab('app');

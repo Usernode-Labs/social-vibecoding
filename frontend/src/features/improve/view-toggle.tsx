@@ -148,7 +148,13 @@ export function ImproveViewToggle({ compact }: { compact: boolean }) {
   // toggle outliving the button it sits beside.
   if (!target || !slug) return null;
 
-  const active: Segment = tab === 'dev' ? (mode === 'kanban' ? 'kanban' : 'feed') : 'app';
+  // `null` when the viewer is on a platform screen that is none of the three
+  // (#1406 — settings, profile, messages). The control keeps its job of saying
+  // where you are, and on those screens the honest answer is "not here": every
+  // segment renders unselected rather than one of them claiming you.
+  const active: Segment | null = tab === 'dev'
+    ? (mode === 'kanban' ? 'kanban' : 'feed')
+    : (tab === 'app' ? 'app' : null);
   // Capitalised binding: JSX reads a lowercase tag as a literal element name.
   const HomeSegmentIcon = selfHosted ? HomeIcon : AppWindowIcon;
 

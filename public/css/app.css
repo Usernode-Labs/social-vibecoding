@@ -491,6 +491,11 @@ html.un-kb .platform-safe-bar {
 .messages-edit textarea {
   width: 100%;
   min-height: 56px;
+  /* #1408: the ceiling lib/use-auto-grow.ts grows into. Taller than the
+     composer's because an edit box holds a message that already exists — it
+     starts full rather than empty, so stopping it at the composer's height
+     would put most edits behind a scrollbar immediately. */
+  max-height: 260px;
   margin-top: 3px;
   border: 1px solid var(--accent-light);
   border-radius: 7px;
@@ -498,7 +503,11 @@ html.un-kb .platform-safe-bar {
   color: var(--text-primary);
   background: var(--bg-input);
   font-size: 13px;
+  /* `resize: vertical` stays: the grow is a floor on convenience, not a
+     ceiling on choice, and a hand-dragged height is a deliberate act the next
+     keystroke should not undo. */
   resize: vertical;
+  overflow-y: auto;
 }
 .messages-edit > div { display: flex; gap: 9px; margin-top: 3px; }
 .messages-edit button { color: var(--accent); font-size: 11px; font-weight: 600; }
@@ -596,6 +605,10 @@ html.un-kb .platform-safe-bar {
   line-height: 20px;
   outline: none;
   resize: none;
+  /* #1408: lib/use-auto-grow.ts sets `height` to the content height, and
+     `max-height` above is what stops it. Past that ceiling the extra lines
+     have to be reachable, so the box scrolls rather than clipping them. */
+  overflow-y: auto;
 }
 .messages-composer-input:focus { border-color: var(--accent-light); }
 .messages-composer-action { color: var(--text-muted); }

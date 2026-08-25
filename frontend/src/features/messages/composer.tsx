@@ -5,6 +5,7 @@ import * as api from './api';
 import { draftFor, notifyTyping, replyFor, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
 import type { MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
+import { useAutoGrow } from '../../lib/use-auto-grow';
 
 const MAX_ATTACHMENTS = 4;
 
@@ -37,6 +38,8 @@ export function MessageComposer() {
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // #1408: grow with the message, up to the max-height already in app.css.
+  useAutoGrow(inputRef, value);
   const fileRef = useRef<HTMLInputElement>(null);
   const typingStop = useRef<number | null>(null);
   const reply = replyFor(conversationId);
