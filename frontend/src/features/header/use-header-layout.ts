@@ -53,11 +53,71 @@ const SIDE_GAP_PX = 4;
 // offsetWidth would otherwise oscillate).
 const JITTER_SLACK_PX = 1;
 
+// Below this the title is NEVER centred — it stays in flex flow, left-aligned
+// beside the back/home icon, and truncates from the right.
+//
+// Two reasons, and the second is the one that made it a rule rather than a
+// preference.
+//
+// A phone header has no room for the idiom. The right group carries the
+// Improve button and the hamburger — around 140px — so the room left for a
+// symmetrically-centred title is `390 - 2*140`, i.e. under 110px: a title
+// short enough to qualify is rare, and one that does qualify sits in the
+// middle of a bar whose only other content is pinned to the two edges, which
+// reads as floating rather than as centred.
+//
+// And a near-miss is not a graceful one. Centring takes the title OUT of flex
+// flow (`position: absolute`, `flex: none` — see app.css), and an absolutely
+// positioned element has no cell to truncate against: it just runs over the
+// right group. On a wide screen the arithmetic has tens of pixels of slack to
+// absorb a late-arriving badge; at 390px it has none. So the narrow case gets
+// the layout that degrades by clipping instead of the one that degrades by
+// overlapping.
+//
+// 640px is the shell's own `sm` breakpoint, the same one the kanban tab strip
+// and the rest of app.css switch on.
+const CENTER_MIN_WIDTH_PX = 640;
+
 declare global {
   interface Window {
     /** features/header/use-header-layout.ts */
     HeaderLayout?: { refresh: () => void };
   }
+}
+
+/**
+ * Can the title sit at the header's exact centre without touching either side
+ * group? Pure, and exported, because THIS is the part that was wrong: the
+ * arithmetic is the whole behaviour and it is not observable from the outside
+ * until a title overlaps a button.
+ *
+ * Everything is in viewport coordinates, so the caller measures rects and this
+ * does no layout of its own.
+ *
+ * @param headerLeft   the header's border-box left edge
+ * @param headerWidth  the header's border-box width
+ * @param leftInner    the left group's RIGHT edge — its inner edge
+ * @param rightInner   the right group's LEFT edge — its inner edge
+ * @param titleNaturalW the title text's intrinsic width, not its flex cell's
+ */
+export function canCenterTitle({
+  headerLeft, headerWidth, leftInner, rightInner, titleNaturalW,
+}: {
+  headerLeft: number;
+  headerWidth: number;
+  leftInner: number;
+  rightInner: number;
+  titleNaturalW: number;
+}): boolean {
+  if (headerWidth <= 0) return false;
+  // See CENTER_MIN_WIDTH_PX: a phone never centres, whatever fits.
+  if (headerWidth < CENTER_MIN_WIDTH_PX) return false;
+  const center = headerLeft + headerWidth / 2;
+  // Centring is symmetric, so the tighter side decides. A right group that
+  // already reaches past the centre line makes this negative, which is the
+  // honest answer: there is no room at all.
+  const halfRoom = Math.min(center - leftInner, rightInner - center) - SIDE_GAP_PX;
+  return titleNaturalW / 2 + JITTER_SLACK_PX <= halfRoom;
 }
 
 /**
@@ -103,24 +163,30 @@ export function useHeaderLayout(
 
     function recompute() {
       pending = false;
-      const headerW = header!.clientWidth;
-      if (headerW <= 0) return;
+      const headerRect = header!.getBoundingClientRect();
+      if (headerRect.width <= 0) return;
 
-      const leftW = leftGroup!.offsetWidth;
-      const rightW = rightGroup!.offsetWidth;
-
-      // For the title to sit at viewport center without overlapping the
-      // wider of the two side groups, the clearance from viewport center
-      // to the title's edge needs to be at least as wide as that group.
-      // Geometric centering is symmetric, so the same clearance applies
-      // on both sides. The constraint reduces to:
-      //   titleNaturalW <= headerW - 2 * max(leftW, rightW) - 2 * GAP
-      const sideClearance = Math.max(leftW, rightW) + SIDE_GAP_PX;
-      const availableForCenter = headerW - 2 * sideClearance;
-
-      const titleNaturalW = measureTitleNaturalWidth();
-
-      const canCenter = titleNaturalW + JITTER_SLACK_PX <= availableForCenter;
+      // MEASURED FROM THE SIDE GROUPS' INNER EDGES, not from their widths.
+      //
+      // The rule used to be `headerW - 2 * (max(leftW, rightW) + GAP)`, which
+      // silently assumes each group is flush against the header's border box.
+      // Neither is: the header is `px-4`, so a group's inner edge sits 16px
+      // further in than its width implies, on both sides. That over-reported
+      // the room by 32px and centred titles that then ran over the right
+      // group — "Settings" at 390px overlapped the Improve button by 3px,
+      // which is the report that found this.
+      //
+      // Rects instead. Both groups are flush to their own edge in either mode
+      // (the title is `flex-1` in flow and `flex: none` when centred, and the
+      // right group's `ml-auto` pins it either way), so measuring while
+      // centred gives the same answer as measuring in flow — no oscillation.
+      const canCenter = canCenterTitle({
+        headerLeft: headerRect.left,
+        headerWidth: headerRect.width,
+        leftInner: leftGroup!.getBoundingClientRect().right,
+        rightInner: rightGroup!.getBoundingClientRect().left,
+        titleNaturalW: measureTitleNaturalWidth(),
+      });
 
       title!.classList.toggle('is-centered', canCenter);
     }

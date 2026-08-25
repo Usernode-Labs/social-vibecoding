@@ -271,17 +271,30 @@ test('no rule hides the header title in the native WebView', () => {
     'the native marker class is still load-bearing elsewhere');
 });
 
-test('the title is left-aligned on a phone by geometry, not by a native branch', () => {
+test('the title is left-aligned on a phone by an explicit rule, not by a native branch', () => {
   // The request was "left justified, leaving space for the home icon, since
-  // there wouldn't be room to centre". That is what the existing measurement
-  // already computes, so there is no native-specific alignment branch to
-  // drift: centring needs
+  // there wouldn't be room to centre".
+  //
+  // This test used to assert that the EXISTING measurement already produced
+  // that, on the reasoning that a 390px viewport carrying #improve-btn and
+  // the hamburger could never satisfy
   //   titleNaturalW <= headerW - 2 * (max(sideGroup) + gap)
-  // which a 390px viewport carrying #improve-btn and the hamburger cannot
-  // satisfy for a real title.
+  // for a real title. That was wrong twice over, and the preview showed it:
+  // "Settings" DID satisfy it, and the formula was over-reporting the room by
+  // the header's own `px-4` on each side, so the centred title overlapped the
+  // Improve button. Both halves are fixed in use-header-layout.ts and pinned
+  // in tests/header-title-centering.test.js, which drives the arithmetic
+  // directly on the measurements that failed.
+  //
+  // What belongs HERE is the part that is about this file's subject — that
+  // alignment stays ONE rule for every surface, with no native-webview branch
+  // to drift out of sync with the browser one.
   const hook = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src',
     'features', 'header', 'use-header-layout.ts'), 'utf8');
-  assert.match(hook, /const canCenter = titleNaturalW \+ JITTER_SLACK_PX <= availableForCenter/);
+  assert.match(hook, /const CENTER_MIN_WIDTH_PX = 640;/,
+    'a phone is left-aligned by a stated breakpoint, not by hoping the maths says so');
+  assert.match(hook, /const canCenter = canCenterTitle\(\{/,
+    'and the decision goes through the one exported, tested function');
   assert.doesNotMatch(hook, /in-native-webview|isNative/,
     'alignment is one geometric rule for every surface');
 });
