@@ -228,10 +228,10 @@ export function PlatformHeader() {
               menu now (build status, kudos, standings, admin, theme), so the
               rightmost slot is the conventional home for it.
               
-              #header-menu-deploy-dot is the amber "something is building"
-              cue: the drawer's status-pane pills are the only place a deploy
-              state renders now, so the dot is what tells you to look in
-              there. Toggled by App.DrawerStatus.refreshDeployDot().
+              It carries ONE indicator now — the bell's red unread count. The
+              deploy dot and the green session count moved to #improve-btn
+              with the things they are about; see the note on the button
+              itself for which corner each took and why.
           */}
           <button
             id="header-menu-btn"
@@ -249,44 +249,31 @@ export function PlatformHeader() {
             */}
             <Bars3Icon className="w-4 h-4" />
             {/*
-                The green "an AI turn or a merge step is in flight for YOU"
-                badge, moved here from the retired work cog. It keeps its id
-                and its writer (Notifications._renderBadge) — only its parent
-                changed. The hamburger is where it belongs now: that drawer is
-                the catch-all, and it is about to become the notifications
-                surface too.
+                THE BELL'S RED UNREAD BADGE — the only indicator left here.
 
-                Positioned IDENTICALLY to #notifications-badge below — same
-                corner, same size, same pill geometry — so the two read as one
-                badge convention rather than two. Only the colour differs
-                (emerald = your work in flight, red = unread).
-            */}
-            <span
-              id="notifications-badge-ai"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
-            >
-            </span>
-            {/*
-                The bell's red unread badge, which came here with the bell. Both
-                badges are painted by Notifications._renderBadge and the two
-                counts stay distinct — emerald = your work in flight, red =
-                unread notifications — so the hamburger can say "there are two
-                different reasons to open me" without a third icon.
+                Two others used to sit on this button and both have gone to
+                #improve-btn, because both were about things that live behind
+                THAT control:
 
-                Positioned IDENTICALLY to the green badge above: same corner,
-                same size, same pill geometry. Only one is ever non-empty in
-                practice, and tests/header-status-pane.test.js diffs the two
-                class lists with the colour token dropped to keep it that way.
+                  - the green session count (#notifications-badge-ai). Sessions
+                    are not notifications, and this drawer is not where you go
+                    to look at one. Green-and-red on one icon was what let the
+                    hamburger say "two different reasons to open me"; the two
+                    reasons are two controls now, which says it better.
+                  - the amber deploy dot (#header-menu-deploy-dot). It read the
+                    platform version row, and THE UI OVERHAUL had already moved
+                    that row into the Improve panel's footer — so the dot was
+                    pointing at something behind a different button. It is
+                    #improve-version-dot there, and it can show the violet
+                    "platform rolled past this tab" state too.
+
+                What is left keeps its id, its writer
+                (Notifications._renderBadge) and its geometry, so the two
+                badges still read as one convention across the two controls.
             */}
             <span
               id="notifications-badge"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
-            >
-            </span>
-            <span
-              id="header-menu-deploy-dot"
-              className="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500"
-              aria-hidden="true"
             >
             </span>
           </button>

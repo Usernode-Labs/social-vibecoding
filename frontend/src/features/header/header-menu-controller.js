@@ -95,21 +95,33 @@ const DrawerStatus = {
     row.classList.toggle('flex', !!visible);
   },
 
-  // Mirror "a deploy is in flight" onto the hamburger. Read straight off the
-  // rendered platform version row rather than threading state: its markup is
-  // already the single source of truth for the platform deploying state.
+  // Mirror the platform version row's state onto the Improve button. Read
+  // straight off the rendered row rather than threading state: its markup is
+  // already the single source of truth for both conditions.
   //
   // Scoped to #improve-footer — where THE UI OVERHAUL moved that row from the
   // retired #drawer-footer — so a deploying dApp pill on a home tile can never
-  // light this dot. The dot itself stays on the hamburger: it is the ambient
-  // "something is happening" cue, and the hamburger is the one control present
-  // on every screen.
+  // light this dot.
+  //
+  // THE DOT MOVED WITH THE ROWS. It was `#header-menu-deploy-dot` on the
+  // hamburger, from when the version rows lived in that drawer's footer; they
+  // are in the Improve panel's footer now, so the cue that says "go and look
+  // at them" belongs on the control that opens it. The name went too — a dot
+  // called `header-menu-*` on the Improve button would be a lie that outlives
+  // everyone who remembers the move.
+  //
+  // And it PUBLISHES rather than toggling a class: #improve-btn is React-owned
+  // end to end, so its indicators are store state. That also lets the second
+  // state exist at all — `button.drawer-ver--stale`, the violet "the platform
+  // rolled past the SHA this tab loaded against" reload affordance, which the
+  // old dot could not show because it had exactly one colour.
   refreshDeployDot() {
-    const dot = document.getElementById('header-menu-deploy-dot');
-    if (!dot) return;
     const deploying = !!document.querySelector(
       '#improve-footer .drawer-ver--deploying');
-    dot.classList.toggle('hidden', !deploying);
+    const stale = !deploying && !!document.querySelector(
+      '#improve-footer button.drawer-ver--stale');
+    const state = deploying ? 'deploying' : (stale ? 'stale' : 'idle');
+    if (typeof window !== 'undefined') window.Improve?.setVersionState?.(state);
   },
 };
 

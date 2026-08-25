@@ -1668,14 +1668,14 @@
       "expectSelector": "#drawer-row-node"
     },
     {
-      "name": "Work-in-flight badge moved off the cog onto the hamburger",
+      "name": "Work-in-flight badge sits on the Improve button, beside the sessions it counts",
       "path": "/",
-      "expectSelector": "#header-menu-btn #notifications-badge-ai"
+      "expectSelector": "#improve-btn #notifications-badge-ai"
     },
     {
       "name": "Work-in-flight badge is VISIBLE when a finished dev session is unread",
       "path": "/?demo=1",
-      "expectSelector": "#header-menu-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
+      "expectSelector": "#improve-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
     },
     {
       "name": "Admin/moderation row renders in the drawer for admins (#588)",

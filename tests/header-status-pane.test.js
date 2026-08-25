@@ -139,13 +139,26 @@ test("the work badge sits exactly where the bell's unread one does", () => {
   assert.match(bell[0], /bg-red-500/, 'the bell badge stays red');
 });
 
-test('the hamburger carries the amber deploy dot, hidden by default', () => {
-  const dot = header.match(/<span id="header-menu-deploy-dot"[^>]*>/);
-  assert.ok(dot, 'the hamburger carries #header-menu-deploy-dot');
+test('the version dot rides the Improve button, hidden by default', () => {
+  // It was #header-menu-deploy-dot on the hamburger, from when the platform
+  // version rows lived in that drawer's footer. THE UI OVERHAUL moved those
+  // rows into the Improve panel, so the dot was pointing at something behind
+  // a different control; it followed them, and was renamed with the move.
+  const dot = html.match(/<span id="improve-version-dot"[^>]*>/);
+  assert.ok(dot, '#improve-version-dot exists');
   assert.match(dot[0], /class="hidden /, 'ships hidden');
-  assert.match(dot[0], /bg-amber-/, 'renders amber, matching the deploying pill');
-  const btn = header.match(/<button id="header-menu-btn"[^>]*>/);
-  assert.match(btn[0], /relative/, 'the button is a positioning context for the dot');
+  assert.match(dot[0], /bg-amber-/, 'renders amber at rest, matching the deploying pill');
+  assert.ok(!html.includes('id="header-menu-deploy-dot"'),
+    'and the hamburger copy is gone, not duplicated');
+  const btn = html.match(/<button id="improve-btn"[^>]*>/);
+  assert.match(btn[0], /relative/, 'the button is a positioning context for it');
+  // The badge that moved with it, and the one that stayed.
+  const at = html.indexOf('id="improve-btn"');
+  const end = html.indexOf('</button>', at);
+  assert.ok(html.slice(at, end).includes('id="notifications-badge-ai"'),
+    'the green session count sits on the Improve button, beside the sessions it counts');
+  assert.match(header.match(/<button id="header-menu-btn"[^>]*>[\s\S]*?<\/button>/)[0],
+    /id="notifications-badge"/, 'the bell\'s red unread badge stays on the hamburger');
 });
 
 test('the deploy dot is derived from the rendered pills, not a duplicate flag', () => {
@@ -158,10 +171,19 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
   // Post-#913 the version rows signalled a rolling deploy with
   // .drawer-ver--deploying instead of the pill class; THE UI OVERHAUL moved
   // those rows from #drawer-footer to the Improve panel's footer, so the
-  // scope moved with them. The DOT stays on the hamburger — it is the ambient
-  // "something is happening" cue, and the hamburger is on every screen.
-  assert.match(fn.slice(0, 700), /#improve-footer \.drawer-ver--deploying/,
+  // scope moved with them — and now the dot has too.
+  assert.match(fn.slice(0, 1400), /#improve-footer \.drawer-ver--deploying/,
     'reads the deploying state off the rendered pills — the single source of truth');
+  // The second state the old single-colour dot could not show: the violet
+  // "platform rolled past the SHA this tab loaded against" reload button.
+  assert.match(fn.slice(0, 1400), /#improve-footer button\.drawer-ver--stale/,
+    'and the stale state, which is the other thing those rows say');
+  // It PUBLISHES: #improve-btn is React-owned, so an id lookup plus a
+  // classList write would be a mismatch React patches straight back out.
+  assert.match(fn.slice(0, 1400), /setVersionState/,
+    'the dot is store state, not a class toggled by id');
+  assert.ok(!/getElementById\('improve-version-dot'\)/.test(headerMenuJs),
+    'nothing resolves the dot by id');
   // The platform-revision renderer and the drawer lifecycle both synchronize
   // the dot. dApp deploy pills live on home cards and are out of scope.
   const calls = (appJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length

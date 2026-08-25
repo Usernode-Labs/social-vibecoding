@@ -400,9 +400,54 @@ const Improve = {
     }
   },
 
-  /** Refresh an open panel when session state changes underneath it. */
+  /**
+   * Session state changed underneath us.
+   *
+   * Two jobs, and the second is the one that matters with the panel SHUT: an
+   * open panel reloads its list, and the button's glyph tracks whether
+   * anything is running at all. `SessionState` is synced from app.js's boot
+   * path and re-ticks on its own (faster while something is in flight), so
+   * this is live without the panel ever being opened — which is the whole
+   * point of putting the cue on the button.
+   */
   onSessionStateChanged() {
+    Improve.refreshWorking();
     if (improveStore.get().open) Improve.loadSessions();
+  },
+
+  /** `SessionState.anyActive()`, as store state. Safe before it exists. */
+  refreshWorking() {
+    const working = !!window.SessionState?.anyActive?.();
+    if (improveStore.get().working !== working) improveStore.set({ working });
+  },
+
+  /**
+   * The green session count, from Notifications._renderBadge.
+   *
+   * That module is loaded as a classic SCRIPT by two test files, so it cannot
+   * import this store and reaches it by name instead — the same constraint
+   * dev-chat.js documents. It used to write `textContent` and toggle `hidden`
+   * on a span inside the hamburger; the span is inside a React-owned button
+   * now, so it publishes the two numbers and the component renders them.
+   */
+  setSessionBadge(unread, done) {
+    const sessionUnread = Number(unread) || 0;
+    const sessionDone = Number(done) || 0;
+    const cur = improveStore.get();
+    if (cur.sessionUnread === sessionUnread && cur.sessionDone === sessionDone) return;
+    improveStore.set({ sessionUnread, sessionDone });
+  },
+
+  /**
+   * The platform version dot's state, from DrawerStatus.refreshDeployDot().
+   *
+   * 'deploying' | 'stale' | 'idle' — read off the version rows this panel's
+   * own footer renders, which is why the dot moved here from the hamburger.
+   */
+  setVersionState(versionState) {
+    const next = versionState === 'deploying' || versionState === 'stale'
+      ? versionState : 'idle';
+    if (improveStore.get().versionState !== next) improveStore.set({ versionState: next });
   },
 
   // ── Actions ──────────────────────────────────────────────────────

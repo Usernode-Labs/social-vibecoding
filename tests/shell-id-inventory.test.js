@@ -54,6 +54,16 @@ const RETIRED_IDS = {
   'work-drawer-icon': 'The cog glyph, retired with its button. The spinning-while-busy cue is the per-row busy dot in the Improve panel now.',
   'dev-console-btn': 'Header terminal icon retired — the Improve panel\'s "Developer terminal" row is shown on the same DevConsole signal. #staging-dev-console-btn survives; the staging overlay has its own chrome.',
   'dev-console-badge': 'Unseen-error count on the retired header terminal icon. #staging-dev-console-badge survives.',
+  // ── The Improve button becomes the one that says what is happening ──
+  // The dot lit when the platform version row said "deploying", and that row
+  // moved into the Improve panel's footer with THE UI OVERHAUL — so the dot
+  // was pointing at something behind a different control. It is
+  // #improve-version-dot on #improve-btn now (see ADDED_IDS), and it gained
+  // the violet "the platform rolled past the SHA this tab loaded against"
+  // state its single amber colour could never show. Same reader
+  // (DrawerStatus.refreshDeployDot), which publishes a state instead of
+  // toggling a class.
+  'header-menu-deploy-dot': 'Renamed to #improve-version-dot and moved onto #improve-btn, following the version rows it reads.',
   // ── #1367: two Improve rows became a segmented toggle ────────────
   // "Development kanban" and "Latest development activity" were list rows
   // with a chevron. They are two segments of the App/Feed/Kanban control now
@@ -112,6 +122,11 @@ const ADDED_IDS = {
   'cu-save': 'Submit for the username change.',
   'cu-status': 'Status line for the username change.',
   'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
+  // The renamed deploy dot's new home and name. Two states, not one: amber
+  // while a deploy is in flight, violet once the platform has rolled past
+  // this tab. Top-LEFT corner, because the green session count took the
+  // top-right and #feedback-queue-dot moved to the bottom-left to make room.
+  'improve-version-dot': 'Platform version cue on #improve-btn — was #header-menu-deploy-dot on the hamburger.',
   // ── #1191: the build-flow preference stops being injected ────────
   // These three were BUILT AT RUNTIME by Settings._renderDevFlowSection,
   // which created the block and inserted it into the Connections pane on
