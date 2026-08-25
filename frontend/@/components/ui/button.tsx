@@ -189,6 +189,16 @@ const buttonVariants = cva('', {
       plain: 'px-4 py-2 font-medium',
       // #settings-remove, beside a `px-4 py-2` primary.
       narrow: 'px-3 py-2 text-sm font-medium',
+      // The native wallet sheet's actions (features/header/wallet-sheet-body.tsx).
+      // Same box as `narrow`, one weight up: a bottom sheet's controls carry
+      // more weight than a settings row's because the sheet IS the screen
+      // while it is up. Transcribed from the buttons that module built
+      // imperatively before it was a component, not invented for it.
+      narrowBold: 'px-3 py-2 text-sm font-semibold',
+      // The same weight with NO horizontal padding, for a button that fills a
+      // flex cell and takes its width from the row rather than its own box —
+      // the wallet sheet's Send / Receive pair.
+      flushBold: 'py-2 text-sm font-semibold',
       // The members dialog's row actions.
       sm: 'px-3 py-1.5 text-sm font-medium',
       // #agent-files-save / #agent-files-cancel.

@@ -97,6 +97,8 @@ import { NotificationsBody } from '../notifications/notifications-list';
 // would tie a boot-time global to a screen nobody has opened yet.
 import './ai-credit.js';
 import './native-app-version.js';
+import { NodePillRow } from './node-pill-row';
+import { WalletRow } from './wallet-row';
 import './node-pill.js';
 import './wallet-sheet.js';
 import './header-menu-controller.js';
@@ -281,32 +283,8 @@ export function HeaderMenu() {
                 below. Tapping opens the same detail sheets the old header pill /
                 chip opened.
             */}
-            <button
-              id="drawer-row-node"
-              className="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <span id="drawer-node-dot" className="w-2.5 h-2.5 rounded-full bg-zinc-400 shrink-0" aria-hidden="true">
-              </span>
-              <span className="text-sm font-medium">
-                Node
-              </span>
-              <span id="drawer-node-status" className="ml-auto text-xs font-medium text-zinc-400">
-              </span>
-            </button>
-            <button
-              id="drawer-row-wallet"
-              className="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <WalletIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-medium">
-                Wallet
-              </span>
-              <span
-                id="drawer-wallet-balance"
-                className="ml-auto text-xs font-semibold text-violet-600 dark:text-violet-400"
-              >
-              </span>
-            </button>
+            <NodePillRow />
+            <WalletRow />
             {/*
                 Members & visibility used to be a drawer row here; #645 moved it
                 into the Dev tab's "+" menu (see AppView._wirePlusMenu).

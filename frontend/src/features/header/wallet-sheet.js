@@ -18,6 +18,9 @@
 // Present for every native top frame, even while wallet state is unavailable.
 // Desktop and child-app iframes keep the row hidden. Delegation itself is an
 // optional v4 capability and affects only the card inside this Wallet sheet.
+import { walletSheetStore, WALLET_EMPTY } from './wallet-sheet-store';
+import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
+
 (function () {
   'use strict';
 
@@ -34,6 +37,69 @@
     _stakingPending: false,
     _refreshPending: false,
     _stateError: null,
+    // Was `hidden` on the row element; the component renders the class now.
+    _visible: false,
+
+    // #977: the sheet is a second surface, so it presents once the drawer has
+    // finished leaving rather than rising across its exit. close() resolves
+    // immediately when nothing is open, and the guard keeps the sheet working
+    // with no HeaderMenu at all. Was an addEventListener on the row; the
+    // component's onClick dispatches here by name.
+    openFromRow() {
+      const closed = (window.App && App.HeaderMenu && App.HeaderMenu.close)
+        ? App.HeaderMenu.close()
+        : null;
+      Promise.resolve(closed).then(() => WalletSheet._openSheet());
+    },
+
+    /** The address copy. Clipboard + toast are the module's, as before. */
+    async copyAddress() {
+      const addr = (WalletSheet._state || {}).address;
+      if (!addr) return;
+      try {
+        await navigator.clipboard.writeText(addr);
+        PlatformUI.toast('Address copied');
+      } catch (_) {
+        PlatformUI.toast('Could not copy address');
+      }
+    },
+
+    /** The staking card's Retry. */
+    async retryState() {
+      if (WalletSheet._refreshPending) return;
+      WalletSheet._refreshPending = true;
+      WalletSheet._publish();
+      await WalletSheet._refreshState();
+      WalletSheet._refreshPending = false;
+      WalletSheet._renderChip();
+    },
+
+    /**
+     * The Send form's submit. The TRUST BOUNDARY is unchanged: this still goes
+     * through `window.sendTransaction`, so the app's native confirm sheet is
+     * still the interaction, and the receipts list picks the tx up once the
+     * app observes it. Returns whether the form should close.
+     */
+    async sendFromSheet(to, amount) {
+      try {
+        await window.sendTransaction(to, amount, '', {
+          waitForInclusion: false,
+          confirmTitle: 'Send from wallet',
+          confirmSubtitle:
+            `Sending ${amount} ${WalletSheet._symbol()} to ` +
+            WalletSheet._shortAddr(to),
+        });
+        PlatformUI.toast('Transaction submitted');
+        await WalletSheet._refreshRecords();
+        WalletSheet._publish();
+        return true;
+      } catch (err) {
+        console.warn('[wallet-sheet] send failed:', err);
+        PlatformUI.toast('Send failed: ' +
+          ((err && err.message) || 'unknown error'));
+        return false;
+      }
+    },
 
     // Drops any snapshot read before the current web participant was handed
     // to native. Reopening refreshes from the newly admitted identity.
@@ -61,20 +127,10 @@
       if (!window.NativeChrome || !window.usernode ||
           window.usernode.isNative !== true) return;
 
-      const row = document.getElementById('drawer-row-wallet');
-      if (row) {
-        row.classList.remove('hidden');
-        row.addEventListener('click', () => {
-          // #977: same one-motion-at-a-time rule as the Node row — the
-          // sheet presents once the drawer has finished leaving, rather
-          // than rising across its exit. close() resolves immediately
-          // when nothing is open.
-          const closed = (window.App && App.HeaderMenu && App.HeaderMenu.close)
-            ? App.HeaderMenu.close()
-            : null;
-          Promise.resolve(closed).then(() => WalletSheet._openSheet());
-        });
-      }
+      // Present for every native top frame — wallet state affects the row's
+      // CONTENTS, never whether it is there.
+      WalletSheet._visible = true;
+      WalletSheet._publish();
 
       await WalletSheet._refreshCapabilities();
       if (WalletSheet._walletSupported) await WalletSheet._refreshState();
@@ -163,11 +219,67 @@
 
     // Kept the historical name from the header-chip era; now paints the
     // balance readout on the drawer row.
+    // The row's balance write. Kept as its own name because forty call sites
+    // reach for it, but there is one publish underneath — the row and the
+    // sheet read the same model and cannot disagree for a frame.
     _renderChip() {
-      const balanceEl = document.getElementById('drawer-wallet-balance');
-      if (!balanceEl) return;
-      balanceEl.textContent =
-        `${WalletSheet._fmtBalance()} ${WalletSheet._symbol()}`;
+      WalletSheet._publish();
+    },
+
+    /** The whole view model, in one place. See ./wallet-sheet-store.ts. */
+    _publish() {
+      const s = WalletSheet._state || {};
+      walletSheetStore.set({
+        visible: WalletSheet._visible,
+        balanceLabel: `${WalletSheet._fmtBalance()} ${WalletSheet._symbol()}`,
+        address: s.address || null,
+        shortAddress: WalletSheet._shortAddr(s.address),
+        walletSupported: WalletSheet._walletSupported,
+        stateError: WalletSheet._stateError || null,
+        staking: WalletSheet._stakingView(s.staking),
+        stakingPending: WalletSheet._stakingPending,
+        refreshPending: WalletSheet._refreshPending,
+        receipts: WalletSheet._receiptViews(),
+      });
+    },
+
+    /**
+     * The block-production card's state. `staking == null` is wallet setup
+     * still running, which is NOT "not delegated" and must not render as it.
+     */
+    _stakingView(staking) {
+      if (!WalletSheet._stakingSupported) return { kind: 'absent' };
+      if (staking === null || staking === undefined) return { kind: 'pending' };
+      if (!WalletSheet._isDelegated(staking)) return { kind: 'local' };
+      return {
+        kind: 'delegated',
+        delegate: WalletSheet._shortAddr(staking.delegate),
+        since: WalletSheet._formatDelegatedSince(staking.delegated_since) || '',
+      };
+    },
+
+    /** Receipts, worded here — the confirmed / pending / unknown ladder. */
+    _receiptViews() {
+      const items = WalletSheet._records;
+      if (items == null) return null;
+      return items.map((r, i) => {
+        const when = r.sentAt ? new Date(r.sentAt).toLocaleString() : '';
+        let status;
+        if (r.onChainStatus === 'confirmed' || r.confirmedAt) {
+          status = r.blockHeight != null
+            ? `confirmed · block ${Number(r.blockHeight).toLocaleString()}`
+            : 'confirmed';
+        } else if (r.status === 'queued') {
+          status = 'pending';
+        } else {
+          status = r.status || 'unknown';
+        }
+        return {
+          key: String(r.id != null ? r.id : `${r.to}-${r.sentAt}-${i}`),
+          line1: `Sent ${r.amount} ${WalletSheet._symbol()} to ${WalletSheet._shortAddr(r.to)}`,
+          line2: `${when} · ${status}`,
+        };
+      });
     },
 
     // -- sheet ----------------------------------------------------------
@@ -187,9 +299,15 @@
 
       WalletSheet._sheet = PlatformUI.sheet({
         contentEl: panel,
-        onDismiss: () => { WalletSheet._sheet = null; },
+        // Drop the portal BEFORE the kit discards the node it lives in.
+        onDismiss: () => {
+          unmountWalletSheet(bodyEl);
+          WalletSheet._sheet = null;
+        },
       });
-      WalletSheet._renderSheetBody();
+      // The store already holds what the body draws, so the mount paints the
+      // current snapshot with no separate first render.
+      mountWalletSheet(bodyEl);
 
       await Promise.all([
         WalletSheet._refreshCapabilities(),
@@ -203,215 +321,22 @@
       WalletSheet._renderSheetBody();
     },
 
+    // `_renderSheetBody`, `_renderStakingCard`, `_button`, `_renderReceipts`,
+    // `_clearExpand`, `_showReceive` and `_showSend` were roughly forty
+    // `createElement` calls rebuilt from scratch on every repaint — and there
+    // are many repaints: the 60s refresh, the admission reset, three inside
+    // `_manageStaking`, one per send. They are ./wallet-sheet-body.tsx now and
+    // the store repaints them, so a refresh landing mid-typing no longer
+    // discards a half-entered address.
     _renderSheetBody() {
-      const body = document.getElementById('wallet-sheet-body');
-      if (!body) return;
-      const s = WalletSheet._state || {};
-      body.textContent = '';
-
-      // Balance
-      const balance = document.createElement('div');
-      balance.className = 'text-3xl font-bold mb-1';
-      balance.textContent = `${WalletSheet._fmtBalance()} ${WalletSheet._symbol()}`;
-      body.appendChild(balance);
-
-      // Address row: short address + copy
-      const addrRow = document.createElement('div');
-      addrRow.className = 'flex items-center gap-2 mb-4 text-sm ' +
-        'text-zinc-500 dark:text-zinc-400';
-      const addr = document.createElement('span');
-      addr.className = 'font-mono';
-      addr.textContent = WalletSheet._shortAddr(s.address);
-      addrRow.appendChild(addr);
-      if (s.address) {
-        const copyBtn = document.createElement('button');
-        copyBtn.className = 'text-violet-500 hover:text-violet-400 text-xs ' +
-          'font-medium';
-        copyBtn.textContent = 'Copy';
-        copyBtn.addEventListener('click', async () => {
-          try {
-            await navigator.clipboard.writeText(s.address);
-            PlatformUI.toast('Address copied');
-          } catch (_) {
-            PlatformUI.toast('Could not copy address');
-          }
-        });
-        addrRow.appendChild(copyBtn);
-      }
-      body.appendChild(addrRow);
-
-      // Send / Receive actions
-      const actions = document.createElement('div');
-      actions.className = 'flex gap-2 mb-4';
-      const mkBtn = (label, primary, onClick) => {
-        const b = document.createElement('button');
-        b.className = primary
-          ? 'flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 ' +
-            'text-white text-sm font-semibold'
-          : 'flex-1 py-2 rounded-lg border border-zinc-300 ' +
-            'dark:border-zinc-700 text-sm font-semibold ' +
-            'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 ' +
-            'dark:hover:bg-zinc-800';
-        b.textContent = label;
-        b.addEventListener('click', onClick);
-        return b;
-      };
-      actions.appendChild(mkBtn('Send', true, () => WalletSheet._showSend()));
-      actions.appendChild(mkBtn('Receive', false,
-        () => WalletSheet._showReceive()));
-      body.appendChild(actions);
-
-      if (!WalletSheet._walletSupported) {
-        const unavailable = document.createElement('div');
-        unavailable.className = 'mb-4 rounded-lg border border-zinc-200 ' +
-          'dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-400';
-        unavailable.textContent = 'Wallet state is unavailable in this app version.';
-        body.appendChild(unavailable);
-      }
-
-      if (WalletSheet._stateError) {
-        const error = document.createElement('div');
-        error.className = 'mb-4 rounded-lg bg-red-500/10 px-3 py-2 text-sm ' +
-          'text-red-600 dark:text-red-400';
-        error.textContent = WalletSheet._stateError;
-        body.appendChild(error);
-      }
-
-      if (WalletSheet._stakingSupported) {
-        body.appendChild(WalletSheet._renderStakingCard(s.staking));
-      }
-
-      // Expandable areas (send form / receive QR)
-      const expand = document.createElement('div');
-      expand.id = 'wallet-sheet-expand';
-      body.appendChild(expand);
-
-      // Receipts
-      const recTitle = document.createElement('div');
-      recTitle.className = 'text-sm font-semibold text-zinc-500 ' +
-        'dark:text-zinc-400 mt-2 mb-1';
-      recTitle.textContent = 'Recent';
-      body.appendChild(recTitle);
-      body.appendChild(WalletSheet._renderReceipts());
-    },
-
-    _renderStakingCard(staking) {
-      const card = document.createElement('section');
-      card.className = 'mb-4 rounded-lg border border-zinc-200 ' +
-        'dark:border-zinc-800 p-4';
-
-      const eyebrow = document.createElement('div');
-      eyebrow.className = 'text-[0.9375rem] font-semibold ' +
-        'text-zinc-500 dark:text-zinc-400';
-      eyebrow.textContent = 'Block production';
-      card.appendChild(eyebrow);
-
-      const disclosure = document.createElement('div');
-      disclosure.className = 'my-3 rounded-lg bg-amber-500/10 px-3 py-2 ' +
-        'text-sm font-medium text-amber-800 dark:text-amber-300';
-      disclosure.textContent = 'When delegated, you receive half the points ' +
-        'you would earn by producing blocks directly from your phone.';
-      card.appendChild(disclosure);
-
-      const selfHosted = document.createElement('div');
-      selfHosted.className = 'mb-3 rounded-lg bg-sky-500/10 px-3 py-2 ' +
-        'text-sm font-medium text-sky-800 dark:text-sky-300';
-      selfHosted.textContent = 'Want to run a node on your own laptop or ' +
-        'server and monitor it from your phone? Start the node there using ' +
-        'the same account you use on this phone.';
-      card.appendChild(selfHosted);
-
-      if (staking === null || staking === undefined) {
-        const progress = document.createElement('div');
-        progress.className = 'text-sm font-semibold';
-        progress.textContent = 'Wallet setup is still in progress';
-        card.appendChild(progress);
-
-        const retry = WalletSheet._button(
-          WalletSheet._refreshPending ? 'Retrying…' : 'Retry',
-          async () => {
-            if (WalletSheet._refreshPending) return;
-            WalletSheet._refreshPending = true;
-            WalletSheet._renderSheetBody();
-            await WalletSheet._refreshState();
-            WalletSheet._refreshPending = false;
-            WalletSheet._renderChip();
-            WalletSheet._renderSheetBody();
-          }
-        );
-        retry.disabled = WalletSheet._refreshPending;
-        card.appendChild(retry);
-        return card;
-      }
-
-      const delegated = WalletSheet._isDelegated(staking);
-      // The delegated state gets its own tinted container so a delegated
-      // wallet stands out from the rest of the card at a glance.
-      const state = document.createElement('div');
-      state.className = delegated
-        ? 'rounded-lg bg-violet-500/10 px-3 py-2' : '';
-      card.appendChild(state);
-
-      const status = document.createElement('div');
-      status.className = delegated
-        ? 'text-base font-semibold text-violet-800 dark:text-violet-300'
-        : 'text-base font-semibold';
-      status.textContent = delegated
-        ? 'Delegated' : 'Producing blocks on this phone';
-      state.appendChild(status);
-
-      const detail = document.createElement('div');
-      detail.className = delegated
-        ? 'mt-1 text-sm text-violet-700 dark:text-violet-300/80'
-        : 'mt-1 text-sm text-zinc-500 dark:text-zinc-400';
-      detail.textContent = delegated
-        ? 'Block production on this phone is disabled.'
-        : 'Producing blocks directly on this phone earns full points.';
-      state.appendChild(detail);
-
-      if (delegated) {
-        const delegate = document.createElement('div');
-        delegate.className = 'mt-2 font-mono text-xs text-violet-700 ' +
-          'dark:text-violet-300';
-        delegate.textContent = WalletSheet._shortAddr(staking.delegate);
-        state.appendChild(delegate);
-
-        const since = WalletSheet._formatDelegatedSince(
-          staking.delegated_since
-        );
-        if (since) {
-          const sinceEl = document.createElement('div');
-          sinceEl.className = 'mt-1 text-xs text-violet-700 ' +
-            'dark:text-violet-300/80';
-          sinceEl.textContent = 'Delegated since ' + since;
-          state.appendChild(sinceEl);
-        }
-      }
-
-      const manage = WalletSheet._button(
-        WalletSheet._stakingPending ? 'Opening…' : 'Manage delegation',
-        () => WalletSheet._manageStaking()
-      );
-      manage.disabled = WalletSheet._stakingPending;
-      card.appendChild(manage);
-      return card;
-    },
-
-    _button(label, onClick) {
-      const button = document.createElement('button');
-      button.className = 'mt-3 w-full rounded-lg bg-violet-600 px-3 py-2 ' +
-        'text-sm font-semibold text-white hover:bg-violet-500 ' +
-        'disabled:cursor-not-allowed disabled:opacity-50';
-      button.textContent = label;
-      button.addEventListener('click', onClick);
-      return button;
+      WalletSheet._publish();
     },
 
     async _manageStaking() {
       if (!WalletSheet._stakingSupported || WalletSheet._stakingPending) return;
       WalletSheet._stakingPending = true;
       WalletSheet._stateError = null;
-      WalletSheet._renderSheetBody();
+      WalletSheet._publish();
       try {
         // No validator address or desired state crosses this boundary. Native
         // owns the entire management flow and resolves after its screen closes.
@@ -420,7 +345,7 @@
           WalletSheet._state = Object.assign({}, WalletSheet._state || {}, {
             staking,
           });
-          WalletSheet._renderSheetBody();
+          WalletSheet._publish();
         }
         await WalletSheet._refreshState();
       } catch (err) {
@@ -429,156 +354,7 @@
       } finally {
         WalletSheet._stakingPending = false;
         WalletSheet._renderChip();
-        WalletSheet._renderSheetBody();
       }
-    },
-
-    _renderReceipts() {
-      const wrap = document.createElement('div');
-      const items = WalletSheet._records;
-      if (items == null) {
-        const loading = document.createElement('div');
-        loading.className = 'text-sm text-zinc-400 py-2';
-        loading.textContent = 'Loading…';
-        wrap.appendChild(loading);
-        return wrap;
-      }
-      if (items.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'text-sm text-zinc-400 py-2';
-        empty.textContent = 'No transactions sent from this session yet.';
-        wrap.appendChild(empty);
-        return wrap;
-      }
-      for (const r of items.slice(0, 20)) {
-        const row = document.createElement('div');
-        row.className = 'flex items-center justify-between py-2 border-b ' +
-          'border-zinc-100 dark:border-zinc-800 text-sm';
-        const left = document.createElement('div');
-        left.className = 'min-w-0';
-        const line1 = document.createElement('div');
-        line1.className = 'font-medium truncate';
-        line1.textContent =
-          `Sent ${r.amount} ${WalletSheet._symbol()} to ` +
-          WalletSheet._shortAddr(r.to);
-        const line2 = document.createElement('div');
-        line2.className = 'text-xs text-zinc-400';
-        const when = r.sentAt ? new Date(r.sentAt).toLocaleString() : '';
-        let status;
-        if (r.onChainStatus === 'confirmed' || r.confirmedAt) {
-          status = r.blockHeight != null
-            ? `confirmed · block ${Number(r.blockHeight).toLocaleString()}`
-            : 'confirmed';
-        } else if (r.status === 'queued') {
-          status = 'pending';
-        } else {
-          status = r.status || 'unknown';
-        }
-        line2.textContent = `${when} · ${status}`;
-        left.appendChild(line1);
-        left.appendChild(line2);
-        row.appendChild(left);
-        wrap.appendChild(row);
-      }
-      return wrap;
-    },
-
-    // -- send / receive -------------------------------------------------
-
-    _clearExpand() {
-      const expand = document.getElementById('wallet-sheet-expand');
-      if (expand) expand.textContent = '';
-      return expand;
-    },
-
-    _showReceive() {
-      const expand = WalletSheet._clearExpand();
-      const s = WalletSheet._state;
-      if (!expand || !s || !s.address) return;
-      const box = document.createElement('div');
-      box.className = 'flex flex-col items-center gap-2 p-4 mb-4 rounded-lg ' +
-        'border border-zinc-200 dark:border-zinc-800';
-      const qrEl = document.createElement('div');
-      qrEl.className = 'bg-white p-2 rounded';
-      box.appendChild(qrEl);
-      const addr = document.createElement('div');
-      addr.className = 'font-mono text-xs break-all text-center ' +
-        'text-zinc-500 dark:text-zinc-400';
-      addr.textContent = s.address;
-      box.appendChild(addr);
-      expand.appendChild(box);
-      if (window.QRCode) {
-        // eslint-disable-next-line no-new
-        new QRCode(qrEl, { text: s.address, width: 160, height: 160 });
-      }
-    },
-
-    _showSend() {
-      const expand = WalletSheet._clearExpand();
-      if (!expand) return;
-      const form = document.createElement('div');
-      form.className = 'flex flex-col gap-2 p-4 mb-4 rounded-lg border ' +
-        'border-zinc-200 dark:border-zinc-800';
-
-      const toInput = document.createElement('input');
-      toInput.placeholder = 'Recipient address (ut1…)';
-      toInput.className = 'w-full px-3 py-2 rounded-lg border ' +
-        'border-zinc-300 dark:border-zinc-700 bg-transparent text-sm ' +
-        'font-mono';
-      const amtInput = document.createElement('input');
-      amtInput.placeholder = 'Amount';
-      amtInput.inputMode = 'numeric';
-      amtInput.className = toInput.className.replace(' font-mono', '');
-      const sendBtn = document.createElement('button');
-      sendBtn.className = 'py-2 rounded-lg bg-violet-600 hover:bg-violet-500 ' +
-        'text-white text-sm font-semibold disabled:opacity-50';
-      sendBtn.textContent = 'Send';
-      const note = document.createElement('div');
-      note.className = 'text-xs text-zinc-400';
-      note.textContent = 'You will confirm this transaction on the next ' +
-        'screen.';
-
-      sendBtn.addEventListener('click', async () => {
-        const to = toInput.value.trim();
-        const amount = parseInt(amtInput.value.trim(), 10);
-        if (!to || !to.startsWith('ut1')) {
-          PlatformUI.toast('Enter a valid ut1… address');
-          return;
-        }
-        if (!Number.isFinite(amount) || amount <= 0) {
-          PlatformUI.toast('Enter a positive amount');
-          return;
-        }
-        sendBtn.disabled = true;
-        try {
-          // Fire-and-forget on the inclusion side: the native confirm
-          // sheet is the interaction, and the receipts list will pick the
-          // tx up once the app observes it.
-          await window.sendTransaction(to, amount, '', {
-            waitForInclusion: false,
-            confirmTitle: 'Send from wallet',
-            confirmSubtitle:
-              `Sending ${amount} ${WalletSheet._symbol()} to ` +
-              WalletSheet._shortAddr(to),
-          });
-          PlatformUI.toast('Transaction submitted');
-          WalletSheet._clearExpand();
-          await WalletSheet._refreshRecords();
-          WalletSheet._renderSheetBody();
-        } catch (err) {
-          console.warn('[wallet-sheet] send failed:', err);
-          PlatformUI.toast('Send failed: ' +
-            ((err && err.message) || 'unknown error'));
-          sendBtn.disabled = false;
-        }
-      });
-
-      form.appendChild(toInput);
-      form.appendChild(amtInput);
-      form.appendChild(sendBtn);
-      form.appendChild(note);
-      expand.appendChild(form);
-      toInput.focus();
     },
   };
 

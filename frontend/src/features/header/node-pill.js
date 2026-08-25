@@ -17,62 +17,46 @@
 // The row is present for every native top frame, even while capabilities or
 // node state are unavailable. Desktop browsers and child-app iframes keep it
 // hidden. A temporary bridge/provisioning problem must not rewrite navigation.
+import { nodePillStore, NODE_PILL_EMPTY } from './node-pill-store';
+import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
+
 (function () {
   'use strict';
 
-  // status → { dot color, label, pill tone } — statuses come from the
-  // app's chrome-level provider: synced | syncing | connecting | offline.
-  const STATUS_STYLES = {
-    synced: {
-      dot: 'bg-emerald-500',
-      label: 'Synced',
-      tone: 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
-    },
-    syncing: {
-      dot: 'bg-amber-500',
-      label: 'Syncing',
-      tone: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
-    },
-    connecting: {
-      dot: 'bg-zinc-400 animate-pulse',
-      label: 'Connecting',
-      tone: 'border-zinc-400/40 text-zinc-500 dark:text-zinc-400',
-    },
-    offline: {
-      dot: 'bg-red-500',
-      label: 'Offline',
-      tone: 'border-red-500/40 text-red-600 dark:text-red-400',
-    },
-    unavailable: {
-      dot: 'bg-zinc-400',
-      label: 'Unavailable',
-      tone: 'border-zinc-400/40 text-zinc-500 dark:text-zinc-400',
-    },
-  };
+  // The status → dot/label/ink table moved to ./node-pill-row.tsx. It was a
+  // `tone` string carrying a border colour AND an ink, with the border stripped
+  // at runtime by a `.filter()` — a computed class name, which Tailwind's
+  // extractor cannot see. It is two complete literals there.
 
   const NodePill = {
     _status: null,
     _sheet: null,
+    // Was `hidden` on the row element. It is the model's now, and the
+    // component renders the class — see ./node-pill-row.tsx.
+    _visible: false,
+
+    // #977: the sheet is a second surface, so it waits for the drawer to be
+    // fully gone — one motion at a time, instead of a sheet rising while the
+    // drawer is still sliding out. close() resolves immediately when nothing
+    // is open, and the guard keeps the sheet working with no HeaderMenu at
+    // all. This was an addEventListener on the row; it is the component's
+    // onClick now, dispatching here by name.
+    openFromRow() {
+      const closed = (window.App && App.HeaderMenu && App.HeaderMenu.close)
+        ? App.HeaderMenu.close()
+        : null;
+      Promise.resolve(closed).then(() => NodePill._openSheet());
+    },
 
     async init() {
       if (!window.NativeChrome || !window.usernode ||
           window.usernode.isNative !== true) return;
 
-      const row = document.getElementById('drawer-row-node');
-      if (row) {
-        row.classList.remove('hidden');
-        row.addEventListener('click', () => {
-          // #977: the sheet is a second surface, so it waits for the
-          // drawer to be fully gone — one motion at a time, instead of
-          // a sheet rising while the drawer is still sliding out.
-          // close() resolves immediately when nothing is open, and the
-          // guard keeps the sheet working with no HeaderMenu at all.
-          const closed = (window.App && App.HeaderMenu && App.HeaderMenu.close)
-            ? App.HeaderMenu.close()
-            : null;
-          Promise.resolve(closed).then(() => NodePill._openSheet());
-        });
-      }
+      // The row is present for every native top frame — capabilities and node
+      // state affect its CONTENTS, never the navigation structure — so this
+      // flips before the capability probe and never flips back.
+      NodePill._visible = true;
+      NodePill._render();
 
       // Wire this BEFORE the asynchronous capability probe. The native app
       // pushes this event through the readiness replay, so it is independent
@@ -81,7 +65,7 @@
       window.addEventListener('usernode:node-status', (e) => {
         const status = e && e.detail;
         if (!status || typeof status.status !== 'string') return;
-        if (row) row.classList.remove('hidden');
+        NodePill._visible = true;
         NodePill._status = status;
         NodePill._render();
         NodePill._renderSheetBody();
@@ -100,67 +84,29 @@
       NodePill._render();
     },
 
-    _styleFor(status) {
-      return STATUS_STYLES[status] || STATUS_STYLES.unavailable;
-    },
-
+    // Five writes across two elements — the dot's class, the label's text and
+    // the label's class — become one publish. The row and the sheet read the
+    // same model, so they cannot disagree for a frame.
     _render() {
-      const dot = document.getElementById('drawer-node-dot');
-      const statusEl = document.getElementById('drawer-node-status');
-      if (!dot || !statusEl) return;
-      const s = NodePill._status;
-      const style = NodePill._styleFor(s && s.status);
-      dot.className = 'w-2.5 h-2.5 rounded-full shrink-0 ' + style.dot;
-      statusEl.textContent = style.label;
-      statusEl.className = 'ml-auto text-xs font-medium ' +
-        style.tone.split(' ').filter((c) => !c.startsWith('border')).join(' ');
+      const s = NodePill._status || {};
+      nodePillStore.set({
+        visible: NodePill._visible,
+        status: typeof s.status === 'string' ? s.status : 'unavailable',
+        localBestHeight: s.localBestHeight == null ? null : s.localBestHeight,
+        networkBestHeight: s.networkBestHeight == null ? null : s.networkBestHeight,
+        connectedPeers: s.connectedPeers == null ? null : s.connectedPeers,
+        totalPeers: s.totalPeers == null ? null : s.totalPeers,
+      });
     },
 
     // -- detail sheet ---------------------------------------------------
 
-    _sheetRow(label, value) {
-      const row = document.createElement('div');
-      row.className = 'flex items-center justify-between py-2 border-b ' +
-        'border-zinc-100 dark:border-zinc-800 text-sm';
-      const l = document.createElement('span');
-      l.className = 'text-zinc-500 dark:text-zinc-400';
-      l.textContent = label;
-      const v = document.createElement('span');
-      v.className = 'font-medium text-zinc-800 dark:text-zinc-100';
-      v.textContent = value;
-      row.appendChild(l);
-      row.appendChild(v);
-      return row;
-    },
-
+    // `_sheetRow` and `_renderSheetBody` built six nodes imperatively and
+    // blanked them with `body.textContent = ''` on every status event. The
+    // body is a portal now (./node-pill-sheet.tsx) and the store repaints it,
+    // so an event arriving mid-sheet updates the numbers in place.
     _renderSheetBody() {
-      const body = document.getElementById('node-pill-sheet-body');
-      if (!body) return;
-      const s = NodePill._status || {};
-      const style = NodePill._styleFor(s.status);
-      body.textContent = '';
-
-      const statusLine = document.createElement('div');
-      statusLine.className = 'flex items-center gap-2 mb-2';
-      const dot = document.createElement('span');
-      dot.className = 'w-2.5 h-2.5 rounded-full ' + style.dot;
-      const label = document.createElement('span');
-      label.className = 'text-base font-semibold';
-      label.textContent = style.label;
-      statusLine.appendChild(dot);
-      statusLine.appendChild(label);
-      body.appendChild(statusLine);
-
-      const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString());
-      body.appendChild(NodePill._sheetRow('Your block height',
-        fmt(s.localBestHeight)));
-      body.appendChild(NodePill._sheetRow('Network block height',
-        fmt(s.networkBestHeight)));
-      body.appendChild(NodePill._sheetRow('Peers',
-        s.connectedPeers == null
-          ? '—'
-          : `${fmt(s.connectedPeers)} connected` +
-            (s.totalPeers != null ? ` / ${fmt(s.totalPeers)} known` : '')));
+      NodePill._render();
     },
 
     async _openSheet() {
@@ -178,9 +124,17 @@
 
       NodePill._sheet = PlatformUI.sheet({
         contentEl: panel,
-        onDismiss: () => { NodePill._sheet = null; },
+        // Drop the portal BEFORE the kit discards the node it is mounted in —
+        // the rule the dev chat's conversions wrote down, on the one seam here
+        // where something other than React destroys the host.
+        onDismiss: () => {
+          unmountNodeSheet(bodyEl);
+          NodePill._sheet = null;
+        },
       });
-      NodePill._renderSheetBody();
+      // The store already holds what the body draws, so the mount paints the
+      // current status immediately — no separate first render.
+      mountNodeSheet(bodyEl);
 
       // Refresh heights/peers on open — pill events only fire on state
       // transitions, so the numbers can be stale between flips.
