@@ -271,7 +271,7 @@ async function createConnectorSubmittedNotification(pool, { userId, appId, sessi
   const kindDetail = (detail || 'submitted').slice(0, 32);
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-     SELECT $1, $2, $3, NULL, 'connector_submitted', $4
+     SELECT $1, $2, $3, NULL, 'connector_submitted', $4::varchar
       WHERE NOT EXISTS (
         SELECT 1 FROM notifications n
         WHERE n.user_id = $1 AND n.session_id = $3
