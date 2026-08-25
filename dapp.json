@@ -1657,6 +1657,11 @@
       "expectSelector": "#header-menu-rows > #drawer-notifications #notifications-list"
     },
     {
+      "name": "The hamburger ships the native Node status row",
+      "path": "/",
+      "expectSelector": "#drawer-row-node"
+    },
+    {
       "name": "Work-in-flight badge moved off the cog onto the hamburger",
       "path": "/",
       "expectSelector": "#header-menu-btn #notifications-badge-ai"

@@ -317,15 +317,26 @@ SV renders it as Settings → Usernode app → "Usernode app — connection", wi
 ```json
 {
   "status": "synced",          // synced | syncing | connecting | offline
-  "localBestHeight": 12480,    // our tip (null while unknown)
-  "networkBestHeight": 12483,  // max across peers (null while unknown)
-  "connectedPeers": 3,
-  "totalPeers": 8
+  "chain": "testnet",
+  "localBestHeight": 12480,       // our tip (null while unknown)
+  "localBestTimestampMs": 1780000000000,
+  "networkBestHeight": 12483,     // block-sync target (null while unknown)
+  "readyPeers": 3,
+  "connectedPeers": 3,            // compatibility alias for readyPeers
+  "totalPeers": 8,
+  "syncStalled": false,
+  "clockDriftMs": 42,
+  "walletDataHydrating": false
 }
 ```
 
 `status` is the chrome-level pill state (small hysteresis applied on the
 native side so 1s-poll flapping between synced/syncing doesn't strobe).
+`readyPeers` counts peers whose P2P connection has reached the ready state.
+`syncStalled` becomes true while syncing after no local-tip, fetch, or apply
+progress for three block intervals (with a 60-second minimum). The timestamp
+and clock drift are milliseconds; subtracting `clockDriftMs` from the device
+clock produces the node clock used for the displayed best-tip age.
 
 **Push events:** the app also dispatches a `usernode:node-status`
 `CustomEvent` on `window` with the same snapshot as `detail`:

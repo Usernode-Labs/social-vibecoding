@@ -126,11 +126,83 @@
       l.className = 'text-zinc-500 dark:text-zinc-400';
       l.textContent = label;
       const v = document.createElement('span');
-      v.className = 'font-medium text-zinc-800 dark:text-zinc-100';
+      v.className = 'font-medium text-right text-zinc-800 dark:text-zinc-100';
       v.textContent = value;
       row.appendChild(l);
       row.appendChild(v);
       return row;
+    },
+
+    _networkHeightFor(s) {
+      // Once synced, our own best tip is the height the network has reached.
+      // While catching up, the peer-derived height is the node's sync target.
+      return s.status === 'synced' ? s.localBestHeight : s.networkBestHeight;
+    },
+
+    _readyPeersFor(s) {
+      return s.readyPeers == null ? s.connectedPeers : s.readyPeers;
+    },
+
+    _tipAgeFor(s, nowMs = Date.now()) {
+      const timestampMs = Number(s.localBestTimestampMs);
+      if (!Number.isFinite(timestampMs) || timestampMs <= 0) return null;
+      const driftMs = Number(s.clockDriftMs);
+      const nodeNowMs = Number(nowMs) -
+        (Number.isFinite(driftMs) ? driftMs : 0);
+      const seconds = Math.max(0, Math.floor((nodeNowMs - timestampMs) / 1000));
+      if (seconds < 5) return 'just now';
+      if (seconds < 60) return `${seconds} seconds ago`;
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) {
+        return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+      }
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+      const days = Math.floor(hours / 24);
+      return `${days} day${days === 1 ? '' : 's'} ago`;
+    },
+
+    _warningMessagesFor(s) {
+      const warnings = [];
+      if (NodePill._readyPeersFor(s) === 0) {
+        warnings.push('No connected peers.');
+      }
+      if (s.syncStalled === true) {
+        warnings.push('Sync appears stalled.');
+      }
+      const driftMs = Number(s.clockDriftMs);
+      if (Number.isFinite(driftMs) && Math.abs(driftMs) > 5000) {
+        warnings.push('Node clock is out of sync.');
+      }
+      if (s.walletDataHydrating === true) {
+        warnings.push('Wallet-data hydration is still running.');
+      }
+      return warnings;
+    },
+
+    _sheetWarnings(messages) {
+      if (!messages.length) return null;
+      const warning = document.createElement('div');
+      warning.className = 'mt-3 rounded-lg border border-amber-500/40 ' +
+        'bg-amber-500/10 px-3 py-2 text-sm text-amber-800 ' +
+        'dark:text-amber-300';
+      warning.setAttribute('role', 'status');
+      const list = document.createElement('ul');
+      list.className = 'space-y-1';
+      messages.forEach((message) => {
+        const item = document.createElement('li');
+        item.className = 'flex gap-2';
+        const marker = document.createElement('span');
+        marker.setAttribute('aria-hidden', 'true');
+        marker.textContent = '•';
+        const text = document.createElement('span');
+        text.textContent = message;
+        item.appendChild(marker);
+        item.appendChild(text);
+        list.appendChild(item);
+      });
+      warning.appendChild(list);
+      return warning;
     },
 
     _renderSheetBody() {
@@ -152,15 +224,25 @@
       body.appendChild(statusLine);
 
       const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString());
+      body.appendChild(NodePill._sheetRow('Chain', s.chain || '—'));
+      const tipAge = NodePill._tipAgeFor(s);
+      const localHeight = fmt(s.localBestHeight);
       body.appendChild(NodePill._sheetRow('Your block height',
-        fmt(s.localBestHeight)));
+        tipAge && s.localBestHeight != null
+          ? `${localHeight} · ${tipAge}`
+          : localHeight));
       body.appendChild(NodePill._sheetRow('Network block height',
-        fmt(s.networkBestHeight)));
+        fmt(NodePill._networkHeightFor(s))));
+      const readyPeers = NodePill._readyPeersFor(s);
       body.appendChild(NodePill._sheetRow('Peers',
-        s.connectedPeers == null
+        readyPeers == null
           ? '—'
-          : `${fmt(s.connectedPeers)} connected` +
+          : `${fmt(readyPeers)} ready` +
             (s.totalPeers != null ? ` / ${fmt(s.totalPeers)} known` : '')));
+      const warnings = NodePill._sheetWarnings(
+        NodePill._warningMessagesFor(s)
+      );
+      if (warnings) body.appendChild(warnings);
     },
 
     async _openSheet() {
