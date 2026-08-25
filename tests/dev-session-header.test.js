@@ -243,21 +243,34 @@ test('the streaming guard is a republish, not a second writer on the button', ()
 
 // ── 4. The seams that stayed ───────────────────────────────────────────
 
-test('the header ELEMENT is still the template\'s, with a constant class', () => {
-  assert.match(DEV_CHAT_SRC, /<div id="dc-session-header" class="[^"]*"><\/div>/,
-    'the element is written empty by renderChatView, and its className never varies');
+test('the header ELEMENT carries a CONSTANT className', () => {
+  // The whole screen is a component now, so the element is rendered rather
+  // than written — but its class string is a literal, not a prop derived
+  // from state, because `PlatformUI.attachScreenFx` writes a hairline class
+  // onto that node once the chat scrolls and React never rewrites a
+  // className whose prop has not changed.
+  const VIEW_TSX = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'view.tsx'), 'utf8');
+  const at = VIEW_TSX.indexOf('id="dc-session-header"');
+  assert.ok(at > 0, 'the screen renders the element');
+  const tag = VIEW_TSX.slice(at, VIEW_TSX.indexOf('>', at));
+  assert.match(tag, /className="[^"{]*"/, 'a literal, never an expression');
   assert.doesNotMatch(HEADER_TSX, /id="dc-session-header"/,
-    'the component renders the CHILDREN, never the host');
+    'the header component renders the CHILDREN, never the host');
   // attachScreenFx writes onto that element, which is why.
   assert.match(DEV_CHAT_SRC, /attachScreenFx\([\s\S]{0,700}?getElementById\('dc-session-header'\)/);
 });
 
-test('the header is mounted before anything reads the DOM under it', () => {
+test('the header publishes its whole state in one call', () => {
+  // It used to mount its own portal, with the state riding in so the one row
+  // that is constant on this screen never painted empty. The screen mounts
+  // once now (features/dev-chat/view.tsx), so this is a publish — and the
+  // no-blink guarantee comes from `renderChatView` calling it on the line
+  // after that mount, inside the same synchronous flush.
   const { DevChat, published, sandbox } = makeDevChat();
   DevChat.currentSession = SESSION;
   DevChat._renderSessionHeader();
   assert.equal(published.length, 1);
-  assert.equal(published[0].mounted, true, 'the state rides in WITH the mount, not in a later publish');
   assert.equal(published[0].state.venue.id, 'usernode-claude');
   assert.ok(sandbox); // the host was resolved by id
 });

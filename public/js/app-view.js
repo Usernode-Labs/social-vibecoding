@@ -12012,12 +12012,12 @@ const AppView = {
     }
     if (AppView._proposalHint) {
       AppView._proposalHint = false;
-      const view = document.getElementById('dc-view');
-      if (view) {
-        view.insertAdjacentHTML('afterbegin',
-          '<div class="mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs text-zinc-600 dark:text-zinc-300 shrink-0">'
-          + 'Describe the change you want — when it\'s ready, promoting this session\'s PR is what creates the proposal everyone votes on.'
-          + '</div>');
+      // #1078: `#dc-view`'s children are a React island, so the hint is a
+      // FIELD of its model rather than an insertAdjacentHTML in front of
+      // them — a second author on nodes React reconciles. The copy lives in
+      // features/dev-chat/view.tsx with the markup it belongs to.
+      if (typeof DevChat !== 'undefined' && DevChat.showProposalHint) {
+        DevChat.showProposalHint();
       }
     }
   },

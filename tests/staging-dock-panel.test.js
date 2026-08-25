@@ -22,6 +22,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeComposerBridge } = require('./lib/dev-composer-html');
+
 const APP_VIEW_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
 const DEV_CHAT_SRC = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8');
 
@@ -240,6 +242,10 @@ test('narrow viewport: dock request falls back to fullscreen', async () => {
 
 // ── Harness B: dev-chat.js ────────────────────────────────────────────
 function makeDevChatHarness() {
+  // #1078: `renderChatView` mounts the whole screen as ONE component and
+  // publishes a view model into it, so the panes are read off the model
+  // rather than out of `#dc-view`'s innerHTML.
+  const react = makeComposerBridge();
   const registry = new Map();
   const getEl = (id) => {
     if (!registry.has(id)) registry.set(id, makeElement(id));
@@ -294,6 +300,7 @@ function makeDevChatHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.UsernodeReact = { devChat: react.bridge };
   vm.createContext(sandbox);
   vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -313,23 +320,26 @@ function makeDevChatHarness() {
   DevChat._startHeartbeat = () => {};
   DevChat._setNotifyOnDone = () => {};
 
-  return { DevChat, sandbox, getEl };
+  return { DevChat, sandbox, getEl , view: () => react.view() };
 }
 
 test('renderChatView mounts the staging resizer + panel slot when stagingPanel.open', () => {
-  const { DevChat, getEl } = makeDevChatHarness();
+  const { DevChat, view } = makeDevChatHarness();
   DevChat.currentSession = { id: 7, status: 'active', branch_name: 'dev/x', session_title: 'Test' };
 
   DevChat.renderChatView();
-  let html = getEl('dc-view').innerHTML;
-  assert.ok(html.includes('id="dc-staging-panel"'), 'slot always rendered');
-  assert.ok(!html.includes('dc-staging-panel-open'), 'closed by default');
+  assert.equal(view().kind, 'session');
+  assert.equal(view().staging.open, false, 'closed by default');
 
   DevChat.stagingPanel.open = true;
   DevChat.renderChatView();
-  html = getEl('dc-view').innerHTML;
-  assert.ok(html.includes('dc-staging-panel-open'), 'open class applied to the slot');
-  assert.ok(html.includes('dc-staging-resizer-open'), 'resizer shown alongside');
+  assert.equal(view().staging.open, true, 'open state reaches the slot and its resizer');
+
+  // …and the component draws both from that one field.
+  const VIEW_TSX = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'view.tsx'), 'utf8');
+  assert.match(VIEW_TSX, /s\.staging\.open \? PANE\.stagingResizer\.on : PANE\.stagingResizer\.off/);
+  assert.match(VIEW_TSX, /s\.staging\.open \? PANE\.stagingPanel\.on : PANE\.stagingPanel\.off/);
 });
 
 test('openStagingPanel closes the spec viewer (one right-hand panel at a time)', () => {

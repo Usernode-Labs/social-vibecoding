@@ -606,7 +606,7 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    the Dev chat below.
 
 2. **Dev chat — `frontend/src/features/dev-chat/dev-chat.js`, about 9,700
-   lines. Started at the composer.** Nine regions have converted:
+   lines. Started at the composer, finished at the screen.** It is DONE:
 
    | converted | host |
    | --- | --- |
@@ -619,11 +619,13 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    | **the four banners** | `#dc-banners` |
    | **the transcript** | `#dc-messages` |
    | **the whole composer** | `#dc-composer-bar` |
+   | **the whole screen** | `#dc-view` |
 
-   FIVE entries cover the nine in the ownership audit's `OWNED`: the composer
-   absorbed four hosts of its own (`#dc-attachments`, `#dc-quick-replies`,
-   `#dc-runner` and `#dc-budget` are inside it now), so one line does what
-   four did. It reports **0 legacy writes**.
+   ONE entry covers all ten in the ownership audit's `OWNED`. Each conversion
+   absorbed the ones inside it — the composer took four strips, the screen
+   took the composer and four more — so `{ sel: '#dc-view', except:
+   ['#dc-spec-viewer', '#dc-staging-panel'] }` is the whole dev chat. It
+   reports **0 legacy writes**.
 
    ### Two orphaned surfaces, and what to do with each
 
@@ -754,6 +756,70 @@ Two traps in writing that browser sweep, both of which hid a real failure:
      primary action's fill, and an amber `variant` would be a value invented
      for one call site in a table whose discipline is that every value is
      transcribed from a button that already exists.
+   - ~~**`renderChatView`'s skeleton**~~ — **done, and it was the last string
+     in the file.** `#dc-view`'s children: the session header, the four
+     banners, the pane frame, the launchpad slot, the transcript, the
+     composer, the two resizers, the two side panes, and (on the other
+     branch) the app's session list.
+
+     **A conversion ABSORBS the islands inside it, and this is the second
+     time in two chunks.** The five regions listed above were portal hosts
+     that this template wrote; once the skeleton is a component they are
+     ordinary children, so their `mount*` bridge methods go and only
+     `publish*` crosses the seam. The composer had already done the same for
+     its four strips. What is left in `mount.ts` is ONE mount and eleven
+     publishes, which is the shape the whole screen should have had.
+
+     **The prize is what a re-render costs.** `renderChatView` runs on every
+     3s status poll and used to assign `#dc-view.innerHTML` — destroying the
+     transcript, the composer, every listener bound on them and whatever the
+     user had typed. So much of dev-chat.js is written to SURVIVE that:
+     `_restoreDraft`, `restoreSessionScroll`, the re-binding of every
+     delegated click, `_maybeOpenShotOptions`' remembered-open latch. Mounting
+     the same host twice is a reconcile, and a browser probe confirms it —
+     after a full `renderChatView()` the transcript's row nodes are the same
+     objects, the textarea is the same node with its typed value intact, and
+     the scroller keeps its position.
+
+     Three hosts inside it stay legacy-owned, and the reasons are all
+     different, which is worth having as a set:
+
+     - `#dc-spec-viewer` is a genuine CONTROLLER HOST — `_renderSpecViewer`
+       fills it, and that renderer is not in this chunk.
+     - `#dc-staging-panel` is a SLOT, not a container: the docked preview is
+       an overlay positioned over its rect, and a `ResizeObserver` watches
+       it. It renders empty and stays empty.
+     - `#dc-session-header` renders its own children, but its `className` is
+       a CONSTANT LITERAL because `PlatformUI.attachScreenFx` writes a
+       hairline class onto that node once the chat scrolls. React never
+       rewrites a className whose prop has not changed — the probe shows
+       `platform-chat-header` surviving a full repaint — and an expression
+       there would have dropped it.
+
+     Two more things from it:
+
+     - **A second author can be in another module, and this one was three
+       lines long.** `public/js/app-view.js` prepended #194's one-shot
+       "what a proposal is" hint with `insertAdjacentHTML('afterbegin')`,
+       directly in front of the subtree React reconciles. It is a `hidden`-
+       style FIELD now, latched by the render that shows it and cleared by
+       the next one, which is exactly what the innerHTML write did to the
+       node. Third instance of the sweep lesson, and the second one outside
+       the module being converted.
+     - **A conditional class run must be two complete literals.** The
+       composer bar drops its border and padding in a launchpad but keeps
+       the safe-area inset, and that was
+       `class="… ${barEmpty ? '' : 'border-t …'}"`. Tailwind's extractor is
+       a regex over source text, so the model carries a BOOLEAN and the
+       component holds both strings whole.
+
+     `_repaintDevFlow` shrank to three lines because of it. #1281's swap has
+     two halves — the launchpad slot's markup and the composer's `hidden` —
+     and they were baked into one innerHTML string, so changing which one was
+     on screen meant a whole `renderChatView`. Both are publishes reading the
+     same predicate now, so they cannot disagree and neither needs the
+     transcript thrown away to land.
+
    - ~~**the composer**~~ — **done.** `#dc-composer-bar`'s children: the venue
      sentence, the two provider model controls, the saved drafts, the attach
      row, the pending strip, the error line, the form and the shortcut hint.
@@ -948,11 +1014,20 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    time and bails when it is absent. Both files' headers say so, and the test
    above asserts it.
 
-   What is left is `renderChatView`'s own SKELETON: the launchpad slot, the
-   `.dc-session-body` / `#dc-tab-chat` pane frame, the two resizers and the
-   spec-viewer and staging-panel hosts. That is one boundary — `#dc-view` —
-   and converting it absorbs the five portals that remain inside it, the same
-   way the composer absorbed its four.
+   **The screen is done.** Every host it draws is React's, and what is left of
+   `dev-chat.js` is the module it should always have been: the fetches, the
+   streaming protocol, the session lifecycle, and eleven view builders that
+   hand plain data across a bridge.
+
+   TWO renderers survive in the file, and neither is part of this screen:
+
+   - **`_renderSpecViewer`** fills `#dc-spec-viewer`, the shared-spec reader.
+     It has its own share popover, its own suggestion list and its own
+     version picker — one surface, and its own chunk when it comes.
+   - **`_switchCurrentCodingAgent`'s dialog** builds a DETACHED overlay and
+     appends it to `document.body`, which is the group chat's card-menu case:
+     the node never enters a subtree React reconciles, so the ownership rule
+     has nothing to say about it.
 
 3. ~~Admin interior~~ — **done**. See "The admin console: done" above.
 

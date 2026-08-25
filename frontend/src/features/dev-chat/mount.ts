@@ -26,7 +26,6 @@ import { flushSync } from 'react-dom';
 import { mountLegacyPortal } from '../../lib/legacy-portals';
 import { attachStripStore, type AttachStripState } from './attach-strip-store';
 import { budgetPillStore, type BudgetPillState } from './budget-pill-store';
-import { DevComposer } from './composer';
 import { composerStore, type ComposerState } from './composer-store';
 import {
   quickRepliesStore,
@@ -34,13 +33,11 @@ import {
   type QuickRepliesState,
   type RunnerState,
 } from './composer-chrome-store';
-import { DevChatBanners } from './banners';
 import { bannersStore, type BannersState } from './banners-store';
-import { SessionHeader } from './session-header';
 import { sessionHeaderStore, type SessionHeaderState } from './session-header-store';
-import { SessionList } from './session-list';
 import { sessionListStore, type SessionListState } from './session-list-store';
-import { DevChatTranscript } from './transcript';
+import { DevChatView } from './view';
+import { devViewStore, type DevViewState } from './view-store';
 import {
   nowStore,
   streamStore,
@@ -57,15 +54,15 @@ export interface DevChatBridge {
   publishBudgetPill(state: BudgetPillState): void;
   publishQuickReplies(state: QuickRepliesState): void;
   publishRunner(state: RunnerState): void;
-  mountComposer(host: Element | null, state: ComposerState): void;
   publishComposer(state: ComposerState): void;
-  mountSessionList(host: Element | null, state: SessionListState): void;
+  // `#dc-view`'s children. Everything below is INSIDE it, so only its state
+  // crosses the seam — the five hosts that used to be portalled into are
+  // ordinary children of this one component now.
+  mountDevView(host: Element | null, state: DevViewState): void;
+  publishDevView(state: DevViewState): void;
   publishSessionList(state: SessionListState): void;
-  mountSessionHeader(host: Element | null, state: SessionHeaderState): void;
   publishSessionHeader(state: SessionHeaderState): void;
-  mountBanners(host: Element | null, state: BannersState): void;
   publishBanners(state: BannersState): void;
-  mountTranscript(host: Element | null, state: TranscriptState): void;
   publishTranscript(state: TranscriptState): void;
   publishStream(state: StreamState): void;
   publishNow(now: number): void;
@@ -80,6 +77,13 @@ export interface DevChatBridge {
 // same. Restoring the contract costs a synchronous render of one small strip.
 sessionHeaderStore.setFlush(flushSync);
 bannersStore.setFlush(flushSync);
+
+// `#dc-view`'s own store flushes for the sharpest version of the same
+// reason: `renderChatView`'s next dozen lines resolve controls by id —
+// `initScrollTracking`, `_setupAttachments`, `_restoreDraft`, the form's
+// submit listener, `attachScreenFx`, both resizers — exactly as they did
+// when the line above was an `innerHTML` assignment.
+devViewStore.setFlush(flushSync);
 
 // The composer flushes for the same reason and one more of its own:
 // `_syncSaveDraftBtn` reads the textarea's live `value` to decide whether the
@@ -103,19 +107,25 @@ transcriptStore.setFlush(flushSync);
 streamStore.setFlush(flushSync);
 
 export const devChatBridge: DevChatBridge = {
-  // `#dc-composer-bar`'s children — the whole composer. The BAR is
-  // `renderChatView`'s, because its own class run is a decision that template
-  // makes (in a launchpad it drops the border and the padding, since there is
-  // nothing left to frame); everything between its edges is the component's.
+  // `#dc-view`'s children — the whole screen. The ELEMENT is
+  // public/js/app-view.js's `renderDevChatTab` template; everything inside it
+  // is this one component, which is why the five hosts that used to be
+  // portalled into it are ordinary children now.
   //
-  // The state rides in WITH the mount: `_setupAttachments`, `_restoreDraft`
-  // and the form's submit listener all resolve controls inside it by id on
-  // the lines after, and an empty composer for one frame is a visible blink
-  // on every chat-view render.
-  mountComposer(host, state) {
+  // The state rides in WITH the mount, and every caller below depends on it:
+  // `initScrollTracking`, `_setupAttachments`, `_restoreDraft`, the form's
+  // submit listener and `attachScreenFx` all resolve controls by id on the
+  // lines after `renderChatView`'s one call.
+  mountDevView(host, state) {
     if (!host) return;
-    composerStore.set(state);
-    mountLegacyPortal(host, createElement(DevComposer));
+    devViewStore.set(state);
+    mountLegacyPortal(host, createElement(DevChatView));
+  },
+
+  // `_repaintDevFlow` and #194's proposal hint land here. Both used to be a
+  // whole `renderChatView` or an `insertAdjacentHTML` in front of it.
+  publishDevView(state) {
+    devViewStore.set(state);
   },
 
   // Six writers land here: `_setStreamingUI`, `_syncSaveDraftBtn`,
@@ -144,28 +154,8 @@ export const devChatBridge: DevChatBridge = {
     runnerStore.set(state);
   },
 
-  // The app's own session list. `renderChatView` writes `#dc-session-list`
-  // (the element carries the pane's scroll geometry) and calls the renderer
-  // on the very next line, so the rows ride in WITH the mount: publishing
-  // after it would paint an empty list for one frame on every render.
-  mountSessionList(host, state) {
-    if (!host) return;
-    sessionListStore.set(state);
-    mountLegacyPortal(host, createElement(SessionList));
-  },
-
   publishSessionList(state) {
     sessionListStore.set(state);
-  },
-
-  // The session header strip. Same shape as the session list above — the
-  // element is `renderChatView`'s and the children are ours, and the state
-  // rides in with the mount so the one row that is constant on this screen
-  // never paints empty.
-  mountSessionHeader(host, state) {
-    if (!host) return;
-    sessionHeaderStore.set(state);
-    mountLegacyPortal(host, createElement(SessionHeader));
   },
 
   // `_patchHeaderStatusPill` — the mid-turn lifecycle repaint. It wrote
@@ -176,31 +166,12 @@ export const devChatBridge: DevChatBridge = {
     sessionHeaderStore.set(state);
   },
 
-  // The four banners. `#dc-banners` is a `display: contents` host, so what
-  // mounts here are still `#dc-view`'s own flex children.
-  mountBanners(host, state) {
-    if (!host) return;
-    bannersStore.set(state);
-    mountLegacyPortal(host, createElement(DevChatBanners));
-  },
-
   // Every `_apply*Banner` lands here. They were three copies of an
   // outerHTML-swap / remove / insertAdjacentHTML dance whose whole purpose was
   // to change a strip WITHOUT re-rendering the transcript under an in-flight
   // stream; a publish does that by construction.
   publishBanners(state) {
     bannersStore.set(state);
-  },
-
-  // `#dc-messages` — the transcript. `renderChatView` writes the element (it
-  // carries the pane's scroll geometry, and `initScrollTracking` binds click,
-  // keydown and scroll on it) and calls `renderMessages` on the next line, so
-  // the rows ride in WITH the mount: publishing after it would blank the whole
-  // conversation for a frame on every chat-view render.
-  mountTranscript(host, state) {
-    if (!host) return;
-    transcriptStore.set(state);
-    mountLegacyPortal(host, createElement(DevChatTranscript));
   },
 
   publishTranscript(state) {

@@ -541,22 +541,13 @@ const DevChat = {
     const typed = document.querySelector('[data-flow-brief]');
     if (typed) DevChat._devFlow.brief = String(typed.value || '');
 
-    const host = document.getElementById('dc-launchpad-slot');
-    const inLaunchpad = !!DevChat._launchpadVenue();
-    const composer = document.getElementById('dc-composer-controls');
-    // If the SWAP itself changed — "Build on Usernode instead" dismissing
-    // the card, say — the whole bar has to repaint, or the composer stays
-    // hidden behind a launchpad that is no longer there.
-    if (composer && inLaunchpad !== composer.hasAttribute('hidden')) {
-      DevChat.renderChatView();
-      return;
-    }
-    if (inLaunchpad && host) {
-      host.innerHTML = DevChat._launchpadHtml();
-      DevChat._wireLaunchpad();
-      return;
-    }
-    DevChat.renderMessages();
+    // BOTH halves of #1281's swap are published now — the launchpad slot's
+    // markup and the composer's `hidden` — so a change in which of them is on
+    // screen no longer needs a whole `renderChatView` to land. That branch
+    // existed because the two were baked into one innerHTML string.
+    DevChat._publishDevView();
+    DevChat._publishComposer();
+    DevChat._wireLaunchpad();
   },
 
   _wireLaunchpad() {
@@ -6111,8 +6102,8 @@ const DevChat = {
     if (!container) return;
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
-    if (!react || !react.mountTranscript) return;
-    react.mountTranscript(container, DevChat._transcriptView());
+    if (!react || !react.publishTranscript) return;
+    react.publishTranscript(DevChat._transcriptView());
 
     // The two FOREIGN cards in the transcript — `DevFlowSelect`'s walkthrough
     // and `CreditOptions`' out-of-credits card — are handed to their own
@@ -6365,8 +6356,8 @@ const DevChat = {
     if (!host) return;
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
-    if (!react || !react.mountBanners) return;
-    react.mountBanners(host, DevChat._bannersView());
+    if (!react || !react.publishBanners) return;
+    react.publishBanners(DevChat._bannersView());
   },
 
   _renderSessionHeader() {
@@ -6374,8 +6365,8 @@ const DevChat = {
     if (!host) return;
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
-    if (!react || !react.mountSessionHeader) return;
-    react.mountSessionHeader(host, DevChat._sessionHeaderView());
+    if (!react || !react.publishSessionHeader) return;
+    react.publishSessionHeader(DevChat._sessionHeaderView());
   },
 
   // True when the device's PRIMARY pointer is coarse (finger) — i.e. a
@@ -6975,7 +6966,7 @@ const DevChat = {
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react) return;
-    react.mountSessionList(container, {
+    react.publishSessionList({
       rows: DevChat.sessions.map((s) => DevChat._sessionRow(s)),
     });
   },
@@ -7585,8 +7576,8 @@ const DevChat = {
     if (!bar) return;
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
-    if (!react || !react.mountComposer) return;
-    react.mountComposer(bar, DevChat._composerView());
+    if (!react || !react.publishComposer) return;
+    react.publishComposer(DevChat._composerView());
   },
 
   /** Republish without re-mounting — every one of the six writers' end. */
@@ -7600,9 +7591,67 @@ const DevChat = {
   /** The venue sentence this render is showing. See `_composerView`. */
   _venueNoteForRender: '',
 
+  /**
+   * `#dc-view`'s children, as one view model.
+   *
+   * The skeleton was the last string in this file: an `innerHTML` assignment
+   * that wrote five hosts and then mounted a portal into each. They are
+   * ordinary children of one component now — see
+   * features/dev-chat/view-store.ts.
+   */
+  _devViewState() {
+    if (!DevChat.currentSession) return { kind: 'none' };
+    const viewerOpen = !!DevChat.specViewer.open;
+    const stagingOpen = !!DevChat.stagingPanel.open;
+    return {
+      kind: 'session',
+      // #1281: a hand-off venue swaps the composer for the launchpad. The
+      // venue dropdown lives in the header, outside the swap, which is what
+      // makes it reversible — it is the way back to a chat.
+      launchpadHtml: DevChat._launchpadHtml(),
+      // Is there anything left in the bottom bar to draw a border around?
+      // The composer is hidden in a launchpad and the venue note is usually
+      // absent, and an empty bordered strip reads as a broken composer.
+      barEmpty: !!DevChat._launchpadVenue() && !DevChat._venueNoteForRender,
+      // Saved widths from a previous drag. CSS clamps to a min/max, so a
+      // stale value can't make the chat unusably narrow.
+      spec: { open: viewerOpen, width: DevChat._readSpecViewerWidth() || null },
+      // #771: same width-persistence pattern, separate key (previews want
+      // to be wider).
+      staging: { open: stagingOpen, width: DevChat._readStagingPanelWidth() || null },
+      proposalHint: !!DevChat._proposalHint,
+    };
+  },
+
+  /**
+   * #194's one-shot hint, set by the "+" menu's "Propose a change".
+   *
+   * public/js/app-view.js used to `insertAdjacentHTML('afterbegin')` it in
+   * front of this subtree, which is a second author on nodes React
+   * reconciles. It is a field, latched for the life of the render that shows
+   * it — `renderChatView` clears it — so a republish keeps it and the next
+   * full render drops it, exactly as the one-shot flag meant.
+   */
+  _proposalHint: false,
+
+  showProposalHint() {
+    DevChat._proposalHint = true;
+    DevChat._publishDevView();
+  },
+
+  _publishDevView() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishDevView) return;
+    react.publishDevView(DevChat._devViewState());
+  },
+
   renderChatView() {
     const content = document.getElementById('dc-view');
     if (!content) return;
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.mountDevView) return;
 
     // The dev-chat tab's meta strip (Edit shortcuts + sessions header)
     // takes up vertical space we want to reclaim once the user is
@@ -7616,128 +7665,43 @@ const DevChat = {
       // #771: the staging panel slot only exists inside a session view —
       // leaving the session closes a docked preview with it.
       if (DevChat.stagingPanel.open) DevChat._resetStagingPanel();
-      content.innerHTML = `
-        <div id="dc-session-list" class="divide-y divide-zinc-200 dark:divide-zinc-800 platform-safe-scroll" style="flex:1;overflow-y:auto;min-height:0"></div>`;
+      react.mountDevView(content, DevChat._devViewState());
       DevChat.renderSessionList();
       return;
     }
 
     if (meta) meta.classList.add('hidden');
 
-    const viewerOpen = !!DevChat.specViewer.open;
-    // Saved viewer width from a previous drag. Applied as inline style
-    // on the side panel; CSS clamps to a min/max so a stale value
-    // can't make the chat unusably narrow.
-    const savedWidth = DevChat._readSpecViewerWidth();
-    const viewerStyle = viewerOpen && savedWidth
-      ? ` style="width:${savedWidth}px"`
-      : '';
-
-    // #771: staging preview panel slot — same width-persistence pattern
-    // as the spec viewer, separate key (previews want to be wider).
-    const stagingOpen = !!DevChat.stagingPanel.open;
-    const stagingSavedWidth = DevChat._readStagingPanelWidth();
-    const stagingStyle = stagingOpen && stagingSavedWidth
-      ? ` style="width:${stagingSavedWidth}px"`
-      : '';
     // #1348: the venue control is the header dropdown, top right. What is
     // left down by the composer is the fallback sentence alone — reported
     // once, on the paint after creation, when the server resolved a venue
-    // other than the one the user's default named. Cleared below so a later
-    // repaint of the same session doesn't keep re-explaining a settled fact.
+    // other than the one the user's default named. Latched for the life of
+    // THIS render rather than read per publish: the composer republishes on
+    // every keystroke, and re-reading a reason that clears itself would make
+    // the sentence vanish on the first one.
     const venueFallbackReason =
       DevChat._venueFallbackReason || DevChat._shotVenueFallbackReason();
-    // Latched for the life of THIS render rather than read per publish: the
-    // composer republishes on every keystroke (the save icon and the hint
-    // flip on them), and re-reading a reason that clears itself would make
-    // the sentence vanish on the first one.
     DevChat._venueNoteForRender = window.BuildVenues
       ? BuildVenues.noteHtml({ fallbackReason: venueFallbackReason })
       : '';
     DevChat._venueFallbackReason = null;
-    // #1281: a hand-off venue swaps the composer for the launchpad. The
-    // venue dropdown lives in the header, outside the swap, which is what
-    // makes it reversible — it is the way back to a chat.
-    const launchpadHtml = DevChat._launchpadHtml();
-    const inLaunchpad = !!DevChat._launchpadVenue();
-    // Is there anything left in the bottom bar to draw a border around?
-    // The composer is hidden in a launchpad and the venue note is usually
-    // absent, and an empty bordered strip reads as a broken composer.
-    const barEmpty = inLaunchpad && !DevChat._venueNoteForRender;
-
-    content.innerHTML = `
-      <!-- The header's CHILDREN are React's (features/dev-chat/session-header
-           .tsx): the back control, the session's name, its pull request, the
-           lifecycle pill and #1348's venue dropdown. The ELEMENT stays here
-           because PlatformUI.attachScreenFx writes a hairline class onto it
-           once the chat scrolls, and a rendered className would be a second
-           author on the same attribute. -->
-      <div id="dc-session-header" class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0"></div>
-      <!-- The four banners are React's (features/dev-chat/banners.tsx). The
-           host carries Tailwind's "contents" utility — display:contents — so
-           it generates NO box: #dc-view is a flex column and each banner has
-           to stay exactly the flex child it was, rather than becoming a block
-           child of a wrapper. -->
-      <div id="dc-banners" class="contents"></div>
-      <div class="dc-session-body flex-1 flex min-h-0">
-        <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
-            <!-- #1348: the launchpad is PINNED TO THE TOP of the chat area.
-                 It stood in the composer's place at the bottom (#1281),
-                 which is where you look to type — but a launchpad is not a
-                 composer: it is the screen's subject, a walkthrough you
-                 work down while the transcript behind it is the reference.
-                 At the bottom the first step sat furthest from the eye and
-                 a long card pushed itself off the fold. Above the
-                 scroller it holds still while the transcript moves under
-                 it, and step 1 is the first thing on screen.
-
-                 It stays OUTSIDE #dc-messages on purpose: inside, it would
-                 scroll away with the transcript and stop being a
-                 launchpad. The slot collapses when empty
-                 (.dc-launchpad-slot:empty), so an ordinary session's chat
-                 pane is exactly what it was. -->
-          <div id="dc-launchpad-slot" class="dc-launchpad-slot">${launchpadHtml}</div>
-          <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
-          <!-- No backticks in the comment below: it lives inside a
-               template literal, and one would close it. -->
-          <!-- The whole composer is React's (features/dev-chat/composer
-               .tsx): the venue sentence, the model pickers, the saved
-               drafts, the attach row, the pending strip, the error line, the
-               form and the shortcut hint. The BAR stays here, because its
-               own class run is a decision this template makes.
-
-               platform-safe-bar (app.css): this block is the bottom of the
-               screen on a phone, so it carries the home-indicator inset on
-               top of its own p-2 — the strip below the Send row is part of
-               this bar rather than dead space under it. The message scroller
-               above keeps the height that used to be reserved on #app-view.
-
-               In a launchpad the composer is hidden and the venue note is
-               usually absent, which would leave a bordered, padded strip
-               framing nothing — so those are dropped when there is nothing
-               to frame. The SAFE-AREA INSET is not: this is still the
-               bottom of the screen, and the transcript must not run under
-               the home indicator. Written as a conditional class rather
-               than a CSS override because app.css loses equal-specificity
-               conflicts to Tailwind (see AGENTS.md), so the p-2 utility
-               would win. -->
-          <div id="dc-composer-bar" class="shrink-0 platform-safe-bar${barEmpty ? '' : ' border-t border-zinc-200 dark:border-zinc-800 p-2'}"></div>
-        </div>
-        <div id="dc-spec-resizer" class="dc-spec-resizer ${viewerOpen ? 'dc-spec-resizer-open' : ''}" role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"></div>
-        <div id="dc-spec-viewer" class="dc-spec-viewer ${viewerOpen ? 'dc-spec-viewer-open' : ''}"${viewerStyle}></div>
-        <div id="dc-staging-resizer" class="dc-staging-resizer ${stagingOpen ? 'dc-staging-resizer-open' : ''}" role="separator" aria-orientation="vertical" aria-label="Resize staging preview"></div>
-        <div id="dc-staging-panel" class="dc-staging-panel ${stagingOpen ? 'dc-staging-panel-open' : ''}"${stagingStyle}></div>
-      </div>`;
-
-    // The header strip's children, FIRST: `_maybeOpenShotVenueSheet` below
-    // resolves `#dc-venue-select` to anchor its sheet against, and
-    // `attachScreenFx` measures the strip. The store flushes synchronously,
-    // so both find what they are looking for on the next line.
-    DevChat._renderSessionHeader();
-    // The composer BEFORE the transcript: `_setupAttachments`, `_restoreDraft`
-    // and the form's submit listener below all resolve controls inside it by
-    // id, and the store flushes synchronously, so they find them.
+    // #194's hint is one-shot: `app-view.js` sets it on the line AFTER this
+    // render, so clearing it here is what makes the next render drop it —
+    // which is exactly what the innerHTML write it replaces did to the node.
+    DevChat._proposalHint = false;
+    // The composer's paint state starts idle, which is what the template's
+    // own markup used to assert; the two calls at the bottom re-arm it.
     DevChat._composerBusy = false;
+
+    // ONE mount, with the whole screen's state riding in. Everything below
+    // resolves controls inside it by id, and the store flushes synchronously
+    // — the same contract they had when this line was an innerHTML write.
+    react.mountDevView(content, DevChat._devViewState());
+
+    // The five regions inside it publish their own state. Order still
+    // matters for the LISTENERS below, not for the markup: `renderMessages`
+    // is what starts the elapsed heartbeat and wires the quick-reply bar.
+    DevChat._renderSessionHeader();
     DevChat._renderComposer();
     DevChat.renderMessages();
     DevChat._renderQuickReplies();

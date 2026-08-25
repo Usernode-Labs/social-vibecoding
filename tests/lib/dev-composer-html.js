@@ -54,8 +54,14 @@ function composerHtml(state) {
 function makeComposerBridge() {
   let state = EMPTY;
   let mounts = 0;
+  let view = null;
   const noop = () => {};
   const bridge = {
+    // #1078: `renderChatView` mounts the whole SCREEN and every region
+    // below publishes into it, so a harness that drives it needs this
+    // method to exist or the render bails on its first line.
+    mountDevView: (_h, s) => { view = s; },
+    publishDevView: (s) => { view = s; },
     mountComposer: (_h, s) => { mounts += 1; state = s; },
     publishComposer: (s) => { state = s; },
     publishAttachStrip: (s) => mod().attachStripStore.set(JSON.parse(JSON.stringify(s))),
@@ -73,6 +79,8 @@ function makeComposerBridge() {
     state: () => JSON.parse(JSON.stringify(state)),
     /** How many times the portal was (re-)mounted rather than republished. */
     mounts: () => mounts,
+    /** The whole screen's last published model. */
+    view: () => (view ? JSON.parse(JSON.stringify(view)) : null),
     /** The last published model, rendered. */
     html: () => composerHtml(state),
   };

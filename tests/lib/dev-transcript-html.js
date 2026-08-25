@@ -75,8 +75,14 @@ function makeTranscriptBridge() {
   let stream = { key: '', html: '' };
   let now = 0;
   let mounts = 0;
+  let view = null;
   const noop = () => {};
   const bridge = {
+    // #1078: `renderChatView` mounts the whole SCREEN and every region
+    // below publishes into it, so a harness that drives it needs this
+    // method to exist or the render bails on its first line.
+    mountDevView: (_h, s) => { view = s; },
+    publishDevView: (s) => { view = s; },
     mountTranscript: (_host, s) => { mounts += 1; state = s; },
     publishTranscript: (s) => { state = s; },
     publishStream: (s) => { stream = s; },
@@ -99,6 +105,8 @@ function makeTranscriptBridge() {
     now: () => now,
     /** How many times the portal was (re-)mounted rather than republished. */
     mounts: () => mounts,
+    /** The whole screen's last published model. */
+    view: () => (view ? JSON.parse(JSON.stringify(view)) : null),
     /** The last published model, rendered. */
     html: () => transcriptHtml(state),
   };

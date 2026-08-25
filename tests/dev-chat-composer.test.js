@@ -96,11 +96,13 @@ test('every writer that reached into the bar publishes instead', () => {
     assert.doesNotMatch(body, /\.innerHTML|\.textContent =|classList\.(add|remove|toggle)/,
       `${fn} touches no node`);
   }
-  // …and the bar's own template is an empty host now.
-  const at = DEV_CHAT_SRC.indexOf('id="dc-composer-bar"');
-  assert.ok(at > 0, 'the bar is still the template\'s element');
-  assert.match(DEV_CHAT_SRC.slice(at, at + 200), /"><\/div>/,
-    'and it is written empty — the children are the component\'s');
+  // …and the bar is the SCREEN's markup now (features/dev-chat/view.tsx),
+  // which is what folded the last string in this module away. Its own class
+  // run is still a decision made there rather than here.
+  const VIEW_TSX = read('frontend', 'src', 'features', 'dev-chat', 'view.tsx');
+  assert.match(VIEW_TSX, /id="dc-composer-bar" className=\{s\.barEmpty \? BAR\.bare : BAR\.framed\}/);
+  assert.doesNotMatch(COMPOSER_TSX, /id="dc-composer-bar"/,
+    'the composer renders the CHILDREN, never the bar');
 });
 
 test('the composer flushes synchronously, because its caller reads the DOM next', () => {

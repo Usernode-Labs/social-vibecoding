@@ -217,7 +217,9 @@ test('the composer is HIDDEN, never removed', () => {
   // read on both halves of the seam.
   assert.match(DEV_CHAT_SRC, /hidden: !!DevChat\._launchpadVenue\(\),/,
     'the model carries the swap');
-  assert.match(DEV_CHAT_SRC, /id="dc-launchpad-slot"/);
+  const VIEW_TSX2 = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'view.tsx'), 'utf8');
+  assert.match(VIEW_TSX2, /id="dc-launchpad-slot"/);
   const COMPOSER_TSX = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
   assert.match(COMPOSER_TSX, /id="dc-composer-controls" hidden=\{s\.hidden \|\| undefined\}/);
@@ -241,7 +243,9 @@ test('the venue control stays outside the swap — it is the way back', () => {
   // The header is written by `renderChatView`; the swap is inside the
   // composer, which is a different file entirely — so the two cannot be
   // compared by position any more, and the guarantee is stronger for it.
-  assert.match(DEV_CHAT_SRC, /id="dc-session-header"/, 'the session header is painted');
+  const VIEW_TSX3 = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'view.tsx'), 'utf8');
+  assert.match(VIEW_TSX3, /id="dc-session-header"/, 'the session header is painted');
   const COMPOSER_TSX = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
   assert.ok(COMPOSER_TSX.includes('id="dc-composer-controls"'), 'the swap is the composer\'s');
@@ -257,7 +261,18 @@ test('the walkthrough repaints on whichever surface it is living on', () => {
   // was the last row of the transcript. In a launchpad venue renderMessages
   // deliberately omits it, so repainting that way would freeze the card on
   // its pre-click state — the #1304 class of bug.
-  assert.match(DEV_CHAT_SRC, /_repaintDevFlow\(\)\s*\{[\s\S]{0,400}dc-launchpad-slot/);
+  // #1078: both halves of the swap are published — the launchpad slot's
+  // markup lives in `_devViewState`, the composer's `hidden` in
+  // `_composerView` — so the repaint is two publishes rather than a reach
+  // into `#dc-launchpad-slot` with a whole-view fallback behind it.
+  const repaint = DEV_CHAT_SRC.match(/_repaintDevFlow\(\)\s*\{[\s\S]*?\n  \},/);
+  assert.ok(repaint, '_repaintDevFlow must exist');
+  assert.match(repaint[0], /DevChat\._publishDevView\(\);/);
+  assert.match(repaint[0], /DevChat\._publishComposer\(\);/);
+  assert.match(repaint[0], /DevChat\._wireLaunchpad\(\);/);
+  assert.doesNotMatch(repaint[0], /innerHTML\s*=/, 'and it writes no markup');
+  assert.match(DEV_CHAT_SRC, /launchpadHtml: DevChat\._launchpadHtml\(\),/,
+    'the slot is a field of the screen model');
   assert.match(
     DEV_CHAT_SRC,
     /_launchpadVenue\(\) \? '' : DevChat\._devFlowHtml\(\)/,
@@ -337,15 +352,26 @@ test('preparing reads the card first and the composer only as a fallback', () =>
   assert.match(body, /flow\.brief = brief/, 'the brief survives the repaints that follow');
 });
 
-test('dismissing a launchpad repaints the whole bar, not just the slot', () => {
+test('dismissing a launchpad repaints BOTH halves of the swap', () => {
   // "Build on Usernode instead" changes the SWAP. Repainting only the slot
-  // would empty the launchpad and leave the composer still hidden behind
-  // it — a session with no way to type at all.
+  // would empty the launchpad and leave the composer still hidden behind it
+  // — a session with no way to type at all.
+  //
+  // #1078: that used to need a whole `renderChatView`, because the slot's
+  // markup and the composer's `hidden` were baked into one innerHTML string
+  // and the only way to change which one was on screen was to write it
+  // again. They are two publishes now, and BOTH are unconditional — which is
+  // the same guarantee without the fall-through, and without throwing the
+  // transcript away to get it.
   const fn = DEV_CHAT_SRC.match(/_repaintDevFlow\(\)\s*\{[\s\S]*?\n  \},/);
   assert.ok(fn);
-  assert.match(fn[0], /inLaunchpad !== composer\.hasAttribute\('hidden'\)/,
-    'a changed swap falls through to renderChatView');
-  assert.match(fn[0], /renderChatView\(\)/);
+  assert.match(fn[0], /DevChat\._publishDevView\(\);/, 'the slot');
+  assert.match(fn[0], /DevChat\._publishComposer\(\);/, 'and the composer that hides behind it');
+  assert.doesNotMatch(fn[0], /renderChatView\(\)/,
+    'and neither needs the screen rebuilt to land');
+  // Both read the same predicate, so they cannot disagree about the swap.
+  assert.match(DEV_CHAT_SRC, /barEmpty: !!DevChat\._launchpadVenue\(\)/);
+  assert.match(DEV_CHAT_SRC, /hidden: !!DevChat\._launchpadVenue\(\),/);
 });
 
 test('the web launchpad takes its vendor from the VENUE, not the flow target', () => {

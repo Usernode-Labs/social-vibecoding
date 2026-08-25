@@ -164,18 +164,6 @@ const OWNED = [
   // (features/header/ai-budget.tsx). It used to be an empty
   // `#ai-budget-slot` that ai-credit.js `innerHTML`ed; the module publishes
   // a view model now and this is the only writer below the row.
-  // The dev chat's own session list (features/dev-chat/session-list.tsx).
-  // `renderChatView` writes the host — it carries the pane's scroll
-  // geometry — and its rows are React's.
-  //
-  // This sweep NEVER SEES IT, and that is worth stating rather than
-  // rediscovering: the branch that draws it runs only when the chat is open
-  // with no session, and every route into the chat carries a session id (see
-  // migration-state.md). Listed so a write into it is a finding the day the
-  // surface is reachable again; the coverage until then is
-  // tests/archive-session-list.test.js plus the chunk's browser probe,
-  // which drives the branch by hand.
-  { sel: '#dc-session-list' },
   { sel: '#drawer-row-ai-budget' },
   { sel: '#auto-session-modal' },
   { sel: '#credit-options-modal' },
@@ -245,40 +233,29 @@ const OWNED = [
     sel: '.gc-chat-pane',
     except: ['#gc-messages'],
   },
-  // The dev chat's whole composer. The BAR is dev-chat.js's — its
-  // `renderChatView` template writes the element, and its own class run is a
-  // decision that template makes — but everything between its edges is
-  // React's: the venue sentence, the model pickers, the saved drafts, the
-  // attach row, the pending strip, the error line, the form and the hint.
-  // The four strips that used to be their own hosts (`#dc-attachments`,
-  // `#dc-quick-replies`, `#dc-runner`, `#dc-budget`) are inside it now, so
-  // this one entry covers them. Swept on the session route above; the
-  // composer is on screen for every dev-chat session.
-  { sel: '#dc-composer-bar' },               // features/dev-chat/composer.tsx
-  // The session header strip. The HOST is dev-chat.js's for a different
-  // reason from the four above — `PlatformUI.attachScreenFx` writes a hairline
-  // class onto the element once the chat scrolls — but the split is the same:
-  // every child is React's. `#dc-status-pill` is INSIDE it and is no longer a
-  // controller host; `_repaintSessionHeader` republishes the strip where
-  // `_patchHeaderStatusPill` used to write that span's innerHTML.
-  { sel: '#dc-session-header' },             // features/dev-chat/session-header.tsx
-  // The four banners. `#dc-banners` is a display:contents host, so what is
-  // below it are still `#dc-view`'s own flex children — and every one of them
-  // is the component's, including the two credits banners' buttons.
-  // `CreditOptions.wire` only ADDS a delegated listener to the banner element,
-  // which is not a DOM write and so needs no exception here; its
-  // `bannerActionsHtml` markup arrives through a dangerouslySetInnerHTML sink
+  // The dev chat's WHOLE screen. `#dc-view` is written by
+  // public/js/app-view.js's `renderDevChatTab`; everything inside it is
+  // features/dev-chat/view.tsx — the session header, the four banners, the
+  // launchpad slot, the transcript, the composer and (on the other branch)
+  // the app's session list. Five separate entries collapsed into this one
+  // when the skeleton stopped being a string.
+  //
+  // Two hosts inside it stay legacy-owned and are excepted: the spec viewer
+  // is a controller host `_renderSpecViewer` fills, and the staging panel is
+  // a SLOT the docked preview is positioned over, watched by a
+  // ResizeObserver. The launchpad slot is NOT excepted — another module
+  // builds its markup, but it arrives through a dangerouslySetInnerHTML sink
   // React itself owns.
-  { sel: '#dc-banners' },                    // features/dev-chat/banners.tsx
-  // The transcript. The HOST is dev-chat.js's — `renderChatView` writes the
-  // element, it carries the pane's scroll geometry, and `initScrollTracking`
-  // binds click, keydown and scroll on it once per render — but every ROW
-  // below it is React's, including the live bubble a streaming turn writes
-  // into. `.dc-msg-content` used to be a controller host that
-  // `_renderStreamingMarkdown` assigned `innerHTML` on up to sixty times a
-  // second; that writer is a `streamStore` publish now, so there is no
-  // exception to carve out here.
-  { sel: '#dc-messages' },                   // features/dev-chat/transcript.tsx
+  //
+  // `#dc-session-list` is in here too, on the no-session branch. This sweep
+  // never reaches it: every route into the chat carries a session id (see
+  // migration-state.md), so the coverage is
+  // tests/archive-session-list.test.js plus the chunk's browser probe, which
+  // drives the branch by hand.
+  {
+    sel: '#dc-view',
+    except: ['#dc-spec-viewer', '#dc-staging-panel'],
+  },
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
   { sel: '#connectors-list' },               // features/settings/connectors-list.tsx

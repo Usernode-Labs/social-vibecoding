@@ -129,7 +129,8 @@ test('the host generates no box, so each banner stays #dc-view\'s flex child', (
   // A plain wrapper would take the banners' place in that flex column and
   // they would become block children of it — a different layout for the same
   // markup, and nothing would have failed to say so.
-  assert.match(DEV_CHAT_SRC, /<div id="dc-banners" class="contents"><\/div>/);
+  const VIEW_TSX = read('frontend', 'src', 'features', 'dev-chat', 'view.tsx');
+  assert.match(VIEW_TSX, /<div id="dc-banners" className="contents">/);
   assert.doesNotMatch(BANNERS_TSX, /id="dc-banners"/, 'the component renders the CHILDREN');
 });
 

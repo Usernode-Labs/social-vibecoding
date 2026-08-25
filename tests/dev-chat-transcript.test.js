@@ -121,15 +121,16 @@ const user = (content, over) => ({
 // ── 1. The five writers are gone ───────────────────────────────────────
 
 test('no path writes into #dc-messages any more', () => {
-  // The host itself is still dev-chat.js's — it carries the pane's scroll
-  // geometry, `initScrollTracking` binds click/keydown/scroll on it, and a
-  // MutationObserver follows the transcript to the bottom. What must not come
-  // back is a writer INSIDE it.
+  // The host is features/dev-chat/view.tsx's now — the whole screen
+  // converted — and it still carries the pane's scroll geometry, the
+  // click/keydown/scroll `initScrollTracking` binds on it, and the
+  // MutationObserver that follows the transcript to the bottom. What must not
+  // come back is a WRITER inside it.
   const at = DEV_CHAT_SRC.indexOf('  renderMessages() {');
   assert.ok(at > 0, 'renderMessages is still the entry point every caller uses');
   const body = DEV_CHAT_SRC.slice(at, DEV_CHAT_SRC.indexOf('\n  },', at));
-  assert.match(body, /react\.mountTranscript\(container, DevChat\._transcriptView\(\)\)/,
-    'the rows ride in WITH the mount, or the conversation blanks for a frame');
+  assert.match(body, /react\.publishTranscript\(DevChat\._transcriptView\(\)\)/,
+    'the rows are one publish');
   assert.doesNotMatch(body, /innerHTML\s*=/, 'renderMessages assigns no markup');
 
   // The four in-place patch paths all collapse onto one publish.

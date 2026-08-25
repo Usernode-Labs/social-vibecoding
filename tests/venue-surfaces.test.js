@@ -90,8 +90,10 @@ test('the selector is painted in the session header, top right (#1348)', () => {
   // Not in the composer's bottom bar, where it was one caption among the
   // meter, the runner and the budget menu — the arrangement that made the
   // venue invisible. And after the status pill, so it lands on the right.
-  const header = DEV_CHAT_SRC.indexOf('id="dc-session-header"');
-  const body = DEV_CHAT_SRC.indexOf('class="dc-session-body');
+  const VIEW_TSX = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'view.tsx'), 'utf8');
+  const header = VIEW_TSX.indexOf('id="dc-session-header"');
+  const body = VIEW_TSX.indexOf('className="dc-session-body');
   assert.ok(header !== -1, 'the session header row is addressable');
   assert.ok(header < body, 'and it opens before the chat body does');
   // The strip's ORDER is the component's now, and the venue button is last —
@@ -111,7 +113,9 @@ test('the selector survives the launchpad swap that hides the composer', () => {
   // The control is in the HEADER's subtree; the swap is inside the composer,
   // which is a different component in a different file — so "outside the
   // swap" is structural rather than positional.
-  assert.match(DEV_CHAT_SRC, /id="dc-session-header"/);
+  const VIEW_TSX = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'view.tsx'), 'utf8');
+  assert.match(VIEW_TSX, /id="dc-session-header"/);
   const COMPOSER_TSX = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
   assert.ok(COMPOSER_TSX.includes('id="dc-composer-controls"'), 'the swap is the composer\'s');
