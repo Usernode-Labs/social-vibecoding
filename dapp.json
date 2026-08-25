@@ -1409,6 +1409,11 @@
       "expectSelector": "#dev-kanban[data-kanban-active=\"done\"] #dev-kanban-col-done.dev-kanban-col-active"
     },
     {
+      "name": "A task moved to Done keeps its priority/assignee/type chips",
+      "path": "/?demo=1&view=kanban&col=done#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-done [data-gov-row=\"9100060\"] .attr-chip"
+    },
+    {
       "name": "?view=kanban forces the board regardless of stored preference (#814)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
