@@ -46,49 +46,46 @@ now reconciles — and is the thing to update when one moves across.
 - `#dc-staging-panel` — a SLOT, not a container: the docked staging preview is
   an overlay positioned over its rect and a `ResizeObserver` watches it, so it
   renders empty and stays empty. It is the one `except` left on `#dc-view`.
-- `#settings-usernode-section` — see "The settings interior" below.
-  `#settings-nav-desktop` and `#settings-mobile-menu-host` came OFF this list
-  in chunk D's follow-up: `frontend/src/features/settings/settings-nav.tsx`
-  renders both, driven by `settings-nav-store.js`.
 - nothing on the Leaderboard screen. See the note under "Converted".
 - nothing on the Dev screen but `showLaunchCoverShot`'s launch cover, which
   is deliberate — see "Large" below.
-- the header's own strays, all native-gated: `header/wallet-sheet.js` and
-  `header/node-pill.js` (`header/native-app-version.js` has CONVERTED — see
-  below). Each `return`s unless `window.usernode.isNative === true`, as does
-  `#settings-usernode-section`. `native-chrome.js` and `screenshot-select.js`
-  build no markup. `header/ai-credit.js` was the one browser-visible stray and
-  has converted.
+- **The four native-gated surfaces have ALL converted**, and they were the
+  last entries on this list:
 
-  **"They need a phone, not a browser" is what this list used to say, and it
-  is wrong in the way that matters.** It conflates two things:
+  | converted | host | writes before → after |
+  | --- | --- | --- |
+  | `header/native-app-version.js` | `#drawer-row-native-app-version` | 2 → 0 |
+  | `header/node-pill.js` | `#drawer-row-node` + its sheet | 17 → 5 |
+  | `header/wallet-sheet.js` | `#drawer-row-wallet` + its sheet | 67 → 4 |
+  | `settings.js`'s usernode section | `#settings-usernode-section` | ~80 → 0 |
 
-  - **Converting them** is ordinary work and needs no device.
-    `tests/node-pill-native-status.test.js` and fourteen others already build
-    `usernode: { isNative: true }` + `NativeChrome` + a DOM stub and call
-    `init()`. That is the same vm harness every other conversion used, and
-    `native-app-version.js` went through it unchanged.
-  - **Auditing them in a browser** is the part that is genuinely hard, and
-    NOT for the reason the old line gave. A pre-load stub does not work:
-    `/usernode-bridge.js` sets `window.usernode` synchronously in `<head>`
-    and `public/js/native-chrome.js` replaces `window.NativeChrome`, so
-    `page.addInitScript` is overwritten by both and the modules still bail on
-    their first line — while the sweep reports a confident zero about hosts it
-    never reached. `frontend/src/head.html` says why in its own words: the
-    real signal is an injected JS channel, "which a headless browser can never
-    have".
+  The residue in the two sheets is the KIT SEAM and stays: `PlatformUI.sheet({
+  contentEl })` reparents the element it is handed, so the panel is still
+  built with `createElement` and only the BODY is a portal, dropped on
+  `onDismiss` before the kit discards the node it lives in.
 
-  The recipe that DOES work, and what `NATIVE=1` in
-  `scripts/audit-react-ownership.mjs` now does: load with
-  `?un-native-webview=1` (the sanctioned presentation flag), then install the
-  bridge shape AFTER boot, then drive `init()` by hand, then open the drawer.
-  Verified: the version row loses its `hidden` and renders `0.4.0/1223` with
-  zero page errors.
+  `#settings-usernode-section` was the largest single conversion of the run —
+  ~800 lines across fourteen methods and six sub-sections. Three notes for
+  anyone doing something that size again:
 
-  What still genuinely needs a device is SIGN-OFF — real bridge response
-  shapes, the kit's sheet presentation, safe areas. That is a verification
-  step, not a prerequisite for writing the conversion, and treating it as one
-  is what left four surfaces untouched for the whole run.
+  - **The stateful-island rule is per SUBTREE, so there is no incremental
+    path.** React cannot own half a host while the module appends into the
+    other half; all fourteen methods went in one commit.
+  - **Some of it simplifies rather than moves.** `box.isConnected` guards on
+    every event, a `box.remove()` that deleted a section from the document,
+    four `holder.textContent = ''` + `render(state)` closures, and an async
+    disable/toast/re-enable wrapper hand-copied into the row, the button AND
+    the toggle. A publish to an unmounted component is a no-op, so most of
+    that had nothing left to do.
+  - **The tests pin the construction, not the property.** Eighteen guards read
+    `box.id = …` and `retry.disabled = true`; re-pointing each to whichever
+    half now owns the property — decisions to the view builders, shapes to the
+    component — is where the review value is.
+
+- `#settings-usernode-section`'s neighbours: `#settings-nav-desktop` and
+  `#settings-mobile-menu-host` came off this list in chunk D's follow-up
+  (`features/settings/settings-nav.tsx` renders both).
+- `native-chrome.js` and `screenshot-select.js` build no markup.
 
 `members-controller.js` and `app-secrets-controller.js` are NOT on this list
 and should not be added: AGENTS.md documents both as legitimate legacy hosts
