@@ -34,10 +34,11 @@ const svc = require('../src/services/external-agent-tasks');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const ROUTE = read('src/routes/sessions.js');
 const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
-// The rows render in the app-context sheet via the extracted SessionRow
-// (Streamlined Concept) — the Improve panel slimmed to its two actions.
+// The rows render in the hamburger DRAWER via the extracted SessionRow
+// (Streamlined Concept) — the Improve panel slimmed to its two actions, and
+// the board's drawer is the app's own surface.
 const ROW_TSX = read('frontend/src/features/improve/session-row.tsx');
-const SHEET_TSX = read('frontend/src/features/app-context/app-context-sheet.tsx');
+const SHEET_TSX = read('frontend/src/features/app-context/app-context-rows.tsx');
 const SERVICE = read('src/services/external-agent-tasks.js');
 
 // A pool that answers one query and records what it was asked, so a test

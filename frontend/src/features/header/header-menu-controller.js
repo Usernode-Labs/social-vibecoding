@@ -27,7 +27,6 @@
 // evaluates this module's whole graph in Node.
 
 import { adoptKitSurface } from '../../lib/kit-surface';
-import { refreshDrawerApps } from './drawer-apps-store.js';
 
 // Drawer status/version rows (header slim-down): the kudos + AI-credit meters
 // render into #drawer-status-pane, and the platform version + mobile-app release +
@@ -234,7 +233,9 @@ const HeaderMenu = {
     HeaderMenu._announceOpen();
     // Refresh the "Your apps" section on every open (Streamlined Concept) —
     // the list is only worth fetching for a drawer someone is looking at.
-    refreshDrawerApps();
+    // The drawer is the APP's surface now (Streamlined Concept): what it
+    // needs on open is the change lists, which the improve controller owns.
+    window.Improve?.loadSessions?.();
     // The #555 AI-credit refresh used to fire here, because the row only
     // rendered in this drawer and opening it was exactly when the number
     // mattered. The row is a Settings section now (Anthropic API key), so the

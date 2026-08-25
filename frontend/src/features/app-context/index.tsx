@@ -10,7 +10,7 @@
 import { useEffect } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
-import { AppContextSheet } from './app-context-sheet';
+import { AppsSwitcherSheet } from './app-context-sheet';
 import { appContextStore, AppContext } from './mount';
 
 export { appContextStore, AppContext } from './mount';
@@ -31,5 +31,5 @@ export function AppContextIsland() {
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
 
-  return <AppContextSheet />;
+  return <AppsSwitcherSheet />;
 }

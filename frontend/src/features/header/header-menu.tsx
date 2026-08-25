@@ -6,18 +6,21 @@
  *
  * ── What THE UI OVERHAUL changed here ─────────────────────────────────
  *
- * The bell merged into this drawer. #notifications-panel is gone and the
- * notifications list briefly led the panel; the Streamlined Concept moved it
- * to its own SCREEN (#notifications) behind a badged Notifications row, and
- * the drawer now leads with the viewer's APPS — see ./drawer-apps.tsx.
+ * ── The drawer is the APP's surface (Streamlined Concept) ─────────────
  *
- * The two blocks are anchored to OPPOSITE ENDS of the panel — Your apps to
- * the top, the navigation rows to the bottom via `mt-auto` — rather than
- * stacked from the top with all the slack underneath (#1367's layout,
- * inherited by the apps section).
+ * The Figma board draws one app-scoped drawer: the app, its Board, its
+ * Activity, "+ New change", the changes in progress and the changes running on
+ * other apps, over a Profile / Settings foot. That body is
+ * <AppContextRows/> (../app-context/app-context-rows.tsx), which is where the
+ * short-lived `#app-context-sheet` content went.
  *
- * So this island is markup-only apart from <DrawerApps/>, the one subtree
- * that renders from a store.
+ * What left this panel with that change: the Notifications and Messages rows
+ * (they are the two header glyphs now — platform alerting has no business
+ * inside the app's own surface) and the Your-apps list (the Apps sheet behind
+ * the title tab switches apps).
+ *
+ * The two blocks are anchored to OPPOSITE ENDS of the panel — the app rows to
+ * the top, the account rows to the bottom via `mt-auto`.
  *
  * Five things left: the theme selector (a SETTING now, and the first one —
  * features/settings/sections/theme.tsx), the kudos and AI-credit meters
@@ -40,11 +43,11 @@
  * (PlatformUI.panel({contentEl}) reparents it and adds .platform-panel-adopted),
  * which a re-render of the panel's own `className` or child order would clobber.
  *
- * <DrawerApps/> is the one exception, and it earns it the same way the
- * notifications body used to: its whole subtree is React's, driven by
- * ./drawer-apps-store.js, and nothing in public/js/** writes inside it. It
- * renders the shipped markup exactly on the first pass — the empty container
- * — so hydration matches byte for byte.
+ * <AppContextRows/> is the one exception, and it earns it the same way the
+ * notifications body used to: its whole subtree is React's, driven by the
+ * improve store, and nothing in public/js/** writes inside it. It renders the
+ * shipped markup exactly on the first pass — target-less, no rows — so
+ * hydration matches byte for byte.
  *
  * Why init() moves to a layout effect: imported modules evaluate while the
  * bundle loads — before hydration — and both node-pill and wallet-sheet lift
@@ -71,7 +74,7 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { DrawerApps } from './drawer-apps';
+import { AppContextRows } from '../app-context/app-context-rows';
 // Two side-effect modules whose ROWS moved out of this drawer — the AI-credit
 // figure to Settings → Anthropic API key, the mobile-app version to the
 // Improve panel's footer — but whose imports stay here on purpose. Both
@@ -182,45 +185,7 @@ export function HeaderMenu() {
               Settings and Admin & moderation stay in the bottom-anchored
               group.
           */}
-          <div id="drawer-top-rows" className="shrink-0">
-            {/*
-                Notifications — the full-screen view (Streamlined Concept).
-                The list left the drawer for #notifications; this badged row
-                is the way in, first of the nav rows because "what happened
-                while I was away" keeps its top-of-menu billing. Real anchor,
-                like every nav row. The badge (#drawer-notifications-badge) is
-                painted by Notifications._renderBadge — notifications-only
-                (bell unread + invites), while the hamburger's red badge sums
-                Messages in as the whole drawer's number.
-            */}
-            <a
-              id="drawer-row-notifications"
-              href="#notifications"
-              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <BellIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-medium">Notifications</span>
-              <span id="drawer-notifications-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread notifications"></span>
-            </a>
-            {/* Platform-wide direct and group conversations (#488). A real
-                anchor keeps deep links and modified clicks browser-native;
-                the badge is updated by the React Messages store. */}
-            <a
-              id="drawer-row-messages"
-              href="#messages"
-              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-medium">Messages</span>
-              <span id="drawer-messages-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread messages"></span>
-            </a>
-          </div>
-          {/*
-              YOUR APPS — a nav item of its own AND a collapsible section:
-              the row navigates home (where the grid lives), the chevron
-              folds the app list. Fully React-owned — see ./drawer-apps.tsx.
-          */}
-          <DrawerApps />
+          <AppContextRows />
           {/*
               THE NAVIGATION ROWS, at the BOTTOM and always on screen.
 
@@ -318,16 +283,23 @@ export function HeaderMenu() {
                 both keep the glyph, and nothing requests /avatars/ until there is
                 something to request.
             */}
+            {/*
+                PROFILE | SETTINGS, side by side (Streamlined Concept): the
+                board closes its drawer with two equal buttons rather than two
+                more full-width rows, which is what separates "the account"
+                from the app rows above.
+            */}
+            <div className="flex gap-3 px-4 py-3">
             <a
               id="drawer-row-profile"
               href="#profile"
-              className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="flex-1 min-w-0 flex items-center justify-center gap-2 min-h-[44px] rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
             >
-              <UserIcon id="drawer-profile-glyph" className="w-5 h-5 shrink-0" />
+              <UserIcon id="drawer-profile-glyph" className="w-4 h-4 shrink-0" />
               <img
                 id="drawer-avatar"
                 alt=""
-                className="hidden w-5 h-5 shrink-0 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800"
+                className="hidden w-4 h-4 shrink-0 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800"
               />
               <span className="text-sm font-medium">
                 Profile
@@ -343,19 +315,20 @@ export function HeaderMenu() {
             <a
               id="drawer-row-settings"
               href="#settings"
-              className="flex items-center gap-3 px-4 min-h-[44px] w-full text-left relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              className="flex-1 min-w-0 flex items-center justify-center gap-2 min-h-[44px] rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
             >
-              <CogIcon className="w-5 h-5 shrink-0" />
+              <CogIcon className="w-4 h-4 shrink-0" />
               <span className="text-sm font-medium">
                 Settings
               </span>
               <span
                 id="drawer-byok-dot"
-                className="hidden ml-auto w-2 h-2 rounded-full bg-emerald-500 shrink-0"
+                className="hidden w-2 h-2 rounded-full bg-emerald-500 shrink-0"
                 aria-hidden="true"
               >
               </span>
             </a>
+            </div>
             {/*
                 Admin & moderation console entry point (#588 shipped it as a
                 header shield icon; the header slim-down moved it here). Sits

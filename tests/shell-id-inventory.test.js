@@ -40,6 +40,25 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Streamlined Concept: the drawer became the APP's surface ──────
+  // The Figma board draws ONE app-scoped drawer (the app, its Board, its
+  // Activity, "+ New change", the changes here and elsewhere, over a
+  // Profile/Settings foot). The short-lived split — a platform drawer plus an
+  // #app-context-sheet behind the title tab — collapsed into it. What the
+  // drawer gave up in exchange: alerting, which is the two header glyphs
+  // (#notifications-btn, #messages-btn), and the app list, which is the Apps
+  // sheet behind the title tab.
+  'app-context-sheet': 'The second surface is gone: its rows ARE the drawer now (features/app-context/app-context-rows.tsx). The element id lives on as #apps-switcher-sheet, which reuses its controller and kit bottom-sheet lifecycle.',
+  'app-context-overlay': 'Backdrop of that surface — #apps-switcher-overlay now.',
+  'app-context-body': 'Scroller of that surface; the drawer\'s own #header-menu-rows is the scroller now.',
+  'app-context-close': 'Close control of that surface — #apps-switcher-close now.',
+  'drawer-top-rows': 'The drawer\'s Notifications + Messages block. Both are header glyphs now, because platform-wide alerting has no business inside the app\'s own surface.',
+  'drawer-row-notifications': 'Became #notifications-btn, the bell in the header\'s right group. Same #notifications route, same badge id.',
+  'drawer-row-messages': 'Became #messages-btn, the chat bubble beside it. Same #messages route; its badge keeps the id its row used.',
+  'drawer-notifications-badge': 'The notifications count rides #notifications-badge on the bell again — one badge, not two.',
+  'drawer-your-apps': 'The Your-apps section. Switching apps is the Apps sheet behind the title tab (#apps-switcher-sheet), which is what the board draws.',
+  'drawer-row-your-apps': 'Nav row of that section; the sheet\'s Home button is the way to the grid now.',
+  'drawer-your-apps-toggle': 'Its fold, retired with the section.',
   // ── Streamlined Concept: the notification list left the drawer ───
   // The rows render on the full-screen #notifications view now
   // (notifications-screen.tsx, its own ids in ADDED_IDS below); the saved +
@@ -85,7 +104,11 @@ const RETIRED_IDS = {
   // ── THE UI OVERHAUL: three top-right drawers became one ──────────
   // The bell and the cog merged INTO the hamburger. Nothing they carried was
   // dropped without a new home; each entry below names it.
-  'notifications-btn': 'The bell. Its list is the first thing in the hamburger now, and both its badges ride that button.',
+  // (#notifications-btn's own round trip: THE UI OVERHAUL folded the bell into
+  // the hamburger, and the Streamlined Concept gives it back its control in the
+  // header's right group — the drawer is the APP's surface now, so platform
+  // alerting needs a seat of its own. The id matches the baseline again, so it
+  // is listed in neither map; what changed is only which panel it opens.)
   'notifications-panel': 'The bell dropdown. features/notifications keeps its store, list components and module — only the panel around them is gone.',
   'work-drawer-panel': 'The cog drawer. Its session list is the Improve panel\'s (this app, plus an overflow for every other); its pinned rows are ordinary notifications in the merged hamburger.',
   'work-drawer-close': 'Close button of the retired cog drawer.',
@@ -113,13 +136,19 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── Streamlined Concept: the header's second alerting glyph ──────
+  'messages-btn': 'The chat bubble beside it, opening #messages.',
+  'drawer-messages-badge': 'Unread-messages count, on that chat bubble. It keeps the id it wore as the drawer row\'s badge — Notifications._renderBadge is still its only writer, so only the parent changed.',
+  // ── …and the Apps sheet behind the title tab ─────────────────────
+  'apps-switcher-sheet': 'The board\'s Apps sheet — its "Switching between Apps" connector. Reuses the retired #app-context-sheet\'s controller, store and kit bottom-sheet lifecycle.',
+  'apps-switcher-overlay': 'Its backdrop.',
+  'apps-switcher-close': 'Its close control.',
+  'apps-switcher-create': 'The sheet\'s "Create New" action.',
+  'apps-switcher-list': 'The horizontal strip of the viewer\'s apps.',
+  'apps-switcher-home': 'The sheet\'s Home button, one half of the board\'s footer pair.',
+  'apps-switcher-explore': 'Its Explore button, the other half.',
+  'drawer-app-rows': 'The drawer\'s app-scoped block (views, New change, the change lists), so the account rows below it can bottom-anchor independently.',
   // ── Streamlined Concept: the drawer leads with Your apps ─────────
-  'drawer-your-apps': 'The drawer\'s "Your apps" section container — React-owned, filled on drawer open from /api/apps via the home screen\'s partition (see drawer-apps.tsx).',
-  'drawer-top-rows': 'The drawer\'s leading group — Notifications and Messages rows (owner review round 2).',
-  'drawer-row-your-apps': 'The "Your apps" NAV ROW — navigates home, where the apps grid lives; a distinct item like Notifications (owner review round 2).',
-  'drawer-your-apps-toggle': 'The chevron disclosure beside that row — folds the app list.',
-  'drawer-row-notifications': 'Badged Notifications nav row — the way into the full-screen #notifications view now that the list left the drawer.',
-  'drawer-notifications-badge': 'Notifications-only unread count on that row (bell unread + invites), painted by Notifications._renderBadge.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
@@ -246,8 +275,6 @@ const ADDED_IDS = {
   'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
   'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
   'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
-  'drawer-row-messages': 'Platform Messages destination in the global navigation drawer (#488).',
-  'drawer-messages-badge': 'Aggregate unread conversation count in the global navigation drawer (#488).',
   'notifications-saved': 'Pinned "Saved" section at the top of the bell drawer, holding the messages this user bookmarked (#1280).',
   // #1344 — verified users may claim one company-funded OpenRouter key.
   // These are static settings controls; settings.js owns their state and the
@@ -276,10 +303,6 @@ const ADDED_IDS = {
   // The surface behind the header's "app name ⌄" tab: the app's three
   // views, its changes in progress/elsewhere, and the reference footer
   // (which moved here from the Improve panel keeping its ids).
-  'app-context-sheet': 'The sheet root — always mounted, data-open slides it in; kit-adopted on touch (features/app-context).',
-  'app-context-overlay': 'Backdrop behind the sheet — opacity-faded, never hidden, like #improve-overlay.',
-  'app-context-body': 'The sheet\'s scroller — a column flex so #improve-footer bottom-anchors, exactly as #improve-body did.',
-  'app-context-close': 'Close button in the sheet header.',
   'app-context-row-app': 'Destination row: view and use the app (Improve.openApp).',
   'app-context-row-activity': 'Destination row: the Activity stream (#app/<slug>/activity).',
   'app-context-row-board': 'Destination row: the Board (#app/<slug>/board).',

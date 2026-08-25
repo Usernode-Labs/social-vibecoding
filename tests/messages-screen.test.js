@@ -25,16 +25,17 @@ const dapp = JSON.parse(read('dapp.json'));
 
 test('Messages is a hidden React-owned top-level screen with global navigation', () => {
   assert.match(html, /<main id="messages-screen" class="hidden /);
-  assert.match(html, /id="drawer-row-messages" href="#messages"/);
+  assert.match(html, /id="messages-btn"\s+href="#messages"/);
   assert.match(html, /id="drawer-messages-badge" class="hidden /);
   // The nav order check. THE UI OVERHAUL took Leaderboard out of the
   // hamburger — a link to shared progress belongs beside the shared progress,
   // so it is the Challenges area's now — and the four rows left are the
   // navigation the drawer was always for.
-  // Streamlined order (owner review round 2): Notifications + Messages lead
-  // the drawer above Your apps; Profile, Settings, Admin close it.
+  // Streamlined Concept: the drawer is the APP's surface, so Messages is a
+  // header glyph beside the bell rather than a row inside it. Profile,
+  // Settings and Admin still close the drawer.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#drawer-top-rows > #drawer-row-notifications + #drawer-row-messages'));
+    === '#platform-header #messages-btn + #notifications-btn'));
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
     === '#drawer-main-rows #drawer-row-profile + #drawer-row-settings + #drawer-row-admin'));
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);

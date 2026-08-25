@@ -21,7 +21,7 @@ import { appContextStore } from './app-context-store.js';
 export const AppContext = {
   _sheet: null,
 
-  /** Matches #app-context-sheet's transition in app.css. */
+  /** Matches #apps-switcher-sheet's transition in app.css. */
   LEGACY_CLOSE_MS: 200,
   /** Hard cap on the completion promise — a kit teardown that never fires
       cannot hang a chained presentation forever. */
@@ -35,7 +35,7 @@ export const AppContext = {
 
   open() {
     if (!improveStore.get().slug) return;
-    const panel = document.getElementById('app-context-sheet');
+    const panel = document.getElementById('apps-switcher-sheet');
     if (!panel) return;
     // One surface at a time — the same courtesy every drawer pays the others.
     if (window.HeaderMenu?.isPresenting?.()) window.HeaderMenu.close?.();

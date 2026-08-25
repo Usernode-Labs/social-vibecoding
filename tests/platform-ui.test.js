@@ -481,8 +481,9 @@ test('the Board owns the view control; the header center is the title tab', () =
 
   // A destination names where it GOES, and the "use the app" row's label
   // follows the target: the platform's reads "Home", an app's reads its own
-  // name. That logic lives on the app-context sheet's rows now.
-  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  // name. That logic lives on the DRAWER's app rows now (Streamlined
+  // Concept) — the board's drawer is the app's own surface.
+  const sheet = read('frontend/src/features/app-context/app-context-rows.tsx');
   assert.match(sheet, /label=\{selfHosted \? 'Home' : name \|\| 'App'\}/,
     "the platform's row is labelled Home, an app's by its name");
   assert.match(sheet, /const AppRowIcon = selfHosted \? HomeIcon : AppWindowIcon;/,
@@ -520,28 +521,31 @@ test('the Board owns the view control; the header center is the title tab', () =
     'and the session eye opens that preview, the one preview affordance');
 });
 
-test('the app-context sheet bottom-anchors the version / GitHub / share block', () => {
-  // Streamlined Concept: the reference footer moved to the app-context sheet
-  // — the app's own surface — keeping its ids, its writers and this layout.
-  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+test("the drawer bottom-anchors the version / GitHub / share block", () => {
+  // Streamlined Concept: the reference footer sits in the DRAWER — the app's
+  // own surface — keeping its ids, its writers and this layout.
+  const sheet = read('frontend/src/features/app-context/app-context-rows.tsx');
   const html = read('public/index.html');
 
-  // Same `mt-auto` trick the hamburger's own footer used before these rows
-  // moved: the free space collects ABOVE the block, so it hugs the foot of a
-  // tall sidebar and degrades to "at the end of the scroll" when the rows
-  // above it fill the sheet. No measurement, one rule, both behaviours.
-  const bodyAt = html.indexOf('id="app-context-body"');
+  // The app rows are the flexing scroller and the footer is `shrink-0`
+  // beneath them, so a long changes list scrolls inside the drawer instead of
+  // pushing GitHub / Share / the versions past the fold. One rule, no
+  // measurement.
+  const bodyAt = html.indexOf('id="header-menu-rows"');
   const bodyTag = html.slice(bodyAt, html.indexOf('>', bodyAt));
   assert.match(bodyTag, /flex flex-col/,
-    '#app-context-body must be the column flex the anchor needs');
-  assert.match(bodyTag, /overflow-y-auto/, 'and still the scroller');
+    '#header-menu-rows must be the column flex the anchor needs');
+
+  const rowsAt = html.indexOf('id="drawer-app-rows"');
+  const rowsTag = html.slice(rowsAt, html.indexOf('>', rowsAt));
+  assert.match(rowsTag, /overflow-y-auto/, 'the app rows are the scroller');
+  assert.match(rowsTag, /flex-1/, 'and take the free space');
 
   const footAt = html.indexOf('id="improve-footer"');
   const footTag = html.slice(footAt, html.indexOf('>', footAt));
-  assert.match(footTag, /\bmt-auto\b/, 'the footer must hug the bottom');
   assert.match(footTag, /\bshrink-0\b/,
-    'and must not be compressed by the rows above it');
-  assert.ok(bodyAt < footAt, 'the footer is inside the body it anchors within');
+    'the footer must not be compressed by the rows above it');
+  assert.ok(rowsAt < footAt, 'the footer follows the rows it belongs to');
   assert.match(sheet, /id="improve-footer"/);
 });
 

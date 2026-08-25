@@ -101,8 +101,11 @@ test('the header keeps navigation + alerting only, hamburger first', () => {
   // only its side changed, badges and all.
   // The retired five must not creep back in as a second way to do the same
   // things — that split is exactly what the overhaul removed.
+  // #notifications-btn is deliberately NOT here any more: the Streamlined
+  // board gives the bell back its own control in the right group, because the
+  // drawer it used to live in is the APP's surface now.
   for (const id of ['app-mode-switch', 'feedback-btn', 'work-drawer-btn',
-    'dev-console-btn', 'notifications-btn']) {
+    'dev-console-btn']) {
     assert.equal(header.indexOf(`id="${id}"`), -1,
       `#${id} was retired and must not return to the header`);
   }
@@ -117,9 +120,9 @@ test("the work badge sits exactly where the bell's unread one does", () => {
   // it rides the hamburger — same badge, same writer, new parent. The geometry
   // rule below is unchanged and is the whole point of the test.
   const cog = header.match(/<span id="notifications-badge-ai"[^>]*>/);
-  const bell = header.match(/<span id="notifications-badge"[^>]*>/);
+  const bellBadge = header.match(/<span id="notifications-badge"[^>]*>/);
   assert.ok(cog, '#notifications-badge-ai is on the hamburger');
-  assert.ok(bell, '#notifications-badge is on the bell');
+  assert.ok(bellBadge, '#notifications-badge is on the bell');
 
   // Two badges side by side in the same header read as one convention
   // only if their geometry matches. Colour is the ONLY intended
@@ -128,16 +131,16 @@ test("the work badge sits exactly where the bell's unread one does", () => {
   // that catches a corner, size or padding drift on either one.
   const classesOf = (tag) => tag.match(/class="([^"]*)"/)[1]
     .split(/\s+/).filter((c) => c && !/^bg-(emerald|red)-500$/.test(c)).sort();
-  assert.deepEqual(classesOf(cog[0]), classesOf(bell[0]),
+  assert.deepEqual(classesOf(cog[0]), classesOf(bellBadge[0]),
     'the two header badges must differ only in colour');
 
   // Pin the corner explicitly so the equality check above can't be
   // satisfied by moving BOTH badges somewhere unintended.
   assert.match(cog[0], /-top-1 -right-1/, 'the work badge is top-right');
-  assert.match(bell[0], /-top-1 -right-1/, 'the bell badge is top-right');
+  assert.match(bellBadge[0], /-top-1 -right-1/, 'the bell badge is top-right');
   // …and keep the colours themselves distinct.
   assert.match(cog[0], /bg-emerald-500/, 'the cog badge stays green');
-  assert.match(bell[0], /bg-red-500/, 'the bell badge stays red');
+  assert.match(bellBadge[0], /bg-red-500/, 'the bell badge stays red');
 });
 
 test('the version dot rides the hamburger, hidden by default', () => {
@@ -159,8 +162,11 @@ test('the version dot rides the hamburger, hidden by default', () => {
   // only its own outbox dot.
   assert.ok(hamburger.includes('id="notifications-badge-ai"'),
     'the green session count sits on the hamburger');
-  assert.ok(hamburger.includes('id="notifications-badge"'),
-    'the bell\'s red unread badge stays on the hamburger');
+  const bell = header.match(/<a id="notifications-btn"[^>]*>[\s\S]*?<\/a>/)[0];
+  assert.ok(bell.includes('id="notifications-badge"'),
+    'the bell\'s red unread badge rides the bell itself now');
+  assert.ok(!hamburger.includes('id="notifications-badge"'),
+    'and no longer the hamburger, whose drawer is the app\'s surface');
   const at = html.indexOf('id="improve-btn"');
   const end = html.indexOf('</button>', at);
   assert.ok(!html.slice(at, end).includes('id="notifications-badge-ai"'),
@@ -334,7 +340,7 @@ test('the drawer constrains a long pill so it cannot widen the 15rem panel', () 
 
 // ─── One scroller, and it is the notification list ──────────────────────
 
-test('the drawer body is one scroller, Your apps leading', () => {
+test('the drawer body is one scroller, the app\'s rows leading', () => {
   const scroller = html.match(/<div id="header-menu-rows"[^>]*>/);
   assert.ok(scroller, '#header-menu-rows exists');
   // The BODY does not scroll. It did, and the navigation rows below the list
@@ -345,17 +351,17 @@ test('the drawer body is one scroller, Your apps leading', () => {
     'the drawer body itself must not scroll');
   assert.match(scroller[0], /min-h-0/,
     'min-h-0 is required for a flex child to bound its children rather than grow');
-  const apps = html.match(/<div id="drawer-your-apps"[^>]*>/);
-  assert.match(apps[0], /flex-1/, 'the apps section takes the free space');
-  assert.match(apps[0], /min-h-0/, 'and may shrink below its content, so it can scroll');
+  const rows = html.match(/<div id="header-menu-rows"[^>]*>/);
+  assert.match(rows[0], /flex-1/, 'the drawer body takes the free space');
+  assert.match(rows[0], /min-h-0/, 'and may shrink below its content, so it can scroll');
   const at = html.indexOf('id="header-menu-rows"');
-  for (const id of ['drawer-your-apps', 'drawer-row-admin']) {
+  for (const id of ['drawer-app-rows', 'drawer-row-admin']) {
     assert.ok(html.indexOf(`id="${id}"`) > at, `#${id} is inside the scroller`);
   }
-  // Your apps lead (Streamlined Concept): the platform's catch-all menu
-  // opens onto the things it exists for; notifications are the badged row.
-  assert.ok(html.indexOf('id="drawer-your-apps"') < html.indexOf('id="drawer-row-node"'),
-    'the apps section comes before every navigation row');
+  // The app's rows lead (Streamlined Concept): the drawer opens onto the app
+  // it belongs to — its views and its changes — and alerting is the header.
+  assert.ok(html.indexOf('id="drawer-app-rows"') < html.indexOf('id="drawer-row-node"'),
+    'the app\'s rows come before every account row');
 });
 
 // ─── The kudos badge no longer pokes at header layout ────────────────────

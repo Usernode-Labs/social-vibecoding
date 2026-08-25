@@ -204,12 +204,15 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // screen with a live preview, so neither of its two paths prerenders.
     'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
-    // (ChevronDownIcon left this list when the drawer's Your-apps fold put
-    // it in the shipped markup — owner review round 2.)
-    // PlusWideIcon — Discover's add badge and the Create app tile. Its other
-    // call site is an HTML string in features/home/home.js's card menu, which
-    // is not rendered by <Shell/> either.
-    'M12 4v16m8-8H4',
+    // ChevronDownIcon — the home panels' expand caret and the header title
+    // tab's own. The Your-apps fold that briefly prerendered it went with the
+    // drawer restructure, so it is behind state again.
+    'M19 9l-7 7-7-7',
+    // Squares2X2Icon — the retired Your-apps nav row's glyph. Nothing in the
+    // shell draws it now; it stays exported for the settings/rows vocabulary.
+    'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
+    // (PlusWideIcon left this list: the Apps sheet's "Create New" ships it in
+    // the prerendered document now.)
     // InfoCircleIcon — the widget strip's ⓘ help toggle. The strip is iOS
     // in-app only: `Home.widgetSectionView()` reports `active: false` unless
     // the bridge answered `mechanism: 'widget'` AND the viewer opened the

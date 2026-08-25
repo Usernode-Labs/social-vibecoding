@@ -212,21 +212,24 @@ test('the theme segments left the drawer entirely', () => {
     'and the settings screen makes that announcement in its place');
 });
 
-test('Your apps lead the drawer; notifications are a badged row to the screen', () => {
-  // Streamlined Concept: the notification LIST left the drawer for the
-  // #notifications screen; the drawer leads with the viewer's apps and the
-  // badged Notifications row is the way in. The module's init stays on this
-  // island's layout effect — the drawer is still the always-mounted host.
-  assert.match(headerMenuTsx, /<DrawerApps \/>/,
-    'the drawer renders the Your-apps section');
+test("the app's rows lead the drawer; alerting is the header's", () => {
+  // Streamlined Concept: the board draws ONE app-scoped drawer, so the
+  // Notifications and Messages rows became header glyphs and the Your-apps
+  // list became the Apps sheet. The module's init stays on this island's
+  // layout effect — the drawer is still the always-mounted host.
+  assert.match(headerMenuTsx, /<AppContextRows \/>/,
+    'the drawer renders the app-scoped rows');
   assert.match(headerMenuTsx, /window\.Notifications\?\.init\(\)/,
     'and initialises the module from its layout effect, before DOMContentLoaded');
-  assert.match(headerMenuTsx, /id="drawer-row-notifications"/, 'the badged row exists');
-  assert.match(headerMenuTsx, /id="drawer-notifications-badge"/, 'with its unread badge');
+  for (const gone of ['drawer-row-notifications', 'drawer-row-messages',
+    'drawer-your-apps']) {
+    assert.equal(headerMenuTsx.indexOf(`id="${gone}"`), -1,
+      `#${gone} left the drawer with the Streamlined restructure`);
+  }
+  assert.ok(html.includes('id="notifications-btn"') && html.includes('id="messages-btn"'),
+    'both are header controls now');
   assert.equal(html.indexOf('id="notifications-panel"'), -1,
     'the retired bell panel must not still ship');
-  assert.equal(html.indexOf('id="notifications-btn"'), -1,
-    'nor the button that opened it');
 });
 
 test('PlatformUI exposes panel() with the same null-degradation contract', () => {
@@ -306,15 +309,15 @@ test('a dapp check pins the drawer to the panel on a forced-touch route', () => 
 // list, both still render — so each strand is pinned against the source and
 // against the prerendered document in the style of the contracts above.
 
-test('Your apps anchor to the top of the drawer, the nav rows to the bottom', () => {
-  // Opposite ends of one column flex. The apps section inherited the slot —
-  // and the anchoring layout — the notifications block held (#1367).
+test("the app's rows anchor to the top of the drawer, the account rows to the bottom", () => {
+  // Opposite ends of one column flex. The app rows inherited the slot — and
+  // the anchoring layout — the notifications block held (#1367).
   const rowsAt = html.indexOf('id="header-menu-rows"');
-  const notifAt = html.indexOf('id="drawer-your-apps"');
+  const notifAt = html.indexOf('id="drawer-app-rows"');
   const navAt = html.indexOf('id="drawer-main-rows"');
   assert.ok(rowsAt !== -1 && notifAt !== -1 && navAt !== -1, 'all three ids survive');
   assert.ok(rowsAt < notifAt && notifAt < navAt,
-    'Your apps first, navigation rows after, both inside #header-menu-rows');
+    "the app's rows first, account rows after, both inside #header-menu-rows");
 
   const rowsTag = html.slice(rowsAt, html.indexOf('>', rowsAt));
   assert.match(rowsTag, /flex flex-col/,
@@ -351,32 +354,22 @@ test('Your apps anchor to the top of the drawer, the nav rows to the bottom', ()
 // each fails silently if it drifts (a section that quietly ships collapsed
 // again, or groups that stay expanded from the last visit).
 
-test('Your apps is a nav row of its own, with a fold beside it', () => {
-  const block = html.slice(
-    html.indexOf('id="drawer-your-apps"'),
-    html.indexOf('id="drawer-main-rows"'),
-  );
-  // Owner review round 2: the section header is BOTH a distinct nav item
-  // (navigates home, where the apps grid lives) and a collapsible
-  // disclosure. The fold is the chevron BUTTON beside the anchor — the
-  // anchor itself never carries the disclosure semantics.
-  assert.ok(/id="drawer-row-your-apps"/.test(block), 'the nav row exists');
-  assert.ok(/id="drawer-your-apps-toggle"/.test(block), 'with its fold beside it');
-  assert.ok(/aria-expanded/.test(block), 'the fold is a real disclosure');
-  // The drawer's groups (owner review round 2): Notifications + Messages on
-  // top, then Your apps; Profile, Settings, Admin close the menu.
-  for (const id of ['drawer-row-notifications', 'drawer-row-messages',
-    'drawer-row-your-apps', 'drawer-row-profile', 'drawer-row-settings',
+test('the Apps sheet is the app switcher, and the drawer keeps the account rows', () => {
+  // Streamlined Concept: switching apps is the board's Apps sheet behind the
+  // title tab, not a section inside the drawer.
+  for (const id of ['apps-switcher-sheet', 'apps-switcher-create',
+    'apps-switcher-list', 'apps-switcher-home', 'apps-switcher-explore']) {
+    assert.ok(html.includes(`id="${id}"`), `#${id} ships with the switcher`);
+  }
+  // What the drawer keeps: the app's own rows, then the account rows.
+  for (const id of ['drawer-app-rows', 'app-context-row-app', 'app-context-row-board',
+    'app-context-row-activity', 'drawer-row-profile', 'drawer-row-settings',
     'drawer-row-admin']) {
     assert.ok(html.includes(`id="${id}"`), `#${id} survives in the drawer`);
   }
   assert.ok(
-    html.indexOf('id="drawer-row-notifications"') < html.indexOf('id="drawer-your-apps"'),
-    'Notifications and Messages sit ABOVE the apps section');
-  assert.ok(
-    html.indexOf('id="drawer-row-profile"') < html.indexOf('id="drawer-row-settings"')
-    && html.indexOf('id="drawer-row-settings"') < html.indexOf('id="drawer-row-admin"'),
-    'the bottom group runs Profile, Settings, Admin & moderation');
+    html.indexOf('id="drawer-app-rows"') < html.indexOf('id="drawer-main-rows"'),
+    "the app's rows sit ABOVE the account rows");
 });
 
 test('each drawer open starts on what is NEW', () => {

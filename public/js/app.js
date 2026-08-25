@@ -623,10 +623,11 @@ const App = {
   IMPROVE_SHOT_TRIES: 40,
   IMPROVE_SHOT_INTERVAL_MS: 100,
 
-  // `?shot=app-context`: open the app-context sheet at boot — the surface
+  // `?shot=app-context`: open the APPS SWITCHER sheet at boot — the surface
   // behind the header's "app name ⌄" tab (Streamlined Concept). Same
   // wait-for-a-target poll as ?shot=improve below, and for the same reason:
-  // the sheet refuses to open until an app target is published.
+  // the sheet refuses to open until an app target is published. (The app's own
+  // views and changes are the DRAWER now — see ?shot=menu for that surface.)
   _applyAppContextShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
@@ -635,7 +636,7 @@ const App = {
     const attempt = () => {
       try {
         window.AppContext?.open();
-        const panel = document.getElementById('app-context-sheet');
+        const panel = document.getElementById('apps-switcher-sheet');
         if (panel && panel.hasAttribute('data-open')) return;
       } catch (err) { /* ignore */ }
       if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);

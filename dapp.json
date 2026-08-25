@@ -506,14 +506,14 @@
     },
     {
       "name": "App-context sheet shows a change's title, not its dev name (#971, Streamlined Concept)",
-      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-context-sheet[data-open] #app-context-body a[href$=\"/sessions/990101\"]",
+      "path": "/?shot=menu&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#header-menu-panel #drawer-app-rows a[href$=\"/sessions/990101\"]",
       "expectText": "[Mock] Your in-progress session"
     },
     {
       "name": "App-context sheet: a busy change row pulses from live state (#1038)",
-      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-context-sheet[data-open] a[href$=\"/sessions/990102\"] .animate-pulse"
+      "path": "/?shot=menu&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#header-menu-panel a[href$=\"/sessions/990102\"] .animate-pulse"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
@@ -1340,12 +1340,12 @@
     {
       "name": "The app-context sheet offers the three views in order (Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-context-sheet [data-context-row=\"app\"] ~ [data-context-row=\"activity\"] ~ [data-context-row=\"board\"]"
+      "expectSelector": "#drawer-app-rows [data-context-row=\"app\"] ~ [data-context-row=\"board\"] ~ [data-context-row=\"activity\"]"
     },
     {
       "name": "The app-context sheet carries the + New change action (Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-context-sheet #app-context-new-change"
+      "expectSelector": "#drawer-app-rows #app-context-new-change"
     },
     {
       "name": "The center title is a tappable app-context tab on an app screen (Streamlined Concept)",
@@ -1370,7 +1370,7 @@
     {
       "name": "The self-hosted platform row gets a use-the-app row too (#1386, Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-context-sheet [data-context-row=\"app\"]",
+      "expectSelector": "#drawer-app-rows [data-context-row=\"app\"]",
       "expectText": "The platform itself"
     },
     {
@@ -1693,9 +1693,9 @@
       "expectSelector": "#improve-panel #improve-row-feedback"
     },
     {
-      "name": "The hamburger leads with the Your-apps section (Streamlined Concept)",
+      "name": "The hamburger leads with the app's own rows (Streamlined Concept)",
       "path": "/?demo=1",
-      "expectSelector": "#header-menu-rows > #drawer-your-apps"
+      "expectSelector": "#header-menu-rows > #drawer-app-rows"
     },
     {
       "name": "The hamburger ships the native Node status row",
@@ -1745,13 +1745,13 @@
     },
     {
       "name": "The reference footer holds GitHub + Share above the version rows (app-context sheet)",
-      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-context-body > #improve-footer > #improve-row-github"
+      "path": "/?shot=menu&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#header-menu-rows > #improve-footer > #improve-row-github"
     },
     {
-      "name": "Notifications and Messages lead the drawer, above Your apps",
-      "path": "/?shot=menu",
-      "expectSelector": "#drawer-top-rows > #drawer-row-notifications + #drawer-row-messages"
+      "name": "Notifications and Messages are header glyphs, not drawer rows (Streamlined Concept)",
+      "path": "/",
+      "expectSelector": "#platform-header #messages-btn + #notifications-btn"
     },
     {
       "name": "The bottom group is Profile, Settings, Admin & moderation and nothing else",
@@ -1759,9 +1759,9 @@
       "expectSelector": "#drawer-main-rows #drawer-row-profile + #drawer-row-settings + #drawer-row-admin"
     },
     {
-      "name": "Your apps is a nav row of its own, with its fold beside it",
-      "path": "/?shot=menu",
-      "expectSelector": "#drawer-your-apps #drawer-row-your-apps + #drawer-your-apps-toggle"
+      "name": "The title tab opens the Apps switcher, with Home and Explore (Streamlined Concept)",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#apps-switcher-sheet[data-open] #apps-switcher-home + #apps-switcher-explore"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -2299,9 +2299,9 @@
       "expectSelector": ".un-panel[data-un-side=\"left\"] #header-menu-panel.platform-panel-adopted #header-menu-rows"
     },
     {
-      "name": "The hamburger opens as a kit panel with notifications at its top",
+      "name": "The hamburger opens as a kit panel with the app's rows at its top",
       "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-your-apps"
+      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-app-rows"
     },
     {
       "name": "Hamburger status area shows the viewer's own AI credit (#555)",
@@ -2703,18 +2703,18 @@
     },
     {
       "name": "A connector work order shows in the app-context sheet (#1417, Streamlined Concept)",
-      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-context-sheet[data-open] #app-context-body [data-improve-row=\"task\"]"
+      "path": "/?shot=menu&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#header-menu-panel #drawer-app-rows [data-improve-row=\"task\"]"
     },
     {
       "name": "The work-order row points at its request, not a session page (#1417)",
-      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-context-sheet[data-open] [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
+      "path": "/?shot=menu&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#header-menu-panel [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
     },
     {
       "name": "Real sessions still render beside it, each on its own destination (#1417)",
-      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-context-sheet[data-open] [data-improve-row=\"session\"][href*=\"/dev/sessions/\"]"
+      "path": "/?shot=menu&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#header-menu-panel [data-improve-row=\"session\"][href*=\"/dev/sessions/\"]"
     }
   ],
   "governance": {

@@ -32,6 +32,8 @@ import { useRef } from 'react';
 
 import {
   Bars3Icon,
+  BellIcon,
+  ChatBubbleTailIcon,
   ChevronLeftIcon,
   HomeIcon,
 } from '@/components/ui/icons';
@@ -227,20 +229,13 @@ export function PlatformHeader() {
           >
             <Bars3Icon className="w-6 h-6" />
             {/*
-                The red unread badge. Painted by Notifications._renderBadge —
-                a classic module — so its className is a constant, rendered
-                once. The green badge beside it is store-rendered; the two
-                counts stay distinct (emerald = your work in flight, red =
-                unread) so the hamburger can say "there are two different
-                reasons to open me" without a third icon.
-                tests/header-status-pane.test.js diffs the two class lists
-                with the colour token dropped to keep them twins.
+                The hamburger's cluster is WORK IN FLIGHT now, and only that:
+                the drawer it opens is the app's changes surface (Streamlined
+                Concept), so the green session count and the version dot are
+                exactly what it should be able to say. The red UNREAD badge
+                went with the bell — see #notifications-btn in the right
+                group, which is the control those notifications live behind.
             */}
-            <span
-              id="notifications-badge"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
-            >
-            </span>
             <MenuIndicators />
           </button>
           {/*
@@ -337,6 +332,50 @@ export function PlatformHeader() {
               control and a dropdown tab announcing the same three
               destinations would be two owners of one decision.
           */}
+          {/*
+              MESSAGES and NOTIFICATIONS, as the board's app-opened bar draws
+              them: two glyphs to the left of Improve, each carrying its own
+              unread badge.
+
+              THE UI OVERHAUL folded both into the hamburger and the
+              Streamlined Concept takes that back, for a reason the drawer
+              makes concrete: that drawer is the APP's surface now (its views
+              and its changes), so platform-wide alerting has no business
+              inside it. Real anchors, so a modified click opens a tab, and
+              the same hrefs the retired drawer rows carried.
+
+              Both badges keep the ids and the writer they had as rows
+              (Notifications._renderBadge), so nothing about how a count is
+              computed changes — only which control wears it.
+          */}
+          <a
+            id="messages-btn"
+            href="#messages"
+            className="relative w-7 h-7 mr-1 flex items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+            aria-label="Messages"
+          >
+            <ChatBubbleTailIcon className="w-5 h-5" />
+            <span
+              id="drawer-messages-badge"
+              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-violet-600 text-white text-[0.65rem] font-bold flex items-center justify-center"
+              aria-label="Unread messages"
+            >
+            </span>
+          </a>
+          <a
+            id="notifications-btn"
+            href="#notifications"
+            className="relative w-7 h-7 mr-1 flex items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+            aria-label="Notifications"
+          >
+            <BellIcon className="w-5 h-5" />
+            <span
+              id="notifications-badge"
+              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
+              aria-label="Unread notifications"
+            >
+            </span>
+          </a>
           <ImproveButton />
           {/*
               The bell (#notifications-btn) used to sit here, then THE UI

@@ -6733,7 +6733,7 @@ a.drawer-ver--fork:hover {
    bottom sheet below it, a real kit sheet on touch — and the same
    always-mounted / data-open mechanics; read that block's comment for
    the reasoning, which transfers wholesale. */
-#app-context-sheet {
+#apps-switcher-sheet {
   top: 0;
   right: 0;
   bottom: 0;
@@ -6742,23 +6742,23 @@ a.drawer-ver--fork:hover {
   border-left-width: 1px;
   transform: translateX(100%);
 }
-#app-context-sheet[data-open] {
+#apps-switcher-sheet[data-open] {
   transform: translateX(0);
 }
 .app-context-transition {
   transition: transform 200ms ease-out;
 }
-#app-context-overlay {
+#apps-switcher-overlay {
   opacity: 0;
   pointer-events: none;
   transition: opacity 200ms ease-out;
 }
-#app-context-overlay[data-open] {
+#apps-switcher-overlay[data-open] {
   opacity: 1;
   pointer-events: auto;
 }
 @media (max-width: 639px) {
-  #app-context-sheet {
+  #apps-switcher-sheet {
     top: auto;
     left: 0;
     right: 0;
@@ -6772,7 +6772,7 @@ a.drawer-ver--fork:hover {
     border-top-right-radius: 1rem;
     transform: translateY(100%);
   }
-  #app-context-sheet[data-open] {
+  #apps-switcher-sheet[data-open] {
     transform: translateY(0);
   }
 }

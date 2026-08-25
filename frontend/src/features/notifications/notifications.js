@@ -648,34 +648,28 @@ const Notifications = {
     // the same constraint dev-chat.js documents). window.Improve is the seam.
     const aiUnread = Notifications._sessionUnread();
     const notifCount = Notifications._bellUnread() + Notifications.invites.length;
-    // Streamlined Concept: the hamburger's red number is the DRAWER'S number —
-    // everything behind it that wants attention — so unread Messages count in.
-    // The messages store publishes its sum on a window seam (this module must
-    // stay import-free) and nudges a repaint whenever it changes.
+    // Streamlined Concept: each header glyph wears its OWN count. The bell
+    // carries notifications (bell unread + invites) and the chat bubble
+    // carries unread Messages — the two are separate surfaces, so a single
+    // summed number would name neither. The messages store publishes its sum
+    // on a window seam (this module must stay import-free) and nudges a
+    // repaint whenever it changes.
     const messagesUnread = Number(window.__usernodeMessagesUnread) || 0;
-    const redCount = notifCount + messagesUnread;
 
-    const badge = document.getElementById('notifications-badge');
-    if (badge) {
-      if (redCount > 0) {
-        badge.textContent = redCount > 99 ? '99+' : String(redCount);
-        badge.classList.remove('hidden');
+    const paint = (id, count) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (count > 0) {
+        el.textContent = count > 99 ? '99+' : String(count);
+        el.classList.remove('hidden');
       } else {
-        badge.classList.add('hidden');
+        el.classList.add('hidden');
       }
-    }
-
-    // The drawer's Notifications ROW badge: notifications only (bell unread +
-    // invites) — Messages has its own row badge right below it.
-    const rowBadge = document.getElementById('drawer-notifications-badge');
-    if (rowBadge) {
-      if (notifCount > 0) {
-        rowBadge.textContent = notifCount > 99 ? '99+' : String(notifCount);
-        rowBadge.classList.remove('hidden');
-      } else {
-        rowBadge.classList.add('hidden');
-      }
-    }
+    };
+    // The bell's badge, in the header's right group.
+    paint('notifications-badge', notifCount);
+    // The chat bubble's, beside it.
+    paint('drawer-messages-badge', messagesUnread);
 
     // The green session badge (#notifications-badge-ai on the hamburger) is
     // React-owned (<MenuIndicators/> in platform-header.tsx): it PUBLISHES
