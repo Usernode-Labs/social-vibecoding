@@ -1373,6 +1373,12 @@
       "expectSelector": "#dev-kanban-search"
     },
     {
+      "name": "The board person filter says it matches assignees or authors",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-assignee[aria-label=\"Filter by assignee or author\"]",
+      "expectText": "Assignee or author"
+    },
+    {
       "name": "Mobile kanban tab strip ships one tab per column (#814)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"inreview\"]"
