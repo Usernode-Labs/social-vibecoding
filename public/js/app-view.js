@@ -4923,47 +4923,54 @@ const AppView = {
   //
   // Pure card-level filter predicate for the kanban filter bar. kind ∈
   // 'issue' | 'proposal' | 'gov' | 'merged' | 'session'. A 'session' card
-  // matches on its displayed label and its linked issue numbers, and is
-  // exempt from priority/category/assignee (which it cannot carry). No DOM, no AppView state
-  // reads — the filters come in explicitly — so it is unit-testable in
+  // matches on its displayed label, linked issue numbers, and author, and is
+  // exempt from priority/category (which it cannot carry). No DOM or mutable
+  // AppView state reads — the filters come in explicitly — so it is unit-testable in
   // isolation (see tests/dev-kanban-filters.test.js). Empty/default
   // filters match everything, keeping the unfiltered board identical to
   // the pre-filter output.
+  _devCardAuthor(kind, item) {
+    const it = item || {};
+    if (kind === 'issue') return it.created_by_username || it.user || '';
+    if (kind === 'gov') return it.created_by_username || '';
+    if (kind === 'merged' && it.row_type === 'close_issue') {
+      return it.created_by_username || '';
+    }
+    // proposal | merged PR | session
+    return it.username || '';
+  },
+
   _devCardMatches(kind, item, filters) {
     const f = filters || {};
     const it = item || {};
     const q = (f.q || '').trim().toLowerCase();
     if (q) {
-      let title; let author; let num;
+      let title; let num;
       if (kind === 'issue') {
         title = it.title || '';
-        author = it.created_by_username || it.user || '';
         num = it.number;
       } else if (kind === 'gov') {
         // Mirror _renderGovCard's title choice for renames.
         title = (it.kind === 'rename' && it.payload && it.payload.newName)
           ? it.payload.newName : (it.title || '');
-        author = it.created_by_username || '';
         num = it.github_issue_number;
       } else if (kind === 'merged' && it.row_type === 'close_issue') {
         // Applied close-issue rows in the Done column — mirror
         // _renderCompletedCloseIssueCard's title/meta sources.
         title = (it.payload && it.payload.issueTitle) || it.title || '';
-        author = it.created_by_username || '';
         num = it.payload && it.payload.issueNumber;
       } else if (kind === 'session') {
         // Dev sessions: match the label the card actually shows, and their
         // linked issue numbers (so "#900002" finds the session working on
         // that issue, matching the reverse #N chips on the card).
         title = it.session_title || it.pr_title || it.branch_name || '';
-        author = it.username || '';
         num = it.pr_number != null ? it.pr_number : null;
       } else {
         // proposal | merged — mirror the card renderers' title fallback.
         title = it.pr_title || `Change by ${it.username || ''}`;
-        author = it.username || '';
         num = it.pr_number != null ? it.pr_number : it.id;
       }
+      const author = AppView._devCardAuthor(kind, it);
       // A leading '#' targets the issue/PR number ("#482" and "482" both
       // match); the number check is substring-based like the text checks.
       const qNum = q.replace(/^#/, '');
@@ -4981,11 +4988,12 @@ const AppView = {
       // "Needs my vote" genuinely excludes a session — there is nothing to
       // vote on until it becomes a proposal.
       if (f.needsVote) return false;
-      // Priority / category / assignee, though, are an explicit NO-OP rather
-      // than a rule a session can never satisfy: it carries no such
-      // metadata, so hiding every session whenever someone picks a priority
-      // would be silently wrong. _sessionFilterNoteHtml says so out loud in
-      // the In-progress column instead.
+      // Priority / category remain an explicit NO-OP because sessions carry
+      // neither attribute. A named person does apply through the session's
+      // author; Unassigned keeps its previous no-op behavior because a
+      // session is not an assignable board item.
+      if (f.assignee && f.assignee !== AppView.KANBAN_ASSIGNEE_UNASSIGNED
+        && AppView._devCardAuthor(kind, it) !== f.assignee) return false;
       return true;
     }
     // priority / assignee filter on the community-voted top value. Cards
@@ -5002,8 +5010,10 @@ const AppView = {
       // board whenever Unassigned is picked.
       if (kind === 'gov') return false;
       if (it.assignee && it.assignee.top) return false;
-    } else if (f.assignee && !(it.assignee && it.assignee.top === f.assignee)) {
-      return false;
+    } else if (f.assignee) {
+      const assignedToUser = !!(it.assignee && it.assignee.top === f.assignee);
+      const authoredByUser = AppView._devCardAuthor(kind, it) === f.assignee;
+      if (!assignedToUser && !authoredByUser) return false;
     }
     if (f.needsVote) {
       if (kind === 'proposal') {
@@ -5023,16 +5033,23 @@ const AppView = {
     return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote);
   },
 
-  // Assignee dropdown options: the union of top-voted assignees across all
-  // cached board data, sorted alphabetically. The current selection is
-  // always kept in the list even if it disappears from the data on a
-  // refresh, so an active filter never silently self-clears.
+  // Person dropdown options: the union of top-voted assignees and authors
+  // across all cached board data, sorted alphabetically. The current
+  // selection is always kept in the list even if it disappears from the
+  // data on a refresh, so an active filter never silently self-clears.
   _kanbanAssigneeOptions() {
     const set = new Set();
-    const add = (it) => { if (it && it.assignee && it.assignee.top) set.add(it.assignee.top); };
-    AppView._visibleGhIssues().forEach(add);
-    (AppView._proposals || []).forEach(add);
-    (AppView._merged || []).forEach(add);
+    const add = (kind, it) => {
+      if (it && it.assignee && it.assignee.top) set.add(it.assignee.top);
+      const author = AppView._devCardAuthor(kind, it);
+      if (author) set.add(author);
+    };
+    AppView._visibleGhIssues().forEach((it) => add('issue', it));
+    (AppView._proposals || []).forEach((it) => add('proposal', it));
+    (AppView._govProposals || []).forEach((it) => add('gov', it));
+    (AppView._merged || []).forEach((it) => add('merged', it));
+    (AppView._mySessions || []).forEach((it) => add('session', it));
+    (AppView._sharedSessions || []).forEach((it) => add('session', it));
     const cur = AppView._kanbanFilters && AppView._kanbanFilters.assignee;
     // The Unassigned sentinel is a fixed option, never a name in this list.
     if (cur && cur !== AppView.KANBAN_ASSIGNEE_UNASSIGNED) set.add(cur);
@@ -5097,7 +5114,7 @@ const AppView = {
   _kanbanAssigneeOptionsHtml() {
     const f = AppView._kanbanFilters || {};
     const un = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
-    return '<option value="">Anyone</option>'
+    return '<option value="">Assignee or author</option>'
       + `<option value="${escapeAttr(un)}"${f.assignee === un ? ' selected' : ''}>Unassigned</option>`
       + AppView._kanbanAssigneeOptions().map((name) =>
         `<option value="${escapeAttr(name)}"${f.assignee === name ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('');
@@ -5149,7 +5166,7 @@ const AppView = {
         <select id="dev-kanban-category" class="${AppView._kanbanChipSelectCls(!!f.category)}" aria-label="Filter by category">
           ${AppView._kanbanCategoryOptionsHtml()}
         </select>
-        <select id="dev-kanban-assignee" class="${AppView._kanbanChipSelectCls(!!f.assignee)}" aria-label="Filter by assignee">
+        <select id="dev-kanban-assignee" class="${AppView._kanbanChipSelectCls(!!f.assignee)}" aria-label="Filter by assignee or author">
           ${AppView._kanbanAssigneeOptionsHtml()}
         </select>
         <button id="dev-kanban-needsvote" type="button" aria-pressed="${f.needsVote ? 'true' : 'false'}"
@@ -5931,18 +5948,18 @@ const AppView = {
   },
 
   // The visible note that replaces the filter bar's silent skip of session
-  // cards. Text search and #number DO filter sessions now; priority,
-  // category and assignee genuinely cannot apply to a dev session (it
-  // carries no such metadata), so rather than quietly ignoring those the
-  // column says so. Returns '' when no such filter is active or there are
-  // no sessions to explain.
+  // cards. Text search, #number and a named person DO filter sessions now;
+  // priority, category, and the Unassigned sentinel genuinely cannot apply
+  // to a dev session, so rather than quietly ignoring those the column says
+  // so. Returns '' when no such filter is active or there are no sessions to
+  // explain.
   _sessionFilterNoteHtml(sessionCount) {
     if (!sessionCount) return '';
     const f = AppView._kanbanFilters || {};
     const which = [];
     if (f.priority) which.push('priority');
     if (f.category) which.push('category');
-    if (f.assignee) which.push('assignee');
+    if (f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED) which.push('assignee');
     if (!which.length) return '';
     const list = which.length === 1
       ? which[0]
