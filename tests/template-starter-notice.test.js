@@ -48,6 +48,9 @@ test('index.html carries the starter-notice sentinel block before the example ca
   assert.match(block, /Starter template/, 'hero badge names the starter template');
   assert.match(block, /Improve/, 'hero copy names the Improve button');
   assert.match(block, /What's already working/, 'explainer card inside the sentinel block');
+  // #1418: the welcome copy is product-focused — it describes the outcome,
+  // never the AI that produces it.
+  assert.ok(!block.includes('Claude'), 'welcome copy does not name Claude');
 
   // …and precedes the labelled example card.
   const example = html.indexOf('Try the example');
@@ -77,6 +80,11 @@ test('the scaffold ships a README that names the app and the template state', ()
   assert.match(readme, /Improve/, 'README says Improve is how to replace it');
   assert.match(readme, /rewrite this README/i,
     'README instructs its own rewrite once the real app exists');
+  // #1418: the product promise never names Claude as the actor. "Claude Code"
+  // (the developer tool) and the CLAUDE.md filename are the only sanctioned
+  // mentions, so a bare "Claude" not followed by " Code" is a regression.
+  assert.ok(!/Claude(?! Code)/.test(readme),
+    'README mentions Claude only as the "Claude Code" tool name');
 });
 
 test('CLAUDE.md instructs the agent to remove the template wholesale', () => {

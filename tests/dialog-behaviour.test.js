@@ -235,6 +235,11 @@ test('create: mode, import check and POST /api/apps all moved', () => {
   assert.match(src, /applyMode\('new'\)/);
   assert.match(src, /\/api\/github\/verify-access\?url=/, 'the import URL check moved with it');
   assert.match(src, /fetch\('\/api\/apps', \{/, 'the create POST moved with it');
+  // #1418: a successful create/import confirms itself with a toast — the
+  // async build's only other signal is the tile's small "Spinning up…" label.
+  assert.match(src, /window\.PlatformUI\?\.toast\?\.\(/, 'success path raises the creation toast');
+  assert.match(src, /being imported/, 'import mode gets the imported wording');
+  assert.match(src, /being created/, 'new mode gets the created wording');
   // Close resets the form, so a half-finished import is never inherited.
   assert.match(src, /formRef\.current\?\.reset\(\)/);
   // The home screen's "+" still opens it by name.
@@ -256,6 +261,9 @@ test('fork: takes its source from the open payload, POSTs to /fork', () => {
   assert.match(src, /useDialog<ForkSource>\('fork'/);
   assert.match(src, /\(fork\)`/, 'the "<name> (fork)" default is still suggested');
   assert.match(src, /\/fork`/);
+  // #1418: a fork lands in the same 'creating' tile state, so it raises the
+  // same creation toast as the create dialog.
+  assert.match(src, /window\.PlatformUI\?\.toast\?\.\(/, 'success path raises the creation toast');
   // _forkSource was a field on AppView; the payload replaces it. (The name
   // survives in app-view.js only in the comment that records the move.)
   assert.ok(!/^\s*_forkSource:/m.test(APP_VIEW),

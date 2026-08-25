@@ -86,6 +86,11 @@ export function ForkAppDialog() {
         return;
       }
       dialog.close();
+      // Same creation toast as the create dialog (issue #1418) — a fork ends
+      // in the identical 'creating' → "Spinning up…" tile state.
+      window.PlatformUI?.toast?.(
+        'Your app is being created — it will appear in your list of apps when it’s ready.',
+      );
       // Land the user on the home feed where the new fork tile shows its
       // "Spinning up…" state (identical to creating a new app).
       (window.App?.navigateHome as (() => void) | undefined)?.();

@@ -232,6 +232,15 @@ export function CreateAppDialog() {
       const data = await res.json();
       if (!res.ok) return setError(data.error || 'Failed to create app');
       dialog.close();
+      // The POST returns 201 with the row still in 'creating' — the build
+      // runs async server-side. The home tile does show "Spinning up…", but
+      // that label is easy to miss, so say explicitly what just started
+      // (issue #1418). Same PlatformUI.toast precedent as import-pr.tsx.
+      window.PlatformUI?.toast?.(
+        mode === 'import'
+          ? 'Your app is being imported — it will appear in your list of apps when it’s ready.'
+          : 'Your app is being created — it will appear in your list of apps when it’s ready.',
+      );
       (window.Home?.load as (() => void) | undefined)?.();
     } catch {
       setError('Network error');
