@@ -36,12 +36,20 @@ into it. The list below is the state after the widget-library run (#1120);
 `scripts/audit-react-ownership.mjs` carries the converse — every host React
 now reconciles — and is the thing to update when one moves across.
 
-- `#dc-view` — the Dev chat's host, created at runtime by
-  `public/js/app-view.js`, so it cannot be converted independently.
+- `#dc-view` — the Dev chat's host ELEMENT, created at runtime by
+  `public/js/app-view.js`'s `renderDevChatTab`, so it cannot be converted
+  independently. Everything INSIDE it is React's, `#dc-spec-viewer` included;
+  the only host below it still on this list is `#dc-staging-panel`, which is a
+  slot rather than a container (see the Dev chat entry under "Converted").
   `#app-content` itself is no longer on this list: all four Dev sub-views mount
   a React frame into it.
-- `#settings-nav-desktop`, `#settings-mobile-menu-host`, and
-  `#settings-usernode-section` — see "The settings interior" below.
+- `#dc-staging-panel` — a SLOT, not a container: the docked staging preview is
+  an overlay positioned over its rect and a `ResizeObserver` watches it, so it
+  renders empty and stays empty. It is the one `except` left on `#dc-view`.
+- `#settings-usernode-section` — see "The settings interior" below.
+  `#settings-nav-desktop` and `#settings-mobile-menu-host` came OFF this list
+  in chunk D's follow-up: `frontend/src/features/settings/settings-nav.tsx`
+  renders both, driven by `settings-nav-store.js`.
 - nothing on the Leaderboard screen. See the note under "Converted".
 - nothing on the Dev screen but `showLaunchCoverShot`'s launch cover, which
   is deliberate — see "Large" below.
@@ -620,12 +628,20 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    | **the transcript** | `#dc-messages` |
    | **the whole composer** | `#dc-composer-bar` |
    | **the whole screen** | `#dc-view` |
+   | **the shared-spec reader** | `#dc-spec-viewer` |
 
-   ONE entry covers all ten in the ownership audit's `OWNED`. Each conversion
-   absorbed the ones inside it — the composer took four strips, the screen
-   took the composer and four more — so `{ sel: '#dc-view', except:
-   ['#dc-spec-viewer', '#dc-staging-panel'] }` is the whole dev chat. It
-   reports **0 legacy writes**.
+   ONE entry covers all eleven in the ownership audit's `OWNED`. Each
+   conversion absorbed the ones inside it — the composer took four strips, the
+   screen took the composer and four more — so `{ sel: '#dc-view', except:
+   ['#dc-staging-panel'] }` is the whole dev chat. It reports **0 legacy
+   writes**.
+
+   The sweep reaches the reader through
+   `?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900830`, which is a
+   ROUTE in the audit rather than a plain hash: the panel's open state lives in
+   localStorage, so without the deep link the sweep ran over an empty pane and
+   proved nothing. `src/db/migrate.js` fixes that session id precisely so the
+   route is stable.
 
    ### Two orphaned surfaces, and what to do with each
 
@@ -756,6 +772,73 @@ Two traps in writing that browser sweep, both of which hid a real failure:
      primary action's fill, and an amber `variant` would be a value invented
      for one call site in a table whose discipline is that every value is
      transcribed from a button that already exists.
+   - ~~**the shared-spec reader**~~ — **done, and it was the last controller
+     host on this screen.** `#dc-spec-viewer`'s children: the version picker,
+     the three header actions, #86's private-share popover, #196's two tabs,
+     the markdown body and the build hint.
+
+     **The state a render-pass idiom was silently throwing away is the reason
+     to convert, not the string it wrote.** `_renderSpecViewer` assigned the
+     pane's `innerHTML` and then bound six listeners onto the nodes that
+     assignment had just written, so every piece of the panel's OWN state —
+     the copy button's flash, the popover's open flag, its typed username, its
+     error line, its fetched suggestions — lived in closures that died on any
+     repaint: a version switch, a `spec_updated` push, a frozen-version fetch
+     landing. That is not a bug anybody filed; it is a bug the shape made
+     unfixable, and it disappears because a repaint is now a reconcile. A
+     browser probe types into the share field, forces a full
+     `renderChatView()`, and the text is still there.
+
+     Five things worth copying:
+
+     - **A fail-closed guard has to SAY closed, not decline to speak.** #233's
+       session-mismatch check was a bare `return` out of `_renderSpecViewer`,
+       and it read as "blank panel" only because `renderChatView` had just
+       rebuilt the pane empty around it. The pane reconciles now, so silence
+       would leave the previous session's spec standing inside it. The view
+       builder returns `{ kind: 'closed' }`, and `renderChatView` publishes
+       UNCONDITIONALLY for the same reason — a CLOSE has to reach the pane too.
+       **Whenever a converted host stops being rebuilt, re-read every early
+       `return` in what filled it: each one was an implicit erase.**
+     - **A loader a renderer calls per paint belongs after the publish.** The
+       lazy fetch for a frozen version sat at the bottom of the renderer it
+       re-entered. `_specViewerView()` is pure and `_publishSpecViewer()`
+       publishes and then kicks it, which is the transcript chunk's rule
+       applied a second time.
+     - **A `<select>` the module can move must be CONTROLLED.** The template
+       wrote `selected` onto an option, which React will not do. `defaultValue`
+       would have been the faithful translation of "set once, rebuilt on every
+       change" — and would have broken the one path that is not a user's own
+       change event: an inline preview card calling `openSpecViewer(2)` while
+       the panel is already open on v3. `value` + `onChange` moves with it.
+       The empty state's placeholder gains a `value=""` so the controlled
+       value always matches an option; that is the chunk's one deliberate
+       markup difference and it is on a disabled control.
+     - **Not every field routes through the primitive.** `@/components/ui/select`
+       has a cva base of `w-full rounded-lg`, and the version picker is
+       `text-xs rounded … px-2 py-1`. Adopting it would have moved the rendered
+       class attribute of the one element on this screen a dapp.json check
+       anchors on, so it stays a plain `<select>` with the literal string and a
+       comment saying why. `tests/shell-primitive-adoption.test.js` scans
+       `<button>`, `<input>` and `<textarea>`, not `<select>` — the conversion
+       contract is the stronger rule where they disagree.
+     - **Two behaviour changes, both deliberate, both stated in the file.** A
+       background refresh no longer wipes what you are typing into the share
+       popover (what still closes it is a change of VERSION, which is what the
+       share is scoped to); and the suggestion list renders the same way on
+       every open, where before it was cleared on open and re-rendered only
+       when the one-shot fetch resolved — so the first open listed six names
+       and every later one listed none until you typed. Picking a name still
+       collapses the list, which is the part of that behaviour that was
+       intended and is now an explicit flag rather than an `innerHTML = ''`.
+
+     `_bindSpecSharePopover` is gone entirely — 90 lines of `querySelector`,
+     `classList.toggle('hidden')` and `sugBox.innerHTML` at four sites. What
+     replaced it in dev-chat.js is `_setSpecTab`, `_loadSpecMentionSuggestions`
+     and `_selectedSpecVersion`: a setter, a fetch and one shared answer to
+     "which version is on screen", which the view builder and the lazy fetch
+     had each been deriving separately.
+
    - ~~**`renderChatView`'s skeleton**~~ — **done, and it was the last string
      in the file.** `#dc-view`'s children: the session header, the four
      banners, the pane frame, the launchpad slot, the transcript, the
@@ -781,11 +864,14 @@ Two traps in writing that browser sweep, both of which hid a real failure:
      objects, the textarea is the same node with its typed value intact, and
      the scroller keeps its position.
 
-     Three hosts inside it stay legacy-owned, and the reasons are all
-     different, which is worth having as a set:
+     Three hosts inside it stayed legacy-owned at the time, and the reasons
+     were all different, which is worth having as a set — the first has since
+     converted (see the spec reader below) and the naming is why:
 
-     - `#dc-spec-viewer` is a genuine CONTROLLER HOST — `_renderSpecViewer`
-       fills it, and that renderer is not in this chunk.
+     - `#dc-spec-viewer` was a genuine CONTROLLER HOST — `_renderSpecViewer`
+       filled it, and that renderer was not in this chunk. Being able to say
+       which KIND of host each one was is what made it obvious that this was
+       the only one of the three with a chunk left in it.
      - `#dc-staging-panel` is a SLOT, not a container: the docked preview is
        an overlay positioned over its rect, and a `ResizeObserver` watches
        it. It renders empty and stays empty.
@@ -1016,18 +1102,19 @@ Two traps in writing that browser sweep, both of which hid a real failure:
 
    **The screen is done.** Every host it draws is React's, and what is left of
    `dev-chat.js` is the module it should always have been: the fetches, the
-   streaming protocol, the session lifecycle, and eleven view builders that
+   streaming protocol, the session lifecycle, and twelve view builders that
    hand plain data across a bridge.
 
-   TWO renderers survive in the file, and neither is part of this screen:
+   ONE renderer survives in the file, and it is not part of this screen:
 
-   - **`_renderSpecViewer`** fills `#dc-spec-viewer`, the shared-spec reader.
-     It has its own share popover, its own suggestion list and its own
-     version picker — one surface, and its own chunk when it comes.
    - **`_switchCurrentCodingAgent`'s dialog** builds a DETACHED overlay and
      appends it to `document.body`, which is the group chat's card-menu case:
      the node never enters a subtree React reconciles, so the ownership rule
      has nothing to say about it.
+
+   `_renderSpecViewer` was the other, and it converted — see "the shared-spec
+   reader" above. There is no `innerHTML` assignment left in the module that
+   writes into a subtree React owns.
 
 3. ~~Admin interior~~ — **done**. See "The admin console: done" above.
 

@@ -36,6 +36,7 @@ import {
 import { bannersStore, type BannersState } from './banners-store';
 import { sessionHeaderStore, type SessionHeaderState } from './session-header-store';
 import { sessionListStore, type SessionListState } from './session-list-store';
+import { specViewerStore, type SpecViewerState } from './spec-viewer-store';
 import { DevChatView } from './view';
 import { devViewStore, type DevViewState } from './view-store';
 import {
@@ -65,6 +66,7 @@ export interface DevChatBridge {
   publishBanners(state: BannersState): void;
   publishTranscript(state: TranscriptState): void;
   publishStream(state: StreamState): void;
+  publishSpecViewer(state: SpecViewerState): void;
   publishNow(now: number): void;
 }
 
@@ -105,6 +107,13 @@ composerStore.setFlush(flushSync);
 // else the same frame touched is the cheaper of the two behaviours.
 transcriptStore.setFlush(flushSync);
 streamStore.setFlush(flushSync);
+
+// The spec reader flushes because `_initSpecResizer` runs on the line after
+// `renderChatView`'s publish and measures `#dc-spec-viewer`'s rect, and
+// because `_publishSpecViewer` kicks the lazy fetch for a frozen version
+// immediately after publishing — the same "the DOM has already changed by the
+// next statement" contract every caller of the old `innerHTML` write had.
+specViewerStore.setFlush(flushSync);
 
 export const devChatBridge: DevChatBridge = {
   // `#dc-view`'s children — the whole screen. The ELEMENT is
@@ -185,6 +194,15 @@ export const devChatBridge: DevChatBridge = {
   // next one's bubble.
   publishStream(state) {
     streamStore.set(state);
+  },
+
+  // The shared-spec reader. Six writers landed on the pane — the loader's
+  // start and finish, a version switch, a frozen-version fetch, a group share
+  // and a tab click — and every one of them was a full `innerHTML` rebuild
+  // that also threw away the panel's own transient state. See
+  // ./spec-viewer-store.ts.
+  publishSpecViewer(state) {
+    specViewerStore.set(state);
   },
 
   // The 1s heartbeat. Three `textContent` passes over `#dc-messages` — the

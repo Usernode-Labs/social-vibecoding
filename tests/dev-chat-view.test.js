@@ -213,16 +213,24 @@ test('the launchpad slot draws NOTHING when empty, so :empty can collapse it', (
     /class="dc-launchpad-slot"><div data-launchpad="1">/);
 });
 
-// ── 3. The two hosts that stay legacy-owned ────────────────────────────
+// ── 3. The one host that stays legacy-owned, and the one that stopped ──
 
-test('the spec viewer and the staging panel render EMPTY, and stay excepted', () => {
+test('the staging panel renders EMPTY and stays excepted', () => {
   const out = html({ ...SESSION, spec: { open: true, width: null }, staging: { open: true, width: null } });
-  assert.match(out, /id="dc-spec-viewer"[^>]*><\/div>/, '_renderSpecViewer fills it');
   assert.match(out, /id="dc-staging-panel"[^>]*><\/div>/, 'the docked preview is positioned OVER it');
   const audit = read('scripts', 'audit-react-ownership.mjs');
   const at = audit.indexOf("sel: '#dc-view'");
   assert.ok(at > 0, '#dc-view is swept');
-  assert.match(audit.slice(at, at + 160), /except: \['#dc-spec-viewer', '#dc-staging-panel'\]/);
+  assert.match(audit.slice(at, at + 160), /except: \['#dc-staging-panel'\]/);
+});
+
+test('the spec viewer is a parent now, and its pane still ships empty', () => {
+  // The reader is features/dev-chat/spec-viewer.tsx, driven by its own store
+  // — so the pane has a CHILD and the store's initial state is `closed`,
+  // which is exactly the empty markup the hand-written shell shipped.
+  assert.match(VIEW_TSX, /id="dc-spec-viewer"[\s\S]{0,160}<SpecViewer \/>/);
+  const out = html({ ...SESSION, spec: { open: true, width: null }, staging: { open: true, width: null } });
+  assert.match(out, /id="dc-spec-viewer"[^>]*><\/div>/, 'nothing until a session publishes one');
 });
 
 test('the header ELEMENT keeps a constant className, because the kit writes one', () => {

@@ -71,6 +71,7 @@ function makeComposerBridge() {
     mountTranscript: noop, publishTranscript: noop, publishStream: noop, publishNow: noop,
     mountSessionList: noop, publishSessionList: noop,
     mountSessionHeader: noop, publishSessionHeader: noop,
+    publishSpecViewer: noop,
     mountBanners: noop, publishBanners: noop,
   };
   return {

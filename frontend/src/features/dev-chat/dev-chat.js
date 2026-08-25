@@ -3092,8 +3092,8 @@ const DevChat = {
         DevChat.specViewer.viewVersionContent = null;
         DevChat.specViewer.activeTab = 'user';
         // Don't await — caller's renderChatView shouldn't block on
-        // the fetch. _loadSpecViewer calls _renderSpecViewer when it
-        // resolves, which patches the body in place.
+        // the fetch. _loadSpecViewer publishes when it resolves, which
+        // repaints the body in place.
         DevChat._loadSpecViewer({ force: true });
       }
       // Q/A chip selection is per-question-turn — never carry one across
@@ -7665,6 +7665,9 @@ const DevChat = {
       // #771: the staging panel slot only exists inside a session view —
       // leaving the session closes a docked preview with it.
       if (DevChat.stagingPanel.open) DevChat._resetStagingPanel();
+      // No session, no pane — and no reason to keep a spec's markdown alive
+      // in the store until one opens again.
+      DevChat._publishSpecViewer();
       react.mountDevView(content, DevChat._devViewState());
       DevChat.renderSessionList();
       return;
@@ -7793,12 +7796,11 @@ const DevChat = {
       DevChat._submitFromInput();
     });
 
-    // Render the spec viewer if it was open before this re-render
-    // (toggling layout, version selection, etc. all re-enter via
-    // renderChatView).
-    if (DevChat.specViewer.open) {
-      DevChat._renderSpecViewer();
-    }
+    // The spec reader publishes unconditionally: a CLOSE has to reach it
+    // too. The pane used to be rebuilt empty by the innerHTML above, so a
+    // closed panel needed no statement at all; the pane reconciles now, and
+    // silence would leave the last session's spec standing inside it.
+    DevChat._publishSpecViewer();
 
     // Wire up the draggable divider between chat pane and viewer. Idempotent —
     // we re-bind on every renderChatView since the resizer element gets
@@ -9035,7 +9037,7 @@ const DevChat = {
     if (DevChat.specViewer.isLoading && !opts.force) return;
 
     DevChat.specViewer.isLoading = true;
-    DevChat._renderSpecViewer();
+    DevChat._publishSpecViewer();
 
     try {
       // ?demo=1 rides along (same pass-through as /status) so a staging
@@ -9052,19 +9054,48 @@ const DevChat = {
       console.warn('loadSpecViewer failed:', err);
     } finally {
       DevChat.specViewer.isLoading = false;
-      DevChat._renderSpecViewer();
+      DevChat._publishSpecViewer();
     }
   },
 
-  _renderSpecViewer() {
-    const pane = document.getElementById('dc-spec-viewer');
-    if (!pane || !DevChat.currentSession) return;
-    if (!DevChat.specViewer.open) return;
+  /**
+   * The version the panel is showing.
+   *
+   * `'latest'` is a SENTINEL, not a number: it follows the highest version as
+   * Mayor edits create new ones. An unknown selection falls back to the
+   * latest rather than to nothing, which is also what makes the lazy fetch
+   * below terminate — a version that cannot be resolved is never fetched.
+   */
+  _selectedSpecVersion() {
+    const versions = DevChat.specViewer.versions; // DESC sorted
+    if (!versions.length) return null;
+    const latest = versions[0];
+    if (DevChat.specViewer.viewVersion === 'latest') return latest;
+    return versions.find((v) => String(v.version) === String(DevChat.specViewer.viewVersion))
+      || latest;
+  },
+
+  /**
+   * `#dc-spec-viewer`'s children, as one view model.
+   *
+   * This was `_renderSpecViewer`: an `innerHTML` assignment followed by six
+   * `addEventListener` calls onto the nodes it had just written. The markup
+   * is features/dev-chat/spec-viewer.tsx now and so is every listener; what
+   * is left here is the reading of `DevChat.specViewer`, which stays one
+   * global slot because five other places read and write it.
+   */
+  _specViewerView() {
+    if (!DevChat.currentSession) return { kind: 'closed' };
+    if (!DevChat.specViewer.open) return { kind: 'closed' };
     // #233 fail-closed guard: never render another session's spec. Any
     // path that forgets to reset the global specViewer slot on a
-    // session switch gets a blank panel, not stale content.
+    // session switch gets a blank panel, not stale content. It has to SAY
+    // closed rather than decline to speak: the pane reconciles now, so a
+    // bare `return` would leave the previous session's panel standing.
     if (DevChat.specViewer.sessionId != null
-        && Number(DevChat.specViewer.sessionId) !== Number(DevChat.currentSession.id)) return;
+        && Number(DevChat.specViewer.sessionId) !== Number(DevChat.currentSession.id)) {
+      return { kind: 'closed' };
+    }
 
     // Sharing back out (to the group, to a user) and dispatching a build
     // are the OWNER's affordances; a non-owner viewer reaches this panel
@@ -9079,18 +9110,10 @@ const DevChat = {
     // For a non-owner the server substitutes the newest SHARED version's
     // content as `spec` and filters the list, so "latest" reads as
     // "latest visible to you" (version numbers may be non-contiguous).
-    // 'latest' is a sentinel that follows the highest version as new
-    // ones are auto-created on each Mayor spec edit.
     const versions = DevChat.specViewer.versions; // DESC sorted
     const hasVersions = versions.length > 0;
     const latest = hasVersions ? versions[0] : null;
-
-    let selectedVersion;
-    if (DevChat.specViewer.viewVersion === 'latest') {
-      selectedVersion = latest;
-    } else {
-      selectedVersion = versions.find((v) => String(v.version) === String(DevChat.specViewer.viewVersion)) || latest;
-    }
+    const selectedVersion = DevChat._selectedSpecVersion();
     const isLatest = !!(selectedVersion && latest && selectedVersion.version === latest.version);
 
     // Latest content lives in draftContent (== spec_md); older versions
@@ -9099,50 +9122,36 @@ const DevChat = {
       ? DevChat.specViewer.draftContent
       : (DevChat.specViewer.viewVersionContent || '');
 
-    const versionOptions = versions.map((v) => {
+    const options = versions.map((v) => {
       const built = v.built_at ? new Date(v.built_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
       const isThisLatest = latest && v.version === latest.version;
       // The latest option carries the 'latest' value so re-selecting it
       // resumes following new versions; older options carry their number.
-      const optValue = isThisLatest ? 'latest' : String(v.version);
-      const sel = selectedVersion && v.version === selectedVersion.version ? 'selected' : '';
-      const label = `v${v.version}${isThisLatest ? ' (latest)' : ''}${built ? ` · ${built}` : ''}${v.pr_number ? ` · PR #${v.pr_number}` : ''}`;
-      return `<option value="${optValue}" ${sel}>${label}</option>`;
-    }).join('');
+      return {
+        value: isThisLatest ? 'latest' : String(v.version),
+        label: `v${v.version}${isThisLatest ? ' (latest)' : ''}${built ? ` · ${built}` : ''}${v.pr_number ? ` · PR #${v.pr_number}` : ''}`,
+      };
+    });
 
-    // Header action: [Share to group] for the selected version (any
-    // version is shareable now — the redundant draft/Save-version step
-    // was removed in #69). Disabled + "Shared" once already posted.
-    // Owner-only: the share routes are owner-scoped server-side, so for
-    // a non-owner the button could only ever fail.
+    // The three header actions share one gate. `blank` is the disabled,
+    // id-less placeholder: no version, or nothing in the one selected.
+    // Both share routes are owner-scoped server-side, so for a non-owner
+    // the buttons could only ever fail — they are absent instead.
     const isEmpty = !displayContent || !displayContent.trim();
-    const alreadyShared = !!(selectedVersion && selectedVersion.shared_to_group_at);
-    const shareBtnHtml = !isOwner
-      ? ''
-      : (!selectedVersion || isEmpty)
-        ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
-        : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
-
-    // (#1012) Copy the WHOLE selected version as raw markdown — both
-    // halves and the marker headings, regardless of which tab is open
-    // (see the click handler below). Disabled with the same posture as
-    // the share buttons while there is nothing to copy; the lazy
-    // frozen-version fetch at the bottom of this method re-renders and
-    // enables it once older content lands.
-    const copyBtnHtml = isEmpty
-      ? `<button class="dc-spec-action-btn dc-spec-copy-btn" disabled title="No spec to copy yet">Copy markdown</button>`
-      : `<button id="dc-spec-viewer-copy" class="dc-spec-action-btn dc-spec-copy-btn" title="Copy the whole spec (both sections) as markdown">Copy markdown</button>`;
-
-    // (#86) Private share: send this version to ONE person, who gets a
-    // notification deep-linking to the read-only spec panel. Repeatable
-    // (no alreadyShared disabling — the owner can share with several
-    // people one at a time) and independent of the group-share state.
-    // Owner-only, same as the group share above.
-    const shareUserBtnHtml = !isOwner
-      ? ''
-      : (!selectedVersion || isEmpty)
-        ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to user</button>`
-        : `<button id="dc-spec-viewer-share-user" class="dc-spec-action-btn" title="Privately share this spec version with one person">Share to user</button>`;
+    const blank = !selectedVersion || isEmpty;
+    const groupShare = !isOwner
+      ? { kind: 'absent' }
+      : blank
+        ? { kind: 'blank' }
+        // Any version is shareable (#69 removed the draft/Save-version
+        // step); once posted the button reads "Shared" and stops.
+        : { kind: 'live', shared: !!selectedVersion.shared_to_group_at };
+    // (#86) Private share: repeatable, and independent of the group-share
+    // state — the owner can send it to several people one at a time.
+    const userShare = !isOwner ? { kind: 'absent' } : blank ? { kind: 'blank' } : { kind: 'live' };
+    // (#1012) Copy is not owner-gated: anyone who can read the panel can
+    // copy what it shows.
+    const copy = isEmpty ? { kind: 'blank' } : { kind: 'live' };
 
     // #196: a conforming spec (BOTH marker headings present — see
     // public/js/spec-sections.js) renders as two tabs so non-technical
@@ -9151,129 +9160,110 @@ const DevChat = {
     // A null split — legacy or non-conforming doc — renders the single
     // untabbed body exactly as before.
     const split = displayContent ? splitSpecSections(displayContent) : null;
-    let specBodyHtml = '';
-    if (split) {
-      const activeTab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';
-      const activeHalf = activeTab === 'tech' ? split.technical : split.userFacing;
-      const tabBtn = (key, label) =>
-        `<button class="dc-spec-viewer-tab${activeTab === key ? ' dc-spec-viewer-tab-active' : ''}" role="tab" aria-selected="${activeTab === key}" data-spec-tab="${key}">${label}</button>`;
-      // An empty-but-present half still gets its tab (with a muted
-      // placeholder) so the toggle doesn't appear/disappear between
-      // versions.
-      specBodyHtml = `${split.preamble ? `<div class="dc-spec-viewer-body dc-spec-viewer-preamble">${DevChat.renderMarkdown(split.preamble, { breaks: false })}</div>` : ''}
-        <div class="dc-spec-viewer-tabs" role="tablist" aria-label="Spec sections">
-          ${tabBtn('user', 'User-facing')}
-          ${tabBtn('tech', 'Technical')}
-        </div>
-        <div class="dc-spec-viewer-body" role="tabpanel">${
-          activeHalf
-            ? DevChat.renderMarkdown(activeHalf, { breaks: false })
-            : '<p class="dc-spec-tab-empty">Nothing in this section.</p>'
-        }</div>`;
-    } else if (displayContent) {
-      specBodyHtml = `<div class="dc-spec-viewer-body">${DevChat.renderMarkdown(displayContent, { breaks: false })}</div>`;
-    }
-    // Non-owners can't ask the AI in someone else's session, so their
-    // empty state says what actually gates them: nothing shared yet.
-    const emptyCopy = isOwner
-      ? 'No spec yet. Ask the AI to draft one.'
-      : 'No spec has been shared for this session yet.';
-    const bodyHtml = DevChat.specViewer.isLoading && !displayContent
-      ? `<div class="p-4 text-sm text-zinc-500 dark:text-zinc-400">Loading spec…</div>`
-      : displayContent
-        ? specBodyHtml
-        : `<div class="p-4 text-sm text-zinc-500 dark:text-zinc-400">${emptyCopy}</div>`;
-
-    // Spec planning and building are two separate steps: drafting a spec
-    // does NOT build anything. Make the handoff explicit so a finished
-    // spec doesn't read as a finished change (there is no in-UI build
-    // button — the user asks the Mayor in chat). Only shown to the OWNER
-    // (dispatching a build is theirs to do) while viewing the non-empty
-    // latest version, where the next action is to dispatch a build.
-    const buildHintHtml = isOwner && isLatest && !isEmpty
-      ? `<div class="dc-spec-viewer-build-hint">This is a plan, not a built change. Ready? Ask the AI in chat to build it.</div>`
-      : '';
-
-    pane.innerHTML = `
-      <div class="dc-spec-viewer-header">
-        <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1" ${hasVersions ? '' : 'disabled'}>
-          ${hasVersions ? versionOptions : '<option>No versions yet</option>'}
-        </select>
-        ${copyBtnHtml}
-        ${shareUserBtnHtml}
-        ${shareBtnHtml}
-        <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
-        ${isOwner ? `<div id="dc-spec-share-pop" class="dc-spec-share-pop hidden">
-          <input id="dc-spec-share-input" class="dc-spec-share-input" type="text"
-                 placeholder="Username…" autocomplete="off" spellcheck="false" maxlength="32" />
-          <div id="dc-spec-share-suggestions" class="dc-spec-share-suggestions"></div>
-          <div id="dc-spec-share-error" class="dc-spec-share-error hidden"></div>
-          <button id="dc-spec-share-send" class="dc-spec-action-btn dc-spec-share-send">Send</button>
-        </div>` : ''}
-      </div>
-      <div class="dc-spec-viewer-body-wrap">
-        ${bodyHtml}
-      </div>
-      ${buildHintHtml}`;
-
-    const versionSel = pane.querySelector('#dc-spec-viewer-version');
-    if (versionSel) {
-      versionSel.addEventListener('change', (e) => {
-        DevChat._switchSpecViewerVersion(e.target.value);
-      });
+    let body;
+    if (DevChat.specViewer.isLoading && !displayContent) {
+      body = { kind: 'loading' };
+    } else if (!displayContent) {
+      // Non-owners can't ask the AI in someone else's session, so their
+      // empty state says what actually gates them: nothing shared yet.
+      body = {
+        kind: 'empty',
+        copy: isOwner
+          ? 'No spec yet. Ask the AI to draft one.'
+          : 'No spec has been shared for this session yet.',
+      };
+    } else if (split) {
+      const tab = DevChat.specViewer.activeTab === 'tech' ? 'tech' : 'user';
+      const half = tab === 'tech' ? split.technical : split.userFacing;
+      body = {
+        kind: 'split',
+        preambleHtml: split.preamble
+          ? DevChat.renderMarkdown(split.preamble, { breaks: false })
+          : '',
+        tab,
+        halfHtml: half ? DevChat.renderMarkdown(half, { breaks: false }) : '',
+      };
+    } else {
+      body = { kind: 'plain', html: DevChat.renderMarkdown(displayContent, { breaks: false }) };
     }
 
-    const closeBtn = pane.querySelector('#dc-spec-viewer-close');
-    if (closeBtn) closeBtn.addEventListener('click', () => DevChat.closeSpecViewer());
+    return {
+      kind: 'open',
+      versions: options,
+      selected: selectedVersion ? (isLatest ? 'latest' : String(selectedVersion.version)) : '',
+      version: selectedVersion ? selectedVersion.version : null,
+      // #1012: the WHOLE selected version, raw — both halves and the marker
+      // headings — so "Copy markdown" can never become the rendered half or
+      // the active tab's slice.
+      raw: displayContent,
+      body,
+      copy,
+      userShare,
+      groupShare,
+      // Spec planning and building are two separate steps: drafting a spec
+      // does NOT build anything. Make the handoff explicit so a finished
+      // spec doesn't read as a finished change (there is no in-UI build
+      // button — the user asks the Mayor in chat).
+      buildHint: isOwner && isLatest && !isEmpty,
+    };
+  },
 
-    // (#1012) Copy the ENTIRE document: displayContent is the raw
-    // markdown of the selected version, so the copy deliberately ignores
-    // `split` and `activeTab` — "copy the whole thing" means both halves
-    // plus their marker headings, verbatim, with nothing added.
-    // The label flash is fire-and-forget: a spec_updated re-render can
-    // replace this button mid-flash, leaving the restore timer pointed at
-    // a detached node. Harmless (the fresh button renders with the
-    // default label), so it needs no bookkeeping.
-    const copyBtn = pane.querySelector('#dc-spec-viewer-copy');
-    if (copyBtn) {
-      copyBtn.addEventListener('click', async () => {
-        const ok = await PlatformUI.copyText(displayContent);
-        copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
-        if (!ok) PlatformUI.toast('Couldn\'t copy — select the text and copy it manually');
-        setTimeout(() => { copyBtn.textContent = 'Copy markdown'; }, 1500);
-      });
-    }
+  /**
+   * Six writers used to rebuild the pane; they all land here.
+   *
+   * The lazy frozen-version fetch sits AFTER the publish rather than inside
+   * `_specViewerView`, which is the rule the transcript's conversion wrote
+   * down: a loader a renderer calls per paint must not re-enter that
+   * renderer. It terminates on the cache check — `_loadSpecVersion` fills
+   * `viewVersionContent` and publishes once.
+   */
+  _publishSpecViewer() {
+    const react = (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devChat : null;
+    if (!react || !react.publishSpecViewer) return;
+    react.publishSpecViewer(DevChat._specViewerView());
 
-    const shareBtn = pane.querySelector('#dc-spec-viewer-share');
-    if (shareBtn && selectedVersion) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(selectedVersion.version));
+    if (!DevChat.specViewer.open || DevChat.specViewer.viewVersionContent) return;
+    const versions = DevChat.specViewer.versions;
+    if (!versions.length) return;
+    const selected = DevChat._selectedSpecVersion();
+    if (!selected || selected.version === versions[0].version) return;
+    DevChat._loadSpecVersion(selected.version).catch(() => {});
+  },
 
-    const shareUserBtn = pane.querySelector('#dc-spec-viewer-share-user');
-    if (shareUserBtn && selectedVersion) DevChat._bindSpecSharePopover(pane, shareUserBtn, selectedVersion.version);
+  // #196: tab switches are pure re-renders of cached content — no
+  // refetch. The selection lives in specViewer.activeTab so it
+  // survives version switches and spec_updated refreshes within the
+  // panel's lifetime.
+  _setSpecTab(tab) {
+    const next = tab === 'tech' ? 'tech' : 'user';
+    if (DevChat.specViewer.activeTab === next) return;
+    DevChat.specViewer.activeTab = next;
+    DevChat._publishSpecViewer();
+  },
 
-    // #196: tab switches are pure re-renders of cached content — no
-    // refetch. The selection lives in specViewer.activeTab so it
-    // survives version switches and spec_updated refreshes within the
-    // panel's lifetime.
-    pane.querySelectorAll('.dc-spec-viewer-tab').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const tab = btn.dataset.specTab === 'tech' ? 'tech' : 'user';
-        if (DevChat.specViewer.activeTab === tab) return;
-        DevChat.specViewer.activeTab = tab;
-        DevChat._renderSpecViewer();
-      });
-    });
-
-    // Lazy-fetch frozen content when an older (non-latest) version is
-    // selected and we don't have it cached.
-    if (selectedVersion && !isLatest && !DevChat.specViewer.viewVersionContent) {
-      DevChat._loadSpecVersion(selectedVersion.version).catch(() => {});
+  // (#86) Mention candidates for the private-share popover — the same
+  // endpoint the group chat's @mention autocomplete uses. Best-effort by
+  // construction: an exact username still works without it, so every
+  // failure resolves to an empty list rather than surfacing an error.
+  async _loadSpecMentionSuggestions() {
+    if (typeof AppView === 'undefined' || !AppView.appData || !AppView.appData.slug) return [];
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/mention-suggestions`);
+      if (!res.ok) return [];
+      const { users } = await res.json();
+      return Array.isArray(users)
+        ? users.map((u) => (u && u.username) || '').filter(Boolean)
+        : [];
+    } catch {
+      return [];
     }
   },
 
   _switchSpecViewerVersion(value) {
     DevChat.specViewer.viewVersion = value === 'latest' ? 'latest' : value;
     DevChat.specViewer.viewVersionContent = null;
-    DevChat._renderSpecViewer();
+    DevChat._publishSpecViewer();
   },
 
   async _loadSpecVersion(version) {
@@ -9287,7 +9277,7 @@ const DevChat = {
       // Bail if the user picked another version while we were fetching.
       if (String(DevChat.specViewer.viewVersion) !== String(version)) return;
       DevChat.specViewer.viewVersionContent = data.spec.content || '';
-      DevChat._renderSpecViewer();
+      DevChat._publishSpecViewer();
     } catch (err) {
       console.warn('loadSpecVersion failed:', err);
     }
@@ -9306,109 +9296,10 @@ const DevChat = {
       // group chat side.
       const v = DevChat.specViewer.versions.find((x) => x.version === Number(version));
       if (v) v.shared_to_group_at = new Date().toISOString();
-      DevChat._renderSpecViewer();
+      DevChat._publishSpecViewer();
     } catch (err) {
       console.warn('shareSpecVersion failed:', err);
     }
-  },
-
-  // (#86) Wire the "Share to user" button + its popover. The popover
-  // lives inside the freshly-rendered pane, so all state here is local
-  // to this render pass — a re-render (version switch, spec update)
-  // simply closes it. Suggestions come from the same endpoint the
-  // group-chat @mention autocomplete uses, fetched once per open and
-  // prefix-filtered client-side as the user types.
-  _bindSpecSharePopover(pane, btn, version) {
-    const pop = pane.querySelector('#dc-spec-share-pop');
-    const input = pane.querySelector('#dc-spec-share-input');
-    const sugBox = pane.querySelector('#dc-spec-share-suggestions');
-    const errBox = pane.querySelector('#dc-spec-share-error');
-    const sendBtn = pane.querySelector('#dc-spec-share-send');
-    if (!pop || !input || !sugBox || !errBox || !sendBtn) return;
-
-    let suggestions = [];
-
-    const setError = (msg) => {
-      errBox.textContent = msg || '';
-      errBox.classList.toggle('hidden', !msg);
-    };
-
-    const renderSuggestions = () => {
-      const q = input.value.trim().toLowerCase();
-      const matches = suggestions
-        .filter((name) => !q || name.toLowerCase().startsWith(q))
-        .slice(0, 6);
-      sugBox.innerHTML = matches
-        .map((name) => `<button type="button" class="dc-spec-share-sug" data-username="${escapeHtml(name)}">@${escapeHtml(name)}</button>`)
-        .join('');
-      sugBox.querySelectorAll('.dc-spec-share-sug').forEach((s) => {
-        s.addEventListener('click', () => {
-          input.value = s.dataset.username;
-          sugBox.innerHTML = '';
-          input.focus();
-        });
-      });
-    };
-
-    const close = () => {
-      pop.classList.add('hidden');
-      document.removeEventListener('pointerdown', onOutside, true);
-    };
-    const onOutside = (e) => {
-      if (pop.contains(e.target) || e.target === btn) return;
-      close();
-    };
-
-    btn.addEventListener('click', async () => {
-      if (!pop.classList.contains('hidden')) { close(); return; }
-      pop.classList.remove('hidden');
-      setError(null);
-      input.value = '';
-      sugBox.innerHTML = '';
-      input.focus();
-      document.addEventListener('pointerdown', onOutside, true);
-      // Lazy one-shot fetch of mention candidates for this app.
-      if (!suggestions.length
-          && typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug) {
-        try {
-          const res = await fetch(`/api/apps/${AppView.appData.slug}/mention-suggestions`);
-          if (res.ok) {
-            const { users } = await res.json();
-            suggestions = Array.isArray(users)
-              ? users.map((u) => (u && u.username) || '').filter(Boolean)
-              : [];
-            if (!pop.classList.contains('hidden')) renderSuggestions();
-          }
-        } catch { /* suggestions are best-effort; exact usernames still work */ }
-      }
-    });
-
-    input.addEventListener('input', () => { setError(null); renderSuggestions(); });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); sendBtn.click(); }
-      if (e.key === 'Escape') close();
-    });
-
-    sendBtn.addEventListener('click', async () => {
-      const username = input.value.trim().replace(/^@/, '');
-      if (!username) { setError('Enter a username'); return; }
-      sendBtn.disabled = true;
-      sendBtn.textContent = 'Sending…';
-      const result = await DevChat._shareSpecToUser(version, username);
-      sendBtn.disabled = false;
-      sendBtn.textContent = 'Send';
-      if (!result.ok) {
-        setError(result.error || 'Failed to share');
-        return;
-      }
-      // Transient confirmation, then reset for the next share.
-      setError(null);
-      sugBox.innerHTML = '';
-      const sentName = (result.recipient && result.recipient.username) || username;
-      btn.textContent = `Sent to @${sentName}`;
-      close();
-      setTimeout(() => { btn.textContent = 'Share to user'; }, 2500);
-    });
   },
 
   // POST the private share; returns the parsed response (or an {ok:false,

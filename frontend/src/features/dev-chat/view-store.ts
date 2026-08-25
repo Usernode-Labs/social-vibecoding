@@ -20,11 +20,13 @@
  * same host is a reconcile, so a poll now touches the nodes whose props
  * changed and nothing else.
  *
- * ── Three hosts stay legacy-owned, and each for its own reason ────────
+ * ── Two hosts stay legacy-owned, and each for its own reason ──────────
  *
- *   - `#dc-spec-viewer` is a genuine CONTROLLER HOST: `_renderSpecViewer`
- *     fills it with the version list, the markdown and the share controls,
- *     none of which this chunk converts.
+ * `#dc-spec-viewer` was a third, and the only genuine CONTROLLER host of the
+ * three: `_renderSpecViewer` filled it with the version list, the markdown
+ * and the share controls. It is an ordinary parent now, with the reader as
+ * its child island — see ./spec-viewer-store.ts.
+ *
  *   - `#dc-staging-panel` is a SLOT, not a container. The docked preview is
  *     an overlay positioned over its rect (`_syncStagingDockGeometry`
  *     measures it); it stays empty, and a `ResizeObserver` watches it.

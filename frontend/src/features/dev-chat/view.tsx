@@ -10,6 +10,7 @@ import { DevChatBanners } from './banners';
 import { DevComposer } from './composer';
 import { SessionHeader } from './session-header';
 import { SessionList } from './session-list';
+import { SpecViewer } from './spec-viewer';
 import { DevChatTranscript } from './transcript';
 import { devViewStore, type DevViewState, type PaneView } from './view-store';
 
@@ -108,11 +109,13 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
           id="dc-spec-resizer" className={s.spec.open ? PANE.specResizer.on : PANE.specResizer.off}
           role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"
         ></div>
-        {/* A genuine controller host: `_renderSpecViewer` fills it. */}
+        {/* The pane's `width` is the DRAG's inline style and its `-open`
+            class is this model's; the reader inside it is its own island,
+            with its own store — see ./spec-viewer-store.ts. */}
         <div
           id="dc-spec-viewer" className={s.spec.open ? PANE.specViewer.on : PANE.specViewer.off}
           style={paneStyle(s.spec)}
-        ></div>
+        ><SpecViewer /></div>
         <div
           id="dc-staging-resizer"
           className={s.staging.open ? PANE.stagingResizer.on : PANE.stagingResizer.off}

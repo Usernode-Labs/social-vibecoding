@@ -13,8 +13,10 @@
 //      data matched.
 //   3. Coarse source-token guards (same style as
 //      tests/spec-copy-markdown.test.js) pinning that both spec read
-//      routes share ONE visibility SQL fragment and that the viewer UI
-//      gates its owner-only affordances on _ownsSession.
+//      routes share ONE visibility SQL fragment and that the viewer's view
+//      MODEL gates its owner-only affordances on _ownsSession. #1078 moved
+//      the panel's markup into features/dev-chat/spec-viewer.tsx; the
+//      gating stayed a decision in dev-chat.js, which is what this pins.
 //
 // Like tests/spec-user-share.test.js, the pool is an in-memory mock that
 // pattern-matches SQL and the ws module is stubbed via require.cache.
@@ -326,20 +328,29 @@ test('both spec read routes consume the ONE shared visibility fragment', () => {
   assert.ok(src.includes("specVersionSharedVisibilitySql('s', '$3')"), 'single-version route call site');
 });
 
-test('_renderSpecViewer gates the owner-only affordances on _ownsSession', () => {
+test('_specViewerView gates the owner-only affordances on _ownsSession', () => {
   const src = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
-  const render = slice(src, '_renderSpecViewer() {', '_switchSpecViewerVersion(', '_renderSpecViewer');
+  const render = slice(src, '_specViewerView() {', '_publishSpecViewer() {', '_specViewerView');
   assert.ok(render.includes('DevChat._ownsSession(DevChat.currentSession)'), 'ownership is computed');
-  assert.ok(/shareBtnHtml = !isOwner\s*\?\s*''/.test(render), 'group-share button is owner-only');
-  assert.ok(/shareUserBtnHtml = !isOwner\s*\?\s*''/.test(render), 'user-share button is owner-only');
+  // `absent` is the model's word for "a non-owner never sees it" — both
+  // share routes are owner-scoped server-side, so for anyone else the
+  // buttons could only ever fail.
+  assert.ok(/groupShare = !isOwner\s*\n?\s*\?\s*\{ kind: 'absent' \}/.test(render),
+    'group-share button is owner-only');
+  assert.ok(/userShare = !isOwner \? \{ kind: 'absent' \}/.test(render),
+    'user-share button is owner-only');
   assert.ok(render.includes('isOwner && isLatest && !isEmpty'), 'build hint is owner-only');
   assert.ok(render.includes('No spec has been shared for this session yet.'), 'non-owner empty copy');
   assert.ok(render.includes('No spec yet. Ask the AI to draft one.'), 'owner empty copy kept');
+  // And the component renders nothing at all for an `absent` action.
+  const tsx = read('frontend', 'src', 'features', 'dev-chat', 'spec-viewer.tsx');
+  assert.ok((tsx.match(/if \(action\.kind === 'absent'\) return null;/g) || []).length === 2,
+    'both share buttons draw nothing for a non-owner');
 });
 
 test('_loadSpecViewer forwards ?demo=1 so staging previews reach the mock list', () => {
   const src = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
-  const loader = slice(src, 'async _loadSpecViewer(', '_renderSpecViewer() {', '_loadSpecViewer');
+  const loader = slice(src, 'async _loadSpecViewer(', '_selectedSpecVersion() {', '_loadSpecViewer');
   assert.ok(loader.includes('/spec${DevChat._demoQS()}'), 'demo flag rides along on the spec fetch');
 });
 

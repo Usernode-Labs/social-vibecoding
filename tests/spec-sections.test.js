@@ -169,11 +169,20 @@ test('index.html loads spec-sections.js before the dev chat reads it', () => {
     'the React entry must stay a deferred module so DevChat sees window.splitSpecSections');
 });
 
+// #1078: the panel's MARKUP moved to features/dev-chat/spec-viewer.tsx.
+// dev-chat.js keeps the split — which half is on screen is a decision, not a
+// tag — and the component draws the toggle from it.
 test('dev-chat.js spec viewer calls splitSpecSections and wires the tabs', () => {
   assert.ok(devChatSrc.includes('splitSpecSections(displayContent)'),
-    '_renderSpecViewer must split the displayed content');
-  assert.ok(devChatSrc.includes('dc-spec-viewer-tab'), 'tab markup missing');
+    '_specViewerView must split the displayed content');
   assert.ok(devChatSrc.includes("activeTab: 'user'"), 'activeTab must default to the user-facing half');
+  assert.ok(devChatSrc.includes("kind: 'split'"), 'the split reaches the component as its own body kind');
+  const viewerTsx = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'spec-viewer.tsx'),
+    'utf8'
+  );
+  assert.ok(viewerTsx.includes('dc-spec-viewer-tab'), 'tab markup missing');
+  assert.ok(viewerTsx.includes('data-spec-tab'), 'each tab still names the half it selects');
 });
 
 // ── 3. Prompt guard ──────────────────────────────────────────────────────

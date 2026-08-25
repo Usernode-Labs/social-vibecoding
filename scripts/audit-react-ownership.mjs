@@ -240,12 +240,13 @@ const OWNED = [
   // the app's session list. Five separate entries collapsed into this one
   // when the skeleton stopped being a string.
   //
-  // Two hosts inside it stay legacy-owned and are excepted: the spec viewer
-  // is a controller host `_renderSpecViewer` fills, and the staging panel is
-  // a SLOT the docked preview is positioned over, watched by a
-  // ResizeObserver. The launchpad slot is NOT excepted — another module
-  // builds its markup, but it arrives through a dangerouslySetInnerHTML sink
-  // React itself owns.
+  // ONE host inside it stays legacy-owned and is excepted: `#dc-staging-panel`
+  // is a SLOT the docked preview is positioned over, watched by a
+  // ResizeObserver. `#dc-spec-viewer` was a second — the controller host
+  // `_renderSpecViewer` filled — and is in scope now that the reader is
+  // features/dev-chat/spec-viewer.tsx. The launchpad slot was never excepted:
+  // another module builds its markup, but it arrives through a
+  // dangerouslySetInnerHTML sink React itself owns.
   //
   // `#dc-session-list` is in here too, on the no-session branch. This sweep
   // never reaches it: every route into the chat carries a session id (see
@@ -254,7 +255,7 @@ const OWNED = [
   // drives the branch by hand.
   {
     sel: '#dc-view',
-    except: ['#dc-spec-viewer', '#dc-staging-panel'],
+    except: ['#dc-staging-panel'],
   },
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
@@ -310,6 +311,13 @@ const ROUTES = [
   '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
+  // The spec reader, which is the one host inside `#dc-view` whose subtree
+  // only exists while the panel is OPEN — its open state otherwise lives in
+  // localStorage, so no plain navigation reaches it and the sweep would run
+  // over an empty pane. `?shot=spec-viewer` is the deep link dapp.json's own
+  // declared check uses, on the migration-seeded session (src/db/migrate.js
+  // fixes id 900830 precisely so the route is stable).
+  '?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900830',
   // A TOPIC page, which is the only route that mounts `.dev-thread` — the
   // thread panel, its composer and the topic card app-view.js fills. Without
   // it that OWNED entry was swept on no route at all. The number is a seeded

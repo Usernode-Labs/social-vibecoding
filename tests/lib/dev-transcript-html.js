@@ -93,6 +93,7 @@ function makeTranscriptBridge() {
     mountRunnerControls: noop, publishRunner: noop,
     mountSessionList: noop, publishSessionList: noop,
     mountSessionHeader: noop, publishSessionHeader: noop,
+    publishSpecViewer: noop,
     mountBanners: noop, publishBanners: noop,
   };
   return {
