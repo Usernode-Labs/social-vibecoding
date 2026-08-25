@@ -38,6 +38,31 @@ const { renderComponent } = require('./lib/render-tsx');
 const html = read('public/index.html');
 const appJs = read('public/js/app.js');
 const settingsJs = read('frontend/src/features/settings/settings.js');
+// #1079: #settings-usernode-section's markup moved to a component; its tests
+// read both halves — the DECISIONS here, the SHAPES there.
+const usernodeTsx = read('frontend/src/features/settings/sections/usernode.tsx');
+const usernodeUiTsx = read('frontend/src/features/settings/sections/usernode-ui.tsx');
+const usernodeStoreTs = read('frontend/src/features/settings/sections/usernode-store.ts');
+
+/** One method's source, by brace matching — stable across reordering. */
+function sliceMethod(src, name) {
+  const re = new RegExp(`\\n    (async )?${name}\\(`);
+  const m = src.match(re);
+  assert.ok(m, `${name} exists`);
+  // Depth starts at ZERO: the match ends inside the PARAMETER list, before
+  // the body's opening brace. Seeding it at 1 makes the scan need two closers
+  // and run on into the next method — which reads as a passing slice right up
+  // until an assertion counts something.
+  let i = m.index + m[0].length;
+  let depth = 0;
+  let started = false;
+  for (; i < src.length; i++) {
+    if (src[i] === '{') { depth++; started = true; }
+    else if (src[i] === '}') { depth--; }
+    if (started && depth === 0) { i++; break; }
+  }
+  return src.slice(m.index, i);
+}
 // The halves the two nav hosts were split into by #1191 slice 6, conversion 8.
 const navTsx = read('frontend/src/features/settings/settings-nav.tsx');
 const navStoreJs = read('frontend/src/features/settings/settings-nav-store.js');
@@ -807,26 +832,28 @@ test('the usernode section renders a reason, not just "could not load"', () => {
     'the reason is read through one helper');
   assert.match(settingsJs, /NativeChrome\.lastReadError\('getSettingsState'\)/,
     'it comes from the shared bridge record, not a settings-local guess');
-  assert.match(settingsJs, /'Could not load Usernode app settings\.'/,
+  assert.match(usernodeTsx, /Could not load Usernode app settings\./,
     'the headline is unchanged so existing reports stay recognisable');
-  assert.match(settingsJs, /font-mono[^']*', *\n? *readError\.message/,
-    "the app's own message is rendered verbatim");
+  // #1079: the box is sections/usernode.tsx now. The MODEL carries the
+  // app's own message and the component renders it verbatim in a mono run.
+  assert.match(settingsJs, /message: \(readError && readError\.message\) \|\| null/,
+    "the app's own message reaches the view model verbatim");
+  assert.match(usernodeTsx, /font-mono[^"]*">\{b\.message\}/,
+    'and is rendered as a mono line, not reworded');
 });
 
 test('the failed read is recoverable in place', () => {
-  const box = settingsJs.slice(
-    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
-    settingsJs.indexOf('    _renderSocialPushSection(section) {'),
-  );
-  assert.ok(box, '_renderUsernodeError exists');
-  assert.match(box, /box\.id = 'settings-usernode-error'/,
+  // #1079: the box is sections/usernode.tsx and the retry is a named module
+  // action. The PROPERTIES are unchanged: stable ids, a retry on screen, and
+  // a retry that swaps in a progress line rather than blanking the section.
+  assert.match(usernodeTsx, /id="settings-usernode-error"/,
     'the error box has a stable id');
-  assert.match(box, /retry\.id = 'settings-usernode-retry'/,
-    'the retry button has a stable id');
-  assert.match(box, /'Try again'/, 'the retry is offered on the screen');
-  assert.match(box, /_renderUsernodeBody\(readError, true\)/,
+  assert.match(usernodeTsx, /id: 'settings-usernode-retry', label: 'Try again'/,
+    'the retry button has a stable id and is offered on the screen');
+  const retry = sliceMethod(settingsJs, '_retryUsernodeRead');
+  assert.match(retry, /this\._usernodeLoading = true;/,
     'a retry swaps the box for a progress line instead of blanking the section');
-  assert.match(box, /await this\._renderUsernodeSection\(\)/,
+  assert.match(retry, /await this\._renderUsernodeSection\(\)/,
     'the retry re-runs the read');
   // The JS-built ids must NOT be in the static shell — that is what makes
   // this section the exception to the id-binding rule.
@@ -837,37 +864,43 @@ test('the failed read is recoverable in place', () => {
 });
 
 test('a failed read still leaves the snapshot-independent blocks up', () => {
-  const body = settingsJs.slice(
-    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
-    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
-  );
-  assert.ok(body, '_renderUsernodeBody takes the failure record');
-  assert.match(body, /if \(!s\) \{\n\s+this\._renderUsernodeError\(/,
+  // #1079: the body is a view MODEL now. The property is unchanged and easier
+  // to state: the error replaces only the snapshot-dependent slice, and the
+  // slices that need no snapshot are separate fields rather than being
+  // sequenced after it.
+  const view = sliceMethod(settingsJs, '_usernodeView');
+  const body = sliceMethod(settingsJs, '_usernodeBodyView');
+  assert.match(body, /if \(!s\) \{[\s\S]{0,400}kind: 'error'/,
     'the error box replaces ONLY the snapshot-dependent permissions block');
+
   // These need no snapshot, so they must not sit behind an `if (s)`.
-  for (const call of [
-    'this._renderSocialPushSection(section);',
-    'this._renderBpSection(section);',
-    'this._renderUsernodeFaq(aboutBox,',
-    "this._openNativeScreen('benchmark',",
-    "this._openNativeScreen('httpLogs',",
+  for (const field of [
+    'socialPush: this._socialPushView()',
+    'blockProduction: this._bpView()',
+    'widgetIcons: this._widgetIconsView()',
   ]) {
-    assert.ok(body.includes(call), `${call} runs with or without a snapshot`);
+    assert.ok(view.includes(field), `${field} is computed with or without a snapshot`);
   }
+  assert.match(view, /actions: \[\s*\n?\s*\{ label: 'Device benchmark'/,
+    'the two native screens are reachable whether or not the snapshot loaded');
+  assert.match(usernodeTsx, /<Faq s=\{s\} \/>/, 'the FAQ needs no snapshot');
+
   // These read the snapshot, so every one of them must be guarded.
   for (const guarded of [
     's.nodeSleepEnabled', 's.facematchStrict', 's.debugMode', 's.authStatus',
   ]) {
-    const at = body.indexOf(guarded);
+    const at = view.indexOf(guarded);
     assert.ok(at > -1, `${guarded} still drives its control`);
-    assert.match(body.slice(0, at), /if \(s\) \{|if \(s && /,
+    assert.match(view.slice(0, at), /s \? \{|\(s &&/,
       `${guarded} is only read behind a snapshot guard`);
   }
-  assert.match(body, /const perms = \(s && s\.permissions\) \|\| \{\}/,
+  assert.match(view, /const perms = \(s && s\.permissions\) \|\| \{\}/,
     'no snapshot means no permission rows, not a TypeError');
-  assert.match(body, /const bi = \(s && s\.buildInfo\) \|\| \{\}/,
+  assert.match(sliceMethod(settingsJs, '_usernodeBuildNotes'),
+    /const bi = \(this\._usernodeState && this\._usernodeState\.buildInfo\) \|\| \{\}/,
     'the build line simply goes missing without a snapshot');
 });
+
 
 test('the usernode read is retried once on readiness and never leaks a listener', () => {
   assert.match(settingsJs, /_armUsernodeAuthStatusRetry\(\)\s*\{/);
@@ -886,7 +919,7 @@ test('the usernode read is retried once on readiness and never leaks a listener'
     /window\.addEventListener\('usernode:auth-status', listener\)/);
   const clear = settingsJs.slice(
     settingsJs.indexOf('    _clearUsernodeAuthStatusRetry() {'),
-    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
+    settingsJs.indexOf('    _publishUsernode() {'),
   );
   assert.match(clear,
     /window\.removeEventListener\(\n?\s*'usernode:auth-status'/,
@@ -896,7 +929,7 @@ test('the usernode read is retried once on readiness and never leaks a listener'
     settingsJs.indexOf('    async _renderUsernodeSection() {'),
     settingsJs.indexOf('    _usernodeReadError() {'),
   );
-  assert.match(section, /this\._clearUsernodeAuthStatusRetry\(\);\n\s+this\._renderUsernodeBody\(\);/,
+  assert.match(section, /this\._clearUsernodeAuthStatusRetry\(\);\n\s+this\._usernodeLoading = false;/,
     'a successful read stops listening');
   const close = settingsJs.slice(settingsJs.indexOf('    close() {'));
   assert.match(close.slice(0, 500), /_clearUsernodeAuthStatusRetry\(\)/,
@@ -909,17 +942,21 @@ test('the usernode read is retried once on readiness and never leaks a listener'
 });
 
 test('activity notifications wait for native admission and surface failures', () => {
-  const section = settingsJs.slice(
-    settingsJs.indexOf('    _renderSocialPushSection(section) {'),
-    settingsJs.indexOf('    // Block production queue')
-  );
-  assert.match(section, /NativeChrome\.isSessionAdmitted\(\)/,
+  // #1079: the wording and the gate are the view builder's; the retry is a
+  // named action. Every property below is unchanged.
+  const view = sliceMethod(settingsJs, '_socialPushView');
+  assert.match(view, /NativeChrome\.isSessionAdmitted\(\)/,
     'a closed handoff renders recovery instead of a stale toggle');
-  assert.match(section, /NativeChrome\.recoverSessionAdmission\(\)/,
+  assert.match(view, /NativeChrome\.recoverSessionAdmission/,
     'the notification section offers an explicit handoff retry');
-  assert.match(section, /Finishing secure app sign-in/);
-  assert.match(section, /includeErrorDetail: true/,
+  assert.match(view, /Finishing secure app sign-in/);
+  assert.match(sliceMethod(settingsJs, '_retrySocialPush'),
+    /NativeChrome\.recoverSessionAdmission\(\)/,
+    'and the retry actually re-runs the handoff');
+  assert.match(usernodeTsx, /includeErrorDetail: true/,
     'native storage and admission errors remain visible to the user');
+  assert.match(usernodeUiTsx, /Could not save the setting/,
+    'a failed setter says so rather than silently reverting');
 });
 
 test('only the newest usernode read attempt paints', () => {
@@ -1070,31 +1107,25 @@ test('the usernode section is gated on being in the app, not on a capability', (
 });
 
 test('the connection panel renders above the failures it explains', () => {
-  const body = settingsJs.slice(
-    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
-    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
-  );
-  const panelAt = body.indexOf('this._renderUsernodeConnection(section);');
-  const errorAt = body.indexOf('this._renderUsernodeError(');
+  // #1079: the ordering is the component's now, and it is easier to read
+  // there — <Connection /> is the first child of the section body.
+  const panelAt = usernodeTsx.indexOf('<Connection s={s} />');
+  const errorAt = usernodeTsx.indexOf('<Body s={s} />');
   assert.ok(panelAt > -1, 'the panel is rendered from the section body');
   assert.ok(errorAt > panelAt,
     'the explanation comes before the "could not load" box, not after it');
 });
 
 test('the panel has stable ids and both actions', () => {
-  const panel = settingsJs.slice(
-    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
-    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
-  );
-  assert.ok(panel, '_renderUsernodeConnection exists');
-  assert.match(panel, /box\.id = 'settings-usernode-connection'/);
-  assert.match(panel, /retry\.id = 'settings-usernode-connection-retry'/);
-  assert.match(panel, /copy\.id = 'settings-usernode-connection-copy'/);
-  assert.match(panel, /'Try again'/);
-  assert.match(panel, /'Copy diagnostics'/);
+  assert.match(usernodeTsx, /id="settings-usernode-connection"/);
+  assert.match(usernodeTsx, /id: 'settings-usernode-connection-retry'/);
+  assert.match(usernodeTsx, /id: 'settings-usernode-connection-copy'/);
+  assert.match(usernodeTsx, /'Try again'/);
+  assert.match(usernodeTsx, /'Copy diagnostics'/);
   // PlatformUI.copyText is the real API (async → boolean, never throws).
-  assert.match(panel, /PlatformUI\.copyText\(/);
-  assert.doesNotMatch(panel, /PlatformUI\.copy\(/);
+  const copy = sliceMethod(settingsJs, '_copyUsernodeDiagnostics');
+  assert.match(copy, /PlatformUI\.copyText\(/);
+  assert.doesNotMatch(copy, /PlatformUI\.copy\(/);
   // JS-built, so they must not appear in the static shell.
   for (const id of [
     'settings-usernode-connection',
@@ -1114,12 +1145,10 @@ test('the panel has stable ids and both actions', () => {
 // last sent per entry) is spread across three pieces of state that no
 // log line reports. This box is that state, in one place.
 test('the widget-icon box reports every step of the icon decision', () => {
-  const widget = settingsJs.slice(
-    settingsJs.indexOf('    _renderWidgetIconsSection(parent) {'),
-    settingsJs.indexOf('    _widgetIconTime(ms) {'),
-  );
-  assert.ok(widget, '_renderWidgetIconsSection exists');
-  assert.match(widget, /'Usernode app — widget icons'/);
+  // #1079: the DECISIONS are _widgetIconsView's; the heading is the
+  // component's. Every property below is unchanged.
+  const widget = sliceMethod(settingsJs, '_widgetIconsView');
+  assert.match(usernodeTsx, /Usernode app — widget icons/);
   for (const id of [
     'settings-widget-mechanism-row',
     'settings-widget-registry-row',
@@ -1149,26 +1178,19 @@ test('the widget-icon box reports every step of the icon decision', () => {
 });
 
 test('the widget-icon box is gated on being in the app, never on a capability', () => {
-  const widget = settingsJs.slice(
-    settingsJs.indexOf('    _renderWidgetIconsSection(parent) {'),
-    settingsJs.indexOf('    _widgetIconTime(ms) {'),
-  );
+  const widget = sliceMethod(settingsJs, '_widgetIconsView');
   // The ONLY early return is "no snapshot at all" (not in the app, and
   // not the demo link). Hiding the box when the mechanism or the
   // capability says no would hide it in exactly the cases it exists for.
-  const returns = widget.match(/^\s+(?:if \(.*\) )?return;/gm) || [];
+  const returns = widget.match(/^\s+(?:if \(.*\) )?return( null)?;/gm) || [];
   assert.equal(returns.length, 1, 'one early return, and it is the snapshot');
-  assert.match(widget, /if \(!diag\) return;/);
+  assert.match(widget, /if \(!diag\) return null;/);
   assert.doesNotMatch(widget, /diag\.mechanism !== 'widget'\) return/);
 });
 
 test('per-entry rows separate "never sent" from "sent and not kept"', () => {
-  const entries = settingsJs.slice(
-    settingsJs.indexOf('    _renderWidgetIconEntries(box, diag) {'),
-    settingsJs.indexOf('    _bridgeDiagnostics() {'),
-  );
-  assert.ok(entries, '_renderWidgetIconEntries exists');
-  assert.match(entries, /id = 'settings-widget-icon-entries'/);
+  const entries = sliceMethod(settingsJs, '_widgetIconEntryViews');
+  assert.match(usernodeTsx, /id="settings-widget-icon-entries"/);
   assert.doesNotMatch(html, /id="settings-widget-icon-entries"/);
   // has_icon / has_icon_dark come from the widget; `matches` is SV's own
   // record of what it last sent. The pair is what tells a platform bug
@@ -1206,12 +1228,13 @@ test('?widgeticons=demo opens the box on a plain browser', () => {
   assert.match(demo, /matches: false/, 'and one is stale against what SV sent');
   // The re-check button performs bridge I/O, so it must not render on a
   // browser pretending to be a device.
-  const widget = settingsJs.slice(
-    settingsJs.indexOf('    _renderWidgetIconsSection(parent) {'),
-    settingsJs.indexOf('    _widgetIconTime(ms) {'),
-  );
-  assert.match(widget, /if \(!this\._widgetIconsDemo\(\)\) \{\n\s+this\._unButton\(box, 'Re-check icons'/);
-  assert.match(widget, /Staging demo — sample data/);
+  // #1079: the GATE is the model's, the button and the label are the
+  // component's. The property — no bridge I/O from a browser pretending to be
+  // a device — is unchanged.
+  const widget = sliceMethod(settingsJs, '_widgetIconsView');
+  assert.match(widget, /recheck: !this\._widgetIconsDemo\(\)/);
+  assert.match(usernodeTsx, /w\.recheck \? <UnBtn btn=\{\{ label: 'Re-check icons'/);
+  assert.match(usernodeTsx, /Staging demo — sample data/);
 });
 
 test('Try again re-probes, re-admits and re-arms readiness in one press', () => {
@@ -1272,19 +1295,22 @@ test('a refused bridge changes what the dependent messages say', () => {
   assert.match(helper, /err\.usernodePrivileged === true/,
     'it keys off the bridge tag, not English pattern-matching');
   // Every user-facing failure path that can be caused by a refused bridge.
-  for (const site of [
-    'this._nativeActionMessage(err,\n              `Could not save the setting',
-    "this._nativeActionMessage(err, 'Action failed')",
-    'this._nativeActionMessage(err, failMsg)',
-  ]) {
-    assert.ok(settingsJs.includes(site), `${site} routes through the helper`);
+  // #1079: the row/button/toggle trio hand-copied this wrapper three times;
+  // sections/usernode-ui.tsx's `useAction` is the single copy, and it routes
+  // through the SAME helper by name across the seam.
+  assert.match(usernodeUiTsx, /settings\(\)\?\._nativeActionMessage\?\.\(err, fallback\)/,
+    'the shared control wrapper routes through the helper');
+  for (const fallback of ['Could not save the setting', 'Action failed']) {
+    assert.ok(usernodeUiTsx.includes(fallback), `${fallback} is a fallback message`);
   }
+  assert.ok(settingsJs.includes('this._nativeActionMessage(err, failMsg)'),
+    'the native-screen opener still routes through the helper');
 });
 
 test('the diagnostics text carries no token and no user data', () => {
   const text = settingsJs.slice(
     settingsJs.indexOf('    _bridgeDiagnosticsText(diag) {'),
-    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
+    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
   );
   assert.ok(text, '_bridgeDiagnosticsText exists');
   for (const banned of [
@@ -1315,13 +1341,16 @@ test('the bridgediag demo hook is read-only and reads the HASH query', () => {
     'the ordinary query string is accepted too');
   assert.match(flag, /'bridgediag'\) === 'demo'/);
 
-  const panel = settingsJs.slice(
-    settingsJs.indexOf('    _renderUsernodeConnection(section) {'),
-    settingsJs.indexOf('    async _retryUsernodeConnection() {'),
-  );
-  assert.match(panel, /'Staging demo — sample data'/,
+  // #1079: the panel's `demo` bit is the model's and the label is the
+  // component's — a demo snapshot still says so on screen.
+  assert.match(sliceMethod(settingsJs, '_usernodeConnectionView'),
+    /demo: !!this\._bridgeDiagDemo\(\)/);
+  assert.match(usernodeTsx, /c\.demo \? <UnP note=\{\{ text: 'Staging demo — sample data'/,
     'the demo snapshot is labelled as fake on screen');
-  assert.match(panel, /retry\.disabled = true;\n\s+copy\.disabled = true;/,
+  // Read-only hook: the buttons render so the screenshot shows the real
+  // panel, but they must not touch a bridge or a session.
+  assert.match(sliceMethod(settingsJs, '_usernodeConnectionView'),
+    /retryDisabled: !!this\._bridgeDiagDemo\(\)/,
     'the demo may not drive the real bridge');
 
   const snapshot = settingsJs.slice(

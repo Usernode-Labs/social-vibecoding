@@ -451,7 +451,9 @@ test('Settings’ Allow notifications completes the grant the same way', () => {
   const fn = settingsJs.slice(at, settingsJs.indexOf('\n    // Awaits a bridge setter', at));
   assert.match(fn, /settleIosPushGrant/,
     'iOS grants settle through the shared native-chrome helper');
-  assert.match(fn, /_renderUsernodeBody\(\)/,
+  // #1079: the row is a component driven by a published model, so repainting
+  // from the settled answer IS the publish.
+  assert.match(fn, /_publishUsernode\(\)/,
     'the row repaints from the settled answer');
   assert.ok(!/_unApply\(window\.usernode\.requestPermissions\(\)\)/.test(settingsJs),
     'the old single-read path must not survive anywhere');

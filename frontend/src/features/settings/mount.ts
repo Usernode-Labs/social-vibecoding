@@ -30,6 +30,7 @@ import './settings.js';
 // once-per-document `sv:authed` boot signal.
 import './terms-first-run.js';
 import { settingsNavStore } from './settings-nav-store.js';
+import { usernodeSectionStore, type UsernodeSectionState } from './sections/usernode-store';
 
 settingsNavStore.setFlush(flushSync);
 
@@ -70,4 +71,10 @@ if (typeof window !== 'undefined') {
   }
   const bridge = (host.UsernodeReact ||= {});
   bridge.settings = host.Settings;
+  // #settings-usernode-section's seam. settings.js is a 5,000-line module a
+  // dozen tests load in a `vm`, so it reaches React by name rather than
+  // importing — the same constraint dev-chat.js has.
+  bridge.settingsUsernode = {
+    publish(state: UsernodeSectionState) { usernodeSectionStore.set(state); },
+  };
 }

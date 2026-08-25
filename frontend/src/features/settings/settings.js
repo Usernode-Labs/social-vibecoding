@@ -3864,75 +3864,6 @@
     // part of that chain answered "no". Hiding it on a "no" would hide it
     // exactly when it is wanted — the same mistake the connection panel
     // above was written to undo.
-    _renderWidgetIconsSection(parent) {
-      const diag = this._widgetIconDiagnostics();
-      if (!diag) return;
-      const box = this._unSection(parent, 'Usernode app — widget icons',
-        'What the homescreen widget was told to show, and what it reports back.');
-      if (this._widgetIconsDemo()) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
-          'Staging demo — sample data'));
-      }
-      const isWidget = diag.mechanism === 'widget';
-      this._unStatusRow(box, 'Widget shortcuts', isWidget, 'Available',
-        diag.mechanism ? `Not this device (${diag.mechanism})` : 'Not available',
-        { id: 'settings-widget-mechanism-row' });
-      this._unStatusRow(box, 'Pinned registry', diag.registryLoaded === true,
-        `Loaded — ${diag.entries.length} pinned`, 'Could not be read',
-        { id: 'settings-widget-registry-row' });
-      // Tri-state, and the third state is the point: `has()` used to
-      // collapse "couldn't say" into "no", which is what latched the
-      // single-face path for a whole page load.
-      this._unStatusRow(box, 'Dark icon capability', diag.capability === true,
-        'Advertised by the app',
-        diag.capability === false ? 'Not advertised' : 'The app couldn’t say',
-        { id: 'settings-widget-capability-row' });
-      this._unStatusRow(box, 'Confirmed by the widget',
-        diag.verdict === 'supported', 'Stores both faces',
-        diag.verdict === 'unsupported' ? 'Single face only' : 'Not confirmed yet',
-        { id: 'settings-widget-verdict-row' });
-      const sending = diag.resolved === true
-        ? 'Light + dark pair'
-        : (diag.resolved === false
-          ? `Single face (${diag.scheme})`
-          : 'Undecided — single face for now');
-      this._unStatusRow(box, 'Sending', diag.resolved === true, sending, sending,
-        { id: 'settings-widget-sending-row' });
-      const build = diag.build
-        ? `${diag.build.appVersion} (${diag.build.buildNumber || '?'})`
-        : 'unknown — the verdict is re-confirmed each time';
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
-        `Verdict bound to app version: ${build}`));
-      const healedAt = diag.lastHealAt
-        ? this._widgetIconTime(diag.lastHealAt)
-        : 'never';
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-500',
-        `Last icon check: ${healedAt}` +
-        (diag.lastHealOutcome ? ` — ${diag.lastHealOutcome}` : '')));
-      if (diag.readError) {
-        const reason = this.USERNODE_READ_ERROR_REASONS[diag.readError.kind] ||
-          this.USERNODE_READ_ERROR_FALLBACK;
-        box.appendChild(this._unEl('p',
-          'text-xs text-amber-600 dark:text-amber-400 mt-2',
-          `${diag.readError.method}: ${reason}`));
-      }
-      this._renderWidgetIconEntries(box, diag);
-      if (!this._widgetIconsDemo()) {
-        this._unButton(box, 'Re-check icons', async () => {
-          const home = window.Home;
-          if (home && typeof home._refreshWidgetItems === 'function') {
-            // Clears the one-attempt-per-load cap so the pass this
-            // triggers actually re-sends anything it finds wrong.
-            home._iconHealTried = null;
-            await home._refreshWidgetItems();
-          }
-          this._renderUsernodeBody();
-        });
-      }
-    },
 
     _widgetIconTime(ms) {
       try { return new Date(ms).toLocaleTimeString(); } catch (_) { return String(ms); }
@@ -3943,39 +3874,6 @@
     // is the difference between "SV never sent it" and "SV sent it and
     // the app didn't keep it" — which are different bugs in different
     // repositories, and were previously indistinguishable from outside.
-    _renderWidgetIconEntries(box, diag) {
-      if (!diag.entries.length) {
-        box.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
-          'No shortcuts are pinned to the widget.'));
-        return;
-      }
-      const list = this._unEl('div', 'mt-3 space-y-1');
-      list.id = 'settings-widget-icon-entries';
-      diag.entries.forEach((entry) => {
-        const flag = (v) => (v === true ? 'yes' : (v === false ? 'no' : '—'));
-        const row = this._unEl('div',
-          'flex items-center gap-2 text-xs ' +
-          'text-zinc-600 dark:text-zinc-400');
-        const healthy = entry.foreign
-          ? true
-          : entry.hasIcon !== false && entry.matches;
-        row.appendChild(this._unEl('span',
-          'w-1.5 h-1.5 rounded-full shrink-0 ' +
-          (healthy ? 'bg-emerald-500' : 'bg-amber-500')));
-        row.appendChild(this._unEl('span',
-          'text-zinc-700 dark:text-zinc-300', entry.name));
-        const note = entry.foreign
-          ? 'pinned by another app'
-          : (entry.unknownApp
-            ? 'app not loaded'
-            : `icon ${flag(entry.hasIcon)} · dark ${flag(entry.hasIconDark)} · ` +
-              `sent ${entry.matches ? 'current' : 'stale'}`);
-        row.appendChild(this._unEl('span', 'ml-auto', note));
-        list.appendChild(row);
-      });
-      box.appendChild(list);
-    },
 
     _bridgeDiagnostics() {
       if (this._bridgeDiagDemo()) return this.DEMO_BRIDGE_DIAGNOSTICS;
@@ -4049,64 +3947,6 @@
     // Rendered FIRST inside the Usernode app section and independent of
     // the settings snapshot: when the handshake is refused there is no
     // snapshot, and this panel is the only thing that can say why.
-    _renderUsernodeConnection(section) {
-      const diag = this._bridgeDiagnostics();
-      if (!diag) return null;
-      const demo = this._bridgeDiagDemo();
-      const box = this._unSection(section, 'Usernode app — connection',
-        'What this screen can reach in the app, and what to do when it can’t.');
-      box.id = 'settings-usernode-connection';
-      if (demo) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
-          'Staging demo — sample data'));
-      }
-      const state = (diag.privileged && diag.privileged.state) || 'unknown';
-      this._unStatusRow(box, 'Secure app connection', state === 'ready',
-        this.PRIVILEGED_STATE_LABELS.ready,
-        this.PRIVILEGED_STATE_LABELS[state] || 'Unavailable');
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-400 mt-2',
-        this.PRIVILEGED_STATE_REASONS[state] ||
-          this.PRIVILEGED_STATE_REASONS.unknown));
-      const buildBits = [];
-      if (diag.appVersion) {
-        buildBits.push(`App ${diag.appVersion}` +
-          (diag.buildNumber ? ` (${diag.buildNumber})` : ''));
-      }
-      buildBits.push(`Bridge v${diag.bridgeVersion}`);
-      box.appendChild(this._unEl('p',
-        'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-2 break-words',
-        buildBits.join(' · ')));
-      if (diag.privileged && diag.privileged.message) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
-          diag.privileged.message));
-      }
-      const actions = this._unEl('div');
-      const retry = this._unButton(actions, 'Try again',
-        () => this._retryUsernodeConnection());
-      retry.id = 'settings-usernode-connection-retry';
-      const copy = this._unButton(actions, 'Copy diagnostics', async () => {
-        const text = this._bridgeDiagnosticsText(diag);
-        const ok = window.PlatformUI && PlatformUI.copyText
-          ? await PlatformUI.copyText(text)
-          : false;
-        if (window.PlatformUI && PlatformUI.toast) {
-          PlatformUI.toast(ok ? 'Diagnostics copied' : 'Could not copy',
-            ok ? {} : { error: true });
-        }
-      });
-      copy.id = 'settings-usernode-connection-copy';
-      if (demo) {
-        // Read-only hook: the buttons are rendered so the screenshot shows
-        // the real panel, but they must not touch a bridge or a session.
-        retry.disabled = true;
-        copy.disabled = true;
-      }
-      box.appendChild(actions);
-      return box;
-    },
 
     // Everything a stuck device can retry from here, in one press: a fresh
     // capability probe, a fresh admission attempt, a fresh readiness
@@ -4134,8 +3974,6 @@
     },
 
     async _renderUsernodeSection() {
-      const section = document.getElementById('settings-usernode-section');
-      if (!section) return;
       // Gated on BEING IN THE APP, not on the getSettingsState capability.
       // That probe is itself a casualty of the failures this section now
       // diagnoses — a degraded getBridgeInfo answers "no capabilities", so
@@ -4149,11 +3987,13 @@
       // The gate resolves asynchronously downstream, so the "Usernode app"
       // menu row is only settled here — re-render the nav either way.
       if (!gated) {
-        section.classList.add('hidden');
+        this._usernodeGated = false;
+        this._publishUsernode();
         this._renderNavIfOpen();
         return;
       }
-      section.classList.remove('hidden');
+      this._usernodeGated = true;
+      this._publishUsernode();
       this._renderNavIfOpen();
       const token = ++this._usernodeRenderToken;
       // A fresh mount re-probes the real notification permission (below)
@@ -4167,14 +4007,15 @@
         this._unPushStatus = demo === 'ios-denied' ? 'denied' : 'undetermined';
         this._unPushProbed = true;
         this._unCanOpenNotifSettings = true;
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
         return;
       }
       if (!this._usernodeState) {
-        section.textContent = '';
-        section.appendChild(this._unEl('div',
-          'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700 ' +
-          'text-xs text-zinc-500', 'Loading Usernode app settings…'));
+        // The in-place progress line, which a retry swaps in while leaving
+        // the rest of the section up.
+        this._usernodeLoading = true;
+        this._publishUsernode();
       }
       let state = null;
       try {
@@ -4194,11 +4035,18 @@
         // The app may simply still be booting; retry itself once it reports
         // a ready identity, so the section fills in without a tap.
         this._armUsernodeAuthStatusRetry();
-        this._renderUsernodeBody(this._usernodeReadError());
+        this._usernodeLoading = false;
+        this._publishUsernode();
         return;
       }
       this._clearUsernodeAuthStatusRetry();
-      this._renderUsernodeBody();
+      this._usernodeLoading = false;
+      this._publishUsernode();
+      // Both used to be renderers that fetched into their own host and
+      // repainted it through a local closure. They fill their slice of the
+      // model instead, so the rest of the body never waits on either.
+      this._initSocialPush();
+      this._initBlockProduction();
       this._probeUnNotifPermission(token);
     },
 
@@ -4240,7 +4088,8 @@
         canOpen !== this._unCanOpenNotifSettings;
       this._unCanOpenNotifSettings = canOpen;
       if (status != null) this._unPushStatus = status;
-      if (changed) this._renderUsernodeBody();
+      if (changed) this._usernodeLoading = false;
+      this._publishUsernode();
     },
 
     // Why the snapshot came back empty, straight from the bridge's
@@ -4281,83 +4130,9 @@
       this._usernodeAuthStatusListener = null;
     },
 
-    _unEl(tag, className, text) {
-      const el = document.createElement(tag);
-      if (className) el.className = className;
-      if (text != null) el.textContent = text;
-      return el;
-    },
 
-    _unSection(parent, title, description) {
-      const box = this._unEl('div',
-        'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700');
-      box.appendChild(this._unEl('h3',
-        'text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', title));
-      if (description) {
-        box.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-500 mb-3', description));
-      }
-      parent.appendChild(box);
-      return box;
-    },
 
-    _unToggle(parent, label, checked, onChange, opts = {}) {
-      const wrap = this._unEl('label',
-        'flex items-center gap-2 cursor-pointer select-none mt-2');
-      const input = this._unEl('input', 'un-switch');
-      input.type = 'checkbox';
-      input.checked = !!checked;
-      input.addEventListener('change', async (e) => {
-        input.disabled = true;
-        try {
-          await onChange(e.target.checked);
-        } catch (err) {
-          console.warn('[settings] usernode toggle failed:', err);
-          input.checked = !e.target.checked;
-          if (window.PlatformUI) {
-            const detail = opts.includeErrorDetail && err && err.message
-              ? `: ${err.message}` : '';
-            PlatformUI.toast(this._nativeActionMessage(err,
-              `Could not save the setting${detail}`));
-          }
-        } finally {
-          input.disabled = false;
-        }
-      });
-      wrap.appendChild(input);
-      wrap.appendChild(this._unEl('span',
-        'text-sm text-zinc-800 dark:text-zinc-200', label));
-      parent.appendChild(wrap);
-      return input;
-    },
 
-    _unButton(parent, label, onClick, opts = {}) {
-      const btn = this._unEl('button',
-        'mt-3 mr-2 rounded-md border px-3 py-1.5 text-xs font-medium ' +
-        'transition-colors ' +
-        (opts.danger
-          ? 'border-red-400 dark:border-red-700 text-red-600 ' +
-            'dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950'
-          : 'border-zinc-300 dark:border-zinc-700 text-zinc-700 ' +
-            'dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
-        label);
-      btn.type = 'button';
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        try {
-          await onClick();
-        } catch (err) {
-          console.warn('[settings] usernode action failed:', err);
-          if (window.PlatformUI) {
-            PlatformUI.toast(this._nativeActionMessage(err, 'Action failed'));
-          }
-        } finally {
-          btn.disabled = false;
-        }
-      });
-      parent.appendChild(btn);
-      return btn;
-    },
 
     // `opts.onActivate` turns the row itself into a real control.
     //
@@ -4366,48 +4141,6 @@
     // rendered underneath, conditionally. On a phone the row is what a
     // thumb lands on, so the notifications row now carries the tap and the
     // chip is a second affordance rather than the only one.
-    _unStatusRow(parent, label, ok, okText, badText, opts = {}) {
-      const interactive = typeof opts.onActivate === 'function';
-      const row = this._unEl(interactive ? 'button' : 'div',
-        'flex items-center gap-2 mt-1 text-sm w-full text-left' +
-        (interactive
-          ? ' rounded-md -mx-1 px-1 py-1 transition-colors ' +
-            'hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          : ''));
-      if (opts.id) row.id = opts.id;
-      const dot = this._unEl('span',
-        'w-2 h-2 rounded-full shrink-0 ' +
-        (ok ? 'bg-emerald-500' : 'bg-amber-500'));
-      row.appendChild(dot);
-      row.appendChild(this._unEl('span',
-        'text-zinc-800 dark:text-zinc-200', label));
-      row.appendChild(this._unEl('span',
-        'ml-auto text-xs ' + (ok
-          ? 'text-emerald-600 dark:text-emerald-400'
-          : 'text-amber-600 dark:text-amber-400'),
-        ok ? okText : badText));
-      if (interactive) {
-        row.type = 'button';
-        if (opts.hint) row.setAttribute('aria-label', `${label} — ${opts.hint}`);
-        row.appendChild(this._unEl('span',
-          'text-xs text-zinc-400 dark:text-zinc-500 shrink-0', '›'));
-        row.addEventListener('click', async () => {
-          row.disabled = true;
-          try {
-            await opts.onActivate();
-          } catch (err) {
-            console.warn('[settings] usernode row action failed:', err);
-            if (window.PlatformUI) {
-              PlatformUI.toast(this._nativeActionMessage(err, 'Action failed'));
-            }
-          } finally {
-            row.disabled = false;
-          }
-        });
-      }
-      parent.appendChild(row);
-      return row;
-    },
 
     _openNativeScreen(screen, failMsg) {
       if (!window.usernode ||
@@ -4460,12 +4193,14 @@
           ? 'Opening the permission prompt…'
           : 'Opening the notification prompt…',
       };
-      this._renderUsernodeBody();
+      this._usernodeLoading = false;
+      this._publishUsernode();
       try {
         await this._runNotifPermissionTap(isAndroid);
       } finally {
         this._unRequestInFlight = false;
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
       }
     },
 
@@ -4580,7 +4315,8 @@
             ? 'Permission granted.'
             : 'Notifications are now allowed for Usernode.',
         };
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
         return;
       }
       this._unNotifDeadEnd(outcome.verdict, {
@@ -4588,7 +4324,8 @@
         settings: outcome.settings === true,
         reason: outcome.reason,
       });
-      this._renderUsernodeBody();
+      this._usernodeLoading = false;
+      this._publishUsernode();
     },
 
     // The bridge's own ceiling for requestPermissions is two minutes,
@@ -4677,27 +4414,6 @@
     // capability — a way out of a determined-denied permission. A button
     // that cannot work is worse than no button, so an inconclusive
     // capability probe (null) renders the manual instructions instead.
-    _renderNotifNotice(parent) {
-      const n = this._unNotifNotice;
-      if (!n) return;
-      const box = this._unEl('div',
-        'mt-2 rounded-md border px-3 py-2 text-xs ' +
-        (n.tone === 'warn'
-          ? 'border-amber-300 dark:border-amber-800 bg-amber-50 ' +
-            'dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
-          : n.tone === 'ok'
-            ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 ' +
-              'dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
-            : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 ' +
-              'dark:text-zinc-300'),
-        n.text);
-      box.id = 'settings-notif-notice';
-      parent.appendChild(box);
-      if (n.settings && this._unCanOpenNotifSettings === true) {
-        this._unButton(parent, 'Open notification settings', () =>
-          window.usernode.openNotificationSettings());
-      }
-    },
 
     // Awaits a bridge setter and re-renders the section from the refreshed
     // snapshot it resolves with.
@@ -4705,7 +4421,8 @@
       const state = await promise;
       if (state && typeof state === 'object') {
         this._usernodeState = state;
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
       }
     },
 
@@ -4777,7 +4494,15 @@
         }
       }
 
-      const el = (tag, cls, text) => this._unEl(tag, cls, text);
+      // A local element helper. This panel is handed to the kit
+      // (PlatformUI.sheet reparents it), so it stays imperative — it was
+      // borrowing the usernode section's `_unEl`, which converted with it.
+      const el = (tag, cls, text) => {
+        const node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text != null) node.textContent = text;
+        return node;
+      };
       const panel = el('div', 'px-4 pb-5');
       panel.appendChild(el('div', 'text-lg font-bold py-3',
         payload.title || 'Terms'));
@@ -4936,178 +4661,458 @@
     // activity notifications, block production, Terms, the FAQ, the native
     // diagnostics screens — still renders. A failed read used to blank the
     // whole section, turning a transient app hiccup into a dead end.
-    _renderUsernodeBody(readError, loading) {
-      const section = document.getElementById('settings-usernode-section');
+    // ── Usernode app section: view builders ────────────────────────────
+    //
+    // #1079: `_renderUsernodeBody` and eight sibling renderers built ~800
+    // lines of `document.createElement` into #settings-usernode-section.
+    // They are sections/usernode.tsx now, and what is left here is the
+    // reading: every bridge call, every fetch, every retry ladder and every
+    // staleness token stays exactly where it was, and ends in a publish.
+
+    _publishUsernode() {
+      const react = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsUsernode : null;
+      if (!react || !react.publish) return;
+      react.publish(this._usernodeView());
+    },
+
+    /** The whole section, as one plain serialisable model. */
+    _usernodeView() {
       const s = this._usernodeState;
-      if (!section) return;
-      section.textContent = '';
       const perms = (s && s.permissions) || {};
       const isAndroid = perms.platform === 'android';
+      const demo = this._unDemoMode();
+      return {
+        gated: this._usernodeGated === true,
+        connection: this._usernodeConnectionView(),
+        body: this._usernodeBodyView(),
+        // The demo link renders the permission rows and stops: everything
+        // below reads the live bridge, which a browser does not have.
+        belowDemoCut: !demo,
+        socialPush: this._socialPushView(),
+        blockProduction: this._bpView(),
+        nodeSleep: s ? {
+          label: 'Node sleep on inactivity',
+          checked: s.nodeSleepEnabled !== false,
+          action: '_setNodeSleep',
+        } : null,
+        privacy: s ? {
+          facematch: {
+            label: 'Strict facematch',
+            checked: s.facematchStrict !== false,
+            action: '_setFacematchStrict',
+          },
+          reset: { label: 'Restart ZK challenge', action: '_resetZkChallenge', danger: true },
+        } : null,
+        widgetIcons: this._widgetIconsView(),
+        diagnostics: {
+          debugMode: s ? {
+            label: 'Debug mode', checked: s.debugMode === true, action: '_setDebugMode',
+          } : null,
+          actions: [
+            { label: 'Device benchmark', action: '_openBenchmarkScreen' },
+            { label: 'HTTP debug logs', action: '_openHttpLogsScreen' },
+          ],
+        },
+        about: { notes: this._usernodeBuildNotes(), actions: [{
+          label: (s && s.termsAccepted === false)
+            ? 'Review terms (not yet accepted)' : 'Terms',
+          action: '_openTermsFromUsernode',
+        }] },
+        account: (s && s.authStatus !== 'authenticated') ? { rows: [], actions: [] } : null,
+        isAndroid,
+      };
+    },
 
-      // First, so a refused handshake explains itself above the failures
-      // it causes rather than below them.
-      this._renderUsernodeConnection(section);
-
-      if (!s) {
-        this._renderUsernodeError(section, readError, loading);
-      } else {
-        // Device permissions — mirrors the native QuickSettingsPanel.
-        // iOS maps requestPermissions() to the notification prompt and has
-        // no block production since v4 — describe each platform's real ask.
-        const permBox = this._unSection(section, 'Usernode app — device permissions',
-          isAndroid
-            ? 'Block production needs the app to wake your device at exact slot times.'
-            : 'Notifications let Usernode alert you about node and account activity.');
-        if (this._unDemoMode()) {
-          permBox.appendChild(this._unEl('p',
-            'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
-            'Staging demo — sample data'));
-        }
-        // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
-        // notification permission (there are no exact alarms on iOS), so
-        // once a request has settled through NativeChrome.settleIosPushGrant
-        // that answer is the authority — the same rule the first-run sheet
-        // in public/js/native-chrome.js applies.
-        const notifOk = !isAndroid && this._unPushStatus != null
-          ? this._unPushStatus === 'granted'
-          : !!perms.exactAlarmGranted;
-        // The row IS the control. It used to be an inert div whose only
-        // affordance was the chip below, and that chip only rendered when
-        // the (iOS-meaningless) exactAlarmGranted boolean said "not
-        // granted" — so on a build reporting it `true` there was nothing
-        // to tap at all. The row now always carries the ask.
-        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Notifications',
-          notifOk, 'Granted', 'Not granted', {
-            id: 'settings-notif-row',
-            hint: isAndroid ? 'request permissions' : 'allow notifications',
-            onActivate: () => this._unRequestPermissions(isAndroid),
-          });
-        if (!notifOk) {
-          this._unButton(permBox,
-            isAndroid ? 'Request permissions' : 'Allow notifications',
-            () => this._unRequestPermissions(isAndroid));
-        }
-        this._renderNotifNotice(permBox);
-        if (isAndroid) {
-          this._unStatusRow(permBox, 'Battery optimization',
-            perms.batteryOptDisabled === true, 'Unrestricted', 'Restricted');
-          if (perms.batteryOptDisabled !== true) {
-            this._unButton(permBox, 'Open battery settings', () =>
-              window.usernode.openBatterySettings());
-          }
-          if (perms.deviceManufacturer) {
-            permBox.appendChild(this._unEl('p',
-              'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
-              `Device: ${perms.deviceManufacturer}`));
-          }
-        }
-      }
-      // The demo link renders the permissions rows and stops: the sections
-      // below all read the live bridge, which a browser does not have.
-      if (this._unDemoMode()) return;
-      this._renderSocialPushSection(section);
-      // (The iOS keep-alive toggle is gone — thin-shell migration: block
-      // production is disabled on iOS and the keep-alive service was
-      // deleted from the app.)
-
-      // Node.
-      if (s) {
-        const nodeBox = this._unSection(section, 'Usernode app — node',
-          'The node pauses when the app has been inactive for a while and wakes on your next interaction.');
-        this._unToggle(nodeBox, 'Node sleep on inactivity',
-          s.nodeSleepEnabled !== false,
-          (v) => this._unApply(window.usernode.setNodeSleepEnabled(v)));
-      }
-
-      // Block production (onboarding flow alignment): producing blocks is
-      // a released capability. The wallet works for dapp transactions
-      // either way; this section is the "ask to produce blocks" queue.
-      this._renderBpSection(section);
-
-      // Privacy & identity.
-      if (s) {
-        const privBox = this._unSection(section, 'Usernode app — privacy & identity',
-          'Controls for the ZK passport identity flow.');
-        this._unToggle(privBox, 'Strict facematch',
-          s.facematchStrict !== false,
-          (v) => this._unApply(window.usernode.setFacematchStrict(v)));
-        this._unButton(privBox, 'Restart ZK challenge', async () => {
-          const ok = await PlatformUI.confirm({
-            title: 'Restart the ZK challenge?',
-            message: 'Your in-progress identity registration will be discarded.',
-            confirmLabel: 'Restart',
-            danger: true,
-          });
-          if (!ok) return;
-          await window.usernode.resetZkChallenge();
-          if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
-        }, { danger: true });
-      }
-
-      // Widget icons. Above the general diagnostics box because it is the
-      // one someone arrives here for: "the widget tile is the wrong
-      // colour" is a user-visible symptom, not a debugging tool.
-      this._renderWidgetIconsSection(section);
-
-      // Diagnostics. The two native screens are reachable whether or not
-      // the snapshot loaded — they are exactly what someone debugging a
-      // failed read wants — so only the Debug mode toggle is gated.
-      const diagBox = this._unSection(section, 'Usernode app — diagnostics',
-        'Debugging tools for the app and its embedded node.');
-      if (s) {
-        this._unToggle(diagBox, 'Debug mode',
-          s.debugMode === true,
-          (v) => this._unApply(window.usernode.setDebugMode(v)));
-      }
-      const diagBtns = this._unEl('div');
-      this._unButton(diagBtns, 'Device benchmark', () =>
-        this._openNativeScreen('benchmark', 'Could not open the benchmark'));
-      this._unButton(diagBtns, 'HTTP debug logs', () =>
-        this._openNativeScreen('httpLogs', 'Could not open the logs'));
-      diagBox.appendChild(diagBtns);
-
-      // About & legal. The build line needs the snapshot; Terms and the FAQ
-      // do not (terms are session-authed web routes).
-      const aboutBox = this._unSection(section, 'Usernode app — about & legal');
-      const bi = (s && s.buildInfo) || {};
-      const buildBits = [];
+    _usernodeBuildNotes() {
+      const bi = (this._usernodeState && this._usernodeState.buildInfo) || {};
+      const bits = [];
       if (bi.appVersion) {
-        buildBits.push(`App ${bi.appVersion}` +
-          (bi.buildNumber ? ` (${bi.buildNumber})` : ''));
+        bits.push(`App ${bi.appVersion}` + (bi.buildNumber ? ` (${bi.buildNumber})` : ''));
       }
-      if (bi.nodeVersion) buildBits.push(`Node ${bi.nodeVersion}`);
-      if (bi.commitHash) buildBits.push(bi.commitHash);
-      if (buildBits.length) {
-        aboutBox.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-400 font-mono',
-          buildBits.join(' · ')));
-      }
-      const termsRow = this._unEl('div');
-      // Terms render in a web sheet now (session-authed /challenges-api
-      // twins) — the native terms screen is gone. On accept, refresh the
-      // usernode snapshot so the label flips without reopening Settings.
-      this._unButton(termsRow, (s && s.termsAccepted === false)
-        ? 'Review terms (not yet accepted)' : 'Terms', () =>
-        this.showTermsSheet(() => this._renderUsernodeSection()));
-      aboutBox.appendChild(termsRow);
-      this._renderUsernodeFaq(aboutBox, isAndroid, perms.deviceManufacturer);
+      if (bi.nodeVersion) bits.push(`Node ${bi.nodeVersion}`);
+      if (bi.commitHash) bits.push(bi.commitHash);
+      return bits.length ? [{ text: bits.join(' · '), tone: 'mono' }] : [];
+    },
 
-      // Account (thin-shell migration). Platform login is the only
-      // sign-in surface: the native app's credential is provisioned from
-      // the web session by the boot handoff (native-chrome.js), so there
-      // is no separate "log in to the app" path anymore. The redundant
-      // native-only "Log out of the Usernode app" row is gone too
-      // (onboarding flow alignment): it was a no-op in practice — the
-      // boot handoff would immediately re-authenticate the native side
-      // from the still-live web session — and the main "Log out" at the
-      // top of this modal already tears down both sides at once. Only
-      // the not-yet-authenticated hint remains.
-      if (s && s.authStatus !== 'authenticated') {
-        const acctBox = this._unSection(section, 'Usernode app — account');
-        acctBox.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-400',
-          'The app signs in automatically with your platform account. ' +
-          'If this message persists, try closing and reopening the app.'));
+    _usernodeConnectionView() {
+      const diag = this._bridgeDiagnostics();
+      if (!diag) return null;
+      const state = (diag.privileged && diag.privileged.state) || 'unknown';
+      const bits = [];
+      if (diag.appVersion) {
+        bits.push(`App ${diag.appVersion}` +
+          (diag.buildNumber ? ` (${diag.buildNumber})` : ''));
+      }
+      bits.push(`Bridge v${diag.bridgeVersion}`);
+      return {
+        demo: !!this._bridgeDiagDemo(),
+        row: {
+          label: 'Secure app connection',
+          ok: state === 'ready',
+          text: state === 'ready'
+            ? this.PRIVILEGED_STATE_LABELS.ready
+            : (this.PRIVILEGED_STATE_LABELS[state] || 'Unavailable'),
+        },
+        reason: this.PRIVILEGED_STATE_REASONS[state] ||
+          this.PRIVILEGED_STATE_REASONS.unknown,
+        build: bits.join(' · '),
+        message: (diag.privileged && diag.privileged.message) || null,
+        // Read-only hook: the buttons render so the screenshot shows the real
+        // panel, but they must not touch a bridge or a session.
+        retryDisabled: !!this._bridgeDiagDemo(),
+      };
+    },
+
+    _usernodeBodyView() {
+      const s = this._usernodeState;
+      if (!s) {
+        if (this._usernodeLoading) return { kind: 'loading' };
+        const readError = this._usernodeReadError();
+        const kind = readError && readError.kind;
+        return {
+          kind: 'error',
+          reason: this.USERNODE_READ_ERROR_REASONS[kind] ||
+            this.USERNODE_READ_ERROR_FALLBACK,
+          message: (readError && readError.message) || null,
+        };
+      }
+      const perms = s.permissions || {};
+      const isAndroid = perms.platform === 'android';
+      // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
+      // notification permission (there are no exact alarms on iOS), so once a
+      // request has settled through NativeChrome.settleIosPushGrant that
+      // answer is the authority — the same rule the first-run sheet applies.
+      const notifOk = !isAndroid && this._unPushStatus != null
+        ? this._unPushStatus === 'granted'
+        : !!perms.exactAlarmGranted;
+      const n = this._unNotifNotice;
+      return {
+        kind: 'permissions',
+        demo: !!this._unDemoMode(),
+        heading: 'Usernode app — device permissions',
+        description: isAndroid
+          ? 'Block production needs the app to wake your device at exact slot times.'
+          : 'Notifications let Usernode alert you about node and account activity.',
+        // The row IS the control. It used to be an inert div whose only
+        // affordance was a chip below, rendered only when the (iOS-meaningless)
+        // exactAlarmGranted boolean said "not granted" — so on a build
+        // reporting it `true` there was nothing to tap at all.
+        row: {
+          id: 'settings-notif-row',
+          label: isAndroid ? 'Exact alarms' : 'Notifications',
+          ok: notifOk,
+          text: notifOk ? 'Granted' : 'Not granted',
+          hint: isAndroid ? 'request permissions' : 'allow notifications',
+          action: '_requestUsernodePermissions',
+        },
+        button: notifOk ? null : {
+          label: isAndroid ? 'Request permissions' : 'Allow notifications',
+          action: '_requestUsernodePermissions',
+        },
+        notice: n ? {
+          text: n.text,
+          tone: n.tone === 'warn' ? 'warn' : (n.tone === 'ok' ? 'ok' : 'plain'),
+          settings: !!(n.settings && this._unCanOpenNotifSettings === true),
+        } : null,
+        android: isAndroid ? {
+          row: {
+            label: 'Battery optimization',
+            ok: perms.batteryOptDisabled === true,
+            text: perms.batteryOptDisabled === true ? 'Unrestricted' : 'Restricted',
+          },
+          button: perms.batteryOptDisabled === true ? null : {
+            label: 'Open battery settings', action: '_openBatterySettings',
+          },
+          device: perms.deviceManufacturer ? `Device: ${perms.deviceManufacturer}` : null,
+        } : null,
+      };
+    },
+
+    _socialPushView() {
+      if (!window.SocialPush || this._socialPushSupported === false) {
+        return { kind: 'absent' };
+      }
+      const state = this._socialPushState;
+      if (state === undefined) return { kind: 'checking' };
+      if (!state) {
+        const admissionPending = window.NativeChrome &&
+          typeof NativeChrome.isSessionAdmitted === 'function' &&
+          !NativeChrome.isSessionAdmitted();
+        // "Finishing secure app sign-in…" is a lie once the handshake has been
+        // refused — nothing is finishing. Name the state and point at the
+        // panel that explains it.
+        const diag = this._bridgeDiagnostics();
+        const stuck = !!diag && diag.privileged &&
+          (diag.privileged.state === 'blocked-frame' ||
+           diag.privileged.state === 'unattached');
+        const failure = (window.NativeChrome &&
+          typeof NativeChrome.lastSessionFailure === 'function')
+          ? NativeChrome.lastSessionFailure() : null;
+        return {
+          kind: 'unavailable',
+          reason: stuck
+            ? 'The Usernode app isn’t accepting this screen’s secure ' +
+              'connection, so notifications can’t be set up. See “Usernode ' +
+              'app — connection” above.'
+            : (admissionPending
+              ? 'Finishing secure app sign-in before enabling notifications…'
+              : 'Notification settings are temporarily unavailable.'),
+          failure: (failure && failure.message) || null,
+          retry: !!(admissionPending && window.NativeChrome &&
+            typeof NativeChrome.recoverSessionAdmission === 'function'),
+        };
+      }
+      let status = 'Off on this device.';
+      if (state.deliveryActive) {
+        status = 'On — this device is registered for activity notifications.';
+      } else if (state.permissionStatus === 'denied') {
+        status = 'Notification permission is denied in the device settings.';
+      } else if (state.enabled && state.registrationStatus === 'registering') {
+        status = 'Enabling notifications…';
+      } else if (state.enabled) {
+        status = 'Enabled, but delivery is not active yet.';
+      }
+      return { kind: 'ready', enabled: !!state.enabled, status };
+    },
+
+    _bpView() {
+      const state = this._bpState;
+      if (state === undefined) return { kind: 'checking' };
+      if (!state) return { kind: 'note', text: 'Could not check block-production status right now.' };
+      if (state.bp_released) return { kind: 'note', text: 'Released — your node produces blocks when it wins slots.' };
+      if (state.bp_requested) return { kind: 'note', text: 'Request pending — you’ll start producing automatically once an admin releases your keys.' };
+      if (!state.has_platform_access) return { kind: 'note', text: 'Available once your account has platform access.' };
+      return { kind: 'ask' };
+    },
+
+    _widgetIconsView() {
+      const diag = this._widgetIconDiagnostics();
+      if (!diag) return null;
+      const sending = diag.resolved === true
+        ? 'Light + dark pair'
+        : (diag.resolved === false
+          ? `Single face (${diag.scheme})`
+          : 'Undecided — single face for now');
+      const build = diag.build
+        ? `${diag.build.appVersion} (${diag.build.buildNumber || '?'})`
+        : 'unknown — the verdict is re-confirmed each time';
+      const healedAt = diag.lastHealAt ? this._widgetIconTime(diag.lastHealAt) : 'never';
+      const notes = [
+        { text: `Verdict bound to app version: ${build}`, tone: 'muted' },
+        { text: `Last icon check: ${healedAt}` +
+          (diag.lastHealOutcome ? ` — ${diag.lastHealOutcome}` : ''), tone: 'muted' },
+      ];
+      if (diag.readError) {
+        notes.push({
+          text: `${diag.readError.method}: ` +
+            (this.USERNODE_READ_ERROR_REASONS[diag.readError.kind] ||
+              this.USERNODE_READ_ERROR_FALLBACK),
+          tone: 'warn',
+        });
+      }
+      return {
+        demo: !!this._widgetIconsDemo(),
+        rows: [
+          { id: 'settings-widget-mechanism-row', label: 'Widget shortcuts',
+            ok: diag.mechanism === 'widget',
+            text: diag.mechanism === 'widget' ? 'Available'
+              : (diag.mechanism ? `Not this device (${diag.mechanism})` : 'Not available') },
+          { id: 'settings-widget-registry-row', label: 'Pinned registry',
+            ok: diag.registryLoaded === true,
+            text: diag.registryLoaded === true
+              ? `Loaded — ${diag.entries.length} pinned` : 'Could not be read' },
+          // Tri-state, and the third state is the point: `has()` used to
+          // collapse "couldn't say" into "no".
+          { id: 'settings-widget-capability-row', label: 'Dark icon capability',
+            ok: diag.capability === true,
+            text: diag.capability === true ? 'Advertised by the app'
+              : (diag.capability === false ? 'Not advertised' : 'The app couldn’t say') },
+          { id: 'settings-widget-verdict-row', label: 'Confirmed by the widget',
+            ok: diag.verdict === 'supported',
+            text: diag.verdict === 'supported' ? 'Stores both faces'
+              : (diag.verdict === 'unsupported' ? 'Single face only' : 'Not confirmed yet') },
+          { id: 'settings-widget-sending-row', label: 'Sending',
+            ok: diag.resolved === true, text: sending },
+        ],
+        notes,
+        entries: this._widgetIconEntryViews(diag),
+        recheck: !this._widgetIconsDemo(),
+      };
+    },
+
+    /** Widget entry rows: dot + name + note, as data. */
+    _widgetIconEntryViews(diag) {
+      if (!diag.entries.length) {
+        return [{ key: 'none', ok: true, name: '', note: '',
+          empty: 'No shortcuts are pinned to the widget.' }];
+      }
+      const flag = (v) => (v === true ? 'yes' : (v === false ? 'no' : '—'));
+      return diag.entries.map((entry, i) => ({
+        key: String(entry.name || i),
+        ok: entry.foreign ? true : (entry.hasIcon !== false && entry.matches),
+        name: entry.name,
+        note: entry.foreign
+          ? 'pinned by another app'
+          : (entry.unknownApp
+            ? 'app not loaded'
+            : `icon ${flag(entry.hasIcon)} · dark ${flag(entry.hasIconDark)} · ` +
+              `sent ${entry.matches ? 'current' : 'stale'}`),
+        empty: null,
+      }));
+    },
+
+    // ── Usernode app section: the named actions the components dispatch ──
+    //
+    // Each was an inline closure passed to `_unButton` / `_unToggle` /
+    // `_unStatusRow`. They are named methods so the view model stays plain
+    // serialisable data — the components carry an action STRING, never a
+    // function. The disable/toast/re-enable wrapper each one used to repeat
+    // lives in sections/usernode-ui.tsx's `useAction`, once.
+
+    async _copyUsernodeDiagnostics() {
+      const diag = this._bridgeDiagnostics();
+      const text = this._bridgeDiagnosticsText(diag);
+      const ok = window.PlatformUI && PlatformUI.copyText
+        ? await PlatformUI.copyText(text) : false;
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(ok ? 'Diagnostics copied' : 'Could not copy',
+          ok ? {} : { error: true });
+      }
+    },
+
+    /** Swap the failure box for the progress line and re-read. */
+    async _retryUsernodeRead() {
+      this._usernodeLoading = true;
+      this._publishUsernode();
+      await this._renderUsernodeSection();
+    },
+
+    _requestUsernodePermissions() {
+      const perms = (this._usernodeState && this._usernodeState.permissions) || {};
+      return this._unRequestPermissions(perms.platform === 'android');
+    },
+
+    _openBatterySettings() { return window.usernode.openBatterySettings(); },
+    _openNotifSettings() { return window.usernode.openNotificationSettings(); },
+    _setNodeSleep(v) { return this._unApply(window.usernode.setNodeSleepEnabled(v)); },
+    _setFacematchStrict(v) { return this._unApply(window.usernode.setFacematchStrict(v)); },
+    _setDebugMode(v) { return this._unApply(window.usernode.setDebugMode(v)); },
+    _openBenchmarkScreen() {
+      return this._openNativeScreen('benchmark', 'Could not open the benchmark');
+    },
+    _openHttpLogsScreen() {
+      return this._openNativeScreen('httpLogs', 'Could not open the logs');
+    },
+    _openTermsFromUsernode() {
+      return this.showTermsSheet(() => this._renderUsernodeSection());
+    },
+
+    async _resetZkChallenge() {
+      const ok = await PlatformUI.confirm({
+        title: 'Restart the ZK challenge?',
+        message: 'Your in-progress identity registration will be discarded.',
+        confirmLabel: 'Restart',
+        danger: true,
+      });
+      if (!ok) return;
+      await window.usernode.resetZkChallenge();
+      if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
+    },
+
+    async _recheckWidgetIcons() {
+      const home = window.Home;
+      if (home && typeof home._refreshWidgetItems === 'function') {
+        // Clears the one-attempt-per-load cap so the pass this triggers
+        // actually re-sends anything it finds wrong.
+        home._iconHealTried = null;
+        await home._refreshWidgetItems();
+      }
+      this._publishUsernode();
+    },
+
+    // ── activity notifications ─────────────────────────────────────────
+    //
+    // The listener and the support probe stay here. What went away is the
+    // `box.isConnected` guard on every event and the `box.remove()` on an
+    // unsupported build: a publish to an unmounted component is a no-op, and
+    // "unsupported" is a model state the rest of the screen can read.
+
+    _initSocialPush() {
+      if (this._socialPushStateListener) {
+        window.removeEventListener(
+          'usernode:social-push-state', this._socialPushStateListener);
+        this._socialPushStateListener = null;
+      }
+      if (!window.SocialPush) { this._socialPushSupported = false; return; }
+      const onState = (event) => {
+        this._socialPushState = (event && event.detail) || null;
+        this._publishUsernode();
+      };
+      this._socialPushStateListener = onState;
+      window.addEventListener('usernode:social-push-state', onState);
+      SocialPush.isSupported().then((supported) => {
+        this._socialPushSupported = !!supported;
+        if (!supported) {
+          window.removeEventListener('usernode:social-push-state', onState);
+          this._socialPushStateListener = null;
+          this._publishUsernode();
+          return null;
+        }
+        return SocialPush.getState();
+      }).then((state) => {
+        if (this._socialPushSupported) this._socialPushState = state || null;
+        this._publishUsernode();
+      }).catch((err) => {
+        console.warn('[settings] social push state failed:', err);
+        this._socialPushState = null;
+        this._publishUsernode();
+      });
+    },
+
+    async _retrySocialPush() {
+      await NativeChrome.recoverSessionAdmission();
+      if (window.SocialPush &&
+          typeof SocialPush.retryBridgeReadiness === 'function') {
+        try { SocialPush.retryBridgeReadiness(); } catch (_) {}
+      }
+      this._socialPushState = await SocialPush.getState();
+      this._publishUsernode();
+    },
+
+    async _setSocialPushEnabled(enabled) {
+      this._socialPushState = await SocialPush.setEnabled(enabled);
+      this._publishUsernode();
+    },
+
+    // ── block production queue ─────────────────────────────────────────
+    //
+    // State comes from the session-authed /challenges-api twins; the async
+    // load fills its slice in place so the rest of the body never waits on it.
+
+    _initBlockProduction() {
+      this._bpState = undefined;
+      fetch('/challenges-api/bp/state', { credentials: 'same-origin' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => { this._bpState = (data && data.success !== false) ? data.data : null; })
+        .catch(() => { this._bpState = null; })
+        .then(() => this._publishUsernode());
+    },
+
+    async _askForBlockProduction() {
+      try {
+        const res = await fetch('/challenges-api/bp/request', {
+          method: 'POST', credentials: 'same-origin',
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || data.success === false) {
+          throw new Error((data && data.error) || 'Request failed');
+        }
+        if (window.PlatformUI) PlatformUI.toast('Request sent — an admin will release your keys');
+        this._bpState = Object.assign({}, this._bpState || {}, { bp_requested: true });
+        this._publishUsernode();
+      } catch (e) {
+        if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
       }
     },
 
@@ -5115,283 +5120,14 @@
     // stay recognisable), the mapped reason, the app's own message, and a
     // retry that stays on this screen. `loading` renders the in-place
     // progress line a retry swaps in, leaving the rest of the section up.
-    _renderUsernodeError(parent, readError, loading) {
-      const box = this._unEl('div',
-        'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700');
-      box.id = 'settings-usernode-error';
-      if (loading) {
-        box.appendChild(this._unEl('p', 'text-xs text-zinc-500',
-          'Loading Usernode app settings…'));
-        parent.appendChild(box);
-        return box;
-      }
-      box.appendChild(this._unEl('p',
-        'text-sm font-bold text-red-600 dark:text-red-400',
-        'Could not load Usernode app settings.'));
-      const kind = readError && readError.kind;
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-400 mt-1',
-        this.USERNODE_READ_ERROR_REASONS[kind] ||
-          this.USERNODE_READ_ERROR_FALLBACK));
-      if (readError && readError.message) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
-          readError.message));
-      }
-      const retry = this._unButton(box, 'Try again', async () => {
-        // Swap this box for the progress line and re-read; the rest of the
-        // section (notifications, block production, Terms, FAQ) stays put.
-        this._renderUsernodeBody(readError, true);
-        await this._renderUsernodeSection();
-      });
-      retry.id = 'settings-usernode-retry';
-      parent.appendChild(box);
-      return box;
-    },
 
-    _renderSocialPushSection(section) {
-      if (this._socialPushStateListener) {
-        window.removeEventListener(
-          'usernode:social-push-state', this._socialPushStateListener
-        );
-        this._socialPushStateListener = null;
-      }
-      if (!window.SocialPush) return;
-      const box = this._unSection(section, 'Usernode app — activity notifications',
-        'Get a device notification when a dev session or auto-solve run finishes. Notification content is loaded only after you open Social.');
-      const holder = this._unEl('div');
-      holder.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-400', 'Checking status…'));
-      box.appendChild(holder);
-
-      const render = (state) => {
-        holder.textContent = '';
-        if (!state) {
-          const admissionPending = window.NativeChrome &&
-            typeof NativeChrome.isSessionAdmitted === 'function' &&
-            !NativeChrome.isSessionAdmitted();
-          // "Finishing secure app sign-in…" is a lie once the handshake has
-          // been refused — nothing is finishing. Name the state and point
-          // at the panel that explains it.
-          const diag = this._bridgeDiagnostics();
-          const stuck = !!diag && diag.privileged &&
-            (diag.privileged.state === 'blocked-frame' ||
-             diag.privileged.state === 'unattached');
-          holder.appendChild(this._unEl('p',
-            'text-xs text-zinc-500 dark:text-zinc-400',
-            stuck
-              ? 'The Usernode app isn’t accepting this screen’s ' +
-                'secure connection, so notifications can’t be set up. ' +
-                'See “Usernode app — connection” above.'
-              : (admissionPending
-                ? 'Finishing secure app sign-in before enabling notifications…'
-                : 'Notification settings are temporarily unavailable.')));
-          const failure = (window.NativeChrome &&
-            typeof NativeChrome.lastSessionFailure === 'function')
-            ? NativeChrome.lastSessionFailure()
-            : null;
-          if (failure && failure.message) {
-            holder.appendChild(this._unEl('p',
-              'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
-              failure.message));
-          }
-          if (admissionPending &&
-              typeof NativeChrome.recoverSessionAdmission === 'function') {
-            this._unButton(holder, 'Try again', async () => {
-              await NativeChrome.recoverSessionAdmission();
-              if (window.SocialPush &&
-                  typeof SocialPush.retryBridgeReadiness === 'function') {
-                try { SocialPush.retryBridgeReadiness(); } catch (_) {}
-              }
-              render(await SocialPush.getState());
-            });
-          }
-          return;
-        }
-        this._unToggle(holder, 'Activity notifications', state.enabled,
-          async (enabled) => render(await SocialPush.setEnabled(enabled)),
-          { includeErrorDetail: true });
-        let status = 'Off on this device.';
-        if (state.deliveryActive) {
-          status = 'On — this device is registered for activity notifications.';
-        } else if (state.permissionStatus === 'denied') {
-          status = 'Notification permission is denied in the device settings.';
-        } else if (state.enabled && state.registrationStatus === 'registering') {
-          status = 'Enabling notifications…';
-        } else if (state.enabled) {
-          status = 'Enabled, but delivery is not active yet.';
-        }
-        holder.appendChild(this._unEl('p',
-          'mt-2 text-xs text-zinc-500 dark:text-zinc-400', status));
-      };
-
-      const onState = (event) => {
-        if (!box.isConnected) return;
-        render(event && event.detail);
-      };
-      this._socialPushStateListener = onState;
-      window.addEventListener('usernode:social-push-state', onState);
-
-      SocialPush.isSupported().then((supported) => {
-        if (!supported) {
-          if (this._socialPushStateListener === onState) {
-            window.removeEventListener('usernode:social-push-state', onState);
-            this._socialPushStateListener = null;
-          }
-          box.remove();
-          return null;
-        }
-        return SocialPush.getState();
-      }).then((state) => {
-        if (box.isConnected) render(state);
-      }).catch((err) => {
-        console.warn('[settings] social push state failed:', err);
-        render(null);
-      });
-    },
 
     // Block production queue (onboarding flow alignment). State comes
     // from the session-authed /challenges-api twins; the async load
     // fills the section in place so the rest of the usernode body never
     // waits on it.
-    _renderBpSection(section) {
-      const box = this._unSection(section, 'Usernode app — block production',
-        'Producing blocks earns points. Access is released manually — ask below and an admin will release your keys in batches.');
-      const holder = this._unEl('div');
-      box.appendChild(holder);
-
-      const note = (text) => {
-        holder.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-400', text));
-      };
-
-      const render = (state) => {
-        holder.textContent = '';
-        if (!state) return note('Could not check block-production status right now.');
-        if (state.bp_released) return note('Released — your node produces blocks when it wins slots.');
-        if (state.bp_requested) return note('Request pending — you\u2019ll start producing automatically once an admin releases your keys.');
-        if (!state.has_platform_access) return note('Available once your account has platform access.');
-        this._unButton(holder, 'Ask to produce blocks', async () => {
-          try {
-            const res = await fetch('/challenges-api/bp/request', {
-              method: 'POST', credentials: 'same-origin',
-            });
-            const data = await res.json().catch(() => null);
-            if (!res.ok || !data || data.success === false) throw new Error((data && data.error) || 'Request failed');
-            if (window.PlatformUI) PlatformUI.toast('Request sent — an admin will release your keys');
-            render({ ...state, bp_requested: true });
-          } catch (e) {
-            if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
-          }
-        });
-      };
-
-      note('Checking status\u2026');
-      fetch('/challenges-api/bp/state', { credentials: 'same-origin' })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => render(data && data.success !== false ? data.data : null))
-        .catch(() => render(null));
-    },
 
     // Static port of the native FaqSection copy (Help & Info tiles).
-    _renderUsernodeFaq(parent, isAndroid, deviceManufacturer) {
-      const faq = this._unEl('div', 'mt-3');
-      faq.appendChild(this._unEl('div',
-        'text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1',
-        'Help & Info'));
-
-      const addTile = (title, paragraphs) => {
-        const d = this._unEl('details',
-          'rounded-lg border border-zinc-200 dark:border-zinc-800 ' +
-          'px-3 py-2 mb-2');
-        const sum = this._unEl('summary',
-          'text-sm font-medium cursor-pointer select-none', title);
-        d.appendChild(sum);
-        for (const p of paragraphs) {
-          d.appendChild(this._unEl('p',
-            'text-xs text-zinc-500 dark:text-zinc-400 mt-2 leading-relaxed',
-            p));
-        }
-        faq.appendChild(d);
-        return d;
-      };
-
-      addTile('About', [
-        'Your device is part of a new network. It verifies, executes, and ' +
-        'contributes compute directly to the network, passively in the ' +
-        'background - with no central servers, no hidden infra. As long as ' +
-        'users keep the app running, the network will continue to operate, ' +
-        'peer to peer, with no external dependencies.',
-        "We're doing this to enable networks that can be hosted end-to-end " +
-        'by their own communities - both for decentralization, and to ' +
-        'enable a natural coordination point around participation, where ' +
-        'users who help operate and contribute to systems directly realize ' +
-        'the benefits from it.',
-        'Right now we are in testnet as we validate the core layer: block ' +
-        "production, consensus behavior, and network reliability. As these " +
-        "stabilize, we'll build upon the unique features of the platform - " +
-        'its decentralization, zero knowledge proofs, and sybil-resistant ' +
-        'identity - to introduce new activities, coordination mechanisms, ' +
-        'and tools for self-hosted, sybil-resistant communities.',
-        'Thanks for helping test at this early stage. The app right now is ' +
-        'simple, but as we prove out the core functionality, we hope to ' +
-        'make possible a new kind of community-owned network, where users ' +
-        'can directly run and benefit from the networks they use.',
-      ]);
-
-      addTile('What is Block Production?', [
-        'This feature automatically wakes your device to produce ' +
-        "blockchain blocks when your node wins a slot. Here's how it works:",
-        '1. VRF Selection — Each epoch, the network randomly selects which ' +
-        'validators will produce blocks using Verifiable Random Function ' +
-        '(VRF).',
-        '2. Slot Scheduling — When you win slots, the app schedules alarms ' +
-        'to wake your device ~1 minute before each slot.',
-        '3. Block Production — At slot time, the app monitors your node ' +
-        'and ensures the block is produced.',
-        '4. Success Tracking — Results are recorded to track your ' +
-        'reliability over time.',
-      ]);
-
-      const platformParas = isAndroid
-        ? [
-            "Uses Android's exact alarm system (AlarmManager) to wake your " +
-            'device precisely when needed for block production.',
-            'Reliability by mode: Default (Event-Driven) 90-95% — ' +
-            'battery-efficient, wakes only during slot windows. Keep-Alive ' +
-            'Mode 100% — persistent service, higher battery (~5-10%/hr).',
-          ]
-        : [
-            'Uses a combination of background tasks and keep-alive mode to ' +
-            'wake your device for block production.',
-            'Reliability by mode: Keep-Alive Mode 99% — app stays awake in ' +
-            'foreground, requires charger. Background Only 40-60% — iOS ' +
-            'controls execution, not guaranteed.',
-          ];
-      if (isAndroid && deviceManufacturer) {
-        platformParas.push(`Device: ${deviceManufacturer}`);
-      }
-      addTile('Platform & Reliability', platformParas);
-
-      addTile('Understanding VRF & Slots', [
-        'VRF (Verifiable Random Function) is how the network fairly ' +
-        'selects block producers. At the start of each epoch, the network ' +
-        'runs VRF calculations to determine which validators will produce ' +
-        'blocks in upcoming slots.',
-        'Status meanings — Pending: waiting for epoch transition to start ' +
-        'calculations. Calculating: VRF evaluation in progress (takes a ' +
-        'few hours). Complete: slot assignments are finalized and ' +
-        'scheduled.',
-        'When VRF selects your node to produce a block at a specific time, ' +
-        'you\'ve "won" that slot. Your responsibility is to have your ' +
-        'device awake and connected so the block can be produced.',
-        "Why timing matters: each slot has a ~5-seconds window. If your " +
-        "device doesn't wake up in time or loses network connectivity, the " +
-        'slot is missed and counted as "failed."',
-      ]);
-
-      parent.appendChild(faq);
-    },
   };
 
   // Published at module scope, not from the island's effect: app.js,
