@@ -11,6 +11,25 @@ test('Kubernetes platform image contains PostgreSQL tools but no Docker CLI', ()
   assert.match(dockerfile, /USER node/);
 });
 
+test('Kubernetes platform image builds and contains the generated shell assets', () => {
+  const dockerfile = read('Dockerfile.kubernetes');
+  assert.match(dockerfile, /FROM node:22-alpine AS shell/);
+  assert.match(dockerfile, /RUN node frontend\/scripts\/build-shell\.mjs/);
+  assert.match(dockerfile, /FROM node:22-alpine AS css/);
+  assert.match(dockerfile, /RUN npm run build:css/);
+
+  const sourceCopy = dockerfile.lastIndexOf('COPY --chown=node:node . .');
+  for (const asset of [
+    '/build/public/index.html ./public/index.html',
+    '/build/public/shell/assets/shell.js ./public/shell/assets/shell.js',
+    '/build/public/css/tailwind.css ./public/css/tailwind.css',
+  ]) {
+    const assetCopy = dockerfile.lastIndexOf(asset);
+    assert.ok(assetCopy > sourceCopy,
+      `${asset} must be copied into the runtime after the source tree`);
+  }
+});
+
 test('Docker keeps boot migrations while Kubernetes can delegate them to a Job', () => {
   const source = read('server.js');
   assert.match(source, /RUN_MIGRATIONS_ON_STARTUP !== 'false'/);

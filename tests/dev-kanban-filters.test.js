@@ -1,7 +1,7 @@
 // Kanban filter bar (#482): AppView._devCardMatches() is the pure per-card
 // predicate behind the board's filter controls (text search, priority,
-// assignee, "needs my vote"). It takes (kind, item, filters) with kind ∈
-// 'issue' | 'proposal' | 'gov' | 'merged' and reads no DOM or AppView
+// person, "needs my vote"). It takes (kind, item, filters) with kind ∈
+// 'issue' | 'proposal' | 'gov' | 'merged' | 'session' and reads no DOM or AppView
 // state, so — like _bucketDevItems — we load app-view.js into a vm context
 // (same harness as dev-kanban-buckets.test.js) and call it directly with
 // synthetic rows.
@@ -281,13 +281,29 @@ test('category filter keeps an active selection that left the vocabulary', () =>
   assert.match(html, /id="dev-kanban-category"[^>]*bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"/);
 });
 
-test('assignee filter matches the top-voted assignee; unassigned cards fail', () => {
+test('person filter matches either the top-voted assignee or the author', () => {
   const AppView = makeAppView();
   const f = { ...none, assignee: 'sam' };
+  // Explicit assignment still matches even when someone else authored it.
   assert.equal(AppView._devCardMatches('issue', issue({ assignee: { top: 'sam', count: 3 } }), f), true);
   assert.equal(AppView._devCardMatches('issue', issue({ assignee: { top: 'kim', count: 1 } }), f), false);
-  assert.equal(AppView._devCardMatches('proposal', prop({ assignee: null }), f), false);
-  assert.equal(AppView._devCardMatches('gov', gov({}), f), false);
+  // Authored-but-unassigned is the behavior this change adds.
+  assert.equal(AppView._devCardMatches('proposal', prop({ assignee: null }), f), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'kim', assignee: null }), f), false);
+});
+
+test('person filter uses every card kind\'s existing author field', () => {
+  const AppView = makeAppView();
+  const by = (name) => ({ ...none, assignee: name });
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'evan' }), by('evan')), true);
+  assert.equal(AppView._devCardMatches('issue',
+    issue({ created_by_username: null, user: 'octocat' }), by('octocat')), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'sam' }), by('sam')), true);
+  assert.equal(AppView._devCardMatches('gov', gov({ created_by_username: 'evan' }), by('evan')), true);
+  assert.equal(AppView._devCardMatches('merged', merged({ username: 'kim' }), by('kim')), true);
+  assert.equal(AppView._devCardMatches('merged', closedIssue({ created_by_username: 'casey' }), by('casey')), true);
+  assert.equal(AppView._devCardMatches('session', { username: 'maya' }, by('maya')), true);
+  assert.equal(AppView._devCardMatches('session', { username: 'maya' }, by('someone-else')), false);
 });
 
 test('Unassigned sentinel matches only cards with no top assignee; gov excluded', () => {
@@ -366,7 +382,7 @@ test('_kanbanFiltersActive reflects any non-default filter', () => {
   assert.equal(AppView._kanbanFiltersActive(), true);
 });
 
-test('_kanbanAssigneeOptions unions board data and keeps the current selection', () => {
+test('_kanbanAssigneeOptions unions assignees and authors and keeps the current selection', () => {
   const AppView = makeAppView();
   AppView._ghIssues = [
     issue({ number: 1, assignee: { top: 'zoe', count: 1 } }),
@@ -374,20 +390,29 @@ test('_kanbanAssigneeOptions unions board data and keeps the current selection',
   ];
   AppView._envIssueNumbers = new Set();
   AppView._proposals = [prop({ assignee: { top: 'sam', count: 2 } })];
+  AppView._govProposals = [gov({ created_by_username: 'casey' })];
   AppView._merged = [merged({ assignee: { top: 'kim', count: 1 } })];
+  AppView._mySessions = [{ username: 'maya' }];
+  AppView._sharedSessions = [{ username: 'evan' }];
   AppView._kanbanFilters = { q: '', priority: null, assignee: null, needsVote: false };
   // Options come back as the vm realm's Array — map into the host realm
   // before comparing (same trick as dev-kanban-buckets' numbersOf/idsOf).
   const names = () => Array.from(AppView._kanbanAssigneeOptions());
-  assert.deepEqual(names(), ['kim', 'sam', 'zoe']);
+  assert.deepEqual(names(), ['casey', 'evan', 'kim', 'maya', 'sam', 'zoe']);
   // A selected assignee that vanished from the data stays listed so the
   // active filter never silently self-clears.
-  AppView._kanbanFilters.assignee = 'evan';
-  assert.deepEqual(names(), ['evan', 'kim', 'sam', 'zoe']);
+  AppView._kanbanFilters.assignee = 'alex';
+  assert.deepEqual(names(), ['alex', 'casey', 'evan', 'kim', 'maya', 'sam', 'zoe']);
   // The Unassigned sentinel is a fixed dropdown option, never a name —
   // an active Unassigned filter must not leak into the alphabetized list.
   AppView._kanbanFilters.assignee = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
-  assert.deepEqual(names(), ['kim', 'sam', 'zoe']);
+  assert.deepEqual(names(), ['casey', 'evan', 'kim', 'maya', 'sam', 'zoe']);
+  // The dropdown is React's now (features/dev-board/kanban-filters.tsx), so
+  // the module hands it OPTIONS rather than markup — same assertion, one
+  // layer down.
+  const opts = Array.from(AppView._kanbanAssigneeOptionList()).map((o) => ({ ...o }));
+  assert.deepEqual(opts[0], { value: '', label: 'Assignee or author' },
+    'the default option describes both ways a person can match');
 });
 
 // ── Persistence helpers (sessionStorage-backed, per app slug) ──────────
@@ -467,11 +492,10 @@ test('persistence helpers survive a storage-less environment', () => {
   assert.doesNotThrow(() => AppView._saveKanbanFilters('my-app'));
 });
 
-// ── Session cards are exempt from the filter bar ────────────────────────────
+// ── Session cards have only the filters their data supports ─────────────────
 // The In progress column now holds the viewer's pinned sessions (top) and
 // other users' shared sessions (bottom). The filter bar's vocabulary
-// (text/priority/assignee/needs-vote) doesn't apply to sessions, so an
-// active filter must keep every session card while filtering issue cards.
+// Priority/category do not apply to sessions; text and the person filter do.
 
 test('a text filter now applies to session cards too (they used to be exempt)', () => {
   const AppView = makeAppView();
@@ -535,7 +559,7 @@ test('a session matches on its LABEL and on the issue numbers it links', () => {
   assert.doesNotMatch(kanbanHtml(AppView), /Dark mode work/, 'an unrelated number does not');
 });
 
-test('priority / category / assignee are a VISIBLE no-op on session cards', () => {
+test('priority / category are a VISIBLE no-op on session cards', () => {
   const AppView = makeAppView();
   AppView._ghIssues = [];
   AppView._envIssueNumbers = new Set();
@@ -559,12 +583,21 @@ test('priority / category / assignee are a VISIBLE no-op on session cards', () =
   assert.match(html, /Dev sessions don&#x27;t carry priority, category or assignee/);
   assert.match(html, /not filtered by priority/);
 
-  // The predicate itself is the explicit no-op.
+  // The predicate itself keeps the attribute filters as an explicit no-op.
   assert.equal(
     AppView._devCardMatches('session', { session_title: 'x' },
-      { priority: 'high', assignee: 'someone', category: 'bug' }),
+      { priority: 'high', category: 'bug' }),
     true
   );
+});
+
+test('a named person filters sessions by author while Unassigned stays a no-op', () => {
+  const AppView = makeAppView();
+  const session = { session_title: 'Dark mode work', username: 'maya' };
+  assert.equal(AppView._devCardMatches('session', session, { ...none, assignee: 'maya' }), true);
+  assert.equal(AppView._devCardMatches('session', session, { ...none, assignee: 'sam' }), false);
+  assert.equal(AppView._devCardMatches('session', session,
+    { ...none, assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED }), true);
 });
 
 // ── #1112: the column is titled "Underway", keyed `inprogress` ─────────────

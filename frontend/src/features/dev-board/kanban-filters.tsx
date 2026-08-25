@@ -133,7 +133,7 @@ export function KanbanFiltersView({
       />
       <FilterSelect
         id="dev-kanban-assignee"
-        label="Filter by assignee"
+        label="Filter by assignee or author"
         value={assignee}
         options={assignees}
         onPick={pick('assignee')}

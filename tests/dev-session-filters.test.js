@@ -5,10 +5,10 @@
 // term and they just sat there in the In-progress column with no explanation.
 // Now:
 //
-//   • text and #number DO filter sessions, matching the label the card shows
-//     and the issue numbers it links,
-//   • priority / category / assignee genuinely cannot apply (a dev session
-//     carries no such metadata), so they are an explicit no-op rather than a
+//   • text, #number, and a named person DO filter sessions, matching the label
+//     the card shows, the issue numbers it links, and its author,
+//   • priority / category genuinely cannot apply (a dev session carries no
+//     such metadata), so they are an explicit no-op rather than a
 //     rule the session can never satisfy — and the column SAYS SO out loud
 //     instead of silently ignoring them.
 //
@@ -100,16 +100,18 @@ test('a session matches on its owner, like every other card', () => {
   assert.ok(AppView._devCardMatches('session', SESS({ username: 'maya' }), F({ q: 'maya' })));
 });
 
-test('priority / category / assignee are an explicit NO-OP, not a failed match', () => {
+test('priority / category are a no-op; a named person matches the session author', () => {
   const AppView = makeAppView();
   // Returning false here would hide every session the moment anyone picked a
   // priority — silently wrong, since a session cannot carry one.
   assert.equal(AppView._devCardMatches('session', SESS(), F({ priority: 'high' })), true);
   assert.equal(AppView._devCardMatches('session', SESS(), F({ category: 'bug' })), true);
-  assert.equal(AppView._devCardMatches('session', SESS(), F({ assignee: 'maya' })), true);
-  assert.equal(AppView._devCardMatches('session', SESS(),
+  assert.equal(AppView._devCardMatches('session', SESS({ username: 'maya' }), F({ assignee: 'maya' })), true);
+  assert.equal(AppView._devCardMatches('session', SESS({ username: 'maya' }), F({ assignee: 'sam' })), false);
+  assert.equal(AppView._devCardMatches('session', SESS({ username: 'maya' }),
     F({ priority: 'high', category: 'bug', assignee: 'maya' })), true);
-  // …and the Unassigned sentinel is no different.
+  // The Unassigned sentinel keeps its previous no-op behavior because a
+  // session is not an assignable board item.
   assert.equal(AppView._devCardMatches('session', SESS(),
     F({ assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED })), true);
 });
@@ -136,9 +138,17 @@ test('the note names WHICH filters did not apply, and how many cards', () => {
   assert.match(note(1), /the 1 session card below is not filtered by priority/);
 
   AppView._kanbanFilters = F({ priority: 'high', assignee: 'maya' });
-  assert.match(note(3), /the 3 session cards below are not filtered by priority or assignee/);
+  // #1404: a NAMED person now applies to a session, through its author, so
+  // the note must no longer claim it does not. Only the Unassigned sentinel
+  // is still inapplicable — a session is not an assignable board item.
+  assert.match(note(3), /the 3 session cards below are not filtered by priority/);
+  // Scoped to the VARIABLE half: the note's fixed preamble ("Dev sessions
+  // don't carry priority, category or assignee") names the word either way.
+  assert.doesNotMatch(note(3).split('not filtered by')[1], /assignee/);
 
-  AppView._kanbanFilters = F({ priority: 'high', category: 'bug', assignee: 'maya' });
+  AppView._kanbanFilters = F({
+    priority: 'high', category: 'bug', assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED,
+  });
   assert.match(note(2), /priority, category or assignee/);
 });
 
@@ -189,6 +199,18 @@ test('an inapplicable filter keeps every session AND renders the note', () => {
   assert.match(html, /Dark mode work/);
   assert.match(html, /Theirs/);
   assert.match(html, /the 2 session cards below are not filtered by priority/);
+});
+
+test('a named person keeps sessions by that author and drops other sessions', () => {
+  const AppView = makeAppView();
+  const html = board(AppView, F({ assignee: 'maya' }), {
+    mine: [SESS({ username: 'maya' })],
+    shared: [{ id: 71, session_title: 'Theirs', username: 'them', user_id: 9,
+      shared_at: '2026-06-01T00:00:00Z', created_at: '2026-06-01T00:00:00Z', chat_count: 0 }],
+  });
+  assert.match(html, /Dark mode work/);
+  assert.doesNotMatch(html, /Theirs/);
+  assert.doesNotMatch(html, /not filtered by assignee/);
 });
 
 test('the note counts only the sessions that SURVIVED the text filter', () => {
