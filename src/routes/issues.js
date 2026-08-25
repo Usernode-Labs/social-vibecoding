@@ -685,6 +685,20 @@ function issueRoutes(config) {
         if (proposal.kind === 'close_issue' && proposal.status === 'closed'
             && proposal.payload && proposal.payload.appliedAt) {
           proposal.row_type = 'close_issue';
+          // /merged also attaches the closed issue's priority/assignee/
+          // category tally to these rows (a task moved to Done keeps its
+          // chips); mirror it here so the by-id recovery path stays
+          // shape-interchangeable with the stream.
+          const closedRef = parseInt(proposal.payload.issueNumber, 10);
+          if (Number.isInteger(closedRef) && closedRef > 0) {
+            const closedAttrs = await topicAttrs.summarizeForTargets(
+              pool, appId, 'issue', [closedRef], userId
+            );
+            const s = closedAttrs.get(closedRef) || topicAttrs.emptySummary();
+            proposal.priority = s.priority;
+            proposal.assignee = s.assignee;
+            proposal.category = s.category;
+          }
         }
       }
 
