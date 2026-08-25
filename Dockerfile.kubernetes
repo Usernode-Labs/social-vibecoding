@@ -1,3 +1,29 @@
+# Build the generated React shell from the same lockfile-pinned frontend tree
+# as the Docker runtime image. The outputs are intentionally excluded from the
+# build context, so every Kubernetes image must create them itself.
+FROM node:22-alpine AS shell
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --ignore-scripts
+WORKDIR /build
+COPY frontend ./frontend
+COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
+RUN node frontend/scripts/build-shell.mjs
+
+# Compile Tailwind only after the current shell has been prerendered because
+# public/index.html is one of the compiler's content sources.
+FROM node:22-alpine AS css
+WORKDIR /build
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY tailwind.config.js ./
+COPY styles ./styles
+COPY scripts/build-tailwind.js ./scripts/build-tailwind.js
+COPY public ./public
+COPY --from=shell /build/public/index.html ./public/index.html
+COPY frontend ./frontend
+RUN npm run build:css
+
 FROM node:22-alpine
 
 # Kubernetes mode talks to the Kubernetes and PostgreSQL APIs over the
@@ -8,6 +34,11 @@ WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --chown=node:node . .
+# Generated assets must be copied after the source tree so ignored local
+# artifacts can never replace the outputs built from this image's revision.
+COPY --chown=node:node --from=shell /build/public/index.html ./public/index.html
+COPY --chown=node:node --from=shell /build/public/shell/assets/shell.js ./public/shell/assets/shell.js
+COPY --chown=node:node --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
 
 USER node
 EXPOSE 3000
