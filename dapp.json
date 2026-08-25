@@ -1333,9 +1333,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Improve button is present on an app Dev view",
+      "name": "The Dev view offers the eye back to the app, not the Improve action (Streamlined Concept)",
       "path": "/app/staging-demo-admins/dev",
-      "expectSelector": "#improve-btn:not(.hidden)"
+      "expectSelector": "#platform-header #app-eye-btn"
     },
     {
       "name": "The app-context sheet offers the three views in order (Streamlined Concept)",
@@ -2281,7 +2281,7 @@
     {
       "name": "Native kit: side panel presents from the right edge with a scrollable body",
       "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=panel",
-      "expectSelector": ".un-panel[data-un-side=\"left\"] > .un-panel-body"
+      "expectSelector": ".un-panel[data-un-side=\"right\"] > .un-panel-body"
     },
     {
       "name": "Native kit: the touch action sheet actually presents (#929 regression lock)",
@@ -2483,7 +2483,7 @@
       "expectText": "a reset link is on its way"
     },
     {
-      "name": "Back from a dev session is the header's own arrow, a real link at the Board (Streamlined Concept)",
+      "name": "Back from a dev session is the header's own arrow, a real link at the Board (#1036, Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/board\"]"
     },
@@ -2496,11 +2496,6 @@
       "name": "A cold session deep link titles the bar with the app, not the previous screen (Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "#header-title #header-title-tab"
-    },
-    {
-      "name": "The header home button is a real link, not a button (#1036)",
-      "path": "/#leaderboard",
-      "expectSelector": "header#platform-header a#back-btn:not(.hidden)[href]"
     },
     {
       "name": "Inside an app's detail page the header arrow links back to the list (#1036)",
