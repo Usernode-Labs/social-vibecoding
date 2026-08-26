@@ -3754,13 +3754,23 @@ const App = {
     // render of that island — which silently undid the classList writes
     // below the moment the header gained state (the app glyph, the session
     // status pill). See features/header/back-button-store.js.
+    const published = typeof window.UsernodeReact?.backButton?.set === 'function';
     window.UsernodeReact?.backButton?.set?.(arrow ? 'arrow' : 'home', target);
+    // ONE OWNER, and once the bridge exists it is React's. The writes below
+    // were kept as a belt-and-braces fallback on the theory that they would
+    // agree with the render — and they do not always, which is worse than
+    // either owner alone. The header derives the DEV-SESSION arrow from the
+    // route now (see features/header/platform-header.tsx), so on that route
+    // React renders the anchor visible while a later `setBackIcon('home')`
+    // from a screen-swap would re-add `hidden` behind React's back — React
+    // never corrects it, because its own props did not change. That is a
+    // staging-only race (locally the swap lands before the store publishes)
+    // and it is exactly what kept the two session-bar checks flaking.
+    if (published) return;
 
-    // The same writes, kept as the pre-hydration fallback — app.js is a
-    // classic script and the bundle is a module, so there is a window in
-    // which the bridge above does not exist yet and the first navigation's
-    // back state would otherwise be dropped. Once React is up the two agree
-    // exactly, so this is a no-op rather than a second owner.
+    // Pre-hydration only: app.js is a classic script and the bundle is a
+    // module, so there is a window in which the bridge does not exist yet
+    // and the first navigation's back state would otherwise be dropped.
     const home = document.getElementById('back-icon-home');
     const chevron = document.getElementById('back-icon-arrow');
     if (home) home.classList.toggle('hidden', arrow);
