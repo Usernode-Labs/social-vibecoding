@@ -287,6 +287,15 @@ function load() {
     // Optional, fail-closed protocol-2 deployment binding. There is exactly
     // one supported mapping in this revision and no internal/custom input.
     nativeSessionV2Network,
+    // Separate rollout fence for epoch delegation. Protocol-2 session
+    // establishment may be live while delegation continues to use the
+    // timestamp policy; both new endpoints remain dark/fail-closed until an
+    // operator explicitly enables the verified epoch baseline cutover.
+    // TODO: Before enabling, verify/seed cutover epoch C and inventory every
+    // signer. This revision also assumes one active producer installation per
+    // account; cross-device lease/refresh belongs to a later protocol.
+    nativeEpochDelegationEnabled:
+      String(process.env.NATIVE_EPOCH_DELEGATION_ENABLED || 'false') === 'true',
     // Signing keys. Read straight from env by services/platform-jwt.js
     // at call time; mirrored here for the boot log and for the container
     // env builders that need the PUBLIC half.
@@ -709,6 +718,9 @@ function load() {
   console.log(`  NATIVE_SESSION_V2=${config.nativeSessionV2Network && config.dataEncryptionKey
     ? `enabled testnet/${config.nativeSessionV2Network.chainId}`
     : `disabled (${config.nativeSessionV2Network ? 'server data key unavailable' : 'no canonical testnet ChainId'})`}`);
+  console.log(`  NATIVE_EPOCH_DELEGATION=${config.nativeEpochDelegationEnabled && config.nativeSessionV2Network
+    ? `enabled testnet/${config.nativeSessionV2Network.chainId}`
+    : 'disabled'}`);
   console.log(`  MOBILE_PUSH=${config.mobilePushEnabled ? 'enabled' : 'disabled'} PUSH_ENV=${config.mobilePushEnvironment || '(not set)'}`);
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);

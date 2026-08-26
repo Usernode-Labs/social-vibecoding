@@ -61,6 +61,7 @@ const DENIED_TABLES = new Set([
   'native_installation_key_generations', // installation continuity keys
   'native_session_credentials', // native credential/revocation lineage
   'native_session_credential_envelopes', // compact JWE + encrypted exact replay
+  'native_epoch_delegation_policies', // credential-bound producer policy lineage
   'mobile_push_deployment_state', // trusted push deployment identity and activation state
   'mobile_push_installation_mutations', // private device mutation fences
   'mobile_push_registrations', // encrypted FCM destinations

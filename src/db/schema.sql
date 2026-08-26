@@ -4740,12 +4740,67 @@ CREATE TABLE IF NOT EXISTS native_session_credential_envelopes (
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Epoch-scoped native delegation policy is additive to the legacy
+-- `account_delegation_periods` timestamp history above. No row is seeded or
+-- rewritten here: a separately verified rollout epoch will establish the
+-- baseline used by scoring. This table records only protocol-2 requests.
+--
+-- The per-chain fence linearizes direct canonical `/status` samples without
+-- holding a database transaction across the HTTP call. Once an E+1 sample
+-- advances `observed_epoch`, an older E sample is stale and cannot append an
+-- E+2 change. The policy's global BIGSERIAL id is both its public monotonic
+-- revision and the same-epoch last-write-wins order.
+CREATE TABLE IF NOT EXISTS native_epoch_delegation_fences (
+  network_id          VARCHAR(16) NOT NULL CHECK (network_id = 'testnet'),
+  chain_id            VARCHAR(100) NOT NULL
+    CHECK (chain_id ~ '^utc1[023456789acdefghjklmnpqrstuvwxyz]+$'),
+  observed_epoch      BIGINT NOT NULL
+    CHECK (observed_epoch BETWEEN 0 AND 4294967295),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (network_id, chain_id)
+);
+
+CREATE TABLE IF NOT EXISTS native_epoch_delegation_policies (
+  id                    BIGSERIAL PRIMARY KEY CHECK (id > 0),
+  request_id            VARCHAR(47) NOT NULL
+    CHECK (request_id ~ '^ndp_[A-Za-z0-9_-]{43}$'),
+  credential_reference  VARCHAR(47) NOT NULL
+    CHECK (credential_reference ~ '^nsc_[A-Za-z0-9_-]{43}$'),
+  credential_generation INTEGER NOT NULL CHECK (credential_generation = 1),
+  user_id               BIGINT NOT NULL CHECK (user_id > 0),
+  account_id            BIGINT NOT NULL CHECK (account_id > 0),
+  account_address       VARCHAR(255) NOT NULL
+    CHECK (account_address <> '' AND account_address = BTRIM(account_address)),
+  network_id            VARCHAR(16) NOT NULL CHECK (network_id = 'testnet'),
+  chain_id              VARCHAR(100) NOT NULL,
+  delegated             BOOLEAN NOT NULL,
+  changed               BOOLEAN NOT NULL,
+  accepted_epoch        BIGINT NOT NULL
+    CHECK (accepted_epoch BETWEEN 0 AND 4294967293),
+  effective_epoch       BIGINT NOT NULL
+    CHECK (effective_epoch BETWEEN 2 AND 4294967295),
+  accepted_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (request_id),
+  FOREIGN KEY (network_id, chain_id)
+    REFERENCES native_epoch_delegation_fences(network_id, chain_id),
+  CHECK (effective_epoch = accepted_epoch + 2)
+);
+CREATE INDEX IF NOT EXISTS native_epoch_delegation_policy_account_idx
+  ON native_epoch_delegation_policies (
+    network_id, chain_id, account_address, effective_epoch DESC, id DESC
+  );
+CREATE INDEX IF NOT EXISTS native_epoch_delegation_policy_effective_idx
+  ON native_epoch_delegation_policies (
+    network_id, chain_id, effective_epoch DESC, id DESC
+  );
+
 COMMENT ON TABLE native_session_web_incarnations IS 'staging:private';
 COMMENT ON TABLE native_session_attempts IS 'staging:private';
 COMMENT ON TABLE native_session_tickets IS 'staging:private';
 COMMENT ON TABLE native_installation_key_generations IS 'staging:private';
 COMMENT ON TABLE native_session_credentials IS 'staging:private';
 COMMENT ON TABLE native_session_credential_envelopes IS 'staging:private';
+COMMENT ON TABLE native_epoch_delegation_policies IS 'staging:private';
 
 -- Onboarding flow alignment — email-only platform waitlist, enforced
 -- platform-access gate, block-producer queue (user-onboarding-flows doc).

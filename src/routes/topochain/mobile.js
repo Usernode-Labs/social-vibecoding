@@ -63,6 +63,7 @@ const {
 const { computeStandings, assignSharedRanks } = require('../../services/topochain/standings');
 const { topochainMobileAuthRoutes, computeLevel } = require('./mobile-auth');
 const { nativeSessionRoutes } = require('./native-session');
+const { nativeEpochDelegationRoutes } = require('./epoch-delegation');
 const { mobileIdentityHash } = require('../../services/mobile-identity-hash');
 const { mobilePushRegistrationRoutes } = require('./mobile-push-registration');
 const { verifyCompletion, ZkBridgeError } = require('../../services/topochain/zk-bridge');
@@ -754,6 +755,7 @@ function topochainMobileRoutes(config) {
   // Task 8: the six auth endpoints (their own throttle/token gating).
   router.use(topochainMobileAuthRoutes(config));
   router.use(nativeSessionRoutes(config));
+  router.use(nativeEpochDelegationRoutes(config));
   router.use(mobilePushRegistrationRoutes(config));
 
   // ── GET /me (SPEC 1748-1767) ─────────────────────────────────────────

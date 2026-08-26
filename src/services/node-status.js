@@ -372,4 +372,48 @@ function getExplorer() {
   return { ...explorerSnapshot };
 }
 
-module.exports = { start, stop, get, getFull, getExplorer };
+// Sample the sidecar directly for a consensus-clock decision. The ordinary
+// dashboard snapshot above is deliberately cached and trimmed; neither is
+// acceptable for policy accepted at an epoch boundary. This call therefore
+// reads the canonical node clock fields from one live `/status` response and
+// cross-checks the node's own epoch against its global-slot derivation.
+async function sampleCanonicalEpoch({ rpcUrl = nodeRpcUrl || DEFAULT_NODE_RPC_URL, network } = {}) {
+  if (!rpcUrl || !network || network.id !== 'testnet' || !network.chainId) {
+    throw new Error('canonical node epoch sampling is not configured');
+  }
+
+  const data = await httpJson('GET', `${String(rpcUrl).replace(/\/+$/, '')}/status`);
+  const node = data && data.node;
+  const globalSlot = node && node.cur_global_slot;
+  const slotsInEpoch = node && node.slots_in_epoch;
+  const reportedEpoch = node && node.cur_epoch;
+
+  if (!node || node.chain_id !== network.chainId
+      || !Number.isSafeInteger(globalSlot) || globalSlot < 0
+      || !Number.isSafeInteger(slotsInEpoch) || slotsInEpoch <= 0
+      || !Number.isSafeInteger(reportedEpoch) || reportedEpoch < 0) {
+    throw new Error('node /status does not contain a canonical epoch sample');
+  }
+
+  const derivedEpoch = Math.floor(globalSlot / slotsInEpoch);
+  if (derivedEpoch !== reportedEpoch) {
+    throw new Error('node /status epoch does not match its canonical global slot');
+  }
+
+  return Object.freeze({
+    networkId: network.id,
+    chainId: network.chainId,
+    epoch: derivedEpoch,
+    globalSlot,
+    slotsInEpoch,
+  });
+}
+
+module.exports = {
+  start,
+  stop,
+  get,
+  getFull,
+  getExplorer,
+  sampleCanonicalEpoch,
+};

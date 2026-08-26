@@ -62,6 +62,7 @@ const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
 const { readDelegationState, setDelegationState } = require('../../services/topochain/delegations');
+const { managedEpochDelegationRoutes } = require('./epoch-delegation');
 
 // ─── Small shared formatters ─────────────────────────────────────────────
 
@@ -92,6 +93,8 @@ function toBool(v) {
 function topochainPartnerRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  router.use(managedEpochDelegationRoutes(config));
 
   // Mount-order probe (plan Task 3). Deliberately NOT gated by
   // partnerApiKey — it exists only to prove this router sits ahead of

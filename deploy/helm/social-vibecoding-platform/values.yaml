@@ -97,6 +97,8 @@ config:
   # Optional exact canonical Rust ChainId. Empty keeps native session protocol
   # 2 dark; the application validates utc/bech32m/32-byte canonical form.
   nativeSessionV2TestnetChainId: ""
+  # Independent baseline/cutover gate; do not enable during additive rollout.
+  nativeEpochDelegationEnabled: false
   internalUrl: http://social-vibecoding.social-platform.svc.cluster.local:3000
   logLevel: INFO
   workerMemory: 2g
