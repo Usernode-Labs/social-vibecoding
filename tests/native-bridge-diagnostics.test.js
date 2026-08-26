@@ -21,7 +21,7 @@ const bridgeSource = fs.readFileSync(
 function loadBridge({
   native = true,
   inIframe = false,
-  capabilities = ['privilegedBridgeCapability', 'beginSessionHandoff'],
+  capabilities = ['privilegedBridgeCapability', 'getSettingsState'],
   errorMethods = {},
   errorInfoMethods = {},
   silentMethods = [],
@@ -30,13 +30,12 @@ function loadBridge({
   const nativePosts = [];
   const responses = {
     getBridgeInfo: {
-      version: 4,
+      version: 5,
       capabilities,
       appVersion: '0.4.0',
       buildNumber: '1223',
     },
     getPrivilegedBridgeCapability: 'realm-capability',
-    beginSessionHandoff: { blocked: true },
     getSettingsState: { authStatus: 'authenticated' },
   };
   const sandbox = {
@@ -131,16 +130,16 @@ test('the installed build stays readable after the handshake is refused',
       },
     });
 
-    await loaded.sandbox.usernode.beginSessionHandoff().catch(() => {});
+    await loaded.sandbox.usernode.getSettingsState();
     const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
 
     // getBridgeInfo is UNPRIVILEGED, which is the whole reason a refused
     // device can still be diagnosed rather than merely apologised to.
     assert.equal(diag.isNative, true);
-    assert.equal(diag.bridgeVersion, 4);
+    assert.equal(diag.bridgeVersion, 5);
     assert.equal(diag.appVersion, '0.4.0');
     assert.equal(diag.buildNumber, '1223');
-    assert.ok(diag.capabilities.includes('beginSessionHandoff'));
+    assert.ok(diag.capabilities.includes('getSettingsState'));
 
     assert.equal(diag.privileged.state, 'blocked-frame');
     assert.equal(diag.privileged.code, 'privileged_frame_unauthorized');
@@ -153,7 +152,7 @@ test('the installed build stays readable after the handshake is refused',
 test('a working handshake reports ready with no attempt debt', async () => {
   const loaded = loadBridge();
 
-  await loaded.sandbox.usernode.beginSessionHandoff();
+  await loaded.sandbox.usernode.getSettingsState();
   const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
 
   assert.equal(diag.privileged.state, 'ready');
@@ -167,7 +166,7 @@ test('a working handshake reports ready with no attempt debt', async () => {
 test('the snapshot never carries the capability token', async () => {
   const loaded = loadBridge();
 
-  await loaded.sandbox.usernode.beginSessionHandoff();
+  await loaded.sandbox.usernode.getSettingsState();
   const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
 
   assert.equal(
@@ -210,16 +209,16 @@ test('failed reads are exposed as copies, not the live record', async () => {
 test('a refused privileged ACTION now leaves a record too', async () => {
   const loaded = loadBridge({
     capabilities: [
-      'privilegedBridgeCapability', 'setSocialPushEnabled',
+      'privilegedBridgeCapability', 'setDebugMode',
     ],
-    errorMethods: { setSocialPushEnabled: 'refused' },
+    errorMethods: { setDebugMode: 'refused' },
   });
 
-  await loaded.sandbox.usernode.setSocialPushEnabled(true).catch(() => {});
+  await loaded.sandbox.usernode.setDebugMode(true).catch(() => {});
 
   const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
-  assert.equal(diag.lastErrors.setSocialPushEnabled.kind, 'rejected');
-  assert.equal(diag.lastErrors.setSocialPushEnabled.message, 'refused');
+  assert.equal(diag.lastErrors.setDebugMode.kind, 'rejected');
+  assert.equal(diag.lastErrors.setDebugMode.message, 'refused');
 });
 
 test('a successful call clears its own stale failure record', async () => {

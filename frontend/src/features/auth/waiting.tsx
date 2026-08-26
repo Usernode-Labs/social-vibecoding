@@ -62,7 +62,6 @@ export function WaitingScreen() {
         // Session died while waiting — back to the login screen.
         stopWaitingPoll();
         if (w.App) {
-          w.App.user = null;
           if (typeof w.App.enterAnonymous === 'function') await w.App.enterAnonymous();
         }
         location.hash = '#login';

@@ -479,9 +479,9 @@ export function LoginScreen() {
         return;
       }
       st.otpSetPasswordToken = null;
-      // Password is set — now open the WEB session with it (the v4 token in
-      // `data.token` is a mobile bearer, not a cookie; the shell mints its own
-      // via /from-session after this login).
+      // Password is set — now open the WEB session with it. The token in
+      // `data.token` is a mobile bearer, not a cookie; protocol 2 establishes
+      // native later from the authenticated web-session ticket endpoint.
       setOtpStatus('Signing you in...');
       const loginRes = await fetch('/api/auth/login', {
         method: 'POST',

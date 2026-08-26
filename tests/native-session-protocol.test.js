@@ -263,6 +263,31 @@ test('concurrent exact ticket requests mint once and replay byte-identically', a
   assert.equal(JSON.parse(first).data.ticket.startsWith('nst_'), true);
 });
 
+test('an exchanged exact attempt replays its ticket after issuance expiry', async () => {
+  let now = new Date('2026-08-26T12:00:00.000Z');
+  const pool = new TicketPool(now);
+  const protocol = new NativeSessionProtocol({
+    pool,
+    config: { nativeSessionV2Network: NETWORK, dataEncryptionKey: DATA_KEY },
+    now: () => now,
+  });
+  const body = {
+    protocol: 2,
+    attemptId: opaque('nsa_', 8),
+    desiredRuntime: 'running',
+  };
+  const first = await protocol.createTicket({
+    sessionToken: 'cookie-A', body,
+  });
+  pool.attempts.get(body.attemptId).state = 'exchanged';
+  pool.tickets.get(body.attemptId).state = 'exchanged';
+  now = new Date('2026-08-26T13:00:00.000Z');
+
+  assert.equal(await protocol.createTicket({
+    sessionToken: 'cookie-A', body,
+  }), first);
+});
+
 function replayPool({ row, credential, keyRow }) {
   const queries = [];
   return {

@@ -360,7 +360,13 @@ class NativeSessionProtocol {
         if (existing.state === 'revoked') {
           protocolError(409, 'native_session_attempt_revoked', 'The native session attempt is no longer valid.');
         }
-        if (new Date(existing.expires_at) <= now) {
+        // A committed exact attempt is a durable retry key, not a request to
+        // mint another credential. Its encrypted byte-exact ticket response
+        // remains replayable after the issuance window; the exchange replay
+        // still enforces credential validity and revocation. An unexchanged
+        // expired ticket stays terminal.
+        if (new Date(existing.expires_at) <= now &&
+            attempt.state !== 'exchanged') {
           protocolError(410, 'native_session_ticket_expired', 'The native session ticket has expired.');
         }
         return openReplay({

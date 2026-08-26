@@ -439,6 +439,10 @@ const App = {
       return;
     }
     App._sessionFromSnapshot = false;
+    if (window.NativeChrome &&
+        typeof NativeChrome.prepareIdentityPublication === 'function') {
+      NativeChrome.prepareIdentityPublication(user);
+    }
     App.user = user;
     App.saveSessionSnapshot(user);
     // The verified answer, for everyone who joined bootSession() rather
@@ -446,6 +450,9 @@ const App = {
     // optimistic boot, because until now the shell had a last-known user,
     // not a confirmed one.
     App._publishBootSession({ user });
+    document.dispatchEvent(new CustomEvent('sv:session', {
+      detail: { user: App.user },
+    }));
     App.connectEvents();
     if (window.Kudos?.Budget?.init) Kudos.Budget.init();
     if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
@@ -489,13 +496,16 @@ const App = {
   _authedBooted: false,
 
   async enterAnonymous() {
-    // No session, or a ?shot= link that boots the anonymous shell without
-    // reading one. Either way nobody joining bootSession() should spend a
-    // request finding that out.
-    App._publishBootSession({ signedOut: true });
+    let nativeBoundary = null;
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
-      await NativeChrome.enterAnonymous();
+      // enterAnonymous closes the private native realm synchronously before
+      // returning its Promise. Publish null only after that hard boundary.
+      nativeBoundary = NativeChrome.enterAnonymous();
     }
+    App.user = null;
+    if (nativeBoundary) await nativeBoundary;
+    // The boot reader sees signed-out only after native authority is closed.
+    App._publishBootSession({ signedOut: true });
     // Capture the platform SHA this document booted with. The anonymous
     // shell has no drawer (so no stale-version pill), which makes
     // pull-to-refresh its only recovery path after a deploy — and
@@ -614,14 +624,15 @@ const App = {
 
 
   enterAuthed(user) {
+    if (window.NativeChrome &&
+        typeof NativeChrome.prepareIdentityPublication === 'function') {
+      // The bridge handles this event synchronously and drops the old opaque
+      // realm claim before the successor identity becomes observable.
+      NativeChrome.prepareIdentityPublication(user);
+    }
     App.user = user;
-    // A snapshot-derived boot publishes NOTHING here. The record is the
-    // whole last user object, so the shell it paints is correct — but it is
-    // UNVERIFIED and can be up to SESSION_SNAPSHOT_MAX_AGE_MS old, and a
-    // joiner asking "who is signed in" wants the answer, not the last one.
-    // _reconcileSession publishes, a moment later, whichever of the three
-    // outcomes the read turns out to be. _sessionFromSnapshot is set
-    // immediately before this call, so it is already true here.
+    // A snapshot is display-only and unverified. _reconcileSession publishes
+    // the server's answer; a normal login publishes immediately.
     if (!App._sessionFromSnapshot) App._publishBootSession({ user });
     // "View as non-admin" admin tool. We mask `App.user.isAdmin`
     // for client-side UI gating (admin buttons, retry, delete, lock,
@@ -665,8 +676,8 @@ const App = {
     // its session out.
     if (!App._sessionFromSnapshot) App.saveSessionSnapshot(App.user);
 
-    // A web session exists (platform access or not). The native login
-    // handoff listens for this — wallet provisioning and the node work
+    // A web session exists (platform access or not). Native protocol 2
+    // listens for this — wallet provisioning and the node work
     // for waiting-room users too (apps are usable without platform
     // access; only the SV social/build surfaces are gated).
     document.dispatchEvent(new CustomEvent('sv:session', {

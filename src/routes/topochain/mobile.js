@@ -790,11 +790,11 @@ function topochainMobileRoutes(config) {
           has_platform_access: !!user.has_platform_access || !!user.is_admin,
           bp_requested: !!user.bp_requested_at,
           bp_released: !!user.bp_released_at,
-          // The namespace the app prefixes its local storage with. Every
-          // native identity is derived from this endpoint (the bridge's
-          // completeLogin resolves the bearer through it), so this is the one
-          // place the value has to be right. Stable for the life of the
-          // account — see src/services/mobile-identity-hash.js.
+          // The stable account namespace used by legacy mobile `/me`
+          // consumers. Protocol 2 derives the same fact inside its server
+          // exchange rather than through a split bridge login call. Stable
+          // for the life of the account — see
+          // src/services/mobile-identity-hash.js.
           identity_hash: mobileIdentityHash(user),
         },
       });

@@ -456,13 +456,12 @@ function topochainMobileAuthRoutes(config) {
   );
 
   // ── POST /from-session (platform-login unification) ──────────────────
-  // Exchanges a live platform WEB session (the `session` cookie) for a
-  // mobile bearer token, so the SV shell can log the user in ONCE on the
-  // web surface and then hand the native app a credential over the JS
-  // bridge (NATIVE-BRIDGE.md, bridge v4 `completeLogin`). This is the only
-  // bridge between the two auth systems: everything else about the token
-  // (ability, TTL, hashing, revocation) is identical to /login's output —
-  // it IS issueToken with a cookie-shaped front door.
+  // Legacy compatibility route: exchanges a live platform WEB session (the
+  // `session` cookie) for a mobile bearer token. Protocol 2 provisions its
+  // credential through the ticket/exchange transaction instead; this route
+  // preserves its existing shape for older clients. Everything else about
+  // the token (ability, TTL, hashing, revocation) is identical to /login's
+  // output — it IS issueToken with a cookie-shaped front door.
   //
   // Auth: session cookie (optionalSessionAuth + explicit user check, the
   // same pattern as the /challenges-api web reads in mobile.js). CSRF is a

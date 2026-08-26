@@ -32,7 +32,7 @@ const nativeChromeSource = fs.readFileSync(
 
 // The sheet must reach signed-out users too: the OS notification prompt
 // (and the Android alarm/battery asks) are device-level, not
-// account-level, so the anonymous-session admission is also a trigger.
+// account-level, so entering the anonymous shell is also a trigger.
 
 function fakeNode(tag) {
   const node = {
@@ -67,8 +67,7 @@ function boot(opts) {
       : { toast() {}, platform: opts.kitPlatform || 'ios' },
     usernode: {
       isNative: true,
-      async getBridgeInfo() { return { version: 4, capabilities }; },
-      async enterAnonymousSession() { return { admitted: true }; },
+      async getBridgeInfo() { return { version: 5, capabilities }; },
       async getSettingsState() { return { permissions: opts.permissions }; },
       async getSocialPushState() {
         if (opts.socialPushState === undefined) return null;
@@ -303,18 +302,17 @@ test('iOS: a denial keeps the sheet open, un-granted, and unmarked', async () =>
   assert.notEqual(stored[MARKER], '1');
 });
 
-test('anonymous: a signed-out iOS device still gets the sheet once the ' +
-     'anonymous session is admitted', async () => {
+test('anonymous: native session stays closed while device permissions remain available',
+  async () => {
   const { sandbox, sheets } = boot({
     user: null,
-    capabilities: ['getSettingsState', 'getSocialPushState',
-      'enterAnonymousSession'],
+    capabilities: ['getSettingsState', 'getSocialPushState'],
     permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
     socialPushState: IOS_UNPROMPTED,
   });
   const admitted = await sandbox.NativeChrome.enterAnonymous();
-  assert.equal(admitted, true, 'the anonymous session was admitted');
-  // The admission fires the sheet itself — wait for that run, without
+  assert.equal(admitted, false, 'anonymous pages never receive session authority');
+  // Anonymous entry fires the device-only sheet itself — wait for that run, without
   // calling maybeShowFirstRunPermissions() here (that would mask a
   // missing trigger).
   if (sandbox.NativeChrome._firstRunPromise) {
@@ -322,24 +320,7 @@ test('anonymous: a signed-out iOS device still gets the sheet once the ' +
   }
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sheets.length, 1,
-    'the anonymous admission itself must trigger the sheet');
-});
-
-test('anonymous: a refused admission does not trigger the sheet', async () => {
-  const { sandbox, sheets } = boot({
-    user: null,
-    capabilities: ['getSettingsState', 'getSocialPushState',
-      'enterAnonymousSession'],
-    permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
-    socialPushState: IOS_UNPROMPTED,
-  });
-  sandbox.usernode.enterAnonymousSession = async () => ({ admitted: false });
-  const admitted = await sandbox.NativeChrome.enterAnonymous();
-  assert.equal(admitted, false);
-  // Let any stray microtask chain settle before counting.
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(sheets.length, 0,
-    'a fail-closed admission keeps the boot quiet');
+    'anonymous entry must still trigger device-only permissions');
 });
 
 test('Android: an unmarked device still gets the sheet', async () => {

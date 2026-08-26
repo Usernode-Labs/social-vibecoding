@@ -78,8 +78,11 @@
   // Privileged chrome methods use a native-issued, per-realm capability. The
   // token is kept in this top-frame closure: child frames cannot read it, and
   // the relay below refuses both the bootstrap method and privileged calls.
-  // Old app builds do not advertise the capability and keep using the legacy
-  // wire shape, so the web half can deploy first.
+  //
+  // Native session authority is a separate, narrower claim. This document
+  // starts native-closed; only one successful protocol-2 establishment may
+  // install the opaque claim, and every session-bound call carries it
+  // automatically. There is no legacy lifecycle fallback.
   var _PRIVILEGED_CAPABILITY_METHOD = "getPrivilegedBridgeCapability";
   var _PRIVILEGED_NATIVE_METHODS = {
     addHomeScreenShortcut: true,
@@ -103,12 +106,7 @@
     // trusted origin through the relay.
     setIosKeepAlive: true,
     logout: true,
-    beginSessionHandoff: true,
-    enterAnonymousSession: true,
-    completeLogin: true,
-    startNode: true,
-    stopNode: true,
-    getAuthStatus: true,
+    establishNativeSession: true,
     markPrivilegedBridgeReady: true,
     getSocialPushState: true,
     setSocialPushEnabled: true,
@@ -117,17 +115,27 @@
     setSocialBadgeCount: true,
     manageStaking: true,
   };
-  var _SESSION_WALLET_METHODS = {
+  var _REALM_SESSION_METHODS = {
     getNodeAddress: true,
     submitTransaction: true,
     signMessage: true,
     getWalletState: true,
+    getNodeStatus: true,
+    manageStaking: true,
+    setNodeSleepEnabled: true,
+    resetZkChallenge: true,
+    getSocialPushState: true,
+    setSocialPushEnabled: true,
+    claimPendingSocialNotification: true,
+    ackPendingSocialNotification: true,
   };
   var _privilegedCapability = null;
   var _privilegedCapabilityPromise = null;
   var _privilegedCapabilitySupported = null;
-  var _sessionWalletRelayAdmitted = true;
-  var _sessionWalletRelayGeneration = 0;
+  var _realmSession = null;
+  var _realmSessionGeneration = 0;
+  var _realmEstablishLease = null;
+  var _REALM_CLOSE_EVENT = "sv:native-realm-close";
 
   // ── Privileged-handshake outcome record ───────────────────────────────
   //
@@ -239,26 +247,39 @@
     return _PRIVILEGED_NATIVE_METHODS[method] === true;
   }
 
-  function isSessionWalletMethod(method) {
-    return _SESSION_WALLET_METHODS[method] === true;
+  function isRealmSessionMethod(method) {
+    return _REALM_SESSION_METHODS[method] === true;
   }
 
-  // NativeChrome closes this synchronously when `sv:session` announces a
-  // login or account change, then reopens it only after that participant's
-  // native handoff succeeds. The iframe's own bridge cannot change the
-  // parent closure; same-origin top-frame code is already trusted.
-  window.usernode._setSessionWalletRelayAdmission = function (admitted) {
-    if (_inIframe) return false;
-    _sessionWalletRelayAdmitted = admitted === true;
-    if (!_sessionWalletRelayAdmitted) {
-      // A close is a hard temporal boundary, including close/reopen for the
-      // same Social participant. Old async work carries the previous private
-      // generation and can never become admitted again.
-      _sessionWalletRelayGeneration++;
-      _socialReceiptObservers = {};
-    }
-    return _sessionWalletRelayAdmitted;
-  };
+  function closeNativeSessionRealm(reason) {
+    if (_inIframe) return;
+    _realmSession = null;
+    _realmEstablishLease = null;
+    _realmSessionGeneration++;
+    _socialReceiptObservers = {};
+
+    var pending = window.__usernodeBridge && window.__usernodeBridge.pending;
+    if (!pending) return;
+    Object.keys(pending).forEach(function (id) {
+      var entry = pending[id];
+      if (!entry || (entry.sessionBound !== true &&
+          entry.establishment !== true)) return;
+      delete pending[id];
+      entry.reject(taggedNativeError(
+        reason || "Native session request stopped because the session changed",
+        "session-changed"
+      ));
+    });
+  }
+
+  // Identity publication dispatches this event synchronously before mutating
+  // App.user. The closure is the sole writer of the opaque realm claim; no
+  // public setter can reopen it.
+  window.addEventListener(_REALM_CLOSE_EVENT, function () {
+    closeNativeSessionRealm(
+      "Native session request stopped because the session changed"
+    );
+  });
 
   // ── Configuration for QR/desktop mode ─────────────────────────────────
   // Apps call window.usernode.configure({ address: "ut1..." }) to set the
@@ -324,6 +345,14 @@
     var entry = window.__usernodeBridge.pending[id];
     if (!entry) return;
     delete window.__usernodeBridge.pending[id];
+    if (entry.sessionBound === true &&
+        entry.realmSessionGeneration !== _realmSessionGeneration) {
+      entry.reject(taggedNativeError(
+        "Native session request stopped because the session changed",
+        "session-changed"
+      ));
+      return;
+    }
     if (error) {
       var err = new Error(error);
       var code = (errorInfo && typeof errorInfo.code === "string")
@@ -350,6 +379,10 @@
   // restoring a Promise that can never receive its old response. Ordinary
   // embedded-dapp calls retain their existing lifecycle contract.
   window.addEventListener("pagehide", function () {
+    closeNativeSessionRealm(
+      "Usernode request was cancelled because the page changed"
+    );
+    _privilegedCapability = null;
     var pending = window.__usernodeBridge.pending;
     Object.keys(pending).forEach(function (id) {
       var entry = pending[id];
@@ -368,7 +401,19 @@
   // request — surface it as an actual error instead of an infinite hang.
   var _RELAY_TIMEOUT_MS = 15000;
 
-  function postNative(method, args, privilegedCapability) {
+  function postNative(
+    method, args, privilegedCapability, realmSessionClaim,
+    realmSessionGeneration
+  ) {
+    if (realmSessionClaim &&
+        (!_realmSession ||
+         _realmSession.claim !== realmSessionClaim ||
+         _realmSessionGeneration !== realmSessionGeneration)) {
+      return Promise.reject(taggedNativeError(
+        "Native session request stopped because the session changed",
+        "session-changed"
+      ));
+    }
     var id = String(Date.now()) + "-" + Math.random().toString(16).slice(2);
     return new Promise(function (resolve, reject) {
       window.__usernodeBridge.pending[id] = {
@@ -376,10 +421,16 @@
         reject: reject,
         privileged: method === _PRIVILEGED_CAPABILITY_METHOD ||
           !!privilegedCapability,
+        sessionBound: !!realmSessionClaim,
+        establishment: method === "establishNativeSession",
+        realmSessionGeneration: realmSessionGeneration,
       };
       var payload = { method: method, id: id, args: args || {} };
       if (privilegedCapability) {
         payload.privilegedCapability = privilegedCapability;
+      }
+      if (realmSessionClaim) {
+        payload.realmSessionClaim = realmSessionClaim;
       }
       console.log(_BRIDGE_TAG, "callNative", method, "id", id,
         "useIframeRelay=" + _useIframeRelay,
@@ -402,6 +453,9 @@
           resolve: function (v) { clearTimeout(timer); origEntry.resolve(v); },
           reject: function (e) { clearTimeout(timer); origEntry.reject(e); },
           privileged: origEntry.privileged,
+          sessionBound: origEntry.sessionBound,
+          establishment: origEntry.establishment,
+          realmSessionGeneration: origEntry.realmSessionGeneration,
         };
         try {
           console.log(_BRIDGE_TAG, "relay → parent:", method, "id", id);
@@ -498,16 +552,28 @@
   }
 
   function callNative(method, args) {
-    if (isSessionWalletMethod(method) && !_sessionWalletRelayAdmitted) {
-      return Promise.reject(new Error(
-        "Native wallet handoff is in progress"
+    var needsRealmSession = isRealmSessionMethod(method);
+    var realmSession = (!_inIframe && needsRealmSession)
+      ? _realmSession : null;
+    if (!_inIframe && needsRealmSession && !realmSession) {
+      return Promise.reject(taggedNativeError(
+        "Native session is not established for this page",
+        "native-session-closed"
       ));
     }
     if (!isPrivilegedNativeMethod(method)) {
-      return postNative(method, args);
+      return postNative(
+        method, args, null,
+        realmSession && realmSession.claim,
+        realmSession && realmSession.generation
+      );
     }
     return ensurePrivilegedCapability().then(function (capability) {
-      return postNative(method, args, capability).catch(function (err) {
+      return postNative(
+        method, args, capability,
+        realmSession && realmSession.claim,
+        realmSession && realmSession.generation
+      ).catch(function (err) {
         // A full navigation replaces this JS realm. This path covers a
         // blocked/revoked navigation that leaves the old document alive:
         // discard its stale token so a later action can bootstrap again.
@@ -597,13 +663,6 @@
           );
         } catch (_) { /* iframe gone, ignore */ }
       }
-      if (isSessionWalletMethod(data.method) &&
-          !_sessionWalletRelayAdmitted) {
-        console.warn(_BRIDGE_TAG, "refusing wallet relay during handoff",
-          data.method, "from child iframe", origin);
-        reply(null, "Native wallet handoff is in progress");
-        return;
-      }
       // The native capability is delivered only into this top-frame JS
       // realm. Never let a child bootstrap it or ask the parent to exercise
       // a privileged method on its behalf; non-privileged dapp methods keep
@@ -614,6 +673,12 @@
           "from child iframe", origin);
         reply(null,
           "Privileged Usernode methods are only available to the top-level page");
+        return;
+      }
+      if (isRealmSessionMethod(data.method) && !_realmSession) {
+        console.warn(_BRIDGE_TAG, "refusing session relay while closed",
+          data.method, "from child iframe", origin);
+        reply(null, "Native session is not established for this page");
         return;
       }
       var nativeArgs = data.args || {};
@@ -628,9 +693,13 @@
       var relayReceiptClaim = data.method === "submitTransaction"
         ? claimSocialReceiptAdmission() : null;
       if (data.method === "submitTransaction" && !relayReceiptClaim) {
-        reply(null, "Native wallet handoff is in progress");
+        reply(null, "Native session is not established for this page");
         return;
       }
+      var relayRealmSession = isRealmSessionMethod(data.method)
+        ? _realmSession : null;
+      var relayRealmGeneration = relayRealmSession
+        ? relayRealmSession.generation : null;
       var nativeId = "relay-" + String(Date.now()) + "-" +
         Math.random().toString(16).slice(2);
       console.log(_BRIDGE_TAG, "← relay request",
@@ -671,13 +740,19 @@
           console.log(_BRIDGE_TAG, "native reject →", nativeId, err);
           reply(null, (err && err.message) || String(err));
         },
+        sessionBound: !!relayRealmSession,
+        realmSessionGeneration: relayRealmGeneration,
       };
       try {
-        window.Usernode.postMessage(JSON.stringify({
+        var relayPayload = {
           method: data.method,
           id: nativeId,
           args: nativeArgs,
-        }));
+        };
+        if (relayRealmSession) {
+          relayPayload.realmSessionClaim = relayRealmSession.claim;
+        }
+        window.Usernode.postMessage(JSON.stringify(relayPayload));
       } catch (err) {
         delete window.__usernodeBridge.pending[nativeId];
         reply(null, (err && err.message) || String(err));
@@ -878,8 +953,10 @@
   }
 
   function requireNativeTransactionSubmissionCapability() {
-    if (!_sessionWalletRelayAdmitted) {
-      return Promise.reject(new Error("Native wallet handoff is in progress"));
+    if (!_inIframe && !_realmSession) {
+      return Promise.reject(new Error(
+        "Native session is not established for this page"
+      ));
     }
     return window.usernode.getBridgeInfo().then(function (info) {
       if (!info || info.degraded === true) {
@@ -904,16 +981,16 @@
   }
 
   function claimSocialReceiptAdmission() {
-    if (_inIframe || !_sessionWalletRelayAdmitted) return null;
+    if (_inIframe || !_realmSession) return null;
     return {
-      generation: _sessionWalletRelayGeneration,
+      generation: _realmSessionGeneration,
       storageOwner: socialReceiptStorageOwner(),
     };
   }
 
   function socialReceiptClaimAdmitted(claim) {
-    return !!claim && !_inIframe && _sessionWalletRelayAdmitted &&
-      claim.generation === _sessionWalletRelayGeneration &&
+    return !!claim && !_inIframe && !!_realmSession &&
+      claim.generation === _realmSessionGeneration &&
       claim.storageOwner === socialReceiptStorageOwner();
   }
 
@@ -4188,7 +4265,9 @@
       );
       var receiptClaim = _inIframe ? null : admittedReceiptClaim;
       if (!_inIframe && !receiptClaim) {
-        return Promise.reject(new Error("Native wallet handoff is in progress"));
+        return Promise.reject(new Error(
+          "Native session is not established for this page"
+        ));
       }
       var from_pubkey;
       return requireNativeTransactionSubmissionCapability().then(function () {
@@ -4662,6 +4741,8 @@
         ? location.origin : null,
       bridgeVersion: (info && typeof info.version === "number")
         ? info.version : 0,
+      sessionLifecycleProtocol:
+        (info && info.sessionLifecycleProtocol === 2) ? 2 : null,
       capabilities: (info && Array.isArray(info.capabilities))
         ? info.capabilities.slice() : [],
       appVersion: (info && info.appVersion) ? String(info.appVersion) : null,
@@ -4705,8 +4786,10 @@
     });
   }
 
-  // getBridgeInfo() → { version, capabilities: [...], appVersion?,
-  //   buildNumber? }. The optional release identifiers describe the installed
+  // getBridgeInfo() → { version, capabilities: [...],
+  //   sessionLifecycleProtocol?, appVersion?, buildNumber? }. The optional
+  // semantic protocol is deliberately separate from generic bridge version.
+  // The optional release identifiers describe the installed
   // Flutter binary and remain on this public probe so SV staging can render
   // them without privileged settings access. Resolves
   // { version: 0, capabilities: [] } outside the app and on old builds,
@@ -5045,105 +5128,247 @@
     });
   };
 
-  // logout() → true. Confirm web-side; native owns the hard stop/drain and
-  // credential cleanup, then SV clears the web session and returns the user
-  // to the platform login page.
+  // logout() → true. Social clears its web session and caches first, then
+  // invokes this terminal action. Native owns the hard stop/drain and
+  // identity/credential cleanup before replacing the old document.
   window.usernode.logout = function () {
     return callNativeChromeAction("logout", {}, _SETTINGS_STATE_TIMEOUT_MS);
   };
 
   // =====================================================================
-  //  Public API: platform login + node lifecycle (bridge v4)
-  //  (usernode.beginSessionHandoff / completeLogin / startNode / stopNode)
+  //  Public API: atomic native-session establishment (protocol 2)
   // =====================================================================
-  //
-  // Thin-shell migration: the platform (SV) is the ONLY sign-in surface
-  // and the node lifecycle is platform-controlled. After a web login, SV
-  // exchanges its session cookie for a mobile bearer token
-  // (POST /api/v4/mobile/auth/from-session) and hands it to the native
-  // app here; the app provisions/imports the custodial wallet and reports
-  // identity progress via `usernode:auth-status` CustomEvents on window
-  // (detail: { phase, address, participantId?, epoch? } — same convention as
-  // `usernode:node-status`). Node start/stop is then requested explicitly
-  // by SV chrome (public/js/native-chrome.js owns the orchestration).
-  //
-  // These methods reject on old builds / outside the app / from non-SV
-  // origins. Contract: NATIVE-BRIDGE.md (bridge v4).
+  // The opaque realm claim never leaves this closure. Callers receive only
+  // the committed receipt's non-secret public status; subsequent session-
+  // bound calls carry the claim automatically.
+  var _NATIVE_ESTABLISH_TIMEOUT_MS = 120000;
+  var _OPAQUE_ATTEMPT_RE = /^nsa_[A-Za-z0-9_-]{43}$/;
+  var _OPAQUE_TICKET_RE = /^nst_[A-Za-z0-9_-]{43}$/;
+  var _B64URL_32_RE = /^[A-Za-z0-9_-]{43}$/;
+  var _HEX_64_RE = /^[0-9a-f]{64}$/;
+  var _CANONICAL_U64_RE = /^(0|[1-9][0-9]*)$/;
+  var _MAX_U64 = "18446744073709551615";
+  var _VALIDATED_CODE_RE = /^[a-z0-9_]{1,64}$/;
 
-  // beginSessionHandoff() → { blocked: true }. New app builds close their
-  // native wallet-dispatch latch before the web session exchange, including
-  // raw Android child-frame channel messages that cannot be stopped by this
-  // JavaScript wrapper alone.
-  window.usernode.beginSessionHandoff = function () {
-    return callNativeChromeAction(
-      "beginSessionHandoff", {}, _CHROME_PROBE_TIMEOUT_MS
-    );
-  };
+  function requireExactObject(value, keys, label) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(label + " must be an object");
+    }
+    var actual = Object.keys(value).sort();
+    var expected = keys.slice().sort();
+    if (actual.length !== expected.length) {
+      throw new Error(label + " has unexpected fields");
+    }
+    for (var i = 0; i < expected.length; i++) {
+      if (actual[i] !== expected[i]) {
+        throw new Error(label + " has unexpected fields");
+      }
+    }
+    return value;
+  }
 
-  // enterAnonymousSession() → { admitted: true }. The trusted shell calls
-  // this only after it has confirmed that no web participant is signed in.
-  window.usernode.enterAnonymousSession = function () {
-    return callNativeChromeAction(
-      "enterAnonymousSession", {}, _CHROME_PROBE_TIMEOUT_MS
-    );
-  };
+  function requireCanonicalString(value, label) {
+    if (typeof value !== "string" || !value || value !== value.trim()) {
+      throw new Error(label + " must be a non-empty canonical string");
+    }
+    return value;
+  }
 
-  // completeLogin({ token, user }) → identity snapshot
-  //   { phase, address, participantId?, epoch? }, or { restarting: true }
-  //   for a cross-participant hard restart. `token` is the v4
-  //   mobile bearer from /from-session; `user` is that response's user
-  //   object. Generous timeout: provisioning round-trips the leaderboard
-  //   API and may import a wallet.
-  var _COMPLETE_LOGIN_TIMEOUT_MS = 120000;
-  window.usernode.completeLogin = function (payload) {
-    payload = payload || {};
-    return callNativeChromeAction(
-      "completeLogin",
-      { token: payload.token, user: payload.user || null },
-      _COMPLETE_LOGIN_TIMEOUT_MS
-    );
-  };
+  function requireNativeEstablishTicket(value) {
+    requireExactObject(value, [
+      "protocol", "attemptId", "desiredRuntime", "ticket",
+      "requestDigest", "exchangeChallenge", "network", "issuedAt",
+      "expiresAt",
+    ], "nativeEstablishTicket");
+    if (value.protocol !== 2 || value.desiredRuntime !== "running" ||
+        !_OPAQUE_ATTEMPT_RE.test(value.attemptId) ||
+        !_OPAQUE_TICKET_RE.test(value.ticket) ||
+        !_HEX_64_RE.test(value.requestDigest) ||
+        !_B64URL_32_RE.test(value.exchangeChallenge)) {
+      throw new Error("nativeEstablishTicket is invalid");
+    }
+    requireExactObject(value.network, ["id", "chainId"],
+      "nativeEstablishTicket.network");
+    if (value.network.id !== "testnet") {
+      throw new Error("nativeEstablishTicket.network is invalid");
+    }
+    requireCanonicalString(value.network.chainId,
+      "nativeEstablishTicket.network.chainId");
+    if (typeof value.issuedAt !== "string" ||
+        !Number.isFinite(Date.parse(value.issuedAt)) ||
+        typeof value.expiresAt !== "string" ||
+        !Number.isFinite(Date.parse(value.expiresAt))) {
+      throw new Error("nativeEstablishTicket timestamps are invalid");
+    }
+    return Object.freeze({
+      protocol: 2,
+      attemptId: value.attemptId,
+      desiredRuntime: "running",
+      ticket: value.ticket,
+      requestDigest: value.requestDigest,
+      exchangeChallenge: value.exchangeChallenge,
+      network: Object.freeze({
+        id: "testnet",
+        chainId: value.network.chainId,
+      }),
+      issuedAt: value.issuedAt,
+      expiresAt: value.expiresAt,
+    });
+  }
 
-  // startNode({ address, participantId?, epoch? }) → { started, nodeStatus }
-  // (or rejects when the requested identity does not match the current
-  // native participant/epoch). The extra binding fields are additive and
-  // ignored by bridge v4 builds.
-  var _NODE_LIFECYCLE_TIMEOUT_MS = 60000;
-  window.usernode.startNode = function (payload) {
-    payload = payload || {};
-    return callNativeChromeAction(
-      "startNode", {
-        address: payload.address || null,
-        participantId: payload.participantId == null
-          ? null : payload.participantId,
-        epoch: payload.epoch == null ? null : payload.epoch,
-      },
-      _NODE_LIFECYCLE_TIMEOUT_MS
-    );
-  };
+  function requireNativeIdentity(value) {
+    requireExactObject(value, ["participantId", "accountId", "address"],
+      "native identity");
+    if (typeof value.participantId !== "string" ||
+        !/^[1-9][0-9]*$/.test(value.participantId)) {
+      throw new Error("native identity participantId is invalid");
+    }
+    return Object.freeze({
+      participantId: value.participantId,
+      accountId: requireCanonicalString(value.accountId,
+        "native identity accountId"),
+      address: requireCanonicalString(value.address,
+        "native identity address"),
+    });
+  }
 
-  // stopNode() → { stopped }. Idempotent — resolves true-shaped even
-  // when the node wasn't running.
-  window.usernode.stopNode = function () {
-    return callNativeChromeAction(
-      "stopNode", {}, _NODE_LIFECYCLE_TIMEOUT_MS
-    );
-  };
+  function requireRuntimeStatus(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("runtimeStatus is invalid");
+    }
+    if (value.state === "running") {
+      requireExactObject(value, ["state"], "runtimeStatus");
+      return Object.freeze({ state: "running" });
+    }
+    requireExactObject(value, ["state", "validatedCode"], "runtimeStatus");
+    if (value.state !== "startFailed" ||
+        typeof value.validatedCode !== "string" ||
+        !_VALIDATED_CODE_RE.test(value.validatedCode)) {
+      throw new Error("runtimeStatus is invalid");
+    }
+    return Object.freeze({
+      state: "startFailed",
+      validatedCode: value.validatedCode,
+    });
+  }
 
-  // getAuthStatus() → { phase, address, participantId?, epoch? } or null
-  // (old build / outside the app). Poll-style twin of the
-  // `usernode:auth-status` event for
-  // boot-time orchestration.
-  window.usernode.getAuthStatus = function () {
-    if (!window.usernode.isNative) return Promise.resolve(null);
-    return callNativeChromeRead(
-      "getAuthStatus", {}, _CHROME_PROBE_TIMEOUT_MS, null
-    );
+  function requireCanonicalU64(value) {
+    if (typeof value !== "string" || !_CANONICAL_U64_RE.test(value) ||
+        value.length > _MAX_U64.length ||
+        (value.length === _MAX_U64.length && value > _MAX_U64)) {
+      throw new Error("nativeRevision is not a canonical u64 string");
+    }
+    return value;
+  }
+
+  function requireNativeEstablishResult(value, attemptId) {
+    requireExactObject(value, [
+      "protocol", "attemptId", "nativeRevision", "identity",
+      "runtimeStatus", "receiptStatus", "realmSessionClaim",
+    ], "native establishment result");
+    if (value.protocol !== 2 || value.attemptId !== attemptId ||
+        value.receiptStatus !== "committedReady") {
+      throw new Error("native establishment result does not match the request");
+    }
+    var identity = requireNativeIdentity(value.identity);
+    var runtimeStatus = requireRuntimeStatus(value.runtimeStatus);
+    var publicStatus = Object.freeze({
+      protocol: 2,
+      attemptId: attemptId,
+      nativeRevision: requireCanonicalU64(value.nativeRevision),
+      identity: identity,
+      runtimeStatus: runtimeStatus,
+      receiptStatus: "committedReady",
+    });
+    return {
+      claim: requireCanonicalString(value.realmSessionClaim,
+        "realmSessionClaim"),
+      publicStatus: publicStatus,
+    };
+  }
+
+  window.usernode.establishNativeSession = function (payload) {
+    var ticket;
+    try {
+      requireExactObject(payload, [
+        "attemptId", "nativeEstablishTicket", "desiredRuntime",
+      ], "native establishment request");
+      ticket = requireNativeEstablishTicket(payload.nativeEstablishTicket);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    if (payload.desiredRuntime !== "running" ||
+        payload.attemptId !== ticket.attemptId) {
+      return Promise.reject(new Error(
+        "native establishment request does not match its ticket"
+      ));
+    }
+    var request = Object.freeze({
+      attemptId: ticket.attemptId,
+      nativeEstablishTicket: ticket,
+      desiredRuntime: "running",
+    });
+    var requestKey = JSON.stringify(request);
+    var generation = _realmSessionGeneration;
+
+    if (_realmSession) {
+      if (_realmSession.attemptId === request.attemptId &&
+          _realmSession.requestKey === requestKey) {
+        return Promise.resolve(_realmSession.publicStatus);
+      }
+      return Promise.reject(taggedNativeError(
+        "A different native session is already established for this page",
+        "native-session-conflict"
+      ));
+    }
+    if (_realmEstablishLease) {
+      if (_realmEstablishLease.generation === generation &&
+          _realmEstablishLease.requestKey === requestKey) {
+        return _realmEstablishLease.promise;
+      }
+      return Promise.reject(taggedNativeError(
+        "A different native session establishment is already in progress",
+        "native-session-conflict"
+      ));
+    }
+
+    var lease = {
+      generation: generation,
+      attemptId: request.attemptId,
+      requestKey: requestKey,
+      promise: null,
+    };
+    _realmEstablishLease = lease;
+    lease.promise = callNativeChromeAction(
+      "establishNativeSession", request, _NATIVE_ESTABLISH_TIMEOUT_MS
+    ).then(function (raw) {
+      if (_realmEstablishLease !== lease ||
+          _realmSessionGeneration !== generation) {
+        throw taggedNativeError(
+          "Native session establishment was superseded",
+          "session-changed"
+        );
+      }
+      var accepted = requireNativeEstablishResult(raw, request.attemptId);
+      _realmSession = {
+        claim: accepted.claim,
+        generation: generation,
+        attemptId: request.attemptId,
+        requestKey: requestKey,
+        publicStatus: accepted.publicStatus,
+      };
+      _realmEstablishLease = null;
+      return accepted.publicStatus;
+    }).then(null, function (err) {
+      if (_realmEstablishLease === lease) _realmEstablishLease = null;
+      throw err;
+    });
+    return lease.promise;
   };
 
   // markPrivilegedBridgeReady() → { ready: true }. Social calls this only
   // after every native-event listener is installed. Native binds readiness to
-  // this exact JavaScript realm and replays current auth/node/push state; it
+  // this exact JavaScript realm and replays current native event state; it
   // deliberately does not infer listener readiness from WebView callbacks.
   window.usernode.markPrivilegedBridgeReady = function () {
     if (!window.usernode.isNative) return Promise.resolve({ ready: false });
