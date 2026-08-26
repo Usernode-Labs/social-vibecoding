@@ -39,9 +39,12 @@ const nativeJs = fs.readFileSync(
 // Every screen root the shell can show, and the screens that swap between
 // them. Kept as literals so a new screen that forgets the discipline shows
 // up as a missing entry rather than passing vacuously.
+// Notifications left this list when it became a SHEET — it presents over
+// whatever screen is showing rather than replacing it, so it is not a
+// mutually exclusive root and has no navigate/exit pair.
 const SCREEN_ROOTS = ['app-view', 'home-screen', 'browse-screen',
   'leaderboard-screen', 'profile-screen', 'admin-screen', 'settings-screen',
-  'messages-screen', 'notifications-screen'];
+  'messages-screen'];
 
 const NAVIGATIONS = [
   { fn: 'navigateToLeaderboard', reveal: 'leaderboard-screen' },
@@ -50,11 +53,10 @@ const NAVIGATIONS = [
   { fn: 'navigateToAdminConsole', reveal: 'admin-screen' },
   { fn: 'navigateToSettings', reveal: 'settings-screen' },
   { fn: 'navigateToMessages', reveal: 'messages-screen' },
-  { fn: 'navigateToNotifications', reveal: 'notifications-screen' },
 ];
 
 const EXITS = ['_exitLeaderboard', '_exitProfile', '_exitBrowse',
-  '_exitAdminConsole', '_exitSettings', '_exitMessages', '_exitNotifications'];
+  '_exitAdminConsole', '_exitSettings', '_exitMessages'];
 
 // The body of a top-level App method, from its two-space-indented
 // definition to the closing `},` at the same indent.

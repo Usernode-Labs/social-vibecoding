@@ -334,11 +334,17 @@ const Notifications = {
   // every existing caller — a notification click, a screenshot deep link, the
   // native Social coordinator — keeps working unchanged.
   //
-  // `open` is derived rather than stored for the same reason: the drawer's
-  // exit is deferred behind a spring (see HeaderMenu.isPresenting), so a flag
-  // set here would disagree with what is on screen for ~200ms after a close.
+  // `open` is derived rather than stored because both surfaces defer their
+  // exit behind a spring (see HeaderMenu.isPresenting and the sheet
+  // controller's dismiss promise), so a flag set here would disagree with
+  // what is on screen for ~200ms after a close.
+  //
+  // It asks about the SHEET and the drawer both. The rows are the sheet's now
+  // (Streamlined Concept), but this module's own dismiss-before-you-navigate
+  // rule predates that and still has to cover a drawer somebody opened.
   get open() {
-    return !!window.HeaderMenu?.isPresenting?.();
+    return !!window.NotificationsSheet?.isOpen?.()
+      || !!window.HeaderMenu?.isPresenting?.();
   },
 
   toggle() {
@@ -347,11 +353,12 @@ const Notifications = {
   },
 
   show() {
-    window.HeaderMenu?.open?.();
+    window.NotificationsSheet?.open?.();
   },
 
   hide() {
-    window.HeaderMenu?.close?.();
+    window.NotificationsSheet?.close?.();
+    if (window.HeaderMenu?.isPresenting?.()) window.HeaderMenu.close?.();
   },
 
   // Screenshot-state deep link (`?shot=notifications`): the list only exists
@@ -368,9 +375,10 @@ const Notifications = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
     if (shot !== 'notifications') return;
     Notifications._shotOpened = true;
-    // The list is the full-screen Notifications view now (Streamlined
-    // Concept), so the deep link lands there rather than opening the drawer.
-    if (window.App?.navigateToNotifications) window.App.navigateToNotifications();
+    // The list is the Notifications SHEET now (Streamlined Concept), so the
+    // deep link resolves a screen underneath and presents over it rather
+    // than opening the drawer.
+    if (window.App?.openNotificationsSheet) window.App.openNotificationsSheet();
     else Notifications.show();
   },
 

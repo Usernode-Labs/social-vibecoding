@@ -352,12 +352,28 @@ export function PlatformHeader() {
               Both badges keep the ids and the writer they had as rows
               (Notifications._renderBadge), so nothing about how a count is
               computed changes — only which control wears it.
+
+              THEY OPEN SHEETS, and they stay real anchors anyway. A plain
+              click presents the sheet over the screen you are on, with no
+              hash write and so no history entry to back out of — which is
+              the whole point of them not being screens. A modified click is
+              left alone and opens the href in a tab, where the same hash is
+              a deep link that resolves to a screen and presents the sheet
+              over it. `NavLink.isNativeClick` is what tells the two apart,
+              and it is checked BEFORE preventDefault — the rule
+              tests/nav-new-tab.test.js pins across the whole shell.
           */}
           <a
             id="messages-btn"
             href="#messages"
             className="relative w-7 h-7 mr-1 flex items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
             aria-label="Messages"
+            aria-haspopup="dialog"
+            onClick={(event) => {
+              if ((window as any).NavLink?.isNativeClick?.(event)) return;
+              event.preventDefault();
+              (window as any).MessagesSheet?.toggle?.();
+            }}
           >
             <ChatBubbleTailIcon className="w-5 h-5" />
             <span
@@ -372,6 +388,12 @@ export function PlatformHeader() {
             href="#notifications"
             className="relative w-7 h-7 mr-1 flex items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
             aria-label="Notifications"
+            aria-haspopup="dialog"
+            onClick={(event) => {
+              if ((window as any).NavLink?.isNativeClick?.(event)) return;
+              event.preventDefault();
+              (window as any).NotificationsSheet?.toggle?.();
+            }}
           >
             <BellIcon className="w-5 h-5" />
             <span

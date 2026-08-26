@@ -78,7 +78,7 @@ import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
-import { NotificationsScreen } from './features/notifications/notifications-screen';
+import { NotificationsIsland } from './features/notifications';
 import { SettingsScreen } from './features/settings';
 import { Dialogs } from './features/dialogs';
 import { StagingOverlay, VisualCompareOverlay } from './features/staging';
@@ -232,14 +232,6 @@ export function Shell() {
       */}
       <Island name="MessagesScreen"><MessagesScreen /></Island>
       {/*
-          The full-screen Notifications view (Streamlined Concept). Same
-          contract as Messages above: fully React-owned, ships hidden and
-          empty for prerender/hydration parity, and renders from the same
-          notifications store the drawer's list reads —
-          App.navigateToNotifications publishes visibility on #notifications.
-      */}
-      <Island name="NotificationsScreen"><NotificationsScreen /></Island>
-      {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down
           merged it into the Leaderboard screen above, where it is now the
@@ -392,6 +384,14 @@ export function Shell() {
           same dual-idiom presentation as the Improve panel above.
       */}
       <Island name="AppContextIsland"><AppContextIsland /></Island>
+      {/*
+          Notifications (Streamlined Concept). A SHEET, not a screen: the bell
+          is in the header on every route, so a full-screen view had to answer
+          "back to where?" and answered "home" — wrong every time it was
+          opened from somewhere else. Presented over the current screen and
+          dismissed back to it, on the same chassis as the sheet above.
+      */}
+      <Island name="NotificationsIsland"><NotificationsIsland /></Island>
       {/* Developer console (slide-up panel, anchored to bottom) — an ISLAND
           since #1079 chunk B: features/dev-console owns the whole subtree and
           public/js/dev-console.js is retired. */}

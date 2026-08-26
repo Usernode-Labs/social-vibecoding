@@ -863,7 +863,9 @@ html.un-kb .platform-safe-sheet {
    and the signal bars, which is the one place the gap exists to prevent. The
    fallback keeps desktop and any browser without the env() unchanged. */
 .platform-sheet-adopted#improve-panel,
-.platform-sheet-adopted#apps-switcher-sheet {
+.platform-sheet-adopted#apps-switcher-sheet,
+.platform-sheet-adopted#notifications-sheet,
+.platform-sheet-adopted#messages-sheet {
   max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem) !important;
 }
 
@@ -881,7 +883,9 @@ html.un-kb .platform-safe-sheet {
    takes a `pointercancel` (native.js handles it with v=0 and springs back);
    a drag starting anywhere else in the sheet still dismisses it, and so
    does the grabber. */
-.un-sheet:has(#improve-panel) {
+.un-sheet:has(#improve-panel),
+.un-sheet:has(#notifications-sheet),
+.un-sheet:has(#messages-sheet) {
   touch-action: pan-y;
 }
 
@@ -6848,6 +6852,71 @@ a.drawer-ver--fork:hover {
     transform: translateY(100%);
   }
   #apps-switcher-sheet[data-open] {
+    transform: translateY(0);
+  }
+}
+
+/* ── Notifications and Messages sheets ────────────────────────────────
+   The bell and the speech bubble present the same way the title tab's
+   app-context sheet does — right-edge slide-over at `sm`+ for a mouse, a
+   bottom sheet below it, a real kit sheet on touch — because they stopped
+   being screens. A screen reachable from every route has to answer "back to
+   where?", and both of these answered "home", which was wrong every time
+   they were opened from somewhere else.
+
+   Taller than the app-context sheet on purpose: that one holds one row of
+   app tiles and a pair of buttons, these hold as many rows as there are, so
+   they take the same near-full-height cap the Improve panel does and let
+   their own scroller take over. */
+#notifications-sheet,
+#messages-sheet {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 24rem;
+  max-width: 90vw;
+  border-left-width: 1px;
+  transform: translateX(100%);
+}
+#notifications-sheet[data-open],
+#messages-sheet[data-open] {
+  transform: translateX(0);
+}
+.nav-sheet-transition {
+  transition: transform 200ms ease-out;
+}
+#notifications-sheet-overlay,
+#messages-sheet-overlay {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+#notifications-sheet-overlay[data-open],
+#messages-sheet-overlay[data-open] {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (max-width: 639px) {
+  #notifications-sheet,
+  #messages-sheet {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-width: none;
+    /* `dvh`, not `vh`: a mobile browser's collapsing toolbar must not push
+       the foot of the sheet under itself. 3rem of ground stays visible so
+       the thing still reads as an overlay rather than a screen. */
+    height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
+    border-left-width: 0;
+    border-top-width: 1px;
+    border-top-left-radius: 1rem;
+    border-top-right-radius: 1rem;
+    transform: translateY(100%);
+  }
+  #notifications-sheet[data-open],
+  #messages-sheet[data-open] {
     transform: translateY(0);
   }
 }

@@ -324,14 +324,22 @@ test('.platform-sheet-adopted survives for the surfaces still using it', () => {
     "and kind: 'sheet' is what still produces the class app.css styles");
   // notifications.js was the fifth copy of the adoption dance and was NOT part
   // of slice 3's four — it wrote the class itself. THE UI OVERHAUL removed
-  // that copy along with the panel it presented: the list renders inside the
-  // hamburger now, and the hamburger's own adoption is the only one left.
+  // that copy along with the panel it presented. The list has its own sheet
+  // again (Streamlined Concept), but the adoption is not this module's: it
+  // goes through lib/sheet-controller.js, the one chassis all three sheets
+  // share, so there is still exactly one copy of the dance.
   const notifications = fs.readFileSync(
     path.join(root, 'frontend/src/features/notifications/notifications.js'), 'utf8');
   assert.ok(!/platform-sheet-adopted/.test(notifications),
     'the retired fifth copy of the adoption dance must not linger');
-  assert.match(notifications, /window\.HeaderMenu\?\.open\?\.\(\)/,
-    'show() forwards to the drawer that actually presents the list');
+  assert.ok(!/adoptKitSurface/.test(notifications),
+    'and this module does not adopt anything itself either');
+  assert.match(notifications, /window\.NotificationsSheet\?\.open\?\.\(\)/,
+    'show() forwards to the sheet controller that actually presents the list');
+  const sheetChassis = fs.readFileSync(
+    path.join(root, 'frontend/src/lib/sheet-controller.js'), 'utf8');
+  assert.match(sheetChassis, /kind: 'sheet'/,
+    'the chassis is where the three sheets ask for the kind');
 });
 
 test('a dapp check pins the drawer to the panel on a forced-touch route', () => {
@@ -434,7 +442,7 @@ test('read notifications keep a way back, on the screen', () => {
   const notificationsJs = fs.readFileSync(
     path.join(root, 'frontend/src/features/notifications/notifications.js'), 'utf8');
   const screenTsx = fs.readFileSync(
-    path.join(root, 'frontend/src/features/notifications/notifications-screen.tsx'), 'utf8');
+    path.join(root, 'frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
 
   // Streamlined Concept: the list is the #notifications screen. Read rows
   // are always in hand there — the All tab shows them, Unread filters them —

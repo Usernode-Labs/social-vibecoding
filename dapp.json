@@ -1656,31 +1656,31 @@
       "expectSelector": "#home-search-input"
     },
     {
-      "name": "The Notifications screen renders its Mark-all-read control (Streamlined Concept)",
+      "name": "The Notifications sheet renders its Mark-all-read control (Streamlined Concept)",
       "path": "/",
       "expectSelector": "#notifications-screen-mark-all"
     },
     {
-      "name": "Saved messages pin to the top of the notifications drawer (#1280)",
+      "name": "Saved messages pin to the top of the notifications sheet (#1280)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-screen #notifications-saved [data-saved-message]",
+      "expectSelector": "#notifications-sheet #notifications-saved [data-saved-message]",
       "expectText": "The deploy runbook lives in docs/deploy.md"
     },
     {
-      "name": "A saved message can be unsaved from the drawer (#1280)",
+      "name": "A saved message can be unsaved from the sheet (#1280)",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-saved [data-saved-unsave]",
       "expectText": "Unsave"
     },
     {
-      "name": "The Notifications screen renders its All | Unread tabs (Streamlined Concept)",
+      "name": "The Notifications sheet renders its All | Unread tabs (Streamlined Concept)",
       "path": "/?demo=1#notifications",
-      "expectSelector": "#notifications-screen:not(.hidden) #notifications-screen-tabs"
+      "expectSelector": "#notifications-sheet[data-open] #notifications-screen-tabs"
     },
     {
-      "name": "The Notifications screen renders notification rows (Streamlined Concept)",
+      "name": "The Notifications sheet renders notification rows (Streamlined Concept)",
       "path": "/?demo=1#notifications",
-      "expectSelector": "#notifications-screen [data-notif-id]"
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id]"
     },
     {
       "name": "Improve panel carries the feedback row",
@@ -2671,14 +2671,14 @@
       "expectSelector": "#dev-actions > #dev-kanban-filterbar:empty + div > #dev-plus-btn"
     },
     {
-      "name": "The Notifications screen shows read rows on the All tab (Streamlined Concept)",
+      "name": "The Notifications sheet shows read rows on the All tab (Streamlined Concept)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-screen:not(.hidden) [data-notif-id]"
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id]"
     },
     {
-      "name": "The Notifications screen is a flat list of rows (#1385)",
+      "name": "The Notifications sheet is a flat list of rows (#1385)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-screen:not(:has([data-group-toggle]))"
+      "expectSelector": "#notifications-sheet:not(:has([data-group-toggle]))"
     },
     {
       "name": "The Dev feed renders as a de-carded stream",

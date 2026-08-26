@@ -192,7 +192,7 @@ test('saves are kept out of the notification feed proper', () => {
 
 test('the section renders above the invites, and only when non-empty', () => {
   // Streamlined Concept: the pinned pair renders on the Notifications
-  // SCREEN now (notifications-screen.tsx mounts <NotificationsPinnedSections/>
+  // SHEET now (notifications-sheet.tsx mounts <NotificationsPinnedSections/>
   // under the tabs); Saved still leads Invites.
   const savedIdx = LIST_SRC.indexOf('id="notifications-saved"');
   const invitesIdx = LIST_SRC.indexOf('id="notifications-invites"');
@@ -211,16 +211,17 @@ test('the section is rendered on every refresh, not on open', () => {
   // measured the right height — so the paths that mattered were the two
   // branches of show() plus a refresh landing while it was already open.
   //
-  // The list lives in the hamburger now, which is always mounted (translated
-  // off-screen, not built on open). There is no "before presenting" to render
-  // at, so the render is unconditional and the drawer opens onto CURRENT rows
-  // rather than last-open's.
+  // The list lives in the Notifications SHEET now, which is always mounted
+  // (translated off-screen, not built on open) — as the hamburger was before
+  // it. There is no "before presenting" to render at, so the render is
+  // unconditional and the sheet opens onto CURRENT rows rather than
+  // last-open's.
   const show = SRC.match(/\n  show\(\) \{([\s\S]*?)\n  \},/);
   assert.ok(show, 'show() found');
   assert.equal((show[1].match(/_renderSaved\(\)/g) || []).length, 0,
-    'show() forwards to the drawer and renders nothing itself');
-  assert.match(show[1], /HeaderMenu\?\.open\?\(\)|HeaderMenu\?\.open\?\.\(\)/,
-    'it forwards to the drawer that actually presents the list');
+    'show() forwards to the sheet and renders nothing itself');
+  assert.match(show[1], /NotificationsSheet\?\.open\?\.\(\)/,
+    'it forwards to the sheet that actually presents the list');
   const refresh = SRC.match(/\n  async refresh\(options\) \{([\s\S]*?)\n  \},/);
   assert.ok(refresh, 'refresh() found');
   assert.match(refresh[1], /Notifications\._renderSaved\(\);/,

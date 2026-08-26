@@ -1,19 +1,24 @@
 /**
- * The full-screen Notifications view (#notifications-screen) — Streamlined
- * Concept.
+ * The Notifications SHEET (#notifications-sheet) — Streamlined Concept.
  *
- * The Figma board gives notifications a real screen behind the drawer's
- * Notifications row: All | Unread tabs, TODAY / EARLIER sections, one row
- * per notification with an avatar-initial chip, the source app + relative
- * time as the subtitle, an unread dot and a trailing chevron.
+ * All | Unread tabs, TODAY / EARLIER sections, one row per notification with
+ * an avatar-initial chip, the source app + relative time as the subtitle, an
+ * unread dot and a trailing chevron.
+ *
+ * ── It was a screen, and a screen needed a back button ─────────────────
+ *
+ * The bell is in the header on every route, so a full-screen Notifications
+ * view had to answer "back to where?" — and it answered "home", which was
+ * wrong every time you opened it from somewhere that was not home. As a
+ * sheet the question does not arise: it presents over the current screen and
+ * dismisses back to it. See ./notifications-sheet-controller.js.
  *
  * ── Ownership ──────────────────────────────────────────────────────────
  *
- * Fully React-owned, on the Messages screen's pattern (the only other
- * fully-React screen root): the screen id lives in App.REACT_SCREEN_IDS, so
- * visibility arrives through lib/visibility-store rather than a classList
- * write, and `App.navigateToNotifications()` (public/js/app.js) does the
- * screen swap. No public/js/** module writes a node inside this subtree.
+ * Fully React-owned. The root is an overlay, not a screen root, so it is not
+ * in App.SCREEN_IDS and its visibility is `data-open` off
+ * ./notifications-sheet-store.js rather than a `hidden` class off the
+ * visibility store. No public/js/** module writes a node inside this subtree.
  *
  * ── Data ───────────────────────────────────────────────────────────────
  *
@@ -26,13 +31,14 @@
  * exactly what the SSG prerender ships.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
-import { ChevronRightIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
-import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
+import { notificationsSheetStore } from './notifications-sheet-store.js';
+import { NotificationsSheet } from './notifications-sheet-controller.js';
 import { NotificationsPinnedSections } from './notifications-list';
 import type { NotificationRowView } from './notifications-list';
 
@@ -115,25 +121,12 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
   );
 }
 
-export function NotificationsScreen() {
-  const screenRef = useRef<HTMLElement | null>(null);
-  useVisibilityHiddenClass(screenRef, 'notifications-screen', false);
+export function NotificationsSheetView() {
+  const { open } = useStoreState(notificationsSheetStore) as { open: boolean };
 
-  // The list's pull-to-refresh, moved here with the list itself (it attached
-  // to the drawer's #notifications-list while the rows rendered there). The
-  // screen root is the scroller and is never re-created, so attaching once
-  // is the same contract; the kit no-ops it on desktop.
-  useEffect(() => {
-    const el = screenRef.current;
-    const ui = (typeof window !== 'undefined'
-      ? (window as any).PlatformUI : null);
-    if (!el || !ui?.pullToRefresh) return;
-    ui.pullToRefresh(
-      el,
-      () => (window as any).Notifications?.refresh() ?? Promise.resolve(),
-    );
-  }, []);
-
+  // Pull-to-refresh went with the screen root. A kit sheet owns the vertical
+  // drag for its own dismiss gesture, so a pull-down inside one cannot also
+  // mean "reload" — the controller refreshes on open instead.
   const snap = useStoreState(notificationsStore) as {
     screenList: ScreenRowView[] | null;
     screenCanLoadMore?: boolean;
@@ -155,15 +148,28 @@ export function NotificationsScreen() {
       : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300');
 
   return (
-    <main
-      ref={screenRef as React.RefObject<HTMLElement>}
-      id="notifications-screen"
-      className="hidden flex-1 min-h-0 overflow-y-auto bg-white dark:bg-zinc-950"
-    >
+    <>
+      <div
+        id="notifications-sheet-overlay"
+        aria-hidden="true"
+        {...(open ? { 'data-open': '' } : {})}
+        className="fixed inset-0 z-40 bg-black/40"
+        onClick={() => NotificationsSheet.close()}
+      >
+      </div>
+      <div
+        id="notifications-sheet"
+        role="dialog"
+        aria-label="Notifications"
+        aria-hidden={open ? undefined : 'true'}
+        {...(open ? { 'data-open': '' } : {})}
+        className={'fixed z-50 flex flex-col bg-white dark:bg-zinc-900 '
+          + 'border-zinc-200 dark:border-zinc-700 shadow-2xl nav-sheet-transition'}
+      >
       <div
         id="notifications-screen-tabs"
-        className={'sticky top-0 z-10 bg-white dark:bg-zinc-950 flex items-end gap-4 px-4 pt-2 '
-          + 'border-b border-zinc-200 dark:border-zinc-800'}
+        className={'sticky top-0 z-10 bg-white dark:bg-zinc-900 flex items-end gap-4 px-5 pt-4 '
+          + 'border-b border-zinc-200 dark:border-zinc-800 shrink-0'}
         role="tablist"
         aria-label="Notification filters"
       >
@@ -194,7 +200,21 @@ export function NotificationsScreen() {
         >
           Mark all read
         </button>
+        <button
+          id="notifications-sheet-close"
+          type="button"
+          className={'pb-2 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 '
+            + 'dark:hover:text-zinc-200 un-touch-target'}
+          aria-label="Close"
+          onClick={() => NotificationsSheet.close()}
+        >
+          <XIcon className="w-5 h-5" />
+        </button>
       </div>
+      {/* The sheet's own scroller. The screen root used to be the scroller;
+          a sheet's head has to stay put while its rows move, so the rows get
+          a box of their own. */}
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll">
       {/*
           Saved messages + collaborator invites, pinned above the rows — they
           moved here with the list from the drawer's notifications block.
@@ -234,6 +254,8 @@ export function NotificationsScreen() {
           </button>
         </div>
       ) : null}
-    </main>
+      </div>
+      </div>
+    </>
   );
 }

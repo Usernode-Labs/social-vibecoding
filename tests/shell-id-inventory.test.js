@@ -61,7 +61,7 @@ const RETIRED_IDS = {
   'drawer-your-apps-toggle': 'Its fold, retired with the section.',
   // ── Streamlined Concept: the notification list left the drawer ───
   // The rows render on the full-screen #notifications view now
-  // (notifications-screen.tsx, its own ids in ADDED_IDS below); the saved +
+  // (notifications-sheet.tsx, its own ids in ADDED_IDS below); the saved +
   // invites sections moved WITH the surface keeping their ids, so only the
   // drawer-specific chrome is gone.
   'notifications-mark-all': 'The drawer block\'s mark-all control; the screen renders its own (#notifications-screen-mark-all), React-wired.',
@@ -137,6 +137,10 @@ const RETIRED_IDS = {
   // and the button that opened it went with them. The header's left slot is
   // the board's own cluster now: the app glyph (or a back arrow) beside the
   // title tab, both opening the Apps sheet.
+  // ── Streamlined Concept, second pass: the two alerting screens
+  //    became SHEETS. A screen reachable from every route has to answer
+  //    "back to where?", and both answered "home".
+  'notifications-screen': 'The Notifications screen ROOT. It is #notifications-sheet now — an overlay over the current screen, out of App.SCREEN_IDS entirely, so there is no back arrow to point anywhere. Its children kept their ids.',
   'header-menu-btn': 'The hamburger. Its slot is the app-glyph/back-arrow pair (features/header/header-app-icon.tsx + #back-btn), and its badge cluster moved to #improve-btn — the control whose panel actually holds the work those badges report.',
   'header-menu-deploy-dot': 'Renamed #improve-version-dot with that move. A `header-menu-*` id on the Improve button would be a lie that outlives everyone who remembers it.',
   'drawer-app-rows': 'The app rows\' scroller in the drawer. The Improve panel renders them now, and #improve-sessions is the scroller.',
@@ -341,9 +345,11 @@ const ADDED_IDS = {
   // screen's fully-React pattern: All | Unread tabs, Today/Earlier
   // sections, avatar-initial rows. Renders from the same notifications
   // store as the drawer's list.
-  'notifications-screen': 'The Notifications screen root — in App.SCREEN_IDS and REACT_SCREEN_IDS, revealed by App.navigateToNotifications on #notifications.',
-  'notifications-screen-tabs': 'The screen\'s sticky All | Unread tab row, with its own Mark-all-read control.',
-  'notifications-screen-mark-all': 'Mark-all-read on the screen — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound.',
+  'notifications-sheet': 'The Notifications SHEET root. It was #notifications-screen, a screen root in App.SCREEN_IDS — but the bell is in the header on every route, so a full-screen view had to answer "back to where?" and answered "home", wrong every time it was opened from anywhere else. A sheet presents over the current screen and dismisses back to it.',
+  'notifications-sheet-overlay': 'Its backdrop.',
+  'notifications-sheet-close': 'Its close control — the desktop slide-over needs a visible dismiss, as the Apps sheet has.',
+  'notifications-screen-tabs': 'The sheet\'s sticky All | Unread tab row, with its own Mark-all-read control. Keeps the `-screen-` id it was born with: the declared checks select on it, and renaming a node that did not move would be churn.',
+  'notifications-screen-mark-all': 'Mark-all-read on the sheet — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound. Same naming note as the tab row above.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

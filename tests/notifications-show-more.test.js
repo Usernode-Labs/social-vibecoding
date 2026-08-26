@@ -38,10 +38,10 @@ const SRC = fs.readFileSync(
 );
 // #1191 slice 6 moved the drawer's markup out of the controller; the
 // Streamlined Concept then made the list its own SCREEN, so the "what does
-// the list render" assertions read notifications-screen.tsx now.
+// the list render" assertions read notifications-sheet.tsx now.
 const LIST_SRC = fs.readFileSync(
   path.join(
-    __dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications-screen.tsx'
+    __dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications-sheet.tsx'
   ),
   'utf8'
 );
