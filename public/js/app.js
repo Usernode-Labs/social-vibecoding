@@ -387,19 +387,31 @@ const App = {
   // nodes are static in index.html — only which one is `hidden` changes,
   // and the <img> gets no src until there is one, so a user with no
   // picture never issues a request.
+  // #1436 adds a SECOND pair: the app-switcher chip in the header carries the
+  // same face, so both swap together from this one choke point rather than the
+  // chip growing its own copy of this logic that can disagree after a save.
   applyUserAvatar() {
-    const img = document.getElementById('drawer-avatar');
-    const glyph = document.getElementById('drawer-profile-glyph');
-    if (!img || !glyph) return;
     const url = App.user && App.user.avatarUrl;
-    if (url) {
-      img.src = url;
-      img.classList.remove('hidden');
-      glyph.classList.add('hidden');
-    } else {
-      img.removeAttribute('src');
-      img.classList.add('hidden');
-      glyph.classList.remove('hidden');
+    const pairs = [
+      ['drawer-avatar', 'drawer-profile-glyph'],
+      ['switcher-avatar', 'switcher-avatar-glyph'],
+    ];
+    for (const [imgId, glyphId] of pairs) {
+      const img = document.getElementById(imgId);
+      const glyph = document.getElementById(glyphId);
+      // Each pair is independent: the chip is absent from the prerendered
+      // document on screens with no target, and a missing pair must not stop
+      // the other one being painted.
+      if (!img || !glyph) continue;
+      if (url) {
+        img.src = url;
+        img.classList.remove('hidden');
+        glyph.classList.add('hidden');
+      } else {
+        img.removeAttribute('src');
+        img.classList.add('hidden');
+        glyph.classList.remove('hidden');
+      }
     }
   },
 

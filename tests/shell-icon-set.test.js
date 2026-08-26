@@ -190,8 +190,13 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // TrophyOutlineIcon — the Challenges bar's leaderboard link and its
     // standings footer.
     'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
-    // ChevronDownIcon — the Challenges footer's expand caret.
-    'M19 9l-7 7-7-7',
+    // ChevronDownIcon LEFT this list in #1436 and is now prerendered. It was
+    // here while its only call site was the Challenges footer's expand caret,
+    // which renders from the fetched /api/home-panels cache; the app-switcher
+    // chip draws it too now, and the chip IS in <Shell/>. Recorded rather than
+    // silently dropped, because a glyph moving between these two states is
+    // exactly the signal this test exists to make visible.
+    //
     // PlusWideIcon — Discover's add badge and the Create app tile. Its other
     // call site is an HTML string in features/home/home.js's card menu, which
     // is not rendered by <Shell/> either.

@@ -104,6 +104,23 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #1436: the app-switcher chip ─────────────────────────────────
+  // The header's left-hand control — your avatar, the app you are in, a
+  // chevron — and the drawer's trigger. It replaced the hamburger BUTTON;
+  // the drawer behind it is the same surface with the same controller, so
+  // #header-menu-panel and friends are untouched here.
+  //
+  // Present in the prerender but shipping `hidden`: it renders wherever
+  // features/improve/improve-store.js carries a target, which is nowhere
+  // until a publisher runs. That is the island rule — the first render has
+  // to match the prerendered markup — and it is the same reason
+  // #improve-btn is in the document on a route where it cannot be seen.
+  'app-switcher-btn': 'The app-switcher chip; opens the drawer and names the app you are in (#1436).',
+  'app-switcher-name': 'The app name inside the chip. Rendered from improve-store.js `name` — the same value #improve-target-name shows, so the header and the panel cannot disagree.',
+  // The avatar pair mirrors #drawer-avatar / #drawer-profile-glyph exactly,
+  // and App.applyUserAvatar() swaps BOTH pairs from its one choke point.
+  'switcher-avatar': "The viewer's picture in the chip. No src until there is one, so a user with no photo issues no request.",
+  'switcher-avatar-glyph': 'The generic person glyph shown in the chip until a photo exists.',
   // ── #1372: the mobile-browser install strip ──────────────────────
   // A visitor on a phone browser is offered the native app. The strip is
   // always in the document and starts `hidden` (the island rule: data loads

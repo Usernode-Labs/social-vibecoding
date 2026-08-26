@@ -39,6 +39,9 @@ import { useVisibility } from '../../lib/visibility-store';
 import { ChromelessPill } from './chromeless-pill';
 import { ImproveButton } from '../improve/improve-button';
 import { ImproveViewToggle } from '../improve/view-toggle';
+import { improveStore } from '../improve/improve-store.js';
+import { SwitcherChip } from '../switcher/switcher-chip';
+import { useStoreState } from '../../lib/use-store-state';
 import { useHeaderLayout } from './use-header-layout';
 
 export function PlatformHeader() {
@@ -56,6 +59,17 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
+
+  // #1436: the title names the SCREEN (Settings, Profile, Messages…) and the
+  // chip names the APP, so exactly one of them shows. `improveStore.target` is
+  // the same condition the chip renders on, which keeps them from ever both
+  // being on screen or both being absent.
+  //
+  // Via useHiddenClass rather than a rendered `className` for the usual
+  // reason: use-header-layout.ts toggles `.is-centered` on this same node at
+  // runtime, so React re-rendering the attribute would drop it.
+  const { target } = useStoreState(improveStore);
+  useHiddenClass(titleRef, !!target);
 
   return (
     <>
@@ -118,7 +132,15 @@ export function PlatformHeader() {
             the title's left side group, via leftGroupRef), 28px tall (the
             header's content-row floor), with the 20px icon centred inside it.
         */}
-        <div ref={leftGroupRef} className="w-5 h-7 shrink-0 flex items-center">
+        {/*
+            #1436: the left group holds the back affordance AND the app-switcher
+            chip now, so it is no longer a fixed 20px column — the `w-5` moved
+            onto an inner wrapper so the back button keeps its own invariant
+            width (toggling its `hidden` must not collapse the column and shift
+            the title) while the chip adds width only when it is showing.
+        */}
+        <div ref={leftGroupRef} className="h-7 shrink-0 flex items-center gap-2">
+        <div className="w-5 h-7 shrink-0 flex items-center">
           {/*
               #1036: a real anchor, not a button, so cmd/ctrl-click,
               middle-click and right-click → "Open in new tab" work on it.
@@ -136,6 +158,12 @@ export function PlatformHeader() {
             <HomeIcon id="back-icon-home" className="w-5 h-5" />
             <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5 hidden" />
           </a>
+        </div>
+          {/* The app-switcher chip (#1436). Renders only where
+              improve-store.js carries a target, which is the same lifecycle
+              #improve-btn has — and is what makes it mutually exclusive with
+              the title below. */}
+          <SwitcherChip />
         </div>
         <h1
           ref={titleRef}
