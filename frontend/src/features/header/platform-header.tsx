@@ -122,7 +122,24 @@ export function PlatformHeader() {
   // The back slot's state (see ./back-button-store.js): App.setBackIcon
   // publishes here rather than writing `hidden` into React-owned DOM.
   const { mode: backMode, href: backHref } = useStoreState(backButtonStore);
-  const backArrow = backMode === 'arrow';
+  // …and ON A DEV SESSION the slot is derived from the ROUTE, not from the
+  // imperative call. <SessionStatusPill/> and <HeaderTitleTab/> already gate
+  // on exactly this condition — the pill renders, the centre tab does not —
+  // so leaving the third member of that trio to an ordering-dependent
+  // setBackIcon() call was the odd one out, and it is the one that kept
+  // coming up hidden on staging while the other two were right. Three
+  // components agreeing by construction beats three call sites agreeing by
+  // convention: a session bar is `←` + status on the left, the doing/seeing
+  // pair on the right, and no centre tab, and that is now true wherever the
+  // route says session.
+  const { slug: backSlug, tab: backTab, subTab: backSubTab } = useStoreState(improveStore);
+  const onSession = backTab === 'dev' && backSubTab === 'sessions';
+  const backArrow = backMode === 'arrow' || onSession;
+  // The session's own destination is deterministic — the Board it was opened
+  // from — so it wins over whatever href the last imperative call left.
+  const resolvedBackHref = (onSession && backSlug)
+    ? `#app/${backSlug}/board`
+    : backHref;
 
   // A LAYOUT effect, and that is load-bearing: it runs inside main.tsx's
   // flushSync(hydrateRoot), which is after hydration has adopted these nodes
@@ -244,7 +261,7 @@ export function PlatformHeader() {
               id="back-btn"
               className={BACK_BTN_CLASS + (backArrow ? '' : ' hidden')}
               aria-label={backArrow ? 'Back' : 'Home'}
-              {...(backHref ? { href: backHref } : {})}
+              {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
             >
               <HomeIcon id="back-icon-home" className={'w-5 h-5' + (backArrow ? ' hidden' : '')} />
               <ChevronLeftIcon id="back-icon-arrow" className={'w-5 h-5' + (backArrow ? '' : ' hidden')} />

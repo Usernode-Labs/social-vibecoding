@@ -839,9 +839,14 @@ html.un-kb .platform-safe-bar {
    sheets carry as many rows as there are. They get the same near-full cap
    their no-kit CSS uses, so the behaviour is one rule at every width and on
    both paths. */
+/* The 3rem gap is measured from BELOW the status bar, not from the top of the
+   viewport. A flat `100dvh - 3rem` is 48px, and the status-bar inset on a
+   notched phone is 54pt — so at the cap the sheet's head slid UNDER the clock
+   and the signal bars, which is the one place the gap exists to prevent. The
+   fallback keeps desktop and any browser without the env() unchanged. */
 .platform-sheet-adopted#improve-panel,
 .platform-sheet-adopted#apps-switcher-sheet {
-  max-height: calc(100dvh - 3rem) !important;
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem) !important;
 }
 
 /* THE KIT'S DRAG WOULD OTHERWISE EAT THE SCROLL.
@@ -6762,7 +6767,7 @@ a.drawer-ver--fork:hover {
        thing still reads as an overlay rather than a screen. `dvh`, not `vh`:
        a mobile browser's collapsing toolbar must not push the foot of the
        sheet under itself. */
-    max-height: calc(100dvh - 3rem);
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
     border-left-width: 0;
     border-top-width: 1px;
     border-top-left-radius: 1rem;
@@ -6817,7 +6822,7 @@ a.drawer-ver--fork:hover {
        thing still reads as an overlay rather than a screen. `dvh`, not `vh`:
        a mobile browser's collapsing toolbar must not push the foot of the
        sheet under itself. */
-    max-height: calc(100dvh - 3rem);
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
     border-left-width: 0;
     border-top-width: 1px;
     border-top-left-radius: 1rem;
