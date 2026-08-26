@@ -26,6 +26,18 @@ test('hosted bridge keeps server-cache inclusion support', () => {
   assert.match(bridge, /attachMatchedTx/);
 });
 
+test('hosted bridge exposes only the exact native transaction boundary', () => {
+  const bridge = readBridge(versionedBridgePath);
+
+  assert.match(bridge, /callNative\("submitTransaction", request\)/);
+  assert.match(bridge, /result must contain only txId/);
+  assert.match(bridge, /amount must be a positive safe integer/);
+  assert.match(bridge, /getTransactionReceipts/);
+  assert.doesNotMatch(bridge, /callNative\("sendTransaction"/);
+  assert.doesNotMatch(bridge, /getTransactionRecords/);
+  assert.doesNotMatch(bridge, /txObserved/);
+});
+
 // LLM-access consent flow (issue #34) — additive within v1. The shell
 // (public/js/app-view.js) answers the `__usernode_llm` message family;
 // these assertions pin the message shape both sides agree on, plus

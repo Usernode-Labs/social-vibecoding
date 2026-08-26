@@ -26,6 +26,9 @@ const SETTINGS_SNAPSHOT = {
 // capability.
 function loadBridge({
   capabilities = [],
+  responseMethods = {},
+  appUser = null,
+  fetchImpl = async () => ({ ok: false }),
   silentMethods = [],
   errorMethods = {},
   // Per-method 4th argument for __usernodeResolve — the machine-readable
@@ -34,18 +37,22 @@ function loadBridge({
   timeoutScale = 1,
   exposeCallNative = false,
   delayedMethods = {},
+  sharedStorage = null,
 } = {}) {
   const nativePosts = [];
   const messageListeners = [];
   const windowListeners = {};
+  const storage = sharedStorage || new Map();
   const responses = {
     getBridgeInfo: {
-      version: 4,
+      version: 5,
       capabilities,
       appVersion: '0.4.0',
       buildNumber: '1223',
     },
     getPrivilegedBridgeCapability: 'navigation-capability',
+    getNodeAddress: 'ut1-sender',
+    submitTransaction: { txId: 'tx-authoritative' },
     beginSessionHandoff: { blocked: true },
     enterAnonymousSession: { admitted: true },
     getWalletState: { address: 'ut1-wallet' },
@@ -66,6 +73,7 @@ function loadBridge({
       base64: '/9j/2Q==',
     },
     markPrivilegedBridgeReady: { ready: true },
+    ...responseMethods,
   };
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
@@ -87,8 +95,8 @@ function loadBridge({
       search: '',
     },
     localStorage: {
-      getItem() { return null; },
-      setItem() {},
+      getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+      setItem(key, value) { storage.set(key, String(value)); },
     },
     document: {
       currentScript: { src: 'https://social.example/usernode-bridge.js' },
@@ -111,9 +119,12 @@ function loadBridge({
       if (!windowListeners[type]) windowListeners[type] = [];
       windowListeners[type].push(listener);
     },
-    dispatchEvent() {},
-    fetch: async () => ({ ok: false }),
+    dispatchEvent(event) {
+      for (const listener of windowListeners[event.type] || []) listener(event);
+    },
+    fetch: fetchImpl,
   };
+  if (appUser) sandbox.App = { user: appUser };
   sandbox.window = sandbox;
   sandbox.parent = sandbox;
   sandbox.globalThis = sandbox;
@@ -705,7 +716,7 @@ test('a failed bridge probe is marked degraded, a real one is not', async () => 
   // sandbox realm, so their prototypes differ from the test realm's.
   const answered = loadBridge({ capabilities: ['getSettingsState'] });
   const info = await answered.sandbox.usernode.getBridgeInfo();
-  assert.equal(info.version, 4);
+  assert.equal(info.version, 5);
   assert.equal(info.appVersion, '0.4.0');
   assert.equal(info.buildNumber, '1223');
   assert.equal(info.degraded, undefined,
@@ -771,7 +782,7 @@ test('parent relay denies bootstrap and privileged methods but keeps reads', () 
 });
 
 test('session handoff gate rejects top-frame and iframe wallet calls', async () => {
-  const loaded = loadBridge();
+  const loaded = loadBridge({ capabilities: ['submitTransaction'] });
   const childReplies = [];
   const child = {
     postMessage(value, origin) { childReplies.push({ value, origin }); },
@@ -790,7 +801,12 @@ test('session handoff gate rejects top-frame and iframe wallet calls', async () 
   loaded.sandbox.usernode._setSessionWalletRelayAdmission(false);
   assert.equal(await loaded.sandbox.usernode.getWalletState(), null,
     'top-frame reads fail closed through their existing null fallback');
-  loaded.sandbox.usernode.acknowledgeTransaction('tx-during-handoff');
+  await assert.rejects(
+    loaded.sandbox.sendTransaction('ut1-recipient', 3, '', {
+      waitForInclusion: false,
+    }),
+    /wallet handoff is in progress/i
+  );
   await assert.rejects(
     loaded.sandbox.signMessage('session-scoped message'),
     /wallet handoff is in progress/i
@@ -802,13 +818,464 @@ test('session handoff gate rejects top-frame and iframe wallet calls', async () 
 
   loaded.sandbox.usernode._setSessionWalletRelayAdmission(true);
   relayWalletRead('admitted-wallet');
-  loaded.sandbox.usernode.acknowledgeTransaction('tx-during-handoff');
+  const submission = await loaded.sandbox.sendTransaction(
+    'ut1-recipient', 3, '', { waitForInclusion: false }
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(submission)), {
+    txId: 'tx-authoritative',
+  });
   assert.deepEqual(
     loaded.nativePosts.map((post) => post.method),
-    ['getWalletState', 'txObserved']
+    ['getWalletState', 'getBridgeInfo', 'getNodeAddress', 'submitTransaction']
   );
   assert.equal(childReplies[1].value.error, null);
 });
+
+test('native transaction submission uses the exact admitted contract', async () => {
+  const loaded = loadBridge({ capabilities: ['submitTransaction'] });
+
+  const result = await loaded.sandbox.sendTransaction(
+    ' ut1-recipient ', 7, '', {
+      waitForInclusion: false,
+      confirmTitle: 'Send tokens',
+      confirmSubtitle: 'Review this transfer',
+    }
+  );
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    txId: 'tx-authoritative',
+  });
+  const submission = loaded.nativePosts.find(
+    (post) => post.method === 'submitTransaction'
+  );
+  assert.ok(submission);
+  assert.deepEqual(JSON.parse(JSON.stringify(submission.args)), {
+    destinationPubkey: 'ut1-recipient',
+    amount: 7,
+    memo: '',
+    confirmation: {
+      title: 'Send tokens',
+      subtitle: 'Review this transfer',
+    },
+  });
+});
+
+test('native transaction submission rejects result aliases and extra fields', async () => {
+  const alias = loadBridge({
+    capabilities: ['submitTransaction'],
+    responseMethods: { submitTransaction: { tx_id: 'legacy-id' } },
+  });
+  await assert.rejects(
+    alias.sandbox.sendTransaction('ut1-recipient', 1, '', {
+      waitForInclusion: false,
+    }),
+    /contain only txId/
+  );
+
+  const extra = loadBridge({
+    capabilities: ['submitTransaction'],
+    responseMethods: {
+      submitTransaction: { txId: 'tx-authoritative', queued: true },
+    },
+  });
+  await assert.rejects(
+    extra.sandbox.sendTransaction('ut1-recipient', 1, '', {
+      waitForInclusion: false,
+    }),
+    /contain only txId/
+  );
+
+  const nonCanonical = loadBridge({
+    capabilities: ['submitTransaction'],
+    responseMethods: { submitTransaction: { txId: ' tx-authoritative ' } },
+  });
+  await assert.rejects(
+    nonCanonical.sandbox.sendTransaction('ut1-recipient', 1, '', {
+      waitForInclusion: false,
+    }),
+    /canonical non-empty string/
+  );
+});
+
+test('native transaction submission rejects invalid requests before dispatch', async () => {
+  const loaded = loadBridge();
+  await assert.rejects(
+    loaded.sandbox.sendTransaction('ut1-recipient', 1.5, '', {
+      waitForInclusion: false,
+    }),
+    /positive safe integer/
+  );
+  assert.equal(loaded.nativePosts.length, 0);
+});
+
+test('Social persists and confirms receipts under the authenticated user', async () => {
+  const explorerRequests = [];
+  const loaded = loadBridge({
+    capabilities: ['submitTransaction'],
+    appUser: { id: 17 },
+    fetchImpl: async (url, options = {}) => {
+      const value = String(url);
+      if (value === '/__mock/enabled') return { ok: false };
+      if (value === '/explorer-api/active_chain') {
+        return {
+          ok: true,
+          json: async () => ({ chain_id: 'test-chain' }),
+        };
+      }
+      if (value === '/explorer-api/test-chain/transactions') {
+        explorerRequests.push(JSON.parse(options.body));
+        return {
+          ok: true,
+          json: async () => ({
+            items: [{
+              tx_id: 'tx-authoritative',
+              status: 'confirmed',
+              block_height: 42,
+              timestamp_ms: 123456,
+            }],
+          }),
+        };
+      }
+      throw new Error(`unexpected fetch ${value}`);
+    },
+  });
+
+  await loaded.sandbox.sendTransaction('ut1-recipient', 9, 'memo', {
+    waitForInclusion: false,
+  });
+
+  let receipts;
+  for (let i = 0; i < 20; i += 1) {
+    receipts = await loaded.sandbox.usernode.getTransactionReceipts();
+    if (receipts.items[0] && receipts.items[0].status === 'confirmed') break;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  assert.equal(receipts.items.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(receipts.items[0])), {
+    txId: 'tx-authoritative',
+    destinationPubkey: 'ut1-recipient',
+    fromPubkey: 'ut1-sender',
+    amount: 9,
+    memo: 'memo',
+    submittedAt: receipts.items[0].submittedAt,
+    status: 'confirmed',
+    confirmedAt: receipts.items[0].confirmedAt,
+    blockHeight: 42,
+    blockTimestampMs: 123456,
+  });
+  assert.equal(explorerRequests.length, 1);
+  assert.deepEqual(explorerRequests[0], {
+    limit: 1,
+    tx_id: 'tx-authoritative',
+  });
+
+  loaded.sandbox.App.user = { id: 18 };
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(
+      await loaded.sandbox.usernode.getTransactionReceipts()
+    )),
+    { items: [] },
+    'a new Social user cannot read the previous user receipt namespace'
+  );
+});
+
+test('missing submission capability fails closed before wallet dispatch', async () => {
+  const loaded = loadBridge({ capabilities: [] });
+  await assert.rejects(
+    loaded.sandbox.sendTransaction('ut1-recipient', 1, '', {
+      waitForInclusion: false,
+    }),
+    /not supported by this app build/
+  );
+  assert.deepEqual(
+    loaded.nativePosts.map((post) => post.method),
+    ['getBridgeInfo']
+  );
+});
+
+test('Social confirms only the authoritative txId, never a fuzzy field match',
+  async () => {
+    const loaded = loadBridge({
+      capabilities: ['submitTransaction'],
+      appUser: { id: 19 },
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value === '/__mock/enabled') return { ok: false };
+        if (value === '/explorer-api/active_chain') {
+          return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+        }
+        if (value === '/explorer-api/test-chain/transactions') {
+          return {
+            ok: true,
+            json: async () => ({
+              items: [{
+                tx_id: 'different-tx',
+                source: 'ut1-sender',
+                destination: 'ut1-recipient',
+                memo: 'same fields',
+                amount: 3,
+              }],
+            }),
+          };
+        }
+        throw new Error(`unexpected fetch ${value}`);
+      },
+    });
+
+    await loaded.sandbox.sendTransaction(
+      'ut1-recipient', 3, 'same fields', {
+        waitForInclusion: false,
+        timeoutMs: 5,
+        pollIntervalMs: 1,
+      }
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const receipts = await loaded.sandbox.usernode.getTransactionReceipts();
+    assert.equal(receipts.items[0].status, 'submitted');
+  });
+
+test('a submission result cannot cross into a replacement Social identity', async () => {
+  const loaded = loadBridge({
+    capabilities: ['submitTransaction'],
+    appUser: { id: 17 },
+    delayedMethods: { submitTransaction: 15 },
+  });
+  const pending = loaded.sandbox.sendTransaction(
+    'ut1-recipient', 2, '', { waitForInclusion: false }
+  );
+  for (let i = 0; i < 20 &&
+      !loaded.nativePosts.some((post) => post.method === 'submitTransaction');
+      i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  loaded.sandbox.usernode._setSessionWalletRelayAdmission(false);
+  loaded.sandbox.App.user = { id: 18 };
+  await assert.rejects(pending, /session changed/i);
+  loaded.sandbox.usernode._setSessionWalletRelayAdmission(true);
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(
+      await loaded.sandbox.usernode.getTransactionReceipts()
+    )),
+    { items: [] }
+  );
+  loaded.sandbox.App.user = { id: 17 };
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(
+      await loaded.sandbox.usernode.getTransactionReceipts()
+    )),
+    { items: [] },
+    'a result delivered after admission closed is not persisted for either user'
+  );
+});
+
+test('trusted top frame records a relayed child-app submission', async () => {
+  const childReplies = [];
+  const explorerRequests = [];
+  const loaded = loadBridge({
+    appUser: { id: 23 },
+    fetchImpl: async (url) => {
+      if (String(url) === '/explorer-api/active_chain') {
+        return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+      }
+      if (String(url) === '/explorer-api/test-chain/transactions') {
+        explorerRequests.push(1);
+        return {
+          ok: true,
+          json: async () => ({
+            items: [{ tx_id: 'tx-authoritative', block_height: 84 }],
+          }),
+        };
+      }
+      return { ok: false };
+    },
+  });
+  const child = {
+    postMessage(value, origin) { childReplies.push({ value, origin }); },
+  };
+
+  loaded.dispatchMessage({
+    source: child,
+    origin: 'https://child.example',
+    data: {
+      __usernode_relay: 'request',
+      id: 'child-submit',
+      method: 'submitTransaction',
+      args: {
+        destinationPubkey: 'ut1-child-recipient',
+        amount: 11,
+        memo: 'from child',
+      },
+    },
+  });
+
+  for (let i = 0; i < 20 && childReplies.length === 0; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.deepEqual(JSON.parse(JSON.stringify(childReplies[0].value)), {
+    __usernode_relay: 'response',
+    id: 'child-submit',
+    value: { txId: 'tx-authoritative' },
+    error: null,
+  });
+  assert.deepEqual(
+    loaded.nativePosts.map((post) => post.method),
+    ['submitTransaction']
+  );
+  for (let i = 0; i < 20 && explorerRequests.length === 0; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.equal(explorerRequests.length, 1,
+    'the trusted top frame starts one Social observer for a relayed tx');
+  const receipts = await loaded.sandbox.usernode.getTransactionReceipts();
+  assert.equal(receipts.items.length, 1);
+  assert.equal(receipts.items[0].destinationPubkey, 'ut1-child-recipient');
+});
+
+test('explorer outage leaves one bounded pending receipt and reads do not retry',
+  async () => {
+    let explorerRequests = 0;
+    const loaded = loadBridge({
+      capabilities: ['submitTransaction'],
+      appUser: { id: 31 },
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value === '/__mock/enabled') return { ok: false };
+        if (value === '/explorer-api/active_chain') {
+          return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+        }
+        if (value === '/explorer-api/test-chain/transactions') {
+          explorerRequests += 1;
+          return { ok: false, status: 503 };
+        }
+        throw new Error(`unexpected fetch ${value}`);
+      },
+    });
+
+    await loaded.sandbox.sendTransaction('ut1-recipient', 5, '', {
+      waitForInclusion: false,
+      timeoutMs: 8,
+      pollIntervalMs: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const requestsAfterBound = explorerRequests;
+    assert.ok(requestsAfterBound > 0);
+
+    const firstRead = await loaded.sandbox.usernode.getTransactionReceipts();
+    const secondRead = await loaded.sandbox.usernode.getTransactionReceipts();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(firstRead.items[0].status, 'submitted');
+    assert.equal(secondRead.items[0].status, 'submitted');
+    assert.equal(explorerRequests, requestsAfterBound,
+      'product reads never create a detached observation retry');
+  });
+
+test('closing and reopening admission makes same-account observers inert',
+  async () => {
+    let explorerRequests = 0;
+    const loaded = loadBridge({
+      capabilities: ['submitTransaction'],
+      appUser: { id: 41 },
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value === '/__mock/enabled') return { ok: false };
+        if (value === '/explorer-api/active_chain') {
+          return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+        }
+        if (value === '/explorer-api/test-chain/transactions') {
+          explorerRequests += 1;
+          return { ok: true, json: async () => ({ items: [] }) };
+        }
+        throw new Error(`unexpected fetch ${value}`);
+      },
+    });
+
+    await loaded.sandbox.sendTransaction('ut1-recipient', 6, '', {
+      waitForInclusion: false,
+      timeoutMs: 1000,
+      pollIntervalMs: 15,
+    });
+    for (let i = 0; i < 20 && explorerRequests === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(explorerRequests, 1);
+
+    loaded.sandbox.usernode._setSessionWalletRelayAdmission(false);
+    loaded.sandbox.usernode._setSessionWalletRelayAdmission(true);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.equal(explorerRequests, 1,
+      'the old generation cannot resume after the same account is readmitted');
+    const receipts = await loaded.sandbox.usernode.getTransactionReceipts();
+    assert.equal(receipts.items[0].status, 'submitted');
+  });
+
+test('an explicit product read resumes one pending receipt after reload',
+  async () => {
+    const sharedStorage = new Map();
+    const first = loadBridge({
+      capabilities: ['submitTransaction'],
+      appUser: { id: 51 },
+      sharedStorage,
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value === '/__mock/enabled') return { ok: false };
+        if (value === '/explorer-api/active_chain') {
+          return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+        }
+        if (value === '/explorer-api/test-chain/transactions') {
+          return { ok: false, status: 503 };
+        }
+        throw new Error(`unexpected fetch ${value}`);
+      },
+    });
+    await first.sandbox.sendTransaction('ut1-recipient', 8, 'reload', {
+      waitForInclusion: false,
+      timeoutMs: 5,
+      pollIntervalMs: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    let explorerRequests = 0;
+    const reloaded = loadBridge({
+      appUser: { id: 51 },
+      sharedStorage,
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value === '/explorer-api/active_chain') {
+          return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+        }
+        if (value === '/explorer-api/test-chain/transactions') {
+          explorerRequests += 1;
+          return {
+            ok: true,
+            json: async () => ({
+              items: [{ tx_id: 'tx-authoritative', block_height: 99 }],
+            }),
+          };
+        }
+        return { ok: false };
+      },
+    });
+
+    const initial = await reloaded.sandbox.usernode.getTransactionReceipts({
+      observePending: true,
+    });
+    assert.equal(initial.items[0].status, 'submitted');
+    let confirmed;
+    for (let i = 0; i < 20; i += 1) {
+      confirmed = await reloaded.sandbox.usernode.getTransactionReceipts();
+      if (confirmed.items[0].status === 'confirmed') break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(confirmed.items[0].status, 'confirmed');
+    assert.equal(confirmed.items[0].blockHeight, 99);
+    assert.equal(explorerRequests, 1);
+  });
 
 // ── Refusal codes (bridge contract v4) ──────────────────────────────────
 //

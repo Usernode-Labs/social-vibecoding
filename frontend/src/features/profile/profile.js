@@ -16,8 +16,7 @@
 //
 // Identity comes from the platform session: since the topochain merge,
 // leaderboard participants ARE platform users, so the /me/* routes scope
-// to the signed-in session server-side. The bridge's getProfileInfo()
-// participant id (bridge v3) is no longer consulted for data.
+// to the signed-in session server-side. Native publishes no profile identity.
 //
 // THE COMPLETED LIST IS THE VIEWER'S OWN. It used to filter the season's
 // challenge grid on `c.completed`, which is an ORGANISER flag about the

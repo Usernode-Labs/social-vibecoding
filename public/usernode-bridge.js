@@ -88,7 +88,6 @@
     reorderHomeScreenShortcuts: true,
     openNativeScreen: true,
     captureScreenshot: true,
-    getProfileInfo: true,
     getSettingsState: true,
     setNodeSleepEnabled: true,
     setDebugMode: true,
@@ -120,16 +119,15 @@
   };
   var _SESSION_WALLET_METHODS = {
     getNodeAddress: true,
-    sendTransaction: true,
+    submitTransaction: true,
     signMessage: true,
-    txObserved: true,
     getWalletState: true,
-    getTransactionRecords: true,
   };
   var _privilegedCapability = null;
   var _privilegedCapabilityPromise = null;
   var _privilegedCapabilitySupported = null;
   var _sessionWalletRelayAdmitted = true;
+  var _sessionWalletRelayGeneration = 0;
 
   // ── Privileged-handshake outcome record ───────────────────────────────
   //
@@ -252,6 +250,13 @@
   window.usernode._setSessionWalletRelayAdmission = function (admitted) {
     if (_inIframe) return false;
     _sessionWalletRelayAdmitted = admitted === true;
+    if (!_sessionWalletRelayAdmitted) {
+      // A close is a hard temporal boundary, including close/reopen for the
+      // same Social participant. Old async work carries the previous private
+      // generation and can never become admitted again.
+      _sessionWalletRelayGeneration++;
+      _socialReceiptObservers = {};
+    }
     return _sessionWalletRelayAdmitted;
   };
 
@@ -611,6 +616,21 @@
           "Privileged Usernode methods are only available to the top-level page");
         return;
       }
+      var nativeArgs = data.args || {};
+      if (data.method === "submitTransaction") {
+        try {
+          nativeArgs = requireExactTransactionSubmissionRequest(nativeArgs);
+        } catch (err) {
+          reply(null, (err && err.message) || String(err));
+          return;
+        }
+      }
+      var relayReceiptClaim = data.method === "submitTransaction"
+        ? claimSocialReceiptAdmission() : null;
+      if (data.method === "submitTransaction" && !relayReceiptClaim) {
+        reply(null, "Native wallet handoff is in progress");
+        return;
+      }
       var nativeId = "relay-" + String(Date.now()) + "-" +
         Math.random().toString(16).slice(2);
       console.log(_BRIDGE_TAG, "← relay request",
@@ -618,7 +638,34 @@
       window.__usernodeBridge.pending[nativeId] = {
         resolve: function (v) {
           console.log(_BRIDGE_TAG, "native resolve →", nativeId);
-          reply(v, null);
+          if (data.method !== "submitTransaction") {
+            reply(v, null);
+            return;
+          }
+          var accepted;
+          try {
+            accepted = requireExactTransactionSubmissionResult(v);
+          } catch (err) {
+            reply(null, (err && err.message) || String(err));
+            return;
+          }
+          try {
+            requireSocialReceiptAdmission(relayReceiptClaim);
+            var receipt = recordSocialTransactionReceipt(
+              nativeArgs, accepted, null, relayReceiptClaim
+            );
+            if (relayReceiptClaim.storageOwner) {
+              observeSocialTransactionReceipt(
+                receipt, null, relayReceiptClaim
+              ).catch(function () {
+                // One bounded observer owns this attempt. An outage leaves
+                // the authenticated Social receipt pending.
+              });
+            }
+            reply(accepted, null);
+          } catch (err) {
+            reply(null, (err && err.message) || String(err));
+          }
         },
         reject: function (err) {
           console.log(_BRIDGE_TAG, "native reject →", nativeId, err);
@@ -629,7 +676,7 @@
         window.Usernode.postMessage(JSON.stringify({
           method: data.method,
           id: nativeId,
-          args: data.args || {},
+          args: nativeArgs,
         }));
       } catch (err) {
         delete window.__usernodeBridge.pending[nativeId];
@@ -724,66 +771,388 @@
     return null;
   }
 
-  // ── Native ack helper ─────────────────────────────────────────────────
+  // ── Social-owned transaction receipts ─────────────────────────────────
   //
-  // When the bridge confirms a tx is on-chain, notify the Flutter host so it
-  // can stamp the "dapp observed" latency separately from its own polling.
-  var _observedTxIds = {};
-  function _notifyNativeTxObserved(txId, matched) {
-    if (typeof txId !== "string") return;
-    var trimmed = txId.trim();
-    if (!trimmed) return;
-    if (!_sessionWalletRelayAdmitted) return;
-    if (_observedTxIds[trimmed]) return;
-    _observedTxIds[trimmed] = true;
+  // Native owns one operation only: submit an admitted transaction and return
+  // its authoritative id. Social owns everything after that boundary — the
+  // session-keyed receipt, explorer observation, persistence and presentation.
+  // No acknowledgement or receipt state is written back into Flutter.
+  var _SOCIAL_RECEIPT_STORAGE_PREFIX = "usernode:social-receipts:v1:";
+  var _SOCIAL_RECEIPT_LIMIT = 50;
+  var _SOCIAL_RECEIPT_OBSERVATION_TIMEOUT_MS = 180000;
+  var _SOCIAL_RECEIPT_MAX_POLL_INTERVAL_MS = 30000;
+  var _socialReceiptObservers = {};
+  var _socialExplorerChainPromise = null;
 
-    var channel = window.Usernode;
-    if (
-      !channel ||
-      typeof channel !== "object" ||
-      typeof channel.postMessage !== "function"
-    ) {
-      return;
+  function requirePlainObject(value, label) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(label + " must be an object");
     }
+    return value;
+  }
 
-    var blockHeight = null;
-    var blockTimestampMs = null;
-    if (matched && typeof matched === "object") {
-      var bh = matched.block_height;
-      if (typeof bh === "number" && Number.isFinite(bh)) blockHeight = bh;
-      var ts = matched.timestamp_ms != null
-        ? matched.timestamp_ms
-        : matched.block_timestamp_ms;
-      if (typeof ts === "number" && Number.isFinite(ts)) {
-        blockTimestampMs = ts;
-      } else if (typeof ts === "string" && ts.trim()) {
-        var parsed = Date.parse(ts);
-        if (!Number.isNaN(parsed)) blockTimestampMs = parsed;
+  function requireExactTransactionSubmissionRequest(value) {
+    var request = requirePlainObject(value, "submitTransaction request");
+    var keys = Object.keys(request).sort();
+    var allowed = ["amount", "confirmation", "destinationPubkey", "memo"];
+    for (var i = 0; i < keys.length; i++) {
+      if (allowed.indexOf(keys[i]) === -1) {
+        throw new Error("submitTransaction request has unknown field " + keys[i]);
       }
     }
-
-    try {
-      channel.postMessage(
-        JSON.stringify({
-          method: "txObserved",
-          id: "tx_observed_" + trimmed,
-          args: {
-            tx_id: trimmed,
-            observed_at_ms: Date.now(),
-            block_height: blockHeight,
-            block_timestamp_ms: blockTimestampMs,
-          },
-        })
+    if (typeof request.destinationPubkey !== "string" ||
+        !request.destinationPubkey.trim()) {
+      throw new Error("submitTransaction destinationPubkey must be a non-empty string");
+    }
+    if (!Number.isSafeInteger(request.amount) || request.amount <= 0) {
+      throw new Error("submitTransaction amount must be a positive safe integer");
+    }
+    if (typeof request.memo !== "string") {
+      throw new Error("submitTransaction memo must be a string");
+    }
+    var exact = {
+      destinationPubkey: request.destinationPubkey.trim(),
+      amount: request.amount,
+      memo: request.memo,
+    };
+    if (request.confirmation != null) {
+      var confirmation = requirePlainObject(
+        request.confirmation, "submitTransaction confirmation"
       );
-    } catch (e) {
-      console.warn("[usernode-bridge] tx_observed emit failed:", e);
+      var confirmationKeys = Object.keys(confirmation).sort();
+      for (var j = 0; j < confirmationKeys.length; j++) {
+        if (["subtitle", "title"].indexOf(confirmationKeys[j]) === -1) {
+          throw new Error(
+            "submitTransaction confirmation has unknown field " +
+            confirmationKeys[j]
+          );
+        }
+      }
+      var exactConfirmation = {};
+      if (confirmation.title != null) {
+        if (typeof confirmation.title !== "string") {
+          throw new Error("submitTransaction confirmation.title must be a string");
+        }
+        exactConfirmation.title = confirmation.title;
+      }
+      if (confirmation.subtitle != null) {
+        if (typeof confirmation.subtitle !== "string") {
+          throw new Error("submitTransaction confirmation.subtitle must be a string");
+        }
+        exactConfirmation.subtitle = confirmation.subtitle;
+      }
+      exact.confirmation = exactConfirmation;
+    }
+    return exact;
+  }
+
+  function transactionSubmissionRequest(destinationPubkey, amount, memo, opts) {
+    var request = {
+      destinationPubkey: destinationPubkey,
+      amount: amount,
+      memo: memo == null ? "" : String(memo),
+    };
+    if (opts && (opts.confirmTitle != null || opts.confirmSubtitle != null)) {
+      request.confirmation = {};
+      if (opts.confirmTitle != null) request.confirmation.title = opts.confirmTitle;
+      if (opts.confirmSubtitle != null) {
+        request.confirmation.subtitle = opts.confirmSubtitle;
+      }
+    }
+    return requireExactTransactionSubmissionRequest(request);
+  }
+
+  function requireExactTransactionSubmissionResult(value) {
+    var result = requirePlainObject(value, "submitTransaction result");
+    var keys = Object.keys(result);
+    if (keys.length !== 1 || keys[0] !== "txId") {
+      throw new Error("submitTransaction result must contain only txId");
+    }
+    if (typeof result.txId !== "string" || !result.txId ||
+        result.txId !== result.txId.trim()) {
+      throw new Error(
+        "submitTransaction result txId must be a canonical non-empty string"
+      );
+    }
+    return { txId: result.txId };
+  }
+
+  function requireNativeTransactionSubmissionCapability() {
+    if (!_sessionWalletRelayAdmitted) {
+      return Promise.reject(new Error("Native wallet handoff is in progress"));
+    }
+    return window.usernode.getBridgeInfo().then(function (info) {
+      if (!info || info.degraded === true) {
+        throw new Error("Could not verify native transaction submission support");
+      }
+      var capabilities = Array.isArray(info.capabilities)
+        ? info.capabilities : [];
+      if (capabilities.indexOf("submitTransaction") === -1) {
+        throw new Error("submitTransaction is not supported by this app build");
+      }
+    });
+  }
+
+  // App.user.id scopes product storage only. Admission comes from the private
+  // top-frame gate generation below; a localStorage key is never authority.
+  function socialReceiptStorageOwner() {
+    var app = window.App;
+    var user = app && app.user;
+    if (!user || user.id == null) return null;
+    var id = String(user.id).trim();
+    return id ? "user:" + id : null;
+  }
+
+  function claimSocialReceiptAdmission() {
+    if (_inIframe || !_sessionWalletRelayAdmitted) return null;
+    return {
+      generation: _sessionWalletRelayGeneration,
+      storageOwner: socialReceiptStorageOwner(),
+    };
+  }
+
+  function socialReceiptClaimAdmitted(claim) {
+    return !!claim && !_inIframe && _sessionWalletRelayAdmitted &&
+      claim.generation === _sessionWalletRelayGeneration &&
+      claim.storageOwner === socialReceiptStorageOwner();
+  }
+
+  function requireSocialReceiptAdmission(claim) {
+    if (!socialReceiptClaimAdmitted(claim)) {
+      throw new Error(
+        "Transaction operation stopped because the session changed"
+      );
+    }
+    return claim;
+  }
+
+  function socialReceiptStorageKey(owner) {
+    return _SOCIAL_RECEIPT_STORAGE_PREFIX + encodeURIComponent(owner);
+  }
+
+  function readSocialTransactionReceipts(owner) {
+    if (!owner) return [];
+    try {
+      var raw = window.localStorage.getItem(socialReceiptStorageKey(owner));
+      var parsed = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(function (receipt) {
+        return receipt && typeof receipt === "object" &&
+          typeof receipt.txId === "string" && receipt.txId.trim() &&
+          typeof receipt.destinationPubkey === "string" &&
+          Number.isSafeInteger(receipt.amount) && receipt.amount > 0 &&
+          typeof receipt.memo === "string" &&
+          typeof receipt.submittedAt === "number";
+      }).slice(0, _SOCIAL_RECEIPT_LIMIT);
+    } catch (_) {
+      return [];
     }
   }
 
-  window.usernode.acknowledgeTransaction = function acknowledgeTransaction(
-    txId
-  ) {
-    _notifyNativeTxObserved(txId);
+  function publishSocialTransactionReceipts(claim, receipts) {
+    if (!socialReceiptClaimAdmitted(claim) || !claim.storageOwner) return;
+    try {
+      window.dispatchEvent(new CustomEvent(
+        "usernode:transaction-receipts-changed",
+        { detail: { items: receipts.map(function (item) {
+          return Object.assign({}, item);
+        }) } }
+      ));
+    } catch (_) { /* a non-browser bridge host has no CustomEvent */ }
+  }
+
+  function writeSocialTransactionReceipts(claim, receipts) {
+    if (!socialReceiptClaimAdmitted(claim) || !claim.storageOwner) return false;
+    var bounded = receipts.slice(0, _SOCIAL_RECEIPT_LIMIT);
+    try {
+      window.localStorage.setItem(
+        socialReceiptStorageKey(claim.storageOwner), JSON.stringify(bounded)
+      );
+    } catch (_) {
+      return false;
+    }
+    publishSocialTransactionReceipts(claim, bounded);
+    return true;
+  }
+
+  function socialExplorerChainId() {
+    if (_socialExplorerChainPromise) return _socialExplorerChainPromise;
+    _socialExplorerChainPromise = fetch("/explorer-api/active_chain", {
+      credentials: "same-origin",
+      headers: { accept: "application/json" },
+    }).then(function (response) {
+      if (!response.ok) {
+        throw new Error("Explorer chain lookup failed (" + response.status + ")");
+      }
+      return response.json();
+    }).then(function (body) {
+      var id = body && typeof body.chain_id === "string"
+        ? body.chain_id.trim() : "";
+      if (!id) throw new Error("Explorer returned no chain_id");
+      return id;
+    }).catch(function (err) {
+      _socialExplorerChainPromise = null;
+      throw err;
+    });
+    return _socialExplorerChainPromise;
+  }
+
+  function fetchSocialTransactionPage(query, claim) {
+    try {
+      requireSocialReceiptAdmission(claim);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    return socialExplorerChainId().then(function (chainId) {
+      requireSocialReceiptAdmission(claim);
+      return fetch(
+        "/explorer-api/" + encodeURIComponent(chainId) + "/transactions",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(query || {}),
+        }
+      );
+    }).then(function (response) {
+      requireSocialReceiptAdmission(claim);
+      if (!response.ok) {
+        throw new Error("Explorer transaction lookup failed (" + response.status + ")");
+      }
+      return response.json();
+    }).then(function (body) {
+      requireSocialReceiptAdmission(claim);
+      return body;
+    }).catch(function (err) {
+      if (!socialReceiptClaimAdmitted(claim)) {
+        throw new Error(
+          "Transaction observation stopped because the session changed"
+        );
+      }
+      // Explorer outages are not transaction failures. Return an empty page so
+      // the existing bounded inclusion waiter retries until its timeout.
+      return { items: [] };
+    });
+  }
+
+  function confirmSocialTransactionReceipt(claim, receipt, transaction) {
+    requireSocialReceiptAdmission(claim);
+    if (!claim.storageOwner) return;
+    var receipts = readSocialTransactionReceipts(claim.storageOwner);
+    for (var i = 0; i < receipts.length; i++) {
+      if (receipts[i].txId !== receipt.txId) continue;
+      var height = transaction && transaction.block_height;
+      var timestamp = transaction &&
+        (transaction.timestamp_ms != null
+          ? transaction.timestamp_ms : transaction.block_timestamp_ms);
+      receipts[i] = Object.assign({}, receipts[i], {
+        status: "confirmed",
+        confirmedAt: Date.now(),
+        blockHeight: typeof height === "number" ? height : null,
+        blockTimestampMs: typeof timestamp === "number" ? timestamp : null,
+      });
+      writeSocialTransactionReceipts(claim, receipts);
+      return;
+    }
+  }
+
+  function observeSocialTransactionReceipt(receipt, opts, claim) {
+    try {
+      requireSocialReceiptAdmission(claim);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    var key = String(claim.generation) + ":" +
+      (claim.storageOwner || "anonymous") + ":" + receipt.txId;
+    if (_socialReceiptObservers[key]) return _socialReceiptObservers[key];
+    var requestedTimeout = opts && Number.isFinite(opts.timeoutMs) &&
+      opts.timeoutMs > 0 ? opts.timeoutMs : _SOCIAL_RECEIPT_OBSERVATION_TIMEOUT_MS;
+    var requestedPollInterval = opts && Number.isFinite(opts.pollIntervalMs) &&
+      opts.pollIntervalMs > 0 ? opts.pollIntervalMs : 3000;
+    var observerOpts = Object.assign({}, opts || {}, {
+      forcePolling: true,
+      timeoutMs: Math.min(
+        requestedTimeout, _SOCIAL_RECEIPT_OBSERVATION_TIMEOUT_MS
+      ),
+      pollIntervalMs: Math.min(
+        requestedPollInterval, _SOCIAL_RECEIPT_MAX_POLL_INTERVAL_MS
+      ),
+      limit: 1,
+      socialExplorer: true,
+      socialReceiptClaim: claim,
+      filterOptions: {
+        tx_id: receipt.txId,
+      },
+    });
+    delete observerOpts.serverCacheUrl;
+    var run = waitForTransactionVisible({
+      txId: receipt.txId,
+      requireExactTxId: true,
+    }, observerOpts).then(
+      function (matched) {
+        delete _socialReceiptObservers[key];
+        requireSocialReceiptAdmission(claim);
+        confirmSocialTransactionReceipt(claim, receipt, matched);
+        return matched;
+      },
+      function (err) {
+        delete _socialReceiptObservers[key];
+        throw err;
+      }
+    );
+    _socialReceiptObservers[key] = run;
+    return run;
+  }
+
+  function recordSocialTransactionReceipt(request, result, fromPubkey, claim) {
+    requireSocialReceiptAdmission(claim);
+    var exactRequest = requireExactTransactionSubmissionRequest(request);
+    var exactResult = requireExactTransactionSubmissionResult(result);
+    var receipt = {
+      txId: exactResult.txId,
+      destinationPubkey: exactRequest.destinationPubkey,
+      fromPubkey: typeof fromPubkey === "string" && fromPubkey.trim()
+        ? fromPubkey.trim() : null,
+      amount: exactRequest.amount,
+      memo: exactRequest.memo,
+      submittedAt: Date.now(),
+      status: "submitted",
+      confirmedAt: null,
+      blockHeight: null,
+      blockTimestampMs: null,
+    };
+    if (claim.storageOwner) {
+      var receipts = readSocialTransactionReceipts(
+        claim.storageOwner
+      ).filter(function (item) {
+        return item.txId !== receipt.txId;
+      });
+      receipts.unshift(receipt);
+      writeSocialTransactionReceipts(claim, receipts);
+    }
+    return receipt;
+  }
+
+  window.usernode.getTransactionReceipts = function (options) {
+    var claim = claimSocialReceiptAdmission();
+    var receipts = claim && claim.storageOwner
+      ? readSocialTransactionReceipts(claim.storageOwner) : [];
+    if (options && options.observePending === true && claim) {
+      receipts.forEach(function (receipt) {
+        if (receipt.status === "confirmed") return;
+        observeSocialTransactionReceipt(receipt, null, claim).catch(
+          function () {
+            // Explicit product entry points may start one new bounded attempt.
+          }
+        );
+      });
+    }
+    return Promise.resolve({ items: receipts.map(function (item) {
+      return Object.assign({}, item);
+    }) });
   };
 
   function txMatches(tx, expected) {
@@ -795,9 +1164,12 @@
         tx.id, tx.txid, tx.txId, tx.tx_id, tx.hash, tx.tx_hash, tx.txHash,
       ]
         .filter(function (v) { return typeof v === "string"; })
-        .map(function (v) { return v.trim(); })
+        .map(function (v) {
+          return expected.requireExactTxId === true ? v : v.trim();
+        })
         .filter(Boolean);
       if (txIdCandidates.indexOf(expected.txId) >= 0) return true;
+      if (expected.requireExactTxId === true) return false;
     }
 
     if (typeof expected.minCreatedAtMs === "number") {
@@ -839,6 +1211,9 @@
   }
 
   function _fetchInclusionPage(query, opts) {
+    if (opts && opts.socialExplorer === true) {
+      return fetchSocialTransactionPage(query, opts.socialReceiptClaim);
+    }
     var base = _serverCacheUrl(opts);
     if (!base) return window.getTransactions(query);
     return fetch(base + "/getTransactions", {
@@ -883,10 +1258,6 @@
 
     return _waitViaSse(expected, timeoutMs, opts).then(
       function (matched) {
-        _notifyNativeTxObserved(
-          extractTxId(matched) || (expected && expected.txId),
-          matched
-        );
         return matched;
       },
       function (err) {
@@ -1053,10 +1424,6 @@
         }
         if (found) {
           console.log("[usernode-bridge] tx found after", attempt, "polls,", Date.now() - startedAt, "ms (via " + transportLabel + ")");
-          _notifyNativeTxObserved(
-            extractTxId(found) || (expected && expected.txId),
-            found
-          );
           return found;
         }
 
@@ -3813,60 +4180,75 @@
       });
     };
 
-    function nativeSendTransaction(destination_pubkey, amount, memo, opts) {
-      var startedAt = Date.now();
+    function nativeSendTransaction(
+      destination_pubkey, amount, memo, opts, admittedReceiptClaim
+    ) {
+      var request = transactionSubmissionRequest(
+        destination_pubkey, amount, memo, opts
+      );
+      var receiptClaim = _inIframe ? null : admittedReceiptClaim;
+      if (!_inIframe && !receiptClaim) {
+        return Promise.reject(new Error("Native wallet handoff is in progress"));
+      }
       var from_pubkey;
-      return window.getNodeAddress().then(function (v) {
+      return requireNativeTransactionSubmissionCapability().then(function () {
+        if (!_inIframe) requireSocialReceiptAdmission(receiptClaim);
+        return window.getNodeAddress();
+      }).then(function (v) {
+        if (!_inIframe) requireSocialReceiptAdmission(receiptClaim);
         from_pubkey = v == null ? null : String(v).trim();
-        return callNative("sendTransaction", {
-          destination_pubkey: destination_pubkey,
-          amount: amount,
-          memo: memo,
-          confirm_title: (opts && opts.confirmTitle) || undefined,
-          confirm_subtitle: (opts && opts.confirmSubtitle) || undefined,
-        });
+        return callNative("submitTransaction", request);
       }).then(function (sendResult) {
-        var sendError = sendResult && sendResult.error;
-        if (sendError) throw new Error(String(sendError));
+        var exactResult = requireExactTransactionSubmissionResult(sendResult);
+        // An iframe owns no Social receipt state. Its exact native call was
+        // relayed through the trusted top frame, which recorded and started
+        // the one Social-owned observer before returning this result.
+        if (_inIframe) {
+          if (opts && typeof opts.onSubmitted === "function") {
+            try { opts.onSubmitted(exactResult); } catch (e) {
+              console.warn("[usernode-bridge] onSubmitted threw:", e);
+            }
+          }
+          return exactResult;
+        }
+        requireSocialReceiptAdmission(receiptClaim);
+        var receipt = recordSocialTransactionReceipt(
+          request, exactResult, from_pubkey, receiptClaim
+        );
         // Native channel resolved: the user has accepted the wallet dialog and
-        // Flutter has begun broadcasting. Fire onSubmitted so callers can reset
-        // send-phase timers (parity with the QR-mode "scanned" moment).
+        // returned the authoritative transaction id. Fire onSubmitted so callers
+        // can reset send-phase timers (parity with the QR-mode "scanned" moment).
         if (opts && typeof opts.onSubmitted === "function") {
-          try { opts.onSubmitted(sendResult); } catch (e) {
+          try { opts.onSubmitted(exactResult); } catch (e) {
             console.warn("[usernode-bridge] onSubmitted threw:", e);
           }
         }
-        var sendFailed = sendResult && sendResult.queued === false;
         var shouldWait =
-          !sendFailed && (!opts || opts.waitForInclusion == null ? true : !!opts.waitForInclusion);
+          !opts || opts.waitForInclusion == null ? true : !!opts.waitForInclusion;
+        var observation =
+          receiptClaim.storageOwner || shouldWait
+            ? observeSocialTransactionReceipt(receipt, opts, receiptClaim)
+            : null;
         if (!shouldWait) {
-          if (!sendFailed) {
-            _openPassiveSseTelemetry({
-              txId: extractTxId(sendResult),
-              minCreatedAtMs: startedAt,
-              memo: memo == null ? null : String(memo),
-              destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
-              from_pubkey: from_pubkey || null,
-              amount: amount,
-            }, opts);
-          }
-          return sendResult;
+          if (observation) observation.catch(function () {
+            // One bounded attempt owns observation. The receipt remains
+            // pending after timeout; only an explicit product resume retries.
+          });
+          return exactResult;
         }
-        var txId = extractTxId(sendResult);
-        return waitForTransactionVisible({
-          txId: txId,
-          minCreatedAtMs: startedAt,
-          memo: memo == null ? null : String(memo),
-          destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
-          from_pubkey: from_pubkey || null,
-          amount: amount,
-        }, opts).then(function (matchedTx) {
-          return attachMatchedTx(sendResult, matchedTx);
+        return observation.then(function (tx) {
+          return { txId: exactResult.txId, tx: tx };
         });
       });
     }
 
     window.sendTransaction = function sendTransaction(destination_pubkey, amount, memo, opts) {
+      // Capture top-frame receipt admission at the public API call, before the
+      // asynchronous mock probe. A close/reopen during that probe cannot move
+      // the operation into the successor session.
+      var admittedReceiptClaim =
+        window.usernode.isNative && !_inIframe
+          ? claimSocialReceiptAdmission() : null;
       return isMockEnabled().then(function (useMock) {
         var branch = useMock ? "mock" :
           (window.usernode.isNative ? "native" : "qr");
@@ -3874,7 +4256,11 @@
           "isNative=" + !!window.usernode.isNative,
           "useMock=" + useMock);
         if (useMock) return mockSendTransaction(destination_pubkey, amount, memo, opts);
-        if (window.usernode.isNative) return nativeSendTransaction(destination_pubkey, amount, memo, opts);
+        if (window.usernode.isNative) {
+          return nativeSendTransaction(
+            destination_pubkey, amount, memo, opts, admittedReceiptClaim
+          );
+        }
         return qrSendTransaction(destination_pubkey, amount, memo, opts);
       });
     };
@@ -4152,11 +4538,11 @@
   // =====================================================================
   //  Public API: native chrome data (bridge v2)
   //  (usernode.getBridgeInfo / getNodeStatus / getWalletState /
-  //   getTransactionRecords / openNativeScreen)
+  //   openNativeScreen)
   // =====================================================================
   //
-  // Data feeds for SV's web chrome (header node pill, wallet sheet,
-  // receipts) when running inside the Usernode app — the app-as-SV-chrome
+  // Data feeds for SV's web chrome (header node pill and wallet sheet)
+  // when running inside the Usernode app — the app-as-SV-chrome
   // migration. Versioned contract: NATIVE-BRIDGE.md in the
   // social-vibecoding repo. Same old-build hazard as the shortcut
   // methods (unknown methods are silently dropped), so every read
@@ -4383,16 +4769,6 @@
     return callNative("manageStaking", {});
   };
 
-  // getTransactionRecords() → { items: [...] } (newest first, capped at
-  // 100) or null. The app-side receipts for transactions sent from this
-  // webview — the same data behind the native receipts sheet.
-  window.usernode.getTransactionRecords = function () {
-    if (!window.usernode.isNative) return Promise.resolve(null);
-    return callNativeChromeRead(
-      "getTransactionRecords", {}, _CHROME_PROBE_TIMEOUT_MS, null
-    );
-  };
-
   // openNativeScreen(screen) → true. Pushes an allowlisted native route
   // ("settings" | "profile"). Unlike the reads above this REJECTS on old
   // builds / non-native — a silent no-op would strand the user's tap.
@@ -4479,15 +4855,14 @@
   };
 
   // =====================================================================
-  //  Public API: native profile & settings (bridge v3)
-  //  (usernode.getProfileInfo / getSettingsState / setNodeSleepEnabled /
+  //  Public API: native settings (bridge v3)
+  //  (usernode.getSettingsState / setNodeSleepEnabled /
   //   setDebugMode / setFacematchStrict / resetZkChallenge /
   //   requestPermissions / openBatterySettings / setIosKeepAlive /
   //   logout)
   // =====================================================================
   //
-  // Backs SV's #profile screen and the "Usernode app" sections of the
-  // Settings modal (profile-and-settings-to-web migration). Contract:
+  // Backs the "Usernode app" sections of the Settings modal. Contract:
   // NATIVE-BRIDGE.md. Reads resolve null on old builds / outside the app
   // so callers can capability-gate UI; mutations REJECT on old builds —
   // a silent no-op would leave a toggle lying about its state. The app
@@ -4552,16 +4927,6 @@
   // the surrounding app chrome.
   window.usernode.captureScreenshot = function () {
     return callNativeChromeAction("captureScreenshot", {}, 15000);
-  };
-
-  // getProfileInfo() → { participantId } or null (old build / outside
-  // the app). participantId is null when this install hasn't registered
-  // with the leaderboard yet.
-  window.usernode.getProfileInfo = function () {
-    if (!window.usernode.isNative) return Promise.resolve(null);
-    return callNativeChromeRead(
-      "getProfileInfo", {}, _CHROME_PROBE_TIMEOUT_MS, null
-    );
   };
 
   // getSettingsState() → { buildInfo: { appVersion, buildNumber,

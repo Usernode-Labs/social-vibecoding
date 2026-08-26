@@ -24,7 +24,7 @@ feature-detect with `getBridgeInfo`.
 - `version` bumps only on breaking changes. New methods are additive and
   appear in `capabilities`.
 - Feature-detect with `capabilities.includes('<method>')`, not `version`.
-- Current version: **4**.
+- Current version: **5**.
 - **The two sides of this contract live in different repositories** — the
   producer in the Flutter shell repo, the consumer here. Adding or changing
   a bridge method is therefore a coordinated two-repo change, and the two
@@ -33,8 +33,15 @@ feature-detect with `getBridgeInfo`.
   `capabilities` is for — never assume a method exists because this document
   lists it.
 
-Six additive security/session capabilities extend v4 without changing its
-version:
+Version 5 is the transaction/profile ownership cut: native `sendTransaction`,
+`txObserved`, `getTransactionRecords`, and the legacy native profile identity
+endpoint are removed; `submitTransaction` is the sole native submission
+operation. There is no fallback to the removed authority. This generic
+bridge-version bump does **not** advertise the later semantic session-lifecycle
+protocol; that protocol has its own capability/version.
+
+Six additive security/session capabilities introduced in v4 remain available
+in v5:
 
 - `privilegedBridgeCapability`: privileged top-frame methods require a
   native-issued capability scoped to the current trusted JavaScript realm.
@@ -53,7 +60,7 @@ version:
   to pattern-match English. Optional in both directions — see "Privileged
   refusal codes" below.
 
-One additive **widget** capability extends v4 the same way:
+One additive **widget** capability introduced in v4 remains available in v5:
 
 - `homeScreenShortcutDarkIcon`: the shell stores a SECOND icon per
   homescreen shortcut and the iOS widget selects between them per system
@@ -83,15 +90,37 @@ One additive **presentation** capability extends v4 the same way:
 
 ## Methods
 
-### Wallet / transactions (pre-existing, v1)
+### Wallet / transactions
 
 | Method | Args | Resolves |
 |---|---|---|
 | `getNodeAddress()` | — | `"ut1..."` current account address |
-| `sendTransaction(dest, amount, memo, opts)` | see bridge.js | `{ queued, tx }` after the native confirm sheet |
+| `submitTransaction(request)` | exact request below | exactly `{ "txId": "..." }` after admission, confirmation and submission |
 | `signMessage(message)` | `{ message }` | signature string |
-| `txObserved` | fire-and-forget inclusion ack | — |
 | `openExternal` | `{ url }` (http/https only) | `true` when the system browser opened |
+
+The hosted dapp API remains `window.sendTransaction(destination, amount, memo,
+opts)`. In native mode it validates and maps to this single boundary:
+
+```json
+{
+  "destinationPubkey": "ut1...",
+  "amount": 5,
+  "memo": "",
+  "confirmation": {
+    "title": "Send from wallet",
+    "subtitle": "Sending 5 UT to ut1..."
+  }
+}
+```
+
+`destinationPubkey` and `memo` are strings; `amount` is a positive safe
+integer. `confirmation` is optional and, when present, contains only optional
+string `title` and `subtitle` fields. Native must return an object containing
+only a non-empty string `txId`. The bridge rejects aliases, missing ids and
+additional result fields. `txId` is canonical: leading or trailing whitespace
+is rejected, never trimmed, and the accepted value is returned unchanged.
+Native has no transaction-observed callback or receipt API.
 
 ### Homescreen shortcuts (pre-existing, v1)
 
@@ -395,7 +424,7 @@ Everything the current frame knows about its own bridge, copied, with no
 { "isNative": true, "isTopFrame": true, "inIframe": false,
   "usesIframeRelay": false, "hasNativeChannel": true,
   "origin": "https://social.usernode.com",
-  "bridgeVersion": 4, "capabilities": ["..."],
+  "bridgeVersion": 5, "capabilities": ["..."],
   "appVersion": "0.4.0", "buildNumber": "1223",
   "privileged": { "state": "blocked-frame",
                   "code": "privileged_frame_unauthorized",
@@ -494,31 +523,48 @@ change. Native owns the fixed delegation target, confirmation, backend
 synchronization, persistence and node reconfiguration. Social Vibecoding must
 not submit a target address or requested delegation state itself.
 
-#### `getTransactionRecords()` → `{ items: [...] }`
+#### Social-owned transaction receipts
 
-The webview's persisted dapp-transaction receipts (what the native receipts
-sheet shows), newest first, capped at 100:
+Once `submitTransaction` returns, Social persists the receipt under the
+authenticated Social user, polls its own `/explorer-api` proxy by the exact
+`txId`, and publishes `usernode:transaction-receipts-changed`. The Wallet
+sheet reads `usernode.getTransactionReceipts()` locally; neither operation
+crosses the native bridge. Opening the sheet calls
+`getTransactionReceipts({ observePending: true })`, which resumes at most one
+deduplicated, bounded explorer attempt for a pending receipt restored after a
+reload. Periodic display reads omit that flag and never create detached retry
+loops. Observation is capped at three minutes even if a dapp supplies a larger
+or non-finite timeout. An explorer outage therefore leaves a pending receipt
+after the bounded attempt, while a later explicit sheet open can try again.
+Receipts are newest first and capped at 50:
 
 ```json
 {
   "items": [{
-    "id": "...",                // tx id
-    "sentAt": 1714672193412,    // epoch ms
-    "from": "ut1...", "to": "ut1...",
-    "amount": "5",              // base units, string
+    "txId": "...",
+    "submittedAt": 1714672193412,
+    "fromPubkey": "ut1...",
+    "destinationPubkey": "ut1...",
+    "amount": 5,
     "memo": "{...}",
-    "status": "queued",         // queued | denied | error
-    "confirmedAt": 1714672253412,       // present once seen on-chain
-    "inclusionLatencyMs": 60000,
+    "status": "submitted",
+    "confirmedAt": 1714672253412,
     "blockHeight": 12480,
-    "onChainStatus": "confirmed"
+    "blockTimestampMs": 1714672253000
   }]
 }
 ```
 
-Records are scoped per webview URL on the native side; the SV shell sees
-the receipts of transactions sent from SV (including relayed child-app
-sends, which run through the shell's bridge).
+Relayed child-app submissions are recorded by the trusted Social top frame
+before the exact result is returned to the child. Closing admission stops
+observation and prevents an old user's result from being written into a new
+user's receipt namespace. Each admitted operation carries a private top-frame
+gate generation through native resolution, explorer fetch/parse, persistence,
+and confirmation; closing the gate permanently invalidates that generation,
+even if the same account is later readmitted. `App.user.id` only chooses the
+product-storage namespace and is never treated as authority. Anonymous sends
+still receive the exact native result but do not create a persisted Social
+receipt.
 
 #### `openNativeScreen({ screen })` → `true`
 
@@ -547,31 +593,12 @@ This is a privileged trusted-top-frame action. Child dapps cannot request a
 capture of surrounding app chrome. Callers must feature-detect the capability;
 older app builds continue to use the feedback dialog's Photos/file fallback.
 
-### Profile & settings (v3 — profile-and-settings-to-web migration)
+### Settings (v3 — app-settings-to-web migration)
 
 All v3 methods are trusted-SV-origin gated like `openNativeScreen`. They
-power SV's `#profile` screen (`public/js/profile.js`) and the "Usernode
-app" sections in SV's Settings modal (`public/js/settings.js`).
-
-#### `getProfileInfo()` → `{ participantId }` (legacy)
-
-**Legacy — like `openNativeScreen`'s `settings` / `profile` screens, kept
-only so older shell builds keep working. Nothing in SV calls it any more;
-do not add new callers.**
-
-`participantId` is the leaderboard participant id (number), or `null` when
-the user hasn't registered. Since the topochain merge, participant ids ARE
-platform user ids and SV's `#profile` screen no longer consults this
-method for data — the in-process `/challenges-api` routes
-(`src/routes/topochain/mobile.js`) scope `/me/*` to the platform session
-server-side.
-
-Its last remaining use was capability detection: the drawer's Profile row
-was revealed only when the bridge reported this method, which meant the
-screen was unreachable in an ordinary browser even though it worked
-perfectly there. That gate is gone — the row now ships visible to
-everyone, and the screen renders a "Sign in to see your profile" prompt
-when there is no session.
+power the "Usernode app" sections in SV's Settings modal
+(`frontend/src/features/settings/settings.js`). Profile identity and data are
+owned entirely by the authenticated Social session.
 
 #### `getSettingsState()` → settings snapshot
 

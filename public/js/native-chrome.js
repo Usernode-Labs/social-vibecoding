@@ -6,10 +6,9 @@
 //     node-pill.js / wallet-sheet.js / settings.js don't each round-trip
 //     the channel;
 //   - the drawer's Profile row (#profile hash route, profile.js) — its
-//     click-to-close wiring only. The row is visible to everyone, web
-//     included: it is no longer gated on the bridge's getProfileInfo
-//     capability, because /challenges-api/me/* scopes to the platform
-//     session server-side and the screen works in any browser. The old
+//     click-to-close wiring only. The row is visible to everyone because
+//     /challenges-api/me/* scopes to the platform session server-side and
+//     the screen works in any browser. The old
 //     native-push Profile / App Settings rows are gone
 //     (profile-and-settings-to-web migration): App Settings is now
 //     capability-gated sections inside the Settings modal (settings.js);

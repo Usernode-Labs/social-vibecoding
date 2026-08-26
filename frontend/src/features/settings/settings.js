@@ -3763,7 +3763,7 @@
       usesIframeRelay: false,
       hasNativeChannel: true,
       origin: 'https://staging.demo.invalid',
-      bridgeVersion: 4,
+      bridgeVersion: 5,
       capabilities: ['getBridgeInfo', 'getSettingsState', 'logout'],
       appVersion: '0.0.0-demo',
       buildNumber: '0',

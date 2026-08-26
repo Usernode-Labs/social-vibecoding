@@ -54,10 +54,11 @@ function loadWallet({ bridgeInfo, walletState = null, isNative = true } = {}) {
     Promise,
     setInterval() { return 1; },
     clearInterval() {},
+    addEventListener() {},
     NativeChrome: {
       async getInfo() {
-        return bridgeInfo || { version: 4, capabilities: [
-          'getWalletState', 'getTransactionRecords', 'manageStaking',
+        return bridgeInfo || { version: 5, capabilities: [
+          'getWalletState', 'submitTransaction', 'manageStaking',
         ] };
       },
       lastReadError() { return null; },
@@ -68,7 +69,7 @@ function loadWallet({ bridgeInfo, walletState = null, isNative = true } = {}) {
         stateReads += 1;
         return walletState;
       },
-      async getTransactionRecords() { return { items: [] }; },
+      async getTransactionReceipts() { return { items: [] }; },
     },
   };
   sandbox.window = sandbox;
@@ -282,10 +283,44 @@ test('unsupported native bridge keeps Wallet navigation but hides delegation',
     assert.doesNotMatch(loaded.rowHtml, /class="hidden /);
     assert.match(loaded.rowHtml, /id="account-row-wallet"/);
     assert.equal(loaded.wallet._stakingSupported, false);
+    assert.equal(loaded.wallet._submissionSupported, false);
     assert.equal(loaded.stateReads, 0);
     // And no delegation card at all on an unsupported bridge.
     assert.doesNotMatch(loaded.bodyHtml, /Block production/);
   });
+
+test('wallet renders Social-owned submitted and confirmed receipts', () => {
+  const { wallet } = loadWallet();
+  wallet._state = { tokenSymbol: 'UT' };
+  wallet._submissionSupported = true;
+  wallet._records = [
+    {
+      txId: 'tx-confirmed',
+      destinationPubkey: 'ut1-confirmed-destination',
+      amount: 4,
+      memo: '',
+      submittedAt: Date.parse('2026-08-26T10:00:00Z'),
+      status: 'confirmed',
+      confirmedAt: Date.parse('2026-08-26T10:00:03Z'),
+      blockHeight: 42,
+    },
+    {
+      txId: 'tx-pending',
+      destinationPubkey: 'ut1-pending-destination',
+      amount: 2,
+      memo: '',
+      submittedAt: Date.parse('2026-08-26T10:01:00Z'),
+      status: 'submitted',
+    },
+  ];
+
+  wallet._publish();
+  const text = textOf(bodyHtml());
+  assert.match(text, /Sent 4 UT to ut1-conf…nation/);
+  assert.match(text, /confirmed · block 42/);
+  assert.match(text, /Sent 2 UT to ut1-pend…nation/);
+  assert.match(text, /pending/);
+});
 
 test('wallet implementation has no raw channel or delegation HTTP path', () => {
   assert.doesNotMatch(source, /Usernode\.postMessage/);

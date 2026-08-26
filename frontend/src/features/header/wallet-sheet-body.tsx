@@ -18,8 +18,8 @@
  * away a half-entered address. The expand is a `useState` now and survives a
  * repaint, which is the same fix the dev chat's share popover got.
  *
- * The TRUST BOUNDARY is untouched: Send still calls `window.sendTransaction`,
- * so the app's native confirm sheet is still the interaction.
+ * Send calls `window.sendTransaction`, which maps to the exact admitted native
+ * `submitTransaction` operation. Social owns the returned txId and receipt.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -188,7 +188,10 @@ export function WalletSheetBody(): ReactNode {
         ) : null}
       </div>
       <div className="flex gap-2 mb-4">
-        <Button layout="flex" size="flushBold" onClick={() => setExpand('send')}>Send</Button>
+        <Button
+          layout="flex" size="flushBold" disabled={!s.submissionSupported}
+          onClick={() => setExpand('send')}
+        >Send</Button>
         <button
           className="flex-1 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 text-sm font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           onClick={() => setExpand('receive')}
@@ -197,6 +200,11 @@ export function WalletSheetBody(): ReactNode {
       {!s.walletSupported ? (
         <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-400">
           Wallet state is unavailable in this app version.
+        </div>
+      ) : null}
+      {!s.submissionSupported ? (
+        <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-400">
+          Transaction submission is unavailable in this app version.
         </div>
       ) : null}
       {s.stateError ? (
@@ -216,7 +224,7 @@ export function WalletSheetBody(): ReactNode {
         {s.receipts == null
           ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">Loading…</div>
           : s.receipts.length === 0
-            ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">No transactions sent from this session yet.</div>
+            ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">No recent transactions yet.</div>
             : s.receipts.slice(0, 20).map((r) => (
               <div key={r.key} className={ROW_LINE}>
                 <div className="min-w-0">
