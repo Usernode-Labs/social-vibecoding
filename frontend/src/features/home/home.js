@@ -284,10 +284,12 @@ const Home = {
   // with every row (see the au join in src/routes/apps.js), so this costs
   // no query.
   //
-  // The ranking mirrors Browse.sortApps' non-featured tail exactly (most
-  // users first, ties keeping the server's own order via a stable sort), so
-  // the widget and the Browse directory can't disagree about what is
-  // popular. parseInt because the count arrives as a STRING — it is a
+  // The ranking mirrors Browse.sortApps' 'users' order exactly (most users
+  // first, ties keeping the server's own order via a stable sort), so the
+  // widget and the Browse directory can't disagree about what is popular.
+  // (#1383 gave the directory five orders and made 'recommended' its default
+  // — this lane still tracks the users one, which is the question the word
+  // "Popular" asks.) parseInt because the count arrives as a STRING — it is a
   // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
   //
   // Four exclusions, each load-bearing:
