@@ -96,14 +96,20 @@ test('the selector is painted in the session header, top right (#1348)', () => {
   const body = VIEW_TSX.indexOf('className="dc-session-body');
   assert.ok(header !== -1, 'the session header row is addressable');
   assert.ok(header < body, 'and it opens before the chat body does');
-  // The strip's ORDER is the component's now, and the venue button is last —
-  // which is the contract, because dapp.json selects it as `:last-child`.
+  // The strip's ORDER is the component's. The venue button was its last
+  // child until the doing<->seeing switch came down from the platform
+  // header — that switch is the strip's right edge now, and the venue sits
+  // immediately before it, so both still land right of the change's name.
   // (The lifecycle pill moved up into the platform header with the
-  // Streamlined Concept; the strip's own state chip is #dc-mode-chip.)
-  const chip = HEADER_TSX.indexOf('id="dc-mode-chip"');
-  const select = HEADER_TSX.indexOf('<VenueSelect');
-  assert.ok(chip !== -1 && select !== -1, 'both are painted');
-  assert.ok(chip < select, 'and the venue is last in that row, so it lands top-right');
+  // Streamlined Concept; the strip's own state word is #dc-mode-chip, which
+  // is the switch's active segment.)
+  const select = HEADER_TSX.indexOf('<VenueSelect venue=');
+  const sw = HEADER_TSX.indexOf('<ModeSwitch');
+  const title = HEADER_TSX.indexOf('{s.title}');
+  assert.ok(select !== -1 && sw !== -1, 'both are painted');
+  assert.ok(title < select && select < sw,
+    'name, then venue, then the switch on the right edge');
+  assert.match(HEADER_TSX, /id="dc-mode-chip"/, 'the state word survives, on the switch');
   assert.match(DEV_CHAT_SRC, /BuildVenues\.venue\(DevChat\._currentVenueId\(\)\)/,
     'resolved through the shared module, not retyped');
 });

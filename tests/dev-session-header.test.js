@@ -41,9 +41,14 @@ let api = null;
 const mod = () => (api || (api = loadTsx('tests/fixtures/dev-session-header-api.ts')));
 
 /** Render the strip from a published state, as the portal does. */
-function headerHtml(state) {
+function headerHtml(state, preview) {
   const m = mod();
   m.sessionHeaderStore.set(JSON.parse(JSON.stringify(state)));
+  // The mode switch reads these three off the improve store. Reset every
+  // time so one test's preview cannot leak into the next one's rest state.
+  m.improveStore.set({
+    previewSessionId: null, previewUrl: null, previewActive: false, ...(preview || {}),
+  });
   return renderToHtml(createElement(m.SessionHeader, {}));
 }
 
@@ -245,12 +250,50 @@ test('the strip hosts no lifecycle pill — the platform header does', () => {
   assert.match(headerTsx, /subTab !== 'sessions'/, 'only a session screen shows it');
 });
 
-test('the strip renders the MODE chip: Building while a turn runs', () => {
+test('with no preview built yet the strip is the bare Building chip', () => {
   const { view } = makeDevChat();
   const rest = headerHtml(view(SESSION));
   assert.doesNotMatch(rest, /dc-mode-chip/, 'absent at rest');
+  assert.doesNotMatch(rest, /dc-mode-switch/, 'and no switch — there is nothing to see');
   const busy = headerHtml({ ...view(SESSION), busy: true });
   assert.match(busy, /id="dc-mode-chip"[^>]*>Building</);
+  assert.doesNotMatch(busy, /dc-mode-switch/);
+});
+
+// The doing<->seeing loop. It was an eye/pencil pair in the PLATFORM HEADER's
+// right slot, where it displaced Improve; Improve is the header's standing
+// action now, so the loop moved down here, beside the name of the change it
+// acts on. The retired `#dc-mode-chip` is the active segment's label.
+test('once a preview exists the strip draws the doing<->seeing switch', () => {
+  const { view } = makeDevChat();
+  const doing = headerHtml({ ...view(SESSION), busy: true },
+    { previewSessionId: 7, previewUrl: 'https://staging.example/x' });
+
+  assert.match(doing, /id="dc-mode-switch"/);
+  assert.match(doing, /id="app-eye-btn"[^>]*aria-pressed="false"/, 'not seeing');
+  assert.match(doing, /id="session-build-btn"[^>]*aria-pressed="true"/, 'doing is current');
+  // The current segment carries the word, and it is the chip's id.
+  assert.match(doing, /id="session-build-btn"[\s\S]{0,900}?id="dc-mode-chip"[^>]*>Building</);
+  assert.match(doing, /bg-violet-500\/15/, 'doing is violet');
+
+  const seeing = headerHtml({ ...view(SESSION), busy: true },
+    { previewSessionId: 7, previewUrl: 'https://staging.example/x', previewActive: true });
+  assert.match(seeing, /id="app-eye-btn"[^>]*aria-pressed="true"/);
+  assert.match(seeing, /id="session-build-btn"[^>]*aria-pressed="false"/);
+  assert.match(seeing, /id="app-eye-btn"[\s\S]{0,900}?id="dc-mode-chip"[^>]*>Preview</);
+  assert.match(seeing, /bg-amber-400\/25/, 'seeing is amber');
+  // Only ONE label at a time — the chip is the current mode, not both.
+  assert.equal((seeing.match(/id="dc-mode-chip"/g) || []).length, 1);
+});
+
+test('at rest, with a preview, the doing segment is filled but wordless', () => {
+  const { view } = makeDevChat();
+  const rest = headerHtml(view(SESSION),
+    { previewSessionId: 7, previewUrl: 'https://staging.example/x' });
+  assert.match(rest, /id="dc-mode-switch"/);
+  assert.match(rest, /id="session-build-btn"[^>]*aria-pressed="true"/);
+  assert.doesNotMatch(rest, /dc-mode-chip/,
+    '"you are in the chat and nothing is running" is not news');
 });
 
 test('the mid-turn repaint publishes instead of writing innerHTML', () => {

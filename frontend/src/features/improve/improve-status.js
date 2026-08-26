@@ -65,15 +65,21 @@ const ImproveStatus = {
         canShare: appData.status === 'running' && !!appData.url,
       });
     } else if (!open) {
-      // Cleared here rather than per-screen: every navigation away from an
-      // app already funnels through this call, home included — which is what
-      // keeps the Improve button from lingering in the header after backing
-      // out of an app.
+      // Closing an app does not mean there is nothing to improve — it means
+      // the PLATFORM is what is on screen. So this is a swap, not a clear.
       //
-      // Home immediately republishes the PLATFORM's own row on top of this
-      // (#1367, Home.publishImproveTarget) — so on home the clear is a swap,
-      // not an absence. Every other screen leaves it cleared.
+      // It used to clear, and home alone republished its own row on top
+      // (#1367, Home.publishImproveTarget). That left every other platform
+      // screen — settings, profile, browse, the leaderboard, admin — with an
+      // empty right slot, which was fine while Improve was a contextual
+      // action and wrong the moment it became the header's standing one:
+      // the control people reach for most cannot be missing from half the
+      // screens. `Home.publishImproveTarget` is still the publisher (it owns
+      // both gates — an app must not be on screen, and the viewer must
+      // actually have been served the self-hosted row), and it is a no-op
+      // when either fails, in which case the clear below stands.
       window.Improve?.setTarget(null);
+      window.Home?.publishImproveTarget?.();
     }
     ImproveStatus.refreshDeployDot();
   },

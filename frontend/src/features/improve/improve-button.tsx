@@ -39,6 +39,19 @@
  * pulse there) — because this slot slims to a plain word and the board keeps
  * the hamburger as THE indicator cluster.
  *
+ * ── The slot is NOT contextual any more ────────────────────────────────
+ *
+ * For a while this control swapped shape by route: the word on an app's
+ * default screens, an EYE on the Dev screens, and an eye/pencil PAIR on a
+ * session that had a staging preview. Improve turned out to be the action
+ * people reach for most, and a control that both moves and disappears is a
+ * bad one to make load-bearing — it was absent exactly on a session with no
+ * preview yet, which is where describing a change is most likely. It renders
+ * on every screen carrying a target now. The doing<->seeing loop it used to
+ * displace lives in the session strip
+ * (../dev-chat/session-header.tsx), beside the name of the change it acts
+ * on.
+ *
  * The dot's visibility rides the visibility store; nothing here may be
  * written by id from a classic module: this button is React-owned end to
  * end, and a pre-hydration `classList` write is a mismatch React patches
@@ -46,8 +59,6 @@
  */
 
 import { useRef } from 'react';
-
-import { EyeIcon, PencilSparklesIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -134,9 +145,7 @@ function ImproveIndicators() {
 }
 
 export function ImproveButton() {
-  const {
-    target, open, tab, subTab, previewSessionId, previewUrl, previewActive,
-  } = useStoreState(improveStore);
+  const { target, open } = useStoreState(improveStore);
   // "this app" is wrong on home, where the target is the platform itself
   // (#1367). The visible label stays the single word "Improve" at both — what
   // is being improved is named in the panel's own header.
@@ -157,105 +166,25 @@ export function ImproveButton() {
   useIsomorphicLayoutEffect(() => {
     (window as unknown as { HeaderLayout?: { refresh?: () => void } })
       .HeaderLayout?.refresh?.();
-    // `tab` is a dependency because the pill ↔ eye swap below changes the
-    // right group's width just as materially as the pill appearing does —
-    // and so do `subTab` / `previewUrl`, which decide whether a session
-    // screen shows the eye at all.
-  }, [target, tab, subTab, previewUrl]);
+    // `target` is the only input left: the control no longer swaps shape by
+    // route, so the right group's width moves only when the word itself
+    // appears or clears.
+  }, [target]);
 
 
-  // Streamlined Concept: the Improve pill belongs to the app's DEFAULT (use)
-  // state only. On the Dev screens — Activity, Board, a session — the slot
-  // renders the EYE instead. Client-only states both (the prerender has no
-  // target), so the swap can be a real conditional render.
+  // Improve renders on EVERY screen that has a target, Dev included.
   //
-  // ── The eye means "go and look at the running thing" ─────────────────
-  //
-  // On Activity and Board that is the app itself, which is always there. On
-  // a SESSION it is that session's staging preview, which is not: a change
-  // has no preview until one is built. The rest of the platform already
-  // treats this eye glyph as exactly that gated affordance —
-  // AppView.cardPreviewHtml renders PREVIEW_EYE_SVG only for a session with
-  // a `staging_url` — so the header follows the same rule rather than
-  // offering a control that would have nothing to show (owner review).
-  const onSession = tab === 'dev' && subTab === 'sessions';
-  const canPreview = !!previewUrl;
-  const eye = !!target && tab === 'dev' && (!onSession || canPreview);
-  // The pill is the USE state's control and nothing else's. Gating it on
-  // `target` alone would hand it back the moment the eye stands down — a
-  // session with no preview yet — which is the one place the board is
-  // explicit that Improve does not belong. The slot is simply empty there.
-  const pill = !!target && tab !== 'dev';
-
-  if (eye && onSession) {
-    // ── The doing↔seeing PAIR (Streamlined Concept) ────────────────────
-    //
-    // The Figma session bar's quick loop: the EYE opens the staging preview
-    // (seeing), the PENCIL brings the chat back (doing), and whichever mode
-    // is CURRENT wears a filled disc — amber for seeing (the Preview chip's
-    // colour), violet for doing (the Building chip's). The pair renders only
-    // once a preview exists — the owner-reviewed gate above — because with
-    // nothing to see there is no loop to draw.
-    const seeing = !!previewActive;
-    return (
-      <span className="flex items-center gap-1 mr-2.5">
-        <button
-          id="app-eye-btn"
-          type="button"
-          className={'w-7 h-7 flex items-center justify-center rounded-full un-touch-target '
-            + (seeing
-              ? 'bg-amber-400/25 text-amber-600 dark:text-amber-400'
-              : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200')}
-          aria-label="Preview this change"
-          aria-pressed={seeing ? 'true' : 'false'}
-          title="Preview this change on staging"
-          onClick={() => {
-            if (seeing) return;
-            (window as unknown as {
-              AppView?: { swapToStagingForSession?: (id: number, url: string) => void };
-            }).AppView?.swapToStagingForSession?.(previewSessionId as number, previewUrl as string);
-          }}
-        >
-          <EyeIcon className="w-5 h-5" aria-hidden="true" />
-        </button>
-        <button
-          id="session-build-btn"
-          type="button"
-          className={'w-7 h-7 flex items-center justify-center rounded-full un-touch-target '
-            + (seeing
-              ? 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
-              : 'bg-violet-500/15 text-violet-600 dark:text-violet-400')}
-          aria-label="Back to building"
-          aria-pressed={seeing ? 'false' : 'true'}
-          title="Back to the session chat"
-          onClick={() => {
-            if (!seeing) return;
-            (window as unknown as {
-              AppView?: { closeStagingOverlay?: () => void };
-            }).AppView?.closeStagingOverlay?.();
-          }}
-        >
-          <PencilSparklesIcon className="w-5 h-5" aria-hidden="true" />
-        </button>
-      </span>
-    );
-  }
-
-  if (eye) {
-    return (
-      <button
-        id="app-eye-btn"
-        type="button"
-        className={'w-7 h-7 mr-2.5 flex items-center justify-center un-touch-target '
-          + 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'}
-        aria-label="Use the app"
-        title="View and use the app"
-        onClick={() => Improve.openApp()}
-      >
-        <EyeIcon className="w-5 h-5" aria-hidden="true" />
-      </button>
-    );
-  }
+  // It used to be the contextual slot: a violet pill in the app's default
+  // state, an EYE on the Dev screens, and on a session with a preview an
+  // eye/pencil PAIR. That made the one control people reach for most a thing
+  // that moved and sometimes vanished — and it vanished on exactly the
+  // screens (a session with no preview yet) where wanting to describe a
+  // change is most likely. So the slot stops being contextual: Improve is
+  // always the header's right-hand action, next to the Messages and
+  // Notifications glyphs, and the doing<->seeing loop it used to displace
+  // moved down to the session strip, where the change it acts on is named
+  // (see ../dev-chat/session-header.tsx).
+  const pill = !!target;
 
   return (
     <button

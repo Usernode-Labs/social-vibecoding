@@ -1333,9 +1333,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "The Dev view offers the eye back to the app, not the Improve action (Streamlined Concept)",
+      "name": "The Dev view carries the standing Improve action in the header",
       "path": "/app/staging-demo-admins/dev",
-      "expectSelector": "#platform-header #app-eye-btn"
+      "expectSelector": "#platform-header #improve-btn:not(.hidden)"
     },
     {
       "name": "The Improve panel offers the three views in order (Streamlined Concept)",
@@ -1353,9 +1353,9 @@
       "expectSelector": "#header-title #header-title-tab"
     },
     {
-      "name": "The Dev screens offer the eye back to the app, on the header right (Streamlined Concept)",
+      "name": "Improve is on the header right on the Dev screens too, not a contextual eye",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#platform-header #app-eye-btn"
+      "expectSelector": "#platform-header #improve-btn:not(.hidden)"
     },
     {
       "name": "The Board draws its own Kanban|Feed control (Streamlined Concept)",
@@ -2503,9 +2503,9 @@
       "expectText": "Usernode · Claude"
     },
     {
-      "name": "The venue dropdown sits in the session header, top right (#1348)",
+      "name": "The venue dropdown sits in the session header, before the mode switch (#1348)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
-      "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]:last-child",
+      "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]",
       "expectText": "Usernode · Claude"
     },
     {

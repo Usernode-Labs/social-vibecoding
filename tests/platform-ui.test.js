@@ -507,21 +507,32 @@ test('the Board owns the view control; the header center is the title tab', () =
     'and navigates home from anywhere that is not home');
 
   // Which HALF of the app is on screen is still published from the single
-  // place App.currentTab is assigned — the eye/Improve swap renders from it.
+  // place App.currentTab is assigned. The header's right slot no longer reads
+  // it — Improve is unconditional there now — but the session LIFECYCLE PILL
+  // is gated on exactly this pair, so the publish stays load-bearing.
   const appJs = read('public/js/app.js');
   assert.match(appJs, /App\.currentTab = tab;[\s\S]{0,600}window\.Improve\?\.setTab\(tab, App\.currentSubTab\)/,
-    'switchTab must publish the active tab AND sub-tab — the header eye is a '
-    + 'preview control on a session and a back-to-the-app control elsewhere');
+    'switchTab must publish the active tab AND sub-tab — the header status '
+    + 'pill is gated on being on a session');
+
+  // THE RIGHT SLOT IS NOT CONTEXTUAL. Improve used to swap into an eye on the
+  // Dev screens and into an eye/pencil pair on a session with a preview,
+  // which meant the action people reach for most both moved and, on a session
+  // with no preview yet, disappeared. It renders from the target alone now.
   const improveBtn = read('frontend/src/features/improve/improve-button.tsx');
-  assert.match(improveBtn, /tab === 'dev'/,
-    'the header right slot renders the eye from the published tab');
-  // The eye only offers what exists: a session shows it once that session
-  // has a staging preview, matching AppView.cardPreviewHtml's own gate.
-  assert.match(improveBtn, /const onSession = tab === 'dev' && subTab === 'sessions';/);
-  assert.match(improveBtn, /\(!onSession \|\| canPreview\)/,
-    'a session with no preview renders no eye');
-  assert.match(improveBtn, /swapToStagingForSession/,
-    'and the session eye opens that preview, the one preview affordance');
+  assert.match(improveBtn, /const pill = !!target;/,
+    'the word renders wherever there is something to improve');
+  assert.doesNotMatch(improveBtn, /tab === 'dev'/, 'and not from the route');
+  for (const gone of ['app-eye-btn', 'session-build-btn', 'EyeIcon', 'PencilSparklesIcon']) {
+    assert.ok(!improveBtn.includes(gone), `the ${gone} half of the swap left the header`);
+  }
+  // It went to the session strip, beside the name of the change it acts on.
+  const strip = read('frontend/src/features/dev-chat/session-header.tsx');
+  assert.match(strip, /id="dc-mode-switch"/, 'the strip draws the doing<->seeing switch');
+  assert.match(strip, /swapToStagingForSession/,
+    'and the eye there opens that preview, the one preview affordance');
+  assert.match(strip, /if \(!previewUrl\)/,
+    'a session with no preview draws no switch — the gate moved with it');
 });
 
 test('the Improve panel is navigation and work — one scroller, nothing below', () => {
