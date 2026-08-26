@@ -350,11 +350,15 @@ test('the gc spec panel body carries the bottom inset', () => {
 });
 
 test('the fullscreen staging overlay clears the notch, docked does not', () => {
-  const m = /#staging-overlay:not\(\.staging-overlay-docked\) \.staging-chrome-bar\s*\{([^}]*)\}/
+  // Two exclusions now, and they are the same exclusion twice: the bar
+  // clears the notch only when nothing above it already has. Docked, the
+  // overlay is pinned mid-page. UNDER-CHROME, a session's own header sits
+  // above it and holds the inset — see the app.css block.
+  const m = /#staging-overlay:not\(\.staging-overlay-docked\):not\(\.staging-overlay-under-chrome\) \.staging-chrome-bar\s*\{([^}]*)\}/
     .exec(APP_CSS);
   assert.ok(m, 'the staging chrome-bar top-inset rule is missing');
   assert.match(m[1], /padding-top:\s*calc\(0\.5rem \+ var\(--platform-safe-top\)\)/,
-    'fullscreen the overlay is inset:0 and covers the status bar');
+    'fullscreen over nothing, the overlay is inset:0 and covers the status bar');
   assert.match(INDEX, /<div class="staging-chrome-bar/,
     'the style hook the rule keys on must exist in index.html');
   // The BOTTOM deliberately gets nothing: everything below the bar is the

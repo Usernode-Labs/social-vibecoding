@@ -3,9 +3,11 @@
  * See ./session-header-store.ts for what stays the module's and why.
  */
 
-import type { MouseEvent, ReactNode } from 'react';
+import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { EyeIcon, PencilSparklesIcon } from '@/components/ui/icons';
+
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from '../improve/improve-store.js';
@@ -93,17 +95,32 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
  *
  * ── What it says ──────────────────────────────────────────────────────
  *
- * Two segments in a shared track, as the board draws them. The EYE opens the
- * staging preview (seeing); the pencil-sparkles brings the chat back (doing).
- * Whichever mode is current is SOLID — yellow for seeing, accent blue for
- * doing — and carries the LABEL, which is where the retired `#dc-mode-chip`
- * went: `Preview` while the preview is up, `Building` while an AI turn is in
- * flight. The other segment is a bare glyph on the track. Solid rather than
- * tinted because the board draws it that way, and because two tinted pills
- * side by side do not read as "one of these is on". At rest the doing segment is
- * filled but wordless, because "you are in the chat, and nothing is running"
- * is not news. The label keeps the chip's id so the one thing that read it
- * still resolves.
+ * ── ONE control, not two buttons ──────────────────────────────────────
+ *
+ * A segmented switch on the iOS model: a single track with a THUMB that
+ * slides between the two segments, rather than two pills that swap fills.
+ * The difference matters because the two states are one choice — you are
+ * either seeing the change or building it — and two independently-filled
+ * pills read as two buttons that happen to sit together.
+ *
+ * The thumb is measured rather than fixed at 50%, because the segments are
+ * NOT equal width: the current one carries a label and the other collapses to
+ * a bare glyph, which is what keeps the strip usable at 375px next to the
+ * change's name and the venue. A layout effect reads the active segment's
+ * offset and width and hands them to the thumb as CSS variables; the thumb
+ * animates `transform` and `width`, so the label growing and the fill
+ * travelling are one movement.
+ *
+ * ── What the thumb says ───────────────────────────────────────────────
+ *
+ * The EYE opens the staging preview (seeing); the pencil-sparkles brings the
+ * chat back (doing). The thumb is yellow under the eye and accent blue under
+ * the pencil, and the segment it is under carries the LABEL — which is where
+ * the retired `#dc-mode-chip` went: `Preview` while the preview is up,
+ * `Building` while an AI turn is in flight. At rest the doing segment holds
+ * the thumb but no word, because "you are in the chat, and nothing is
+ * running" is not news. The label keeps the chip's id so the one thing that
+ * read it still resolves.
  *
  * ── The gate ──────────────────────────────────────────────────────────
  *
@@ -118,6 +135,28 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     previewSessionId: number | null; previewUrl: string | null; previewActive: boolean;
   };
   const seeing = !!previewActive;
+  const trackRef = useRef<HTMLSpanElement | null>(null);
+  const eyeRef = useRef<HTMLButtonElement | null>(null);
+  const penRef = useRef<HTMLButtonElement | null>(null);
+  const [thumb, setThumb] = useState<{ x: number; w: number } | null>(null);
+
+  // Measure AFTER the labels have laid out — the active segment's width is
+  // its text's, so this cannot be computed ahead of the paint. `seeing` and
+  // `busy` are the two inputs that change which segment is wide.
+  useIsomorphicLayoutEffect(() => {
+    if (!previewUrl) { setThumb(null); return undefined; }
+    const measure = () => {
+      const active = seeing ? eyeRef.current : penRef.current;
+      if (!active) return;
+      setThumb({ x: active.offsetLeft, w: active.offsetWidth });
+    };
+    measure();
+    // The label is text, so a font swap or a width change under it moves the
+    // thumb — the same reason the docked staging panel watches its slot.
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (ro && trackRef.current) ro.observe(trackRef.current);
+    return () => ro?.disconnect();
+  }, [seeing, busy, previewUrl]);
 
   // No preview yet — the chip alone, exactly as the strip drew it before.
   if (!previewUrl) {
@@ -132,19 +171,38 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     );
   }
 
+  const SEG_ON = 'relative z-10 flex items-center gap-1 h-6 rounded-full py-1 pr-2.5 pl-1.5 '
+    + 'text-xs font-semibold un-touch-target';
+  const SEG_OFF = 'relative z-10 flex items-center justify-center h-6 w-6 rounded-full '
+    + 'text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100 un-touch-target';
+
   return (
     <span
       id="dc-mode-switch"
-      className="shrink-0 flex items-center gap-0.5 rounded-full bg-zinc-200 p-0.5 dark:bg-zinc-800"
+      ref={trackRef}
+      className="relative shrink-0 flex items-center rounded-full bg-zinc-200 p-0.5 dark:bg-zinc-800"
       role="group"
       aria-label="Preview or build this change"
     >
+      {/* THE THUMB. One element for both states, so the fill travels rather
+          than one pill vanishing and another appearing. Hidden until the
+          first measurement lands, which is the same frame. */}
+      <span
+        aria-hidden="true"
+        className={'absolute top-0.5 bottom-0.5 left-0 rounded-full transition-[transform,width] '
+          + 'duration-200 ease-out '
+          + (thumb ? '' : 'opacity-0 ')
+          + (seeing ? 'bg-amber-300' : 'bg-violet-600')}
+        style={thumb
+          ? { transform: `translateX(${thumb.x}px)`, width: `${thumb.w}px` }
+          : undefined}
+      >
+      </span>
       <button
         id="app-eye-btn"
+        ref={eyeRef}
         type="button"
-        className={seeing
-          ? 'flex items-center gap-1 h-6 rounded-full py-1 pr-2.5 pl-1.5 text-xs font-semibold bg-amber-300 text-zinc-900 un-touch-target'
-          : 'flex items-center justify-center h-6 w-6 rounded-full text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100 un-touch-target'}
+        className={seeing ? `${SEG_ON} text-zinc-900` : SEG_OFF}
         aria-label="Preview this change"
         aria-pressed={seeing ? 'true' : 'false'}
         title="Preview this change on staging"
@@ -158,10 +216,9 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
       </button>
       <button
         id="session-build-btn"
+        ref={penRef}
         type="button"
-        className={seeing
-          ? 'flex items-center justify-center h-6 w-6 rounded-full text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100 un-touch-target'
-          : 'flex items-center gap-1 h-6 rounded-full py-1 pr-2.5 pl-1.5 text-xs font-semibold bg-violet-600 text-white un-touch-target'}
+        className={seeing ? SEG_OFF : `${SEG_ON} text-white`}
         aria-label="Back to building"
         aria-pressed={seeing ? 'false' : 'true'}
         title="Back to the session chat"
@@ -205,7 +262,13 @@ export function SessionHeader(): ReactNode {
           {`PR #${s.pr}`}
         </button>
       ) : (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>New change</span>
+        /* "New change" is the PR link's resting state — it says only "no PR
+           yet", and it was taking room from the change's own name on a 375px
+           strip that also carries the venue and the mode switch. The board's
+           row is the name and the switch, nothing else; hiding it below `sm`
+           is the nearest thing to that which still shows it where there is
+           room. */
+        <span className="max-sm:hidden text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>New change</span>
       )}
       {/* #1348: where this session is built. It states the venue and opens the
           sheet that changes it. Here it survives the launchpad swap, and it is

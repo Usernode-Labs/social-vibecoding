@@ -274,14 +274,22 @@ test('once a preview exists the strip draws the doing<->seeing switch', () => {
   assert.match(doing, /id="session-build-btn"[^>]*aria-pressed="true"/, 'doing is current');
   // The current segment carries the word, and it is the chip's id.
   assert.match(doing, /id="session-build-btn"[\s\S]{0,900}?id="dc-mode-chip"[^>]*>Building</);
-  assert.match(doing, /bg-violet-600[^"]*text-white/, 'doing is the SOLID accent, as the board draws it');
+  // ONE control: the fill is a single THUMB that slides between the two
+  // segments, not a pill on each. So the colour is on the thumb and the ink
+  // is on the segment it is under.
+  assert.match(doing, /aria-hidden="true"[^>]*bg-violet-600/, 'the thumb is the accent under doing');
+  assert.match(doing, /id="session-build-btn"[^>]*text-white/, 'and the doing segment takes white ink');
+  assert.equal((doing.match(/bg-violet-600|bg-amber-300/g) || []).length, 1,
+    'exactly one fill in the control — two would be two buttons again');
 
   const seeing = headerHtml({ ...view(SESSION), busy: true },
     { previewSessionId: 7, previewUrl: 'https://staging.example/x', previewActive: true });
   assert.match(seeing, /id="app-eye-btn"[^>]*aria-pressed="true"/);
   assert.match(seeing, /id="session-build-btn"[^>]*aria-pressed="false"/);
   assert.match(seeing, /id="app-eye-btn"[\s\S]{0,900}?id="dc-mode-chip"[^>]*>Preview</);
-  assert.match(seeing, /bg-amber-300[^"]*text-zinc-900/, 'seeing is the SOLID yellow, dark ink on it');
+  assert.match(seeing, /aria-hidden="true"[^>]*bg-amber-300/, 'the thumb slides under seeing, in yellow');
+  assert.match(seeing, /id="app-eye-btn"[^>]*text-zinc-900/, 'and the eye segment takes dark ink');
+  assert.equal((seeing.match(/bg-violet-600|bg-amber-300/g) || []).length, 1, 'still one fill');
   // Only ONE label at a time — the chip is the current mode, not both.
   assert.equal((seeing.match(/id="dc-mode-chip"/g) || []).length, 1);
 });

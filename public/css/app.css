@@ -5681,10 +5681,37 @@ span.gc-vote-btn-icon { cursor: default; }
 /* Fullscreen, the overlay is `inset: 0` — it covers the status bar, so
    its own chrome bar has to clear the notch. Docked, it is pinned over
    the in-page slot by the geometry sync and needs no inset at all,
-   hence the :not(). */
-#staging-overlay:not(.staging-overlay-docked) .staging-chrome-bar {
+   hence the :not(). Under-chrome is excluded for the same reason docked
+   is: the platform header is above it and already holds the notch. */
+#staging-overlay:not(.staging-overlay-docked):not(.staging-overlay-under-chrome) .staging-chrome-bar {
   padding-top: calc(0.5rem + var(--platform-safe-top));
 }
+
+/* ── A session's preview sits UNDER that session's own bars ───────────
+   The Streamlined Concept board's APP PREVIEW frame keeps the header and
+   the session strip on screen and puts the preview below them, which is
+   also what makes the strip's doing<->seeing switch a real toggle rather
+   than a one-way door: the pencil segment has to be reachable from here.
+
+   `top` is set by the component, which measures the strip's bottom edge;
+   this rule owns everything that does not need a number. The z-index pair
+   is deliberate and deliberately LOW: the chrome goes to 30 rather than the
+   overlay to something below 0, and 30 is under the sheets' 40/50 so a
+   Notifications or Messages backdrop still dims the header the way it dims
+   everything else. */
+#staging-overlay.staging-overlay-under-chrome {
+  z-index: 20;
+}
+body:has(#staging-overlay.staging-overlay-under-chrome) #platform-header,
+body:has(#staging-overlay.staging-overlay-under-chrome) #dc-session-header {
+  position: relative;
+  z-index: 30;
+}
+
+/* Same call the docked mode makes, for the same reason: "Back to session"
+   is meaningless beside a session that never left the screen. The strip's
+   pencil segment is the way back. */
+#staging-overlay.staging-overlay-under-chrome #staging-back { display: none; }
 
 /* Docked chrome: "Back to session" makes no sense beside the still-
    visible session — the ×-close (.staging-dock-only) replaces it. */
