@@ -274,14 +274,14 @@ test('once a preview exists the strip draws the doing<->seeing switch', () => {
   assert.match(doing, /id="session-build-btn"[^>]*aria-pressed="true"/, 'doing is current');
   // The current segment carries the word, and it is the chip's id.
   assert.match(doing, /id="session-build-btn"[\s\S]{0,900}?id="dc-mode-chip"[^>]*>Building</);
-  assert.match(doing, /bg-violet-500\/15/, 'doing is violet');
+  assert.match(doing, /bg-violet-600[^"]*text-white/, 'doing is the SOLID accent, as the board draws it');
 
   const seeing = headerHtml({ ...view(SESSION), busy: true },
     { previewSessionId: 7, previewUrl: 'https://staging.example/x', previewActive: true });
   assert.match(seeing, /id="app-eye-btn"[^>]*aria-pressed="true"/);
   assert.match(seeing, /id="session-build-btn"[^>]*aria-pressed="false"/);
   assert.match(seeing, /id="app-eye-btn"[\s\S]{0,900}?id="dc-mode-chip"[^>]*>Preview</);
-  assert.match(seeing, /bg-amber-400\/25/, 'seeing is amber');
+  assert.match(seeing, /bg-amber-300[^"]*text-zinc-900/, 'seeing is the SOLID yellow, dark ink on it');
   // Only ONE label at a time — the chip is the current mode, not both.
   assert.equal((seeing.match(/id="dc-mode-chip"/g) || []).length, 1);
 });

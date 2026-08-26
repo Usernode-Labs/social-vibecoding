@@ -93,11 +93,14 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
  *
  * ── What it says ──────────────────────────────────────────────────────
  *
- * Two segments. The EYE opens the staging preview (seeing); the
- * pencil-sparkles brings the chat back (doing). Whichever mode is current is
- * filled — amber for seeing, violet for doing — and carries the LABEL, which
- * is where the retired `#dc-mode-chip` went: `Preview` while the preview is
- * up, `Building` while an AI turn is in flight. At rest the doing segment is
+ * Two segments in a shared track, as the board draws them. The EYE opens the
+ * staging preview (seeing); the pencil-sparkles brings the chat back (doing).
+ * Whichever mode is current is SOLID — yellow for seeing, accent blue for
+ * doing — and carries the LABEL, which is where the retired `#dc-mode-chip`
+ * went: `Preview` while the preview is up, `Building` while an AI turn is in
+ * flight. The other segment is a bare glyph on the track. Solid rather than
+ * tinted because the board draws it that way, and because two tinted pills
+ * side by side do not read as "one of these is on". At rest the doing segment is
  * filled but wordless, because "you are in the chat, and nothing is running"
  * is not news. The label keeps the chip's id so the one thing that read it
  * still resolves.
@@ -122,7 +125,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     return (
       <span
         id="dc-mode-chip"
-        className="text-[0.65rem] font-semibold px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-400 shrink-0"
+        className="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-600 text-white shrink-0"
       >
         Building
       </span>
@@ -132,7 +135,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
   return (
     <span
       id="dc-mode-switch"
-      className="shrink-0 flex items-center gap-0.5 rounded-full bg-zinc-100 p-0.5 dark:bg-zinc-800"
+      className="shrink-0 flex items-center gap-0.5 rounded-full bg-zinc-200 p-0.5 dark:bg-zinc-800"
       role="group"
       aria-label="Preview or build this change"
     >
@@ -140,8 +143,8 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         id="app-eye-btn"
         type="button"
         className={seeing
-          ? 'flex items-center gap-1 h-6 rounded-full py-1 pr-2 pl-1.5 text-[0.65rem] font-semibold bg-amber-400/25 text-amber-700 dark:text-amber-400 un-touch-target'
-          : 'flex items-center justify-center h-6 w-6 rounded-full text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 un-touch-target'}
+          ? 'flex items-center gap-1 h-6 rounded-full py-1 pr-2.5 pl-1.5 text-xs font-semibold bg-amber-300 text-zinc-900 un-touch-target'
+          : 'flex items-center justify-center h-6 w-6 rounded-full text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100 un-touch-target'}
         aria-label="Preview this change"
         aria-pressed={seeing ? 'true' : 'false'}
         title="Preview this change on staging"
@@ -157,8 +160,8 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         id="session-build-btn"
         type="button"
         className={seeing
-          ? 'flex items-center justify-center h-6 w-6 rounded-full text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 un-touch-target'
-          : 'flex items-center gap-1 h-6 rounded-full py-1 pr-2 pl-1.5 text-[0.65rem] font-semibold bg-violet-500/15 text-violet-700 dark:text-violet-400 un-touch-target'}
+          ? 'flex items-center justify-center h-6 w-6 rounded-full text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100 un-touch-target'
+          : 'flex items-center gap-1 h-6 rounded-full py-1 pr-2.5 pl-1.5 text-xs font-semibold bg-violet-600 text-white un-touch-target'}
         aria-label="Back to building"
         aria-pressed={seeing ? 'false' : 'true'}
         title="Back to the session chat"
@@ -182,7 +185,16 @@ export function SessionHeader(): ReactNode {
           own back arrow leads the session bar now — App.setBackIcon('arrow',
           '#app/<slug>/board') on the way in, DevChat.handleBack on the way
           out. One back control, in the bar the board draws it in. */}
-      <span className="text-xs text-zinc-500 truncate flex-1 dark:text-zinc-400" title={s.branch}>{s.title}</span>
+      {/* The board makes the change's NAME the subject of this row — dark and
+          semibold, taking whatever width the controls leave it. It was a 12px
+          grey caption, which read as metadata about the bar rather than as
+          the thing the bar is about. */}
+      <span
+        className="text-sm font-semibold text-zinc-900 truncate flex-1 min-w-0 dark:text-zinc-100"
+        title={s.branch}
+      >
+        {s.title}
+      </span>
       {s.pr ? (
         <button
           id="dc-pr-header-link"

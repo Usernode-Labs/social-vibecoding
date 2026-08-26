@@ -105,8 +105,14 @@ function SessionStatusPill() {
 // The anchor's own classes, hoisted out of the JSX so the `hidden` suffix is
 // the ONLY thing that varies between the two states — the string itself has to
 // stay byte-identical to the hand-written shell's (tests/baselines).
-const BACK_BTN_CLASS = 'inline-flex items-center text-zinc-900 hover:text-zinc-500'
-  + ' dark:text-zinc-100 dark:hover:text-zinc-400 un-touch-target';
+// The board draws the bar's three glyph controls — back, chat, bell — as dark
+// glyphs on a light DISC, and the accent pill beside them as the one filled
+// thing. Discs at 28px, not the board's larger circle: the header's content
+// row is pinned to 28px (tests/header-height-parity.test.js, and #909 before
+// it), so the ratio scales rather than the row.
+const BACK_BTN_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-full'
+  + ' bg-zinc-100 text-zinc-900 hover:bg-zinc-200'
+  + ' dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 un-touch-target';
 
 export function PlatformHeader() {
   // The four elements the centering measurement needs. Passing them as refs
@@ -366,7 +372,7 @@ export function PlatformHeader() {
           <a
             id="messages-btn"
             href="#messages"
-            className="relative w-7 h-7 mr-1 flex items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+            className="relative w-7 h-7 mr-1 flex items-center justify-center rounded-full un-touch-target bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
             aria-label="Messages"
             aria-haspopup="dialog"
             onClick={(event) => {
@@ -386,7 +392,7 @@ export function PlatformHeader() {
           <a
             id="notifications-btn"
             href="#notifications"
-            className="relative w-7 h-7 mr-1 flex items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+            className="relative w-7 h-7 mr-1 flex items-center justify-center rounded-full un-touch-target bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
             aria-label="Notifications"
             aria-haspopup="dialog"
             onClick={(event) => {

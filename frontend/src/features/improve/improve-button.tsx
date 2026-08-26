@@ -18,12 +18,15 @@
  * now — the call every path funnels through — so the button is either there on
  * every home visit or on none.
  *
- * ── Why a labelled text action and not an icon ─────────────────────────
+ * ── Why a labelled pill and not an icon ────────────────────────────────
  *
  * "improve" has no conventional glyph the way a bell or a hamburger does, so
- * it is a word. Per owner review it is a PLAIN violet text action, not a
- * pill — the header stays quiet and the word carries it — sized to the
- * header's 28px content row.
+ * it is a word. It was a plain violet text action for as long as it was
+ * CONTEXTUAL — quiet on purpose, one of several things that could occupy the
+ * slot. Now that it is the standing action on every screen, the board draws
+ * it as the bar's one FILLED control, and a bare word beside two glyphs
+ * reads as a caption rather than as the primary thing to do. Sized to the
+ * header's 28px content row either way.
  *
  * ── What the button says while the panel is SHUT ───────────────────────
  *
@@ -72,13 +75,28 @@ import { Improve } from './improve-controller.js';
  * thing that appears in the header when an app opens, so its height IS the
  * header's height there.
  */
-// Owner review (twice): Improve is NOT a button — a plain violet text
-// action, no fill, no border. The element stays a <button> for semantics
-// and its ids/handlers; only the chrome is text.
+// A FILLED accent pill, per the Streamlined Concept board's session bar
+// (node 380:9325 / 390:10516 — the CHAT UI and APP PREVIEW frames).
+//
+// This reverses an earlier owner review, recorded here twice, that made it a
+// plain violet text action with no fill and no border. That call was right
+// while Improve was CONTEXTUAL — one of several things that could occupy the
+// slot, and quiet on purpose. It is the standing action on every screen now,
+// and the board draws it as the bar's one filled control. A text action
+// sitting beside two glyphs reads as a third glyph's label rather than as
+// the primary thing to do.
+//
+// `violet-600` is #0a6ee0 — the shell's accent is a BLUE, not a violet (see
+// tailwind.config.js: the scale name is an identity, not a hue), which is
+// exactly the blue the board draws.
+//
+// h-7 and no vertical padding are the header's 28px content-row ceiling,
+// pinned by tests/header-height-parity.test.js — a filled pill keeps it by
+// taking its height from `h-7` and its shape from `rounded-full`.
 const IMPROVE_BTN_CLASS =
-  'relative inline-flex items-center h-7 px-1 mr-2.5 '
-  + 'text-violet-600 dark:text-violet-400 hover:text-violet-500 text-sm font-medium '
-  + 'transition-colors un-touch-target';
+  'relative inline-flex items-center h-7 px-3 mr-2.5 rounded-full '
+  + 'bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold '
+  + 'un-touch-target';
 
 /** Amber while a deploy runs, violet once the platform has rolled past us. */
 const VERSION_DOT: Record<string, string> = {
