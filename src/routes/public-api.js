@@ -35,6 +35,7 @@ const { waitlistJoinLimiter, waitlistTokenLimiter } = require('../middleware/rat
 const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail } = require('../services/topochain/mailer');
+const { PRODUCTION_ORIGIN } = require('../services/cli-auth-constants');
 const { productionHostname } = require('../services/caddy');
 const { loadContributors, shapeContributor } = require('../services/contributors');
 
@@ -190,10 +191,16 @@ function publicApiRoutes(config) {
         email,
         ip: clientIp(req),
         answers: stage1.value,
+        // From /#waitlist?ref=<code>. An unresolvable code is ignored
+        // rather than refused — a stale link must never block a join.
+        inviteCode: typeof req.body?.invite_code === 'string' ? req.body.invite_code : null,
       });
       if (created) {
         log.info('public-api', 'Waitlist join', {});
-        sendWaitlistJoinMail(config, email, { moreToken }); // fire-and-forget, never throws
+        // Best-effort like the mail itself: a code that cannot be minted
+        // must not fail the join, and the one-click link still confirms.
+        const code = await waitlist.issueVerificationCode(pool, email).catch(() => null);
+        sendWaitlistJoinMail(config, email, { moreToken, code }); // fire-and-forget, never throws
       }
       res.json({
         ok: true,
@@ -241,6 +248,34 @@ function publicApiRoutes(config) {
     }
   });
 
+  // POST /api/public/waitlist/confirm — the same confirmation as the
+  // one-click link above, by the six-digit code carried in the same mail.
+  // It exists for the phone, where leaving the app for the mail client
+  // loses the WebView's place; on desktop the link is still one click.
+  // Both stamp the same confirmed_at and the first one wins.
+  //
+  // A wrong code and an address that was never on the list get the SAME
+  // 422, so this cannot be used to test whether an email is on the
+  // waitlist — the same non-enumeration contract the join endpoint keeps.
+  router.post('/api/public/waitlist/confirm', waitlistTokenLimiter, async (req, res) => {
+    const email = waitlist.normalizeEmail(req.body?.email);
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    if (!email || !/^[0-9]{6}$/.test(code)) {
+      return res.status(422).json({ error: 'Enter the six-digit code from your email.' });
+    }
+    try {
+      const row = await waitlist.confirmSignupByCode(pool, email, code);
+      if (!row) {
+        return res.status(422).json({ error: 'That code is wrong or has expired. Ask for a new one.' });
+      }
+      log.info('public-api', 'Waitlist email confirmed by code', {});
+      return res.json({ ok: true, more_token: row.more_token || null });
+    } catch (err) {
+      log.error('public-api', 'waitlist code confirm failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // GET /api/public/waitlist/more/:token — stage-2 state for the "Want
   // in sooner?" form: previously saved answers (so the form is
   // re-openable and prefills) plus which OAuth connects are available /
@@ -251,12 +286,23 @@ function publicApiRoutes(config) {
       const row = await waitlist.getSignupByMoreToken(pool, req.params.token);
       if (!row) return res.status(404).json({ error: 'Unknown or expired link.' });
       const answers = row.answers && typeof row.answers === 'object' ? row.answers : {};
+      // The invite link is minted on this read, not at join: most signups
+      // never open the stage-2 form, and a code nobody will share is a
+      // row nobody needs.
+      const inviteCode = await waitlist.inviteCodeFor(pool, row.id);
+      const invited = await waitlist.invitedBySignup(pool, row.id);
       res.json({
         ok: true,
         answers,
         oauth: {
           github: !!(config.waitlistGithubClientId && config.waitlistGithubClientSecret),
           x: !!(config.waitlistXClientId && config.waitlistXClientSecret),
+          linkedin: !!(config.waitlistLinkedinClientId && config.waitlistLinkedinClientSecret),
+        },
+        invite: {
+          url: inviteCode ? `${PRODUCTION_ORIGIN}/#waitlist?ref=${inviteCode}` : null,
+          count: invited.count,
+          emails: invited.emails,
         },
       });
     } catch (err) {

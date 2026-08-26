@@ -379,10 +379,11 @@ async function sendOtpMail(config, email, code) {
 // survey, and the bare survey link, which stays the durable "Want in
 // sooner?" home for anyone who stopped at the join. An idempotent re-join
 // mints no token and so carries neither.
-async function sendWaitlistJoinMail(config, email, { moreToken = null } = {}) {
+async function sendWaitlistJoinMail(config, email, { moreToken = null, code = null } = {}) {
   await send(config, {
     kind: 'waitlist_joined',
     to: email,
+    code,
     url: moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null,
     confirmUrl: moreToken
       ? `${PRODUCTION_ORIGIN}/api/public/waitlist/confirm/${moreToken}`

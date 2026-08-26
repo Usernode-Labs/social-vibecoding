@@ -171,6 +171,12 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // lookup-by-hash schemes these tables use.
   mobile_otp_codes: ['code_hash'],
   mobile_auth_tokens: ['token_hash'],
+  // The waitlist's own email verification code, same shape and same
+  // reasoning as mobile_otp_codes above: bcrypt, but a six-digit space is
+  // offline-guessable, and this hash confirms an address. Everything else
+  // on the row — attempts, expires_at, consumed_at — is exactly what
+  // debugging "my code did not work" needs, so only the hash is masked.
+  waitlist_verification_codes: ['code_hash'],
   // The encrypted FCM destination and its lookup hash. Every other
   // column (platform, permission_status, session_expires_at, last_seen_at)
   // is exactly what push debugging needs.

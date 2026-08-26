@@ -100,10 +100,42 @@ const RETIRED_IDS = {
   'settings-home-panels-section': 'Settings → Home screen widgets. A checkbox per widget only made sense while the blocks were optional furniture a viewer arranged; they are three fixed areas of the screen now. The ⋮ menu on a block still hides one, and POST /api/home-panels/:key/visibility is untouched.',
   'settings-home-panels-list': 'The checkbox list inside that retired section.',
   'settings-home-panels-status': 'Save/error line of that retired section.',
+  // ── Andrea's simpler waitlist flow: joining is email-only ─────────
+  // "Link something you've made" was a REQUIRED stage-1 field, which
+  // contradicted the flow the onboarding doc settled on and that Andrea
+  // and Evan agreed in its comments ("Just an email!"). The question is
+  // not gone — it moved to the stage-2 "Want in sooner?" form as
+  // #more-made-url / #more-made-note, where it is one of the things that
+  // helps you move up rather than a gate on joining.
+  'waitlist-made-url': 'Moved to the stage-2 survey as #more-made-url; joining no longer asks it.',
+  'waitlist-made-note': 'Moved to the stage-2 survey as #more-made-note, with its url field.',
+  // ── Andrea's simpler waitlist flow: the invite link is real now ────
+  // The five typed-address rows collected emails and did nothing with
+  // them: no invite was sent, no attribution was recorded, no count was
+  // ever shown. They are replaced by a share link whose joins ARE
+  // attributed (waitlist_signups.invited_by), which is the mechanic the
+  // doc asks for. Nothing that worked was removed, because nothing here
+  // worked.
+  'more-invites': 'Typed-address invite rows retired for the share link (#more-invite-url); they sent nothing.',
+  'more-invite-add': 'The "add another" button for the retired invite rows.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── Andrea's simpler waitlist flow ────────────────────────────────
+  // The relocated join question (see RETIRED_IDS above).
+  'more-made-url': "The \"link something you've made\" field, relocated from the join form (was #waitlist-made-url).",
+  'more-made-note': 'Its one-line description (was #waitlist-made-note).',
+  // The doc asks for "Email + verification code". The mailed link still
+  // works and confirms the same row; the code exists for the phone, where
+  // leaving for the mail app and back loses the WebView's place.
+  'waitlist-confirm': 'The confirm-your-email block on the join success state. Hides once the code is accepted.',
+  'waitlist-code': 'Six-digit email verification code; confirms the same row the mailed link does.',
+  'waitlist-code-submit': 'Submits the verification code.',
+  // The share link that replaced the typed rows (see RETIRED_IDS above).
+  'more-invite-url': "The signup's shareable invite link; joins through it set waitlist_signups.invited_by.",
+  'more-invite-copy': 'Copies the invite link to the clipboard.',
+  'more-invite-joined': 'How many people joined through this link. Empty until the stage-2 load effect fills it.',
   // ── #1372: the mobile-browser install strip ──────────────────────
   // A visitor on a phone browser is offered the native app. The strip is
   // always in the document and starts `hidden` (the island rule: data loads

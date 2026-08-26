@@ -612,6 +612,20 @@
       "preview": "`SELECT DISTINCT ${USER_SELECT_QUALIFIED} FROM users u ${joinClause} ${whereClause} ORDER BY u.id DESC LIMIT $${dataParams.length - 1} OFFSET $${dataParams.leng"
     },
     {
+      "source": "src/routes/topochain/admin/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "27d7dffe2bcda3d40d0a",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS c FROM waitlist_signups w ${where}`"
+    },
+    {
+      "source": "src/routes/topochain/admin/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "a5ba989b29c286008dbf",
+      "count": 1,
+      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited"
+    },
+    {
       "source": "src/routes/topochain/ingest.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "0374518af384f1d0ee6a",
