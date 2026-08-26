@@ -25,19 +25,18 @@ const dapp = JSON.parse(read('dapp.json'));
 
 test('Messages is a hidden React-owned top-level screen with global navigation', () => {
   assert.match(html, /<main id="messages-screen" class="hidden /);
-  // #1436: the front door is a HEADER control, not a row in a menu. Messages
-  // is one of the two things a person checks most, and it sat one level inside
-  // an unlabeled drawer. The surface itself is unchanged — this is a door, not
-  // a redesign.
-  assert.match(html, /id="messages-btn" href="#messages"/);
+  // #1436: the front door is a row in the app-switcher menu. Messages briefly
+  // had a header control of its own; it lost it because the menu is what lists
+  // the things with their own PAGE, and a page reachable from a header slot
+  // too is the header growing back. The surface itself is unchanged
+  // throughout — this was only ever about the door.
+  assert.match(html, /id="drawer-row-messages" href="#messages"/);
   assert.match(html, /id="drawer-messages-badge" class="hidden /,
-    'the unread count kept its id, and therefore its writer, when it moved');
-  assert.equal(html.indexOf('id="drawer-row-messages"'), -1,
-    'and the drawer row it came from is gone — an inbox is not navigation');
-  // The nav order check, now that Messages has left it: what remains in the
-  // switcher menu is the account group.
+    'the unread count kept its id, and therefore its writer');
+  assert.equal(html.indexOf('id="messages-btn"'), -1,
+    'and no header control competes with the row');
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#drawer-row-profile + #drawer-row-settings + #drawer-row-admin'));
+    === '#drawer-row-messages + #drawer-row-profile + #drawer-row-settings + #drawer-row-admin'));
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
   assert.match(app, /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/);
   assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,600}navigateToMessages/);

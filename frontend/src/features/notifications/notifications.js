@@ -632,37 +632,18 @@ const Notifications = {
     return Notifications.items.filter((n) => n && n.kind === 'session_done' && !n.readAt).length;
   },
 
-  // Direct and group messages. `conversation_message` is a notification kind
-  // like any other, which is how ONE incoming message used to light TWO
-  // badges: it counted here for the bell, and again on the Messages row's own
-  // unread count. Two colours, one event, one nested inside the other.
+  // Message notifications count on the BELL like every other kind (#1436
+  // follow-up). They were split out for a moment, while Messages had a header
+  // control of its own beside the bell and one incoming DM lit both counts.
   //
-  // #1436 gave Messages its own header control beside the bell, which made
-  // that double-count visible rather than merely wrong. The rule is one
-  // event, one badge, on the surface that owns it — and Messages owns this
-  // one: its count is per-conversation and survives being read there, which
-  // the bell's flat total cannot express.
-  //
-  // Split OUT rather than filtered at the source: the rows themselves still
-  // belong in the notifications list, because "@Bruno sent you a message" is
-  // part of what happened while you were away. It is only the COUNT that
-  // moves.
-  _conversationUnread() {
-    return Notifications.items.filter(
-      (n) => n && n.kind === 'conversation_message' && !n.readAt
-    ).length;
-  },
-
-  // The bell's own unread count: everything except the session-related kinds
-  // that live on #improve-btn and the conversation kinds that Messages counts
-  // for itself.
+  // Messages is a row in the app-switcher menu again, so there are no longer
+  // two badges in the bar to disagree — and the split was the wrong half to
+  // fix anyway. The bell is "what happened while I was away", and a message
+  // arriving is exactly that. The menu row keeps its own unread count, which
+  // is a different statement: how many conversations are waiting, on the page
+  // that shows them.
   _bellUnread() {
-    return Math.max(
-      0,
-      Notifications.unread
-        - Notifications._sessionUnread()
-        - Notifications._conversationUnread()
-    );
+    return Math.max(0, Notifications.unread - Notifications._sessionUnread());
   },
 
   _renderBadge() {

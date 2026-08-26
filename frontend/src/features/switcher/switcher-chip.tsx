@@ -16,34 +16,26 @@
  * a terminal group at the bottom. The rule that keeps it from decaying back
  * into a hamburger is in the menu, not here.
  *
- * ── Why the label is not this component's state ────────────────────────
+ * ── It is on EVERY screen, and it is the header's only label ───────────
  *
- * It reads ../improve/improve-store.js, the same store `ImproveButton` and
- * `ImproveViewToggle` read. `Improve.publishTarget()` (an open app) and
- * `Home.publishImproveTarget()` (the platform's own row, while home is on
- * screen) already publish `target`, `slug` and `name` there, and
- * `#improve-target-name` renders that same `name` in the panel's header. A
- * second store fed by those same two callers is how a header label and a panel
- * header start disagreeing about which app you are looking at.
+ * The first cut showed it only inside an app, and hid it on home, Messages,
+ * Settings and the rest, where `#header-title` carried the name instead. Two
+ * different header shapes for one product: on some screens a tappable chip,
+ * on others a dead string, with no rule a person could learn. It is the same
+ * control everywhere now, and the thing it names is wherever you are.
  *
- * It also means the chip inherits the Improve button's show/hide lifecycle
- * exactly: present wherever there is a target, absent everywhere else. That
- * matters for the header's layout — see the note on `#header-title` below.
+ * The label comes from `App.setHeaderTitle` through
+ * ./switcher-controller.js's `setTitle`. That function is the single choke
+ * point every screen entry already funnels through, and the same string it
+ * puts in `document.title` — so the chip cannot drift from the browser tab,
+ * and it needs no second router to follow navigation. It reads "Messages" on
+ * Messages and "Cool App" inside Cool App because setHeaderTitle is already
+ * called with each.
  *
- * ── The chip and the title are mutually exclusive ──────────────────────
- *
- * `#header-title` names the SCREEN (Settings, Profile, Messages…), which is
- * still the right thing on a screen that is not an app. The chip names the
- * APP. Showing both would put two names in one bar, so the chip renders
- * exactly where a target exists and ../header/platform-header.tsx hides the
- * title on the same condition.
- *
- * That is also what keeps use-header-layout.ts's centering measurement honest.
- * It decides between a viewport-centred and a flow-positioned title by
- * measuring the left group's inner edge against the right group; a variable
- * width left group would normally make that harder, but when the chip is
- * showing there is no title to centre, and when there is a title the chip is
- * gone and the left group is back to its fixed 20px.
+ * `#header-title` is therefore HIDDEN at all times (see
+ * ../header/platform-header.tsx). It stays in the document and keeps being
+ * written: declared checks resolve it, and it is what `document.title` is
+ * derived from. What it no longer does is put a second name in the bar.
  *
  * ── The avatar is legacy-written, deliberately ─────────────────────────
  *
@@ -60,7 +52,7 @@ import { ChevronDownIcon, UserIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { improveStore } from '../improve/improve-store.js';
+import { switcherStore } from './switcher-store.js';
 
 const CHIP_CLASS =
   'relative inline-flex items-center gap-1.5 h-7 pl-1 pr-1.5 rounded-full '
@@ -79,22 +71,15 @@ function drawer(): HeaderMenuBridge | undefined {
 }
 
 export function SwitcherChip() {
-  // `target !== 'platform'` rather than merely `target`: #1406 republishes the
-  // PLATFORM's own row on every non-home screen so the Improve button survives
-  // onto settings, profile and messages. A chip that rendered on that would
-  // label Settings with the platform's name and hide the screen's own title —
-  // see the matching note in ../header/platform-header.tsx.
-  const { target, name } = useStoreState(improveStore);
-  const inApp = Boolean(target) && target !== 'platform';
+  const { title } = useStoreState(switcherStore);
 
-  // The chip materially changes the header's LEFT group width, which is one of
-  // the two inputs to the title's centred-vs-flow decision. The group's
-  // ResizeObserver catches it a frame later on its own; this is the explicit
-  // hook, so nothing visibly jumps on the frame an app opens or closes.
+  // The chip's width changes with the name in it, and the header measures its
+  // left group. The ResizeObserver catches that a frame later on its own; this
+  // is the explicit hook, so nothing visibly jumps on the frame you navigate.
   useIsomorphicLayoutEffect(() => {
     (window as unknown as { HeaderLayout?: { refresh?: () => void } })
       .HeaderLayout?.refresh?.();
-  }, [inApp]);
+  }, [title]);
 
   // Toggle rather than open: the drawer's controller exposes `isPresenting()`
   // for exactly this (the Improve panel already asks it before presenting), and
@@ -106,17 +91,17 @@ export function SwitcherChip() {
     else menu?.open?.();
   };
 
-  // The platform's own row has a name like any other app, so there is no
-  // special case here — only a fallback for the instant before a publisher has
-  // run, where an empty chip would be worse than a generic word.
-  const label = name || 'Apps';
+  // A fallback for the instant before the first setHeaderTitle lands — and for
+  // the prerender, which has no navigation behind it. An empty chip would read
+  // as a broken control; a generic word reads as a menu.
+  const label = title || 'Menu';
 
   return (
     <button
       id="app-switcher-btn"
       type="button"
-      className={inApp ? CHIP_CLASS : `hidden ${CHIP_CLASS}`}
-      aria-label={`Switch app — currently ${label}`}
+      className={CHIP_CLASS}
+      aria-label={`Menu — currently ${label}`}
       aria-haspopup="menu"
       onClick={toggle}
     >

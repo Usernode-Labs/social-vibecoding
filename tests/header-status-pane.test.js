@@ -83,19 +83,19 @@ test('none of the moved slots are duplicated in the header', () => {
     'the admin shield left the header (it is #drawer-row-admin now)');
 });
 
-test('#1436: the header is four controls, and only one of them is a menu', () => {
+test('#1436: the header is three controls, and only one of them is a menu', () => {
   // THE UI OVERHAUL collapsed four controls into #improve-btn. #1436 finishes
   // the job by giving the two INBOXES their own controls and retiring the
   // hamburger, so what is left answers four different questions:
   //
-  //   the chip   — which app am I in?        (and where else can I go)
-  //   messages   — my conversations
+  //   the chip   — where am I, and where else can I go
   //   the bell   — what happened while I was away
   //   Improve    — what can I do to this app
   //
-  // Only Improve opens a list of choices. Everything else GOES somewhere,
-  // which is the property the hamburger never had and the reason it is gone.
-  const order = ['app-switcher-btn', 'messages-btn', 'notifications-btn', 'improve-btn'];
+  // Messages had a control here for a moment and lost it: it has its own PAGE,
+  // and the chip's menu is what lists those. A page reachable from a header
+  // slot too is the header growing back.
+  const order = ['app-switcher-btn', 'notifications-btn', 'improve-btn'];
   let prev = -1;
   for (const id of order) {
     const at = header.indexOf(`id="${id}"`);
@@ -111,7 +111,7 @@ test('#1436: the header is four controls, and only one of them is a menu', () =>
   // The retired ones must not creep back as a second way to do the same
   // thing — that split is exactly what the overhaul removed.
   for (const id of ['app-mode-switch', 'feedback-btn', 'work-drawer-btn',
-    'dev-console-btn', 'header-menu-btn']) {
+    'dev-console-btn', 'header-menu-btn', 'messages-btn']) {
     assert.equal(header.indexOf(`id="${id}"`), -1,
       `#${id} was retired and must not return to the header`);
   }
@@ -358,13 +358,14 @@ test('#1436: the drawer is the switcher menu, and its rows always fit', () => {
   // neither "where am I" nor "you" does not belong. An inbox is neither.
   assert.equal(html.indexOf('id="drawer-notifications"'), -1,
     'notifications left the drawer for their own sheet');
-  assert.equal(html.indexOf('id="drawer-row-messages"'), -1,
-    'and so did messages');
+  // Messages, by contrast, is a PAGE — so it belongs in this menu with the
+  // rest of them, and came back when its header control went away.
+  assert.match(html, /id="drawer-row-messages"/, 'Messages is a row here');
 
   // What is left is navigation plus the account group at the bottom.
   const at = html.indexOf('id="header-menu-rows"');
-  for (const id of ['drawer-main-rows', 'drawer-row-profile', 'drawer-row-settings',
-    'drawer-row-admin']) {
+  for (const id of ['drawer-main-rows', 'drawer-row-messages', 'drawer-row-profile',
+    'drawer-row-settings', 'drawer-row-admin']) {
     assert.ok(html.indexOf(`id="${id}"`) > at, `#${id} is inside the drawer body`);
   }
   // Profile and Settings are the TERMINAL group — last, after the navigation.

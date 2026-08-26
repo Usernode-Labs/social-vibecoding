@@ -30,7 +30,6 @@ import { useRef } from 'react';
 
 import {
   BellIcon,
-  ChatIcon,
   ChevronLeftIcon,
 } from '@/components/ui/icons';
 
@@ -39,9 +38,7 @@ import { useVisibility } from '../../lib/visibility-store';
 import { ChromelessPill } from './chromeless-pill';
 import { ImproveButton } from '../improve/improve-button';
 import { ImproveViewToggle } from '../improve/view-toggle';
-import { improveStore } from '../improve/improve-store.js';
 import { SwitcherChip } from '../switcher/switcher-chip';
-import { useStoreState } from '../../lib/use-store-state';
 import { NotificationsSheet } from '../notifications/sheet-controller.js';
 import { useHeaderLayout } from './use-header-layout';
 
@@ -61,25 +58,16 @@ export function PlatformHeader() {
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
 
-  // #1436: the title names the SCREEN (Settings, Profile, Messages…) and the
-  // chip names the APP you are inside, so exactly one of them shows.
-  //
-  // The condition is `target !== 'platform'`, NOT merely `target`. #1406
-  // deliberately re-publishes the PLATFORM's own row from
-  // _enterScreenChrome(), so that the Improve button and the view selector
-  // survive onto settings, profile, messages and the rest instead of
-  // disappearing the moment you leave home — which means a target exists on
-  // every screen in the product and cannot, on its own, tell an app apart
-  // from a platform screen. Reading it as "an app is open" hid the title
-  // everywhere, and a declared check caught it: /#apps lost the words "All
-  // apps".
+  // #1436: the chip is the header's only label now, on every screen, so this
+  // node is hidden at ALL times. It stays in the document and app.js keeps
+  // writing it — declared checks resolve it, and `document.title` is set from
+  // the same call — but it no longer puts a second name in the bar beside the
+  // chip.
   //
   // Via useHiddenClass rather than a rendered `className` for the usual
-  // reason: use-header-layout.ts toggles `.is-centered` on this same node at
-  // runtime, so React re-rendering the attribute would drop it.
-  const { target } = useStoreState(improveStore);
-  const inApp = Boolean(target) && target !== 'platform';
-  useHiddenClass(titleRef, inApp);
+  // reason: use-header-layout.ts toggles a class on this same node at runtime,
+  // so React re-rendering the attribute would drop it.
+  useHiddenClass(titleRef, true);
 
   return (
     <>
@@ -143,14 +131,20 @@ export function PlatformHeader() {
             header's content-row floor), with the 20px icon centred inside it.
         */}
         {/*
-            #1436: the left group holds the back affordance AND the app-switcher
-            chip now, so it is no longer a fixed 20px column — the `w-5` moved
-            onto an inner wrapper so the back button keeps its own invariant
-            width (toggling its `hidden` must not collapse the column and shift
-            the title) while the chip adds width only when it is showing.
+            #1436: the left group is the chip, with the back chevron in front of
+            it when there is somewhere to go back to.
+            
+            THE 20px COLUMN IS GONE. It existed so that toggling #back-btn's
+            `hidden` could not collapse the leftmost column and shift a CENTRED
+            title. There is no centred title any more — the chip is the label
+            and it is flush left — so a reserved slot for an icon that is
+            usually absent is just an indent the eye reads as a misalignment.
+            The wrapper is `contents` so it adds no box of its own: the chevron
+            participates in this flex row directly and takes no space at all
+            when hidden.
         */}
-        <div ref={leftGroupRef} className="h-7 shrink-0 flex items-center gap-2">
-        <div className="w-5 h-7 shrink-0 flex items-center">
+        <div ref={leftGroupRef} className="h-7 shrink-0 flex items-center gap-1.5 min-w-0">
+        <div className="contents">
           {/*
               #1036: a real anchor, not a button, so cmd/ctrl-click,
               middle-click and right-click → "Open in new tab" work on it.
@@ -268,41 +262,20 @@ export function PlatformHeader() {
               Notifications._renderBadge paints exactly as it painted this one.
           */}
           {/*
-              #1436: MESSAGES and the BELL, the two inboxes, each with its own
-              control and its own badge.
+              MESSAGES MOVED INTO THE CHIP'S MENU (#1436 follow-up).
 
-              They were one row and one list inside the hamburger, which is
-              also why a single incoming direct message used to light TWO
-              badges: `conversation_message` is a notification kind, so it
-              counted once on #drawer-messages-badge and again on the red
-              count of the button that contained it. Two colours, one event.
-              The rule now is one event, one badge, on the surface that owns
-              it — see Notifications._renderBadge, which excludes the
-              conversation kind from the bell's count.
+              It had its own control here beside the bell. That made the header
+              carry two inboxes and split the rule the chip is supposed to
+              hold: the chip lists the things that have their own PAGE — home,
+              your apps, Discover, Messages, Profile, Settings — and Messages
+              has one. A page reachable two ways, one of them a header slot, is
+              the header growing again.
 
-              Messages is a real ANCHOR, not a button: `#messages` is a route
-              with per-conversation routes under it, so cmd/ctrl-click and
-              middle-click have to work. The bell opens a sheet, so it is a
-              button.
+              Its unread count went back into the menu row with it, and message
+              notifications count on the bell again like every other kind: the
+              bell is "what happened while I was away", Messages is a place you
+              go. See Notifications._bellUnread.
           */}
-          <a
-            id="messages-btn"
-            href="#messages"
-            className="relative w-7 h-7 flex items-center justify-center rounded-full bg-white hover:bg-zinc-50 dark:bg-zinc-900 dark:hover:bg-zinc-800 shadow-sm transition-colors un-touch-target text-zinc-900 dark:text-zinc-100 mr-2.5"
-            aria-label="Messages"
-          >
-            <ChatIcon className="w-4 h-4" />
-            {/* Same id and same writer as the drawer row's badge, so the
-                Messages store keeps painting it with no change. Violet, not
-                red: it is a count of conversations, and the bell beside it is
-                the red one. */}
-            <span
-              id="drawer-messages-badge"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-violet-600 text-white text-[0.65rem] font-bold flex items-center justify-center"
-              aria-label="Unread messages"
-            >
-            </span>
-          </a>
           <button
             id="notifications-btn"
             type="button"

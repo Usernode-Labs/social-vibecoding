@@ -221,10 +221,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // <Shell/>. BellIcon moved the other way in the same change and is off
     // this list, because the bell is a control again.
     'M4 6h16M4 12h16M4 18h16',
-    // ChatBubbleTailIcon — the drawer's Messages row, which #1436 retired.
-    // #messages-btn draws ChatIcon instead, so the tailed bubble has no
-    // prerendered call site left.
-    'M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z',
+    // ChatBubbleTailIcon came BACK off this list in the #1436 follow-up: the
+    // Messages row returned to the switcher menu, which is in <Shell/>, and
+    // the header control that briefly replaced it is gone.
     // ── The Dev card's glyphs (#1367's card chunk) ──────────────────
     // The card family renders inside #dev-feed / #dev-kanban-board /
     // #gc-thread-head, all of which app-view.js mounts at runtime on the Dev

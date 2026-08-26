@@ -1734,9 +1734,9 @@
       "expectSelector": "#improve-body > #improve-footer > #improve-row-github"
     },
     {
-      "name": "Switcher menu account group is Profile, Settings, Admin & moderation",
+      "name": "Switcher menu page group is Messages, Profile, Settings, Admin & moderation",
       "path": "/?shot=menu",
-      "expectSelector": "#drawer-row-profile + #drawer-row-settings + #drawer-row-admin"
+      "expectSelector": "#drawer-row-messages + #drawer-row-profile + #drawer-row-settings + #drawer-row-admin"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -2715,9 +2715,9 @@
       "expectSelector": "#platform-header #app-switcher-btn #app-switcher-name"
     },
     {
-      "name": "Messages and the bell are their own header controls (#1436)",
+      "name": "The bell is the header’s only inbox control (#1436)",
       "path": "/?demo=1",
-      "expectSelector": "#platform-header #messages-btn[href='#messages'] + #notifications-btn #notifications-badge"
+      "expectSelector": "#platform-header #notifications-btn #notifications-badge"
     },
     {
       "name": "The switcher menu opens onto your apps, then Home and Discover (#1436)",

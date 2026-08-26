@@ -317,23 +317,26 @@ export function HeaderMenu() {
                 Profile
               </span>
             </a>
-            {/*
-                MESSAGES LEFT THIS MENU in #1436, and its badge went with it.
+            {/* MESSAGES IS BACK IN THIS MENU (#1436 follow-up), and its
+                unread count with it.
 
-                It is an INBOX, and this menu is the switcher: where you are,
-                where else you can go, and your account. An inbox is neither,
-                which is the rule that stops this drawer drifting back into
-                the catch-all it used to be. Messages has its own header
-                control beside the bell now — #messages-btn — and
-                #drawer-messages-badge moved onto it, keeping its id and its
-                writer so the Messages store paints it unchanged.
+                It briefly had a header control of its own beside the bell.
+                That put two inboxes in the bar and broke the rule this menu
+                holds: it lists the things with their own PAGE — home, your
+                apps, Discover, Messages, Profile, Settings — and Messages has
+                one. A page reachable two ways, one of them a header slot, is
+                the header growing back.
 
-                That move is also what ended the double-count: one incoming
-                direct message used to light this badge AND the red one on the
-                button containing it, because `conversation_message` is a
-                notification kind. Notifications._bellUnread() excludes it
-                now — see the note there.
-            */}
+                Same id, so the Messages store paints this badge unchanged. */}
+            <a
+              id="drawer-row-messages"
+              href="#messages"
+              className="flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
+              <span className="text-sm font-medium">Messages</span>
+              <span id="drawer-messages-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread messages"></span>
+            </a>
             <a
               id="drawer-row-settings"
               href="#settings"

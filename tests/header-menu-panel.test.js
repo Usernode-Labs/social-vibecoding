@@ -281,16 +281,19 @@ test('#1436: the drawer keeps its surface, and its module keeps its boot role', 
     'notifications init moved to the sheet that renders the list');
 });
 
-test('#1436: Messages is an inbox, so it is not a row in the switcher menu', () => {
-  // The rule that keeps this menu from decaying back into the catch-all it
-  // used to be: a row that is neither "where am I" nor "you" does not belong.
-  // An inbox is neither, and it has its own control beside the bell.
-  assert.equal(headerMenuTsx.indexOf('id="drawer-row-messages"'), -1,
-    'the Messages row is gone from the drawer');
-  assert.match(html, /id="messages-btn"/, 'it is a header control now');
-  // The badge kept its id and therefore its writer.
+test('#1436: Messages is a row in the switcher menu, with its own count', () => {
+  // It briefly had a header control of its own beside the bell. That put two
+  // inboxes in the bar and broke the rule this menu holds: it lists the things
+  // with their own PAGE — home, your apps, Discover, Messages, Profile,
+  // Settings — and Messages has one. A page reachable two ways, one of them a
+  // header slot, is the header growing back.
+  assert.match(headerMenuTsx, /id="drawer-row-messages"/, 'the Messages row is in the menu');
+  assert.match(html, /id="drawer-row-messages" href="#messages"/, 'and points at its page');
+  assert.equal(html.indexOf('id="messages-btn"'), -1,
+    'and there is no header control competing with it');
+  // Same id, so the Messages store paints the count unchanged.
   assert.match(html, /id="drawer-messages-badge"/,
-    'and its unread count rode along, unchanged, onto that control');
+    'the unread count rides the row, not the bar');
 });
 
 test('PlatformUI exposes panel() with the same null-degradation contract', () => {

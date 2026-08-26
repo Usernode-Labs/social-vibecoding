@@ -47,6 +47,18 @@ function shape(list) {
 }
 
 export const AppSwitcher = {
+  /**
+   * The chip's label. Called from `App.setHeaderTitle`, which is the single
+   * choke point every screen entry already funnels through — so the chip
+   * follows navigation without a second router to keep in step, and says
+   * exactly what the browser tab says.
+   */
+  setTitle(text) {
+    const title = typeof text === 'string' ? text : '';
+    if (switcherStore.get().title === title) return;
+    switcherStore.set({ title });
+  },
+
   async loadApps() {
     const cached = shape(/** @type {any} */ (window).Home?._apps);
     if (cached.length) {

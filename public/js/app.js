@@ -3801,6 +3801,14 @@ const App = {
   setHeaderTitle(text) {
     const headerEl = document.getElementById('header-title');
     if (headerEl) headerEl.textContent = text;
+    // #1436: the app-switcher chip is the header's visible label now, so it
+    // renders this same string. Published rather than written, because the
+    // chip is React-owned; #header-title stays in the document (and keeps
+    // being written) for the declared checks and for anything reading it, but
+    // it is hidden — two names in one bar is what this replaces.
+    if (window.AppSwitcher && typeof AppSwitcher.setTitle === 'function') {
+      AppSwitcher.setTitle(text);
+    }
     document.title = text;
     // Re-apply the dev-chat status marker ("⏳ thinking / ✅ done",
     // #108) that the plain title assignment above just wiped, then let

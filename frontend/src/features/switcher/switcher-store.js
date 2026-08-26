@@ -42,6 +42,7 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {SwitcherApp[]} apps
  * @property {boolean} loading — an /api/apps load is in flight
  * @property {boolean} loaded  — a load has resolved at least once
+ * @property {string} title    — the name of the place you are in
  */
 
 /**
@@ -57,4 +58,13 @@ export const switcherStore = createStore({
   apps: [],
   loading: false,
   loaded: false,
+  // The chip's LABEL, from App.setHeaderTitle — the one choke point every
+  // screen entry already goes through, and the same string that reaches
+  // `document.title`. One source, so the chip cannot drift from the tab.
+  //
+  // It is the SCREEN's name on a platform screen ("Messages", "All apps") and
+  // the APP's name inside an app, because setHeaderTitle is already called
+  // with each. That is what lets the chip be the header's only label instead
+  // of sitting beside a second one.
+  title: '',
 });

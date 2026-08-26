@@ -110,25 +110,38 @@ test('both top bars carry the identical shape: py-3, no hairline, safe-area', ()
   }
 });
 
-test('FLOOR: the lead back-button wrapper is 28px tall (and still 20px wide)', () => {
-  for (const bar of BARS) {
-    // First element inside the header: the fixed-size wrapper holding the
-    // back button. `h-7` is what holds the row open when #header-title is
-    // hidden (native WebView); `flex items-center` centres the 20px icon
-    // inside those 28px.
-    const wrapper = withoutComments(bar.slice).match(/<div class="([^"]*\bw-5\b[^"]*)"/);
-    assert.ok(wrapper, `#${bar.id} still has its w-5 back-button wrapper`);
-    const classes = wrapper[1].split(/\s+/);
-    assert.ok(classes.includes('h-7'),
-      `#${bar.id}'s back-btn wrapper carries h-7 — the header's 28px content-row floor`);
-    assert.ok(classes.includes('flex') && classes.includes('items-center'),
-      `#${bar.id}'s back-btn wrapper centres its icon in those 28px`);
-    // features/header/use-header-layout.ts measures this element as the
-    // title's left side group (leftGroup.offsetWidth) — the WIDTH must stay
-    // fixed at 20px or the centering measurement drifts.
-    assert.ok(classes.includes('w-5') && classes.includes('shrink-0'),
-      `#${bar.id}'s back-btn wrapper stays w-5 shrink-0 (the header-layout hook measures it)`);
-  }
+test('FLOOR: something always holds the 28px content row open', () => {
+  // The row's height must not depend on which children happen to be present.
+  // It used to be held by the back-button wrapper's `h-7` — a fixed 20x28
+  // column that was always there even when the button inside it was hidden.
+  //
+  // #1436 changed which element does that job on the PLATFORM bar, and the
+  // reason is worth recording: the fixed 20px column existed so that toggling
+  // #back-btn's `hidden` could not shift a CENTRED title. The chip is the
+  // header's label now and it is flush left, so a reserved slot for a usually
+  // absent icon was just an indent that read as a misalignment. The chip is
+  // `h-7` and is on screen on every route, so IT holds the row open — and it
+  // has to, because #header-title is hidden at all times now.
+  //
+  // The landing bar has no chip and keeps the original wrapper.
+  const platform = withoutComments(headerSlice('platform-header'));
+  const chip = platform.match(/<button id="app-switcher-btn" type="button" class="([^"]*)"/);
+  assert.ok(chip, '#platform-header leads with the app-switcher chip');
+  assert.ok(chip[1].split(/\s+/).includes('h-7'),
+    "the chip is pinned to the header's 28px content row — it is what holds it open");
+  // And it must not be able to vanish: a hidden label leaves an empty bar.
+  assert.ok(!/\bhidden\b/.test(chip[1]),
+    'the chip renders on every route — it is the label AND the floor');
+
+  const landing = withoutComments(headerSlice('landing-header'));
+  const wrapper = landing.match(/<div class="([^"]*\bw-5\b[^"]*)"/);
+  assert.ok(wrapper, '#landing-header still has its w-5 back-button wrapper');
+  const classes = wrapper[1].split(/\s+/);
+  assert.ok(classes.includes('h-7'),
+    "#landing-header's back-btn wrapper carries h-7 — that bar's 28px floor");
+  assert.ok(classes.includes('flex') && classes.includes('items-center'),
+    "#landing-header's back-btn wrapper centres its icon in those 28px");
+  assert.ok(classes.includes('shrink-0'), "and does not collapse");
 });
 
 test('CEILING: the Improve button is exactly the 28px row', () => {

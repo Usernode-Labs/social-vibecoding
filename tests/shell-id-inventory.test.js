@@ -47,6 +47,7 @@ const RETIRED_IDS = {
   // or "you", which is the rule that keeps the menu from decaying back into
   // a catch-all.
   'back-icon-home': 'The header\'s house glyph. Home is a row in the app-switcher menu immediately right of that slot, so a house icon an inch away was two affordances for one destination. #back-btn survives as the BACK chevron only, and App.setBackIcon now decides whether the control exists at all rather than which glyph it draws.',
+  'messages-btn': 'The header Messages control. Messages is a row in the app-switcher menu again — the menu lists what has its own PAGE, and a page reachable from a header slot too is the header growing back.',
   'header-menu-btn': 'The hamburger. Its surface is opened by #app-switcher-btn now — a labelled chip naming the app you are in, whose primary action is switching.',
   'drawer-row-app-version': 'Per-dApp SHA removed from platform information; app versions remain on app cards.',
   'app-version-pill-slot': 'Drawer-only per-dApp SHA renderer removed with its row.',
@@ -110,6 +111,7 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  'drawer-row-messages': "The Messages row in the app-switcher menu (#488). #1436 briefly gave Messages a header control of its own and retired this; the follow-up put it back, because the menu is what lists the things with their own page and a page reachable from a header slot too is the header growing back.",
   'drawer-messages-badge': 'Aggregate unread conversation count (#488). It kept this id when #1436 moved it off the retired drawer row onto #messages-btn in the header, so the Messages store paints it unchanged.',
   // ── #1436: the switcher menu's top half ──────────────────────────
   // The drawer opens onto what it is FOR now — your apps — rather than onto
@@ -121,7 +123,6 @@ const ADDED_IDS = {
   'switcher-row-home': 'Home, under the app list.',
   'switcher-row-discover': 'Discover (#apps), under Home.',
   // ── #1436: the two inboxes get their own controls ────────────────
-  'messages-btn': 'The Messages control. A real anchor, not a button: #messages is a route with per-conversation routes under it, so modified clicks have to work. Carries #drawer-messages-badge, which kept its id and its writer when it moved off the retired drawer row.',
   'notifications-overlay': "The notifications sheet's backdrop. Mirrors #improve-overlay exactly, including never using `hidden` — opacity carries the fade and pointer-events is what stops a transparent backdrop eating clicks while the sheet is shut.",
   'notifications-body-scroll': 'The single scroller inside the notifications sheet. It is here rather than on #notifications-list because the saved and invites sections are capped at max-h-48 EACH, so on a short viewport those two caps alone can leave the list at zero height.',
   // ── #1436: the app-switcher chip ─────────────────────────────────
