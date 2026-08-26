@@ -316,8 +316,8 @@ export function CreateAppDialog() {
         dialog.close();
         window.PlatformUI?.toast?.(
           mode === 'import'
-            ? 'Your app is being imported — it will appear in your list of apps when it’s ready.'
-            : 'Your app is being created — it will appear in your list of apps when it’s ready.',
+            ? 'Your app is being imported. It will appear in your list of apps when it’s ready.'
+            : 'Your app is being created. It will appear in your list of apps when it’s ready.',
         );
         (window.Home?.load as (() => void) | undefined)?.();
         return;
