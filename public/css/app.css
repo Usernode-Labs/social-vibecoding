@@ -127,6 +127,20 @@
   padding-bottom: calc(0.5rem + var(--platform-safe-bottom)) !important;
 }
 
+/* .platform-safe-sheet — a sheet's own FOOTER row (the Apps sheet's
+   Home | Explore pair). Same additive rule as .platform-safe-bar, with the
+   sheet's larger base gap: a sheet has rounded top corners and sits on the
+   ground rather than against the screen edge, so its last row needs real
+   padding under it whether or not the device reports an inset. This exists
+   because .platform-safe-scroll REPLACES the element's bottom padding with
+   the bare inset — correct for a scroller whose content runs to the bottom
+   of the screen, wrong for a button row, which on every 0-inset device
+   (desktop, most Android, the in-app preview) then sat flush on the sheet's
+   rounded edge. */
+.platform-safe-sheet {
+  padding-bottom: calc(1.25rem + var(--platform-safe-bottom)) !important;
+}
+
 /* Keyboard up: the home-indicator strip sits BEHIND the on-screen
    keyboard, so reserving it there is pure dead space above the
    keyboard. Same suppression the kit applies to its own surfaces
@@ -140,6 +154,10 @@ html.un-kb .platform-safe-scroll {
 
 html.un-kb .platform-safe-bar {
   padding-bottom: 0.5rem !important;
+}
+
+html.un-kb .platform-safe-sheet {
+  padding-bottom: 1.25rem !important;
 }
 
 /* ── Platform Messages screen ─────────────────────────────

@@ -135,8 +135,8 @@ export function AppsSwitcherSheet(): ReactNode {
         {...(open ? { 'data-open': '' } : {})}
         className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl app-context-transition"
       >
-        <div className="flex items-center gap-3 px-4 pt-4 pb-2 shrink-0">
-          <span className="flex-1 min-w-0 block text-lg font-bold text-zinc-900 dark:text-zinc-100">
+        <div className="flex items-center gap-3 px-5 pt-5 pb-3 shrink-0">
+          <span className="flex-1 min-w-0 block text-lg font-semibold text-zinc-900 dark:text-zinc-100">
             Apps
           </span>
           <button
@@ -165,23 +165,23 @@ export function AppsSwitcherSheet(): ReactNode {
             in one row that scrolls rather than a grid that grows. */}
         <div
           id="apps-switcher-list"
-          className="shrink-0 flex gap-3 px-4 pb-3 overflow-x-auto overscroll-contain"
+          className="shrink-0 flex gap-4 px-5 pb-5 overflow-x-auto overscroll-contain"
         >
           {rows.map((app) => (
             <AppTile key={app.slug} app={app} current={app.slug === slug} />
           ))}
           {apps && rows.length === 0 ? (
-            <span className="py-4 text-xs text-zinc-500 dark:text-zinc-400">
+            <span className="py-4 text-sm text-zinc-500 dark:text-zinc-400">
               No apps yet — Explore finds the ones you can join.
             </span>
           ) : null}
         </div>
         {/* Home | Explore, the board's two footer buttons. */}
-        <div className="shrink-0 flex gap-3 px-4 pb-4 pt-2 border-t border-zinc-100 dark:border-zinc-800 platform-safe-scroll">
+        <div className="shrink-0 flex gap-3 px-5 pt-4 border-t border-zinc-100 dark:border-zinc-800 platform-safe-sheet">
           <a
             id="apps-switcher-home"
             href="/"
-            className="flex-1 text-center text-sm font-medium rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 py-2.5 un-touch-target"
+            className="flex-1 text-center text-base sm:text-sm font-medium rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 py-3 un-touch-target"
             onClick={(e) => {
               if ((window as any).NavLink?.isNativeClick(e)) return;
               e.preventDefault();
@@ -194,7 +194,7 @@ export function AppsSwitcherSheet(): ReactNode {
           <a
             id="apps-switcher-explore"
             href="#apps"
-            className="flex-1 text-center text-sm font-medium rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 py-2.5 un-touch-target"
+            className="flex-1 text-center text-base sm:text-sm font-medium rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 py-3 un-touch-target"
             onClick={() => AppContext.dismissForNav()}
           >
             Explore
