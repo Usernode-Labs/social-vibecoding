@@ -17,6 +17,7 @@ const {
   accountRecovery,
   withTransaction,
 } = require('../services/cli-auth');
+const { revokeNativeSessionCredentials } = require('../services/native-session-revocation');
 // The SAME predicate the CLI 404 gates use (routes/cli-auth.js), so the
 // capability this route advertises can never disagree with what that
 // surface actually serves.
@@ -240,8 +241,30 @@ function authRoutes(config) {
   router.post('/api/auth/logout', async (req, res) => {
     const token = req.cookies?.session;
     if (token) {
-      await pool.query('DELETE FROM sessions WHERE token = $1', [token]).catch(() => {});
-      log.info('auth', 'Logout', { userId: req.user?.id });
+      try {
+        await withTransaction(pool, async (client) => {
+          const { rows } = await client.query(
+            `SELECT user_id, native_session_incarnation_id
+               FROM sessions WHERE token = $1 FOR UPDATE`,
+            [token]
+          );
+          const session = rows[0];
+          if (session?.native_session_incarnation_id) {
+            await revokeNativeSessionCredentials(client, {
+              reason: 'web_logout',
+              userId: session.user_id,
+              webSessionIncarnationId: session.native_session_incarnation_id,
+            });
+          }
+          await client.query('DELETE FROM sessions WHERE token = $1', [token]);
+        });
+        log.info('auth', 'Logout', { userId: req.user?.id });
+      } catch (err) {
+        // A logout that did not atomically close its native incarnation must
+        // never be reported as complete.
+        log.error('auth', 'Logout failed', { message: err.message, userId: req.user?.id });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
     }
     res.clearCookie('session');
     res.json({ ok: true });

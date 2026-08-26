@@ -77,6 +77,8 @@ function collapse(sql) {
 function handleQuery(rawSql, params = []) {
   const sql = collapse(rawSql);
 
+  if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+
   // mobileTokenAuth's own lookup + bookkeeping update.
   if (sql.startsWith('SELECT t.id, t.user_id, t.ability, t.expires_at, u.username FROM mobile_auth_tokens')) {
     const tok = tokens.find((t) => t.token_hash === params[0]);
@@ -151,6 +153,17 @@ function handleQuery(rawSql, params = []) {
     tokens = tokens.filter((t) => t.token_hash !== params[0]);
     return { rows: [] };
   }
+  if (sql.startsWith("UPDATE native_session_attempts SET state = 'revoked'")) {
+    return { rows: [] };
+  }
+  if (sql.startsWith("UPDATE native_session_credentials SET state = 'revoked'")) {
+    return { rows: [] };
+  }
+  if (sql.startsWith('DELETE FROM mobile_auth_tokens WHERE id = ANY')) {
+    const ids = new Set((params[0] || []).map(String));
+    tokens = tokens.filter((t) => !ids.has(String(t.id)));
+    return { rows: [] };
+  }
 
   // otp/request.
   if (sql.startsWith('DELETE FROM mobile_otp_codes WHERE email = $1 AND consumed_at IS NULL')) {
@@ -185,7 +198,13 @@ function handleQuery(rawSql, params = []) {
 }
 
 function makeMockPool() {
-  return { query: async (sql, params) => handleQuery(sql, params) };
+  return {
+    query: async (sql, params) => handleQuery(sql, params),
+    connect: async () => ({
+      query: async (sql, params) => handleQuery(sql, params),
+      release: () => {},
+    }),
+  };
 }
 
 // ─── Test app wiring (require.cache reset per test — see file header) ──

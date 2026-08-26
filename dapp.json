@@ -247,6 +247,11 @@
       "description": "Base URL of the external zkPassport bridge service that verifies proofs for POST /api/v4/mobile/zkpassport/complete (src/services/topochain/zk-bridge.js). Unset doesn't block boot — every zkpassport/complete call returns 500 'The zkPassport bridge is not configured.' until it is set. Not secret, so it stays visible in the console for is-it-pointed-at-the-right-host checks."
     },
     {
+      "key": "NATIVE_SESSION_V2_TESTNET_CHAIN_ID",
+      "group": "Topochain",
+      "description": "Exact canonical Rust ChainId (lower-case utc bech32m, 32-byte payload) for the sole protocol-2 network mapping id=testnet. Unset or malformed keeps both native-establish routes dark with 404; there is no internal/custom fallback. HTTPS/TLS remains the server-authenticity boundary."
+    },
+    {
       "key": "MOBILE_PUSH_ENABLED",
       "group": "Mobile push",
       "default": "false",

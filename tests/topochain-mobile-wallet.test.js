@@ -114,6 +114,10 @@ function handleQuery(rawSql, params = []) {
     return { rows: [{ id: tok.user_id, user_id: tok.user_id, ability: tok.ability, expires_at: tok.expires_at, username: user.email }] };
   }
   if (sql.startsWith('UPDATE mobile_auth_tokens SET last_used_at')) return { rows: [] };
+  if (sql === 'SELECT id FROM users WHERE id = $1 FOR UPDATE') {
+    const user = USERS.find((u) => u.id === params[0]);
+    return { rows: user ? [{ id: user.id }] : [] };
+  }
 
   // One-time email proof used by wallet claim.
   if (sql.startsWith('SELECT id, code_hash, attempts, expires_at FROM mobile_otp_codes')) {

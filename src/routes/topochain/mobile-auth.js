@@ -39,6 +39,7 @@ const { sendOtpMail } = require('../../services/topochain/mailer');
 const { mobileIdentityHash } = require('../../services/mobile-identity-hash');
 const mail = require('../../services/mail');
 const waitlist = require('../../services/waitlist');
+const { revokeNativeSessionCredentials } = require('../../services/native-session-revocation');
 const { ok, fail } = require('./helpers');
 
 // ─── Constants (token model, SPEC 1588-1599; OTP model, SPEC 1675-1679) ──
@@ -116,6 +117,21 @@ async function revokePresentedToken(pool, req) {
   if (!presented) return;
   const tokenHash = crypto.createHash('sha256').update(presented).digest('hex');
   await pool.query('DELETE FROM mobile_auth_tokens WHERE token_hash = $1', [tokenHash]);
+}
+
+async function withMobileAuthTransaction(pool, fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ─── level + user payload (SPEC 1653: operator > member > guest) ────────
@@ -494,7 +510,10 @@ function topochainMobileAuthRoutes(config) {
       try {
         // SPEC 1746: revokes ONLY the token used; other devices/sessions
         // stay signed in.
-        await revokePresentedToken(pool, req);
+        await withMobileAuthTransaction(pool, (client) => revokeNativeSessionCredentials(client, {
+          reason: 'mobile_logout',
+          mobileTokenId: req.mobileAuth.tokenId,
+        }));
         return ok(res, { message: 'Logged out.' });
       } catch (err) {
         log.error('topochain-mobile-auth', 'POST /logout failed', { message: err.message });

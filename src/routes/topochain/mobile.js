@@ -62,6 +62,7 @@ const {
 } = require('./helpers');
 const { computeStandings, assignSharedRanks } = require('../../services/topochain/standings');
 const { topochainMobileAuthRoutes, computeLevel } = require('./mobile-auth');
+const { nativeSessionRoutes } = require('./native-session');
 const { mobileIdentityHash } = require('../../services/mobile-identity-hash');
 const { mobilePushRegistrationRoutes } = require('./mobile-push-registration');
 const { verifyCompletion, ZkBridgeError } = require('../../services/topochain/zk-bridge');
@@ -752,6 +753,7 @@ function topochainMobileRoutes(config) {
 
   // Task 8: the six auth endpoints (their own throttle/token gating).
   router.use(topochainMobileAuthRoutes(config));
+  router.use(nativeSessionRoutes(config));
   router.use(mobilePushRegistrationRoutes(config));
 
   // ── GET /me (SPEC 1748-1767) ─────────────────────────────────────────
@@ -2080,10 +2082,10 @@ function topochainMobileRoutes(config) {
       try {
         await client.query('BEGIN');
 
-        // Serialize normal allocation with /wallet/claim for this user. The
-        // claim route locks the same user row before moving a legacy wallet,
-        // so an event-scoped legacy account cannot race a fresh season-wide
-        // pool allocation and leave the target holding both.
+        // Serialize all wallet-assignment doors for this user. Both the
+        // legacy-wallet claim and the native atomic credential exchange lock
+        // this row, preventing either from racing normal provisioning onto a
+        // second pool account.
         await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [req.user.id]);
 
         // Existing allocation wins. Prefer a season-wide account (matches

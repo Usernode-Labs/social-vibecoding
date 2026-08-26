@@ -3660,6 +3660,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_season_public_key_unique
 CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_user_season_unique
   ON onchain_accounts (user_id, season_id)
   WHERE user_id IS NOT NULL AND season_event_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_id_user_uidx
+  ON onchain_accounts (id, user_id);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_user ON onchain_accounts (user_id);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season ON onchain_accounts (season_id);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season_event_address ON onchain_accounts (season_event_id, address);
@@ -4044,6 +4046,9 @@ CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS mobile_auth_tokens_id_user_uidx
+  ON mobile_auth_tokens (id, user_id);
+
 
 -- Mobile push notifications — sender identity, registrations, deliveries (#844)
 --
@@ -4562,6 +4567,186 @@ COMMENT ON COLUMN onchain_accounts.registration_code IS 'staging:private';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_set BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- ═══════════════════════════════════════════════════════════════════════
+-- Native session establish protocol 2. The web incarnation is created lazily
+-- on the first ticket request and attached to exactly one live cookie session.
+-- Its row deliberately survives deletion/expiry of that session: an exchange
+-- can prove that the exact session is no longer live, while an already-issued
+-- native credential retains an auditable origin until explicit revocation.
+CREATE TABLE IF NOT EXISTS native_session_web_incarnations (
+  id          VARCHAR(47) PRIMARY KEY
+    CHECK (id ~ '^nsw_[A-Za-z0-9_-]{43}$'),
+  user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (id, user_id)
+);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS native_session_incarnation_id
+  VARCHAR(47);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'sessions'::regclass
+       AND conname = 'sessions_native_session_incarnation_user_fkey'
+  ) THEN
+    ALTER TABLE sessions
+      ADD CONSTRAINT sessions_native_session_incarnation_user_fkey
+      FOREIGN KEY (native_session_incarnation_id, user_id)
+      REFERENCES native_session_web_incarnations(id, user_id)
+      ON DELETE SET NULL (native_session_incarnation_id);
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS sessions_native_session_incarnation_uidx
+  ON sessions (native_session_incarnation_id)
+  WHERE native_session_incarnation_id IS NOT NULL;
+
+-- A caller chooses only the opaque attempt id and the sole protocol-2 target,
+-- `running`. Subject and network are server-derived and frozen here. Reusing
+-- an attempt id with any changed semantic input is a sticky conflict.
+CREATE TABLE IF NOT EXISTS native_session_attempts (
+  attempt_id                 VARCHAR(47) PRIMARY KEY
+    CHECK (attempt_id ~ '^nsa_[A-Za-z0-9_-]{43}$'),
+  protocol                   SMALLINT NOT NULL DEFAULT 2 CHECK (protocol = 2),
+  user_id                    BIGINT NOT NULL,
+  web_session_incarnation_id VARCHAR(47) NOT NULL,
+  desired_runtime            VARCHAR(16) NOT NULL CHECK (desired_runtime = 'running'),
+  network_id                 VARCHAR(16) NOT NULL CHECK (network_id = 'testnet'),
+  chain_id                   VARCHAR(100) NOT NULL
+    CHECK (chain_id ~ '^utc1[023456789acdefghjklmnpqrstuvwxyz]+$'),
+  request_digest             CHAR(64) NOT NULL
+    CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+  state                      VARCHAR(16) NOT NULL DEFAULT 'ticketed'
+    CHECK (state IN ('ticketed', 'exchanged', 'revoked')),
+  created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (attempt_id, user_id, web_session_incarnation_id, network_id, chain_id),
+  FOREIGN KEY (web_session_incarnation_id, user_id)
+    REFERENCES native_session_web_incarnations(id, user_id) ON DELETE CASCADE,
+  CHECK (updated_at >= created_at)
+);
+CREATE INDEX IF NOT EXISTS native_session_attempts_user_idx
+  ON native_session_attempts (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS native_session_attempts_incarnation_idx
+  ON native_session_attempts (web_session_incarnation_id, state);
+
+-- Raw tickets never reach storage. Their SHA-256 digest is the lookup key;
+-- the one successful JSON response is encrypted at rest so ticket issuance
+-- can replay the byte-identical body without minting a second capability.
+CREATE TABLE IF NOT EXISTS native_session_tickets (
+  id                 BIGSERIAL PRIMARY KEY,
+  attempt_id         VARCHAR(47) NOT NULL UNIQUE
+    REFERENCES native_session_attempts(attempt_id) ON DELETE CASCADE,
+  ticket_hash        CHAR(64) NOT NULL UNIQUE
+    CHECK (ticket_hash ~ '^[0-9a-f]{64}$'),
+  exchange_challenge CHAR(43) NOT NULL
+    CHECK (exchange_challenge ~ '^[A-Za-z0-9_-]{43}$'),
+  audience           VARCHAR(64) NOT NULL
+    CHECK (audience = 'usernode-native-session-v2'),
+  encrypted_response TEXT NOT NULL,
+  response_digest    CHAR(64) NOT NULL
+    CHECK (response_digest ~ '^[0-9a-f]{64}$'),
+  state              VARCHAR(16) NOT NULL DEFAULT 'issued'
+    CHECK (state IN ('issued', 'exchanged', 'revoked')),
+  issued_at          TIMESTAMPTZ NOT NULL,
+  expires_at         TIMESTAMPTZ NOT NULL,
+  CHECK (expires_at = issued_at + INTERVAL '5 minutes')
+);
+CREATE INDEX IF NOT EXISTS native_session_tickets_expiry_idx
+  ON native_session_tickets (expires_at) WHERE state = 'issued';
+
+-- Installation identity is continuity-only in protocol 2, not hardware
+-- attestation. The caller submits public JWKs; the server validates them and
+-- derives the purpose-specific ids and RFC 7638 thumbprints stored here.
+CREATE TABLE IF NOT EXISTS native_installation_key_generations (
+  installation_id                 VARCHAR(47) NOT NULL
+    CHECK (installation_id ~ '^nsi_[A-Za-z0-9_-]{43}$'),
+  key_generation                  INTEGER NOT NULL CHECK (key_generation = 1),
+  user_id                         BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  possession_key_id               VARCHAR(48) NOT NULL UNIQUE
+    CHECK (possession_key_id ~ '^nskp_[A-Za-z0-9_-]{43}$'),
+  possession_key_thumbprint       CHAR(43) NOT NULL
+    CHECK (possession_key_thumbprint ~ '^[A-Za-z0-9_-]{43}$'),
+  possession_public_jwk           JSONB NOT NULL,
+  envelope_key_id                 VARCHAR(48) NOT NULL UNIQUE
+    CHECK (envelope_key_id ~ '^nske_[A-Za-z0-9_-]{43}$'),
+  envelope_key_thumbprint         CHAR(43) NOT NULL
+    CHECK (envelope_key_thumbprint ~ '^[A-Za-z0-9_-]{43}$'),
+  envelope_public_jwk             JSONB NOT NULL,
+  created_at                      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (installation_id, key_generation),
+  UNIQUE (installation_id),
+  UNIQUE (installation_id, key_generation, user_id),
+  UNIQUE (possession_key_thumbprint),
+  UNIQUE (envelope_key_thumbprint),
+  CHECK (jsonb_typeof(possession_public_jwk) = 'object'),
+  CHECK (jsonb_typeof(envelope_public_jwk) = 'object')
+);
+
+-- A credential references the existing mobile bearer and provisioned wallet,
+-- but neither secret is stored here. The encrypted compact JWE in the sibling
+-- table is the only response carrying those values to the native key owner.
+CREATE TABLE IF NOT EXISTS native_session_credentials (
+  credential_reference       VARCHAR(47) PRIMARY KEY
+    CHECK (credential_reference ~ '^nsc_[A-Za-z0-9_-]{43}$'),
+  credential_generation      INTEGER NOT NULL DEFAULT 1 CHECK (credential_generation = 1),
+  attempt_id                 VARCHAR(47) NOT NULL UNIQUE,
+  user_id                    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  web_session_incarnation_id VARCHAR(47) NOT NULL,
+  installation_id            VARCHAR(47) NOT NULL,
+  installation_key_generation INTEGER NOT NULL,
+  mobile_auth_token_id       BIGINT UNIQUE,
+  account_id                 BIGINT NOT NULL,
+  network_id                 VARCHAR(16) NOT NULL CHECK (network_id = 'testnet'),
+  chain_id                   VARCHAR(100) NOT NULL,
+  exchange_request_digest    CHAR(64) NOT NULL
+    CHECK (exchange_request_digest ~ '^[0-9a-f]{64}$'),
+  state                      VARCHAR(16) NOT NULL DEFAULT 'valid'
+    CHECK (state IN ('valid', 'revoked')),
+  revocation_reason          VARCHAR(32)
+    CHECK (revocation_reason IN ('web_logout', 'mobile_logout', 'account_recovery')),
+  revoked_at                 TIMESTAMPTZ,
+  created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at                 TIMESTAMPTZ NOT NULL,
+  FOREIGN KEY (attempt_id, user_id, web_session_incarnation_id, network_id, chain_id)
+    REFERENCES native_session_attempts(
+      attempt_id, user_id, web_session_incarnation_id, network_id, chain_id
+    ),
+  FOREIGN KEY (installation_id, installation_key_generation, user_id)
+    REFERENCES native_installation_key_generations(installation_id, key_generation, user_id),
+  FOREIGN KEY (mobile_auth_token_id, user_id)
+    REFERENCES mobile_auth_tokens(id, user_id)
+    ON DELETE SET NULL (mobile_auth_token_id),
+  FOREIGN KEY (account_id, user_id)
+    REFERENCES onchain_accounts(id, user_id) ON DELETE RESTRICT,
+  CHECK ((state = 'valid' AND revoked_at IS NULL AND revocation_reason IS NULL)
+      OR (state = 'revoked' AND revoked_at IS NOT NULL AND revocation_reason IS NOT NULL)),
+  CHECK (expires_at = created_at + INTERVAL '90 days'),
+  CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+);
+CREATE INDEX IF NOT EXISTS native_session_credentials_user_idx
+  ON native_session_credentials (user_id, state);
+CREATE INDEX IF NOT EXISTS native_session_credentials_incarnation_idx
+  ON native_session_credentials (web_session_incarnation_id, state);
+
+CREATE TABLE IF NOT EXISTS native_session_credential_envelopes (
+  credential_reference VARCHAR(47) PRIMARY KEY
+    REFERENCES native_session_credentials(credential_reference) ON DELETE CASCADE,
+  compact_jwe           TEXT NOT NULL
+    CHECK (compact_jwe ~ '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'),
+  compact_jwe_digest    CHAR(64) NOT NULL
+    CHECK (compact_jwe_digest ~ '^[0-9a-f]{64}$'),
+  encrypted_response    TEXT NOT NULL,
+  response_digest       CHAR(64) NOT NULL
+    CHECK (response_digest ~ '^[0-9a-f]{64}$'),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE native_session_web_incarnations IS 'staging:private';
+COMMENT ON TABLE native_session_attempts IS 'staging:private';
+COMMENT ON TABLE native_session_tickets IS 'staging:private';
+COMMENT ON TABLE native_installation_key_generations IS 'staging:private';
+COMMENT ON TABLE native_session_credentials IS 'staging:private';
+COMMENT ON TABLE native_session_credential_envelopes IS 'staging:private';
+
 -- Onboarding flow alignment — email-only platform waitlist, enforced
 -- platform-access gate, block-producer queue (user-onboarding-flows doc).
 -- ═══════════════════════════════════════════════════════════════════════

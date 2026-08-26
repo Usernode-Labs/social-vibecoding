@@ -94,6 +94,9 @@ config:
   explorerUpstream: testnet-explorer.usernodelabs.org
   explorerUpstreamBase: /api
   explorerUseHttp: false
+  # Optional exact canonical Rust ChainId. Empty keeps native session protocol
+  # 2 dark; the application validates utc/bech32m/32-byte canonical form.
+  nativeSessionV2TestnetChainId: ""
   internalUrl: http://social-vibecoding.social-platform.svc.cluster.local:3000
   logLevel: INFO
   workerMemory: 2g

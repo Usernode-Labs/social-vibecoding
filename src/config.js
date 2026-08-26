@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { bech32m } = require('bech32');
 const platformJwt = require('./services/platform-jwt');
 const { PRODUCTION_ORIGIN } = require('./services/cli-auth-constants');
 
@@ -126,6 +127,28 @@ function canonicalOpenRouterApiBase(value, source) {
   return url.toString().replace(/\/$/, '');
 }
 
+// Protocol 2 is a closed deployment capability, not a caller-selectable
+// network switch. Rust's canonical ChainId is a lower-case bech32m string
+// with HRP `utc` and exactly 32 payload bytes (crates/core/src/chain_id.rs).
+// Returning null keeps both native-establish routes dark when the deployment
+// has not pinned that exact identity, or when a typo would select something
+// Rust could not parse byte-for-byte.
+// TODO(native-session-v3): authenticate network/genesis provenance. Protocol
+// 2 treats this operator config as consistency only and keeps ordinary
+// configured-origin HTTPS/TLS as the server-authenticity boundary.
+function canonicalNativeSessionV2Network(value) {
+  if (typeof value !== 'string' || !value || value !== value.toLowerCase()) return null;
+  try {
+    const decoded = bech32m.decode(value, 1023);
+    const bytes = Buffer.from(bech32m.fromWords(decoded.words));
+    if (decoded.prefix !== 'utc' || bytes.length !== 32) return null;
+    if (bech32m.encode('utc', bech32m.toWords(bytes), 1023) !== value) return null;
+    return { id: 'testnet', chainId: value };
+  } catch {
+    return null;
+  }
+}
+
 function load() {
   const staging = IS_STAGING();
   const appRuntime = process.env.APP_RUNTIME || 'docker';
@@ -197,6 +220,13 @@ function load() {
   const openrouterManagedDailyLimitUsd = Number(
     process.env.OPENROUTER_MANAGED_DAILY_LIMIT_USD || '1',
   );
+
+  const nativeSessionV2Network = canonicalNativeSessionV2Network(
+    process.env.NATIVE_SESSION_V2_TESTNET_CHAIN_ID
+  );
+  if (process.env.NATIVE_SESSION_V2_TESTNET_CHAIN_ID && !nativeSessionV2Network) {
+    console.log('[config] [warn] NATIVE_SESSION_V2_TESTNET_CHAIN_ID is not a canonical Rust ChainId; native session protocol 2 is disabled.');
+  }
   if (!Number.isFinite(openrouterManagedDailyLimitUsd)
       || openrouterManagedDailyLimitUsd <= 0) {
     console.error('[config] OPENROUTER_MANAGED_DAILY_LIMIT_USD must be a positive dollar amount.');
@@ -254,6 +284,9 @@ function load() {
     // KDF input for services/secrets.js (AES-256-GCM at rest). Never
     // injected into a child container, never used to sign anything.
     dataEncryptionKey: staging ? stagingDataKey() : process.env.DATA_ENCRYPTION_KEY,
+    // Optional, fail-closed protocol-2 deployment binding. There is exactly
+    // one supported mapping in this revision and no internal/custom input.
+    nativeSessionV2Network,
     // Signing keys. Read straight from env by services/platform-jwt.js
     // at call time; mirrored here for the boot log and for the container
     // env builders that need the PUBLIC half.
@@ -673,6 +706,9 @@ function load() {
   console.log(`  TOPOCHAIN_PARTNER_API_KEY=${config.topochainPartnerApiKey ? mask(config.topochainPartnerApiKey) : '(not set — partner API returns 500)'}`);
   console.log(`  TOPOCHAIN_INGEST_API_KEY=${config.topochainIngestApiKey ? mask(config.topochainIngestApiKey) : '(not set — ingest writes return 500)'}`);
   console.log(`  TOPOCHAIN_ZK_BRIDGE_URL=${config.topochainZkBridgeUrl || '(not set — zkpassport/complete returns 500)'}`);
+  console.log(`  NATIVE_SESSION_V2=${config.nativeSessionV2Network && config.dataEncryptionKey
+    ? `enabled testnet/${config.nativeSessionV2Network.chainId}`
+    : `disabled (${config.nativeSessionV2Network ? 'server data key unavailable' : 'no canonical testnet ChainId'})`}`);
   console.log(`  MOBILE_PUSH=${config.mobilePushEnabled ? 'enabled' : 'disabled'} PUSH_ENV=${config.mobilePushEnvironment || '(not set)'}`);
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
@@ -702,5 +738,6 @@ module.exports = {
   usesMockGithubForImports,
   canonicalCliOrigin,
   canonicalOpenRouterApiBase,
+  canonicalNativeSessionV2Network,
   isLoopbackOrigin,
 };
