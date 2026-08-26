@@ -14,8 +14,8 @@
  * prerender pass has to reproduce it byte for byte. Same for everything the
  * options payload fills: the two selects hold only their placeholder `<option>`,
  * the three chip rows are empty `<div>`s, the connect row is empty, the invite
- * link and its joined-count are empty, and the loss detail block keeps its `hidden`. Nothing is fetched
- * until the router shows the screen.
+ * link and its joined-count are empty, and the loss detail block keeps its
+ * `hidden`. Nothing is fetched until the router shows the screen.
  *
  * ── Uncontrolled inputs, on purpose ──────────────────────────────────
  *
@@ -28,10 +28,12 @@
  *
  * ── ?connect= ────────────────────────────────────────────────────────
  *
- * GitHub / X verification is a `/waitlist/connect/<provider>` OAuth round trip
+ * GitHub / X / LinkedIn verification is a `/waitlist/connect/<provider>` OAuth
+ * round trip
  * that comes back to `#more/<token>?connect=<outcome>` — inside the hash, so the
  * token never reaches a server log. The outcome is read on show and painted into
- * the same status line the submit uses.
+ * the same status line the submit uses. It proves the account is THEIRS; no
+ * provider here can tell us whether they followed anything.
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -516,17 +518,24 @@ export function MoreScreen() {
               Where else are you?
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
-              Connecting an account proves you&rsquo;re a person with a history, which is most of what gets a signup read quickly.
+              Connecting an account proves you&rsquo;re a person with a history, which is most of what gets a signup read quickly. It confirms the account is yours and nothing else, so follow us if you want to, but we won&rsquo;t claim we checked.
             </p>
             {/*
-                GitHub / X: a verified pill when connected, a connect link when
-                the platform has OAuth creds for the provider, nothing otherwise
-                (the text handles below still work).
+                GitHub / X / LinkedIn: a verified pill when connected, a connect
+                link when the platform has OAuth creds for the provider, nothing
+                otherwise (the text handles below still work).
+
+                "Verified" here means the account is THEIRS. The onboarding doc
+                asks to verify that the follow itself happened; LinkedIn and
+                Instagram expose no API that reports it, and X only does on a
+                paid tier with the follows.read scope, so the copy above stops
+                at what we can actually stand behind.
             */}
             <div id="more-connect-row" className="flex flex-wrap gap-2 mb-3">
               {[
                 ['github', 'GitHub'],
                 ['x', 'X'],
+                ['linkedin', 'LinkedIn'],
               ].map(([provider, label]) =>
                 connect.verified[provider] ? (
                   <span

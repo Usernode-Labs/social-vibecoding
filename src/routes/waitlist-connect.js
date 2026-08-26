@@ -2,8 +2,16 @@
 // the original topochain waitlist's GitHub / X verification).
 //
 // A waitlist signer on the stage-2 "Want in sooner?" form can verify a
-// GitHub or X account — "connecting an account proves you're a person
-// with a history, which is most of what gets a signup read quickly".
+// GitHub, X or LinkedIn account — "connecting an account proves you're a
+// person with a history, which is most of what gets a signup read
+// quickly".
+//
+// What this proves is ACCOUNT OWNERSHIP, and nothing more. The onboarding
+// doc asks to "verify that the follow action was completed"; that cannot
+// be built as asked. LinkedIn exposes no API reporting whether a member
+// follows a page, and neither does Instagram; X can answer it, but only
+// with the follows.read scope on a paid API tier. So the form says
+// "connect" and never claims a follow was checked.
 // There is no platform account involved: the signup's unguessable
 // `more_token` is the capability, carried through the OAuth round-trip
 // in the `state` parameter (a random nonce keyed to a short-lived
@@ -11,13 +19,14 @@
 // or referer headers).
 //
 // Config-gated per provider (WAITLIST_GITHUB_CLIENT_ID/SECRET,
-// WAITLIST_X_CLIENT_ID/SECRET): without credentials the start route
+// WAITLIST_X_CLIENT_ID/SECRET, WAITLIST_LINKEDIN_CLIENT_ID/SECRET):
+// without credentials the start route
 // bounces back to the form and the SPA shows a plain text input instead
 // of a connect button (the GET /api/public/waitlist/more/:token payload
 // carries per-provider availability).
 //
-// Verified handles land under answers.verified.{github,x} — distinct
-// from the self-reported answers.handles entries.
+// Verified handles land under answers.verified.{github,x,linkedin} —
+// distinct from the self-reported answers.handles entries.
 'use strict';
 
 const crypto = require('crypto');
@@ -26,6 +35,10 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const waitlist = require('../services/waitlist');
 const { PRODUCTION_ORIGIN } = require('../services/cli-auth-constants');
+
+// Every provider this router serves. Both routes gate on it, so adding a
+// fourth is one edit rather than two divergent conditions.
+const PROVIDERS = new Set(['github', 'x', 'linkedin']);
 
 // state nonce → { token, provider, verifier, expiresAt }. In-memory is
 // fine: the platform is a single process, and an entry only needs to
@@ -67,6 +80,11 @@ function providerConfig(config, provider) {
   if (provider === 'x') {
     return config.waitlistXClientId && config.waitlistXClientSecret
       ? { id: config.waitlistXClientId, secret: config.waitlistXClientSecret }
+      : null;
+  }
+  if (provider === 'linkedin') {
+    return config.waitlistLinkedinClientId && config.waitlistLinkedinClientSecret
+      ? { id: config.waitlistLinkedinClientId, secret: config.waitlistLinkedinClientSecret }
       : null;
   }
   return null;
@@ -122,6 +140,31 @@ async function resolveHandle(provider, creds, code, redirectUri, verifier) {
     return String(user.login);
   }
 
+  if (provider === 'linkedin') {
+    // OpenID Connect. The secret goes in the form body (LinkedIn does not
+    // accept Basic here), and /v2/userinfo returns the member's name —
+    // there is no public handle to read, so the display name IS the
+    // identifier we can store.
+    const tokenResp = await fetchJson('https://www.linkedin.com/oauth/v2/accessToken', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+        client_id: creds.id,
+        client_secret: creds.secret,
+      }).toString(),
+    });
+    if (!tokenResp || !tokenResp.access_token) throw new Error('no access token');
+    const me = await fetchJson('https://api.linkedin.com/v2/userinfo', {
+      headers: { authorization: `Bearer ${tokenResp.access_token}` },
+    });
+    const name = me && (me.name || [me.given_name, me.family_name].filter(Boolean).join(' '));
+    if (!name) throw new Error('no name in profile');
+    return String(name);
+  }
+
   // X (OAuth 2.0 with PKCE; confidential client → Basic auth on the
   // token exchange).
   const basic = Buffer.from(`${creds.id}:${creds.secret}`).toString('base64');
@@ -158,7 +201,7 @@ function waitlistConnectRoutes(config) {
   // record, and redirects to the provider's authorize page.
   router.get('/waitlist/connect/:provider', async (req, res) => {
     const provider = req.params.provider;
-    if (provider !== 'github' && provider !== 'x') return res.status(404).end();
+    if (!PROVIDERS.has(provider)) return res.status(404).end();
 
     const token = typeof req.query.token === 'string' ? req.query.token : '';
     const row = await waitlist.getSignupByMoreToken(pool, token).catch(() => null);
@@ -168,6 +211,24 @@ function waitlistConnectRoutes(config) {
     if (!creds) return res.redirect(formUrl(token, 'unavailable'));
 
     const redirectUri = callbackUrl(config, provider);
+
+    if (provider === 'linkedin') {
+      // OpenID Connect, no PKCE. `openid profile` is the smallest scope
+      // that returns a name; we deliberately do NOT ask for email (the
+      // waitlist row already has one), and there is no follow scope to
+      // ask for — LinkedIn exposes no API reporting whether a member
+      // follows a page, which is why the form says "connect" and never
+      // claims a verified follow.
+      const state = putState({ token, provider });
+      const url = 'https://www.linkedin.com/oauth/v2/authorization?' + new URLSearchParams({
+        response_type: 'code',
+        client_id: creds.id,
+        redirect_uri: redirectUri,
+        state,
+        scope: 'openid profile',
+      });
+      return res.redirect(url);
+    }
 
     if (provider === 'github') {
       const state = putState({ token, provider });
@@ -202,7 +263,7 @@ function waitlistConnectRoutes(config) {
   // handle on the signup, land back on the stage-2 form.
   router.get('/waitlist/connect/:provider/callback', async (req, res) => {
     const provider = req.params.provider;
-    if (provider !== 'github' && provider !== 'x') return res.status(404).end();
+    if (!PROVIDERS.has(provider)) return res.status(404).end();
 
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const entry = takeState(state);

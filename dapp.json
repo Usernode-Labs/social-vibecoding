@@ -441,10 +441,23 @@
       "description": "Client secret paired with WAITLIST_X_CLIENT_ID. The token exchange authenticates with HTTP Basic, so an X app created as \"Native App / Single page App\" (a public client, no secret) can never work here. Private: encrypted at rest and never returned by any API. Both halves must be set together or the Connect X button stays hidden."
     },
     {
+      "key": "WAITLIST_LINKEDIN_CLIENT_ID",
+      "group": "Waitlist",
+      "required": false,
+      "description": "Client ID of the LinkedIn OpenID Connect app that confirms a waitlist signer controls their LinkedIn account. It needs the openid and profile scopes. Callback: https://<your-domain>/waitlist/connect/linkedin/callback. Unset: the Connect LinkedIn button is hidden. It confirms account ownership only, never whether the member follows a page: LinkedIn exposes no API that reports that."
+    },
+    {
+      "key": "WAITLIST_LINKEDIN_CLIENT_SECRET",
+      "group": "Waitlist",
+      "required": false,
+      "private": true,
+      "description": "Client secret paired with WAITLIST_LINKEDIN_CLIENT_ID. The token exchange authenticates with the secret in the form body, so a LinkedIn app with no secret can never work here. Private: encrypted at rest and never returned by any API. Both halves must be set together or the Connect LinkedIn button stays hidden."
+    },
+    {
       "key": "WAITLIST_OAUTH_ORIGIN",
       "group": "Waitlist",
       "required": false,
-      "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it resolves to this deployment's production origin in production and http://localhost:<PORT> in dev. Changing it means registering the matching callback URL with GitHub and X too — both validate redirect_uri before any platform code runs."
+      "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it resolves to this deployment's production origin in production and http://localhost:<PORT> in dev. Changing it means registering the matching callback URL with GitHub, X and LinkedIn too — all three validate redirect_uri before any platform code runs."
     }
   ],
   "tests": [

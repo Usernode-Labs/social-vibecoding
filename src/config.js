@@ -297,6 +297,8 @@ function load() {
     waitlistGithubClientSecret: process.env.WAITLIST_GITHUB_CLIENT_SECRET || '',
     waitlistXClientId: process.env.WAITLIST_X_CLIENT_ID || '',
     waitlistXClientSecret: process.env.WAITLIST_X_CLIENT_SECRET || '',
+    waitlistLinkedinClientId: process.env.WAITLIST_LINKEDIN_CLIENT_ID || '',
+    waitlistLinkedinClientSecret: process.env.WAITLIST_LINKEDIN_CLIENT_SECRET || '',
     // Account-linking OAuth is separate from the waitlist. GitHub requires
     // a dedicated OAuth app because an OAuth app has one callback URL. X can
     // reuse the waitlist client when its app has both callbacks registered.
