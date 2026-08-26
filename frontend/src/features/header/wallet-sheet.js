@@ -40,16 +40,15 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
     // Was `hidden` on the row element; the component renders the class now.
     _visible: false,
 
-    // #977: the sheet is a second surface, so it presents once the drawer has
-    // finished leaving rather than rising across its exit. close() resolves
-    // immediately when nothing is open, and the guard keeps the sheet working
-    // with no HeaderMenu at all. Was an addEventListener on the row; the
-    // component's onClick dispatches here by name.
+
+    // #977 had this await the hamburger drawer's exit before presenting:
+    // the row sat inside that drawer, and a kit sheet cannot open over a kit
+    // panel still sliding out. The row is in the Profile screen's account
+    // group now — a screen does not need dismissing — so the sheet presents
+    // directly. This was an addEventListener on the row; it is the
+    // component's onClick, dispatching here by name.
     openFromRow() {
-      const closed = (window.App && App.HeaderMenu && App.HeaderMenu.close)
-        ? App.HeaderMenu.close()
-        : null;
-      Promise.resolve(closed).then(() => WalletSheet._openSheet());
+      WalletSheet._openSheet();
     },
 
     /** The address copy. Clipboard + toast are the module's, as before. */
@@ -359,7 +358,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
   };
 
   // Same as node-pill.js: published here, initialised from the island's layout
-  // effect so the `hidden` it lifts off #drawer-row-wallet lands after React
+  // effect so the `hidden` it lifts off #account-row-wallet lands after React
   // has hydrated that node.
   // `typeof window` guard: the shell's markup is PRERENDERED in Node
   // (frontend/scripts/build-shell.mjs), which imports this island's module

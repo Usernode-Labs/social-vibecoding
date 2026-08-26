@@ -141,6 +141,28 @@ const RETIRED_IDS = {
   //    became SHEETS. A screen reachable from every route has to answer
   //    "back to where?", and both answered "home".
   'messages-screen': 'The Messages screen ROOT. It is #messages-sheet now, for the same reason and with an extra one of its own: Messages had TWO back levels (thread -> list -> home), the outer driven by writing the platform header from inside the feature. Dismissal is the outer level now and the thread\'s own button is the inner one.',
+  // ── The hamburger, and the drawer it opened, are gone ────────────
+  // The Streamlined Concept retired the hamburger button and left the drawer
+  // with no trigger — its rows were reachable only through the ?shot=menu
+  // capture links, which is why ten declared checks kept passing over a
+  // surface no user could open. The whole panel goes; every row it held has
+  // a home on a SCREEN now, with an address and a back arrow of its own.
+  'header-menu-panel': 'The drawer itself. Its account rows are the Profile screen\'s account group (features/profile/account-panel.tsx), reached from Home\'s account row.',
+  'header-menu-overlay': 'Its backdrop.',
+  'header-menu-rows': 'Its scroller.',
+  'header-menu-close': 'Its close control.',
+  'drawer-main-rows': 'The account group inside it — #profile-account now.',
+  'drawer-row-profile': 'Profile is reached from Home\'s #home-account-row, which is the one entrance the drawer\'s removal would otherwise have taken away.',
+  'drawer-avatar': 'The viewer\'s picture on that row — #home-account-avatar, same writer (App.applyUserAvatar), same contract.',
+  'drawer-profile-glyph': 'Its fallback glyph — #home-account-glyph.',
+  'drawer-row-settings': 'Settings is #profile-row-settings, in the Profile screen\'s account group.',
+  'drawer-byok-dot': 'The BYOK dot on that row — #profile-byok-dot. settings.js publishes the flag through the visibility store now rather than writing the class by id, because the row renders inside a React-owned subtree.',
+  'drawer-row-admin': 'Admin & moderation is #profile-row-admin, same isAdmin gate, published rather than class-written for the same reason.',
+  'drawer-node-dot': 'Its status dot — #account-node-dot. It also stops PRERENDERING: the row renders inside the Profile screen\'s account group, which draws from profile data, where the drawer shipped on every page.',
+  'drawer-node-status': 'Its status text — #account-node-status, same note.',
+  'drawer-wallet-balance': 'The wallet row\'s balance readout — #account-wallet-balance, same note.',
+  'drawer-row-node': 'The native node row — #account-row-node, same component, same module.',
+  'drawer-row-wallet': 'The native wallet row — #account-row-wallet, ditto.',
   'notifications-screen': 'The Notifications screen ROOT. It is #notifications-sheet now — an overlay over the current screen, out of App.SCREEN_IDS entirely, so there is no back arrow to point anywhere. Its children kept their ids.',
   'header-menu-btn': 'The hamburger. Its slot is the app-glyph/back-arrow pair (features/header/header-app-icon.tsx + #back-btn), and its badge cluster moved to #improve-btn — the control whose panel actually holds the work those badges report.',
   'header-menu-deploy-dot': 'Renamed #improve-version-dot with that move. A `header-menu-*` id on the Improve button would be a lie that outlives everyone who remembers it.',
@@ -348,6 +370,10 @@ const ADDED_IDS = {
   'messages-sheet': 'The Messages SHEET root — see the retired #messages-screen above.',
   'messages-sheet-overlay': 'Its backdrop.',
   'messages-sheet-close': 'Its close control, as the other two sheets carry.',
+  'home-account-row': 'Home\'s entrance to Profile — the door the retired hamburger took away.',
+  'home-account-avatar': 'The viewer\'s picture on it (was #drawer-avatar).',
+  'home-account-glyph': 'Its fallback glyph (was #drawer-profile-glyph).',
+  'home-account-section': 'The section that holds it, last in Home\'s reading order.',
   'notifications-sheet': 'The Notifications SHEET root. It was #notifications-screen, a screen root in App.SCREEN_IDS — but the bell is in the header on every route, so a full-screen view had to answer "back to where?" and answered "home", wrong every time it was opened from anywhere else. A sheet presents over the current screen and dismisses back to it.',
   'notifications-sheet-overlay': 'Its backdrop.',
   'notifications-sheet-close': 'Its close control — the desktop slide-over needs a visible dismiss, as the Apps sheet has.',

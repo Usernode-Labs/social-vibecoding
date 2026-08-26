@@ -224,15 +224,18 @@ test('every screen entry refreshes the href through the one choke point', () => 
 });
 
 test('the three up-one-level screens pass their own target', () => {
-  // Each is ALWAYS an arrow since the hamburger went — level 1 falls through
-  // to home rather than hiding the slot — and each names its own parent.
+  // Each is ALWAYS an arrow since the hamburger went, and each names its own
+  // parent. Settings and Admin name PROFILE at level 1, not home: the drawer
+  // that used to link them from anywhere is retired and the one way in is
+  // Home → Profile → Settings, so a back arrow that skipped the middle step
+  // would drop you below where you came from.
   assert.match(browseJs, /App\.setBackIcon\(\s*'arrow',[\s\S]{0,160}?'#apps'/,
     'browse detail goes up to the list…');
   assert.match(browseJs, /Browse\._detailOrigin !== 'home'/,
     '…except when it was opened from a home card, where handleBack goes home');
-  assert.match(adminConsoleJs, /setBackIcon\('arrow', inSection \? '#admin' : undefined\)/,
-    'the admin section chevron pops to the console menu');
-  assert.match(settingsJs, /setBackIcon\('arrow', inSection \? '#settings' : undefined\)/,
+  assert.match(adminConsoleJs, /setBackIcon\('arrow', inSection \? '#admin' : '#profile'\)/,
+    'the admin section chevron pops to the console menu, its root to Profile');
+  assert.match(settingsJs, /setBackIcon\('arrow', inSection \? '#settings' : '#profile'\)/,
     'the settings section chevron pops to the settings menu');
 });
 
@@ -520,30 +523,10 @@ test('browse list rows open in a new tab under a modifier', () => {
     'the plain click resolves through the same guard');
 });
 
-// ── The drawer's delegated handler ─────────────────────────────────────
 
-test('a modified click in the drawer neither arms the flag nor closes it', () => {
-  // #1079 chunk B moved App.HeaderMenu into the React bundle beside the
-  // markup it drives; the delegated handler went with it.
-  const headerMenuJs = read('frontend/src/features/header/header-menu-controller.js');
-  const at = headerMenuJs.indexOf("const drawerPanel = document.getElementById('header-menu-panel');");
-  assert.ok(at !== -1, 'the delegated drawer handler went missing');
-  const body = headerMenuJs.slice(at, at + 1400);
-  const guard = body.indexOf('NavLink.isNativeClick(e)');
-  const arm = body.indexOf('_navArmedAt = HeaderMenu._now()');
-  const close = body.indexOf('HeaderMenu.close()');
-  assert.ok(guard !== -1, 'the guard went missing');
-  assert.ok(arm !== -1 && close !== -1, 'the existing arm/close behaviour must survive');
-  assert.ok(guard < arm,
-    'nothing navigates in THIS document on a cmd-click, so the one-shot '
-    + 'animation-suppression flag must not be armed — it would leak onto the '
-    + 'next real navigation until its TTL');
-  assert.ok(guard < close,
-    'and the drawer must not be torn down under a user who opened another tab');
-  // The existing contract (tests/drawer-nav-motion.test.js) is intact.
-  assert.match(body, /closest\('a\[href\]'\)/);
-  assert.match(body, /getAttribute\('href'\)/);
-});
+// The drawer is retired. The rule it pinned — a modified click belongs to the
+// browser and is never intercepted — is asserted shell-wide by the tests
+// above, which cover every surviving anchor including Home's account row.
 
 // ── The declared checks ────────────────────────────────────────────────
 

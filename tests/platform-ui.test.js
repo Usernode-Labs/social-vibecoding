@@ -568,11 +568,10 @@ test('the Improve panel is navigation and work — one scroller, nothing below',
   assert.ok(actionsAt < viewsAt && viewsAt < scrollAt,
     'actions, then views, then the scroller');
 
-  // The account rows still bottom-anchor in the drawer they stayed in.
-  const footAt = html.indexOf('id="drawer-main-rows"');
-  const footTag = html.slice(footAt, html.indexOf('>', footAt));
-  assert.match(footTag, /\bshrink-0\b/, 'the account rows keep their height');
-  assert.match(footTag, /\bmt-auto\b/, 'and hug the bottom');
+  // The account rows used to bottom-anchor in the drawer they stayed in.
+  // There is no drawer: they are the Profile screen's account group now
+  // (features/profile/account-panel.tsx), and a screen section has nothing to
+  // bottom-anchor against.
 
   // The footer is gone, not merely hidden.
   assert.ok(!panel.includes('id="improve-footer"'), 'no reference footer in the panel');

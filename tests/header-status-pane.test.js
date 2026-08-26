@@ -351,35 +351,10 @@ test('the drawer constrains a long pill so it cannot widen the 15rem panel', () 
     'and their value truncates rather than overflowing');
 });
 
-// ─── One scroller, and it is the notification list ──────────────────────
 
-test('the drawer body is one scroller, the app\'s rows leading', () => {
-  const scroller = html.match(/<div id="header-menu-rows"[^>]*>/);
-  assert.ok(scroller, '#header-menu-rows exists');
-  // The BODY does not scroll. It did, and the navigation rows below the list
-  // went with it — off the bottom of a short viewport, behind a scroll nobody
-  // expects in a menu. The apps section scrolls inside #drawer-your-apps
-  // instead; the rows are `shrink-0` and always on screen.
-  assert.ok(!/overflow-y-auto/.test(scroller[0]),
-    'the drawer body itself must not scroll');
-  assert.match(scroller[0], /min-h-0/,
-    'min-h-0 is required for a flex child to bound its children rather than grow');
-  const rows = html.match(/<div id="header-menu-rows"[^>]*>/);
-  assert.match(rows[0], /flex-1/, 'the drawer body takes the free space');
-  assert.match(rows[0], /min-h-0/, 'and may shrink below its content, so it can scroll');
-  const at = html.indexOf('id="header-menu-rows"');
-  for (const id of ['drawer-row-node', 'drawer-row-admin']) {
-    assert.ok(html.indexOf(`id="${id}"`) > at, `#${id} is inside the body`);
-  }
-  // The app's rows left for the Improve panel, so the account block is all
-  // that remains — and #improve-sessions is the scroller that carries the
-  // changes list now.
-  assert.ok(!html.includes('id="drawer-app-rows"'),
-    'the app rows are not in the drawer any more');
-  const sessions = html.match(/<div id="improve-sessions"[^>]*>/);
-  assert.ok(sessions, '#improve-sessions exists');
-  assert.match(sessions[0], /overflow-y-auto/, 'and it is the surface that scrolls');
-});
+// The drawer's scroller went with the drawer. What it held is on screens now:
+// the account rows in the Profile screen's account group
+// (features/profile/account-panel.tsx), the notification list in its own sheet.
 
 // ─── The kudos badge no longer pokes at header layout ────────────────────
 

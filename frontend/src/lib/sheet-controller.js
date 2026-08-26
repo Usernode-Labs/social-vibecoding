@@ -118,8 +118,7 @@ export function createSheetController({
     },
 
     _closeSiblings() {
-      // The two surfaces that predate the registry.
-      if (window.HeaderMenu?.isPresenting?.()) window.HeaderMenu.close?.();
+      // The Improve panel predates the registry and is not built here.
       window.Improve?.dismissForNav?.();
       for (const other of REGISTRY) {
         if (other !== controller) other.dismissForNav();

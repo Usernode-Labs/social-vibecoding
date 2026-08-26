@@ -349,7 +349,6 @@ const Improve = {
     if (!panel) return;
     // One surface at a time: opening this closes the hamburger, the same
     // courtesy the cog and bell drawers paid each other.
-    if (window.HeaderMenu?.isPresenting?.()) window.HeaderMenu.close?.();
 
     if (!Improve._sheet) {
       // Publish `open` BEFORE presenting: the kit sheet measures the content's

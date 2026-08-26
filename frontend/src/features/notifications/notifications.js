@@ -343,8 +343,7 @@ const Notifications = {
   // (Streamlined Concept), but this module's own dismiss-before-you-navigate
   // rule predates that and still has to cover a drawer somebody opened.
   get open() {
-    return !!window.NotificationsSheet?.isOpen?.()
-      || !!window.HeaderMenu?.isPresenting?.();
+    return !!window.NotificationsSheet?.isOpen?.();
   },
 
   toggle() {
@@ -358,7 +357,6 @@ const Notifications = {
 
   hide() {
     window.NotificationsSheet?.close?.();
-    if (window.HeaderMenu?.isPresenting?.()) window.HeaderMenu.close?.();
   },
 
   // Screenshot-state deep link (`?shot=notifications`): the list only exists

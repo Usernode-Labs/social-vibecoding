@@ -489,11 +489,6 @@
       "expectText": "Change photo"
     },
     {
-      "name": "A sidebar tap lands on the destination with no competing screen animation (#977)",
-      "path": "/?shot=menu-nav&un-platform=ios",
-      "expectSelector": "#profile-screen:not(.hidden)[data-entered=\"none\"]"
-    },
-    {
       "name": "Challenges tab summarises the completed set (#981)",
       "path": "/#leaderboard/challenges",
       "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid #tc-se-challenge-summary"
@@ -793,16 +788,6 @@
       "path": "/?demo=1&challenges=none",
       "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
       "expectText": "staging-demo-validator"
-    },
-    {
-      "name": "The sidebar is fully gone and restored to <body> after a sidebar tap (#977)",
-      "path": "/?shot=menu-nav&un-platform=ios",
-      "expectSelector": "body:not(:has(.un-panel)) > #header-menu-panel:not(.platform-panel-adopted)"
-    },
-    {
-      "name": "The desktop slide-over suppresses the screen fade too (#977)",
-      "path": "/?shot=menu-nav",
-      "expectSelector": "#profile-screen:not(.hidden)[data-entered=\"none\"]"
     },
     {
       "name": "Challenges widget: with no standings at all the fill falls back to the Kudos board (#962)",
@@ -1693,9 +1678,9 @@
       "expectSelector": "#improve-body > *:has(#improve-quick-actions) + #improve-views"
     },
     {
-      "name": "The hamburger ships the native Node status row",
-      "path": "/",
-      "expectSelector": "#drawer-row-node"
+      "name": "The Profile account group ships the native Node status row",
+      "path": "/#profile",
+      "expectSelector": "#account-row-node"
     },
     {
       "name": "Work-in-flight badge sits on the Improve button (Streamlined Concept)",
@@ -1708,9 +1693,9 @@
       "expectSelector": "#improve-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
     },
     {
-      "name": "Admin/moderation row renders in the drawer for admins (#588)",
-      "path": "/",
-      "expectSelector": "#drawer-row-admin:not(.hidden)"
+      "name": "Admin & moderation renders in the Profile account group for admins (#588)",
+      "path": "/#profile",
+      "expectSelector": "#profile-row-admin:not(.hidden)"
     },
     {
       "name": "Settings' About block renders the platform build as plain text, not a pill",
@@ -1748,11 +1733,6 @@
       "name": "Notifications and Messages are header glyphs, not drawer rows (Streamlined Concept)",
       "path": "/",
       "expectSelector": "#platform-header #messages-btn + #notifications-btn"
-    },
-    {
-      "name": "The drawer closes with the Profile | Settings pair, then Admin & moderation (Streamlined Concept)",
-      "path": "/?shot=menu",
-      "expectSelector": "#drawer-main-rows > div:has(#drawer-row-profile + #drawer-row-settings) + #drawer-row-admin"
     },
     {
       "name": "The title tab opens the Apps switcher, with Home and Explore (Streamlined Concept)",
@@ -2156,9 +2136,9 @@
       "expectSelector": "#profile-screen:not(.hidden) #profile-root"
     },
     {
-      "name": "Profile drawer row is visible without the native bridge",
+      "name": "Home carries the entrance to Profile, without the native bridge",
       "path": "/",
-      "expectSelector": "#drawer-row-profile:not(.hidden)"
+      "expectSelector": "#home-account-row"
     },
     {
       "name": "Topochain leaderboard shows standings, not a red error, between events",
@@ -2288,28 +2268,13 @@
       "expectSelector": ".un-action-sheet .un-action-btn.un-destructive"
     },
     {
-      "name": "Hamburger menu opens as a right-side panel on touch, not a bottom sheet",
-      "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel[data-un-side=\"left\"] #header-menu-panel.platform-panel-adopted #header-menu-rows"
-    },
-    {
-      "name": "The hamburger opens as a kit panel with the account rows",
-      "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-main-rows"
-    },
-    {
-      "name": "Hamburger status area shows the viewer's own AI credit (#555)",
-      "path": "/?shot=menu&demo=1",
-      "expectSelector": "#drawer-row-ai-budget .ai-budget-meter"
-    },
-    {
       "name": "AI credit reads like the dev chat: limit $spent/$limit, no pill",
       "path": "/?demo=1#settings/api-key",
       "expectText": "limit $"
     },
     {
-      "name": "AI credit value is right-aligned to the panel edge, wrapped or not",
-      "path": "/?shot=menu&demo=1",
+      "name": "AI credit value is right-aligned to the row edge, wrapped or not",
+      "path": "/?demo=1#settings/api-key",
       "expectSelector": "#drawer-row-ai-budget #ai-budget-slot.grow.text-right"
     },
     {

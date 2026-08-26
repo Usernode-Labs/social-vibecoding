@@ -158,6 +158,20 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   const shipped = new Set(HTML.match(/\sd="[^"]*"/g).map((s) => s.slice(4, -1)));
   const absent = [...modulePaths()].filter((d) => !shipped.has(d));
   const expected = [
+    // ── The Profile screen's account group (drawer removal) ────────
+    // CogIcon, ShieldCheckIcon and the two native rows' glyphs shipped in the
+    // hamburger drawer, which was in the document on every page. The drawer
+    // is retired and they are the Profile screen's account group now
+    // (features/profile/account-panel.tsx), which renders from profile data —
+    // so none of them is in a cold document.
+    // CogIcon — Settings.
+    'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
+    'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
+    // ShieldCheckIcon — Admin & moderation.
+    'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+    // The drawer's own person glyph, and the wallet row's card.
+    'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
+    'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
     // LockIcon — the landing screen's waitlist badge, rendered only once the
     // waitlist form is open.
     'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
@@ -249,7 +263,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // CheckLongIcon — the sync banner's settled success.
     'M4.5 12.75l6 6 9-13.5',
     // UserCircleIcon — the credits banner's connect-an-account variant.
-    'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z',
+    // (UserCircleIcon left this list: Home's account row draws it on every
+    // page now, so it is in the cold document.)
     // ── Retired by THE UI OVERHAUL, with their surfaces ─────────────
     // GitHubIcon and ShareIcon left the hamburger drawer's footer for the
     // Improve panel — which IS in <Shell/>, so they would still be here…

@@ -347,7 +347,7 @@ const App = {
   // network — without this the offline UI is literally unphotographable,
   // and the "before" side of the comparison could never be produced.
   // Pure UI state, no writes, so deliberately NOT env-gated (same
-  // reasoning as ?shot=menu). Returns the shot name, or null.
+  // reasoning as ?shot=improve). Returns the shot name, or null.
   _applyOfflineShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
@@ -387,8 +387,12 @@ const App = {
   // and the <img> gets no src until there is one, so a user with no
   // picture never issues a request.
   applyUserAvatar() {
-    const img = document.getElementById('drawer-avatar');
-    const glyph = document.getElementById('drawer-profile-glyph');
+    // Was the drawer row's pair. The drawer is retired; Home's account row is
+    // the entrance to Profile now (features/home/panels/account.tsx), and it
+    // renders the same two elements under the same contract — a `hidden`
+    // toggle on a constant className, no children.
+    const img = document.getElementById('home-account-avatar');
+    const glyph = document.getElementById('home-account-glyph');
     if (!img || !glyph) return;
     const url = App.user && App.user.avatarUrl;
     if (url) {
@@ -511,7 +515,6 @@ const App = {
     // re-running either on the hashchange it just caused would loop, and
     // _applyNotifPermissionsShot / _applyTermsConsentShot present overlays
     // that would stack.
-    App._applyMenuNavShot();
     App._applySettingsBackShot();
     App._applyNotifPermissionsShot();
     App._applyTermsConsentShot();
@@ -556,13 +559,6 @@ const App = {
   // The "View as non-admin" preview reloads the page after masking
   // `App.user.isAdmin` (see settings.js), so this boot-time read is all
   // that's needed to make the row disappear in preview mode too.
-  // Screenshot-state deep link `?shot=menu` (#555): opens the slide-out
-  // drawer at boot so the status pane — which is only reachable by
-  // TAPPING the hamburger — is visible to the before/after screenshots,
-  // the "Test this change" button and the dapp.json checks. Pure UI
-  // state, no writes, so it is deliberately NOT env-gated: an
-  // IS_STAGING-only link would starve the production "before" shot
-  // forever, while an ungated one starts working the moment it ships.
   // The fragment this ran for last, so a repeat dispatch for the same
   // address is a no-op (one history traversal fires popstate AND
   // hashchange, so the router runs twice in a tick — #1102).
@@ -583,7 +579,6 @@ const App = {
     if (!App.user) return;
     if (App._shotHash === location.hash) return;
     App._shotHash = location.hash;
-    App._applyMenuShot();
     App._applyImproveShot();
     App._applyLaunchShot();
     App._applyOfflineAppShot();
@@ -598,7 +593,7 @@ const App = {
   // only reachable by TAPPING the header button otherwise, which no still
   // frame and no plain route can do.
   //
-  // Deliberately NOT env-gated, for exactly the reason ?shot=menu is not: pure
+  // Deliberately NOT env-gated, for exactly the reason ?shot=improve is not: pure
   // UI state with no writes, and an IS_STAGING-only link would starve the
   // production "before" shot forever while an ungated one starts working the
   // moment it ships. Pair it with ?demo=1 in staging so the session sections
@@ -608,7 +603,7 @@ const App = {
   // panel refuses to open — correct behaviour, not something to work around —
   // and on an #app/<slug> route the target is published by
   // App.ImproveStatus.setAppOpen(), which runs after openApp()'s fetch has
-  // landed. A single 50ms tick (what ?shot=menu can afford, because the drawer
+  // landed. A single 50ms tick (what ?shot=improve can afford, because the panel
   // needs nothing but a settled shell) fired long before that, so the panel
   // stayed shut and both of its declared checks failed on an empty surface.
   //
@@ -625,7 +620,7 @@ const App = {
   // behind the header's "app name ⌄" tab (Streamlined Concept). Same
   // wait-for-a-target poll as ?shot=improve below, and for the same reason:
   // the sheet refuses to open until an app target is published. (The app's own
-  // views and changes are the DRAWER now — see ?shot=menu for that surface.)
+  // views and changes are the IMPROVE PANEL now — see ?shot=improve.)
   _applyAppContextShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
@@ -660,17 +655,6 @@ const App = {
     setTimeout(attempt, 50);
   },
 
-  _applyMenuShot() {
-    let shot = null;
-    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'menu') return;
-    // One tick after restoreFromHash so the screen it navigated to has
-    // painted and the drawer opens over a settled shell. The rows' own
-    // fetches repaint their pills in place whenever they land.
-    setTimeout(() => {
-      try { App.HeaderMenu.open(); } catch (err) { /* ignore */ }
-    }, 50);
-  },
 
   // Screenshot-state deep link `?shot=safe-bottom`: paint the whole shell
   // as if it were on a notched phone, so the safe-area treatment is
@@ -688,7 +672,7 @@ const App = {
   //
   // Pure paint state — nothing is written and no layout code branches on
   // it — so it is deliberately NOT env-gated (same reasoning as
-  // ?shot=menu above). It also cannot lie to an app frame: the insets
+  // ?shot=improve above). It also cannot lie to an app frame: the insets
   // forwarded over the safe-area bridge are read from the hidden
   // env()-valued probe element (AppView._readRootInsets), never from
   // these properties, so an embedded app still receives its real ones.
@@ -708,40 +692,6 @@ const App = {
     } catch (err) { /* ignore */ }
   },
 
-  // Screenshot-state deep link `?shot=menu-nav` (#977): open the drawer
-  // and TAP a navigation row, so the single-motion rule — the drawer's
-  // exit is the only animation, the destination screen is swapped
-  // underneath it with no push — is reachable by URL. The defect it
-  // fixes lives entirely inside the ~400ms both animations used to
-  // overlap, which no still frame and no plain route can reach; the
-  // dapp.json checks assert the resulting state (the destination screen
-  // carrying data-entered="none", the drawer fully torn down).
-  //
-  // Ungated for the same reason as ?shot=menu above: pure UI state, no
-  // writes, and an env-gated link would starve the production "before"
-  // shot forever. The row is a real anchor, so .click() follows its href
-  // and the whole hash → restoreFromHash → navigate* path is exercised
-  // exactly as a finger would.
-  //
-  // It clicked #drawer-row-leaderboard until THE UI OVERHAUL moved that row
-  // to the home screen's Challenges area. What this shot is about is the
-  // DRAWER's teardown, not any one destination, so it takes the first row
-  // that is always there instead: Profile is unconditional, where Settings
-  // and Admin are gated.
-  _applyMenuNavShot() {
-    let shot = null;
-    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'menu-nav') return;
-    setTimeout(() => {
-      try { App.HeaderMenu.open(); } catch (err) { /* ignore */ }
-      // After the entrance spring has settled, so the tap lands on a
-      // presented drawer rather than one still sliding in.
-      setTimeout(() => {
-        const row = document.getElementById('drawer-row-profile');
-        if (row) row.click();
-      }, 200);
-    }, 50);
-  },
 
   // Screenshot-state deep link `?shot=settings-back` (#1102): drill into a
   // settings section and then traverse history BACK out of it, which is the
@@ -754,9 +704,9 @@ const App = {
   // data-settings-route="skipped" — i.e. the duplicate did NOT repaint —
   // with the destination section still correct).
   //
-  // Ungated for the same reason as ?shot=menu above: pure UI state, no
+  // Ungated for the same reason as ?shot=improve above: pure UI state, no
   // writes, and an env-gated link would starve the production "before" shot
-  // forever. Same timing budget as ?shot=menu-nav (well inside the checks
+  // forever. Same timing budget as the other appliers (well inside the checks
   // runner's 500ms settle), and it drives the real hash → restoreFromHash →
   // navigateToSettings path rather than calling the router directly.
   _applySettingsBackShot() {
@@ -792,7 +742,7 @@ const App = {
   //
   // The sheet renders from a fixed "nothing granted yet" snapshot and calls
   // no bridge method, so this is pure UI state with no writes — ungated for
-  // the same reason as ?shot=menu-nav above, and on the same timing budget
+  // the same reason as the other appliers above, and on the same timing budget
   // (well inside the checks runner's 500ms settle).
   _applyNotifPermissionsShot() {
     let shot = null;
@@ -862,7 +812,7 @@ const App = {
   // which otherwise exists only for the few hundred milliseconds between a
   // tap and the app's first paint, and so was invisible to the before/after
   // screenshots and the dapp.json checks. Pure UI state, no app is loaded
-  // behind it, not env-gated (same reasoning as ?shot=menu above).
+  // behind it, not env-gated (same reasoning as ?shot=improve above).
   _applyLaunchShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
@@ -897,7 +847,7 @@ const App = {
   // remains the real allowance gate on submit.
   //
   // Pure UI state, no writes, deliberately NOT env-gated — same reasoning as
-  // ?shot=menu above: an IS_STAGING-only link would starve the production
+  // ?shot=improve above: an IS_STAGING-only link would starve the production
   // "before" shot forever.
   _applyFeedbackShot() {
     let shot = null;
@@ -972,8 +922,15 @@ const App = {
   },
 
   renderAdminButton() {
-    const btn = document.getElementById('drawer-row-admin');
-    if (btn) btn.classList.toggle('hidden', !App.user?.isAdmin);
+    // Was a classList write on #drawer-row-admin, which was always in the DOM
+    // because the drawer was. The row is the Profile screen's account group
+    // now (features/profile/account-panel.tsx) — rendered only once profile
+    // data lands — so an id lookup at boot finds nothing, and React would
+    // re-render the class back the moment it did. PUBLISH instead: the
+    // visibility store is the one sanctioned way to drive a converted
+    // region's visibility from outside React, and the component subscribes.
+    // The gate is unchanged.
+    App.Visibility.publish('profile-row-admin', !!App.user?.isAdmin);
   },
 
   // Navigate to the full-page admin console (#818): the #admin hash route
@@ -1073,7 +1030,6 @@ const App = {
   refreshActiveScreen() {
     try {
       if (document.hidden) return;
-      if (App.HeaderMenu.isPresenting()) return;
 
       const visible = (id) => {
         const el = document.getElementById(id);
@@ -2107,19 +2063,6 @@ const App = {
     refreshDeployDot() { window.ImproveStatus?.refreshDeployDot(); },
   },
 
-  HeaderMenu: {
-    open() { window.HeaderMenu?.open(); },
-    // close() is awaited by callers that present a surface of their own (the
-    // Node / Wallet sheets, the Share dialog), so the forwarder has to keep
-    // returning a thenable even when the controller is not up yet.
-    close() {
-      return window.HeaderMenu
-        ? window.HeaderMenu.close()
-        : Promise.resolve();
-    },
-    isPresenting() { return !!window.HeaderMenu?.isPresenting(); },
-    consumeNavPending() { return !!window.HeaderMenu?.consumeNavPending(); },
-  },
 
   // Pull-to-refresh on the static full-screen scrollers (element mode —
   // the platform is a fixed shell). The kit no-ops these on desktop.
@@ -2207,6 +2150,17 @@ const App = {
       // A dev SESSION claims it as "back to the Board" (Streamlined
       // Concept); declines when no session is open.
       if (App.currentApp && window.DevChat?.handleBack?.()) return;
+      // FOLLOW THE ARROW'S OWN HREF. Every screen that shows the arrow tells
+      // setBackIcon where it points, and until now that href was decorative
+      // on a plain click: the chain preventDefault()s and then always went
+      // home, so Settings and Admin — whose parent is the Profile screen now
+      // — landed a level below where they came from. The href IS the answer;
+      // home is the fallback for a screen that named no parent.
+      const href = e.currentTarget?.getAttribute?.('href');
+      if (href && href.startsWith('#') && href.length > 1) {
+        window.location.hash = href;
+        return;
+      }
       App.navigateHome();
     });
 
@@ -2762,16 +2716,16 @@ const App = {
   // mirroring the kit's own data-un-vt. Nothing reads it at runtime — it
   // exists so the dapp.json checks can assert an ordering that is
   // otherwise only observable mid-animation.
+  // It used to have a second job, and that job was the whole reason it
+  // existed: suppressing the entry animation when the navigation came from
+  // the hamburger drawer, because a screen animating in behind a drawer
+  // springing out was two motions competing (#977). The drawer is retired,
+  // so there is nothing to suppress and every screen simply gets the type its
+  // caller asked for. The STAMP stays — dapp.json asserts `data-entered`,
+  // which is the only way a mid-animation state is testable at all.
   _entryTransition(preferred, screenEl) {
-    const menu = App.HeaderMenu;
-    // consumeNavPending() FIRST and unconditionally — it is one-shot, so
-    // letting isPresenting() short-circuit it would leave the flag armed
-    // for whatever navigation came next.
-    const fromDrawer = !!menu && menu.consumeNavPending();
-    const suppress = fromDrawer || (!!menu && menu.isPresenting());
-    const type = suppress ? 'none' : preferred;
-    if (screenEl && screenEl.setAttribute) screenEl.setAttribute('data-entered', type);
-    return type;
+    if (screenEl && screenEl.setAttribute) screenEl.setAttribute('data-entered', preferred);
+    return preferred;
   },
 
   // ── Screen swap — THE ORDERING RULE (issue #979) ────────────────────

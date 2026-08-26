@@ -134,7 +134,8 @@ test('the state-painting shot appliers re-run on every fragment change', () => {
   const fn = body(appJs, '  _applyRouteShots() {');
   assert.match(fn, /if \(App\._shotHash === location\.hash\) return;/,
     'deduped on the hash, so a traversal\'s popstate+hashchange pair applies once');
-  for (const applier of ['_applyMenuShot', '_applyLaunchShot', '_applyFeedbackShot']) {
+  // `_applyMenuShot` was here and went with the hamburger drawer it opened.
+  for (const applier of ['_applyLaunchShot', '_applyFeedbackShot']) {
     assert.match(fn, new RegExp(`App\\.${applier}\\(\\)`), `${applier} is re-applied`);
   }
   assert.match(appJs, /_shotHash: null,/, 'the recorded address starts empty');
@@ -150,17 +151,17 @@ test('both history listeners route AND re-apply, through one entry point', () =>
     'it routes first, then applies the shots for the address it landed on');
 });
 
-test('the two NAVIGATION-driving shots stay once per document', () => {
-  // _applyMenuNavShot clicks a drawer row and _applySettingsBackShot assigns
-  // a hash then traverses back out of it. Both CAUSE a hashchange, so
-  // re-running them from the handler for that hashchange would loop.
+test('the NAVIGATION-driving shot stays once per document', () => {
+  // `_applySettingsBackShot` assigns a hash then traverses back out of it, so
+  // it CAUSES a hashchange — re-running it from the handler for that
+  // hashchange would loop. `_applyMenuNavShot` was the other one: it clicked
+  // a drawer row, and went with the drawer.
   const boot = body(appJs, '    App.restoreFromHash();\n    // The fragment-scoped');
   assert.match(boot, /App\._applyRouteShots\(\);/, 'boot applies the painting shots');
-  assert.match(boot, /App\._applyMenuNavShot\(\);/, 'and the navigation ones');
-  assert.match(boot, /App\._applySettingsBackShot\(\);/);
+  assert.match(boot, /App\._applySettingsBackShot\(\);/, 'and the navigation one');
   const routed = body(appJs, '  _routeFromHash() {');
   assert.doesNotMatch(routed, /_applyMenuNavShot|_applySettingsBackShot/,
-    'but the routed path does not repeat them');
+    'but the routed path does not repeat it');
 });
 
 test('dev chat\'s shot latches key on the address, not on the document', () => {

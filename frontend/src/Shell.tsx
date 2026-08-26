@@ -75,7 +75,6 @@ import { HomeScreen } from './features/home';
 import { ImproveIsland } from './features/improve';
 import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
-import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesIsland } from './features/messages';
 import { NotificationsIsland } from './features/notifications';
@@ -103,16 +102,7 @@ export function Shell() {
           Hidden the moment the probe succeeds.
       */}
       <Island name="OfflineBanner"><OfflineBanner /></Island>
-      {/*
-          Slide-out navigation drawer (all viewport widths — #122) — a React
-          island since #1079 chunk B. Overlay dims the page; panel slides in
-          from the right. Both nodes, the three native/credit modules that
-          write into the panel, and the theme row live in
-          features/header/header-menu.tsx; opening and closing is still
-          App.HeaderMenu in app.js.
-      */}
-      <Island name="HeaderMenu"><HeaderMenu /></Island>
-      {/*
+            {/*
           Persistent banner shown only while an admin has flipped the
           "View as non-admin" toggle in Settings — a React island since
           #1078. Visibility is still driven entirely by the

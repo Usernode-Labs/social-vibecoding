@@ -67,7 +67,6 @@ import './ai-credit.js';
 import './native-app-version.js';
 import './node-pill.js';
 import './wallet-sheet.js';
-import './header-menu-controller.js';
 // The Improve button's two publishers — what it is about, and what its
 // version dot says. A side-effect module like the rest: it installs
 // window.ImproveStatus, which app.js forwards onto as App.ImproveStatus.
@@ -157,7 +156,6 @@ export function PlatformHeader() {
     window.NodePill?.init();
     window.WalletSheet?.init();
     window.NativeAppVersion?.init();
-    window.HeaderMenu?.init();
     window.Notifications?.init();
   }, []);
 

@@ -41,13 +41,13 @@ test('Messages is a React-owned SHEET with global navigation', () => {
   // hamburger — a link to shared progress belongs beside the shared progress,
   // so it is the Challenges area's now — and the four rows left are the
   // navigation the drawer was always for.
-  // Streamlined Concept: the drawer is the APP's surface, so Messages is a
-  // header glyph beside the bell rather than a row inside it. Profile,
-  // Settings and Admin still close the drawer.
+  // Streamlined Concept: Messages is a header glyph beside the bell. The
+  // companion assertion here used to pin the drawer's Profile | Settings |
+  // Admin group; the drawer is retired outright, and those three are the
+  // Profile screen's account group now — see
+  // tests/admin-console-entry-row.test.js, which owns that contract.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
     === '#platform-header #messages-btn + #notifications-btn'));
-  assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#drawer-main-rows > div:has(#drawer-row-profile + #drawer-row-settings) + #drawer-row-admin'));
   assert.match(sheetCtl, /createSheetController\(/, 'on the shared sheet chassis');
   assert.match(screen, /messagesSheetStore/);
   assert.doesNotMatch(screen, /useVisibilityHiddenClass/,

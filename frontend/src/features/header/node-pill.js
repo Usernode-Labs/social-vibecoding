@@ -35,17 +35,15 @@ import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
     // component renders the class — see ./node-pill-row.tsx.
     _visible: false,
 
-    // #977: the sheet is a second surface, so it waits for the drawer to be
-    // fully gone — one motion at a time, instead of a sheet rising while the
-    // drawer is still sliding out. close() resolves immediately when nothing
-    // is open, and the guard keeps the sheet working with no HeaderMenu at
-    // all. This was an addEventListener on the row; it is the component's
-    // onClick now, dispatching here by name.
+
+    // #977 had this await the hamburger drawer's exit before presenting:
+    // the row sat inside that drawer, and a kit sheet cannot open over a kit
+    // panel still sliding out. The row is in the Profile screen's account
+    // group now — a screen does not need dismissing — so the sheet presents
+    // directly. This was an addEventListener on the row; it is the
+    // component's onClick, dispatching here by name.
     openFromRow() {
-      const closed = (window.App && App.HeaderMenu && App.HeaderMenu.close)
-        ? App.HeaderMenu.close()
-        : null;
-      Promise.resolve(closed).then(() => NodePill._openSheet());
+      NodePill._openSheet();
     },
 
     async init() {
@@ -217,7 +215,7 @@ import { mountNodeSheet, unmountNodeSheet } from './node-pill-sheet';
   // Published for the legacy callers that still reach for it by name, exactly
   // as before. init() is NOT called here any more: this module now evaluates
   // while the bundle is being imported, i.e. BEFORE hydration, and its init
-  // removes `hidden` from #drawer-row-node — a class React is about to hydrate
+  // removes `hidden` from #account-row-node — a class React is about to hydrate
   // against. The island calls it from a layout effect instead (see
   // features/header/header-menu.tsx), which is still before DOMContentLoaded.
   // `typeof window` guard: the shell's markup is PRERENDERED in Node
