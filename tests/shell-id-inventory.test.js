@@ -124,6 +124,22 @@ const RETIRED_IDS = {
   'drawer-footer': 'The bottom-anchored reference block moved wholesale into the Improve panel: every line in it was about an app, and that panel is the surface scoped to one.',
   'drawer-row-github': 'View on GitHub — an Improve panel row now.',
   'drawer-row-share': 'Share App — an Improve panel row now.',
+  // ── Streamlined Concept: the reference footer has no successor ───
+  // The block THE UI OVERHAUL carried from the drawer into the Improve panel
+  // (and the Streamlined Concept then carried into the drawer again, as
+  // #improve-footer) is dissolved. The board draws a drawer of navigation and
+  // work only, and every line of that footer was a different KIND of thing
+  // wearing the same row: two of them described the platform, two described
+  // the app, and exactly one was an action. Each went where it belongs.
+  'improve-footer': 'The reference block itself. Not re-homed anywhere — it was a container for four unrelated facts, and each of them moved separately.',
+  'improve-row-github': 'View on GitHub is a Home.menuItemsFor item now, so it renders on the app\'s own page (#apps/<slug>) and in the home card\'s menu instead of only while the app was open.',
+  'improve-row-share': 'Share app is the Improve panel\'s third action (features/improve/improve-panel.tsx) — the one line in that footer that was an action rather than a reference. Same id, same `canShare` gate.',
+  'improve-row-version': 'The open app\'s version. The app\'s own page already renders the same chip from AppView.renderAppVersionPillHTML, so this was a second copy of one fact.',
+  'improve-version-value': 'Value slot of that duplicate row.',
+  'drawer-row-app-fork': 'Fork lineage renders on the app\'s page from the detail descriptor (features/apps/browse-detail.tsx, #browse-detail-fork) — lineage is a fact about an app, not about the drawer you have open.',
+  'app-fork-badge-slot': 'Slot AppView.renderForkBadge wrote into. Both the function and App.DrawerStatus.setForkVisible are gone with it.',
+  'drawer-row-platform-version': 'Renamed, not retired: #about-row-platform-version in Settings\' About block. The deployed web build describes the PLATFORM, so a `drawer-row-*` name on a settings screen would outlive everyone who remembers the drawer.',
+  'drawer-row-native-app-version': 'Renamed with it: #about-row-native-app-version.',
   // ── THE UI OVERHAUL: the home screen's widgets became four fixed areas ──
   // Discover, Challenges and Create app were draggable blocks on the launcher
   // canvas; they are sections in a fixed order under the grid now, so the
@@ -181,7 +197,9 @@ const ADDED_IDS = {
   'dev-flow-pref-section': 'The "Preferred build flow" block in Settings → Connections (#1049) — the escape hatch for the dev-chat picker\'s "remember my option" checkbox.',
   'settings-dev-flow': 'The build-flow dropdown itself. Settings binds its change and gates the two hand-off options on whether the deployment has external flows.',
   'settings-dev-flow-status': 'Save/error line for the build-flow dropdown.',
-  'drawer-row-native-app-version': 'Installed Flutter app version in the drawer footer (#1101).',
+  'about-row-native-app-version': 'Installed Flutter app version (#1101) — Settings\' About block since the drawer footer was dissolved.',
+  'about-row-platform-version': 'The deployed web build (a Git SHA), beside it. Both slots keep their ids, so App.renderPlatformVersionPill and native-app-version.js resolve them unchanged.',
+  'settings-about': 'The About block itself, at the foot of #settings-root. Also what DrawerStatus.refreshDeployDot scopes its "is a deploy rolling out" read to.',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
   'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
@@ -189,7 +207,7 @@ const ADDED_IDS = {
   // ── THE UI OVERHAUL: the Improve panel ───────────────────────────
   // One surface for everything you do *to* the app on screen rather than
   // *with* it. It absorbed four header controls (see RETIRED_IDS above)
-  // plus the drawer's GitHub / Share / version footer. Fully React-owned,
+  // plus the drawer's Share action. Fully React-owned,
   // so unlike most of the shell it holds real state — nothing in
   // public/js/** writes a node inside it.
   'improve-btn': 'Header control that opens the Improve panel; inherits the retired App/Dev switch\'s show/hide lifecycle (App.DrawerStatus.setAppOpen).',
@@ -200,7 +218,6 @@ const ADDED_IDS = {
   'improve-body': 'The panel\'s scroller.',
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
   'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
-  'improve-footer': 'Reference block: View on GitHub, Share app, version — all three moved out of the hamburger drawer.',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────
   // Your apps, Discover, Challenges, Create app — stacked, in that order.

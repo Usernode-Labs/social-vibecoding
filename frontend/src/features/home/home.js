@@ -2493,6 +2493,25 @@ const Home = {
         },
       });
     }
+    // The app's source. This was a row in the hamburger drawer's reference
+    // footer, revealed by hand from App.navigateToApp when the OPEN app had a
+    // repo_url; the Streamlined Concept board draws no such footer, and a
+    // link to the code is a thing you do WITH an app, which is what this list
+    // is. As a menu item it reaches both places that render the list — the
+    // home card's "…" menu and the app's own page — instead of only being
+    // reachable while the app was open.
+    //
+    // ?demo=1 tiles carry no repository, so the gate never fires for them.
+    if (app.repo_url) {
+      items.push({
+        key: 'github',
+        label: 'View on GitHub',
+        title: 'Open this app’s repository',
+        // `noopener` explicitly: the target document must not get a handle on
+        // this window, and repo_url is app-supplied.
+        run: () => window.open(app.repo_url, '_blank', 'noopener'),
+      });
+    }
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',

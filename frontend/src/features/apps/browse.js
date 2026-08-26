@@ -670,6 +670,30 @@ const Browse = {
           includePrContext: false,
         })
       : '';
+    // Fork lineage — "⑂ Forked from <name>", under the version chip.
+    //
+    // This was the hamburger drawer's last footer row, painted by
+    // AppView.renderForkBadge() into a slot by id and revealed through
+    // App.DrawerStatus.setForkVisible(). Both are gone: the Streamlined
+    // Concept board draws no reference footer, and lineage is a fact about
+    // an app rather than about the drawer you happen to have open, so it
+    // belongs on the app's own page next to the version it qualifies.
+    //
+    // Derived here rather than fetched: GET /api/apps and GET /api/apps/:slug
+    // both resolve the stored reference to { appId, slug, name, linkable }
+    // (attachForkLineage in src/routes/apps.js), so whichever of the two
+    // filled Browse._apps, this reads. A source that has been deleted comes
+    // back as `linkable: false` with the literal name "<deleted>", and
+    // renders as inert text — the same two states the badge had.
+    const forkRef = app.forked_from;
+    const forkedFrom = (forkRef && typeof forkRef === 'object')
+      ? {
+          name: forkRef.name || '<deleted>',
+          href: (forkRef.linkable && forkRef.slug)
+            ? `#app/${encodeURIComponent(forkRef.slug)}`
+            : null,
+        }
+      : null;
     const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
     const actions = Browse.detailActionsFor(app);
     // Contributors ride the same paint: first visit to this page renders the
@@ -699,6 +723,7 @@ const Browse = {
         // the hero renders its output as markup rather than re-deriving a
         // chip that would then have two owners. '' draws no wrapper at all.
         versionPillHtml: pillHtml,
+        forkedFrom,
         updatedRel,
         canOpen,
         openLabel: canOpen

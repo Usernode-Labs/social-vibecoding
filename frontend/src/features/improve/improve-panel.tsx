@@ -7,7 +7,7 @@
  * (the switch, the feedback bubble, the work cog) collapse into one button, and
  * it is why the rows below span what used to be four different places — the
  * feedback dialog, the Dev "+" menu, the cog drawer's session list and the
- * hamburger's GitHub / Share / version footer.
+ * hamburger's Share row.
  *
  * ── A fully React-owned island ─────────────────────────────────────────
  *
@@ -105,24 +105,13 @@ export function ImprovePanel() {
         </div>
 
         {/*
-            A COLUMN FLEX, so #improve-footer can be bottom-anchored with
-            `mt-auto` (#1367): the version, GitHub and Share block hugs the
-            foot of the panel whenever the rows above it leave free space, and
-            degrades to "just at the end of the scroll" when they do not — a
-            long session list, a short viewport, the kit sheet. One rule, both
-            behaviours, no measurement, and the same trick the hamburger's own
-            footer used before those rows moved here.
-        */}
-        {/*
             A COLUMN FLEX that does NOT scroll. Everything in this panel is a
-            control except the session list, and the list was the thing
-            pushing the controls off the bottom: with a handful of sessions
-            running, "Start a new session", "Developer terminal" and the
-            GitHub / Share / version footer all sat below the fold behind a
-            scroll. The list flexes and scrolls inside itself now (see the
-            wrapper below); every control is `shrink-0` and stays on screen.
-
-            `platform-safe-scroll` moves onto the scroller with the scrolling.
+            control, and every one of them is `shrink-0`, so the three actions
+            stay on screen at any viewport — no measurement, no fold. The
+            session list that used to push them off the bottom is the drawer's
+            now (../app-context/app-context-rows.tsx), and the GitHub / version
+            footer that sat below it has moved on too; only Share stayed, as an
+            action rather than a reference row.
         */}
         <div
           id="improve-body"
@@ -175,6 +164,34 @@ export function ImprovePanel() {
                 </span>
               </div>
             )}
+            {/*
+                Third action, and deliberately last: sharing is the one thing
+                here that changes nothing about the app. It was a drawer row
+                until the board took the drawer down to navigation and work —
+                and a row labelled "Share app" sitting under the app's version
+                lines never read as an action anyway. `canShare` is already on
+                this store (App.DrawerStatus.setAppOpen publishes it: a running
+                app with a real URL), so the gate is the same one the drawer
+                used, and #improve-row-share keeps its id.
+            */}
+            {state.canShare ? (
+              <div className="flex items-center gap-3">
+                <Button
+                  id="improve-row-share"
+                  type="button"
+                  size="sm"
+                  variant="neutral"
+                  ink="neutral"
+                  className="un-touch-target shrink-0 whitespace-nowrap"
+                  onClick={() => Improve.share()}
+                >
+                  Share app
+                </Button>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400 min-w-0 truncate">
+                  Send someone a link to the live app
+                </span>
+              </div>
+            ) : null}
             {/*
                 The transitional App/Feed/Kanban toggle is gone (Streamlined
                 Concept, final step): the app-context sheet's rows are the

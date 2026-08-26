@@ -2,9 +2,24 @@
  * The APP'S OWN rows — the body of the hamburger drawer (Streamlined Concept).
  *
  * The Figma board draws ONE app-scoped drawer: the app itself, its Board, its
- * Activity, a "+ New change" action, the changes in progress here, the changes
- * running on the viewer's other apps, and the app's reference footer. This is
- * that content.
+ * Activity, a "+ New change" action, the changes in progress here and the
+ * changes running on the viewer's other apps. This is that content.
+ *
+ * NAVIGATION AND WORK, nothing else. The reference block the drawer used to
+ * carry at its foot — View on GitHub, Share app, the two version lines, the
+ * fork lineage — is gone from here, because the board draws no such footer and
+ * because each of those four things has a truer home:
+ *
+ *   - "View on GitHub" is a Home.menuItemsFor item now, so it appears on the
+ *     app's own page (#apps/<slug>) alongside everything else you can do with
+ *     the app, and in the home card's menu for free.
+ *   - Fork lineage renders from the same page's descriptor
+ *     (../apps/browse-detail.tsx), off the `forked_from` the app fetch already
+ *     returns, rather than through a slot a legacy module wrote into.
+ *   - "Share app" is the Improve panel's third action (../improve/improve-panel.tsx).
+ *   - The platform and installed-app versions are Settings' About block
+ *     (../settings/index.tsx) — they describe the platform, not this app, and
+ *     were the one part of the footer that never belonged to an app at all.
  *
  * ── Why it lives here rather than in a sheet of its own ────────────────
  *
@@ -13,9 +28,8 @@
  * and a Your-apps list. The board has no such split: the hamburger IS this
  * surface, alerting lives on the two header glyphs, and switching apps is the
  * Apps sheet behind the title tab. So the rows moved into the drawer and kept
- * every id — the declared checks and the legacy writers
- * (App.loadVersion, native-app-version.js, AppView.renderForkBadge) address
- * them by id, and none of them care which panel they sit in.
+ * every id — the declared checks address them by id, and none of them care
+ * which panel they sit in.
  *
  * ── Dismissal ──────────────────────────────────────────────────────────
  *
@@ -29,11 +43,9 @@ import { useCallback, type ReactNode } from 'react';
 import {
   AppWindowIcon,
   BoardIcon,
-  GitHubIcon,
   HomeIcon,
   NewspaperIcon,
   PlusIcon,
-  ShareIcon,
   TerminalIcon,
 } from '@/components/ui/icons';
 
@@ -41,7 +53,6 @@ import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from '../improve/improve-store.js';
 import { Improve } from '../improve/improve-controller.js';
 import { SessionRow } from '../improve/session-row';
-import { NativeAppVersionRow } from '../header/native-app-version-row';
 
 const ROW_CLASS =
   'w-full flex items-center gap-3 px-4 min-h-[44px] text-left text-zinc-600 '
@@ -225,77 +236,6 @@ export function AppContextRows(): ReactNode {
             </span>
           </button>
         ) : null}
-      </div>
-
-      {/*
-          The reference footer: GitHub, Share, the version lines and the fork
-          lineage. Ids and legacy writers unchanged — App.loadVersion,
-          native-app-version.js and AppView.renderForkBadge resolve their
-          slots by getElementById.
-      */}
-      <div
-        id="improve-footer"
-        className="shrink-0 pt-2 border-t border-zinc-100 dark:border-zinc-800"
-      >
-        {state.repoUrl ? (
-          <a
-            id="improve-row-github"
-            href={state.repoUrl}
-            target="_blank"
-            rel="noreferrer"
-            className={ROW_CLASS}
-            onClick={closeDrawer}
-          >
-            <GitHubIcon className="w-5 h-5 shrink-0" />
-            <span className="text-sm font-medium flex-1 min-w-0 truncate">
-              View on GitHub
-            </span>
-          </a>
-        ) : null}
-        {state.canShare ? (
-          <button
-            id="improve-row-share"
-            type="button"
-            className={ROW_CLASS}
-            onClick={() => { closeDrawer(); Improve.share(); }}
-          >
-            <ShareIcon className="w-5 h-5 shrink-0" />
-            <span className="text-sm font-medium flex-1 min-w-0 truncate">
-              Share app
-            </span>
-          </button>
-        ) : null}
-        {slug ? (
-          <div
-            id="improve-row-version"
-            className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400"
-          >
-            <span>
-              Version
-            </span>
-            <span
-              id="improve-version-value"
-              className="ml-auto font-mono truncate"
-            >
-              {state.deploying ? 'deploying…' : state.version || 'unknown'}
-            </span>
-          </div>
-        ) : null}
-        <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
-          <span className="drawer-ver-label">
-            Platform version
-          </span>
-          <span
-            id="platform-version-pill-slot"
-            className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
-          >
-          </span>
-        </div>
-        <NativeAppVersionRow />
-        <div id="drawer-row-app-fork" className="hidden drawer-ver-row items-center gap-2 px-4">
-          <span id="app-fork-badge-slot" className="ml-auto inline-flex min-w-0 justify-end">
-          </span>
-        </div>
       </div>
     </>
   );

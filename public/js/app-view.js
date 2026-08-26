@@ -482,9 +482,6 @@ const AppView = {
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
     if (window.DevConsole) DevConsole.setCurrentApp(slug);
-    // Amber "⑂ Forked from <name>" lineage label in the shared header
-    // (cleared by close()). No-op for non-forks.
-    AppView.renderForkBadge();
     // Missing-secrets badge lives inside the dev-chat tab now and is
     // re-applied by renderDevChatTab() on every mount, so the call here
     // is just a primer for the case where the tab is already rendered.
@@ -738,10 +735,6 @@ const AppView = {
     }
     if (window.Secrets) Secrets.hide();
     AppView.pendingInnerPath = null;
-    // Fork lineage lives in the drawer's bottom-anchored footer. Blank it and
-    // hide its row, or the previous app's lineage lingers on the home feed.
-    const forkSlot = document.getElementById('app-fork-badge-slot');
-    if (forkSlot) forkSlot.innerHTML = '';
     if (window.App?.DrawerStatus) App.DrawerStatus.setAppOpen(false);
   },
 
@@ -12029,39 +12022,13 @@ const AppView = {
     dialogIsland('rename')?.open();
   },
 
-  // Amber "⑂ Forked from <name>" lineage label. Lived in the header's
-  // right-hand action group until the header slim-down moved it under
-  // the "App" build line, now in the drawer's footer
-  // (#drawer-row-app-fork, whose visibility this function drives — the
-  // slot id is unchanged). `forked_from` is resolved server-side to
-  // { appId, slug, name, linkable }; when linkable the label links to the
-  // source app, otherwise (source deleted → name "<deleted>") it renders
-  // as inert text. No-op for non-forks.
-  renderForkBadge() {
-    const slot = document.getElementById('app-fork-badge-slot');
-    if (!slot) return;
-    const setRow = (visible) => {
-      if (window.App?.DrawerStatus) App.DrawerStatus.setForkVisible(visible);
-    };
-    const ref = AppView.appData && AppView.appData.forked_from;
-    if (!ref || typeof ref !== 'object') { slot.innerHTML = ''; setRow(false); return; }
-    const name = ref.name || '<deleted>';
-    // Text form, not a pill: this line sits in the drawer footer directly
-    // under the "App" version line, and a filled amber pill between two
-    // quiet mono version lines shouted louder than a lineage note needs
-    // to. Amber is retained as the lineage colour.
-    const cls = 'drawer-ver drawer-ver--fork max-w-full truncate';
-    const label = `⑂ Forked from ${escapeHtml(name)}`;
-    if (ref.linkable && ref.slug) {
-      slot.innerHTML = `<a href="#app/${encodeURIComponent(ref.slug)}" `
-        + `class="${cls}" `
-        + `title="Forked from ${escapeAttr(name)} — open the original">${label}</a>`;
-    } else {
-      slot.innerHTML = `<span class="${cls} opacity-90" `
-        + `title="The original app no longer exists">${label}</span>`;
-    }
-    setRow(true);
-  },
+  // The "⑂ Forked from <name>" lineage label used to be rendered here, into
+  // a slot in the drawer's reference footer. The Streamlined Concept board
+  // draws no such footer, and lineage is a fact about an app rather than
+  // about the drawer you have open, so it renders on the app's own page now
+  // — frontend/src/features/apps/browse-detail.tsx, off the same server-
+  // resolved `forked_from` this function read. No slot, no writer, no
+  // DrawerStatus.setForkVisible.
 
   // ── Fork dialog ───────────────────────────────────────────────────
   // #1078 chunk I moved `_forkSource`, the reveal, the field reset and the

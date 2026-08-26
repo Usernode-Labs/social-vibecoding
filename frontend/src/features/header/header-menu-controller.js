@@ -43,7 +43,6 @@ const DrawerStatus = {
   setAppOpen(open) {
     // Fork lineage is app-scoped too — closing an app can never leave
     // the previous app's "Forked from" line behind.
-    if (!open) DrawerStatus.setForkVisible(false);
     // THE UI OVERHAUL: this used to show and hide #app-mode-switch, the
     // App/Dev segmented control. There is no App/Dev switch any more — an
     // app is just an app, and "Dev" is somewhere the Improve panel links to.
@@ -84,24 +83,15 @@ const DrawerStatus = {
     DrawerStatus.refreshDeployDot();
   },
 
-  // Driven by AppView.renderForkBadge(): shown only when it actually
-  // wrote a badge (i.e. the open app is a fork). `flex`, not the row
-  // default, because the row ships `hidden` and Tailwind's `hidden`
-  // would otherwise fight an inline display.
-  setForkVisible(visible) {
-    const row = document.getElementById('drawer-row-app-fork');
-    if (!row) return;
-    row.classList.toggle('hidden', !visible);
-    row.classList.toggle('flex', !!visible);
-  },
-
   // Mirror the platform version row's state onto the Improve button. Read
   // straight off the rendered row rather than threading state: its markup is
   // already the single source of truth for both conditions.
   //
-  // Scoped to #improve-footer — where THE UI OVERHAUL moved that row from the
-  // retired #drawer-footer — so a deploying dApp pill on a home tile can never
-  // light this dot.
+  // Scoped to #settings-about — where the Streamlined Concept board's removal
+  // of the drawer's reference footer moved that row — so a deploying dApp pill
+  // on a home tile can never light this dot. The row is in the shell at all
+  // times (the settings screen is hidden, never unmounted), so reading it does
+  // not depend on Settings being open.
   //
   // THE DOT MOVED WITH THE ROWS. It was `#header-menu-deploy-dot` on the
   // hamburger, from when the version rows lived in that drawer's footer; they
@@ -117,9 +107,9 @@ const DrawerStatus = {
   // old dot could not show because it had exactly one colour.
   refreshDeployDot() {
     const deploying = !!document.querySelector(
-      '#improve-footer .drawer-ver--deploying');
+      '#settings-about .drawer-ver--deploying');
     const stale = !deploying && !!document.querySelector(
-      '#improve-footer button.drawer-ver--stale');
+      '#settings-about button.drawer-ver--stale');
     const state = deploying ? 'deploying' : (stale ? 'stale' : 'idle');
     if (typeof window !== 'undefined') window.Improve?.setVersionState?.(state);
   },
@@ -128,9 +118,12 @@ const DrawerStatus = {
 // Slide-out navigation drawer — available at every viewport width
 // (#122). Top to bottom: the kudos/AI-credit status pane, the theme
 // selector directly below it, the native Node/Wallet rows, the five
-// main nav rows (Profile, Messages, Leaderboard, Settings, Admin & moderation),
-// and a bottom-anchored footer carrying the web/mobile-app releases plus
-// GitHub + Share. (Members & visibility moved to the Dev "+" menu — #645.)
+// main nav rows (Profile, Messages, Leaderboard, Settings, Admin & moderation).
+// The bottom-anchored reference footer it used to carry — the web/mobile-app
+// releases, GitHub and Share — is gone: the Streamlined Concept board draws a
+// drawer of navigation and work only, and those four things moved to Settings'
+// About block, the app's own page and the Improve panel respectively.
+// (Members & visibility moved to the Dev "+" menu — #645.)
 const HeaderMenu = {
   _panel: null,
 

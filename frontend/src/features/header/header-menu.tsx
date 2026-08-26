@@ -357,40 +357,26 @@ export function HeaderMenu() {
 
           </div>
           {/*
-              ── Drawer footer ────────────────────────────────────────────────
-              Platform information + app-scoped link rows, pinned to the FOOT of the
-              panel: `mt-auto` inside #header-menu-rows' column flex hugs the
-              bottom of the viewport whenever the rows above leave free space,
-              and degrades to "just at the end of the scroll" when they don't
-              (touch sheet, short viewport). No JS, no measurement.
-              
-              The revision/version lines render as PLAIN TEXT rather than pills — the
-              old "usernode · 1a2b3c4" pill overflowed the 15rem panel, and a
-              version you can't act on doesn't need pill chrome. The slots keep
-              their ids, so App.renderPlatformVersionPill and
-              AppView.renderForkBadge still resolve them by getElementById.
-              
-              GitHub + Share are the last two items, on the same
-              app-open lifecycle they had as mid-list rows (App.openApp /
-              navigate* toggle their `hidden`).
-          {/*
-              The drawer used to end in a bottom-anchored #drawer-footer:
-              the platform version, the installed mobile-app release, the
-              "Forked from" lineage label, View on GitHub and Share App.
+              THE DRAWER ENDS HERE — there is no footer.
 
-              THE UI OVERHAUL moved all of it into the Improve panel, which is
-              where it belongs — every one of those lines is ABOUT AN APP, and
-              the panel is the surface scoped to one. The version and the repo
-              link in particular were describing whichever app happened to be
-              open while sitting in a menu that is otherwise global.
+              It used to end in a bottom-anchored #drawer-footer: the platform
+              version, the installed mobile-app release, the "Forked from"
+              lineage label, View on GitHub and Share app. THE UI OVERHAUL
+              moved that block into the Improve panel, and the Streamlined
+              Concept board then took it apart entirely, because the board
+              draws a drawer of navigation and work and nothing else. Each
+              line went to the surface it is actually about:
+
+                - the two version lines  → Settings' #settings-about
+                - fork lineage + GitHub  → the app's own page (#apps/<slug>)
+                - Share app              → the Improve panel's third action
 
               Two consequences worth naming. The `mt-auto` on that footer was
               the only reason #header-menu-rows is a column flex, and it stays
-              so — the rows above simply sit at the top now. And the amber
-              #header-menu-deploy-dot on the hamburger used to be derived from
-              the deploying pill rendered INSIDE this footer; DrawerStatus
-              .refreshDeployDot reads the Improve panel's version state instead
-              (features/improve/improve-store.js's `deploying`).
+              so — the account rows use it now (see #drawer-main-rows). And the
+              deploy dot the footer's amber pill used to drive is unchanged:
+              DrawerStatus.refreshDeployDot still reads a rendered version row,
+              it just reads the one in Settings.
           */}
 
         </div>

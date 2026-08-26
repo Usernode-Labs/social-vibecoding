@@ -1718,9 +1718,9 @@
       "expectSelector": "#drawer-row-admin:not(.hidden)"
     },
     {
-      "name": "The reference footer renders the platform build as plain text, not a pill",
-      "path": "/?shot=app-context",
-      "expectSelector": "#improve-footer #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
+      "name": "Settings' About block renders the platform build as plain text, not a pill",
+      "path": "/#settings",
+      "expectSelector": "#settings-about #about-row-platform-version #platform-version-pill-slot .drawer-ver"
     },
     {
       "name": "Settings renders the AI-credit allowance as inline text",
@@ -1744,9 +1744,10 @@
       "expectText": "Platform version"
     },
     {
-      "name": "The reference footer holds GitHub + Share above the version rows (app-context sheet)",
-      "path": "/?shot=menu&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#header-menu-rows > #improve-footer > #improve-row-github"
+      "name": "View on GitHub is an action on the app's own page, not a drawer row",
+      "path": "/#apps/staging-demo-dormant-approvers",
+      "expectSelector": "#browse-detail .browse-detail-action",
+      "expectText": "View on GitHub"
     },
     {
       "name": "Notifications and Messages are header glyphs, not drawer rows (Streamlined Concept)",
@@ -2013,16 +2014,14 @@
       "expectSelector": ".fork-tag"
     },
     {
-      "name": "Menu status pane shows the Forked-from label",
-      "path": "/app/staging-demo-fork",
-      "expectText": "Forked from",
-      "allowConsoleErrors": true
+      "name": "The app's own page shows the Forked-from label",
+      "path": "/#apps/staging-demo-fork",
+      "expectText": "Forked from"
     },
     {
-      "name": "Menu status pane reveals the fork row for a forked app",
-      "path": "/app/staging-demo-fork",
-      "expectSelector": "#drawer-row-app-fork:not(.hidden) #app-fork-badge-slot",
-      "allowConsoleErrors": true
+      "name": "Fork lineage renders under the version it qualifies",
+      "path": "/#apps/staging-demo-fork",
+      "expectSelector": "#browse-detail #browse-detail-fork a[href=\"#app/staging-demo-forkable\"]"
     },
     {
       "name": "Home feed renders the seeded errored app tile",

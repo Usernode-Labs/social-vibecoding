@@ -67,6 +67,7 @@ export type DetailView =
     name: string;
     slug: string;
     versionPillHtml: string;
+    forkedFrom: { name: string; href: string | null } | null;
     updatedRel: string | null;
     canOpen: boolean;
     openLabel: string;
@@ -187,6 +188,33 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
           <p className="text-xs font-mono text-zinc-500 dark:text-zinc-500 break-all">{view.slug}</p>
           {view.versionPillHtml ? (
             <div className="mt-2" dangerouslySetInnerHTML={{ __html: view.versionPillHtml }} />
+          ) : null}
+          {/*
+              Fork lineage, directly under the version it qualifies — the row
+              that used to be the drawer footer's last line, moved to the app's
+              own page (see Browse._renderDetail). Amber is retained as the
+              lineage colour, and it stays TEXT rather than a filled pill: it
+              is a note about where this app came from, not a status.
+
+              A deleted source resolves to `href: null` and renders inert,
+              which is also why the name is a text child and never markup.
+          */}
+          {view.forkedFrom ? (
+            <p id="browse-detail-fork" className="mt-1 text-xs text-amber-600 dark:text-amber-400 truncate">
+              {view.forkedFrom.href ? (
+                <a
+                  href={view.forkedFrom.href}
+                  className="hover:underline"
+                  title={`Forked from ${view.forkedFrom.name} — open the original`}
+                >
+                  {`\u2442 Forked from ${view.forkedFrom.name}`}
+                </a>
+              ) : (
+                <span className="opacity-90" title="The original app no longer exists">
+                  {`\u2442 Forked from ${view.forkedFrom.name}`}
+                </span>
+              )}
+            </p>
           ) : null}
           {view.updatedRel ? (
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{`Updated ${view.updatedRel}`}</p>

@@ -2106,7 +2106,6 @@ const App = {
 
   DrawerStatus: {
     setAppOpen(open) { window.DrawerStatus?.setAppOpen(open); },
-    setForkVisible(visible) { window.DrawerStatus?.setForkVisible(visible); },
     refreshDeployDot() { window.DrawerStatus?.refreshDeployDot(); },
   },
 

@@ -40,7 +40,7 @@ function rendered() {
   const slotText = raw
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
     .replace(/&#x27;/g, "'").replace(/&amp;/g, '&');
-  const rowClass = (html.match(/id="drawer-row-native-app-version"[^>]*class="([^"]*)"/) || [, ''])[1];
+  const rowClass = (html.match(/id="about-row-native-app-version"[^>]*class="([^"]*)"/) || [, ''])[1];
   return {
     html,
     rawSlot: raw,
@@ -133,19 +133,19 @@ test('the drawer island imports and initializes the native version renderer afte
     'layout-effect init prevents a pre-hydration class/text mutation');
 });
 
-test('the footer separates the mobile app version from the platform version', () => {
-  // The footer is the Improve panel's now, not the drawer's — same three rows,
-  // same order, same ids.
-  const footerAt = html.indexOf('id="improve-footer"');
-  assert.ok(footerAt > -1, 'the Improve panel has a footer');
-  const revisionAt = html.indexOf('id="drawer-row-platform-version"');
-  assert.ok(revisionAt > footerAt, 'the version rows live inside it');
-  const versionAt = html.indexOf('id="drawer-row-native-app-version"');
-  const forkAt = html.indexOf('id="drawer-row-app-fork"');
-  assert.ok(revisionAt > -1 && versionAt > revisionAt && forkAt > versionAt,
-    'footer order is platform version → mobile app version → optional fork lineage');
+test('the About block separates the mobile app version from the platform version', () => {
+  // Settings' About block, not a drawer footer: the two rows that describe the
+  // PLATFORM outlived the app-scoped block they were passing through, and the
+  // fork line that used to follow them went to the app's own page instead.
+  const aboutAt = html.indexOf('id="settings-about"');
+  assert.ok(aboutAt > -1, 'Settings has an About block');
+  const revisionAt = html.indexOf('id="about-row-platform-version"');
+  assert.ok(revisionAt > aboutAt, 'the version rows live inside it');
+  const versionAt = html.indexOf('id="about-row-native-app-version"');
+  assert.ok(versionAt > revisionAt,
+    'About order is platform version → mobile app version');
   assert.match(html.slice(revisionAt, versionAt), /Platform version/);
-  assert.match(html.slice(versionAt, forkAt), /Mobile app version/);
+  assert.match(html.slice(versionAt), /Mobile app version/);
   assert.doesNotMatch(html, /drawer-row-app-version|app-version-pill-slot|dApp version/,
     'no particular dApp SHA appears in platform information');
 });
@@ -221,14 +221,14 @@ test('an inconclusive bridge probe retries on drawer open and caches success', a
   await settle();
   assert.equal(loaded.row.classList.contains('hidden'), true);
 
-  loaded.dispatch('usernode:header-menu-open');
+  loaded.dispatch('usernode:settings-section');
   await settle();
   assert.equal(loaded.slot.textContent, '0.4.0/1223');
   assert.equal(loaded.row.classList.contains('hidden'), false);
   assert.equal(loaded.infoReads, 2);
   assert.equal(loaded.settingsReads, 0);
 
-  loaded.dispatch('usernode:header-menu-open');
+  loaded.dispatch('usernode:settings-section');
   await settle();
   assert.equal(loaded.infoReads, 2, 'a successful device-local read is reused');
 });

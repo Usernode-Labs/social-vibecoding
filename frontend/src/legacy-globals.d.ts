@@ -119,7 +119,6 @@ declare global {
     /** features/header/header-menu-controller.js */
     DrawerStatus?: {
       setAppOpen(open: boolean): void;
-      setForkVisible(visible: boolean): void;
       refreshDeployDot(): void;
       [key: string]: unknown;
     };

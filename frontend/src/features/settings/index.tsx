@@ -45,6 +45,7 @@
  */
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { NativeAppVersionRow } from '../header/native-app-version-row';
 import { SettingsSections } from './sections';
 // ./mount imports ./settings.js and plants both seams on it. Importing that
 // module directly here would publish window.Settings without a store and
@@ -109,6 +110,51 @@ export function SettingsScreen() {
               <SettingsSections />
             </div>
           </div>
+        </div>
+        {/*
+            ── About ──────────────────────────────────────────────────────
+            The two version lines that used to sit in the hamburger drawer's
+            reference footer. The Streamlined Concept board draws no such
+            footer, and neither line was ever about the app the drawer is
+            scoped to: one is the deployed WEB build (a Git SHA), the other
+            the installed Flutter app. Both describe the platform, so they
+            belong in the platform's own settings.
+
+            SAME SLOT IDS, new parents. App.renderPlatformVersionPill() writes
+            #platform-version-pill-slot and ../header/native-app-version.js
+            writes #native-app-version-slot, both by getElementById, so the
+            move costs them nothing — and this screen is in the shell at all
+            times (hidden, never unmounted), exactly as the drawer was, so a
+            version landing while Settings is closed still paints. The ROW ids
+            changed with the move, because `drawer-row-*` on a settings screen
+            would be a name that outlives everyone who remembers the drawer.
+
+            The `.drawer-ver*` CLASS names are unchanged: they are the version-
+            line recipe in public/css/app.css, shared with nothing else, and
+            renaming a recipe is a sweep of its own rather than a rider on a
+            relocation.
+
+            Outside the md:flex row above, so it reads at the foot of the
+            screen at every width and on both mobile levels.
+        */}
+        <div
+          id="settings-about"
+          className="mt-8 pt-5 border-t border-zinc-200 dark:border-zinc-700"
+        >
+          <h2 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-2">
+            About
+          </h2>
+          <div id="about-row-platform-version" className="drawer-ver-row flex items-center gap-2">
+            <span className="drawer-ver-label">
+              Platform version
+            </span>
+            <span
+              id="platform-version-pill-slot"
+              className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
+            >
+            </span>
+          </div>
+          <NativeAppVersionRow />
         </div>
       </div>
     </main>

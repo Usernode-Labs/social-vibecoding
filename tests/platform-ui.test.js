@@ -349,7 +349,7 @@ test('setAppOpen publishes the Improve target instead of toggling a switch', () 
   // covers openApp, navigateHome, AppView.close() and every other-screen
   // navigation, which is why the header control still rides it.
   const src = read('frontend/src/features/header/header-menu-controller.js');
-  const fn = src.slice(src.indexOf('setAppOpen(open) {'), src.indexOf('setForkVisible(visible)'));
+  const fn = src.slice(src.indexOf('setAppOpen(open) {'), src.indexOf('refreshDeployDot() {'));
   assert.ok(!fn.includes("getElementById('app-mode-switch')"),
     'the retired switch must not still be toggled here');
   assert.ok(fn.includes('Improve?.setTarget'), fn);
@@ -521,32 +521,42 @@ test('the Board owns the view control; the header center is the title tab', () =
     'and the session eye opens that preview, the one preview affordance');
 });
 
-test("the drawer bottom-anchors the version / GitHub / share block", () => {
-  // Streamlined Concept: the reference footer sits in the DRAWER — the app's
-  // own surface — keeping its ids, its writers and this layout.
-  const sheet = read('frontend/src/features/app-context/app-context-rows.tsx');
+test('the drawer is navigation and work — nothing anchors below it', () => {
+  // Streamlined Concept: the drawer carries the app's views, its changes and
+  // the account rows, and nothing else. The reference footer it used to end in
+  // is dissolved — see app-context-rows.tsx's header for where each line went.
+  const rows = read('frontend/src/features/app-context/app-context-rows.tsx');
   const html = read('public/index.html');
 
-  // The app rows are the flexing scroller and the footer is `shrink-0`
-  // beneath them, so a long changes list scrolls inside the drawer instead of
-  // pushing GitHub / Share / the versions past the fold. One rule, no
-  // measurement.
   const bodyAt = html.indexOf('id="header-menu-rows"');
   const bodyTag = html.slice(bodyAt, html.indexOf('>', bodyAt));
   assert.match(bodyTag, /flex flex-col/,
-    '#header-menu-rows must be the column flex the anchor needs');
+    '#header-menu-rows must be the column flex the account rows anchor in');
 
+  // The app rows flex and scroll inside themselves, so a long changes list
+  // scrolls within the drawer rather than pushing the account rows past the
+  // fold. One rule, no measurement — the same trick the footer used.
   const rowsAt = html.indexOf('id="drawer-app-rows"');
   const rowsTag = html.slice(rowsAt, html.indexOf('>', rowsAt));
   assert.match(rowsTag, /overflow-y-auto/, 'the app rows are the scroller');
   assert.match(rowsTag, /flex-1/, 'and take the free space');
 
-  const footAt = html.indexOf('id="improve-footer"');
+  const footAt = html.indexOf('id="drawer-main-rows"');
   const footTag = html.slice(footAt, html.indexOf('>', footAt));
   assert.match(footTag, /\bshrink-0\b/,
-    'the footer must not be compressed by the rows above it');
-  assert.ok(rowsAt < footAt, 'the footer follows the rows it belongs to');
-  assert.match(sheet, /id="improve-footer"/);
+    'the account rows must not be compressed by the rows above them');
+  assert.match(footTag, /\bmt-auto\b/, 'and they hug the bottom');
+  assert.ok(rowsAt < footAt, 'the account rows follow the app rows');
+
+  // The footer is gone from the drawer, not merely hidden.
+  assert.ok(!rows.includes('id="improve-footer"'),
+    'no reference footer in the drawer');
+  assert.ok(!html.includes('id="improve-footer"'),
+    'and none in the shipped shell');
+  // Share survived as an ACTION, in the panel that holds the other two.
+  assert.match(read('frontend/src/features/improve/improve-panel.tsx'),
+    /id="improve-row-share"/,
+    'Share app is the Improve panel\'s third action');
 });
 
 test('app.css drops the tab-bar rules and draws the Improve panel', () => {

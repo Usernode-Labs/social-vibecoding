@@ -31,9 +31,17 @@ const header = html.slice(0, html.indexOf('</header>'));
 // notifications. These four slots are the load-bearing survivors, and where
 // each one now lives is the thing this file pins:
 //
-//   #platform-version-pill-slot  → the Improve panel's footer (app-scoped
-//   #native-app-version-slot        reference information, which is what the
-//   #app-fork-badge-slot            panel is for)
+//   #platform-version-pill-slot  → Settings' About block (#settings-about).
+//   #native-app-version-slot        Both describe the PLATFORM — the deployed
+//                                   web build and the installed mobile app —
+//                                   so they outlived the app-scoped footer
+//                                   they were passing through.
+//   #app-fork-badge-slot         → RETIRED with the drawer's reference footer.
+//                                  Fork lineage is a fact about an app, and it
+//                                  renders on the app's own page from the
+//                                  detail descriptor now (#browse-detail-fork,
+//                                  features/apps/browse-detail.tsx) rather than
+//                                  through a slot a legacy module wrote into.
 //   #kudos-budget-slot           → RETIRED with the drawer's status pane. The
 //                                  kudos figure lives on the Leaderboard,
 //                                  which the home screen's Challenges area
@@ -44,21 +52,25 @@ const header = html.slice(0, html.indexOf('</header>'));
 // each kept its id while changing parent, because renderers across app.js /
 // app-view.js / kudos.js resolve them with getElementById. A well-meaning
 // rename would break the value silently.
-const IMPROVE_SLOTS = [
+const ABOUT_SLOTS = [
   'platform-version-pill-slot',
   'native-app-version-slot',
-  'app-fork-badge-slot',
 ];
 
 test('each surviving slot exists exactly once, in its new region', () => {
-  const improveStart = html.indexOf('id="improve-footer"');
-  assert.ok(improveStart > -1, '#improve-footer is missing from the shell');
-  for (const id of IMPROVE_SLOTS) {
+  const aboutStart = html.indexOf('id="settings-about"');
+  assert.ok(aboutStart > -1, '#settings-about is missing from the shell');
+  for (const id of ABOUT_SLOTS) {
     const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
     assert.equal(hits.length, 1, `exactly one #${id} in the shell`);
-    assert.ok(html.indexOf(`id="${id}"`) > improveStart,
-      `#${id} lives inside the Improve panel's footer`);
+    assert.ok(html.indexOf(`id="${id}"`) > aboutStart,
+      `#${id} lives inside Settings' About block`);
   }
+  // The fork slot is gone outright, writer included.
+  assert.ok(!html.includes('id="app-fork-badge-slot"'),
+    'the fork slot is retired — the app page renders lineage from its descriptor');
+  assert.ok(!/renderForkBadge\(\) \{/.test(appViewJs),
+    'and nothing writes into it any more');
 
   // The AI-credit slot is a settings pane's now.
   const apiKey = html.indexOf('data-settings-section="api-key"');
@@ -74,7 +86,7 @@ test('each surviving slot exists exactly once, in its new region', () => {
 });
 
 test('none of the moved slots are duplicated in the header', () => {
-  for (const id of [...IMPROVE_SLOTS, 'ai-budget-slot', 'kudos-budget-slot']) {
+  for (const id of [...ABOUT_SLOTS, 'ai-budget-slot', 'kudos-budget-slot']) {
     assert.ok(!header.includes(`id="${id}"`), `#${id} has left the header`);
   }
   assert.ok(!header.includes('id="leaderboard-btn"'),
@@ -181,14 +193,14 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
   assert.match(headerMenuJs, /refreshDeployDot\(\)\s*\{/, 'DrawerStatus.refreshDeployDot is defined');
   const fn = headerMenuJs.slice(headerMenuJs.indexOf('  refreshDeployDot() {'));
   // Post-#913 the version rows signalled a rolling deploy with
-  // .drawer-ver--deploying instead of the pill class; THE UI OVERHAUL moved
-  // those rows from #drawer-footer to the Improve panel's footer, so the
-  // scope moved with them — and now the dot has too.
-  assert.match(fn.slice(0, 1400), /#improve-footer \.drawer-ver--deploying/,
+  // .drawer-ver--deploying instead of the pill class. The SCOPE has followed
+  // those rows through every move: #drawer-footer → the Improve panel's
+  // footer → Settings' About block, which is where they finally stopped.
+  assert.match(fn.slice(0, 1400), /#settings-about \.drawer-ver--deploying/,
     'reads the deploying state off the rendered pills — the single source of truth');
   // The second state the old single-colour dot could not show: the violet
   // "platform rolled past the SHA this tab loaded against" reload button.
-  assert.match(fn.slice(0, 1400), /#improve-footer button\.drawer-ver--stale/,
+  assert.match(fn.slice(0, 1400), /#settings-about button\.drawer-ver--stale/,
     'and the stale state, which is the other thing those rows say');
   // It PUBLISHES: #improve-btn is React-owned, so an id lookup plus a
   // classList write would be a mismatch React patches straight back out.
@@ -206,25 +218,18 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
 
 // ─── App-scoped row lifecycle ────────────────────────────────────────────
 
-test('the mobile app version and fork rows ship hidden', () => {
-  const nativeRow = html.match(/<div id="drawer-row-native-app-version"[^>]*>/);
-  const forkRow = html.match(/<div id="drawer-row-app-fork"[^>]*>/);
-  assert.ok(nativeRow, '#drawer-row-native-app-version exists');
-  assert.ok(forkRow, '#drawer-row-app-fork exists');
+test('the mobile app version row ships hidden', () => {
+  const nativeRow = html.match(/<div id="about-row-native-app-version"[^>]*>/);
+  assert.ok(nativeRow, '#about-row-native-app-version exists');
   assert.match(nativeRow[0], /class="hidden /,
     'the mobile app version ships hidden until the native bridge answers');
-  assert.match(forkRow[0], /class="hidden /, 'the fork row ships hidden');
 
-  // Hidden from every navigate* that leaves an app behind — one call per
-  // site that also hides #drawer-row-share.
-  const hides = (appJs.match(/DrawerStatus\.setAppOpen\(false\)/g) || []).length;
-  const shareHides = (appJs.match(/if \(_drs\) _drs\.classList\.add\('hidden'\);/g) || []).length;
-  assert.ok(hides > shareHides,
-    'setAppOpen(false) runs everywhere the Share row is hidden, plus navigateHome');
+  // The app-open lifecycle is unchanged — it publishes what the Improve panel
+  // and the drawer are ABOUT, which outlived the reference rows entirely.
   assert.match(appJs, /DrawerStatus\.setAppOpen\(true\)/,
     'the app-open lifecycle still drives the header mode switch');
   assert.match(appViewJs, /DrawerStatus\.setAppOpen\(false\)/,
-    'AppView.close() clears app-scoped lineage too');
+    'and AppView.close() clears it');
 });
 
 test('version information contains no particular dApp version', () => {
@@ -237,18 +242,22 @@ test('version information contains no particular dApp version', () => {
     'the semantic version/build is labelled as the installed mobile app');
 });
 
-test('the fork row visibility is driven by renderForkBadge', () => {
-  // Anchored on the next member, not on `_forkSource`: that field moved into
-  // the fork dialog's island in #1078 chunk I and survives here only in the
-  // comment explaining where it went.
-  const fn = appViewJs.slice(
-    appViewJs.indexOf('  renderForkBadge() {'),
-    appViewJs.indexOf('  promptFork(source) {')
-  );
-  assert.ok(fn.length > 0, 'renderForkBadge located');
-  assert.match(fn, /setRow\(false\)/, 'a non-fork hides the row');
-  assert.match(fn, /setRow\(true\)/, 'a fork reveals it');
-  assert.match(fn, /DrawerStatus\.setForkVisible/, 'through DrawerStatus.setForkVisible');
+test('fork lineage renders from the app page descriptor, not a written slot', () => {
+  const browseJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/apps/browse.js'), 'utf8');
+  const detailTsx = fs.readFileSync(
+    path.join(root, 'frontend/src/features/apps/browse-detail.tsx'), 'utf8');
+  // The two states the badge had, now derived rather than written: a linkable
+  // source becomes an href, a deleted one ("<deleted>") stays inert text.
+  assert.match(browseJs, /const forkedFrom = /, 'the detail descriptor carries lineage');
+  assert.match(browseJs, /forkRef\.linkable && forkRef\.slug/,
+    'linkable sources get a href, deleted ones do not');
+  assert.match(detailTsx, /id="browse-detail-fork"/, 'and the page renders it');
+  // Never markup: the source name is user-supplied and React escapes text
+  // children, which is why the imperative version needed escapeHtml at all.
+  const forkBlock = detailTsx.slice(detailTsx.indexOf('id="browse-detail-fork"'));
+  assert.ok(!forkBlock.slice(0, 900).includes('dangerouslySetInnerHTML'),
+    'the source name is a text child, never markup');
 });
 
 // ─── Status-pane rows are not clickable containers ───────────────────────
@@ -256,11 +265,10 @@ test('the fork row visibility is driven by renderForkBadge', () => {
 test('reference rows are plain divs — the pills carry their own anchors', () => {
   // renderPlatformVersionPill's stale state renders a <button
   // onclick="location.reload()">, and the live state an <a>. Nesting
-  // those inside a clickable row would be invalid markup. The rule follows the
-  // rows to the Improve panel and to Settings; #drawer-row-kudos is retired.
-  for (const id of ['drawer-row-platform-version',
-    'drawer-row-native-app-version', 'drawer-row-app-fork',
-    'drawer-row-ai-budget']) {
+  // those inside a clickable row would be invalid markup. The rule followed the
+  // rows all the way to Settings; #drawer-row-kudos is retired.
+  for (const id of ['about-row-platform-version',
+    'about-row-native-app-version', 'drawer-row-ai-budget']) {
     const row = html.match(new RegExp(`<(\\w+) id="${id}"`));
     assert.ok(row, `${id} exists`);
     assert.equal(row[1], 'div', `${id} is a <div>, never an <a>/<button>`);

@@ -260,7 +260,7 @@ const OWNED = [
   // Only reachable under NATIVE=1 — see the stubbed bridge below. The row is
   // features/header/native-app-version-row.tsx; the module that used to write
   // its text and strip its `hidden` publishes to a store instead.
-  { sel: '#drawer-row-native-app-version' },
+  { sel: '#about-row-native-app-version' },
   { sel: '#llm-grants-list' },               // features/settings/grants-list.tsx
   { sel: '#cli-tokens-list' },               // features/settings/cli-tokens-list.tsx
   { sel: '#connectors-list' },               // features/settings/connectors-list.tsx
