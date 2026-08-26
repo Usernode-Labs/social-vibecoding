@@ -901,6 +901,22 @@ test('a failed read still leaves the snapshot-independent blocks up', () => {
     'the build line simply goes missing without a snapshot');
 });
 
+test('the native ZK identity entry is capability-gated and dispatchable', () => {
+  const view = sliceMethod(settingsJs, '_usernodeView');
+  assert.match(view,
+    /const canOpenZkIdentity = this\._hasNativeCapability\('zkIdentityFlow'\)/,
+    'the button follows the additive feature capability, not bridge version');
+  assert.match(view,
+    /open: canOpenZkIdentity \? \{[\s\S]*label: 'Open ZK identity'[\s\S]*action: '_openZkIdentityScreen'/,
+    'supported builds publish a visible settings action');
+  assert.match(usernodeTsx,
+    /s\.privacy\.open \? <UnBtn btn=\{s\.privacy\.open\} \/> : null/,
+    'unsupported builds render no dead control');
+  assert.match(sliceMethod(settingsJs, '_openZkIdentityScreen'),
+    /_openNativeScreen\('zkIdentity', 'Could not open ZK identity'\)/,
+    'the action uses the allowlisted native target');
+});
+
 
 test('the usernode read is retried once on readiness and never leaks a listener', () => {
   assert.match(settingsJs, /_armUsernodeAuthStatusRetry\(\)\s*\{/);
