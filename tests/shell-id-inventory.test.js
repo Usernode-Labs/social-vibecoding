@@ -100,10 +100,23 @@ const RETIRED_IDS = {
   'settings-home-panels-section': 'Settings → Home screen widgets. A checkbox per widget only made sense while the blocks were optional furniture a viewer arranged; they are three fixed areas of the screen now. The ⋮ menu on a block still hides one, and POST /api/home-panels/:key/visibility is untouched.',
   'settings-home-panels-list': 'The checkbox list inside that retired section.',
   'settings-home-panels-status': 'Save/error line of that retired section.',
+  // ── Andrea's simpler waitlist flow: joining is email-only ─────────
+  // "Link something you've made" was a REQUIRED stage-1 field, which
+  // contradicted the flow the onboarding doc settled on and that Andrea
+  // and Evan agreed in its comments ("Just an email!"). The question is
+  // not gone — it moved to the stage-2 "Want in sooner?" form as
+  // #more-made-url / #more-made-note, where it is one of the things that
+  // helps you move up rather than a gate on joining.
+  'waitlist-made-url': 'Moved to the stage-2 survey as #more-made-url; joining no longer asks it.',
+  'waitlist-made-note': 'Moved to the stage-2 survey as #more-made-note, with its url field.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── Andrea's simpler waitlist flow ────────────────────────────────
+  // The relocated join question (see RETIRED_IDS above).
+  'more-made-url': "The \"link something you've made\" field, relocated from the join form (was #waitlist-made-url).",
+  'more-made-note': 'Its one-line description (was #waitlist-made-note).',
   // ── #1372: the mobile-browser install strip ──────────────────────
   // A visitor on a phone browser is offered the native app. The strip is
   // always in the document and starts `hidden` (the island rule: data loads

@@ -57,6 +57,8 @@ const MAX_INVITE_ROWS = 5;
 
 /** `GET /api/public/waitlist/more/<token>`. Every field is optional. */
 interface MoreAnswers {
+  made_url?: string;
+  made_note?: string;
   group?: { name?: string; size?: string; role?: string; tools?: string[]; need?: string };
   loss?: { had?: string; product?: string; kind?: string[]; story?: string };
   handles?: { farcaster?: string; discord?: string; telegram?: string; other?: string };
@@ -99,6 +101,8 @@ export function MoreScreen() {
   const [msg, setMsg] = useState<{ text: string; tone: MsgTone } | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const madeUrl = useRef<HTMLInputElement>(null);
+  const madeNote = useRef<HTMLInputElement>(null);
   const groupName = useRef<HTMLInputElement>(null);
   const groupSize = useRef<HTMLSelectElement>(null);
   const groupRole = useRef<HTMLSelectElement>(null);
@@ -183,6 +187,9 @@ export function MoreScreen() {
       if (other.current) other.current.value = handles.other || '';
 
       setConnect({ verified: a.verified || {}, oauth: payload.oauth || {} });
+
+      if (madeUrl.current) madeUrl.current.value = a.made_url || '';
+      if (madeNote.current) madeNote.current.value = a.made_note || '';
 
       if (admitTogether.current) admitTogether.current.checked = !!a.admit_together;
       if (referrer.current) referrer.current.value = a.referrer_handle || '';
@@ -294,6 +301,8 @@ export function MoreScreen() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            made_url: madeUrl.current?.value.trim() || undefined,
+            made_note: madeNote.current?.value.trim() || undefined,
             group_name: groupName.current?.value.trim() || undefined,
             group_size: groupSize.current?.value || undefined,
             group_role: groupRole.current?.value || undefined,
@@ -395,6 +404,36 @@ export function MoreScreen() {
           className={hiddenFirst(status !== 'ready', 'mt-6 space-y-8')}
           onSubmit={onSubmit}
         >
+          {/* 4 · Something you've made — relocated from the join form, where
+              it used to be required. Joining takes an email now; this is one
+              of the things that helps you move up instead. */}
+          <div>
+            <label
+              htmlFor="more-made-url"
+              className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
+            >
+              Link something you&rsquo;ve made
+            </label>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+              A repo, a site, a bot, a mod, a newsletter, a spreadsheet that runs your fantasy league. Built with AI counts, we care that it exists, not how you made it.
+            </p>
+            <input
+              ref={madeUrl}
+              id="more-made-url"
+              type="url"
+              maxLength={2000}
+              placeholder="https://"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+            />
+            <input
+              ref={madeNote}
+              id="more-made-note"
+              type="text"
+              maxLength={140}
+              placeholder="What is it, in one line? — optional"
+              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+            />
+          </div>
           {/* 5 · The group */}
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">

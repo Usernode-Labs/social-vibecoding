@@ -62,8 +62,6 @@ export function WaitlistScreen() {
   const [discovery, setDiscovery] = useState<string | null>(null);
 
   const email = useRef<HTMLInputElement>(null);
-  const madeUrl = useRef<HTMLInputElement>(null);
-  const madeNote = useRef<HTMLInputElement>(null);
   const country = useRef<HTMLSelectElement>(null);
   const city = useRef<HTMLInputElement>(null);
   const discoveryDetail = useRef<HTMLInputElement>(null);
@@ -109,16 +107,10 @@ export function WaitlistScreen() {
     async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       const emailVal = email.current?.value.trim() || '';
-      const madeUrlVal = madeUrl.current?.value.trim() || '';
-      // Client preflight mirroring the server's stage-1 rules, so the common
-      // misses get a message without a round trip.
+      // Client preflight mirroring the server's stage-1 rules. Only the
+      // address is required now, so this is the only miss worth catching
+      // without a round trip.
       if (!emailVal) return setMsg({ text: 'Please enter your email.', tone: 'error' });
-      if (!madeUrlVal) {
-        return setMsg({ text: 'Please link something you have made.', tone: 'error' });
-      }
-      if (!discovery) {
-        return setMsg({ text: 'Please tell us how you found us.', tone: 'error' });
-      }
 
       setSubmitting(true);
       try {
@@ -127,11 +119,9 @@ export function WaitlistScreen() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             email: emailVal,
-            made_url: madeUrlVal,
-            made_note: madeNote.current?.value.trim() || undefined,
             country: country.current?.value || undefined,
             city: city.current?.value.trim() || undefined,
-            discovery_source: discovery,
+            discovery_source: discovery || undefined,
             discovery_detail: discoveryDetail.current?.value.trim() || undefined,
             referrer_handle: referrer.current?.value.trim() || undefined,
           }),
@@ -201,7 +191,7 @@ export function WaitlistScreen() {
         you when your spot opens — the public apps are open to everyone right
         now.
           <span className="font-medium text-zinc-700 dark:text-zinc-200">
-            Four questions to join.
+            Just your email to join.
           </span>
         </p>
         {/*
@@ -235,36 +225,6 @@ export function WaitlistScreen() {
               placeholder="you@example.com"
               autoComplete="email"
               className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <label
-              htmlFor="waitlist-made-url"
-              className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
-            >
-              Link something you&rsquo;ve made
-              <span className="text-red-700 dark:text-red-400">
-                *
-              </span>
-            </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
-              A repo, a site, a bot, a mod, a newsletter, a spreadsheet that runs your fantasy league. Built with AI counts — we care that it exists, not how you made it.
-            </p>
-            <input
-              ref={madeUrl}
-              id="waitlist-made-url"
-              type="url"
-              maxLength={2000}
-              placeholder="https://"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-            />
-            <input
-              ref={madeNote}
-              id="waitlist-made-note"
-              type="text"
-              maxLength={140}
-              placeholder="What is it, in one line? — optional"
-              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
           </div>
           <div>
@@ -309,8 +269,8 @@ export function WaitlistScreen() {
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               How did you find us?
-              <span className="text-red-700 dark:text-red-400">
-                *
+              <span className="text-zinc-500 font-normal dark:text-zinc-400">
+                Optional
               </span>
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
@@ -360,7 +320,10 @@ export function WaitlistScreen() {
         */}
         <div id="waitlist-joined" className={hiddenFirst(!joined, 'mt-8')}>
           <p className="text-sm text-emerald-700 dark:text-emerald-400 font-medium">
-            You're on the waitlist — we'll email you when your spot opens.
+            You&rsquo;re on the list 🎉
+          </p>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            We&rsquo;re opening access in small groups. We&rsquo;ll email you when yours comes up.
           </p>
           <div
             id="waitlist-more-offer"
