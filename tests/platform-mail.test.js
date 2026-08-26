@@ -341,19 +341,39 @@ test('an unknown kind never reaches a provider and never throws', async () => {
 
 // ─── templates ──────────────────────────────────────────────────────────
 
-test('the join mail carries the confirm link AND the survey link', async () => {
+test('the join mail carries the CODE, the confirm link AND the survey link', async () => {
+  const seen = [];
+  await mail.sendWaitlistJoinMail(
+    { mailTransport: { send: async (m) => { seen.push(m); } } },
+    'a@b.invalid', { moreToken: 'b'.repeat(48), code: '123456' });
+  assert.match(seen[0].confirmUrl, /\/api\/public\/waitlist\/confirm\/b{48}$/);
+  assert.match(seen[0].url, /#more\/b{48}$/);
+  assert.equal(seen[0].code, '123456');
+
+  const msg = templates.buildMessage('waitlist_joined', seen[0]);
+  // Both ways to confirm ride in one mail: the code for a phone, where
+  // leaving for the mail app loses the WebView's place, and the link for
+  // a desktop, where it is one click. Either stamps the same row.
+  assert.match(msg.text, /verification code is 123456/);
+  assert.ok(msg.text.includes(seen[0].confirmUrl), 'the confirm CTA must be in the copy');
+  assert.match(msg.text, /confirm this email address in one click/i);
+  assert.match(msg.text, /Want in sooner\?/);
+  assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
+  assert.match(msg.html, /<strong>123456<\/strong>/);
+});
+
+test('a join mail with no code still renders, and prints no stray placeholder', async () => {
   const seen = [];
   await mail.sendWaitlistJoinMail(
     { mailTransport: { send: async (m) => { seen.push(m); } } },
     'a@b.invalid', { moreToken: 'b'.repeat(48) });
-  assert.match(seen[0].confirmUrl, /\/api\/public\/waitlist\/confirm\/b{48}$/);
-  assert.match(seen[0].url, /#more\/b{48}$/);
-
+  assert.equal(seen[0].code, null);
   const msg = templates.buildMessage('waitlist_joined', seen[0]);
-  assert.ok(msg.text.includes(seen[0].confirmUrl), 'the confirm CTA must be in the copy');
-  assert.match(msg.text, /Confirm this email address/);
-  assert.match(msg.text, /Want in sooner\?/);
-  assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
+  // Minting the code is best-effort — a failure must not cost the signer
+  // their confirm link, nor leak a placeholder into the mail.
+  assert.doesNotMatch(msg.text, /verification code/);
+  assert.doesNotMatch(msg.text, /undefined|null/);
+  assert.ok(msg.text.includes(seen[0].confirmUrl));
 });
 
 test('a re-join carries neither link and no stray "undefined"', async () => {

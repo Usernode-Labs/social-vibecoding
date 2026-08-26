@@ -6102,3 +6102,28 @@ BEGIN
       FOR EACH ROW EXECUTE FUNCTION reject_retired_username();
   END IF;
 END $$;
+
+-- ── Waitlist email verification codes ──────────────────────────────────
+--
+-- The six-digit code that rides beside the one-click confirm link in the
+-- join mail (the onboarding doc's "Email + verification code"). Both work
+-- and both stamp waitlist_signups.confirmed_at; whichever the signer uses
+-- first wins. The code exists for the phone, where leaving the app for the
+-- mail client loses the WebView's place.
+--
+-- Same shape and same guarantees as `mobile_otp_codes`, deliberately: only
+-- the bcrypt hash is stored, one live code per address, capped attempts and
+-- a short expiry. Keyed by email like the waitlist itself, so a code can
+-- exist before any account does. Schema only is migrated; rows are not.
+CREATE TABLE IF NOT EXISTS waitlist_verification_codes (
+  id           BIGSERIAL PRIMARY KEY,
+  email        VARCHAR(255) NOT NULL,
+  code_hash    VARCHAR(255) NOT NULL,
+  attempts     SMALLINT NOT NULL DEFAULT 0,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  consumed_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_waitlist_verification_codes_email
+  ON waitlist_verification_codes (email);
+COMMENT ON TABLE waitlist_verification_codes IS 'staging:private';

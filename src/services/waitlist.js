@@ -14,6 +14,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const log = require('./logger');
 const { ANSWERS_VERSION } = require('./waitlist-questions');
 
@@ -74,6 +75,86 @@ async function confirmSignupByMoreToken(pool, token) {
     [row.id]
   );
   return rows[0] || null;
+}
+
+// How long a verification code lives, and how many wrong guesses it
+// survives. Both mirror mobile_otp_codes rather than inventing new
+// numbers — somebody reading a code out of their mail is the same person
+// in the same hurry either way.
+const CODE_TTL_MINUTES = 15;
+const MAX_CODE_ATTEMPTS = 5;
+
+// Mint a six-digit verification code for an email on the waitlist.
+// Returns the PLAINTEXT code for the caller to mail; only its bcrypt hash
+// is stored. Any unconsumed code for the address is deleted first, so
+// exactly one code is ever live and a forwarded older mail is dead.
+async function issueVerificationCode(pool, email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) throw new Error('invalid email');
+  // randomInt is the uniform generator; % 1000000 over random bytes is
+  // not, and this value protects an address someone else typed.
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  const hash = await bcrypt.hash(code, 10);
+  await pool.query(
+    'DELETE FROM waitlist_verification_codes WHERE email = $1 AND consumed_at IS NULL',
+    [normalized]
+  );
+  await pool.query(
+    `INSERT INTO waitlist_verification_codes (email, code_hash, expires_at)
+     VALUES ($1, $2, NOW() + INTERVAL '${CODE_TTL_MINUTES} minutes')`,
+    [normalized, hash]
+  );
+  return code;
+}
+
+// Confirm a signup with the code from its join mail. Returns the signup
+// row (with more_token, so the caller can hand back the stage-2
+// capability) or null.
+//
+// EVERY failure returns the same null — unknown email, malformed code,
+// wrong code, expired, already consumed, too many attempts — so this can
+// never be used to test whether an address is on the list. That is the
+// same non-enumeration contract joinWaitlist keeps.
+async function confirmSignupByCode(pool, email, code) {
+  const normalized = normalizeEmail(email);
+  if (!normalized || typeof code !== 'string' || !/^[0-9]{6}$/.test(code)) return null;
+
+  const { rows } = await pool.query(
+    `SELECT id, code_hash, attempts, expires_at
+       FROM waitlist_verification_codes
+      WHERE email = $1 AND consumed_at IS NULL
+      ORDER BY id DESC
+      LIMIT 1`,
+    [normalized]
+  );
+  const entry = rows[0];
+  if (!entry) return null;
+  if (new Date(entry.expires_at) < new Date()) return null;
+  if (entry.attempts >= MAX_CODE_ATTEMPTS) return null;
+
+  const matches = await bcrypt.compare(code, entry.code_hash);
+  if (!matches) {
+    await pool.query(
+      'UPDATE waitlist_verification_codes SET attempts = attempts + 1 WHERE id = $1',
+      [entry.id]
+    );
+    return null;
+  }
+
+  await pool.query(
+    'UPDATE waitlist_verification_codes SET consumed_at = NOW() WHERE id = $1',
+    [entry.id]
+  );
+  // COALESCE, not a plain assignment: the mailed LINK may have confirmed
+  // this row already, and the first timestamp is the true one.
+  const { rows: signup } = await pool.query(
+    `UPDATE waitlist_signups
+        SET confirmed_at = COALESCE(confirmed_at, NOW())
+      WHERE email = $1
+      RETURNING id, email, confirmed_at, more_token`,
+    [normalized]
+  );
+  return signup[0] || null;
 }
 
 // Merge a validated stage-2 payload into the signup's answers. Merging
@@ -191,10 +272,13 @@ async function releaseWaitlistSignup(pool, signupId) {
 }
 
 module.exports = {
+  MAX_CODE_ATTEMPTS,
   normalizeEmail,
   joinWaitlist,
   getSignupByMoreToken,
   confirmSignupByMoreToken,
+  issueVerificationCode,
+  confirmSignupByCode,
   mergeMoreAnswers,
   setVerifiedHandle,
   grantPlatformAccess,

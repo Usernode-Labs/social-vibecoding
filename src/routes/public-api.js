@@ -193,7 +193,10 @@ function publicApiRoutes(config) {
       });
       if (created) {
         log.info('public-api', 'Waitlist join', {});
-        sendWaitlistJoinMail(config, email, { moreToken }); // fire-and-forget, never throws
+        // Best-effort like the mail itself: a code that cannot be minted
+        // must not fail the join, and the one-click link still confirms.
+        const code = await waitlist.issueVerificationCode(pool, email).catch(() => null);
+        sendWaitlistJoinMail(config, email, { moreToken, code }); // fire-and-forget, never throws
       }
       res.json({
         ok: true,
@@ -237,6 +240,34 @@ function publicApiRoutes(config) {
       return res.redirect(302, `/#more/${token}`);
     } catch (err) {
       log.error('public-api', 'waitlist confirm failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/public/waitlist/confirm — the same confirmation as the
+  // one-click link above, by the six-digit code carried in the same mail.
+  // It exists for the phone, where leaving the app for the mail client
+  // loses the WebView's place; on desktop the link is still one click.
+  // Both stamp the same confirmed_at and the first one wins.
+  //
+  // A wrong code and an address that was never on the list get the SAME
+  // 422, so this cannot be used to test whether an email is on the
+  // waitlist — the same non-enumeration contract the join endpoint keeps.
+  router.post('/api/public/waitlist/confirm', waitlistTokenLimiter, async (req, res) => {
+    const email = waitlist.normalizeEmail(req.body?.email);
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    if (!email || !/^[0-9]{6}$/.test(code)) {
+      return res.status(422).json({ error: 'Enter the six-digit code from your email.' });
+    }
+    try {
+      const row = await waitlist.confirmSignupByCode(pool, email, code);
+      if (!row) {
+        return res.status(422).json({ error: 'That code is wrong or has expired. Ask for a new one.' });
+      }
+      log.info('public-api', 'Waitlist email confirmed by code', {});
+      return res.json({ ok: true, more_token: row.more_token || null });
+    } catch (err) {
+      log.error('public-api', 'waitlist code confirm failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

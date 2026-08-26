@@ -66,10 +66,18 @@ function waitlistJoined(payload) {
   let html = p('Thanks for joining the Usernode waitlist.')
     + p("We'll email you at this address as soon as your access is ready.");
 
+  // The code comes first. On a phone, leaving for the mail app and coming
+  // back loses the WebView's place, so typing six digits beats following a
+  // link; on desktop the link below is still one click. Either confirms
+  // the same row.
+  if (payload.code) {
+    text += `\n\nYour verification code is ${payload.code}. It works for 15 minutes.`;
+    html += p(`Your verification code is <strong>${payload.code}</strong>. It works for 15 minutes.`);
+  }
   if (confirmUrl) {
-    text += '\n\nConfirm this email address so we can reach you when it opens up:\n'
+    text += '\n\nOr confirm this email address in one click:\n'
       + confirmUrl;
-    html += p('Confirm this email address so we can reach you when it opens up:')
+    html += p('Or confirm this email address in one click:')
       + p(link(confirmUrl));
   }
   if (surveyUrl) {

@@ -60,8 +60,10 @@ export function WaitlistScreen() {
   const [msg, setMsg] = useState<{ text: string; tone: MsgTone } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [discovery, setDiscovery] = useState<string | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
 
   const email = useRef<HTMLInputElement>(null);
+  const code = useRef<HTMLInputElement>(null);
   const country = useRef<HTMLSelectElement>(null);
   const city = useRef<HTMLInputElement>(null);
   const discoveryDetail = useRef<HTMLInputElement>(null);
@@ -151,6 +153,43 @@ export function WaitlistScreen() {
     },
     [discovery],
   );
+
+  /**
+   * Confirm the address with the six-digit code from the join mail. The link
+   * in that same mail does the same thing; whichever is used first wins.
+   *
+   * The email input keeps its value after a join — the form is hidden, not
+   * cleared — so `email.current` is still the address the code went to.
+   */
+  const onConfirmCode = useCallback(async () => {
+    const codeVal = code.current?.value.trim() || '';
+    if (!/^[0-9]{6}$/.test(codeVal)) {
+      return setMsg({ text: 'Enter the six-digit code from your email.', tone: 'error' });
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/public/waitlist/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.current?.value.trim() || '', code: codeVal }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        setMsg(null);
+        setConfirmed(true);
+        const token = (data && data.more_token) || null;
+        if (token) {
+          setMoreToken(token);
+          setOffer(true);
+        }
+      } else {
+        setMsg({ text: (data && data.error) || 'That code did not work.', tone: 'error' });
+      }
+    } catch {
+      setMsg({ text: 'Connection issue — try again.', tone: 'error' });
+    }
+    setSubmitting(false);
+  }, []);
 
   const live = useRef({ waitlistOnShow });
   live.current = { waitlistOnShow };
@@ -325,6 +364,44 @@ export function WaitlistScreen() {
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             We&rsquo;re opening access in small groups. We&rsquo;ll email you when yours comes up.
           </p>
+          {/*
+              Confirming by code, for the phone: leaving for the mail app and
+              coming back loses the WebView's place, so typing six digits
+              beats following a link. The same mail carries both, and the
+              first one used stamps confirmed_at.
+          */}
+          <div id="waitlist-confirm" className={hiddenLast(confirmed, 'mt-4')}>
+            <label
+              htmlFor="waitlist-code"
+              className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
+            >
+              Confirm your email
+            </label>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+              We sent a six-digit code. You can also just click the link in that email.
+            </p>
+            <div className="flex gap-2">
+              <input
+                ref={code}
+                id="waitlist-code"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                placeholder="000000"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              />
+              <button
+                id="waitlist-code-submit"
+                type="button"
+                disabled={submitting}
+                onClick={onConfirmCode}
+                className="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-60 px-3 py-2 text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
           <div
             id="waitlist-more-offer"
             className={hiddenFirst(

@@ -53,6 +53,7 @@ const DENIED_TABLES = new Set([
   'platform_env_values', // platform's own env values (AES blobs, still deny)
   'pending_secret_declarations', // values held for a declaration PR (AES blobs)
   'mobile_otp_codes',   // topochain: one-time login codes (SPEC §6)
+  'waitlist_verification_codes', // one-time waitlist email codes, same treatment as mobile_otp_codes
   'mobile_auth_tokens', // topochain: bearer session/set-password tokens (plan Global Constraints #4)
   'mobile_push_deployment_state', // trusted push deployment identity and activation state
   'mobile_push_installation_mutations', // private device mutation fences

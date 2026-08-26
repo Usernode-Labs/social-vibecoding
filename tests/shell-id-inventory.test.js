@@ -117,6 +117,12 @@ const ADDED_IDS = {
   // The relocated join question (see RETIRED_IDS above).
   'more-made-url': "The \"link something you've made\" field, relocated from the join form (was #waitlist-made-url).",
   'more-made-note': 'Its one-line description (was #waitlist-made-note).',
+  // The doc asks for "Email + verification code". The mailed link still
+  // works and confirms the same row; the code exists for the phone, where
+  // leaving for the mail app and back loses the WebView's place.
+  'waitlist-confirm': 'The confirm-your-email block on the join success state. Hides once the code is accepted.',
+  'waitlist-code': 'Six-digit email verification code; confirms the same row the mailed link does.',
+  'waitlist-code-submit': 'Submits the verification code.',
   // ── #1372: the mobile-browser install strip ──────────────────────
   // A visitor on a phone browser is offered the native app. The strip is
   // always in the document and starts `hidden` (the island rule: data loads
