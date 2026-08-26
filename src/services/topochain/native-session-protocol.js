@@ -256,6 +256,7 @@ function buildCredentialPlaintext({
       bearerExpiresAt: iso(bearerExpiresAt),
     },
     account: {
+      accountId: String(account.id),
       address: account.address,
       publicKey: account.public_key,
       secretKey: account.secret_key,

@@ -21,6 +21,7 @@ const {
 } = require('../src/services/topochain/native-session-crypto');
 const {
   NativeSessionProtocol,
+  buildCredentialPlaintext,
 } = require('../src/services/topochain/native-session-protocol');
 const { revokeNativeSessionCredentials } = require('../src/services/native-session-revocation');
 
@@ -175,6 +176,54 @@ test('RSA-OAEP+A256GCM compact JWE decrypts only with the envelope private key',
     kid: keys.envelopeKeyId,
     typ: 'application/usernode-native-session-credential+jwe',
   });
+});
+
+test('encrypted credential carries the exact canonical account id without widening its envelope', async () => {
+  const pair = makeKeys();
+  const request = unsignedExchangeRequest(pair);
+  const keys = validateInstallationKeys(request.installation);
+  const accountId = '9007199254740993';
+  const plaintext = buildCredentialPlaintext({
+    row: {
+      user_id: 41,
+      network_id: NETWORK.id,
+      chain_id: NETWORK.chainId,
+    },
+    request,
+    keys,
+    ticketHash: sha256Hex(request.ticket),
+    exchangeDigest: exchangeSemanticDigest(request, keys),
+    credentialReference: opaque('nsc_', 9),
+    bearerToken: 'ab'.repeat(40),
+    bearerExpiresAt: new Date('2026-11-24T12:00:00.000Z'),
+    account: {
+      id: accountId,
+      address: 'ut1-account',
+      public_key: 'public-key',
+      secret_key: 'secret-key',
+      seasonId: 7,
+      season_event_id: null,
+      newlyAllocated: false,
+    },
+    bpReleased: true,
+  });
+  assert.deepEqual(Object.keys(plaintext.account), [
+    'accountId', 'address', 'publicKey', 'secretKey', 'seasonId',
+    'seasonEventId', 'newlyAllocated', 'blockProductionReleased',
+  ]);
+  assert.match(plaintext.account.accountId, /^[1-9][0-9]*$/);
+  assert.equal(plaintext.account.accountId, accountId);
+
+  const compactJwe = await compactEncryptCredential(plaintext, keys);
+  assert.equal(compactJwe.includes(accountId), false,
+    'the outer compact envelope must not expose the account id');
+  const { compactDecrypt, importJWK } = await import('jose');
+  const privateKey = await importJWK(pair.envelopePrivateJwk, 'RSA-OAEP');
+  const decrypted = await compactDecrypt(compactJwe, privateKey);
+  assert.deepEqual(
+    JSON.parse(Buffer.from(decrypted.plaintext).toString('utf8')),
+    plaintext
+  );
 });
 
 class TicketPool {
