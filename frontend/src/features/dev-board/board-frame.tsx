@@ -116,7 +116,7 @@ function BoardViewToggle({ onSelect }: { onSelect?: (mode: string) => void }) {
         aria-selected={mode === 'kanban' ? 'true' : 'false'}
         className={segmentCls(mode === 'kanban')}
         onClick={() => onSelect?.('kanban')}
-        title="Kanban — work in flight, by column"
+        title="Kanban: work in flight, by column"
       >
         <BoardIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
         Kanban
@@ -128,7 +128,7 @@ function BoardViewToggle({ onSelect }: { onSelect?: (mode: string) => void }) {
         aria-selected={mode === 'feed' ? 'true' : 'false'}
         className={segmentCls(mode === 'feed')}
         onClick={() => onSelect?.('feed')}
-        title="Feed — recent development activity, newest first"
+        title="Feed: recent development activity, newest first"
       >
         <ListLinesIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
         Feed

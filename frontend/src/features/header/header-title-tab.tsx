@@ -68,7 +68,7 @@ export function HeaderTitleTab({ titleRef }: { titleRef: RefObject<HTMLHeadingEl
           className={'pointer-events-auto inline-flex items-center gap-1 max-w-full h-7 '
             + 'align-middle un-touch-target'}
           aria-haspopup="dialog"
-          aria-label={`${text} — open app views`}
+          aria-label={`${text}: open app views`}
           onClick={() => (window as unknown as {
             AppContext?: { toggle?: () => void };
           }).AppContext?.toggle?.()}

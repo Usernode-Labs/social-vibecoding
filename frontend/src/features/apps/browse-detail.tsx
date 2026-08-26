@@ -205,7 +205,7 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
                 <a
                   href={view.forkedFrom.href}
                   className="hover:underline"
-                  title={`Forked from ${view.forkedFrom.name} — open the original`}
+                  title={`Forked from ${view.forkedFrom.name}: open the original`}
                 >
                   {`\u2442 Forked from ${view.forkedFrom.name}`}
                 </a>

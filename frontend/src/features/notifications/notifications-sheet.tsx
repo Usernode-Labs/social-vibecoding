@@ -240,7 +240,7 @@ export function NotificationsSheetView() {
       ) : null}
       {!rows.length ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
-          {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet — you’ll get pinged here.'}
+          {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
         </p>
       ) : null}
       {snap.screenCanLoadMore ? (

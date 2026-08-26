@@ -172,7 +172,7 @@ export function AppsSwitcherSheet(): ReactNode {
           ))}
           {apps && rows.length === 0 ? (
             <span className="py-4 text-sm text-zinc-500 dark:text-zinc-400">
-              No apps yet — Explore finds the ones you can join.
+              No apps yet. Explore finds the ones you can join.
             </span>
           ) : null}
         </div>
