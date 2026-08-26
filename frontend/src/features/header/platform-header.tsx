@@ -38,7 +38,7 @@ import {
   HomeIcon,
 } from '@/components/ui/icons';
 
-import { useHiddenClass } from '../../lib/legacy-dom';
+import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { ChromelessPill } from './chromeless-pill';
@@ -48,6 +48,32 @@ import { improveStore } from '../improve/improve-store.js';
 import { MergeStatusPill } from '../dev-chat/session-header';
 import { sessionHeaderStore } from '../dev-chat/session-header-store';
 import { useHeaderLayout } from './use-header-layout';
+// ── The bundle's boot seam ────────────────────────────────────────────
+//
+// These six imports and the four inits below rode on the hamburger drawer's
+// island for as long as there was one. They were never ABOUT the drawer: each
+// installs a `window.*` global that app.js's boot looks for, and the drawer
+// island simply happened to be the earliest thing in the bundle. This island
+// is earlier still — it is the first one in Shell.tsx and it never unmounts —
+// so the seam moves here rather than following any single row to its new home.
+// Hanging a boot-time global off a surface nobody has opened yet would be a
+// boot-order regression dressed up as tidiness.
+//
+// The AI-credit renderer, whose ROW is Settings → Anthropic API key. It
+// installs window.AiCredit and App.init() calls AiCredit.Budget.init().
+import './ai-credit.js';
+// The installed mobile-app version, whose row is Settings' About block.
+import './native-app-version.js';
+import './node-pill.js';
+import './wallet-sheet.js';
+import './header-menu-controller.js';
+// The Improve button's two publishers — what it is about, and what its
+// version dot says. A side-effect module like the rest: it installs
+// window.ImproveStatus, which app.js forwards onto as App.ImproveStatus.
+import '../improve/improve-status.js';
+// The bell's module. ../notifications/mount.ts installs the store's flush and
+// publishes the controller; this pulls both in.
+import '../notifications/mount';
 
 /** Amber while a deploy runs, violet once the platform has rolled past us. */
 const VERSION_DOT: Record<string, string> = {
@@ -148,6 +174,20 @@ export function PlatformHeader() {
   const rightGroupRef = useRef<HTMLDivElement>(null);
 
   useHeaderLayout(headerRef, leftGroupRef, titleRef, rightGroupRef);
+
+  // A LAYOUT effect, and that is load-bearing: it runs inside main.tsx's
+  // flushSync(hydrateRoot), which is after hydration has adopted these nodes
+  // and still before DOMContentLoaded — where the classic scripts' own init()
+  // used to run. A passive effect could be scheduled after app.js's init, and
+  // `sv:authed` fires at most once, so a late Notifications listener would
+  // never get the first fetch.
+  useIsomorphicLayoutEffect(() => {
+    window.NodePill?.init();
+    window.WalletSheet?.init();
+    window.NativeAppVersion?.init();
+    window.HeaderMenu?.init();
+    window.Notifications?.init();
+  }, []);
 
   // Chromeless mode hides the bar and floats the "Open in Usernode" pill in
   // its place; App.setChromeless publishes the flag, this reads it.

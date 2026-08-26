@@ -4,7 +4,7 @@
  * It replaced three things at once: the App/Dev segmented switch, the feedback
  * bubble and the work cog. The switch is the one worth explaining, because this
  * button inherits its lifecycle exactly. That control was shown by
- * `App.DrawerStatus.setAppOpen()` and hidden everywhere else; this one is shown
+ * `App.ImproveStatus.setAppOpen()` and hidden everywhere else; this one is shown
  * whenever ../improve/improve-store.js carries a TARGET.
  *
  * TWO publishers put one there. `setAppOpen()` does it for an open app, and
@@ -88,7 +88,7 @@ export function ImproveButton() {
   // The button materially changes the header's right-group width, which is one
   // of the two inputs to the title's centered-vs-flow decision. The group's
   // ResizeObserver catches it a frame later on its own; this is the explicit
-  // hook `App.DrawerStatus.setAppOpen()` used to call for the App/Dev switch,
+  // hook `App.ImproveStatus.setAppOpen()` used to call for the App/Dev switch,
   // so the title does not visibly jump.
   useIsomorphicLayoutEffect(() => {
     (window as unknown as { HeaderLayout?: { refresh?: () => void } })

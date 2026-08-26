@@ -474,7 +474,7 @@ const AppView = {
     // non-collaborators via AppView.readOnly) used to be two per-button
     // `hidden` toggles on the bottom tab bar's cells. The bar is now the
     // header's #app-mode-switch, whose whole-control visibility is owned
-    // by App.DrawerStatus.setAppOpen() — called from navigateToApp right
+    // by App.ImproveStatus.setAppOpen() — called from navigateToApp right
     // after this fetch resolves, on the same lifecycle as the drawer's
     // app-scoped rows. Nothing to toggle here any more.
 
@@ -735,7 +735,7 @@ const AppView = {
     }
     if (window.Secrets) Secrets.hide();
     AppView.pendingInnerPath = null;
-    if (window.App?.DrawerStatus) App.DrawerStatus.setAppOpen(false);
+    if (window.App?.ImproveStatus) App.ImproveStatus.setAppOpen(false);
   },
 
   // Iframe tokens are APP-SCOPED since the RSA cutover: each one carries
@@ -12028,7 +12028,7 @@ const AppView = {
   // about the drawer you have open, so it renders on the app's own page now
   // — frontend/src/features/apps/browse-detail.tsx, off the same server-
   // resolved `forked_from` this function read. No slot, no writer, no
-  // DrawerStatus.setForkVisible.
+  // ImproveStatus.setForkVisible.
 
   // ── Fork dialog ───────────────────────────────────────────────────
   // #1078 chunk I moved `_forkSource`, the reveal, the field reset and the

@@ -10,7 +10,7 @@
  * ── Why a plain store and not React state ──────────────────────────────
  *
  * Every writer is a classic script. `public/js/app.js` publishes the app
- * lifecycle from `App.DrawerStatus.setAppOpen()`, `public/js/app-view.js`
+ * lifecycle from `App.ImproveStatus.setAppOpen()`, `public/js/app-view.js`
  * publishes the repo/version/read-only facts once `/api/apps/:slug` resolves,
  * and `frontend/src/features/dev-console/store.ts` publishes whether the
  * terminal row is worth showing. None of them can import from this bundle, so

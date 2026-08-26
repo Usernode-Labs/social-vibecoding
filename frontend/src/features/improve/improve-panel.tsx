@@ -170,7 +170,7 @@ export function ImprovePanel() {
                 until the board took the drawer down to navigation and work —
                 and a row labelled "Share app" sitting under the app's version
                 lines never read as an action anyway. `canShare` is already on
-                this store (App.DrawerStatus.setAppOpen publishes it: a running
+                this store (App.ImproveStatus.setAppOpen publishes it: a running
                 app with a real URL), so the gate is the same one the drawer
                 used, and #improve-row-share keeps its id.
             */}

@@ -609,7 +609,7 @@ const App = {
   // It WAITS FOR A TARGET rather than firing on a fixed delay. Without one the
   // panel refuses to open — correct behaviour, not something to work around —
   // and on an #app/<slug> route the target is published by
-  // App.DrawerStatus.setAppOpen(), which runs after openApp()'s fetch has
+  // App.ImproveStatus.setAppOpen(), which runs after openApp()'s fetch has
   // landed. A single 50ms tick (what ?shot=menu can afford, because the drawer
   // needs nothing but a settled shell) fired long before that, so the panel
   // stayed shut and both of its declared checks failed on an empty surface.
@@ -1130,7 +1130,7 @@ const App = {
     // Every path below ends by painting `slot` and syncing the dot.
     const paint = (html) => {
       slot.innerHTML = html;
-      App.DrawerStatus.refreshDeployDot();
+      App.ImproveStatus.refreshDeployDot();
     };
 
     const runningSha = info.sha;
@@ -2087,7 +2087,7 @@ const App = {
   //
   // Explicit method-by-method forwarding rather than a getter for App.X:
   // app.js is a classic script and the bundle is a module, so there is a
-  // window in which window.DrawerStatus does not exist yet, and the two
+  // window in which window.ImproveStatus does not exist yet, and the two
   // unguarded refreshDeployDot() / setAppOpen() callers below would throw on
   // a bare getter. Forwarding no-ops instead, which is what those calls did
   // when the drawer was not on screen anyway.
@@ -2104,9 +2104,9 @@ const App = {
   // boot, a WS repaint and the return from an app all funnel through. See
   // Home.publishImproveTarget for the two gates it gets right.
 
-  DrawerStatus: {
-    setAppOpen(open) { window.DrawerStatus?.setAppOpen(open); },
-    refreshDeployDot() { window.DrawerStatus?.refreshDeployDot(); },
+  ImproveStatus: {
+    setAppOpen(open) { window.ImproveStatus?.setAppOpen(open); },
+    refreshDeployDot() { window.ImproveStatus?.refreshDeployDot(); },
   },
 
   HeaderMenu: {
@@ -2671,7 +2671,7 @@ const App = {
         // Home has no Improve target: clear whatever screen published one, or
         // the header button would outlive the app it was about (the lingering
         // Improve-button bug, in its unrecognised-hash variant).
-        App.DrawerStatus.setAppOpen(false);
+        App.ImproveStatus.setAppOpen(false);
         Home.load();
       }
     } finally {
@@ -2925,7 +2925,7 @@ const App = {
     // that decision on purpose: a platform screen carries a plain title and
     // an empty right slot — navigation lives in the drawer, and the title
     // tab means "an app context is on screen", which these screens are not.
-    App.DrawerStatus.setAppOpen(false);
+    App.ImproveStatus.setAppOpen(false);
   },
 
   // Show the Leaderboard screen. Sibling to navigateToApp/navigateHome —
@@ -3688,7 +3688,7 @@ const App = {
     // Publish the app-open lifecycle for the Improve panel and the fork
     // lineage. A particular dApp's SHA is intentionally not shown in the
     // platform-information footer.
-    App.DrawerStatus.setAppOpen(true);
+    App.ImproveStatus.setAppOpen(true);
     // Members & visibility moved from the drawer into the Dev tab's "+"
     // menu (#645) — AppView._plusMenuShowsMembers() is the single gate.
     // The App tab iframes appData.url, which doesn't resolve for the self-
@@ -3738,7 +3738,7 @@ const App = {
       // …and the GitHub / Share rows retire with the panel's target, rather
       // than being hidden one by one as drawer rows were. This clears the
       // app's target; the line below immediately republishes home's own.
-      App.DrawerStatus.setAppOpen(false);
+      App.ImproveStatus.setAppOpen(false);
       // Home's Improve button is the PLATFORM's (#1367). Published here so
       // backing out of an app swaps the target in the same frame the app's
       // was cleared, rather than leaving a gap until the next grid paint.

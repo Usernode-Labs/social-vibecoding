@@ -29,13 +29,12 @@
  * version, GitHub, Share — which is app-scoped and therefore Improve-panel
  * material.
  *
- * The modules that own live content in this subtree are bundled with it and
- * initialise from the island's layout effect:
- *
- *   ./node-pill.js               #drawer-row-node    (native node status)
- *   ./wallet-sheet.js            #drawer-row-wallet  (native wallet balance)
- *   ./header-menu-controller.js  the drawer's own open/close (was
- *                                App.HeaderMenu / App.DrawerStatus in app.js)
+ * The modules that own live content in this subtree — ./node-pill.js for
+ * #drawer-row-node, ./wallet-sheet.js for #drawer-row-wallet, and
+ * ./header-menu-controller.js for the drawer's own open/close — are imported
+ * and initialised by ./platform-header.tsx. They used to boot from THIS
+ * island's layout effect, which was never about the drawer: it was about being
+ * the earliest island in the bundle, and the header bar is earlier.
  *
  * The drawer stays MARKUP-ONLY apart from the notifications body, and for the
  * usual reason: app.js and app-view.js still show and hide individual rows per
@@ -49,13 +48,12 @@
  * shipped markup exactly on the first pass — target-less, no rows — so
  * hydration matches byte for byte.
  *
- * Why init() moves to a layout effect: imported modules evaluate while the
- * bundle loads — before hydration — and both node-pill and wallet-sheet lift
- * `hidden` off a row React is about to hydrate. A layout effect runs inside
- * flushSync(hydrateRoot), so the class lands after hydration has adopted the
- * node and still before DOMContentLoaded, where app.js's own init waits. The
- * notifications module needs the same treatment for a different reason — see
- * the effect below.
+ * Why those init()s run from a LAYOUT effect (over in the header bar, now):
+ * imported modules evaluate while the bundle loads — before hydration — and
+ * both node-pill and wallet-sheet lift `hidden` off a row React is about to
+ * hydrate. A layout effect runs inside flushSync(hydrateRoot), so the class
+ * lands after hydration has adopted the node and still before
+ * DOMContentLoaded, where app.js's own init waits.
  */
 
 import {
@@ -73,68 +71,17 @@ import {
   WalletIcon,
   XIcon,
 } from '@/components/ui/icons';
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { AppContextRows } from '../app-context/app-context-rows';
-// Two side-effect modules whose ROWS moved out of this drawer — the AI-credit
-// figure to Settings → Anthropic API key, the mobile-app version to the
-// Improve panel's footer — but whose imports stay here on purpose. Both
-// install a `window.*` global that app.js's boot looks for, and this island is
-// the earliest thing in the bundle; hanging either off a surface that may
-// never be opened would be a boot-order regression dressed up as tidiness.
-//
-// The AI-credit renderer. Its ROW moved to Settings → Anthropic API key when
-// THE UI OVERHAUL emptied the drawer's status pane, but the import stays here:
-// it is a side-effect module that installs window.AiCredit, App.init() is what
-// calls AiCredit.Budget.init(), and this island is still the earliest thing in
-// the bundle that loads before that. Moving the import to the settings screen
-// would tie a boot-time global to a screen nobody has opened yet.
-import './ai-credit.js';
-import './native-app-version.js';
 import { NodePillRow } from './node-pill-row';
 import { WalletRow } from './wallet-row';
-import './node-pill.js';
-import './wallet-sheet.js';
-import './header-menu-controller.js';
-// The bell's module, imported here because its list is rendered here now.
-// ../notifications/mount.ts installs the store's flush and publishes the
-// controller; this pulls both in with the markup they drive.
-import '../notifications/mount';
 
 export function HeaderMenu() {
-  // ── The notifications AREA is not collapsible ────────────────────────
-  //
-  // #1367 briefly collapsed this whole section behind a disclosure. That was
-  // the wrong grain: what is worth collapsing is each GROUP inside it — an app
-  // with nine notifications should fold to one line, but the section itself is
-  // the reason the drawer has a top half at all, and hiding it behind a tap
-  // just moved the work. The per-group fold is where it belongs, and it lives
-  // in ../notifications/notifications.js (`Notifications.expanded`, cleared on
-  // every drawer open so each one starts folded).
-  //
-  // So this island holds no notifications state again, and the section renders
-  // exactly the markup it shipped: header, "Mark all read", body.
-  useIsomorphicLayoutEffect(() => {
-    window.NodePill?.init();
-    window.WalletSheet?.init();
-    // The mobile-app version renderer. Its row is the Improve panel's footer
-    // now, but the init stays on this island's layout effect: it runs inside
-    // flushSync(hydrateRoot), so its class/text write lands after hydration has
-    // adopted the node and still before DOMContentLoaded.
-    window.NativeAppVersion?.init();
-    // The drawer's own open/close wiring — app.js's bindEvents() used to call
-    // this; it lives beside the markup it drives now (#1079 chunk B).
-    window.HeaderMenu?.init();
-    // Notifications init from HERE now, not from the retired
-    // #notifications-panel island. A LAYOUT effect, not a passive one: it runs
-    // inside main.tsx's flushSync(hydrateRoot), which is before
-    // DOMContentLoaded — where the classic script's init() used to run, only
-    // earlier still. A passive effect could be scheduled after app.js's init,
-    // and `sv:authed` fires at most once, so a late listener would never get
-    // the first fetch.
-    window.Notifications?.init();
-    // The list's pull-to-refresh moved to the Notifications SCREEN with the
-    // list itself (Streamlined Concept) — see notifications-screen.tsx.
-  }, []);
+  // NO BOOT SEAM HERE ANY MORE. This island used to carry the bundle's
+  // earliest side-effect imports and a layout effect that init()ed NodePill,
+  // WalletSheet, NativeAppVersion, HeaderMenu and Notifications — not because
+  // any of them belonged to a drawer, but because this was the first island to
+  // load. ./platform-header.tsx is earlier and never unmounts, so the seam
+  // lives there now and this file is markup again.
 
   return (
     <>
@@ -375,7 +322,7 @@ export function HeaderMenu() {
               the only reason #header-menu-rows is a column flex, and it stays
               so — the account rows use it now (see #drawer-main-rows). And the
               deploy dot the footer's amber pill used to drive is unchanged:
-              DrawerStatus.refreshDeployDot still reads a rendered version row,
+              ImproveStatus.refreshDeployDot still reads a rendered version row,
               it just reads the one in Settings.
           */}
 

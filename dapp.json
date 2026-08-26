@@ -1739,8 +1739,8 @@
       "expectText": "Theme"
     },
     {
-      "name": "Drawer footer distinguishes the mobile app version from the platform version",
-      "path": "/?shot=menu",
+      "name": "Settings' About block distinguishes the mobile app version from the platform version",
+      "path": "/#settings",
       "expectText": "Platform version"
     },
     {

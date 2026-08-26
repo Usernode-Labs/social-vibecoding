@@ -1,18 +1,19 @@
 // The hamburger drawer's behaviour — open/close, the kit-panel adoption, the
 // presentation state App._entryTransition reads, and app-scoped visibility
 // (#1079 chunk B). Moved verbatim out of public/js/app.js, where it
-// lived as App.HeaderMenu / App.DrawerStatus, when #header-menu-panel became a
+// lived as App.HeaderMenu, when #header-menu-panel became a
 // React island: the markup is React's now, so the code that drives it belongs
 // beside the component rather than in the shell's router module.
 //
 // A MOVE, not a rewrite. Every threshold, every guard and every comment below
 // came across unchanged, with three deliberate differences:
 //
-//   1. `App.HeaderMenu.x` self-references became `HeaderMenu.x`, and the two
-//      objects publish as window.HeaderMenu / window.DrawerStatus. app.js keeps
-//      `App.HeaderMenu` / `App.DrawerStatus` as thin forwarders onto those
-//      globals, so its own call sites — plus app-view.js, native-chrome.js,
-//      node-pill.js and wallet-sheet.js — are untouched.
+//   1. `App.HeaderMenu.x` self-references became `HeaderMenu.x`, and the object
+//      publishes as window.HeaderMenu. app.js keeps `App.HeaderMenu` as a thin
+//      forwarder onto that global, so its own call sites — plus app-view.js,
+//      native-chrome.js, node-pill.js and wallet-sheet.js — are untouched.
+//      (`DrawerStatus` rode along here until it outlived the drawer; it is
+//      ../improve/improve-status.js's `ImproveStatus` now.)
 //   2. The theme segmented control is genuinely React-owned now (see
 //      ThemeControl in ./header-menu.tsx), so _renderThemeButtons and its click
 //      wiring are gone from here. open() announces itself with a
@@ -27,93 +28,6 @@
 // evaluates this module's whole graph in Node.
 
 import { adoptKitSurface } from '../../lib/kit-surface';
-
-// Drawer status/version rows (header slim-down): the kudos + AI-credit meters
-// render into #drawer-status-pane, and the platform version + mobile-app release +
-// fork lineage label render into #drawer-footer — none of them in the header
-// any more. The dApp SHA does not belong in this platform-information block.
-const DrawerStatus = {
-  // The header's App/Dev switch rides the SAME lifecycle, which is why
-  // it's owned here rather than in a seventh place: this one call
-  // already covers openApp, navigateHome, AppView.close() and all six
-  // other-screen navigations (leaderboard, challenges, profile, admin,
-  // settings, topochain). It used to be free — the old #app-tabs bar
-  // was a child of #app-view and disappeared whenever that did — but a
-  // header-resident control has to be hidden explicitly.
-  setAppOpen(open) {
-    // Fork lineage is app-scoped too — closing an app can never leave
-    // the previous app's "Forked from" line behind.
-    // THE UI OVERHAUL: this used to show and hide #app-mode-switch, the
-    // App/Dev segmented control. There is no App/Dev switch any more — an
-    // app is just an app, and "Dev" is somewhere the Improve panel links to.
-    // What this call publishes now is that panel's TARGET, which is what
-    // decides whether #improve-btn exists at all, so the header control still
-    // rides exactly this one lifecycle: it already covers openApp,
-    // navigateHome, AppView.close() and all six other-screen navigations.
-    //
-    // The self-hosted platform row is NOT excluded here, unlike the switch it
-    // replaced. That exclusion existed because the row's App mode had no
-    // reachable iframe target, which made a two-option control a control with
-    // one dead option. Improve has no such problem — everything it offers
-    // works on the platform's own row, opened like any other app.
-    const appData = window.AppView?.appData;
-    if (open && appData?.slug) {
-      window.Improve?.setTarget({
-        kind: appData.self_hosted ? 'platform' : 'app',
-        slug: appData.slug,
-        name: appData.name || appData.slug,
-        selfHosted: !!appData.self_hosted,
-        repoUrl: appData.repo_url || null,
-        version: appData.main_sha ? appData.main_sha.slice(0, 7) : null,
-        deploying: appData.status === 'deploying',
-        readOnly: !!window.AppView?.readOnly,
-        canShare: appData.status === 'running' && !!appData.url,
-      });
-    } else if (!open) {
-      // Cleared here rather than per-screen: every navigation away from an
-      // app already funnels through this call, home included — which is what
-      // keeps the Improve button from lingering in the header after backing
-      // out of an app.
-      //
-      // Home immediately republishes the PLATFORM's own row on top of this
-      // (#1367, Home.publishImproveTarget) — so on home the clear is a swap,
-      // not an absence. Every other screen leaves it cleared.
-      window.Improve?.setTarget(null);
-    }
-    DrawerStatus.refreshDeployDot();
-  },
-
-  // Mirror the platform version row's state onto the Improve button. Read
-  // straight off the rendered row rather than threading state: its markup is
-  // already the single source of truth for both conditions.
-  //
-  // Scoped to #settings-about — where the Streamlined Concept board's removal
-  // of the drawer's reference footer moved that row — so a deploying dApp pill
-  // on a home tile can never light this dot. The row is in the shell at all
-  // times (the settings screen is hidden, never unmounted), so reading it does
-  // not depend on Settings being open.
-  //
-  // THE DOT MOVED WITH THE ROWS. It was `#header-menu-deploy-dot` on the
-  // hamburger, from when the version rows lived in that drawer's footer; they
-  // are in the Improve panel's footer now, so the cue that says "go and look
-  // at them" belongs on the control that opens it. The name went too — a dot
-  // called `header-menu-*` on the Improve button would be a lie that outlives
-  // everyone who remembers the move.
-  //
-  // And it PUBLISHES rather than toggling a class: #improve-btn is React-owned
-  // end to end, so its indicators are store state. That also lets the second
-  // state exist at all — `button.drawer-ver--stale`, the violet "the platform
-  // rolled past the SHA this tab loaded against" reload affordance, which the
-  // old dot could not show because it had exactly one colour.
-  refreshDeployDot() {
-    const deploying = !!document.querySelector(
-      '#settings-about .drawer-ver--deploying');
-    const stale = !deploying && !!document.querySelector(
-      '#settings-about button.drawer-ver--stale');
-    const state = deploying ? 'deploying' : (stale ? 'stale' : 'idle');
-    if (typeof window !== 'undefined') window.Improve?.setVersionState?.(state);
-  },
-};
 
 // Slide-out navigation drawer — available at every viewport width
 // (#122). Top to bottom: the kudos/AI-credit status pane, the theme
@@ -455,7 +369,6 @@ const HeaderMenu = {
 
 if (typeof window !== 'undefined') {
   window.HeaderMenu = HeaderMenu;
-  window.DrawerStatus = DrawerStatus;
 }
 
-export { HeaderMenu, DrawerStatus };
+export { HeaderMenu };

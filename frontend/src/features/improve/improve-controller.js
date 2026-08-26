@@ -9,7 +9,7 @@
  * mode — everything you do *to* the app rather than *with* it — is this panel.
  * That means this file absorbed responsibilities from three retired places:
  *
- *   * `App.DrawerStatus.setAppOpen()`'s show/hide of `#app-mode-switch`
+ *   * `App.ImproveStatus.setAppOpen()`'s show/hide of `#app-mode-switch`
  *     becomes `Improve.setTarget()`, which publishes what the panel is about
  *     (and therefore whether the header button exists at all);
  *   * the drawer's `#drawer-row-github` / `#drawer-row-share` / version rows
@@ -163,7 +163,7 @@ const Improve = {
 
   // ── What the panel is about ──────────────────────────────────────
   //
-  // Called from App.DrawerStatus.setAppOpen() for an open app, and from
+  // Called from App.ImproveStatus.setAppOpen() for an open app, and from
   // Home.publishImproveTarget() for the platform's own self-hosted row while
   // home is on screen (#1367). Passing null clears the target, which hides the
   // header button — every OTHER screen does that.
@@ -586,7 +586,7 @@ const Improve = {
   },
 
   /**
-   * The platform version dot's state, from DrawerStatus.refreshDeployDot().
+   * The platform version dot's state, from ImproveStatus.refreshDeployDot().
    *
    * 'deploying' | 'stale' | 'idle' — read off the version rows this panel's
    * own footer renders, which is why the dot moved here from the hamburger.

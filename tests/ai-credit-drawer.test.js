@@ -40,9 +40,9 @@ test('the shell still carries the renderer, now via the React bundle', () => {
   assert.ok(!html.includes('src="/js/ai-credit.js"'),
     'the classic tag is retired — a surviving one would load a second copy');
   const menu = fs.readFileSync(
-    path.join(root, 'frontend/src/features/header/header-menu.tsx'), 'utf8');
+    path.join(root, 'frontend/src/features/header/platform-header.tsx'), 'utf8');
   assert.match(menu, /import '\.\/ai-credit\.js'/,
-    'the header-menu island must import it, or nothing defines window.AiCredit');
+    'the header bar island must import it, or nothing defines window.AiCredit');
 });
 
 test('the renderer publishes into the store the row reads', () => {

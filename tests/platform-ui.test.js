@@ -343,12 +343,13 @@ test('the Improve button ships hidden and opens the panel', () => {
 });
 
 test('setAppOpen publishes the Improve target instead of toggling a switch', () => {
-  // #1079 chunk B moved App.DrawerStatus into the React bundle alongside the
-  // drawer markup it drives; app.js keeps a forwarder. THE UI OVERHAUL kept
+  // #1079 chunk B moved it into the React bundle; app.js keeps a forwarder.
+  // It is ImproveStatus in the improve feature now — both of its publishers
+  // are about the Improve button, not about any drawer. THE UI OVERHAUL kept
   // that lifecycle and changed only what it publishes — one call already
   // covers openApp, navigateHome, AppView.close() and every other-screen
   // navigation, which is why the header control still rides it.
-  const src = read('frontend/src/features/header/header-menu-controller.js');
+  const src = read('frontend/src/features/improve/improve-status.js');
   const fn = src.slice(src.indexOf('setAppOpen(open) {'), src.indexOf('refreshDeployDot() {'));
   assert.ok(!fn.includes("getElementById('app-mode-switch')"),
     'the retired switch must not still be toggled here');
@@ -422,7 +423,7 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
   //    home's — in that order, so nothing inherits the closed app's facts.
   const navStart = src.indexOf('navigateHome() {');
   const nav = src.slice(navStart, src.indexOf('after: () => {', navStart));
-  assert.ok(/App\.DrawerStatus\.setAppOpen\(false\);[\s\S]{0,900}Home\.publishImproveTarget\(\)/.test(nav),
+  assert.ok(/App\.ImproveStatus\.setAppOpen\(false\);[\s\S]{0,900}Home\.publishImproveTarget\(\)/.test(nav),
     'navigateHome must clear the app target before republishing home\'s');
   // The retired helper stays retired: the publish belongs to Home, and a
   // second copy in app.js is how the return-path-only bug got in.
@@ -434,7 +435,7 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
   // and then calls Home.load(), whose render() publishes home's own.
   const fallbackIdx = src.indexOf("App._showOnlyScreen('home-screen');");
   const fallback = src.slice(fallbackIdx, src.indexOf('Home.load();', fallbackIdx));
-  assert.ok(fallback.includes('App.DrawerStatus.setAppOpen(false);'),
+  assert.ok(fallback.includes('App.ImproveStatus.setAppOpen(false);'),
     'the hash-fallback home landing must clear the app target too');
 });
 

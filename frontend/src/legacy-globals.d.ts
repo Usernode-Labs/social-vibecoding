@@ -103,9 +103,8 @@ declare global {
     };
     /**
      * features/header/header-menu-controller.js — the hamburger drawer's
-     * open/close, and the app-scoped drawer rows' visibility. Both were
-     * App.HeaderMenu / App.DrawerStatus in app.js, which now forwards onto
-     * these so its own call sites (plus app-view.js, native-chrome.js,
+     * open/close. It was App.HeaderMenu in app.js, which now forwards onto
+     * this so its own call sites (plus app-view.js, native-chrome.js,
      * node-pill.js, wallet-sheet.js) are untouched.
      */
     HeaderMenu?: {
@@ -116,8 +115,8 @@ declare global {
       consumeNavPending(): boolean;
       [key: string]: unknown;
     };
-    /** features/header/header-menu-controller.js */
-    DrawerStatus?: {
+    /** features/improve/improve-status.js */
+    ImproveStatus?: {
       setAppOpen(open: boolean): void;
       refreshDeployDot(): void;
       [key: string]: unknown;

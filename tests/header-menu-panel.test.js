@@ -39,6 +39,11 @@ const root = path.join(__dirname, '..');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
 const headerMenuJs = fs.readFileSync(
   path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
+// The bundle's boot seam moved off this island: ./platform-header.tsx is the
+// first island in the shell and it never unmounts, so the side-effect imports
+// and the init()s that used to ride the drawer live there.
+const platformHeaderTsx = fs.readFileSync(
+  path.join(root, 'frontend/src/features/header/platform-header.tsx'), 'utf8');
 const headerMenuTsx = fs.readFileSync(
   path.join(root, 'frontend/src/features/header/header-menu.tsx'), 'utf8');
 const appCss = fs.readFileSync(path.join(root, 'public/css/app.css'), 'utf8');
@@ -178,11 +183,11 @@ test('the drawer controller lives in the bundle, not in app.js', () => {
     'close() is awaited by the Node/Wallet sheets — the forwarder must stay thenable');
 });
 
-test('init() is called from the island, not from App.bindEvents()', () => {
+test('init() is called from an island, not from App.bindEvents()', () => {
   assert.ok(!/App\.HeaderMenu\.init\(\);/.test(appJs),
     'binding from bindEvents() would run before hydration adopted #header-menu-panel');
-  assert.match(headerMenuTsx, /window\.HeaderMenu\?\.init\(\)/,
-    'the island owns the wiring now');
+  assert.match(platformHeaderTsx, /window\.HeaderMenu\?\.init\(\)/,
+    'the header bar island owns the wiring now — it is the earliest one');
   assert.match(headerMenuJs, /if \(HeaderMenu\._bound\) return/,
     'a layout effect can run twice (StrictMode, remount) and these listeners '
     + 'sit on nodes that outlive the component — binding twice double-closes');
@@ -215,12 +220,12 @@ test('the theme segments left the drawer entirely', () => {
 test("the app's rows lead the drawer; alerting is the header's", () => {
   // Streamlined Concept: the board draws ONE app-scoped drawer, so the
   // Notifications and Messages rows became header glyphs and the Your-apps
-  // list became the Apps sheet. The module's init stays on this island's
-  // layout effect — the drawer is still the always-mounted host.
+  // list became the Apps sheet. The module's init runs from the HEADER BAR's
+  // layout effect — the earliest island, and one that never unmounts.
   assert.match(headerMenuTsx, /<AppContextRows \/>/,
     'the drawer renders the app-scoped rows');
-  assert.match(headerMenuTsx, /window\.Notifications\?\.init\(\)/,
-    'and initialises the module from its layout effect, before DOMContentLoaded');
+  assert.match(platformHeaderTsx, /window\.Notifications\?\.init\(\)/,
+    'and the header bar initialises the module from its layout effect, before DOMContentLoaded');
   for (const gone of ['drawer-row-notifications', 'drawer-row-messages',
     'drawer-your-apps']) {
     assert.equal(headerMenuTsx.indexOf(`id="${gone}"`), -1,

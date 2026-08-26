@@ -186,11 +186,13 @@ test('the version dot rides the hamburger, hidden by default', () => {
 });
 
 test('the deploy dot is derived from the rendered pills, not a duplicate flag', () => {
-  // #1079 chunk B moved App.DrawerStatus into the React bundle, beside the
-  // drawer markup it drives; app.js keeps a forwarder for its call sites.
+  // #1079 chunk B moved it into the React bundle; app.js keeps a forwarder for
+  // its call sites. It is ImproveStatus now, in the improve feature — its two
+  // publishers are both about the Improve button, and the drawer it was named
+  // after no longer has anything to do with either.
   const headerMenuJs = fs.readFileSync(
-    path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
-  assert.match(headerMenuJs, /refreshDeployDot\(\)\s*\{/, 'DrawerStatus.refreshDeployDot is defined');
+    path.join(root, 'frontend/src/features/improve/improve-status.js'), 'utf8');
+  assert.match(headerMenuJs, /refreshDeployDot\(\)\s*\{/, 'ImproveStatus.refreshDeployDot is defined');
   const fn = headerMenuJs.slice(headerMenuJs.indexOf('  refreshDeployDot() {'));
   // Post-#913 the version rows signalled a rolling deploy with
   // .drawer-ver--deploying instead of the pill class. The SCOPE has followed
@@ -208,10 +210,10 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
     'the dot is store state, not a class toggled by id');
   assert.ok(!/getElementById\('improve-version-dot'\)/.test(headerMenuJs),
     'nothing resolves the dot by id');
-  // The platform-revision renderer and the drawer lifecycle both synchronize
+  // The platform-revision renderer and the app-open lifecycle both synchronize
   // the dot. dApp deploy pills live on home cards and are out of scope.
-  const calls = (appJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length
-    + (headerMenuJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length;
+  const calls = (appJs.match(/ImproveStatus\.refreshDeployDot\(\)/g) || []).length
+    + (headerMenuJs.match(/ImproveStatus\.refreshDeployDot\(\)/g) || []).length;
   assert.ok(calls >= 2,
     `refreshDeployDot is called from the revision renderer and lifecycle (found ${calls})`);
 });
@@ -226,9 +228,9 @@ test('the mobile app version row ships hidden', () => {
 
   // The app-open lifecycle is unchanged — it publishes what the Improve panel
   // and the drawer are ABOUT, which outlived the reference rows entirely.
-  assert.match(appJs, /DrawerStatus\.setAppOpen\(true\)/,
+  assert.match(appJs, /ImproveStatus\.setAppOpen\(true\)/,
     'the app-open lifecycle still drives the header mode switch');
-  assert.match(appViewJs, /DrawerStatus\.setAppOpen\(false\)/,
+  assert.match(appViewJs, /ImproveStatus\.setAppOpen\(false\)/,
     'and AppView.close() clears it');
 });
 

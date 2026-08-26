@@ -11,8 +11,11 @@ const vm = require('node:vm');
 const root = path.join(__dirname, '..');
 const source = fs.readFileSync(
   path.join(root, 'frontend/src/features/header/native-app-version.js'), 'utf8');
+// The bundle's boot seam. It rode on the hamburger island for as long as
+// there was one; ./platform-header.tsx is earlier and never unmounts, so the
+// imports and inits live there.
 const menuSource = fs.readFileSync(
-  path.join(root, 'frontend/src/features/header/header-menu.tsx'), 'utf8');
+  path.join(root, 'frontend/src/features/header/platform-header.tsx'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -92,7 +95,7 @@ function loadRenderer({
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  // The module is an ordinary bundle module now (./header-menu.tsx imports it)
+  // The module is an ordinary bundle module now (./platform-header.tsx imports it)
   // and pulls its store in by name. Bind the REAL store into the sandbox and
   // drop the import line, so the module body evaluates as a script exactly as
   // it did — same technique as tests/challenge-template-prefill.test.js.
@@ -122,11 +125,11 @@ async function settle() {
 
 test('the drawer island imports and initializes the native version renderer after hydration', () => {
   // THE UI OVERHAUL moved the ROW into the Improve panel's footer — it is
-  // reference information about the platform, which is what that footer is —
-  // but the import and the init stay HERE. This island loads before anything
-  // else in the bundle, and the renderer is a side-effect module that has to
+  // reference information about the platform — but the import and the init
+  // stay on the HEADER BAR's island. It is the first island in the shell and
+  // it never unmounts, and the renderer is a side-effect module that has to
   // install window.NativeAppVersion before app.js's own init looks for it;
-  // hanging it off a panel that may never be opened would be a boot-order
+  // hanging it off a surface that may never be opened would be a boot-order
   // regression dressed up as tidiness.
   assert.match(menuSource, /import '\.\/native-app-version\.js'/);
   assert.match(menuSource, /window\.NativeAppVersion\?\.init\(\)/,
