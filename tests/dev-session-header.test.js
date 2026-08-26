@@ -294,14 +294,19 @@ test('once a preview exists the strip draws the doing<->seeing switch', () => {
   assert.equal((seeing.match(/id="dc-mode-chip"/g) || []).length, 1);
 });
 
-test('at rest, with a preview, the doing segment is filled but wordless', () => {
+test('the label belongs to the THUMB, so both sides carry one', () => {
+  // It used to say `Building` only while a turn ran, which left the thumb
+  // wordless half the time and made the two sides look like different
+  // controls. A switch that reads `Preview` in one position reads `Building`
+  // in the other.
   const { view } = makeDevChat();
   const rest = headerHtml(view(SESSION),
     { previewSessionId: 7, previewUrl: 'https://staging.example/x' });
   assert.match(rest, /id="dc-mode-switch"/);
   assert.match(rest, /id="session-build-btn"[^>]*aria-pressed="true"/);
-  assert.doesNotMatch(rest, /dc-mode-chip/,
-    '"you are in the chat and nothing is running" is not news');
+  assert.match(rest, /id="dc-mode-chip"[^>]*>Building</,
+    'idle or busy, the doing side is labelled');
+  assert.equal((rest.match(/id="dc-mode-chip"/g) || []).length, 1, 'and only one side is');
 });
 
 test('the mid-turn repaint publishes instead of writing innerHTML', () => {

@@ -115,12 +115,17 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
  *
  * The EYE opens the staging preview (seeing); the pencil-sparkles brings the
  * chat back (doing). The thumb is yellow under the eye and accent blue under
- * the pencil, and the segment it is under carries the LABEL — which is where
- * the retired `#dc-mode-chip` went: `Preview` while the preview is up,
- * `Building` while an AI turn is in flight. At rest the doing segment holds
- * the thumb but no word, because "you are in the chat, and nothing is
- * running" is not news. The label keeps the chip's id so the one thing that
- * read it still resolves.
+ * the pencil, and WHICHEVER segment it is under carries the label — `Preview`
+ * one side, `Building` the other. Symmetrical on purpose: the label belongs
+ * to the thumb, so a switch that reads `Preview` in one position has to read
+ * `Building` in the other, or the control looks like it lost its word.
+ *
+ * `Building` used to appear only while an AI turn was in flight, on the
+ * reasoning that "you are in the chat and nothing is running" is not news.
+ * That made the two sides asymmetric — the thumb sat wordless half the time —
+ * and a busy turn already announces itself in the transcript and the header's
+ * status pill. The label keeps `#dc-mode-chip`'s id so the one thing that read
+ * it still resolves.
  *
  * ── The gate ──────────────────────────────────────────────────────────
  *
@@ -228,7 +233,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         }}
       >
         <PencilSparklesIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-        {!seeing && busy ? <span id="dc-mode-chip">Building</span> : null}
+        {!seeing ? <span id="dc-mode-chip">Building</span> : null}
       </button>
     </span>
   );
