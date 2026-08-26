@@ -121,17 +121,50 @@ test('a re-open during the exit spring keeps the drawer in the NEW panel', () =>
     'onDismissStart must run BEFORE the ownership guard can bail out');
 });
 
-test('the hamburger reflects its expanded state on the touch path too', () => {
+test('#1436: the CHIP reflects the expanded state, on both paths, guarded', () => {
   const body = openBody();
-  // The touch branch returns early, so before this it left the button
-  // reading "Open menu" / aria-expanded=false for the whole time the
-  // drawer was open.
-  assert.match(body, /aria-expanded',\s*'true'[\s\S]{0,200}?'Close menu'/,
-    'opening must announce the expanded state on the touch path');
+  // The trigger is #app-switcher-btn now. Writing to the retired
+  // #header-menu-btn unguarded threw `Cannot read properties of null` on every
+  // open and every dismiss — the "1 console error on load" three declared
+  // checks caught on ?shot=menu-nav.
+  assert.match(headerMenuJs, /_setTriggerExpanded\(expanded\)\s*\{/,
+    'one guarded helper owns the trigger state');
+  const helper = headerMenuJs.slice(headerMenuJs.indexOf('  _setTriggerExpanded(expanded) {'));
+  assert.match(helper.slice(0, 400), /getElementById\('app-switcher-btn'\)/,
+    'it resolves the chip, not the retired hamburger');
+  assert.match(helper.slice(0, 400), /if \(trigger\)/,
+    'and GUARDS it — the chip is absent on the platform\'s own screens, where '
+    + 'there is no app to name, and the menu is still openable by deep link');
+
+  // aria-label is deliberately NOT written: the chip is React-owned and
+  // renders its own ("Switch app — currently <app>"), so a write here would be
+  // reconciled away and would say the wrong thing until it was.
+  assert.ok(!/'Close menu'|'Open menu'/.test(headerMenuJs),
+    'the controller must not fight React for the chip\'s label');
+
+  // The touch branch used to return before the aria writes; it still must not.
+  assert.match(body, /_setTriggerExpanded\(true\)[\s\S]{0,120}?return;/,
+    'opening announces the expanded state on the touch path too');
   const dismiss = body.slice(body.indexOf('onDismiss: () => {'), body.indexOf('if (adoption) {'));
-  assert.match(dismiss, /aria-expanded',\s*'false'/,
+  assert.match(dismiss, /_setTriggerExpanded\(false\)/,
     'every exit path routes through onDismiss — reset the state there');
-  assert.match(dismiss, /'Open menu'/, 'the label must go back too');
+});
+
+test('#1436: init() binds the drawer even with no hamburger to hang it on', () => {
+  // It resolved #header-menu-btn and `return`ed when it was missing. With the
+  // button retired that early return killed everything after it — the ✕, the
+  // overlay click, Escape, and the single-motion nav-arm rule #977's checks
+  // are about — while the drawer still OPENED, because its trigger is the
+  // chip's own React onClick. Silent, and exactly the shape of bug the
+  // declared checks exist to catch.
+  const init = headerMenuJs.slice(headerMenuJs.indexOf('  init() {'));
+  const head = init.slice(0, 1400);
+  assert.ok(!/getElementById\('header-menu-btn'\)/.test(head),
+    'init must not depend on the retired button');
+  assert.match(head, /getElementById\('header-menu-panel'\)[\s\S]{0,80}?if \(!panel\) return;/,
+    'the PANEL is what has to exist for the drawer to be wired');
+  assert.match(init, /header-menu-close[\s\S]{0,120}?addEventListener/,
+    'and the close button is bound');
 });
 
 test('close() and Escape both defer to the kit handle', () => {

@@ -223,7 +223,6 @@ const HeaderMenu = {
   open() {
     const panel = document.getElementById('header-menu-panel');
     const overlay = document.getElementById('header-menu-overlay');
-    const btn = document.getElementById('header-menu-btn');
     if (!panel) return;
     // A fresh presentation ends any "still sliding out" window the
     // legacy path was counting down (#977).
@@ -278,8 +277,7 @@ const HeaderMenu = {
         // The hamburger's state is not the kit's business, so it is
         // reset here on EVERY exit path (backdrop, Escape, ✕, row
         // navigation) — they all route through the kit dismiss.
-        btn.setAttribute('aria-expanded', 'false');
-        btn.setAttribute('aria-label', 'Open menu');
+        HeaderMenu._setTriggerExpanded(false);
       },
     });
     if (adoption) {
@@ -292,8 +290,7 @@ const HeaderMenu = {
       // The touch path used to return before the aria writes below,
       // leaving the button reading "Open menu" / collapsed while the
       // drawer was open.
-      btn.setAttribute('aria-expanded', 'true');
-      btn.setAttribute('aria-label', 'Close menu');
+      HeaderMenu._setTriggerExpanded(true);
       return;
     }
     overlay.classList.remove('hidden');
@@ -301,8 +298,7 @@ const HeaderMenu = {
     overlay.getBoundingClientRect();
     overlay.setAttribute('data-open', '');
     panel.setAttribute('data-open', '');
-    btn.setAttribute('aria-expanded', 'true');
-    btn.setAttribute('aria-label', 'Close menu');
+    HeaderMenu._setTriggerExpanded(true);
     const closeBtn = document.getElementById('header-menu-close');
     if (closeBtn) closeBtn.focus();
   },
@@ -322,14 +318,12 @@ const HeaderMenu = {
     }
     const panel = document.getElementById('header-menu-panel');
     const overlay = document.getElementById('header-menu-overlay');
-    const btn = document.getElementById('header-menu-btn');
     if (!panel) return Promise.resolve();
     const wasOpen = panel.hasAttribute('data-open');
     if (wasOpen) HeaderMenu._closingAt = HeaderMenu._now();
     panel.removeAttribute('data-open');
     overlay.removeAttribute('data-open');
-    btn.setAttribute('aria-expanded', 'false');
-    btn.setAttribute('aria-label', 'Open menu');
+    HeaderMenu._setTriggerExpanded(false);
     if (!wasOpen) return Promise.resolve();
     const done = HeaderMenu._afterDismiss();
     // Hide overlay after the slide-out transition finishes.
@@ -350,6 +344,29 @@ const HeaderMenu = {
     });
   },
 
+  // #1436: THE TRIGGER IS THE CHIP NOW, and it may not be on screen.
+  //
+  // This controller used to resolve #header-menu-btn and write to it
+  // unguarded, from eight places. That button is retired, so every one of
+  // those writes threw `Cannot read properties of null` the moment the drawer
+  // opened or dismissed — which is what three declared checks caught as "1
+  // console error on load" on ?shot=menu-nav.
+  //
+  // Only `aria-expanded` is written, and deliberately not `aria-label`: the
+  // chip is React-owned and renders its own label ("Switch app — currently
+  // <app>"), so a write here would be reconciled away on the next render and
+  // would say the wrong thing in the meantime. `aria-expanded` is not a
+  // rendered prop, so React never touches it — the same split that lets
+  // App.setBackIcon write to #back-btn inside this React-owned header.
+  //
+  // The chip is also ABSENT on the platform's own screens, where there is no
+  // app to name. A menu whose trigger is off-screen is still perfectly
+  // openable (a deep link, ?shot=menu), so this guards rather than bails.
+  _setTriggerExpanded(expanded) {
+    const trigger = document.getElementById('app-switcher-btn');
+    if (trigger) trigger.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  },
+
   _bound: false,
 
   init() {
@@ -358,10 +375,16 @@ const HeaderMenu = {
     // on nodes that outlive the component, so binding twice would double
     // every close.
     if (HeaderMenu._bound) return;
-    const btn = document.getElementById('header-menu-btn');
-    if (!btn) return;
+    // #1436: this used to resolve #header-menu-btn and `return` when it was
+    // missing. With the hamburger retired that early return killed everything
+    // below it — the ✕, the overlay click, Escape, and the single-motion
+    // nav-arm rule that #977's three checks are about — while the drawer
+    // still opened, because its trigger is the React chip's own onClick.
+    //
+    // So the panel is what has to exist, not the button.
+    const panel = document.getElementById('header-menu-panel');
+    if (!panel) return;
     HeaderMenu._bound = true;
-    btn.addEventListener('click', () => HeaderMenu.open());
     document.getElementById('header-menu-close')
       .addEventListener('click', () => HeaderMenu.close());
     document.getElementById('header-menu-overlay')
