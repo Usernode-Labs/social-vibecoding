@@ -2463,8 +2463,8 @@
       "expectSelector": "a#dc-back[href=\"#app/usernode-2d5619/dev\"]"
     },
     {
-      "name": "The header home button is a real link, not a button (#1036)",
-      "path": "/#leaderboard",
+      "name": "The header back control is a real link, not a button (#1036, #1436)",
+      "path": "/#apps/usernode-2d5619",
       "expectSelector": "header#platform-header a#back-btn:not(.hidden)[href]"
     },
     {

@@ -46,6 +46,7 @@ const RETIRED_IDS = {
   // went is the unlabeled TRIGGER and two rows that were never "where am I"
   // or "you", which is the rule that keeps the menu from decaying back into
   // a catch-all.
+  'back-icon-home': 'The header\'s house glyph. Home is a row in the app-switcher menu immediately right of that slot, so a house icon an inch away was two affordances for one destination. #back-btn survives as the BACK chevron only, and App.setBackIcon now decides whether the control exists at all rather than which glyph it draws.',
   'header-menu-btn': 'The hamburger. Its surface is opened by #app-switcher-btn now — a labelled chip naming the app you are in, whose primary action is switching.',
   'drawer-row-app-version': 'Per-dApp SHA removed from platform information; app versions remain on app cards.',
   'app-version-pill-slot': 'Drawer-only per-dApp SHA renderer removed with its row.',

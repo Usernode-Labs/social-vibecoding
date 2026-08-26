@@ -32,7 +32,6 @@ import {
   BellIcon,
   ChatIcon,
   ChevronLeftIcon,
-  HomeIcon,
 } from '@/components/ui/icons';
 
 import { useHiddenClass } from '../../lib/legacy-dom';
@@ -156,9 +155,16 @@ export function PlatformHeader() {
               in the native WebView that would push a plain tap out to the
               system browser.
           */}
-          <a id="back-btn" className="inline-flex items-center text-zinc-900 hover:text-zinc-500 dark:text-zinc-100 dark:hover:text-zinc-400 un-touch-target hidden" aria-label="Home">
-            <HomeIcon id="back-icon-home" className="w-5 h-5" />
-            <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5 hidden" />
+          <a id="back-btn" className="inline-flex items-center text-zinc-900 hover:text-zinc-500 dark:text-zinc-100 dark:hover:text-zinc-400 un-touch-target hidden" aria-label="Back">
+            {/* #1436: the house glyph is gone. Home is a row in the switcher
+                menu immediately to the right of this slot, and a house icon
+                an inch from a chip whose menu also says "Home" is two
+                affordances for one destination. What is left is the BACK
+                chevron, which has a real target this menu cannot express: the
+                Settings or Admin section you are inside, or the app list
+                behind a detail page. App.setBackIcon decides whether the
+                control exists at all. */}
+            <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5" />
           </a>
         </div>
           {/* The app-switcher chip (#1436). Renders only where

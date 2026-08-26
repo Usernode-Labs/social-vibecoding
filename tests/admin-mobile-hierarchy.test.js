@@ -163,8 +163,12 @@ test('the header back button defers to the console, then goes home', () => {
     'every other screen keeps the plain go-home behaviour');
 });
 
-test('the back button has both icons and one named toggle', () => {
-  assert.ok(html.includes('id="back-icon-home"'), 'the house icon ships');
+test('#1436: the back control is a chevron or nothing, from one named toggle', () => {
+  // The house glyph went with #1436 — Home is a row in the app-switcher menu
+  // an inch to the right, so a house icon here was a second affordance for
+  // one destination. `mode` decides whether the control EXISTS now rather
+  // than which glyph it draws.
+  assert.ok(!html.includes('id="back-icon-home"'), 'the house icon is retired');
   assert.ok(html.includes('id="back-icon-arrow"'), 'the chevron ships');
   // #1036 widened it to setBackIcon(mode, href): the control is a real
   // anchor now, so the same choke point that owns which icon shows also
@@ -172,9 +176,11 @@ test('the back button has both icons and one named toggle', () => {
   assert.match(appJs, /setBackIcon\(mode, href\)\s*\{/, 'App.setBackIcon owns the toggle');
   const fn = appJs.slice(appJs.indexOf('  setBackIcon(mode, href) {'));
   const body = fn.slice(0, 900);
-  assert.match(body, /back-icon-home/, 'it toggles the home icon');
+  assert.ok(!/back-icon-home/.test(body), 'no home glyph left to toggle');
   assert.match(body, /back-icon-arrow/, 'it toggles the arrow icon');
-  assert.match(body, /aria-label/, 'and relabels the button for screen readers');
+  assert.match(body, /btn\.classList\.toggle\('hidden', !arrow\)/,
+    'and it is the single owner of whether the control is on screen at all');
+  assert.match(body, /aria-label/, 'and labels the button for screen readers');
   assert.match(body, /setAttribute\('href'/, 'and retargets the anchor (#1036)');
   // Leaving the console must hand the button back, or every later screen
   // inherits a chevron that means "home" — but NOT from _exitAdminConsole

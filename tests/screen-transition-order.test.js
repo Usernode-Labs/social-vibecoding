@@ -158,8 +158,15 @@ test('navigateToApp reveals in fn and conceals every other root in after', () =>
   const callback = zoom.slice(at);
   assert.match(callback, /App\._setScreenVisible\('app-view', true\)/,
     'fn reveals the app view (the departing screen stays visible beneath it)');
-  assert.match(callback, /getElementById\('back-btn'\)\.classList\.remove\('hidden'\)/,
-    'the back button is revealed inside the callback too');
+  // #1436: nothing reveals the back button here any more. App.setBackIcon is
+  // its single owner — 'arrow' shows the chevron, 'home' renders nothing at
+  // all, because Home is a row in the app-switcher menu now. Opening an app
+  // has no back target, so the control is correctly absent, and the four
+  // hand-rolled classList toggles that used to fight that rule are gone.
+  assert.ok(!/getElementById\('back-btn'\)\.classList/.test(callback),
+    'the back button is not toggled by hand inside the callback');
+  assert.ok(!/getElementById\('back-btn'\)\.classList/.test(appJs),
+    'nor anywhere else — setBackIcon owns it');
   assert.match(callback, /after: \(\) => \{ App\._showOnlyScreen\('app-view'\); \}/,
     'the conceal hook hides EVERY other root — the _exitX helpers no longer do');
   // The one deliberate exception, documented at the call site: the

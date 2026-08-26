@@ -179,7 +179,11 @@ test('the header back/home control is a real anchor', () => {
   assert.match(tag, /\bhidden\b/, 'it still ships hidden — app.js toggles that class');
   // Both icons still live inside it, and the wrapper is untouched.
   const inner = html.slice(html.indexOf('<a id="back-btn"'), html.indexOf('</a>', html.indexOf('<a id="back-btn"')));
-  assert.match(inner, /id="back-icon-home"/, 'the house icon');
+  // #1436 retired the house glyph: Home is a row in the app-switcher menu
+  // immediately right of this slot. The chevron is what survives, because a
+  // Settings section or an app detail page has a back target the menu cannot
+  // express.
+  assert.ok(!/id="back-icon-home"/.test(inner), 'the house icon is retired');
   assert.match(inner, /id="back-icon-arrow"/, 'the chevron');
   assert.match(html, /<div class="w-5 h-7 shrink-0 flex items-center">/,
     'the fixed 20x28 wrapper the header-layout hook measures must not change');
@@ -205,8 +209,11 @@ test('setBackIcon owns the anchor href, defaulting to home', () => {
   assert.match(fn, /href \|\| \(window\.NavLink \? NavLink\.homeHref\(\) : '\/'\)/,
     'omitting the argument means home — correct for every screen except the '
     + 'three that claim the chevron as "up one level"');
-  assert.match(fn, /aria-label', arrow \? 'Back' : 'Home'/,
-    'the accessible name still tracks the icon');
+  // One name, because there is one meaning left: the control only exists
+  // when there is somewhere to go back to.
+  assert.match(fn, /aria-label', 'Back'/, 'the accessible name is Back');
+  assert.match(fn, /btn\.classList\.toggle\('hidden', !arrow\)/,
+    'and home mode renders nothing rather than a house');
 });
 
 test('every screen entry refreshes the href through the one choke point', () => {

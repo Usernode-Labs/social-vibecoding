@@ -2634,7 +2634,6 @@ const App = {
         if (App._inMessages) App._exitMessages();
         if (App._inBrowse) App._exitBrowse();
         App._showOnlyScreen('home-screen');
-        document.getElementById('back-btn').classList.add('hidden');
         App.setHeaderTitle('Social Vibecoding');
         // Home has no Improve target: clear whatever screen published one, or
         // the header button would outlive the app it was about (the lingering
@@ -2879,7 +2878,6 @@ const App = {
   // Same ordering rule as _showOnlyScreen: inside the transition
   // callback only.
   _enterScreenChrome() {
-    document.getElementById('back-btn').classList.remove('hidden');
     // The GitHub and Share drawer rows were hidden by hand here. Both are
     // Improve panel rows now, and setAppOpen(false) below clears the panel's
     // target — which retires them for the same reason and in one move.
@@ -3589,7 +3587,6 @@ const App = {
     const appViewEl = document.getElementById('app-view');
     PlatformUI.transition(() => {
       App._setScreenVisible('app-view', true);
-      document.getElementById('back-btn').classList.remove('hidden');
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
@@ -3694,7 +3691,6 @@ const App = {
     PlatformUI.transition(() => {
       AppView.close();
       App._showOnlyScreen('home-screen', ['app-view']);
-      document.getElementById('back-btn').classList.add('hidden');
       // …and the GitHub / Share rows retire with the panel's target, rather
       // than being hidden one by one as drawer rows were. This clears the
       // app's target; the line below immediately republishes home's own.
@@ -3749,15 +3745,30 @@ const App = {
   // pass their own up-level hash. Because App._showOnlyScreen calls this
   // on EVERY screen change, there is no state in which the href can go
   // stale — same reasoning that makes the icon itself reliable.
+  // #1436: THERE IS NO HOME BUTTON ANY MORE, and this is the choke point that
+  // makes that true. Home is a row in the app-switcher menu, which sits
+  // immediately to the right of this slot — a house icon beside a chip whose
+  // menu also says "Home" is two navigation affordances an inch apart, both
+  // going to the same place.
+  //
+  // So `mode` now decides whether the control EXISTS, not which glyph it
+  // draws: 'arrow' is a real back target (a Settings or Admin section, an app
+  // detail page) and renders the chevron; 'home' means "nothing to go back
+  // to", and renders nothing at all.
+  //
+  // This function is also the SINGLE owner of the button's visibility now.
+  // Four call sites used to toggle `hidden` on it by hand, and with home mode
+  // hiding the control they would have fought this: _enterScreenChrome()
+  // un-hid it immediately after _showOnlyScreen() set 'home'. They are gone,
+  // and the shipped markup starts hidden, so every state comes from here.
   setBackIcon(mode, href) {
     const arrow = mode === 'arrow';
-    const home = document.getElementById('back-icon-home');
     const chevron = document.getElementById('back-icon-arrow');
-    if (home) home.classList.toggle('hidden', arrow);
     if (chevron) chevron.classList.toggle('hidden', !arrow);
     const btn = document.getElementById('back-btn');
     if (btn) {
-      btn.setAttribute('aria-label', arrow ? 'Back' : 'Home');
+      btn.classList.toggle('hidden', !arrow);
+      btn.setAttribute('aria-label', 'Back');
       const target = href || (window.NavLink ? NavLink.homeHref() : '/');
       btn.setAttribute('href', target);
     }
