@@ -53,7 +53,14 @@ test('the bell opens it in place, and the hash stays a deep link', () => {
   // The hash resolves a real screen and presents OVER it, then puts the
   // address back — an overlay must never be what the address names.
   assert.match(app, /parts\[0\] === 'notifications'[\s\S]{0,900}openNotificationsSheet/);
-  assert.match(app, /openNotificationsSheet\(\) \{[\s\S]{0,700}history\.replaceState/);
+  assert.match(app, /openNotificationsSheet\(\) \{[\s\S]{0,200}_restoreAddressUnderSheet/);
+  // The address it puts back is `updateHash`'s, not one built by hand. A
+  // hand-built `#app/<slug>/app` was wrong the moment the screen underneath
+  // was a dev session: it claimed the app's default view and threw the
+  // session's own address away.
+  assert.match(app, /_restoreAddressUnderSheet\(\) \{[\s\S]{0,900}App\.updateHash\(\)/);
+  assert.match(app, /_restoreAddressUnderSheet\(\) \{[\s\S]{0,900}setTimeout\(/,
+    'deferred one tick, because updateHash refuses to run while _isRestoring');
   // One declared check still renders it from that deep link.
   assert.ok(dapp.tests.some((entry) => entry.path === '/?demo=1#notifications'
     && /#notifications-sheet\[data-open\]/.test(entry.expectSelector)));

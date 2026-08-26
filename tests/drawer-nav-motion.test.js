@@ -89,16 +89,16 @@ test('the resolved type is stamped on the screen element', () => {
 
 // ── Every screen entry routes through it ───────────────────────────────
 
-test('all eight screen transitions go through App._entryTransition', () => {
-  // It was nine. Notifications gave one back when it stopped being a screen:
-  // a sheet presents over whatever is there, so there is no screen swap to
-  // animate and nothing for the gate to type.
+test('all seven screen transitions go through App._entryTransition', () => {
+  // It was nine. Notifications and Messages gave one back each when they
+  // stopped being screens: a sheet presents over whatever is there, so there
+  // is no screen swap to animate and nothing for the gate to type.
   const calls = appJs.match(/PlatformUI\.transition\(/g) || [];
-  assert.equal(calls.length, 8,
-    `expected 8 PlatformUI.transition call sites in app.js, found ${calls.length} — `
+  assert.equal(calls.length, 7,
+    `expected 7 PlatformUI.transition call sites in app.js, found ${calls.length} — `
     + 'a new one must route its type through App._entryTransition too');
   const routed = appJs.match(/type: App\._entryTransition\(/g) || [];
-  assert.equal(routed.length, 8,
+  assert.equal(routed.length, 7,
     'every call site must take its type from the gate, or that screen keeps '
     + 'animating over the closing drawer');
 });
@@ -114,9 +114,10 @@ test('no screen entry still hard-codes its transition type', () => {
 });
 
 test('each named screen entry passes its own screen element to the gate', () => {
+  // Messages and Notifications are off this list: they are sheets, and a
+  // sheet has no screen element for the gate to stamp `data-entered` on.
   for (const nav of ['navigateToLeaderboard', 'navigateToProfile',
-    'navigateToBrowse', 'navigateToAdminConsole', 'navigateToSettings',
-    'navigateToMessages']) {
+    'navigateToBrowse', 'navigateToAdminConsole', 'navigateToSettings']) {
     const at = appJs.indexOf(`  ${nav}(`);
     assert.ok(at !== -1, `${nav} went missing`);
     const body = appJs.slice(at, appJs.indexOf("getElementById('back-btn')", at));

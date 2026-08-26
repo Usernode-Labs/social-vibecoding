@@ -41,6 +41,25 @@ declare global {
       open: boolean;
       [key: string]: unknown;
     };
+    /**
+     * The three platform SHEETS, each built by lib/sheet-controller.js and
+     * published at its controller's module scope. Classic scripts and the
+     * header glyphs reach them here.
+     */
+    MessagesSheet?: {
+      open(): void;
+      close(): Promise<void> | void;
+      toggle(): void;
+      isOpen(): boolean;
+      [key: string]: unknown;
+    };
+    NotificationsSheet?: {
+      open(): void;
+      close(): Promise<void> | void;
+      toggle(): void;
+      isOpen(): boolean;
+      [key: string]: unknown;
+    };
     /** features/settings/settings.js */
     Settings?: {
       init(): void;

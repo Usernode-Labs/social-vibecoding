@@ -77,7 +77,7 @@ import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
-import { MessagesScreen } from './features/messages';
+import { MessagesIsland } from './features/messages';
 import { NotificationsIsland } from './features/notifications';
 import { SettingsScreen } from './features/settings';
 import { Dialogs } from './features/dialogs';
@@ -230,7 +230,6 @@ export function Shell() {
           hydration parity; the hash router publishes visibility and the
           feature loads authenticated data only after #messages opens.
       */}
-      <Island name="MessagesScreen"><MessagesScreen /></Island>
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down
@@ -392,6 +391,14 @@ export function Shell() {
           dismissed back to it, on the same chassis as the sheet above.
       */}
       <Island name="NotificationsIsland"><NotificationsIsland /></Island>
+      {/*
+          Messages (Streamlined Concept). A SHEET for the same reason the bell
+          is: the chat bubble is in the header on every route, so a
+          full-screen Messages had to answer "back to where?" — and it had a
+          SECOND back level of its own on top of that. Dismissal is the outer
+          one now; the thread's own back button is the inner one.
+      */}
+      <Island name="MessagesIsland"><MessagesIsland /></Island>
       {/* Developer console (slide-up panel, anchored to bottom) — an ISLAND
           since #1079 chunk B: features/dev-console owns the whole subtree and
           public/js/dev-console.js is retired. */}

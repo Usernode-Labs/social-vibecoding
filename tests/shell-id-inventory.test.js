@@ -140,6 +140,7 @@ const RETIRED_IDS = {
   // ── Streamlined Concept, second pass: the two alerting screens
   //    became SHEETS. A screen reachable from every route has to answer
   //    "back to where?", and both answered "home".
+  'messages-screen': 'The Messages screen ROOT. It is #messages-sheet now, for the same reason and with an extra one of its own: Messages had TWO back levels (thread -> list -> home), the outer driven by writing the platform header from inside the feature. Dismissal is the outer level now and the thread\'s own button is the inner one.',
   'notifications-screen': 'The Notifications screen ROOT. It is #notifications-sheet now — an overlay over the current screen, out of App.SCREEN_IDS entirely, so there is no back arrow to point anywhere. Its children kept their ids.',
   'header-menu-btn': 'The hamburger. Its slot is the app-glyph/back-arrow pair (features/header/header-app-icon.tsx + #back-btn), and its badge cluster moved to #improve-btn — the control whose panel actually holds the work those badges report.',
   'header-menu-deploy-dot': 'Renamed #improve-version-dot with that move. A `header-menu-*` id on the Improve button would be a lie that outlives everyone who remembers it.',
@@ -305,7 +306,6 @@ const ADDED_IDS = {
   // BOTH blocks above in place, so the copy buttons already there pick up the
   // corrected rules — hence a field and no button of its own.
   'connector-name-spelling': 'Settings → Connectors input that rewrites both allow-rule blocks for a connector registered under a different server name (#1222 follow-up).',
-  'messages-screen': 'Fully React-owned platform direct/group Messages screen (#488).',
   'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
   'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
   'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
@@ -345,6 +345,9 @@ const ADDED_IDS = {
   // screen's fully-React pattern: All | Unread tabs, Today/Earlier
   // sections, avatar-initial rows. Renders from the same notifications
   // store as the drawer's list.
+  'messages-sheet': 'The Messages SHEET root — see the retired #messages-screen above.',
+  'messages-sheet-overlay': 'Its backdrop.',
+  'messages-sheet-close': 'Its close control, as the other two sheets carry.',
   'notifications-sheet': 'The Notifications SHEET root. It was #notifications-screen, a screen root in App.SCREEN_IDS — but the bell is in the header on every route, so a full-screen view had to answer "back to where?" and answered "home", wrong every time it was opened from anywhere else. A sheet presents over the current screen and dismisses back to it.',
   'notifications-sheet-overlay': 'Its backdrop.',
   'notifications-sheet-close': 'Its close control — the desktop slide-over needs a visible dismiss, as the Apps sheet has.',
