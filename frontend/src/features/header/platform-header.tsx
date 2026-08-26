@@ -62,15 +62,24 @@ export function PlatformHeader() {
   useHiddenClass(headerRef, !visible);
 
   // #1436: the title names the SCREEN (Settings, Profile, Messages…) and the
-  // chip names the APP, so exactly one of them shows. `improveStore.target` is
-  // the same condition the chip renders on, which keeps them from ever both
-  // being on screen or both being absent.
+  // chip names the APP you are inside, so exactly one of them shows.
+  //
+  // The condition is `target !== 'platform'`, NOT merely `target`. #1406
+  // deliberately re-publishes the PLATFORM's own row from
+  // _enterScreenChrome(), so that the Improve button and the view selector
+  // survive onto settings, profile, messages and the rest instead of
+  // disappearing the moment you leave home — which means a target exists on
+  // every screen in the product and cannot, on its own, tell an app apart
+  // from a platform screen. Reading it as "an app is open" hid the title
+  // everywhere, and a declared check caught it: /#apps lost the words "All
+  // apps".
   //
   // Via useHiddenClass rather than a rendered `className` for the usual
   // reason: use-header-layout.ts toggles `.is-centered` on this same node at
   // runtime, so React re-rendering the attribute would drop it.
   const { target } = useStoreState(improveStore);
-  useHiddenClass(titleRef, !!target);
+  const inApp = Boolean(target) && target !== 'platform';
+  useHiddenClass(titleRef, inApp);
 
   return (
     <>

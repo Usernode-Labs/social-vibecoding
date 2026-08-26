@@ -79,7 +79,13 @@ function drawer(): HeaderMenuBridge | undefined {
 }
 
 export function SwitcherChip() {
+  // `target !== 'platform'` rather than merely `target`: #1406 republishes the
+  // PLATFORM's own row on every non-home screen so the Improve button survives
+  // onto settings, profile and messages. A chip that rendered on that would
+  // label Settings with the platform's name and hide the screen's own title —
+  // see the matching note in ../header/platform-header.tsx.
   const { target, name } = useStoreState(improveStore);
+  const inApp = Boolean(target) && target !== 'platform';
 
   // The chip materially changes the header's LEFT group width, which is one of
   // the two inputs to the title's centred-vs-flow decision. The group's
@@ -88,7 +94,7 @@ export function SwitcherChip() {
   useIsomorphicLayoutEffect(() => {
     (window as unknown as { HeaderLayout?: { refresh?: () => void } })
       .HeaderLayout?.refresh?.();
-  }, [target]);
+  }, [inApp]);
 
   // Toggle rather than open: the drawer's controller exposes `isPresenting()`
   // for exactly this (the Improve panel already asks it before presenting), and
@@ -109,7 +115,7 @@ export function SwitcherChip() {
     <button
       id="app-switcher-btn"
       type="button"
-      className={target ? CHIP_CLASS : `hidden ${CHIP_CLASS}`}
+      className={inApp ? CHIP_CLASS : `hidden ${CHIP_CLASS}`}
       aria-label={`Switch app — currently ${label}`}
       aria-haspopup="menu"
       onClick={toggle}
