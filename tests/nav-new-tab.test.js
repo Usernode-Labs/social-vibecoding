@@ -181,8 +181,11 @@ test('the header back/home control is a real anchor', () => {
   const inner = html.slice(html.indexOf('<a id="back-btn"'), html.indexOf('</a>', html.indexOf('<a id="back-btn"')));
   assert.match(inner, /id="back-icon-home"/, 'the house icon');
   assert.match(inner, /id="back-icon-arrow"/, 'the chevron');
-  assert.match(html, /<div class="w-5 h-7 shrink-0 flex items-center">/,
-    'the fixed 20x28 wrapper the header-layout hook measures must not change');
+  // 28x28 now, not 20x28: the slot holds the app glyph as well as the arrow
+  // (features/header/header-app-icon.tsx), and they never draw together. What
+  // matters to the header-layout hook is that the width is FIXED, and it is.
+  assert.match(html, /<div class="w-7 h-7 shrink-0 flex items-center justify-center">/,
+    'the fixed 28x28 lead-icon wrapper the header-layout hook measures');
 });
 
 test('the header click handler guards before it preventDefaults', () => {
@@ -221,13 +224,15 @@ test('every screen entry refreshes the href through the one choke point', () => 
 });
 
 test('the three up-one-level screens pass their own target', () => {
-  assert.match(browseJs, /App\.setBackIcon\(\s*onDetail \? 'arrow' : 'home',[\s\S]{0,160}?'#apps'/,
+  // Each is ALWAYS an arrow since the hamburger went — level 1 falls through
+  // to home rather than hiding the slot — and each names its own parent.
+  assert.match(browseJs, /App\.setBackIcon\(\s*'arrow',[\s\S]{0,160}?'#apps'/,
     'browse detail goes up to the list…');
   assert.match(browseJs, /Browse\._detailOrigin !== 'home'/,
     '…except when it was opened from a home card, where handleBack goes home');
-  assert.match(adminConsoleJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
+  assert.match(adminConsoleJs, /setBackIcon\('arrow', inSection \? '#admin' : undefined\)/,
     'the admin section chevron pops to the console menu');
-  assert.match(settingsJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#settings' : undefined\)/,
+  assert.match(settingsJs, /setBackIcon\('arrow', inSection \? '#settings' : undefined\)/,
     'the settings section chevron pops to the settings menu');
 });
 

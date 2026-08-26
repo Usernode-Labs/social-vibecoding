@@ -165,14 +165,13 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // lib/interim-root.ts on the Dev route rather than by <Shell/>, so it is
     // not part of the prerender at all.
     //
-    // ChevronRightIcon has moved on and off this list twice, which is worth
-    // recording rather than re-deciding. It prerendered while the Improve
-    // panel drew it on its two navigating rows; #1367 turned those rows into
-    // the App/Feed/Kanban toggle and briefly kept it as the notifications
-    // disclosure caret; the follow-up removed that disclosure. Every call site
-    // left is behind route state — the Dev board frame's General-chat card and
-    // its group rows, none of which are in <Shell/>.
-    'M9 5l7 7-7 7',
+    // (ChevronRightIcon has moved on and off this list three times now, which
+    // is worth recording rather than re-deciding each time. It prerendered
+    // while the Improve panel drew it on its two navigating rows; #1367 turned
+    // those rows into the App/Feed/Kanban toggle and briefly kept it as the
+    // notifications disclosure caret; the follow-up removed that disclosure.
+    // It is BACK in the prerender now — the merged Improve panel's three view
+    // rows each end in one — so it is no longer on this list.)
     // CheckIcon and ArrowRightShortIcon — the browse screen's Add button and
     // its detail page's Open pill (#1191 slice 6). Both render from row/detail
     // descriptors that are null until the first fetch lands, so the prerendered
@@ -193,21 +192,19 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // TrophyOutlineIcon — the Challenges bar's leaderboard link and its
     // standings footer.
     'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
-    // ChatIcon and LightBulbIcon — they left the prerender when the Improve
-    // pill and the panel's two actions dropped their glyphs (owner review:
-    // the Figma bar and buttons are text-only). Both still render behind
-    // state elsewhere (chat surfaces; nothing draws the bulb today).
-    'M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
+    // LightBulbIcon — it left the prerender when the Improve pill dropped its
+    // glyph (owner review: the Figma bar is text-only) and nothing draws the
+    // bulb today. ChatIcon came BACK when the panel's quick actions became
+    // icon-led, so it is no longer on this list.
     'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
-    // PencilSparklesIcon — the session bar's "back to building" half of the
-    // doing↔seeing pair (Streamlined Concept). Renders only on a session
-    // screen with a live preview, so neither of its two paths prerenders.
-    'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
-    'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     // ChevronDownIcon — the home panels' expand caret and the header title
     // tab's own. The Your-apps fold that briefly prerendered it went with the
     // drawer restructure, so it is behind state again.
     'M19 9l-7 7-7-7',
+    // Bars3Icon — the hamburger. The board's header leads with the app glyph
+    // and the title as one switcher cluster, so nothing draws three bars any
+    // more; the export stays for the vocabulary.
+    'M4 6h16M4 12h16M4 18h16',
     // Squares2X2Icon — the retired Your-apps nav row's glyph. Nothing in the
     // shell draws it now; it stays exported for the settings/rows vocabulary.
     'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',

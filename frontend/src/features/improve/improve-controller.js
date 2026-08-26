@@ -182,6 +182,8 @@ const Improve = {
         name: '',
         selfHosted: false,
         repoUrl: null,
+        iconUrl: null,
+        iconEmoji: null,
         version: null,
         deploying: false,
         readOnly: false,
@@ -204,6 +206,8 @@ const Improve = {
       name: target.name || '',
       selfHosted: !!target.selfHosted,
       repoUrl: target.repoUrl || null,
+      iconUrl: target.iconUrl || null,
+      iconEmoji: target.iconEmoji || null,
       version: target.version || null,
       deploying: !!target.deploying,
       readOnly: !!target.readOnly,
@@ -314,7 +318,7 @@ const Improve = {
   update(patch) {
     if (!patch || !improveStore.get().slug) return;
     const allowed = {};
-    for (const key of ['name', 'repoUrl', 'version', 'deploying', 'readOnly', 'canShare', 'selfHosted']) {
+    for (const key of ['name', 'repoUrl', 'iconUrl', 'iconEmoji', 'version', 'deploying', 'readOnly', 'canShare', 'selfHosted']) {
       if (key in patch) allowed[key] = patch[key];
     }
     improveStore.set(allowed);

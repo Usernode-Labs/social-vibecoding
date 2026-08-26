@@ -57,6 +57,8 @@ const ImproveStatus = {
         name: appData.name || appData.slug,
         selfHosted: !!appData.self_hosted,
         repoUrl: appData.repo_url || null,
+        iconUrl: appData.icon_url || null,
+        iconEmoji: appData.icon_emoji || null,
         version: appData.main_sha ? appData.main_sha.slice(0, 7) : null,
         deploying: appData.status === 'deploying',
         readOnly: !!window.AppView?.readOnly,

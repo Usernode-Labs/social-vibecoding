@@ -22,7 +22,6 @@
  * host knows which sheet that is.
  */
 
-import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from '../notifications/notifications-store.js';
@@ -135,7 +134,11 @@ export function SessionRow({
           data-session-unread={session.id}
         />
       ) : null}
-      <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
+      {/* NO CHEVRON. The whole row is an anchor and the status dot already
+          says this is a live thing you can open; an affordance glyph on every
+          row only bought a redundant hint, and it bought it with the width a
+          change's TITLE needs — which is the one part of the row a reader
+          actually has to read. */}
     </a>
   );
 }

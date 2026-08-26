@@ -11,9 +11,9 @@
  * (App.setBackIcon on #back-btn, the title text, the red unread badge), so
  * React must never reconcile over those nodes: every class string below is a
  * constant prop, rendered once at hydration and never again. The exceptions
- * are React-owned end to end: <ImproveButton/>, <HeaderTitleTab/>, and the
- * hamburger's <MenuIndicators/> (whose writers publish through improveStore
- * rather than touching the DOM — see its header).
+ * are React-owned end to end: <ImproveButton/> (which carries the work-in-
+ * flight indicators), <HeaderTitleTab/> and <HeaderAppIcon/> — all of whose
+ * writers publish through improveStore rather than touching the DOM.
  *
  * The bar's OWN visibility is the one piece of state it holds. Chromeless mode
  * (`#app/<slug>/app`) hides the whole header, and App.setChromeless used to do
@@ -31,7 +31,6 @@
 import { useRef } from 'react';
 
 import {
-  Bars3Icon,
   BellIcon,
   ChatBubbleTailIcon,
   ChevronLeftIcon,
@@ -42,6 +41,7 @@ import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom'
 import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { ChromelessPill } from './chromeless-pill';
+import { HeaderAppIcon } from './header-app-icon';
 import { HeaderTitleTab } from './header-title-tab';
 import { ImproveButton } from '../improve/improve-button';
 import { improveStore } from '../improve/improve-store.js';
@@ -75,16 +75,6 @@ import '../improve/improve-status.js';
 // publishes the controller; this pulls both in.
 import '../notifications/mount';
 
-/** Amber while a deploy runs, violet once the platform has rolled past us. */
-const VERSION_DOT: Record<string, string> = {
-  deploying: 'bg-amber-500',
-  stale: 'bg-violet-400',
-};
-
-const AI_BADGE_CLS =
-  'absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full '
-  + 'bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center';
-
 /**
  * The session lifecycle pill, IN THE TOP BAR (Streamlined Concept): the
  * Figma session bar leads with ← and a `Checks run…` status pill, so the
@@ -111,60 +101,7 @@ function SessionStatusPill() {
   );
 }
 
-/**
- * The hamburger's store-rendered indicators (Streamlined Concept × #1412).
- *
- * #1412 moved the green session count and the version dot onto the Improve
- * button, spinning its lightbulb while a turn ran. The Streamlined header has
- * no lightbulb to spin — the right slot is a slim text action or the eye —
- * and the board keeps the hamburger as THE badge cluster, so the indicators
- * re-homed here instead. What #1412 actually built is kept whole: the writers
- * publish through improveStore (Improve.setSessionBadge / setVersionState —
- * never a classList write by id), the count carries `data-session-done` for
- * the declared checks, the dot knows the violet "platform rolled past this
- * tab" state, and the working cue survives as a pulse on the emerald badge —
- * which also shows, dot-sized and empty, when a turn runs with nothing
- * unread yet.
- *
- * At rest everything is `hidden` with the exact class runs the prerender
- * always shipped, so hydration matches and the badge-geometry test can keep
- * diffing this badge against the red one as twins.
- */
-function MenuIndicators() {
-  const { working, sessionUnread, sessionDone, versionState } = useStoreState(improveStore);
-  const showAi = working || sessionUnread > 0;
-  return (
-    <>
-      <span
-        id="notifications-badge-ai"
-        data-session-done={String(sessionDone)}
-        className={showAi
-          ? `${AI_BADGE_CLS}${working ? ' animate-pulse' : ''}`
-          : `hidden ${AI_BADGE_CLS}`}
-      >
-        {sessionUnread > 0 ? (sessionUnread > 99 ? '99+' : String(sessionUnread)) : ''}
-      </span>
-      <span
-        id="header-menu-deploy-dot"
-        className={VERSION_DOT[versionState]
-          ? `absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${VERSION_DOT[versionState]}`
-          : 'hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500'}
-        aria-hidden="true"
-      >
-      </span>
-    </>
-  );
-}
-
 export function PlatformHeader() {
-  // A SESSION screen replaces the hamburger with the back arrow, and carries
-  // no centre tab at all — the board draws its session bar as
-  // `← ⟳ Checks run…` on the left and the doing/seeing pair on the right, with
-  // the change's own name in the strip below. Anywhere else the hamburger
-  // leads, because the drawer is how you move around the app.
-  const { tab: headerTab, subTab: headerSubTab } = useStoreState(improveStore);
-  const onSession = headerTab === 'dev' && headerSubTab === 'sessions';
-
   // The four elements the centering measurement needs. Passing them as refs
   // replaces the classic script's document.querySelector('header') +
   // previousElementSibling / nextElementSibling walk.
@@ -251,50 +188,24 @@ export function PlatformHeader() {
         className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 shrink-0"
       >
         {/*
-            The LEFT group (Streamlined Concept): hamburger first, then the
-            back slot. use-header-layout.ts measures this group's offsetWidth
-            via leftGroupRef, so the group grew a real width when the
-            hamburger moved here from the right — the centering decision
-            adapts because it measures rather than assumes. 28px tall (the
-            header's content-row floor).
+            The LEFT group, and it is the board's own header cluster: ONE
+            28px icon slot, then the title tab beside it.
 
-            The hamburger keeps its three badges: the red unread count keeps
-            its legacy writer (Notifications._renderBadge) and its constant
-            class string, while the green session count and the version dot
-            became <MenuIndicators/> — upstream #1412 turned their writers
-            into improveStore publishes (Improve.setSessionBadge /
-            Improve.setVersionState), so they render from the store now,
-            here, on the control whose badge cluster the Streamlined board
-            keeps. See the note on <MenuIndicators/> for why they did not
-            follow #1412 onto the Improve button itself.
+            The slot has two occupants and they are disjoint BY ROUTING, not
+            by a branch. The back anchor shows exactly when
+            App.setBackIcon('arrow') has run — a dev session, a drilled
+            settings/admin/browse level, or any of the root platform screens —
+            and in every one of those states the improve store either has no
+            target or is on the sessions subtab, which is precisely when
+            <HeaderAppIcon/> renders null. Two owners, no shared state, no
+            way for both to draw at once.
+
+            The hamburger that used to lead this group is gone. Its badge
+            cluster went with it, onto #improve-btn where the work it reports
+            actually lives (see ../improve/improve-button.tsx).
         */}
         <div ref={leftGroupRef} className="h-7 shrink-0 flex items-center gap-1">
-          <button
-            id="header-menu-btn"
-            className={onSession
-              ? 'hidden relative w-7 h-7 items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'
-              : 'relative w-7 h-7 flex items-center justify-center un-touch-target text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200'}
-            aria-label="Open menu"
-            aria-expanded="false"
-          >
-            <Bars3Icon className="w-6 h-6" />
-            {/*
-                The hamburger's cluster is WORK IN FLIGHT now, and only that:
-                the drawer it opens is the app's changes surface (Streamlined
-                Concept), so the green session count and the version dot are
-                exactly what it should be able to say. The red UNREAD badge
-                went with the bell — see #notifications-btn in the right
-                group, which is the control those notifications live behind.
-            */}
-            <MenuIndicators />
-          </button>
-          {/*
-              The back slot keeps its own fixed 20px wrapper so toggling the
-              button's `hidden` class doesn't change the group's width (the
-              ResizeObserver would catch it, but a title that never moves
-              beats one that recenters a frame later).
-          */}
-          <div className="w-5 h-7 shrink-0 flex items-center">
+          <div className="w-7 h-7 shrink-0 flex items-center justify-center">
             {/*
                 #1036: a real anchor, not a button, so cmd/ctrl-click,
                 middle-click and right-click → "Open in new tab" work on it.
@@ -312,6 +223,7 @@ export function PlatformHeader() {
               <HomeIcon id="back-icon-home" className="w-5 h-5" />
               <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5 hidden" />
             </a>
+            <HeaderAppIcon />
           </div>
           <SessionStatusPill />
         </div>

@@ -270,7 +270,10 @@ export function syncChrome(): void {
   const app = typeof window !== 'undefined' ? window.App : undefined;
   if (!app) return;
   const thread = isMobile() && !!state.route.conversationId;
-  app.setBackIcon?.(thread ? 'arrow' : 'home', thread ? '#messages' : undefined);
+  // ALWAYS an arrow: a thread goes up to the list, the list goes home. It was
+  // `'home'` — i.e. hidden — on the list, which left that screen with no way
+  // back once the hamburger stopped carrying the nav rows.
+  app.setBackIcon?.('arrow', thread ? '#messages' : undefined);
   app.setHeaderTitle?.(thread ? state.active?.title || 'Messages' : 'Messages');
 }
 

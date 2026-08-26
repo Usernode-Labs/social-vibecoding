@@ -217,13 +217,20 @@ test('the theme segments left the drawer entirely', () => {
     'and the settings screen makes that announcement in its place');
 });
 
-test("the app's rows lead the drawer; alerting is the header's", () => {
+test("the app's rows are the Improve panel's; alerting is the header's", () => {
   // Streamlined Concept: the board draws ONE app-scoped drawer, so the
   // Notifications and Messages rows became header glyphs and the Your-apps
-  // list became the Apps sheet. The module's init runs from the HEADER BAR's
-  // layout effect — the earliest island, and one that never unmounts.
-  assert.match(headerMenuTsx, /<AppContextRows \/>/,
-    'the drawer renders the app-scoped rows');
+  // list became the Apps sheet. The app's own rows then merged INTO the
+  // Improve panel — one surface for the app's navigation and its work rather
+  // than two that half-overlapped — so the drawer no longer renders them.
+  // The bell's init runs from the HEADER BAR's layout effect: the earliest
+  // island, and one that never unmounts.
+  assert.ok(!/<AppContextRows \/>/.test(headerMenuTsx),
+    'the drawer no longer renders the app-scoped rows');
+  const panelTsx = fs.readFileSync(
+    path.join(root, 'frontend/src/features/improve/improve-panel.tsx'), 'utf8');
+  assert.match(panelTsx, /id="improve-views"/,
+    'the Improve panel renders them instead');
   assert.match(platformHeaderTsx, /window\.Notifications\?\.init\(\)/,
     'and the header bar initialises the module from its layout effect, before DOMContentLoaded');
   for (const gone of ['drawer-row-notifications', 'drawer-row-messages',
@@ -314,40 +321,27 @@ test('a dapp check pins the drawer to the panel on a forced-touch route', () => 
 // list, both still render — so each strand is pinned against the source and
 // against the prerendered document in the style of the contracts above.
 
-test("the app's rows anchor to the top of the drawer, the account rows to the bottom", () => {
-  // Opposite ends of one column flex. The app rows inherited the slot — and
-  // the anchoring layout — the notifications block held (#1367).
+test("the account rows are the drawer's only block, still bottom-anchored", () => {
+  // The app rows used to sit above these, taking the free space; they are the
+  // Improve panel's now. What the anchoring has to survive is that removal:
+  // #drawer-main-rows keeps `mt-auto`, so it hugs the bottom of the column
+  // rather than floating at the top of an otherwise empty panel.
   const rowsAt = html.indexOf('id="header-menu-rows"');
-  const notifAt = html.indexOf('id="drawer-app-rows"');
   const navAt = html.indexOf('id="drawer-main-rows"');
-  assert.ok(rowsAt !== -1 && notifAt !== -1 && navAt !== -1, 'all three ids survive');
-  assert.ok(rowsAt < notifAt && notifAt < navAt,
-    "the app's rows first, account rows after, both inside #header-menu-rows");
+  assert.ok(rowsAt !== -1 && navAt !== -1, 'both ids survive');
+  assert.ok(rowsAt < navAt, 'the account rows sit inside #header-menu-rows');
+  assert.ok(html.indexOf('id="drawer-app-rows"') === -1,
+    'the app rows left the drawer with the merge');
 
   const rowsTag = html.slice(rowsAt, html.indexOf('>', rowsAt));
   assert.match(rowsTag, /flex flex-col/,
     '#header-menu-rows stays the column flex the anchoring depends on');
 
-  // WHICH BLOCK ABSORBS THE FREE SPACE, and therefore which one scrolls.
-  //
-  // WHO FLEXES: the apps section is the flexing, scrolling block (#1421's
-  // fix, inherited by the section that inherited the slot) — a long apps
-  // list scrolls within it instead of pushing Profile / Settings below the
-  // fold. The nav rows are `shrink-0` and unconditional, and `mt-auto` keeps
-  // them hugging the bottom when the apps list is short (mt-auto collects
-  // the free space above them, and flex-1 above means there is only any
-  // when the apps section has nothing to fill it with).
   const navTag = html.slice(navAt, html.indexOf('>', navAt));
   assert.match(navTag, /\bshrink-0\b/, 'the navigation rows keep their height');
-  assert.match(navTag, /\bmt-auto\b/, 'and hug the bottom when space is free');
-  const notifTag = html.slice(notifAt, html.indexOf('>', notifAt));
-  assert.match(notifTag, /\bflex-1\b/, 'the apps section takes what is left');
-  assert.match(notifTag, /\bmin-h-0\b/,
-    'and may shrink below its content, which is what lets it scroll');
+  assert.match(navTag, /\bmt-auto\b/, 'and hug the bottom');
   assert.ok(!/\boverflow-y-auto\b/.test(rowsTag),
-    '#header-menu-rows itself must not scroll — only the section inside it does');
-  assert.ok(!/\bmt-auto\b/.test(notifTag),
-    'nothing may push the apps section off the top');
+    '#header-menu-rows itself must not scroll');
 });
 
 // ── The follow-up: the SECTION is not collapsible; its GROUPS are ────
@@ -366,15 +360,21 @@ test('the Apps sheet is the app switcher, and the drawer keeps the account rows'
     'apps-switcher-list', 'apps-switcher-home', 'apps-switcher-explore']) {
     assert.ok(html.includes(`id="${id}"`), `#${id} ships with the switcher`);
   }
-  // What the drawer keeps: the app's own rows, then the account rows.
-  for (const id of ['drawer-app-rows', 'app-context-row-app', 'app-context-row-board',
-    'app-context-row-activity', 'drawer-row-profile', 'drawer-row-settings',
-    'drawer-row-admin']) {
+  // What the drawer keeps: the account rows, and only those. The app's own
+  // rows (#app-context-row-*) still ship — in the Improve panel.
+  for (const id of ['drawer-row-profile', 'drawer-row-settings', 'drawer-row-admin']) {
     assert.ok(html.includes(`id="${id}"`), `#${id} survives in the drawer`);
   }
+  for (const id of ['app-context-row-app', 'app-context-row-board',
+    'app-context-row-activity']) {
+    assert.ok(html.includes(`id="${id}"`), `#${id} ships with the Improve panel`);
+  }
+  // The panel is a LATER island than the drawer in Shell.tsx, which is why
+  // the rows now appear after it in the document — the merge moved them
+  // forward in the tree, not backward.
   assert.ok(
-    html.indexOf('id="drawer-app-rows"') < html.indexOf('id="drawer-main-rows"'),
-    "the app's rows sit ABOVE the account rows");
+    html.indexOf('id="drawer-main-rows"') < html.indexOf('id="improve-views"'),
+    'the drawer ships before the panel that took its rows');
 });
 
 test('each drawer open starts on what is NEW', () => {

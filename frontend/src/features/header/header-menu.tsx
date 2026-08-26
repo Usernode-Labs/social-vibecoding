@@ -4,30 +4,29 @@
  * surface: the overlay is the panel's backdrop on the desktop / kit-missing
  * path, and nothing ever renders one without the other.
  *
- * ── What THE UI OVERHAUL changed here ─────────────────────────────────
+ * ── What is left of it (Streamlined Concept) ─────────────────────────
  *
- * ── The drawer is the APP's surface (Streamlined Concept) ─────────────
+ * Almost nothing. The Figma board drew one app-scoped drawer — the app, its
+ * Board, its Activity, "+ New change", the changes in flight — and every one
+ * of those rows has since merged into the Improve panel
+ * (../improve/improve-panel.tsx), which is one surface for the app's
+ * navigation AND its work rather than two that half-overlapped.
  *
- * The Figma board draws one app-scoped drawer: the app, its Board, its
- * Activity, "+ New change", the changes in progress and the changes running on
- * other apps, over a Profile / Settings foot. That body is
- * <AppContextRows/> (../app-context/app-context-rows.tsx), which is where the
- * short-lived `#app-context-sheet` content went.
+ * What left before that: the Notifications and Messages rows (the two header
+ * glyphs now — platform alerting has no business inside an app's own surface)
+ * and the Your-apps list (the Apps sheet behind the title tab switches apps).
  *
- * What left this panel with that change: the Notifications and Messages rows
- * (they are the two header glyphs now — platform alerting has no business
- * inside the app's own surface) and the Your-apps list (the Apps sheet behind
- * the title tab switches apps).
+ * So this panel is the bottom-anchored ACCOUNT group and its chrome: Node,
+ * Wallet, the Profile / Settings pair and Admin & moderation. The hamburger
+ * that opened it is already gone from the header, which means nothing in the
+ * product reaches this surface by hand — it is here until those rows land in
+ * their new homes, and then it goes.
  *
- * The two blocks are anchored to OPPOSITE ENDS of the panel — the app rows to
- * the top, the account rows to the bottom via `mt-auto`.
- *
- * Five things left: the theme selector (a SETTING now, and the first one —
- * features/settings/sections/theme.tsx), the kudos and AI-credit meters
- * (ambient numbers nobody acts on from a menu), the Leaderboard row (the home
- * screen's Challenges area links there) and the whole bottom-anchored footer —
- * version, GitHub, Share — which is app-scoped and therefore Improve-panel
- * material.
+ * Gone earlier still, each to a truer home: the theme selector (a SETTING now,
+ * and the first one — features/settings/sections/theme.tsx), the kudos and
+ * AI-credit meters (ambient numbers nobody acts on from a menu), the
+ * Leaderboard row (the home screen's Challenges area links there) and the
+ * reference footer — versions, GitHub, Share.
  *
  * The modules that own live content in this subtree — ./node-pill.js for
  * #drawer-row-node, ./wallet-sheet.js for #drawer-row-wallet, and
@@ -36,17 +35,11 @@
  * island's layout effect, which was never about the drawer: it was about being
  * the earliest island in the bundle, and the header bar is earlier.
  *
- * The drawer stays MARKUP-ONLY apart from the notifications body, and for the
- * usual reason: app.js and app-view.js still show and hide individual rows per
- * screen, and on touch the panel is physically adopted into a kit side drawer
+ * The drawer stays MARKUP-ONLY, and for the usual reason: app.js and
+ * app-view.js still show and hide individual rows per screen, and on touch
+ * the panel is physically adopted into a kit side drawer
  * (PlatformUI.panel({contentEl}) reparents it and adds .platform-panel-adopted),
  * which a re-render of the panel's own `className` or child order would clobber.
- *
- * <AppContextRows/> is the one exception, and it earns it the same way the
- * notifications body used to: its whole subtree is React's, driven by the
- * improve store, and nothing in public/js/** writes inside it. It renders the
- * shipped markup exactly on the first pass — target-less, no rows — so
- * hydration matches byte for byte.
  *
  * Why those init()s run from a LAYOUT effect (over in the header bar, now):
  * imported modules evaluate while the bundle loads — before hydration — and
@@ -71,7 +64,6 @@ import {
   WalletIcon,
   XIcon,
 } from '@/components/ui/icons';
-import { AppContextRows } from '../app-context/app-context-rows';
 import { NodePillRow } from './node-pill-row';
 import { WalletRow } from './wallet-row';
 
@@ -126,13 +118,14 @@ export function HeaderMenu() {
         */}
         <div id="header-menu-rows" className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {/*
-              THE TOP OF THE DRAWER (owner review, round 2): Notifications
-              and Messages lead — the two "what happened while I was away"
-              rows — then the collapsible Your-apps section. Only Profile,
-              Settings and Admin & moderation stay in the bottom-anchored
-              group.
+              THE APP'S ROWS ARE THE IMPROVE PANEL'S NOW. Its three views, the
+              changes in flight and the terminal all rendered here, from
+              <AppContextRows/>, until they merged into
+              ../improve/improve-panel.tsx — one surface for the app's
+              navigation and its work, which is what the panel had already
+              half become. What is left in this drawer is the account group
+              below, and not for much longer.
           */}
-          <AppContextRows />
           {/*
               THE NAVIGATION ROWS, at the BOTTOM and always on screen.
 

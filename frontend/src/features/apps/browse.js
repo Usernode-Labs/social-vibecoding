@@ -250,8 +250,11 @@ const Browse = {
     // target handleBack() would take — up to the list, or all the way
     // home when the detail page was opened from a home card's "App
     // details" entry (there is no list behind it to go up to).
+    // ALWAYS an arrow — the list is a root screen and home is its parent.
+    // `'home'` means "hidden" to setBackIcon, which was only survivable while
+    // the hamburger carried the nav rows.
     App.setBackIcon(
-      onDetail ? 'arrow' : 'home',
+      'arrow',
       onDetail && Browse._detailOrigin !== 'home' ? '#apps' : undefined
     );
     if (onDetail) {

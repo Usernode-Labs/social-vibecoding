@@ -832,6 +832,46 @@ html.un-kb .platform-safe-bar {
   display: flex !important;
 }
 
+/* ── The nav surfaces grow further, and keep their scroller ────────────
+   The 70vh above is right for a kit sheet that is a DIALOG — a form, a
+   confirm, a short list. The four navigation surfaces are not: the Improve
+   panel carries every change in flight, and the messages/notifications
+   sheets carry as many rows as there are. They get the same near-full cap
+   their no-kit CSS uses, so the behaviour is one rule at every width and on
+   both paths. */
+.platform-sheet-adopted#improve-panel,
+.platform-sheet-adopted#apps-switcher-sheet {
+  max-height: calc(100dvh - 3rem) !important;
+}
+
+/* THE KIT'S DRAG WOULD OTHERWISE EAT THE SCROLL.
+   `.un-sheet` sets `touch-action: none` and claims any vertical drag for
+   drag-to-dismiss, with no scroller detection — which is why the header
+   drawer became a kit PANEL rather than a sheet (#915), and why an inner
+   `overflow-y: auto` inside an adopted sheet has been decorative up to now.
+   `touch-action` is intersected down the ancestor chain, so the scroller
+   cannot opt back in on its own; the SHEET has to allow vertical panning.
+
+   Scoped to the sheets that actually contain a scroller, so every other
+   adopted sheet keeps the kit's dismiss gesture exactly as it was. Inside
+   these, a vertical pan goes to the scroller and the kit's pointer handler
+   takes a `pointercancel` (native.js handles it with v=0 and springs back);
+   a drag starting anywhere else in the sheet still dismisses it, and so
+   does the grabber. */
+.un-sheet:has(#improve-panel) {
+  touch-action: pan-y;
+}
+
+/* THE SWITCHER'S ONLY SCROLLER RUNS THE OTHER WAY. Its app rail is a
+   horizontal strip, and `pan-y` here made that strip unreachable by touch —
+   the overflow existed and no gesture could get at it. `pan-x` inverts the
+   trade in this sheet's favour, and it costs less than the panel's does: a
+   VERTICAL drag anywhere still reaches the kit's pointer handler, so
+   drag-to-dismiss survives intact here. */
+.un-sheet:has(#apps-switcher-sheet) {
+  touch-action: pan-x;
+}
+
 /* THE HOME-INDICATOR INSET IS THE KIT'S JOB INSIDE AN ADOPTED SURFACE.
    #improve-footer carries .platform-safe-scroll, which is right in the two
    cases where nothing else reserves that strip: the desktop slide-over
@@ -6716,7 +6756,13 @@ a.drawer-ver--fork:hover {
     bottom: 0;
     width: auto;
     max-width: none;
-    max-height: 70vh;
+    /* GROWS WITH ITS CONTENT, up to nearly the whole screen. A short sheet is
+       short; a long one climbs to this cap and then its own scroller takes
+       over (see .nav-sheet-scroll below). 3rem of ground stays visible so the
+       thing still reads as an overlay rather than a screen. `dvh`, not `vh`:
+       a mobile browser's collapsing toolbar must not push the foot of the
+       sheet under itself. */
+    max-height: calc(100dvh - 3rem);
     border-left-width: 0;
     border-top-width: 1px;
     border-top-left-radius: 1rem;
@@ -6765,7 +6811,13 @@ a.drawer-ver--fork:hover {
     bottom: 0;
     width: auto;
     max-width: none;
-    max-height: 70vh;
+    /* GROWS WITH ITS CONTENT, up to nearly the whole screen. A short sheet is
+       short; a long one climbs to this cap and then its own scroller takes
+       over (see .nav-sheet-scroll below). 3rem of ground stays visible so the
+       thing still reads as an overlay rather than a screen. `dvh`, not `vh`:
+       a mobile browser's collapsing toolbar must not push the foot of the
+       sheet under itself. */
+    max-height: calc(100dvh - 3rem);
     border-left-width: 0;
     border-top-width: 1px;
     border-top-left-radius: 1rem;

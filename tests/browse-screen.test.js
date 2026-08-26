@@ -81,7 +81,7 @@ function makeBrowse(opts = {}) {
     'home-screen', 'home-search-bar', 'app-list', 'home-featured-list',
     'home-create-body'].forEach(mkEl);
   // The chrome _syncLevel drives, recorded so the level tests can assert it.
-  const chrome = { backIcon: null, title: null, transitions: [] };
+  const chrome = { backIcon: null, backHref: null, title: null, transitions: [] };
   // The shot deep link aligns the URL with replaceState — record the URLs.
   const history = { calls: [], replaceState: (_a, _b, url) => history.calls.push(url) };
 
@@ -91,7 +91,7 @@ function makeBrowse(opts = {}) {
     App: {
       user: opts.user || { id: 1 },
       navigateToApp: () => {},
-      setBackIcon: (m) => { chrome.backIcon = m; },
+      setBackIcon: (m, href) => { chrome.backIcon = m; chrome.backHref = href; },
       setHeaderTitle: (t) => { chrome.title = t; },
       navigateHome: () => { chrome.wentHome = (chrome.wentHome || 0) + 1; },
     },
@@ -559,7 +559,10 @@ test('showDetail / showList publish the level, which drives both containers', ()
 
   Browse.showList();
   assert.equal(state.level, 'list');
-  assert.equal(chrome.backIcon, 'home');
+  // The list keeps the arrow too — it just points home rather than at
+  // #apps. Nothing else on this screen goes back since the hamburger went.
+  assert.equal(chrome.backIcon, 'arrow');
+  assert.equal(chrome.backHref, undefined, 'and with no href, which means home');
   assert.equal(chrome.title, 'All apps');
 });
 

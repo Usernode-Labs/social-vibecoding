@@ -10,7 +10,7 @@
  * ── Why this file kept the app-context controller ──────────────────────
  *
  * It used to render the app's rows as a second surface; those moved into the
- * drawer (../app-context/app-context-rows.tsx). What stayed useful is the
+ * drawer, and then into the Improve panel. What stayed useful is the
  * plumbing: ./app-context-controller.js already presents this element as a kit
  * BOTTOM SHEET on touch — which is the idiom the board draws for this sheet —
  * owns `hidden`, the backdrop dismiss and the ghost-click guard, and is what
@@ -24,13 +24,30 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { PlusWideIcon, XIcon } from '@/components/ui/icons';
 
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 
-type SwitcherApp = { slug: string; name?: string; icon_url?: string | null };
+type SwitcherApp = {
+  slug: string; name?: string; icon_url?: string | null; icon_emoji?: string | null;
+};
 
+/**
+ * One app in the rail.
+ *
+ * THE APP'S OWN ARTWORK, never its initial if it has any. This resolved
+ * `icon_url ? <img> : first letter`, which skipped the emoji branch entirely —
+ * so a rail of apps that had all chosen emoji rendered as P / H / W / N while
+ * Home drew their actual icons. ../apps/app-card-view's AppIconContent is the
+ * three-way `icon_url → icon_emoji → letter` walk Home and the browse list
+ * already share; a letter is the LAST resort, for an app with no artwork.
+ *
+ * `.app-icon-tile` + `data-icon` draw the box, and this call site adds no
+ * background or text colour of its own — app.css says tile call sites must not
+ * repaint the one tile face.
+ */
 function AppTile({ app, current }: { app: SwitcherApp; current: boolean }) {
   const label = app.name || app.slug;
   return (
@@ -38,27 +55,28 @@ function AppTile({ app, current }: { app: SwitcherApp; current: boolean }) {
       href={`#app/${app.slug}/app`}
       data-switcher-app={app.slug}
       aria-current={current ? 'page' : undefined}
-      className="shrink-0 w-[4.5rem] flex flex-col items-center gap-1.5 un-touch-target"
+      className="shrink-0 w-16 flex flex-col items-center gap-1.5"
       onClick={() => AppContext.dismissForNav()}
     >
-      {app.icon_url ? (
-        <img
-          src={app.icon_url}
-          alt=""
-          className={'w-12 h-12 rounded-2xl object-cover bg-zinc-100 dark:bg-zinc-800'
-            + (current ? ' ring-2 ring-violet-500' : '')}
-        />
-      ) : (
-        <span
-          className={'w-12 h-12 rounded-2xl flex items-center justify-center text-lg font-semibold '
-            + 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
-            + (current ? ' ring-2 ring-violet-500' : '')}
-          aria-hidden="true"
-        >
-          {label.slice(0, 1).toUpperCase()}
-        </span>
-      )}
-      <span className="w-full text-center text-[0.7rem] leading-tight text-zinc-600 dark:text-zinc-300 truncate">
+      {/* The ring sits OUTSIDE the tile's own hairline, offset in the sheet's
+          ground, so a selected tile reads as one edge rather than two. */}
+      <span
+        data-icon={appIconKind(app)}
+        className={'app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center text-xl font-bold'
+          + (current
+            ? ' ring-2 ring-violet-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900'
+            : '')}
+      >
+        <AppIconContent app={app} />
+      </span>
+      {/* Colour only, never weight — navigation.md forbids a weight change
+          between nav item states. */}
+      <span
+        className={'w-full text-center text-[0.8125rem] truncate '
+          + (current
+            ? 'text-violet-600 dark:text-violet-400'
+            : 'text-zinc-900 dark:text-zinc-100')}
+      >
         {label}
       </span>
     </a>

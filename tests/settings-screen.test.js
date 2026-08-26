@@ -552,8 +552,10 @@ test('_syncChrome drives the header through App, not the DOM', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    _syncChrome() {'));
   const head = fn.slice(0, 800);
   // #1036: the second argument is the anchor's href — inside a section
-  // the chevron pops to the settings menu, so that is where it points.
-  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#settings' : undefined\)/);
+  // the chevron pops to the settings menu, so that is where it points; at
+  // level 1 it falls through to home. ALWAYS an arrow now: with the
+  // hamburger gone, a hidden back slot would strand level 1.
+  assert.match(head, /App\.setBackIcon\('arrow', inSection \? '#settings' : undefined\)/);
   assert.match(head, /App\.setHeaderTitle\(/,
     'setHeaderTitle mirrors document.title for the native AppBar');
   assert.doesNotMatch(head, /getElementById\('header-title'\)/,

@@ -953,7 +953,10 @@
       const inSection = Settings._isMobile() && Settings._level === 2;
       // #1036: the header control is a real anchor — inside a section
       // the chevron pops to the settings menu, so that is its href.
-      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? '#settings' : undefined);
+      // ALWAYS an arrow — level 2 goes up to the section list, level 1 goes
+      // home. `'home'` means "hidden" to setBackIcon, and a hidden back slot
+      // on level 1 was survivable only while the hamburger carried the nav.
+      if (App.setBackIcon) App.setBackIcon('arrow', inSection ? '#settings' : undefined);
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const s = Settings._visibleSections().find((x) => x.key === Settings._section);

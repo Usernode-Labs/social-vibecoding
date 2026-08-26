@@ -2989,6 +2989,12 @@ const App = {
       App._showOnlyScreen('leaderboard-screen');
       App._enterScreenChrome();
       App.setHeaderTitle('Leaderboard');
+      // NO DEAD ENDS: every screen the viewer can reach shows a way back.
+      // The hamburger used to be that way — it was on every bar, and it held
+      // the nav rows — so these screens shipped with the back slot hidden.
+      // With the hamburger gone the slot IS the way back, and `arrow` with no
+      // href resolves to home, which is the honest parent of a root screen.
+      App.setBackIcon('arrow');
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inLeaderboard = true;
     App._routeLeaderboard(sub, profileUser, challengeTarget);
@@ -3081,6 +3087,8 @@ const App = {
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
       App.setHeaderTitle(username ? `@${username}` : 'Profile');
+      // See the note in navigateToLeaderboard.
+      App.setBackIcon('arrow');
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inProfile = true;
     if (window.Profile?.open) Profile.open(username);
@@ -3343,6 +3351,8 @@ const App = {
       App._showOnlyScreen('notifications-screen');
       App._enterScreenChrome();
       App.setHeaderTitle('Notifications');
+      // See the note in navigateToLeaderboard.
+      App.setBackIcon('arrow');
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -3783,10 +3793,12 @@ const App = {
   //
   // #1036: the control is a real <a href>, so this also owns its TARGET.
   // `href` is where the button would go if pressed — omit it and it
-  // defaults to home, which is correct for every state except the three
-  // screens that claim the chevron as "up one level" (Browse detail,
-  // and the mobile section views of Settings / the Admin console). Those
-  // pass their own up-level hash. Because App._showOnlyScreen calls this
+  // defaults to home, which is correct for every ROOT screen — profile,
+  // leaderboard, notifications, messages, settings, admin, browse all point
+  // there now, because nothing else offers a way off them since the hamburger
+  // went. The screens that claim the chevron as "up one level" instead
+  // (Browse detail, the mobile section views of Settings / the Admin console,
+  // a message thread, a dev session) pass their own up-level hash. Because App._showOnlyScreen calls this
   // on EVERY screen change, there is no state in which the href can go
   // stale — same reasoning that makes the icon itself reliable.
   setBackIcon(mode, href) {
@@ -3797,10 +3809,9 @@ const App = {
     if (chevron) chevron.classList.toggle('hidden', !arrow);
     const btn = document.getElementById('back-btn');
     if (btn) {
-      // Streamlined Concept (owner review): there is never a HOME button
-      // beside the hamburger — home is the drawer and the title tab's
-      // business. The slot renders only as a level-2 BACK arrow, so this
-      // is now the single owner of the anchor's visibility.
+      // `mode` is really a boolean: 'arrow' shows the anchor, anything else
+      // hides it and leaves the slot to the app glyph
+      // (features/header/header-app-icon.tsx). Single owner, both ways.
       btn.classList.toggle('hidden', !arrow);
       btn.setAttribute('aria-label', arrow ? 'Back' : 'Home');
       const target = href || (window.NavLink ? NavLink.homeHref() : '/');

@@ -788,6 +788,8 @@ const Home = {
       name: self.name || self.slug,
       selfHosted: true,
       repoUrl: self.repo_url || null,
+      iconUrl: self.icon_url || null,
+      iconEmoji: self.icon_emoji || null,
       // The list payload's own version block, already shortened server-side.
       version: self.version?.shortSha || null,
       deploying: self.status === 'deploying',

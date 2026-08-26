@@ -131,6 +131,16 @@ const RETIRED_IDS = {
   // work only, and every line of that footer was a different KIND of thing
   // wearing the same row: two of them described the platform, two described
   // the app, and exactly one was an action. Each went where it belongs.
+  // ── Streamlined Concept: the hamburger, and the rows it held ─────
+  // The drawer's app rows merged into the Improve panel — one surface for
+  // the app's navigation AND its work, rather than two that half-overlapped —
+  // and the button that opened it went with them. The header's left slot is
+  // the board's own cluster now: the app glyph (or a back arrow) beside the
+  // title tab, both opening the Apps sheet.
+  'header-menu-btn': 'The hamburger. Its slot is the app-glyph/back-arrow pair (features/header/header-app-icon.tsx + #back-btn), and its badge cluster moved to #improve-btn — the control whose panel actually holds the work those badges report.',
+  'header-menu-deploy-dot': 'Renamed #improve-version-dot with that move. A `header-menu-*` id on the Improve button would be a lie that outlives everyone who remembers it.',
+  'drawer-app-rows': 'The app rows\' scroller in the drawer. The Improve panel renders them now, and #improve-sessions is the scroller.',
+  'app-context-new-change': 'Merged INTO #improve-row-new-session, the panel\'s middle quick action. Two ids calling one Improve.startSession() was the duplication the merge exists to remove.',
   'improve-footer': 'The reference block itself. Not re-homed anywhere — it was a container for four unrelated facts, and each of them moved separately.',
   'improve-row-github': 'View on GitHub is a Home.menuItemsFor item now, so it renders on the app\'s own page (#apps/<slug>) and in the home card\'s menu instead of only while the app was open.',
   'improve-row-share': 'Share app is the Improve panel\'s third action (features/improve/improve-panel.tsx) — the one line in that footer that was an action rather than a reference. Same id, same `canShare` gate.',
@@ -163,7 +173,6 @@ const ADDED_IDS = {
   'apps-switcher-list': 'The horizontal strip of the viewer\'s apps.',
   'apps-switcher-home': 'The sheet\'s Home button, one half of the board\'s footer pair.',
   'apps-switcher-explore': 'Its Explore button, the other half.',
-  'drawer-app-rows': 'The drawer\'s app-scoped block (views, New change, the change lists), so the account rows below it can bottom-anchor independently.',
   // ── Streamlined Concept: the drawer leads with Your apps ─────────
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
@@ -217,6 +226,10 @@ const ADDED_IDS = {
   'improve-close': 'Close button in the Improve panel header.',
   'improve-body': 'The panel\'s scroller.',
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
+  'improve-quick-actions': 'The panel\'s three circular actions — Feedback, New change, Share — captioned beneath so three fit across a phone.',
+  'improve-views': 'The app\'s three destinations (App / Board / Activity), one line each, moved from the drawer.',
+  'improve-sessions': 'The changes in flight, here and on the viewer\'s other apps — and the panel\'s ONE scroller, which is what keeps the actions and the views on screen at any height.',
+  'improve-version-dot': 'The platform deploy/stale dot, renamed from #header-menu-deploy-dot when it followed the badge cluster onto #improve-btn.',
   'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────
@@ -320,10 +333,9 @@ const ADDED_IDS = {
   // The surface behind the header's "app name ⌄" tab: the app's three
   // views, its changes in progress/elsewhere, and the reference footer
   // (which moved here from the Improve panel keeping its ids).
-  'app-context-row-app': 'Destination row: view and use the app (Improve.openApp).',
+  'app-context-row-app': 'Destination row: view and use the app (Improve.openApp). Rendered by the Improve panel since the drawer\'s rows merged into it; the ids stay because the declared checks select on them.',
   'app-context-row-activity': 'Destination row: the Activity stream (#app/<slug>/activity).',
   'app-context-row-board': 'Destination row: the Board (#app/<slug>/board).',
-  'app-context-new-change': 'The + New change action beside the Changes-in-progress heading (Improve.startSession).',
   // ── Streamlined Concept: the full-screen Notifications view ──────
   // A real screen behind the drawer's Notifications row, on the Messages
   // screen's fully-React pattern: All | Unread tabs, Today/Earlier

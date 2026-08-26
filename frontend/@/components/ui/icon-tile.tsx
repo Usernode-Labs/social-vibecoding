@@ -4,12 +4,14 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 /**
- * The rounded-square glyph tile, in its two sizes.
+ * The rounded-square glyph tile, in its three sizes.
  *
  * `sm` is the leading tile in a grouped-list row; `lg` is the launcher/app
  * tile — the same shape at 4rem, used for app identity on Home, in the
  * Activity feed's app card, and on the record cards attached to chat
- * messages.
+ * messages. `xs` is the same face at 2rem, for a row whose whole height is
+ * the 44px tap target and where an 11-unit tile would leave no air: the
+ * Improve panel's App / Board / Activity rows.
  *
  * ── There is ONE face, and it is neutral ──────────────────────────────
  *
@@ -29,6 +31,7 @@ import { cn } from '@/lib/utils';
 const tile = cva('flex shrink-0 items-center justify-center', {
   variants: {
     size: {
+      xs: 'h-8 w-8 rounded-lg [&>svg]:h-5 [&>svg]:w-5',
       sm: 'h-11 w-11 rounded-xl [&>svg]:h-6 [&>svg]:w-6',
       lg: 'h-16 w-16 rounded-2xl [&>svg]:h-9 [&>svg]:w-9',
     },

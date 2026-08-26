@@ -98,10 +98,10 @@ test('none of the moved slots are duplicated in the header', () => {
 test('the header keeps navigation + alerting only, hamburger first', () => {
   // THE UI OVERHAUL took four controls out of this group — #app-mode-switch,
   // #feedback-btn, #work-drawer-btn and #dev-console-btn — and put the whole
-  // of what they did behind #improve-btn. The Streamlined Concept then moved
-  // the hamburger to the LEFT group, mirroring the drawer it opens, so the
-  // bar reads hamburger → title → Improve.
-  const order = ['header-menu-btn', 'header-title', 'improve-btn'];
+  // of what they did behind #improve-btn. The hamburger then went too: the
+  // board's header leads with the app glyph and the title as ONE switcher
+  // cluster, so the bar reads back-slot → title → Improve.
+  const order = ['back-btn', 'header-title', 'improve-btn'];
   let prev = -1;
   for (const id of order) {
     const at = header.indexOf(`id="${id}"`);
@@ -109,10 +109,12 @@ test('the header keeps navigation + alerting only, hamburger first', () => {
     assert.ok(at > prev, `#${id} comes after the previous header control`);
     prev = at;
   }
-  // The hamburger is still the catch-all menu AND the notifications surface;
-  // only its side changed, badges and all.
-  // The retired five must not creep back in as a second way to do the same
-  // things — that split is exactly what the overhaul removed.
+  // The retired controls must not creep back in as a second way to do the
+  // same things — that split is exactly what the overhaul removed. The
+  // hamburger joins them: its rows are the Improve panel's and its badges are
+  // the Improve button's.
+  assert.ok(!header.includes('id="header-menu-btn"'),
+    'the hamburger is gone from the bar');
   // #notifications-btn is deliberately NOT here any more: the Streamlined
   // board gives the bell back its own control in the right group, because the
   // drawer it used to live in is the APP's surface now.
@@ -155,35 +157,36 @@ test("the work badge sits exactly where the bell's unread one does", () => {
   assert.match(bellBadge[0], /bg-red-500/, 'the bell badge stays red');
 });
 
-test('the version dot rides the hamburger, hidden by default', () => {
-  // #1412 parked it on the Improve button as #improve-version-dot; the
-  // Streamlined Concept re-homed it to the hamburger's badge cluster —
-  // keeping its ORIGINAL id (#header-menu-deploy-dot) and gaining #1412's
-  // violet "platform rolled past this tab" state. It renders from
-  // improveStore (<MenuIndicators/>), never from a classList write by id.
-  const dot = header.match(/<span id="header-menu-deploy-dot"[^>]*>/);
-  assert.ok(dot, '#header-menu-deploy-dot exists on the hamburger');
+test('the version dot rides the Improve button, hidden by default', () => {
+  // #1412 built it as #improve-version-dot on the Improve button; the
+  // Streamlined Concept parked it on the hamburger's badge cluster as
+  // #header-menu-deploy-dot; and with the hamburger gone it is back where
+  // #1412 put it, under its original name. A `header-menu-*` id on the
+  // Improve button would be a lie that outlives everyone who remembers it.
+  // It renders from improveStore (<ImproveIndicators/>), never from a
+  // classList write by id.
+  const dot = header.match(/<span id="improve-version-dot"[^>]*>/);
+  assert.ok(dot, '#improve-version-dot exists on the Improve button');
   assert.match(dot[0], /class="hidden /, 'ships hidden');
   assert.match(dot[0], /bg-amber-/, 'renders amber at rest, matching the deploying pill');
-  assert.ok(!html.includes('id="improve-version-dot"'),
-    'and the Improve-button copy is gone, not duplicated');
-  const hamburger = header.match(/<button id="header-menu-btn"[^>]*>[\s\S]*?<\/button>/)[0];
-  assert.match(header.match(/<button id="header-menu-btn"[^>]*>/)[0], /relative/,
-    'the hamburger is a positioning context for it');
-  // All three indicators cluster on the hamburger; the Improve button keeps
-  // only its own outbox dot.
-  assert.ok(hamburger.includes('id="notifications-badge-ai"'),
-    'the green session count sits on the hamburger');
+  assert.ok(!html.includes('id="header-menu-deploy-dot"'),
+    'and the hamburger-era copy is gone, not duplicated');
+
+  const improve = header.match(/<button id="improve-btn"[^>]*>[\s\S]*?<\/button>/)[0];
+  assert.match(header.match(/<button id="improve-btn"[^>]*>/)[0], /relative/,
+    'the Improve button is a positioning context for its three corners');
+  // The work indicators cluster on the control whose panel holds the work.
+  assert.ok(improve.includes('id="notifications-badge-ai"'),
+    'the green session count sits on the Improve button');
+  assert.ok(improve.includes('id="feedback-queue-dot"'),
+    'beside its own outbox dot');
   const bell = header.match(/<a id="notifications-btn"[^>]*>[\s\S]*?<\/a>/)[0];
   assert.ok(bell.includes('id="notifications-badge"'),
-    'the bell\'s red unread badge rides the bell itself now');
-  assert.ok(!hamburger.includes('id="notifications-badge"'),
-    'and no longer the hamburger, whose drawer is the app\'s surface');
-  const at = html.indexOf('id="improve-btn"');
-  const end = html.indexOf('</button>', at);
-  assert.ok(!html.slice(at, end).includes('id="notifications-badge-ai"'),
-    'the Improve button carries no session count');
+    'the bell\'s red unread badge rides the bell itself');
+  assert.ok(!improve.includes('id="notifications-badge"'),
+    'and never the Improve button — they count different things');
 });
+
 
 test('the deploy dot is derived from the rendered pills, not a duplicate flag', () => {
   // #1079 chunk B moved it into the React bundle; app.js keeps a forwarder for
@@ -365,13 +368,17 @@ test('the drawer body is one scroller, the app\'s rows leading', () => {
   assert.match(rows[0], /flex-1/, 'the drawer body takes the free space');
   assert.match(rows[0], /min-h-0/, 'and may shrink below its content, so it can scroll');
   const at = html.indexOf('id="header-menu-rows"');
-  for (const id of ['drawer-app-rows', 'drawer-row-admin']) {
-    assert.ok(html.indexOf(`id="${id}"`) > at, `#${id} is inside the scroller`);
+  for (const id of ['drawer-row-node', 'drawer-row-admin']) {
+    assert.ok(html.indexOf(`id="${id}"`) > at, `#${id} is inside the body`);
   }
-  // The app's rows lead (Streamlined Concept): the drawer opens onto the app
-  // it belongs to — its views and its changes — and alerting is the header.
-  assert.ok(html.indexOf('id="drawer-app-rows"') < html.indexOf('id="drawer-row-node"'),
-    'the app\'s rows come before every account row');
+  // The app's rows left for the Improve panel, so the account block is all
+  // that remains — and #improve-sessions is the scroller that carries the
+  // changes list now.
+  assert.ok(!html.includes('id="drawer-app-rows"'),
+    'the app rows are not in the drawer any more');
+  const sessions = html.match(/<div id="improve-sessions"[^>]*>/);
+  assert.ok(sessions, '#improve-sessions exists');
+  assert.match(sessions[0], /overflow-y-auto/, 'and it is the surface that scrolls');
 });
 
 // ─── The kudos badge no longer pokes at header layout ────────────────────

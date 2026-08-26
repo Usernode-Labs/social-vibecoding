@@ -38,7 +38,9 @@ const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 // (Streamlined Concept) — the Improve panel slimmed to its two actions, and
 // the board's drawer is the app's own surface.
 const ROW_TSX = read('frontend/src/features/improve/session-row.tsx');
-const SHEET_TSX = read('frontend/src/features/app-context/app-context-rows.tsx');
+// The app's rows merged into the Improve panel — one surface for the app's
+// navigation and its work. This file used to read app-context-rows.tsx.
+const SHEET_TSX = read('frontend/src/features/improve/improve-panel.tsx');
 const SERVICE = read('src/services/external-agent-tasks.js');
 
 // A pool that answers one query and records what it was asked, so a test

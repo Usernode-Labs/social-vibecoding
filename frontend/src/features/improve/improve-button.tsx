@@ -69,6 +69,70 @@ const IMPROVE_BTN_CLASS =
   + 'text-violet-600 dark:text-violet-400 hover:text-violet-500 text-sm font-medium '
   + 'transition-colors un-touch-target';
 
+/** Amber while a deploy runs, violet once the platform has rolled past us. */
+const VERSION_DOT: Record<string, string> = {
+  deploying: 'bg-amber-500',
+  stale: 'bg-violet-400',
+};
+
+// Byte-identical to the bell's own badge run, which is the point: the two are
+// twins at different corners of different controls, and a contrast/geometry
+// test diffs them as such.
+const AI_BADGE_CLS =
+  'absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full '
+  + 'bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center';
+
+/**
+ * What changed while you were not looking — three corners of one control.
+ *
+ * #1412 built these for the Improve button and the Streamlined header then
+ * parked them on the hamburger, because that was the control whose drawer
+ * held the sessions. It does not any more: this panel is the sessions
+ * surface, so the cue that says "go and look" belongs on the control that
+ * opens it. Everything #1412 built is kept whole — the writers publish
+ * through improveStore (Improve.setSessionBadge / setVersionState, never a
+ * classList write by id), the count carries `data-session-done` for the
+ * declared checks, the dot knows the violet "platform rolled past this tab"
+ * state, and a running turn shows as a pulse on the emerald badge, which also
+ * appears dot-sized and empty when a turn runs with nothing unread yet.
+ *
+ * Three corners, one rule: the outbox dot is bottom-left, the session count
+ * top-right, the version dot bottom-right — so a deploy rolling out during an
+ * unread finish cannot hide underneath the count.
+ *
+ * At rest everything is `hidden` with the exact class runs the prerender
+ * ships, so hydration matches.
+ */
+function ImproveIndicators() {
+  const { working, sessionUnread, sessionDone, versionState } = useStoreState(improveStore);
+  const showAi = working || sessionUnread > 0;
+  return (
+    <>
+      <span
+        id="notifications-badge-ai"
+        data-session-done={String(sessionDone)}
+        className={showAi
+          ? `${AI_BADGE_CLS}${working ? ' animate-pulse' : ''}`
+          : `hidden ${AI_BADGE_CLS}`}
+      >
+        {sessionUnread > 0 ? (sessionUnread > 99 ? '99+' : String(sessionUnread)) : ''}
+      </span>
+      {/* Renamed with the move. It was #header-menu-deploy-dot, from when the
+          version rows lived in that drawer's footer — a `header-menu-*` id on
+          the Improve button would be a lie that outlives everyone who
+          remembers it. */}
+      <span
+        id="improve-version-dot"
+        className={VERSION_DOT[versionState]
+          ? `absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full ${VERSION_DOT[versionState]}`
+          : 'hidden absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500'}
+        aria-hidden="true"
+      >
+      </span>
+    </>
+  );
+}
+
 export function ImproveButton() {
   const {
     target, open, tab, subTab, previewSessionId, previewUrl, previewActive,
@@ -205,13 +269,14 @@ export function ImproveButton() {
     >
       Improve
       {/* Bottom-LEFT, where it landed when #1412's green count took the
-          top-right corner; the count re-homed to the hamburger since, but
-          moving this back would churn the geometry for nothing. */}
+          top-right corner. All three indicators are on this control again
+          now, one per corner, so nothing needs to move. */}
       <span
         ref={dotRef}
         id="feedback-queue-dot"
         className="hidden absolute -bottom-0.5 -left-0.5 w-2 h-2 rounded-full bg-amber-400"
       />
+      <ImproveIndicators />
     </button>
   );
 }

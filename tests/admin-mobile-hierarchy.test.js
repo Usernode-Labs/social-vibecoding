@@ -241,9 +241,10 @@ test('the header becomes the section nav bar on mobile level 2 only', () => {
     'only a mobile section view borrows the header');
   // #1036: the second argument is the anchor's href — inside a section
   // the chevron pops to the console's own menu, so that is where it
-  // points; everywhere else it falls through to home.
-  assert.match(body, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
-    'the arrow appears exactly there, and targets the console menu');
+  // points; at level 1 it falls through to home. ALWAYS an arrow now: with
+  // the hamburger gone, a hidden back slot would strand level 1.
+  assert.match(body, /setBackIcon\('arrow', inSection \? '#admin' : undefined\)/,
+    'the arrow is always there, and targets the console menu inside a section');
   assert.match(body, /App\.setHeaderTitle\(s \? s\.label : /,
     'the title becomes the section label (which also feeds the native AppBar)');
   assert.match(body, /'Platform status'/,

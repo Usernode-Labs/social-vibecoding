@@ -69,6 +69,8 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {string} name
  * @property {boolean} selfHosted
  * @property {string|null} repoUrl
+ * @property {string|null} iconUrl
+ * @property {string|null} iconEmoji
  * @property {string|null} version
  * @property {boolean} deploying
  * @property {boolean} readOnly
@@ -132,6 +134,11 @@ const INITIAL = {
   selfHosted: false,
   /** `appData.repo_url`, or null — gates the "View on GitHub" row. */
   repoUrl: null,
+  /** The open app's own artwork, for the header cluster's 28px tile. Both
+      fields, because the resolver is icon_url → icon_emoji → letter and an
+      app that set an emoji must not fall through to its initial. */
+  iconUrl: null,
+  iconEmoji: null,
   /** Short commit sha for the version row, or null while unknown. */
   version: null,
   /** Whether a deploy is in flight for the target — renders as a pill. */
