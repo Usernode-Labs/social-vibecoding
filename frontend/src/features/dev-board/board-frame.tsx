@@ -228,7 +228,15 @@ export function DevBoardFrame({
             from claiming the row's width on the feed, where it stays empty.
         */}
         <div id="dev-kanban-filterbar" className="flex-1 min-w-0 empty:hidden" />
-        <div className={`relative ${readOnly && selfHosted ? 'hidden' : ''}`}>
+        {/*
+            `ml-auto` is load-bearing on the FEED: the filter host above is
+            `empty:hidden` there, so it stops claiming the row's width and
+            without the margin the "+" (the row's only remaining item) would
+            collapse to the LEFT edge — where its `right-0` dropdown then
+            opens off the left side of the viewport. On kanban the host's
+            `flex-1` already fills the row, so the auto margin is a no-op.
+        */}
+        <div className={`relative ml-auto ${readOnly && selfHosted ? 'hidden' : ''}`}>
           <button
             id="dev-plus-btn"
             aria-haspopup="true"
