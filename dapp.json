@@ -2650,6 +2650,11 @@
       "expectSelector": "#dev-actions > #dev-kanban-filterbar + div > #dev-plus-btn"
     },
     {
+      "name": "On the Feed the + button stays right-aligned with its menu anchored on-screen",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-actions > div.ml-auto > #dev-plus-btn"
+    },
+    {
       "name": "A filter select wears the chip pill",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-priority.dev-chip-select.rounded-full"
