@@ -77,6 +77,7 @@ import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
+import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
 import { Dialogs } from './features/dialogs';
 import { StagingOverlay, VisualCompareOverlay } from './features/staging';
@@ -101,6 +102,20 @@ export function Shell() {
           Hidden the moment the probe succeeds.
       */}
       <Island name="OfflineBanner"><OfflineBanner /></Island>
+      {/*
+          Mobile-browser install strip (#1372) — a React island in
+          features/mobile-install. Offers the native app to a visitor who
+          opened the platform in a phone browser; the per-OS store URL comes
+          from GET /api/public/mobile-app, which reads the same
+          `app_version_configs.update_url` the native update gate uses.
+
+          Directly under the offline banner because it is the same kind of
+          element and app.css stacks the two: offline at z-60, this at z-59.
+          Rendered hidden and empty on the first pass (the URLs load in an
+          effect) — the island rule in AGENTS.md — so with no published store
+          listing this is inert markup nobody sees.
+      */}
+      <Island name="MobileInstallBanner"><MobileInstallBanner /></Island>
       {/*
           Slide-out navigation drawer (all viewport widths — #122) — a React
           island since #1079 chunk B. Overlay dims the page; panel slides in
