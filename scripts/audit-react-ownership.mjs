@@ -160,6 +160,15 @@ const OWNED = [
   // this is scoped to the App tab, where the placeholder is the one thing in
   // there. Unscoped it would report every sibling surface's writes.
   { sel: '#app-content', when: '#app/recipebot/app' },
+  // The two alerting SHEETS (Streamlined Concept). Both were screen roots and
+  // neither was swept, because a screen root is the host and these were the
+  // hosts' contents; as overlays they are React-owned end to end, so the
+  // whole subtree is in scope. Scoped by route because they are always in the
+  // DOM and only PRESENTED on their own deep link — an unscoped entry would
+  // sweep a closed sheet on every route and report nothing.
+  { sel: '#notifications-sheet', when: '#notifications' }, // features/notifications/notifications-sheet.tsx
+  { sel: '#messages-sheet', when: '#messages' },           // features/messages/index.tsx
+
   // The AI-credit row in Settings → Anthropic API key
   // (features/header/ai-budget.tsx). It used to be an empty
   // `#ai-budget-slot` that ai-credit.js `innerHTML`ed; the module publishes
@@ -312,7 +321,7 @@ const OWNED = [
 
 const ROUTES = [
   '#home', '#apps', '#apps/recipebot', '#settings', '#settings/app-ai',
-  '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages',
+  '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages', '#notifications',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
   // The spec reader, which is the one host inside `#dc-view` whose subtree
