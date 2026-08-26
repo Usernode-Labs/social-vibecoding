@@ -1695,7 +1695,7 @@
     {
       "name": "The Improve panel leads with the quick actions, then the app's views",
       "path": "/?demo=1",
-      "expectSelector": "#improve-body > #improve-quick-actions + #improve-views"
+      "expectSelector": "#improve-body > *:has(#improve-quick-actions) + #improve-views"
     },
     {
       "name": "The hamburger ships the native Node status row",

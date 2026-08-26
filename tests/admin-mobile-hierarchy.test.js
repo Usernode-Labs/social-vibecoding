@@ -171,7 +171,16 @@ test('the back button has both icons and one named toggle', () => {
   // owns where it points.
   assert.match(appJs, /setBackIcon\(mode, href\)\s*\{/, 'App.setBackIcon owns the toggle');
   const fn = appJs.slice(appJs.indexOf('  setBackIcon(mode, href) {'));
-  const body = fn.slice(0, 900);
+  const body = fn.slice(0, fn.indexOf('\n  },'));
+  // The slot is React's, so the toggle PUBLISHES first — a rendered
+  // className belongs to React and it rewrites the attribute from its own
+  // props on every render of that island, which silently undid the
+  // classList writes below once the header gained state (the app glyph,
+  // the session status pill). See features/header/back-button-store.js.
+  assert.match(body, /UsernodeReact\?\.backButton\?\.set\?\.\(/,
+    'setBackIcon publishes the slot state rather than only writing to the DOM');
+  assert.ok(body.indexOf('backButton') < body.indexOf('back-icon-home'),
+    'the publish comes first; the DOM writes are the pre-hydration fallback');
   assert.match(body, /back-icon-home/, 'it toggles the home icon');
   assert.match(body, /back-icon-arrow/, 'it toggles the arrow icon');
   assert.match(body, /aria-label/, 'and relabels the button for screen readers');

@@ -75,6 +75,25 @@ const HeaderMenu = {
       : Date.now();
   },
 
+  // The hamburger's aria state, in one place BECAUSE THE HAMBURGER IS GONE.
+  // #header-menu-btn was the drawer's only human entry point and the
+  // Streamlined Concept deleted it; the drawer itself survives a while
+  // longer because ?shot=menu-nav still presents it programmatically for
+  // the #977 single-motion checks. Every one of the five `btn.setAttribute`
+  // pairs this replaces therefore ran against `null` on staging and threw
+  // out of onDismiss / close — which surfaces as "1 console error on load",
+  // and a console error on any route fails the proposal.
+  //
+  // A no-op when the button is absent is the honest shape here: the state
+  // it mirrors has no reader left. When the drawer goes (commit 5) this
+  // helper goes with it.
+  _setBtnState(open) {
+    const btn = document.getElementById('header-menu-btn');
+    if (!btn) return;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+  },
+
   // True while the drawer surface is on screen OR still animating out.
   isPresenting() {
     if (HeaderMenu._panel) return true;
@@ -130,7 +149,6 @@ const HeaderMenu = {
   open() {
     const panel = document.getElementById('header-menu-panel');
     const overlay = document.getElementById('header-menu-overlay');
-    const btn = document.getElementById('header-menu-btn');
     if (!panel) return;
     // A fresh presentation ends any "still sliding out" window the
     // legacy path was counting down (#977).
@@ -192,8 +210,7 @@ const HeaderMenu = {
         // The hamburger's state is not the kit's business, so it is
         // reset here on EVERY exit path (backdrop, Escape, ✕, row
         // navigation) — they all route through the kit dismiss.
-        btn.setAttribute('aria-expanded', 'false');
-        btn.setAttribute('aria-label', 'Open menu');
+        HeaderMenu._setBtnState(false);
       },
     });
     if (adoption) {
@@ -206,8 +223,7 @@ const HeaderMenu = {
       // The touch path used to return before the aria writes below,
       // leaving the button reading "Open menu" / collapsed while the
       // drawer was open.
-      btn.setAttribute('aria-expanded', 'true');
-      btn.setAttribute('aria-label', 'Close menu');
+      HeaderMenu._setBtnState(true);
       return;
     }
     overlay.classList.remove('hidden');
@@ -215,8 +231,7 @@ const HeaderMenu = {
     overlay.getBoundingClientRect();
     overlay.setAttribute('data-open', '');
     panel.setAttribute('data-open', '');
-    btn.setAttribute('aria-expanded', 'true');
-    btn.setAttribute('aria-label', 'Close menu');
+    HeaderMenu._setBtnState(true);
     const closeBtn = document.getElementById('header-menu-close');
     if (closeBtn) closeBtn.focus();
   },
@@ -236,14 +251,12 @@ const HeaderMenu = {
     }
     const panel = document.getElementById('header-menu-panel');
     const overlay = document.getElementById('header-menu-overlay');
-    const btn = document.getElementById('header-menu-btn');
     if (!panel) return Promise.resolve();
     const wasOpen = panel.hasAttribute('data-open');
     if (wasOpen) HeaderMenu._closingAt = HeaderMenu._now();
     panel.removeAttribute('data-open');
     overlay.removeAttribute('data-open');
-    btn.setAttribute('aria-expanded', 'false');
-    btn.setAttribute('aria-label', 'Open menu');
+    HeaderMenu._setBtnState(false);
     if (!wasOpen) return Promise.resolve();
     const done = HeaderMenu._afterDismiss();
     // Hide overlay after the slide-out transition finishes.
@@ -272,14 +285,21 @@ const HeaderMenu = {
     // on nodes that outlive the component, so binding twice would double
     // every close.
     if (HeaderMenu._bound) return;
-    const btn = document.getElementById('header-menu-btn');
-    if (!btn) return;
     HeaderMenu._bound = true;
-    btn.addEventListener('click', () => HeaderMenu.open());
+    // The hamburger USED to gate this whole function — `if (!btn) return`,
+    // written when the button was the drawer's only entry point and its
+    // absence therefore meant "no drawer on this page". The Streamlined
+    // Concept deleted the button while ?shot=menu-nav still presents the
+    // drawer programmatically, so that early return now skips the close
+    // button, the overlay, Escape AND the single-motion link rule (#977) for
+    // a drawer that is very much on screen. Bind what exists; the button is
+    // just one more conditional row.
+    document.getElementById('header-menu-btn')
+      ?.addEventListener('click', () => HeaderMenu.open());
     document.getElementById('header-menu-close')
-      .addEventListener('click', () => HeaderMenu.close());
+      ?.addEventListener('click', () => HeaderMenu.close());
     document.getElementById('header-menu-overlay')
-      .addEventListener('click', () => HeaderMenu.close());
+      ?.addEventListener('click', () => HeaderMenu.close());
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         // Adopted into a kit panel: the kit's own modal-stack handler

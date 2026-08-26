@@ -12,11 +12,16 @@
 
 import { flushSync } from 'react-dom';
 
+import { backButtonStore } from './back-button-store.js';
 import { headerTitleStore } from './header-title-store.js';
 
 headerTitleStore.setFlush(flushSync);
+// Same reason as the title's: App.setBackIcon's callers read the header back
+// on their next lines (the ?shot= fixtures assert it within the same task),
+// so the notification has to land synchronously.
+backButtonStore.setFlush(flushSync);
 
-export { headerTitleStore };
+export { backButtonStore, headerTitleStore };
 
 if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
@@ -25,6 +30,18 @@ if (typeof window !== 'undefined') {
     /** @param text The visible title — forwarded from App.setHeaderTitle. */
     set(text: string) {
       headerTitleStore.set({ text: String(text ?? '') });
+    },
+  };
+  bridge.backButton = {
+    /**
+     * @param mode 'arrow' shows the anchor, anything else hides it.
+     * @param href The resolved destination — setBackIcon defaults it to home.
+     */
+    set(mode: string, href: string | null) {
+      backButtonStore.set({
+        mode: mode === 'arrow' ? 'arrow' : 'home',
+        href: href || null,
+      });
     },
   };
 }

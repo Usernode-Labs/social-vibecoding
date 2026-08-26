@@ -3803,6 +3803,20 @@ const App = {
   // stale — same reasoning that makes the icon itself reliable.
   setBackIcon(mode, href) {
     const arrow = mode === 'arrow';
+    const target = href || (window.NavLink ? NavLink.homeHref() : '/');
+    // The slot is React's (features/header/platform-header.tsx), so its
+    // appearance is PUBLISHED, not written: a rendered className belongs to
+    // React, and it rewrites the attribute from its own props on every
+    // render of that island — which silently undid the classList writes
+    // below the moment the header gained state (the app glyph, the session
+    // status pill). See features/header/back-button-store.js.
+    window.UsernodeReact?.backButton?.set?.(arrow ? 'arrow' : 'home', target);
+
+    // The same writes, kept as the pre-hydration fallback — app.js is a
+    // classic script and the bundle is a module, so there is a window in
+    // which the bridge above does not exist yet and the first navigation's
+    // back state would otherwise be dropped. Once React is up the two agree
+    // exactly, so this is a no-op rather than a second owner.
     const home = document.getElementById('back-icon-home');
     const chevron = document.getElementById('back-icon-arrow');
     if (home) home.classList.toggle('hidden', arrow);
@@ -3814,7 +3828,6 @@ const App = {
       // (features/header/header-app-icon.tsx). Single owner, both ways.
       btn.classList.toggle('hidden', !arrow);
       btn.setAttribute('aria-label', arrow ? 'Back' : 'Home');
-      const target = href || (window.NavLink ? NavLink.homeHref() : '/');
       btn.setAttribute('href', target);
     }
   },

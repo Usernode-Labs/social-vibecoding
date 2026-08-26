@@ -130,15 +130,51 @@ test('a re-open during the exit spring keeps the drawer in the NEW panel', () =>
 
 test('the hamburger reflects its expanded state on the touch path too', () => {
   const body = openBody();
-  // The touch branch returns early, so before this it left the button
-  // reading "Open menu" / aria-expanded=false for the whole time the
-  // drawer was open.
-  assert.match(body, /aria-expanded',\s*'true'[\s\S]{0,200}?'Close menu'/,
+  // This used to read the two `btn.setAttribute` pairs literally. THE
+  // HAMBURGER IS GONE — the Streamlined Concept deleted #header-menu-btn
+  // while the drawer itself survives, presented programmatically by
+  // ?shot=menu-nav for the #977 single-motion checks — so all five of those
+  // pairs ran against `null` and threw out of onDismiss and close(). That
+  // surfaces as "1 console error on load", and a console error on any route
+  // fails proposal checks.
+  //
+  // So the contract is the same one, expressed through ONE guarded helper:
+  // the touch branch still announces the expanded state (it returns early,
+  // and before that it left the button reading "Open menu" for as long as
+  // the drawer was open), every exit path still resets it, and neither
+  // throws when the button is not there.
+  assert.match(body, /HeaderMenu\._setBtnState\(true\)/,
     'opening must announce the expanded state on the touch path');
   const dismiss = body.slice(body.indexOf('onDismiss: () => {'), body.indexOf('if (adoption) {'));
-  assert.match(dismiss, /aria-expanded',\s*'false'/,
+  assert.match(dismiss, /HeaderMenu\._setBtnState\(false\)/,
     'every exit path routes through onDismiss — reset the state there');
-  assert.match(dismiss, /'Open menu'/, 'the label must go back too');
+
+  const helper = headerMenuJs.slice(headerMenuJs.indexOf('  _setBtnState(open) {'));
+  const fn = helper.slice(0, helper.indexOf('\n  },'));
+  assert.match(fn, /if \(!btn\) return;/,
+    'the helper must no-op when the hamburger is absent — that is the whole point');
+  assert.match(fn, /aria-expanded'[\s\S]{0,120}?'Close menu'/,
+    'it still writes both attributes, both ways');
+  assert.ok(!/\bbtn\.setAttribute\(/.test(headerMenuJs.replace(fn, '')),
+    'no unguarded btn.setAttribute may survive outside the helper');
+});
+
+test('init binds the drawer without needing the hamburger', () => {
+  const init = headerMenuJs.slice(headerMenuJs.indexOf('  init() {'));
+  const body = init.slice(0, 1200);
+  // `if (!btn) return` used to gate this whole function, back when the
+  // button was the drawer's only entry point and its absence therefore
+  // meant "no drawer here". With the button deleted that early return
+  // skipped the close button, the overlay, Escape AND the single-motion
+  // link rule (#977) for a drawer that ?shot=menu-nav still opens.
+  assert.ok(!/const btn = document\.getElementById\('header-menu-btn'\);\n\s*if \(!btn\) return;/.test(body),
+    'the missing hamburger must not gate the rest of the wiring');
+  assert.match(body, /getElementById\('header-menu-btn'\)\s*\n?\s*\?\.addEventListener/,
+    'the button is just one more conditional binding now');
+  assert.match(body, /getElementById\('header-menu-close'\)\s*\n?\s*\?\.addEventListener/,
+    'the close button binds whether or not the hamburger shipped');
+  assert.match(body, /getElementById\('header-menu-overlay'\)\s*\n?\s*\?\.addEventListener/,
+    'and so does the backdrop');
 });
 
 test('close() and Escape both defer to the kit handle', () => {

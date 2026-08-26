@@ -1590,7 +1590,11 @@ const AppView = {
     // away on the next render.
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
-    document.getElementById('back-btn')?.classList.remove('hidden');
+    // The back slot is setBackIcon's alone now (see App.setBackIcon and
+    // features/header/back-button-store.js): it shows the ARROW or nothing,
+    // and the app glyph takes the slot the rest of the time. A raw unhide
+    // here used to leave a home icon on these fixtures; React reconciles it
+    // away on its next render anyway, so it was a write with no reader.
   },
 
   // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
@@ -1628,7 +1632,11 @@ const AppView = {
     AppView.renderAppTab();
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
-    document.getElementById('back-btn')?.classList.remove('hidden');
+    // The back slot is setBackIcon's alone now (see App.setBackIcon and
+    // features/header/back-button-store.js): it shows the ARROW or nothing,
+    // and the app glyph takes the slot the rest of the time. A raw unhide
+    // here used to leave a home icon on these fixtures; React reconciles it
+    // away on its next render anyway, so it was a write with no reader.
   },
 
   // ── The App tab's placeholder states ────────────────────────────────

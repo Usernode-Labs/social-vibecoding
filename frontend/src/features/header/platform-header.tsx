@@ -40,6 +40,7 @@ import {
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
+import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
 import { HeaderAppIcon } from './header-app-icon';
 import { HeaderTitleTab } from './header-title-tab';
@@ -101,6 +102,12 @@ function SessionStatusPill() {
   );
 }
 
+// The anchor's own classes, hoisted out of the JSX so the `hidden` suffix is
+// the ONLY thing that varies between the two states — the string itself has to
+// stay byte-identical to the hand-written shell's (tests/baselines).
+const BACK_BTN_CLASS = 'inline-flex items-center text-zinc-900 hover:text-zinc-500'
+  + ' dark:text-zinc-100 dark:hover:text-zinc-400 un-touch-target';
+
 export function PlatformHeader() {
   // The four elements the centering measurement needs. Passing them as refs
   // replaces the classic script's document.querySelector('header') +
@@ -111,6 +118,11 @@ export function PlatformHeader() {
   const rightGroupRef = useRef<HTMLDivElement>(null);
 
   useHeaderLayout(headerRef, leftGroupRef, titleRef, rightGroupRef);
+
+  // The back slot's state (see ./back-button-store.js): App.setBackIcon
+  // publishes here rather than writing `hidden` into React-owned DOM.
+  const { mode: backMode, href: backHref } = useStoreState(backButtonStore);
+  const backArrow = backMode === 'arrow';
 
   // A LAYOUT effect, and that is load-bearing: it runs inside main.tsx's
   // flushSync(hydrateRoot), which is after hydration has adopted these nodes
@@ -218,10 +230,24 @@ export function PlatformHeader() {
                 is load-bearing enough not to leave to that. No target=_blank:
                 in the native WebView that would push a plain tap out to the
                 system browser.
+
+                RENDERED FROM A STORE, not written by classList from outside.
+                setBackIcon used to toggle `hidden` on all three of these
+                nodes directly, which held only while this island never
+                re-rendered. It does now — the slot is `#back-btn` XOR
+                <HeaderAppIcon/>, and the bar carries <SessionStatusPill/> —
+                and React rewrites a rendered className from its own props on
+                every render, so the legacy write was being undone. The store
+                is ./back-button-store.js; setBackIcon publishes into it.
             */}
-            <a id="back-btn" className="inline-flex items-center text-zinc-900 hover:text-zinc-500 dark:text-zinc-100 dark:hover:text-zinc-400 un-touch-target hidden" aria-label="Home">
-              <HomeIcon id="back-icon-home" className="w-5 h-5" />
-              <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5 hidden" />
+            <a
+              id="back-btn"
+              className={BACK_BTN_CLASS + (backArrow ? '' : ' hidden')}
+              aria-label={backArrow ? 'Back' : 'Home'}
+              {...(backHref ? { href: backHref } : {})}
+            >
+              <HomeIcon id="back-icon-home" className={'w-5 h-5' + (backArrow ? ' hidden' : '')} />
+              <ChevronLeftIcon id="back-icon-arrow" className={'w-5 h-5' + (backArrow ? '' : ' hidden')} />
             </a>
             <HeaderAppIcon />
           </div>
