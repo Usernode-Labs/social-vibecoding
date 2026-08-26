@@ -496,16 +496,6 @@ export const EllipsisHorizontalIcon = ({ id, className, ...rest }: IconProps) =>
 );
 EllipsisHorizontalIcon.displayName = 'EllipsisHorizontalIcon';
 
-/** The kanban card's drag handle: two columns of three dots, 20×20. */
-export const GripDotsIcon = ({ id, className, ...rest }: IconProps) => (
-  <svg id={id} className={className} viewBox="0 0 20 20" fill="currentColor" {...rest}>
-    <circle cx="7" cy="5" r="1.4" /><circle cx="13" cy="5" r="1.4" />
-    <circle cx="7" cy="10" r="1.4" /><circle cx="13" cy="10" r="1.4" />
-    <circle cx="7" cy="15" r="1.4" /><circle cx="13" cy="15" r="1.4" />
-  </svg>
-);
-GripDotsIcon.displayName = 'GripDotsIcon';
-
 /** "Open the staging preview" — the eye, and the same eye struck through. */
 export const EyeIcon = ({ id, className, strokeWidth = '2', ...rest }: IconProps) => (
   <svg id={id} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} {...rest}>

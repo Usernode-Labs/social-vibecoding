@@ -227,9 +227,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // ── The Dev card's glyphs (#1367's card chunk) ──────────────────
     // The card family renders inside #dev-feed / #dev-kanban-board /
     // #gc-thread-head, all of which app-view.js mounts at runtime on the Dev
-    // route — none is in <Shell/>, so none of the four prerenders. The eye,
-    // the ⋯ dots and the drag grip are circles rather than paths, so they
-    // never appear in this list at all.
+    // route — none is in <Shell/>, so none prerenders. The eye and the ⋯ dots
+    // are circles rather than paths, so they never appear in this list at
+    // all (the drag grip was a third such glyph until the board's
+    // drag-to-reorder was retired).
     // PencilSquareIcon — the author-only inline title edit on a topic head.
     'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
     // ── The dev chat's banner glyphs ────────────────────────────────

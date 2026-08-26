@@ -4819,8 +4819,8 @@ const AppView = {
   },
 
   // Identity string for a bucketed card, matching the (card_type, card_ref)
-  // pairs the server stores and the data-*-row attributes the drag handler
-  // reads. `column` picks how to read the ref: Issues holds bare issue rows,
+  // pairs the server stores, so a saved order can be laid over the derived
+  // one. `column` picks how to read the ref: Issues holds bare issue rows,
   // In review holds { kind, item } entries (proposal | gov).
   _cardOrderKey(column, entry) {
     if (entry == null) return null;
@@ -5175,17 +5175,13 @@ const AppView = {
   // Repaint only the board region (#dev-kanban-board) from cached data,
   // leaving the filter bar node untouched. Every filter-control event and
   // WS-driven kanban refresh routes through here.
-  // `remount` forces a fresh portal mount instead of a publish. The drag
-  // recognizer physically rearranges the column's nodes, and React
-  // reconciling keyed children over DOM that already moved leaves cards
-  // wherever the gesture put them — so the commit that ends a drag rebuilds
-  // the subtree exactly as the old innerHTML did. See card/dev-kanban.tsx.
-  _repaintKanbanBoard(remount) {
-    // #613: never rebuild the board out from under an in-progress drag — a
-    // mid-drag rebuild (e.g. a WS board_order_update from another user)
-    // would drop the pointer capture and strand the card. The commit that
-    // ends the drag repaints once it lands.
-    if (AppView._dragState) return;
+  //
+  // This used to take a `remount` flag, because the retired drag recognizer
+  // physically rearranged a column's nodes and React reconciling keyed
+  // children over DOM that already moved left cards where the gesture put
+  // them. Nothing moves nodes behind React any more, so every repaint is a
+  // plain publish. See card/dev-kanban.tsx.
+  _repaintKanbanBoard() {
     const board = document.getElementById('dev-kanban-board');
     if (!board) return;
     // Every filter-control change (and Clear) funnels through here, so this
@@ -5195,7 +5191,6 @@ const AppView = {
     const react = AppView._reactDevBoard();
     AppView._lastKanbanView = AppView._kanbanView();
     if (react) {
-      if (remount) react.unmount(board);
       react.mountKanban(board);
       react.publishKanban(AppView._lastKanbanView);
     }
@@ -5205,143 +5200,8 @@ const AppView = {
     AppView._fillKudosHosts(board);
     AppView._refreshAiAvailability();
     AppView._updateKanbanFilterBarUI();
-    AppView._initKanbanDrag(board);
     AppView._reanchorCardMenu();
   },
-
-  // ── Drag-to-reorder within a column (#613) ───────────────────────────
-  //
-  // Pointer-events based (not native HTML5 DnD) so it works with touch and
-  // doesn't hijack the card's own click/vote/kudos handlers: a drag only
-  // starts from the grip handle in the card's left gutter. On drop the new
-  // order is optimistically applied to _boardOrder + repainted, then POSTed;
-  // a failed save reverts to server truth. _dragState is non-null for the
-  // life of one drag and blocks board repaints (see _repaintKanbanBoard).
-  _dragState: null,
-
-  _initKanbanDrag(board) {
-    if (!board || board._dragBound) return;
-    if (AppView.readOnly) return; // #621: no reordering for read-only viewers
-    board._dragBound = true;
-    board.addEventListener('pointerdown', AppView._onDragPointerDown);
-  },
-
-  _onDragPointerDown(e) {
-    // Left mouse button only (touch/pen report button 0 / -1); ignore others.
-    if (typeof e.button === 'number' && e.button > 0) return;
-    const handle = e.target.closest && e.target.closest('.dev-drag-handle');
-    if (!handle) return;
-    const item = handle.closest('.dev-drag-item');
-    const list = item && item.closest('.dev-drag-list');
-    if (!item || !list || !item.dataset.orderKey) return;
-    e.preventDefault();
-    // Every drag stays inside ONE list now. The retired PM view was the only
-    // surface whose drags spanned several (reorder within a person's stack,
-    // reassign across two, unassign by dropping outside), which is what the
-    // `pm` branch and its cross-list hit-testing existed for.
-    AppView._dragState = {
-      item, list, handle,
-      column: list.dataset.orderCol,
-      pointerId: e.pointerId,
-      moved: false,
-    };
-    try { handle.setPointerCapture(e.pointerId); } catch {}
-    item.classList.add('opacity-50');
-    handle.classList.add('cursor-grabbing');
-    document.addEventListener('pointermove', AppView._onDragPointerMove);
-    document.addEventListener('pointerup', AppView._onDragPointerUp);
-    document.addEventListener('pointercancel', AppView._onDragPointerUp);
-  },
-
-  _onDragPointerMove(e) {
-    const st = AppView._dragState;
-    if (!st) return;
-    st.moved = true;
-    // Insert the dragged item before the first sibling whose vertical
-    // midpoint is below the pointer; append when the pointer is past them
-    // all. Direct children only, so nested cards never confuse the scan.
-    const items = Array.from(st.list.children).filter((el) => el.classList.contains('dev-drag-item'));
-    const y = e.clientY;
-    let before = null;
-    for (const other of items) {
-      if (other === st.item) continue;
-      const rect = other.getBoundingClientRect();
-      if (y < rect.top + rect.height / 2) { before = other; break; }
-    }
-    if (before) {
-      if (st.item.nextElementSibling !== before) st.list.insertBefore(st.item, before);
-    } else if (st.list.lastElementChild !== st.item) {
-      st.list.appendChild(st.item);
-    }
-  },
-
-
-  _onDragPointerUp() {
-    const st = AppView._dragState;
-    if (!st) return;
-    document.removeEventListener('pointermove', AppView._onDragPointerMove);
-    document.removeEventListener('pointerup', AppView._onDragPointerUp);
-    document.removeEventListener('pointercancel', AppView._onDragPointerUp);
-    try { st.handle.releasePointerCapture(st.pointerId); } catch {}
-    st.item.classList.remove('opacity-50');
-    st.handle.classList.remove('cursor-grabbing');
-    const { list, column, moved } = st;
-    AppView._dragState = null;
-    if (!moved) return;
-    const keys = Array.from(list.children)
-      .filter((el) => el.classList.contains('dev-drag-item'))
-      .map((el) => el.dataset.orderKey)
-      .filter(Boolean);
-    AppView._commitBoardOrder(column, keys);
-  },
-
-  // Parse an identity string ('issue:123' / 'proposal:45') back into the
-  // { type, ref } the server stores. Returns null on a malformed key.
-  _orderKeyToRef(key) {
-    const idx = String(key || '').indexOf(':');
-    if (idx < 0) return null;
-    const type = key.slice(0, idx);
-    const ref = parseInt(key.slice(idx + 1), 10);
-    if (!Number.isFinite(ref)) return null;
-    return { type, ref };
-  },
-
-  // Persist a column's new order. Optimistically updates _boardOrder +
-  // repaints (so the order sticks and the handles re-bind), then POSTs. On
-  // failure, reverts to the pre-drag order and repaints.
-  async _commitBoardOrder(column, keys) {
-    if (column !== 'issues' && column !== 'review') return;
-    const order = (keys || []).map(AppView._orderKeyToRef).filter(Boolean);
-    const prev = AppView._boardOrder || { issues: [], review: [] };
-    AppView._boardOrder = { ...prev, [column]: order };
-    // remount: the recognizer moved these nodes, so reconciling over them
-    // would leave cards where the gesture put them (card/dev-kanban.tsx).
-    AppView._repaintKanbanBoard(true);
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    try {
-      const res = await fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ column, order }),
-      });
-      if (!res.ok) throw new Error('save failed');
-      const data = await res.json().catch(() => null);
-      if (data && Array.isArray(data.issues) && Array.isArray(data.review)) {
-        AppView._boardOrder = { issues: data.issues, review: data.review };
-        AppView._repaintKanbanBoard(true);
-      }
-    } catch {
-      AppView._boardOrder = prev;
-      AppView._repaintKanbanBoard(true);
-      PlatformUI.toast('Couldn’t save the new order — reverted.');
-    }
-  },
-
-
-
-
-
 
   // The kanban board's VIEW MODEL (card/model.ts DevKanbanView). Reuses the
   // exact per-card builders the feed uses, so every card keeps its buttons,
@@ -5429,26 +5289,17 @@ const AppView = {
         : { kind: 'moreCompleted', n: moreCount };
     }
 
-    const cardRows = (items, build, orderCol) => items.map((it) => {
+    const cardRows = (items, build) => items.map((it) => {
       const card = build(it);
-      return {
-        t: 'card', key: card.key, card,
-        // #613: `orderKey` is the card identity the saved overlay and the
-        // drag handler share. Filtering disables dragging (the saved order
-        // applies to the full column, not a filtered subset), and read-only
-        // viewers can't reorder — both render the item with no handle.
-        orderKey: (orderCol && !filtering && !AppView.readOnly)
-          ? AppView._cardOrderKey(orderCol, it) : null,
-      };
+      return { t: 'card', key: card.key, card };
     });
     const emptyNote = filtering ? 'No matching cards' : 'Nothing here yet';
 
     const cols = [
       {
         key: 'issues', title: 'Issues', count: kIssues.length,
-        rows: cardRows(kIssues, (i) => AppView._issueCardModel(i), 'issues'),
+        rows: cardRows(kIssues, (i) => AppView._issueCardModel(i)),
         empty: kIssues.length ? null : emptyNote,
-        orderCol: (!filtering && !AppView.readOnly) ? 'issues' : null,
         footer: issuesFooter,
       },
       // In progress renders through a dedicated builder: pinned own
@@ -5462,23 +5313,20 @@ const AppView = {
         key: 'inprogress', title: 'Underway', count: kInProgress.length,
         rows: AppView._inProgressRows(kInProgress),
         empty: null,
-        orderCol: null,
         footer: null,
         hint: 'Somebody or something is on these — being worked on, auto-solving, paused, waiting on an answer, or just claimed. The chip on each card says which.',
       },
       {
         key: 'inreview', title: 'In review', count: kInReview.length,
         rows: cardRows(kInReview, (x) => (x.kind === 'proposal'
-          ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)), 'review'),
+          ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item))),
         empty: kInReview.length ? null : emptyNote,
-        orderCol: (!filtering && !AppView.readOnly) ? 'review' : null,
         footer: null,
       },
       {
         key: 'done', title: 'Done', count: filtering ? kDone.length : doneTotal,
-        rows: cardRows(kDone, (m) => AppView._mergedRowModel(m), null),
+        rows: cardRows(kDone, (m) => AppView._mergedRowModel(m)),
         empty: kDone.length ? null : emptyNote,
-        orderCol: null,
         footer: doneFooter,
       },
     ];
@@ -5495,8 +5343,8 @@ const AppView = {
   // publishing `activeTab` does both.
   //
   // Switching tabs deliberately does NOT rebuild the columns: all four are
-  // already rendered, so moving the marker is enough — no scroll jump, no
-  // re-binding, and no interaction with the mid-drag repaint guard.
+  // already rendered, so moving the marker is enough — no scroll jump and
+  // no re-binding.
   _onKanbanTabSelect(key) {
     if (!AppView.KANBAN_TABS.includes(key)) return;
     // An explicit tap retires the ?col= override, mirroring _setViewMode.
@@ -6144,10 +5992,6 @@ const AppView = {
   // load (below), not per mount, so it survives every repaint; the repaint
   // itself no-ops when no card surface is mounted.
   _onSessionStateChanged() {
-    // Never rebuild the board out from under an in-progress drag — same
-    // guard _repaintDevBody / _repaintKanbanBoard apply to WS-driven
-    // repaints. The next settled event repaints.
-    if (AppView._dragState) return;
     if (!AppView.appData) return;
     if (typeof App !== 'undefined' && App.currentTab !== 'dev') return;
     // _repaintCards, not _repaintDevBody: an auto-run can be watched from

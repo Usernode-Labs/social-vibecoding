@@ -1594,12 +1594,7 @@
       "expectText": "Close issue #900001"
     },
     {
-      "name": "Issues + In review cards carry a drag-to-reorder handle",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": ".dev-drag-handle"
-    },
-    {
-      "name": "Issue filed after the last drag surfaces on the board (#617)",
+      "name": "Issue filed after a saved order surfaces on the board (#617)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "[Mock] Newly filed issue — should render on top"
     },

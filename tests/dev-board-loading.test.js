@@ -121,8 +121,6 @@ test('an unloaded board draws placeholders, not four empty columns', () => {
   for (const col of ['Issues', 'Underway', 'In review', 'Done']) {
     assert.ok(html.includes(`Loading ${col}`), `${col} announces itself as loading`);
   }
-  // Drag must not attach to placeholders: no column offers an order list.
-  assert.ok(!html.includes('data-order-col'), 'nothing is draggable while loading');
 });
 
 test('a loaded board draws its counts and its empty notes again', () => {
