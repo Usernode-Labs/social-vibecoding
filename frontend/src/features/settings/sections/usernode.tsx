@@ -210,6 +210,7 @@ function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
           description="Controls for the ZK passport identity flow."
         >
           <UnSwitch toggle={s.privacy.facematch} />
+          {s.privacy.open ? <UnBtn btn={s.privacy.open} /> : null}
           <UnBtn btn={s.privacy.reset} />
         </UnSection>
       ) : null}

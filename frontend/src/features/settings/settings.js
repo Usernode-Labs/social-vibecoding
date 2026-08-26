@@ -3891,6 +3891,12 @@
       }
     },
 
+    _hasNativeCapability(name) {
+      const diag = this._bridgeDiagnostics();
+      return !!diag && Array.isArray(diag.capabilities) &&
+        diag.capabilities.includes(name);
+    },
+
     // The copyable report. Deliberately assembled from the diagnostics
     // snapshot only — it carries no capability token, no session cookie
     // and no user data, so it is safe to paste into an issue.
@@ -4684,6 +4690,7 @@
       const perms = (s && s.permissions) || {};
       const isAndroid = perms.platform === 'android';
       const demo = this._unDemoMode();
+      const canOpenZkIdentity = this._hasNativeCapability('zkIdentityFlow');
       return {
         gated: this._usernodeGated === true,
         connection: this._usernodeConnectionView(),
@@ -4704,6 +4711,11 @@
             checked: s.facematchStrict !== false,
             action: '_setFacematchStrict',
           },
+          open: canOpenZkIdentity ? {
+            id: 'settings-usernode-open-zk-identity',
+            label: 'Open ZK identity',
+            action: '_openZkIdentityScreen',
+          } : null,
           reset: { label: 'Restart ZK challenge', action: '_resetZkChallenge', danger: true },
         } : null,
         widgetIcons: this._widgetIconsView(),
@@ -5000,6 +5012,9 @@
     _setNodeSleep(v) { return this._unApply(window.usernode.setNodeSleepEnabled(v)); },
     _setFacematchStrict(v) { return this._unApply(window.usernode.setFacematchStrict(v)); },
     _setDebugMode(v) { return this._unApply(window.usernode.setDebugMode(v)); },
+    _openZkIdentityScreen() {
+      return this._openNativeScreen('zkIdentity', 'Could not open ZK identity');
+    },
     _openBenchmarkScreen() {
       return this._openNativeScreen('benchmark', 'Could not open the benchmark');
     },
