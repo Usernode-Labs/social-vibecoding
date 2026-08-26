@@ -138,7 +138,7 @@ export function RenameAppDialog() {
               placeholder="a better name"
             />
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              3–64 characters. This is the app's display name — the URL won't change. Opens a PR that edits
+              3–64 characters. This is the app's display name, and the URL won't change. Opens a PR that edits
               <span className="font-mono">
                 dapp.json
               </span>

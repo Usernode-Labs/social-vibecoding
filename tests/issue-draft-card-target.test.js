@@ -1,6 +1,6 @@
 // #1037: the draft card must say WHERE the issue will be filed, because
 // the tap is irreversible and the Mayor picks the destination from the
-// user's wording. An app-targeted card reads "Issue draft — <app>" with a
+// user's wording. An app-targeted card reads "Issue draft: <app>" with a
 // "File issue" button; a platform-targeted one keeps the historical
 // "Suggested platform report" / "Report to platform" copy — and so does a
 // card with NO target at all, which is every draft written before #1037
@@ -112,7 +112,7 @@ test('a draft with NO target keeps the platform copy (legacy + fixture rows)', (
   assert.deepEqual(draftRow().action, { kind: 'buttons', confirmLabel: 'Report to platform' });
   assert.equal(draftRow().msgId, 42, 'the row the buttons resolve');
   assert.match(html, /class="dc-pr-btn dc-pr-btn-promote">Report to platform</);
-  assert.doesNotMatch(html, /Issue draft —/);
+  assert.doesNotMatch(html, /Issue draft:/);
 });
 
 test('an explicit platform target renders identically to an untargeted draft', () => {
@@ -126,7 +126,7 @@ test('an app target names the app and offers "File issue"', () => {
   const { render, draftRow } = makeDevChat();
   const html = render([card({ target: 'app', appName: 'Demo App' })]);
 
-  assert.match(html, /Issue draft — Demo App/, 'the destination is on the card');
+  assert.match(html, /Issue draft: Demo App/, 'the destination is on the card');
   assert.deepEqual(draftRow().action, { kind: 'buttons', confirmLabel: 'File issue' });
   assert.equal(draftRow().msgId, 42);
   assert.match(html, /class="dc-pr-btn dc-pr-btn-promote">File issue</);
@@ -138,7 +138,7 @@ test('an app target names the app and offers "File issue"', () => {
 test('an app-targeted card with no app name still reads sensibly', () => {
   const { render } = makeDevChat();
   const html = render([card({ target: 'app', appName: undefined })]);
-  assert.match(html, /Issue draft — this app/);
+  assert.match(html, /Issue draft: this app/);
 });
 
 test('an app name containing markup is escaped in the header', () => {
@@ -165,7 +165,7 @@ test('the resolved-state label follows the target too', () => {
   const linked = render([card({
     status: 'filed', target: 'app', issueUrl: 'https://github.com/acme/demo/issues/9', issueNumber: 9,
   })]);
-  assert.match(linked, /Reported — issue #9/);
+  assert.match(linked, /Reported: issue #9/);
 });
 
 test('a user-requested card reads as fulfilment, an agent one as a suggestion', () => {

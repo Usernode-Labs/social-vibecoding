@@ -160,7 +160,7 @@ const ACTIONS_SECRETS_MAX = 300;      // 3 pages of 100 — a hard stall guard
 const ACTIONS_SECRETS_TIMEOUT_MS = 4000;
 
 const ACTIONS_SECRETS_FORBIDDEN_MESSAGE =
-  "The platform's GitHub token can't read this repo's Actions secrets — it needs admin "
+  "The platform's GitHub token can't read this repo's Actions secrets, because it needs admin "
   + 'access on the platform repo (or the GitHub App needs the `secrets: read` permission).';
 
 function actionsSecretsFailure(code, message) {
@@ -1102,7 +1102,7 @@ async function createPR(owner, repo, {
       const detail = err && (err.message || '') +
         ' ' + JSON.stringify(err?.response?.data?.errors || err?.response?.data || '');
       if (err && err.status === 422 && /No commits between/i.test(detail)) {
-        const e = new Error(`No commits between main and ${headRef} — the branch has no pushed commits.`);
+        const e = new Error(`No commits between main and ${headRef}: the branch has no pushed commits.`);
         e.code = 'no_commits';
         throw e;
       }
@@ -1568,7 +1568,7 @@ async function verifyBotAccess(owner, repo) {
     if (err.status === 401) {
       return {
         ok: false, status: 500, code: 'unauthorized',
-        message: 'Platform GitHub credentials are invalid — contact an admin.',
+        message: 'Platform GitHub credentials are invalid. Contact an admin.',
       };
     }
     return { ok: false, status: 502, code: 'github_error', message: `GitHub error: ${err.message}` };
@@ -1583,7 +1583,7 @@ async function verifyBotAccess(owner, repo) {
   if (resp.data.private === true) {
     return {
       ok: false, status: 400, code: 'private_repo',
-      message: `${owner}/${repo} is a private repository. Usernode currently supports public repositories only — switch the repo to public on GitHub and resubmit.`,
+      message: `${owner}/${repo} is a private repository. Usernode currently supports public repositories only. Switch the repo to public on GitHub and resubmit.`,
     };
   }
 

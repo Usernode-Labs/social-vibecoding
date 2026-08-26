@@ -76,7 +76,7 @@ test('OpenRouter model labels show exact rates, cost tier, and advisory compatib
     costTier: 'medium',
     compatibility: 'experimental',
   });
-  assert.equal(label, 'Model — Medium cost · $0.25 /M input · $4 /M output · unverified');
+  assert.equal(label, 'Model: Medium cost · $0.25 /M input · $4 /M output · unverified');
 
   const limited = h.DevChat._openRouterModelOptionLabel({
     id: 'vendor/limited',
@@ -85,7 +85,7 @@ test('OpenRouter model labels show exact rates, cost tier, and advisory compatib
     costTier: 'unknown',
     compatibility: 'blocked',
   });
-  assert.equal(limited, 'vendor/limited — Price unavailable · $100 /M input · ? /M output · limited');
+  assert.equal(limited, 'vendor/limited: Price unavailable · $100 /M input · ? /M output · limited');
 });
 
 test('new session creation sends the explicit Claude choice', async () => {

@@ -124,7 +124,7 @@ function FeaturesSection() {
       if (!alive.current) return;
       if (httpStatus === 403) { setSummary('Admin access required.'); return; }
       if (!data || typeof data !== 'object') {
-        setSummary('Couldn’t load submitted features — try Refresh.');
+        setSummary('Couldn’t load submitted features. Try Refresh.');
         return;
       }
       const rows: Feature[] = data.features || [];
@@ -133,12 +133,12 @@ function FeaturesSection() {
         setSummary('');
         setEmpty(status === 'all'
           ? 'No submitted features yet.'
-          : 'No submitted features match this filter — try the “All” status.');
+          : 'No submitted features match this filter. Try the “All” status.');
         return;
       }
       setFeatures(rows);
       setSummary(total > rows.length
-        ? `Showing the top ${rows.length} of ${total} — use Download CSV for the full list.`
+        ? `Showing the top ${rows.length} of ${total}. Use Download CSV for the full list.`
         : `${total} feature${total === 1 ? '' : 's'}.`);
     })();
   }, [status, nonce]);
@@ -175,7 +175,7 @@ function FeaturesSection() {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch {
-      if (alive.current) setSummary('CSV export failed — try again.');
+      if (alive.current) setSummary('CSV export failed. Try again.');
     } finally {
       if (alive.current) setBusy(false);
     }

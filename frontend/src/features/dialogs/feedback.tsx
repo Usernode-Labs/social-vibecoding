@@ -116,7 +116,7 @@ export function FeedbackDialog() {
           id="feedback-title"
           type="text"
           maxLength={200}
-          placeholder="Title — generated as you type; edit as you like"
+          placeholder="Title, generated as you type; edit as you like"
           className="mb-2"
         />
         <Textarea
@@ -191,9 +191,9 @@ export function FeedbackDialog() {
             />
             <span className="text-xs text-zinc-600 dark:text-zinc-400">
               <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                Include app state
+                Include app state:
               </span>
-              &mdash; this app can attach a snapshot of its current state to help debugging
+              this app can attach a snapshot of its current state to help debugging
             </span>
           </label>
         </div>
@@ -212,9 +212,9 @@ export function FeedbackDialog() {
             <input id="feedback-bounty-checkbox" type="checkbox" className="accent-violet-500 w-4 h-4 mt-0.5" />
             <span className="text-xs text-zinc-600 dark:text-zinc-400">
               <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                Put a kudos bounty on this
+                Put a kudos bounty on this:
               </span>
-              &mdash; pledges 1 of your weekly kudos to whoever's merged proposal closes this issue
+              pledges 1 of your weekly kudos to whoever's merged proposal closes this issue
               <br />
               <span id="feedback-bounty-note" className="text-zinc-500 dark:text-zinc-500">
               </span>

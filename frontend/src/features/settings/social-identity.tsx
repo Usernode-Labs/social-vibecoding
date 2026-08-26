@@ -204,7 +204,7 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
               } else if (answer.clientAuth === 'rejected') {
                 setVerdict({
                   tone: 'text-red-700 dark:text-red-400',
-                  text: `${view.name} rejected the platform’s client ID or secret — `
+                  text: `${view.name} rejected the platform’s client ID or secret. `
                     + 'the configured credential pair is wrong.',
                 });
               } else {

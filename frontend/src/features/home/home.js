@@ -129,7 +129,7 @@ const Home = {
             ready: true, view: 'grid', rowTemplate: '', items: [],
             resultsHeading: null, emptyQuery: null,
             notice: {
-              text: "You're offline — apps you've opened before will appear here once this "
+              text: "You're offline. Apps you've opened before will appear here once this "
                 + 'device has loaded them.',
               tone: 'muted',
             },
@@ -1317,7 +1317,7 @@ const Home = {
             if (!ok) return;
             fetch(`/api/apps/${data.slug}/redeploy`, { method: 'POST' })
               .then((r) => r.ok ? r.json() : r.json().then((j) => Promise.reject(new Error(j.error || `HTTP ${r.status}`))))
-              .then(() => PlatformUI.toast('Rebuild started — watch the version pill.'))
+              .then(() => PlatformUI.toast('Rebuild started. Watch the version pill.'))
               .catch((err) => PlatformUI.toast(`Rebuild kickoff failed: ${err.message}`));
           });
         }
@@ -1448,7 +1448,7 @@ const Home = {
           ? 'bg-emerald-500 border-emerald-500 text-white'
           : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
       }" data-slug="${app.slug}" data-added="${isAdded}" title="${
-        isAdded ? 'Added — tap to remove from Your apps' : 'Add to Your apps'
+        isAdded ? 'Added. Tap to remove from Your apps' : 'Add to Your apps'
       }" aria-label="${
         isAdded ? `Remove ${escapeHtml(app.name)} from Your apps` : `Add ${escapeHtml(app.name)} to Your apps`
       }" aria-pressed="${isAdded}">${
@@ -2341,12 +2341,12 @@ const Home = {
   _lastHealOutcome: null,
   async _healWidgetIconsPass() {
     if (Home._shortcutSupport?.mechanism !== 'widget') {
-      Home._lastHealOutcome = 'skipped — not the widget mechanism';
+      Home._lastHealOutcome = 'skipped, not the widget mechanism';
       return;
     }
     const bridge = window.usernode;
     if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') {
-      Home._lastHealOutcome = 'skipped — no shortcut bridge';
+      Home._lastHealOutcome = 'skipped, no shortcut bridge';
       return;
     }
     // Resolve the dual-icon capability BEFORE building any marker or
@@ -2549,7 +2549,7 @@ const Home = {
         label: app.your_apps_hidden ? 'Add to Your apps' : 'Remove from Your apps',
         title: app.your_apps_hidden
           ? 'Show this app in Your apps again. You keep your builder access either way.'
-          : 'Hide this app from Your apps — it stays live and you keep your builder access.',
+          : 'Hide this app from Your apps. It stays live and you keep your builder access.',
         run: () => Home._menuToggleFavorite(app, !!app.your_apps_hidden),
       });
     } else {
@@ -2641,8 +2641,8 @@ const Home = {
         key: 'lock',
         label: app.locked ? 'Unlock app' : 'Lock app',
         title: app.locked
-          ? 'App locked — merges also need an admin yes vote. Click to unlock.'
-          : 'Lock this app — admin yes vote will also be required to merge changes.',
+          ? 'App locked: merges also need an admin yes vote. Click to unlock.'
+          : 'Lock this app. An admin yes vote will also be required to merge changes.',
         run: () => Home._menuToggleLock(app),
       });
       items.push({ key: 'delete', label: 'Delete app', danger: true, run: () => Home._menuDelete(app) });

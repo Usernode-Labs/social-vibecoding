@@ -154,7 +154,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
 
         var tip;
         if (exhausted && s.hasByokKey) {
-          tip = 'Your ' + money(limit) + ' daily allowance is used up — AI turns are now '
+          tip = 'Your ' + money(limit) + ' daily allowance is used up. AI turns are now '
             + 'billed to the Anthropic key you saved in Settings. ' + resetText;
         } else if (exhausted) {
           tip = 'You have used all ' + money(limit) + ' of today’s AI allowance. ' + resetText;

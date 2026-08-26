@@ -6,7 +6,7 @@
 // explicit terminal verdict:
 //
 //   - unparseable repo_url / missing GITHUB_BOT_TOKEN → 'skipped'
-//     ("checks unavailable — GitHub is not configured"), gate-passing;
+//     ("checks unavailable: GitHub is not configured"), gate-passing;
 //   - branch not ahead of main → 'skipped' ("nothing to test");
 //   - compareCommits throw → 'error' (retryable via the existing
 //     storeChecks backoff bookkeeping).
@@ -152,7 +152,7 @@ test('recordChecksSkipped: writes the verdict, broadcasts checks_ready, re-drive
     await subject.recordChecksSkipped({
       config: {}, pool: makeRecordingPool(), session: { ...SESSION },
       commitSha: 'beef5678', expectedCommitSha: 'cafe1234',
-      reason: 'branch has no commits beyond main — nothing to test',
+      reason: 'branch has no commits beyond main, so there is nothing to test',
     });
     assert.equal(skippedCalls.length, 1);
     assert.equal(skippedCalls[0].commitSha, 'beef5678');
@@ -205,7 +205,7 @@ test("storeChecksSkipped: writes 'skipped' + reason and clears the failure strea
   const { subject, restore } = loadVisuals();
   const pool = makeRecordingPool();
   try {
-    await subject.storeChecksSkipped(pool, 42, 'cafe1234', 'branch has no commits beyond main — nothing to test');
+    await subject.storeChecksSkipped(pool, 42, 'cafe1234', 'branch has no commits beyond main, so there is nothing to test');
     assert.equal(pool.queries.length, 1);
     const q = pool.queries[0];
     assert.match(q.sql, /check_state = 'skipped'/);
@@ -218,7 +218,7 @@ test("storeChecksSkipped: writes 'skipped' + reason and clears the failure strea
       'an archived or merged session cannot regain a terminal checks verdict');
     assert.match(q.sql, /checks_commit_sha IS NOT DISTINCT FROM \$4::text/);
     assert.deepEqual(q.params, [
-      'cafe1234', 'branch has no commits beyond main — nothing to test', 42, 'cafe1234',
+      'cafe1234', 'branch has no commits beyond main, so there is nothing to test', 42, 'cafe1234',
     ]);
   } finally { restore(); }
 });
@@ -403,7 +403,7 @@ test('the heal claims the resolved commit before staging can fail', () => {
 });
 
 test('an imported row with no recorded head sha records a terminal skip', () => {
-  assert.match(RECOVERY_SRC, /if \(imported && !importedHead\) \{[\s\S]*?reason: 'imported PR has no recorded head commit — nothing to preview'/,
+  assert.match(RECOVERY_SRC, /if \(imported && !importedHead\) \{[\s\S]*?reason: 'imported PR has no recorded head commit, so there is nothing to preview'/,
     'nothing to pin → an explicit gate-passing verdict, not a NULL that the sweeper re-picks forever');
 });
 

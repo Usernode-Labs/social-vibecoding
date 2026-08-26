@@ -89,13 +89,13 @@ export function ForkAppDialog() {
       // Same creation toast as the create dialog (issue #1418) — a fork ends
       // in the identical 'creating' → "Spinning up…" tile state.
       window.PlatformUI?.toast?.(
-        'Your app is being created — it will appear in your list of apps when it’s ready.',
+        'Your app is being created. It will appear in your list of apps when it’s ready.',
       );
       // Land the user on the home feed where the new fork tile shows its
       // "Spinning up…" state (identical to creating a new app).
       (window.App?.navigateHome as (() => void) | undefined)?.();
     } catch {
-      setError('Network error — please try again.');
+      setError('Network error. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -116,7 +116,7 @@ export function ForkAppDialog() {
           <span id="fork-source-name" className="font-mono text-zinc-300">
             {sourceName}
           </span>
-          stands up your own independent copy — its own repo, database, and web address.
+          stands up your own independent copy: its own repo, database, and web address.
         </p>
         <form id="fork-form" className="space-y-4" onSubmit={submit}>
           <div>
@@ -155,7 +155,7 @@ export function ForkAppDialog() {
               <span className="text-violet-700 dark:text-violet-400">
                 🔁 Resets to you:
               </span>
-              you become the sole owner — collaborators, group chat, issues, proposals and votes all start empty.
+              you become the sole owner, and collaborators, group chat, issues, proposals and votes all start empty.
             </p>
             <p>
               <span className="text-amber-800 dark:text-amber-400">

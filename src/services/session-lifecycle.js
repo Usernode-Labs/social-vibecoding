@@ -274,7 +274,7 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
     // panel either way. Own catch so a chat failure never fails the
     // archive itself.
     const label = session.pr_title
-      ? `PR #${session.pr_number} — ${session.pr_title}`
+      ? `PR #${session.pr_number}: ${session.pr_title}`
       : `PR #${session.pr_number}`;
     // Rejection (auto-takedown) gets its own line so the lifecycle feed reads
     // correctly: the group voted it down rather than it just going quiet.

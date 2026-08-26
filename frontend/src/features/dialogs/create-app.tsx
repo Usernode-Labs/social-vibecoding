@@ -246,7 +246,7 @@ export function CreateAppDialog() {
     try {
       res = await fetch(`/api/github/verify-access?url=${encodeURIComponent(url)}`);
     } catch {
-      return fail('Network error — try again.');
+      return fail('Network error. Try again.');
     }
 
     let data: Record<string, string> = {};
@@ -267,7 +267,7 @@ export function CreateAppDialog() {
     const nameEl = nameRef.current;
     if (nameEl && !nameEl.value.trim() && data.name) {
       nameEl.value = data.description
-        ? `${data.name} — ${data.description}`.slice(0, 80)
+        ? `${data.name}: ${data.description}`.slice(0, 80)
         : data.name;
     }
     nameEl?.focus();

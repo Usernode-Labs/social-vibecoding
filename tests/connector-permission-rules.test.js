@@ -512,8 +512,8 @@ test('copying reports the destination, and reports failure honestly', () => {
   const settingsJs = read('frontend/src/features/settings/settings.js');
   // The label swap alone cannot say WHICH file you copied for, and on a phone
   // the thumb is over it — so the toast names the destination.
-  assert.match(settingsJs, /Copied — paste it into ~\/\.claude\/settings\.json/);
-  assert.match(settingsJs, /Copied — commit it as \.claude\/settings\.json in your app repo/);
+  assert.match(settingsJs, /Copied\. Paste it into ~\/\.claude\/settings\.json/);
+  assert.match(settingsJs, /Copied\. Commit it as \.claude\/settings\.json in your app repo/);
   assert.match(settingsJs, /Connector URL copied/);
   // The URL button used to write 'Copied' even when writeText had rejected.
   assert.match(settingsJs, /'Copy failed'/);

@@ -2015,7 +2015,7 @@ test('every route the connector could not use is named back to the caller', () =
   });
   assert.deepEqual(shaped.testingPaths.map((p) => p.path), ['/ok', '/a', '/b']);
   assert.deepEqual(shaped.rejectedPaths, [
-    'https://evil.example/x (not a usable in-app path — it must start with a single "/")',
+    'https://evil.example/x (not a usable in-app path: it must start with a single "/")',
     '/ok (already listed)',
     '/c (over the 3-route cap)',
   ]);

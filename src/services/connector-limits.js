@@ -173,7 +173,7 @@ async function checkOpenWorkOrders(pool, userId) {
     return limitError(
       'at_capacity',
       `You have ${LIMITS.openTasks} pieces of work started and not yet submitted, which is the limit. `
-      + 'Submit one, or start one of them over, before starting another — a slot comes back as soon '
+      + 'Submit one, or start one of them over, before starting another. A slot comes back as soon '
       + 'as one is submitted.'
     );
   }

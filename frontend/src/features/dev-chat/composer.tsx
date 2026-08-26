@@ -40,7 +40,7 @@ function controller(): any {
 }
 
 const ATTACH_TITLE
-  = 'Attach files — images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB),'
+  = 'Attach files: images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB),'
   + ' or any other file (≤10 MB); up to 4 per message';
 
 const ATTACH_BTN
@@ -115,7 +115,7 @@ function SendButton({ send }: { send: ComposerState['send'] }): ReactNode {
  */
 function SavedDrafts({ rows, busy }: { rows: SavedDraftView[]; busy: boolean }): ReactNode {
   const sendTitle = busy
-    ? 'Claude is still working — you can send this when the turn finishes'
+    ? 'Claude is still working. You can send this when the turn finishes'
     : 'Send this draft now';
   return (
     <div id="dc-drafts" className={rows.length ? 'dc-drafts dc-drafts-active' : 'dc-drafts'}>

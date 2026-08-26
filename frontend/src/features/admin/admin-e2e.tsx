@@ -194,7 +194,7 @@ function E2ESection() {
       {/* One child per run. A bare whitespace expression would split the text
           around it into adjacent children — see tests/shell-build.test.js. */}
       <p className={`${AdminUI.muted} mb-4 max-w-3xl`}>
-        {`A record of the last full manual sweep of the product against production — ${RUN.total} `
+        {`A record of the last full manual sweep of the product against production: ${RUN.total} `
           + 'catalogued user-facing flows, what was exercised, and what broke. Unit and dapp '
           + 'tests answer “does this component still behave?”; this answers “has anyone walked '
           + 'the product end to end, and what did they find?” It reports, it does not run: the '

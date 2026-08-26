@@ -51,7 +51,7 @@ async function inviteApprover(pool, app, username, inviter) {
     const isMember = await appAccess.isCollaborator(pool, app.id, target.id);
     if (!isMember) {
       throw new ApproverInviteError(400,
-        `@${target.username} must be a collaborator first — invite them as a collaborator, then as an approver`);
+        `@${target.username} must be a collaborator first. Invite them as a collaborator, then as an approver`);
     }
   }
 

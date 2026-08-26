@@ -109,14 +109,14 @@ function prepareCheckout(repo, { branch, headSha }, io) {
   const dirty = git(topLevel, ['status', '--porcelain']).trim();
   if (dirty) {
     throw new Error(
-      `${topLevel} has uncommitted changes. Commit or stash them first — a local agent turn starts from a clean tree so the commit it uploads is exactly the work it did.`
+      `${topLevel} has uncommitted changes. Commit or stash them first: a local agent turn starts from a clean tree so the commit it uploads is exactly the work it did.`
     );
   }
   const head = git(topLevel, ['rev-parse', 'HEAD']).trim();
   if (!headSha || head === headSha) return { repo: topLevel, head };
 
   // Behind (or on the wrong branch). Fetch just what is needed and move.
-  io.out(`Checkout is at ${head.slice(0, 8)}; session is at ${headSha.slice(0, 8)} — fetching.\n`);
+  io.out(`Checkout is at ${head.slice(0, 8)}; session is at ${headSha.slice(0, 8)}. Fetching.\n`);
   if (!gitOk(topLevel, ['fetch', '--depth=1', 'origin', headSha])
       && !gitOk(topLevel, ['fetch', 'origin', branch])) {
     throw new Error(`Could not fetch ${headSha.slice(0, 8)} from origin. Check the remote and retry.`);
@@ -152,7 +152,7 @@ function describeError(response) {
     lease_lost: 'This machine\'s lease expired or was released. Run `agent run` again to re-attach.',
     turn_not_offered: 'That turn is no longer waiting for this machine.',
     turn_not_running: 'That turn already ended (it may have been stopped from the web page).',
-    read_only_turn: 'That turn is read-only — it drafts a spec and cannot carry a commit.',
+    read_only_turn: 'That turn is read-only: it drafts a spec and cannot carry a commit.',
     insufficient_scope: 'This credential predates local coding agents. Run `social-vibecoding login` to re-authorize.',
     branch_moved: 'The branch moved underneath this turn. Re-run it.',
     tree_mismatch: 'The reconstructed commit did not match the local tree; nothing was pushed.',
@@ -279,7 +279,7 @@ async function confirmTurn(turn, mode, context, io) {
     .join('\n')
     .slice(0, CONFIRM_PREVIEW_CHARS);
   io.out(
-    `\n┌─ Turn ${turn.turnId} — ${mode.label}\n`
+    `\n┌─ Turn ${turn.turnId}: ${mode.label}\n`
     + `│  Usernode wants to ${mode.verb} ${context.repo}\n`
     + `│\n${preview.split('\n').map((line) => `│  ${line}`).join('\n')}\n`
     + `└─\n`
@@ -320,7 +320,7 @@ async function runOneTurn(api, turn, context, io) {
     io.err(`Skipping turn ${turn.turnId}: ${describeError(accepted)}\n`);
     return;
   }
-  io.out(`\n▶ Turn ${turn.turnId} — running ${runtime.RUNTIME_ID} in ${repo}`
+  io.out(`\n▶ Turn ${turn.turnId}: running ${runtime.RUNTIME_ID} in ${repo}`
     + `${mode.readOnly ? ' (read-only)' : ''}\n`);
 
   const reporter = progressReporter(api, { turnId: turn.turnId, leaseId: context.leaseId });
@@ -412,7 +412,7 @@ async function runOneTurn(api, turn, context, io) {
     if (!result.ok) io.err(`Could not report the turn result: ${describeError(result)}\n`);
     io.out(failed
       ? `✗ Turn ${turn.turnId} failed.\n`
-      : `✓ Turn ${turn.turnId} done — drafted a ${specMd.split('\n').length}-line spec.\n`);
+      : `✓ Turn ${turn.turnId} done: drafted a ${specMd.split('\n').length}-line spec.\n`);
     return;
   }
 
@@ -512,7 +512,7 @@ async function agentRun(args, io, deps) {
     api.call('POST', '/api/cli/agent/heartbeat', { leaseId: lease.leaseId })
       .then((response) => {
         if (response.status === 409) {
-          io.err('Lease lost — this machine is no longer attached.\n');
+          io.err('Lease lost: this machine is no longer attached.\n');
           running = false;
         }
       })
@@ -606,7 +606,7 @@ async function agentStatus(args, io, deps) {
   }
   for (const agent of agents) {
     io.out(
-      `${agent.label} — session ${agent.sessionId} (${agent.appSlug || '?'}) `
+      `${agent.label}: session ${agent.sessionId} (${agent.appSlug || '?'}) `
       + `${agent.runtime}, last seen ${agent.lastSeenAt}\n`
     );
   }

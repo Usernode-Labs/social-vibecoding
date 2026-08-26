@@ -61,7 +61,7 @@ const CORE: FieldSpec[] = [
     key: 'kind',
     label: 'Kind',
     kind: 'text',
-    help: 'No admin listing endpoint exists for Kinds (documented gap) — must match an existing challenge_kinds id.',
+    help: 'No admin listing endpoint exists for Kinds (documented gap). Must match an existing challenge_kinds id.',
   },
   { key: 'schedule_start', label: 'Schedule start', kind: 'datetime' },
   { key: 'schedule_end', label: 'Schedule end', kind: 'datetime' },

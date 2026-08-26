@@ -144,7 +144,7 @@ test('the checks detail lists per-test rows with failure reasons', () => {
       { name: 'Feed renders', path: '/feed', status: 'fail', failureReason: '1 console error on load', consoleErrors: [{ kind: 'pageerror', message: 'TypeError: x', source: 'a.js:1' }] },
     ],
   }));
-  assert.match(html, /merge is blocked/);
+  assert.match(html, /Merge is blocked/);
   assert.match(html, /Home loads/);
   assert.match(html, /Feed renders/);
   assert.match(html, /1 console error on load/);
@@ -171,7 +171,7 @@ test('checksBadgeHtml: "skipped" is grey, spinner-free and non-blocking', () => 
   const AppView = makeAppView(ME);
   const badge = AppView.checksBadgeHtml(baseProposal({
     check_state: 'skipped', test_results: [],
-    check_error_detail: 'branch has no commits beyond main — nothing to test',
+    check_error_detail: 'branch has no commits beyond main, so there is nothing to test',
   }));
   assert.match(badge, /Checks skipped/);
   assert.match(badge, /gc-checks-running-badge/);
@@ -184,7 +184,7 @@ test('card: a skipped verdict blocks nothing, so the pill shows the vote state',
   const html = proposalCardHtml(AppView, baseProposal({
     check_state: 'skipped', test_results: [], my_vote: 'yes',
     yes_count: 1, no_count: 0, votes_required: 2,
-    check_error_detail: 'branch has no commits beyond main — nothing to test',
+    check_error_detail: 'branch has no commits beyond main, so there is nothing to test',
   }));
   assert.match(html, /dev-status-pill/);
   assert.match(html, /gc-vote-count-label">1 \/ 2/, 'skipped is terminal + non-blocking');
@@ -194,7 +194,7 @@ test('the checks detail shows a skipped block with the reason and the re-run but
   const AppView = makeAppView(ME);
   const html = checksHtml(AppView, baseProposal({
     check_state: 'skipped', test_results: [], user_id: ME,
-    check_error_detail: 'branch has no commits beyond main — nothing to test',
+    check_error_detail: 'branch has no commits beyond main, so there is nothing to test',
   }));
   assert.match(html, /Checks skipped/);
   assert.match(html, /nothing to test/);

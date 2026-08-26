@@ -390,7 +390,7 @@ function feedbackRoutes(config) {
       }
       const [, owner, repo] = (appRow.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (!owner || !repo) {
-        return res.status(409).json({ error: 'This app has no repository yet — try platform feedback' });
+        return res.status(409).json({ error: 'This app has no repository yet. Try platform feedback instead' });
       }
       issueOwner = owner;
       issueRepo = repo;
@@ -509,7 +509,7 @@ function feedbackRoutes(config) {
           // Never silently reroute to the platform repo — the user
           // explicitly chose this app. Surface an actionable hint.
           return res.status(502).json({
-            error: "Failed to create GitHub issue: couldn't file to this app's repo — the bot may not be installed on it",
+            error: "Failed to create GitHub issue: couldn't file to this app's repo. The bot may not be installed on it",
           });
         }
         await queueTitleHeal(issueOwner, issueRepo, issue.number);
@@ -556,7 +556,7 @@ function feedbackRoutes(config) {
         // limiting (403). Never include the raw body — it can leak repo
         // metadata — but the status alone is safe + actionable.
         const hint = ghRes.status === 404
-          ? 'feedback repo not visible to the bot — add usernode-bot as a collaborator or install the GitHub App on it'
+          ? 'feedback repo not visible to the bot. Add usernode-bot as a collaborator or install the GitHub App on it'
           : ghRes.status === 401
             ? 'GITHUB_BOT_TOKEN is invalid or expired'
             : ghRes.status === 403

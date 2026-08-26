@@ -77,7 +77,7 @@ test('the row is repainted from the live Kudos budget, not a literal', () => {
   // Both copy variants interpolate the server's numbers.
   assert.match(feedbackJs, /\$\{remaining\} of \$\{limit\} kudos left this week/);
   assert.match(feedbackJs, /You've used all \$\{limit\} kudos this week/);
-  assert.match(feedbackJs, /resets Monday 00:00 UTC/);
+  assert.match(feedbackJs, /Resets Monday 00:00 UTC/);
 });
 
 test('resetBountyRow unchecks the box and disables it at zero remaining', () => {
@@ -141,7 +141,7 @@ test('the confirmation reports the bounty outcome and refreshes the meter', () =
     feedbackJs.indexOf('const submitFeedback = async () => {'),
     feedbackJs.indexOf('Feedback._open = (opts = {}) => {')
   );
-  assert.match(submit, /and pledged 1 kudos as a bounty/);
+  assert.match(submit, /Pledged 1 kudos as a bounty/);
   assert.match(submit, /\$\{data\.bounty\.remaining\} left this week/);
   assert.match(submit, /Couldn't add the bounty/);
   // The drawer meter must show the number the user just spent down to.

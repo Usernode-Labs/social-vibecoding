@@ -188,7 +188,7 @@ test('the console section exists, is admin-visible, and its button is write-gate
     'canWrite is derived from canAdminWrite — the view-only-admin split');
   assert.match(rolloverTsx, /\{canWrite \? \(/,
     'the start button is conditional on write access, the section itself is not');
-  assert.match(rolloverTsx, /View-only admin — you can watch a rollover, but not start one\./,
+  assert.match(rolloverTsx, /View-only admin: you can watch a rollover, but not start one\./,
     'and a view-only admin is told why the button is missing');
   assert.match(rolloverTsx, /id="admin-rollover-list"/, 'a host for the live per-app table');
 });

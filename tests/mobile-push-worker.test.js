@@ -108,7 +108,7 @@ test('eligible delivery sends one contextual bound message and marks it sent', a
   assert.equal(calls.sent[0].data.environment, 'production');
   assert.deepEqual(calls.sent[0].notification, {
     title: 'Your build is ready · MyPage',
-    body: '"Fix login redirect loop" finished — review it while it\'s fresh',
+    body: '"Fix login redirect loop" finished. Review it while it\'s fresh',
   });
 });
 

@@ -193,7 +193,7 @@ export function AdminScreen() {
               id="admin-view-only-banner"
               className="hidden bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg px-4 py-3 mb-4 text-sm"
             >
-              <span className="font-semibold">View-only — read access only.</span>
+              <span className="font-semibold">View-only: read access only.</span>
               {/*
                   ONE text child, not `{' '}` followed by the sentence. The
                   prerender pass uses renderToStaticMarkup (prerender.tsx), which

@@ -391,7 +391,7 @@ export function MembersDialog() {
             <code>
               admins
             </code>
-            list &mdash; that proposal needs real Yes votes and won&rsquo;t merge on a timer.
+            list. That proposal needs real Yes votes and won&rsquo;t merge on a timer.
           </p>
         </div>
         <div className="flex gap-3">

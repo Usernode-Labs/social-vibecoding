@@ -382,7 +382,7 @@ test('the password-reset mail carries the reset link and no secrets beyond it', 
   const msg = templates.buildMessage('password_reset', seen[0]);
   assert.ok(msg.text.includes(seen[0].url), 'the reset link must be in the copy');
   assert.match(msg.text, /30 minutes/);
-  assert.match(msg.text, /ignore this email/i);
+  assert.match(msg.text, /you can ignore it/i);
   assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
 });
 

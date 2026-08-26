@@ -321,7 +321,7 @@ function ChallengeForm({ eventId, existing, initialTemplateId, onClose, onSaved 
     </Field>
   );
 
-  const KIND_HELP = 'No admin listing endpoint exists for Kinds (documented gap) — must match an existing challenge_kinds id.';
+  const KIND_HELP = 'No admin listing endpoint exists for Kinds (documented gap). Must match an existing challenge_kinds id.';
 
   return (
     <Panel
@@ -362,7 +362,7 @@ function ChallengeForm({ eventId, existing, initialTemplateId, onClose, onSaved 
               htmlFor="admin-topo-ch-f-template"
               help={(templates && templates.length)
                 ? 'Picking a template fills in every field below with its values; switching template fills them in again.'
-                : 'No unused Challenge templates are available for this event — create one in the Challenge templates tab first.'}
+                : 'No unused Challenge templates are available for this event. Create one in the Challenge templates tab first.'}
             >
               <Select
                 id="admin-topo-ch-f-template"
@@ -386,7 +386,7 @@ function ChallengeForm({ eventId, existing, initialTemplateId, onClose, onSaved 
             <Field
               label="Display order"
               htmlFor={fieldId('display_order')}
-              help="Not part of a template — where this challenge sits in the event."
+              help="Not part of a template: where this challenge sits in the event."
             >
               <Input
                 id={fieldId('display_order')}

@@ -550,7 +550,7 @@ const Browse = {
       demo: isDemo,
       openable: !isDemo,
       added: isAdded,
-      addTitle: isAdded ? 'Added — tap to remove from Your apps' : 'Add to Your apps',
+      addTitle: isAdded ? 'Added. Tap to remove from Your apps' : 'Add to Your apps',
     };
   },
 

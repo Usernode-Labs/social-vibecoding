@@ -57,7 +57,7 @@ export function UsernameSection() {
         </Button>
 
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
-          Letters, numbers and underscores, 3–32 characters — so people can still
+          Letters, numbers and underscores, 3–32 characters, so people can still
           @mention you. Your old handle is kept reserved for you rather than
           released, so links and mentions that used it keep pointing at you and
           nobody else can take it. You can change your username again after 30 days.

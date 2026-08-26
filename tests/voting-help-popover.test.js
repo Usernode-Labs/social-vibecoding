@@ -57,10 +57,10 @@ test('eight rules, and the emphasis falls where it was written', () => {
   );
 
   // Emphasis is inline, so the words either side of it have to keep their
-  // spacing. `<strong>No</strong> votes` and `becomes <strong>Contested</strong> —`
+  // spacing. `<strong>No</strong> votes` and `becomes <strong>Contested</strong>.`
   // are the two that a trimmed JSX text child would run together.
   assert.match(html, /<strong>No<\/strong> votes make a proposal harder/);
-  assert.match(html, /becomes <strong>Contested<\/strong> — the time-based path/);
+  assert.match(html, /becomes <strong>Contested<\/strong>\. The time-based path/);
   assert.match(html, /its <strong>automated checks pass<\/strong> and it’s <strong>up to date/);
   assert.ok(!/<strong>\s|\s<\/strong>/.test(html), 'no emphasis run has leading or trailing space');
 });

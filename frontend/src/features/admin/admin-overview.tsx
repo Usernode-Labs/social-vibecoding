@@ -140,7 +140,7 @@ function OverviewSection() {
           </div>
         ) : null}
         {data && !anyDetail ? (
-          <p className={MUTED_SM}>All clear — no stuck apps, no orphan workers, no LLM spend recorded today.</p>
+          <p className={MUTED_SM}>All clear: no stuck apps, no orphan workers, no LLM spend recorded today.</p>
         ) : null}
       </div>
     </div>

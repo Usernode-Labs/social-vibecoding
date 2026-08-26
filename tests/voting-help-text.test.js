@@ -116,7 +116,7 @@ test('reached + green checks, no window → "queued to merge shortly"', () => {
     yes_count: 9, no_count: 0, votes_required: 9, check_state: 'passing',
   }));
   assert.match(txt, /votes it needs \(9 of 9\)/);
-  assert.match(txt, /queued to merge shortly/);
+  assert.match(txt, /Queued to merge shortly/);
 });
 
 test('reached but checks still running → folds the checks blocker in', () => {
@@ -127,7 +127,7 @@ test('reached but checks still running → folds the checks blocker in', () => {
   assert.match(txt, /enough Yes votes \(9 of 9\)/);
   assert.match(txt, /can’t merge yet/);
   assert.match(txt, /still running/);
-  assert.doesNotMatch(txt, /queued to merge shortly/);
+  assert.doesNotMatch(txt, /Queued to merge shortly/);
 });
 
 test('reached but behind main → folds the behind-main blocker in', () => {

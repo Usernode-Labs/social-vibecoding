@@ -128,9 +128,9 @@
           local = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
         }
       } catch (err) { /* no Intl — the UTC boundary still reads fine */ }
-      if (local) parts += ' — ' + local + ' your time';
+      if (local) parts += ' (' + local + ' your time)';
       var left = resetIn(s.resetsAt, nowMs);
-      if (left) parts += (local ? ', about ' : ' — about ') + left + ' from now';
+      if (left) parts += ', about ' + left + ' from now';
     }
     return parts + '.';
   }
@@ -255,7 +255,7 @@
   // it, rather than announcing a failure that hasn't happened.
   function lowLead(state) {
     var s = state || {};
-    return 'Running low on free AI credits — ' + money(s.remainingCents)
+    return 'Running low on free AI credits: ' + money(s.remainingCents)
       + ' of ' + money(s.limitCents) + ' left today.';
   }
 
@@ -322,7 +322,7 @@
         ? "Your saved key couldn't be used"
         : 'Use your own Anthropic API key',
       blurb: hasApiKey
-        ? 'Usernode has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it — the daily allowance is bypassed entirely while a working key is on file.'
+        ? 'Usernode has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it. The daily allowance is bypassed entirely while a working key is on file.'
         : 'Paste a key in Settings → API key and Usernode keeps working exactly as it does now, billed to your Anthropic account instead of your daily allowance.',
       cta: hasApiKey ? 'Check API key' : 'Add API key',
       hash: SETTINGS_HASHES.apiKey,

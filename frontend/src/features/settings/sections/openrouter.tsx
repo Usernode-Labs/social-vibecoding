@@ -29,7 +29,7 @@ export function OpenRouterSection() {
         </Button>
       </div>
       <div id="settings-openrouter-reveal" className="hidden rounded-lg border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-3 py-3 mb-3">
-        <div className="text-sm font-semibold text-amber-900 dark:text-amber-100">Save this key now — it is shown only once</div>
+        <div className="text-sm font-semibold text-amber-900 dark:text-amber-100">Save this key now. It is shown only once</div>
         <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">It is already encrypted and selected for your Usernode sessions. Copy it if you also want your own backup.</p>
         <div className="mt-2 flex gap-2">
           <Input id="settings-openrouter-revealed-key" type="text" readOnly width="flex" className="font-mono" />

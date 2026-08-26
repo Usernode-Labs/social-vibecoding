@@ -117,25 +117,25 @@ test('each kind renders its own title and body from send-time context', () => {
       'Your work is getting noticed'],
     ['collab_invite', CONTEXT,
       '@alice wants to build MyPage with you',
-      'Join as a collaborator — accept or decline in the app'],
+      'Join as a collaborator. Accept or decline in the app'],
     ['collab_invite_accepted', CONTEXT,
       '@alice is in! · MyPage',
-      'Your invite was accepted — you can start building together'],
+      'Your invite was accepted. You can start building together'],
     ['approver_invite', CONTEXT,
       '@alice asked you to be an approver · MyPage',
-      "You'd review and vote on proposals — accept in the app"],
+      "You'd review and vote on proposals. Accept in the app"],
     ['approver_invite_accepted', CONTEXT,
       '@alice is now an approver · MyPage',
       'They can review and vote on proposals from now on'],
     ['spec_shared', { ...CONTEXT, detail: '3' },
       '@alice shared "Fix login redirect loop" with you · MyPage',
-      'Spec v3 — take a look and leave feedback'],
+      'Spec v3. Take a look and leave feedback'],
     ['session_done', CONTEXT,
       'Your build is ready · MyPage',
-      '"Fix login redirect loop" finished — review it while it\'s fresh'],
+      '"Fix login redirect loop" finished. Review it while it\'s fresh'],
     ['pr_proposed', { ...CONTEXT, prTitle: 'Fix login redirect loop', sessionTitle: null },
       '@alice proposed "Fix login redirect loop" · MyPage',
-      'Take a look — your vote decides'],
+      'Take a look. Your vote decides'],
     ['check_failed', CONTEXT,
       'Checks failed on "Fix login redirect loop" · MyPage',
       'Needs a fix before it can merge'],
@@ -152,15 +152,15 @@ test('each kind renders its own title and body from send-time context', () => {
 test('auto-solve outcomes surface urgency in the title, next step in the body', () => {
   const cases = [
     ['spec', 'Auto-solve finished "Fix login redirect loop" · MyPage',
-      'Spec ready — review it in the app'],
+      'Spec ready. Review it in the app'],
     ['code', 'Auto-solve finished "Fix login redirect loop" · MyPage',
-      "Code ready — review and promote when you're happy"],
+      "Code ready. Review and promote when you're happy"],
     ['spec_code', 'Auto-solve finished "Fix login redirect loop" · MyPage',
-      "Spec and code ready — review and promote when you're happy"],
+      "Spec and code ready. Review and promote when you're happy"],
     ['question', 'Auto-solve is waiting on you · MyPage',
       '"Fix login redirect loop" needs an answer before it can continue'],
     ['failed', 'Auto-solve hit a wall · MyPage',
-      '"Fix login redirect loop" failed — open the log to see what happened'],
+      '"Fix login redirect loop" failed. Open the log to see what happened'],
   ];
   for (const [detail, title, body] of cases) {
     const message = buildMessage({
@@ -178,11 +178,11 @@ test('a stale proposal names how long it has been waiting when the promotion tim
   }).notification.body;
   assert.equal(
     bodyAfter(3 * day + 60_000),
-    'No votes in 3 days — nudge collaborators or share the preview'
+    'No votes in 3 days. Nudge collaborators or share the preview'
   );
   assert.equal(
     bodyAfter(day + 60_000),
-    'No votes in 1 day — nudge collaborators or share the preview'
+    'No votes in 1 day. Nudge collaborators or share the preview'
   );
   // Under a day, or promoted_at missing entirely: the nudge stands alone.
   assert.equal(bodyAfter(60_000), 'Nudge collaborators or share the preview');

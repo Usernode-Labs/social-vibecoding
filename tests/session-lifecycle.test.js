@@ -237,7 +237,7 @@ test('archiveSession: a rename/visibility PR row archives like any promoted sess
     const res = await subject.archiveSession({ pool, sessionId: 8, userId: 3, reason: 'manual' });
     assert.equal(res.archived, true);
     assert.deepEqual(spies.closePR, [{ owner: 'acme', repo: 'widget', pr: 21 }]);
-    assert.equal(spies.sendSystemMessage[0].content, 'evan withdrew PR #21 — Rename to "Cooler App"');
+    assert.equal(spies.sendSystemMessage[0].content, 'evan withdrew PR #21: Rename to "Cooler App"');
   } finally {
     restore();
   }
@@ -245,7 +245,7 @@ test('archiveSession: a rename/visibility PR row archives like any promoted sess
 
 // ── PR-withdrawn group-chat announcement (#200) ─────────────────────────
 
-test('archiveSession: manual archive announces "<user> withdrew PR #N — Title"', async () => {
+test('archiveSession: manual archive announces "<user> withdrew PR #N: Title"', async () => {
   const { subject, spies, restore } = loadWithStubs();
   try {
     const pool = makePool([
@@ -261,7 +261,7 @@ test('archiveSession: manual archive announces "<user> withdrew PR #N — Title"
     assert.equal(res.archived, true);
     assert.equal(spies.sendSystemMessage.length, 1);
     assert.equal(spies.sendSystemMessage[0].appId, 4);
-    assert.equal(spies.sendSystemMessage[0].content, 'evan withdrew PR #53 — Add sticky notes');
+    assert.equal(spies.sendSystemMessage[0].content, 'evan withdrew PR #53: Add sticky notes');
     assert.equal(spies.sendSystemMessage[0].msgType, 'system');
   } finally {
     restore();
