@@ -248,6 +248,13 @@ const ADDED_IDS = {
   'settings-openrouter-copy': 'Copy action for the one-time child-key reveal (#1344).',
   'settings-openrouter-dismiss-reveal': 'Clears the one-time plaintext key from the settings DOM (#1344).',
   'settings-openrouter-personal-controls': 'Personal-BYOK controls hidden while a managed key owns the credential slot (#1344).',
+  // #1383 — the #apps directory's Sort control. It rides INSIDE
+  // #browse-search-bar rather than in a strip of its own: both narrow the
+  // same list, and one sticky row costs the phone less of the fold than two.
+  // The <select> is controlled off browse-store's `sort`, so the remembered
+  // choice, a ?sort= deep link and a hand change all show the same value.
+  'browse-sort-bar': 'Sort row inside the browse search bar (#1383).',
+  'browse-sort-select': 'The five-order Sort control for the all-apps directory (#1383).',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

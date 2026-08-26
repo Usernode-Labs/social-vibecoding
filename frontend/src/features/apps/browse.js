@@ -57,6 +57,10 @@ const Browse = {
   _open: false,
   _apps: [],
   _query: '',
+  // Which of Browse.SORTS orders the list (#1383). 'recommended' is the
+  // default and the store's initial value; the persisted / URL choice is
+  // applied on screen ENTRY, never during render — see _applyInitialSort.
+  _sort: 'recommended',
   _searchDebounce: null,
   // Slug of the app whose detail page is showing; null = the list level.
   _slug: null,
@@ -135,6 +139,7 @@ const Browse = {
     if (!Browse._apps.length && Array.isArray(Home._apps) && Home._apps.length) {
       Browse._apps = Home._apps;
     }
+    Browse._applyInitialSort();
     Browse._syncLevel();
     Browse.render();
     Browse._load();
@@ -310,36 +315,166 @@ const Browse = {
     }
   },
 
-  // Featured first (by the admin's featured_order, ascending), then
-  // everything else by NUMBER OF USERS, most-used first — the directory's
-  // "what are people actually using" ordering. Ties fall back to the order
-  // /api/apps returned (its own activity ranking), which Array.prototype
-  // .sort preserves because it is stable.
+  // ── Sorting (#1383) ───────────────────────────────────────────────
   //
-  // Featured apps keep the admin's order among themselves rather than being
-  // re-sorted by users: that list IS a curation, and reordering it would
-  // silently override the choice made in the admin console.
+  // "When viewing the list of apps that are available, it'd be useful to be
+  // able to sort it by number of users, how actively developed it is, etc."
+  // Five orders over the ONE /api/apps payload the screen already holds, so
+  // switching is instant: no second endpoint, no paging, no spinner.
+  //
+  // The order of this array is the order of the <select>; the first entry is
+  // the default. Labels are user-facing.
+  SORTS: [
+    { key: 'recommended', label: 'Recommended' },
+    { key: 'users', label: 'Most users' },
+    { key: 'active', label: 'Most active' },
+    { key: 'merged', label: 'Most changes merged' },
+    { key: 'new', label: 'Newest' },
+  ],
+
+  // localStorage key for the remembered choice. Namespaced like the rest of
+  // the shell's client-side preferences.
+  SORT_STORAGE_KEY: 'usernode:browse-sort',
+
+  // Anything unrecognised — a stale stored value, a hand-typed ?sort= — falls
+  // back to the default rather than emptying the screen. Pure — unit-tested.
+  resolveSort(raw) {
+    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    return Browse.SORTS.some((s) => s.key === key) ? key : 'recommended';
+  },
+
+  // Precedence on screen entry: ?sort= (a link someone was handed, and what
+  // the before/after captures and the declared checks navigate to) beats the
+  // remembered choice, which beats the default.
+  //
+  // The URL form is READ-ONLY: it seeds the control for this visit and is
+  // never written back to storage, so following a `?sort=new` link cannot
+  // silently repoint somebody's directory forever. Changing the control by
+  // hand IS an explicit choice, and setSort persists that.
+  //
+  // Runs on ENTRY, not during render: reading localStorage while rendering
+  // would throw in the SSG prerender (no localStorage in Node) and make the
+  // first client render disagree with the prerendered markup, which is a
+  // hydration console.error — and a console error on any route fails checks.
+  _applyInitialSort() {
+    const fromUrl = Browse._urlSort();
+    const key = fromUrl || Browse._storedSort() || 'recommended';
+    Browse._sort = Browse.resolveSort(key);
+    if (Browse._store) Browse._store.set({ sort: Browse._sort });
+  },
+
+  // null when absent/unrecognised, so the caller can fall through to storage.
+  _urlSort() {
+    let raw = null;
+    try { raw = new URLSearchParams(location.search).get('sort'); } catch (err) { return null; }
+    if (!raw) return null;
+    const key = Browse.resolveSort(raw);
+    return key === 'recommended' && raw.trim().toLowerCase() !== 'recommended' ? null : key;
+  },
+
+  // Storage can throw outright (Safari private mode, an iframe denied
+  // storage), so both accessors swallow — a missing preference is not an
+  // error, it is the default.
+  _storedSort() {
+    try {
+      const raw = window.localStorage.getItem(Browse.SORT_STORAGE_KEY);
+      if (!raw) return null;
+      const key = Browse.resolveSort(raw);
+      return key === 'recommended' && raw !== 'recommended' ? null : key;
+    } catch (err) { return null; }
+  },
+
+  // The control's onChange. Always persists: this is the user saying so.
+  setSort(key) {
+    const next = Browse.resolveSort(key);
+    Browse._sort = next;
+    try { window.localStorage.setItem(Browse.SORT_STORAGE_KEY, next); } catch (err) { /* ignore */ }
+    if (Browse._store) Browse._store.set({ sort: next });
+    Browse.render();
+  },
+
+  // Sorting REORDERS, it never filters: every order returns the same set of
+  // rows, so a switch can't make an app disappear. (Deliberately unlike the
+  // home screen's Popular lane, which drops zero-user apps.)
+  //
+  // Every comparator returns 0 on a tie, so Array.prototype.sort's stability
+  // falls the tail back to the order /api/apps returned — its own
+  // chat-activity ranking — rather than to an arbitrary one.
+  //
+  // FEATURED PINNING applies under 'recommended' ONLY. That list is an admin
+  // curation and the default must not silently override it; but under an
+  // explicit "Most users" a featured app that nobody uses sitting on top
+  // would just look like the control is broken, so there it takes the
+  // position its numbers earn.
   // Pure — unit-tested in tests/browse-screen.test.js.
-  sortApps(apps) {
+  sortApps(apps, key) {
+    const sort = Browse.resolveSort(key == null ? Browse._sort : key);
+    const num = (v) => (parseInt(v, 10) || 0);
+    const users = (a) => num(a && a.active_users);
+    const time = (v) => {
+      if (!v) return null;
+      const t = new Date(v).getTime();
+      return Number.isNaN(t) ? null : t;
+    };
+    // Newest first, with unparseable/missing timestamps last in either
+    // direction (they carry no information; they should not lead).
+    const byTimeDesc = (a, b) => {
+      if (a === b) return 0;
+      if (a == null) return 1;
+      if (b == null) return -1;
+      return b - a;
+    };
     const featuredRank = (a) => (a && a.featured
       ? (a.featured_order == null ? Number.MAX_SAFE_INTEGER - 1 : a.featured_order)
       : Number.MAX_SAFE_INTEGER);
-    const users = (a) => (parseInt(a && a.active_users, 10) || 0);
-    return (apps || []).slice().sort((x, y) => {
-      const fx = featuredRank(x);
-      const fy = featuredRank(y);
-      if (fx !== fy) return fx - fy;
-      // Same bucket. Inside the featured bucket the ranks already differ
-      // (distinct sort_order), so this only orders the non-featured tail.
-      return users(y) - users(x);
-    });
+    // The later of "last change merged" and "last deploy" — an app can ship
+    // without a community proposal and vice versa, and either is a sign of
+    // life.
+    const touched = (a) => {
+      const m = time(a && a.last_merged_at);
+      const d = time(a && (a.last_deploy_at || a.created_at));
+      if (m == null) return d;
+      if (d == null) return m;
+      return Math.max(m, d);
+    };
+
+    const cmp = {
+      // Featured first (by the admin's featured_order, ascending), then
+      // everything else by number of users — the shipped ordering, unchanged.
+      recommended: (x, y) => {
+        const fx = featuredRank(x);
+        const fy = featuredRank(y);
+        if (fx !== fy) return fx - fy;
+        // Same bucket. Inside the featured bucket the ranks already differ
+        // (distinct sort_order), so this only orders the non-featured tail.
+        return users(y) - users(x);
+      },
+      users: (x, y) => users(y) - users(x),
+      // "How actively developed is it" — accepted community proposals in the
+      // last 30 days, then recency of the last sign of life, then size.
+      active: (x, y) => (
+        num(y && y.merged_prs_recent) - num(x && x.merged_prs_recent)
+        || byTimeDesc(touched(x), touched(y))
+        || users(y) - users(x)
+      ),
+      // All-time accepted proposals: the app with the deepest history of
+      // community changes, not the busiest month.
+      merged: (x, y) => (
+        num(y && y.merged_prs) - num(x && x.merged_prs)
+        || byTimeDesc(time(x && x.last_merged_at), time(y && y.last_merged_at))
+      ),
+      new: (x, y) => byTimeDesc(time(x && x.created_at), time(y && y.created_at)),
+    }[sort];
+
+    return (apps || []).slice().sort(cmp);
   },
 
   // The rows for the current query. Search covers EVERY visible app here
   // (home's own search is scoped to "Your apps"), reusing Home's matcher
-  // so both fields behave identically.
+  // so both fields behave identically. Sort first, then filter: the two
+  // compose, and searching never changes the order.
   visibleApps() {
-    const sorted = Browse.sortApps(Browse._apps);
+    const sorted = Browse.sortApps(Browse._apps, Browse._sort);
     return sorted.filter((a) => Home.matchesQuery(a, Browse._query));
   },
 
@@ -348,14 +483,41 @@ const Browse = {
   // The row's second line. There is no description column on `apps` (and
   // dapp.json carries descriptions only per-secret), so this is derived
   // META, not prose: who's using it, when it last shipped, and the status
-  // word when the app isn't actually running. Pure — unit-tested.
-  metaLine(app) {
+  // word when the app isn't actually running.
+  //
+  // It ADAPTS to the current sort (#1383), so the number a row was ranked by
+  // is the number the row shows — a list ordered by merged proposals whose
+  // rows only mention users reads as unsorted. The user count leads in every
+  // variant: it is the one figure people scan for.
+  //
+  //   recommended / users   12 users · Updated 3d ago
+  //   active                12 users · 4 merged in 30d · Updated 3d ago
+  //   merged                12 users · 37 changes merged · Updated 3d ago
+  //   new                   12 users · Created 5d ago
+  //
+  // A zero-merge app omits the merge segment rather than printing "0 merged",
+  // which reads as a defect rather than as an absence.
+  // Pure — unit-tested.
+  metaLine(app, key) {
     if (!app) return '';
+    const sort = Browse.resolveSort(key == null ? Browse._sort : key);
     const bits = [];
     const users = parseInt(app.active_users || 0, 10) || 0;
     bits.push(`${users} user${users === 1 ? '' : 's'}`);
-    const rel = formatRelativeTime(app.last_deploy_at || app.created_at);
-    if (rel) bits.push(`Updated ${rel}`);
+    if (sort === 'active') {
+      const recent = parseInt(app.merged_prs_recent || 0, 10) || 0;
+      if (recent > 0) bits.push(`${recent} merged in 30d`);
+    } else if (sort === 'merged') {
+      const merged = parseInt(app.merged_prs || 0, 10) || 0;
+      if (merged > 0) bits.push(`${merged} change${merged === 1 ? '' : 's'} merged`);
+    }
+    if (sort === 'new') {
+      const created = formatRelativeTime(app.created_at);
+      if (created) bits.push(`Created ${created}`);
+    } else {
+      const rel = formatRelativeTime(app.last_deploy_at || app.created_at);
+      if (rel) bits.push(`Updated ${rel}`);
+    }
     const status = app.status === 'running' ? ''
       : app.status === 'creating' ? 'Spinning up…'
       : app.status === 'awaiting_secrets' ? 'Awaiting secrets'
@@ -379,7 +541,7 @@ const Browse = {
       app,
       slug: app.slug,
       name: app.name || app.slug,
-      meta: Browse.metaLine(app),
+      meta: Browse.metaLine(app, Browse._sort),
       status: app.status || '',
       statusDot: app.status === 'running' ? 'running'
         : app.status === 'error' ? 'error' : 'creating',
@@ -407,6 +569,9 @@ const Browse = {
 
     Browse._store.set({
       rows,
+      // Republished on every list render so the <select> and the
+      // #browse-list[data-sort] anchor can never lag the rows they describe.
+      sort: Browse._sort,
       error: false,
       empty: rows.length
         ? null

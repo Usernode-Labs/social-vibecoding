@@ -1409,6 +1409,11 @@
       "expectSelector": "#dev-kanban[data-kanban-active=\"done\"] #dev-kanban-col-done.dev-kanban-col-active"
     },
     {
+      "name": "A task moved to Done keeps its priority/assignee/type chips",
+      "path": "/?demo=1&view=kanban&col=done#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-done [data-gov-row=\"9100060\"] .attr-chip"
+    },
+    {
       "name": "?view=kanban forces the board regardless of stored preference (#814)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
@@ -2686,6 +2691,23 @@
       "name": "Real sessions still render beside it, each on its own destination (#1417)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#improve-panel[data-open] [data-improve-row=\"session\"][href*=\"/dev/sessions/\"]"
+    },
+    {
+      "name": "The all-apps directory offers a Sort control, defaulting to Recommended (#1383)",
+      "path": "/#apps",
+      "expectSelector": "#browse-search-bar #browse-sort-select",
+      "expectText": "Recommended"
+    },
+    {
+      "name": "?sort= orders the directory on arrival (#1383)",
+      "path": "/?sort=new#apps",
+      "expectSelector": "#browse-list[data-sort=\"new\"] .browse-row"
+    },
+    {
+      "name": "Sorting by activity shows what it sorted on (#1383)",
+      "path": "/?demo=1&sort=active#apps",
+      "expectSelector": "#browse-list[data-sort=\"active\"] .browse-row",
+      "expectText": "merged in 30d"
     }
   ],
   "governance": {

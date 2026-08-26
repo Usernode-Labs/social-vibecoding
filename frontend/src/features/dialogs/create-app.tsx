@@ -8,11 +8,27 @@
  * juggles per-element classes.
  *
  * Markup extracted verbatim from Shell.tsx by #1078 chunk A; #1078 chunk I
- * moved the behaviour in and made it stateful. The render output is still
+ * moved the behaviour in and made it stateful. The INITIAL render is still
  * byte-identical to what the shell shipped — same ids, same class strings,
  * same `hidden` semantics, same data-* attributes — and
  * tests/baselines/shell-markup.json plus the prerendered public/index.html in
  * this commit are the proof.
+ *
+ * ── The second view, and why it costs the baseline nothing ────────────
+ *
+ * `POST /api/apps` returns 201 with the row still in `'creating'`; the build
+ * runs async server-side. This dialog no longer closes on that 201 — it
+ * swaps its card to ./create-progress.tsx and reports the four phases
+ * `services/app-creator.js` broadcasts, resolving into live /
+ * awaiting-secrets / failed.
+ *
+ * That second view is gated on `created`, which starts null. The prerender
+ * pass has no user to submit the form, so it renders the form and nothing
+ * else — the progress subtree contributes no ids to public/index.html and
+ * therefore nothing to the shell-markup baseline, the id inventory, or the
+ * 338 declared dapp.json selectors. A separate tenth shell dialog would have
+ * needed an entry in all three; this needs none, which is the whole reason
+ * the progress view lives inside this card rather than beside it.
  *
  * ── What moved, and from where ────────────────────────────────────────
  *
@@ -42,13 +58,23 @@
  * a controlled input renders a `value` attribute in the prerender pass.
  */
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useStoreState } from '../../lib/use-store-state';
+import { CreateProgress } from './create-progress';
+import {
+  creationProgressStore,
+  fetchCreationProgress,
+  outcomeOf,
+  publishAppStatus,
+  stopWatchingCreation,
+  watchCreation,
+} from './creation-progress-store.js';
 import { useDialog } from './use-dialog';
 
 type Mode = 'new' | 'import';
@@ -63,6 +89,14 @@ interface ImportStatus {
 }
 
 const IDLE_STATUS: ImportStatus = { tone: 'none', text: '' };
+
+/**
+ * How often the progress view re-asks the server while a creation is
+ * still pending. The WS broadcasts do the real work; this only has to be
+ * often enough that a dropped socket is noticed, and rare enough that a
+ * dialog left open costs the API almost nothing.
+ */
+const POLL_INTERVAL_MS = 4000;
 
 function statusClass(status: ImportStatus): string {
   if (status.tone === 'ok') return 'text-sm mt-2 import-status--ok';
@@ -87,6 +121,12 @@ export function CreateAppDialog() {
   const [collabVis, setCollabVis] = useState<Vis>('public');
   const [viewVis, setViewVis] = useState<Vis>('public');
   const [error, setError] = useState('');
+  // The app this dialog is now reporting on. Null until a POST succeeds,
+  // which is what keeps the FIRST render byte-identical to the
+  // prerendered shell — the progress subtree exists only after a user
+  // action, so it never reaches public/index.html.
+  const [created, setCreated] = useState<{ slug: string; name: string } | null>(null);
+  const progress = useStoreState(creationProgressStore);
 
   const dialog = useDialog('create', {
     onOpen: () => {
@@ -102,6 +142,11 @@ export function CreateAppDialog() {
       applyMode('new');
       setCollabVis('public');
       setViewVis('public');
+      // Drop the progress view too, so the next open lands on the form.
+      // The build carries on server-side either way — closing this is
+      // dismissing a report, not cancelling anything.
+      setCreated(null);
+      stopWatchingCreation();
     },
   });
 
@@ -125,6 +170,32 @@ export function CreateAppDialog() {
   useIsomorphicLayoutEffect(() => {
     if (nameRef.current) nameRef.current.required = mode === 'new';
   }, [mode]);
+
+  // Progress arrives on the WS `app_status` channel, which public/js/app.js
+  // forwards into the store. That is the fast path and it is not the only
+  // one it can be: a socket that drops right before the terminal event
+  // would leave a step spinning forever. So while the outcome is still
+  // pending, also ASK — GET /api/apps/:slug serves the same phase from the
+  // server-side store, plus the status, so one poll recovers everything a
+  // missed broadcast would have carried.
+  const creatingSlug = created && outcomeOf(progress.status) === 'pending' ? created.slug : null;
+  useEffect(() => {
+    if (!creatingSlug) return undefined;
+    let stopped = false;
+    const poll = () => {
+      if (stopped) return;
+      void fetchCreationProgress(creatingSlug, (url) => fetch(url));
+    };
+    // Immediately, not only on the interval: the first phase broadcast
+    // may already have been sent before this dialog started listening,
+    // and four seconds of four idle steps reads as nothing happening.
+    poll();
+    const timer = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [creatingSlug]);
 
   /** Verbatim from App.setCreateMode: one entry point keeps every mirror in sync. */
   function applyMode(next: Mode) {
@@ -231,16 +302,30 @@ export function CreateAppDialog() {
       });
       const data = await res.json();
       if (!res.ok) return setError(data.error || 'Failed to create app');
-      dialog.close();
       // The POST returns 201 with the row still in 'creating' — the build
-      // runs async server-side. The home tile does show "Spinning up…", but
-      // that label is easy to miss, so say explicitly what just started
-      // (issue #1418). Same PlatformUI.toast precedent as import-pr.tsx.
-      window.PlatformUI?.toast?.(
-        mode === 'import'
-          ? 'Your app is being imported. It will appear in your list of apps when it’s ready.'
-          : 'Your app is being created. It will appear in your list of apps when it’s ready.',
-      );
+      // runs async server-side. #1418 covered that with a one-line toast
+      // over a closed dialog, because the tile's small "Spinning up…" was
+      // easy to miss; the dialog now STAYS OPEN and reports the phases
+      // app-creator broadcasts, so the toast would only say the same
+      // thing twice, less well.
+      const slug = data.app?.slug;
+      if (!slug) {
+        // A 201 we cannot follow. Nothing to report progress on, so fall
+        // back to exactly the old behaviour rather than opening an empty
+        // progress view.
+        dialog.close();
+        window.PlatformUI?.toast?.(
+          mode === 'import'
+            ? 'Your app is being imported — it will appear in your list of apps when it’s ready.'
+            : 'Your app is being created — it will appear in your list of apps when it’s ready.',
+        );
+        (window.Home?.load as (() => void) | undefined)?.();
+        return;
+      }
+      watchCreation(slug);
+      setCreated({ slug, name: data.app?.name || name });
+      // Refresh the grid behind the dialog so the new tile is already
+      // there when the user closes it.
       (window.Home?.load as (() => void) | undefined)?.();
     } catch {
       setError('Network error');
@@ -267,6 +352,44 @@ export function CreateAppDialog() {
         data-mode={mode}
         data-import-state={importState}
       >
+        {created ? (
+          <CreateProgress
+            appName={created.name}
+            mode={mode}
+            progress={progress}
+            onOpenApp={() => {
+              const slug = created.slug;
+              dialog.close();
+              (window.App?.openAppTab as ((s: string, t: string) => void) | undefined)?.(slug, 'app');
+            }}
+            onSetSecrets={() => {
+              const slug = created.slug;
+              dialog.close();
+              // Published by features/app-secrets — a bare global read is
+              // what broke the last cross-surface jump, so guard it and
+              // leave the tile's own "fix secrets" path as the fallback.
+              (window.Secrets?.open as ((s: string) => void) | undefined)?.(slug);
+            }}
+            onRetry={() => {
+              const slug = created.slug;
+              // Put the view back into its pending state immediately —
+              // the retry re-enters createApp server-side and will start
+              // broadcasting phases again.
+              watchCreation(slug);
+              void fetch(`/api/apps/${encodeURIComponent(slug)}/retry`, { method: 'POST' })
+                .then(() => (window.Home?.load as (() => void) | undefined)?.())
+                .catch(() => {
+                  publishAppStatus({
+                    slug,
+                    status: 'error',
+                    errorReason: 'Couldn’t reach the server to retry. Try again from the app’s tile.',
+                  });
+                });
+            }}
+            onClose={() => dialog.close()}
+          />
+        ) : (
+        <>
         <h2 id="create-title" className="text-lg font-bold mb-4">
           {mode === 'import' ? 'Import existing app' : 'Create a new app'}
         </h2>
@@ -455,6 +578,8 @@ export function CreateAppDialog() {
             </Button>
           </div>
         </form>
+        </>
+        )}
       </DialogCard>
     </DialogRoot>
   );

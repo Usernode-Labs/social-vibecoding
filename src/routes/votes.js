@@ -868,6 +868,12 @@ function stagingMockCompletedCloseIssues() {
     down_count: 0,
     chat_count: chat,
     last_message_at: null,
+    // The tally the target issue carried while open — a closed task keeps
+    // its priority/assignee/category chips in the Done column. Baked in
+    // because mock rows are injected after the real rows' summarize pass.
+    priority: { top: 'high', count: 2, myValue: null },
+    assignee: { top: 'maya-builder', count: 2, myValue: null },
+    category: { top: 'bug', count: 1, myValue: null },
   });
   return [
     mk(9100060, 'group-vote', 1, 2, 3),
@@ -3302,8 +3308,7 @@ function voteRoutes(config) {
       let total = (totalRows[0]?.total || 0) + (closeTotalRows[0]?.close_total || 0);
 
       // Same priority + assigned-person summary on completed proposals, so
-      // the read-only chips stay visible after a PR merges. PR rows only —
-      // close-issue rows deliberately carry no priority/assignee chips.
+      // the read-only chips stay visible after a PR merges.
       const prPageRows = rows.filter((r) => r.row_type !== 'close_issue');
       const mergedAttrs = await topicAttrs.summarizeForProposals(
         pool, appRows[0].id,
@@ -3311,6 +3316,30 @@ function voteRoutes(config) {
       );
       for (const row of prPageRows) {
         const s = mergedAttrs.get(row.id) || topicAttrs.emptySummary();
+        row.priority = s.priority;
+        row.assignee = s.assignee;
+        row.category = s.category;
+      }
+
+      // Close-issue rows carry the CLOSED ISSUE's own tally, keyed by the
+      // target issue number from the proposal payload. Attribute votes are
+      // never deleted when an issue closes, so a task moved to Done keeps
+      // the priority / assignee / category it accumulated while open — the
+      // chips just have to keep reading them (they used to be dropped here
+      // on purpose, which made moving a task to Done look like it wiped
+      // those fields).
+      const closePageRows = rows.filter((r) => r.row_type === 'close_issue');
+      const closeIssueRef = (r) => {
+        const n = parseInt(r.payload && r.payload.issueNumber, 10);
+        return Number.isInteger(n) && n > 0 ? n : null;
+      };
+      const closeAttrs = await topicAttrs.summarizeForTargets(
+        pool, appRows[0].id, 'issue',
+        closePageRows.map(closeIssueRef).filter((n) => n != null), userId
+      );
+      for (const row of closePageRows) {
+        const ref = closeIssueRef(row);
+        const s = (ref != null && closeAttrs.get(ref)) || topicAttrs.emptySummary();
         row.priority = s.priority;
         row.assignee = s.assignee;
         row.category = s.category;

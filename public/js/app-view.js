@@ -9848,7 +9848,11 @@ const AppView = {
   // Same green check icon as merged PRs so the column reads uniformly, but
   // the meta line says "Issue close" where a code proposal shows its PR
   // number, and there are deliberately NO code-proposal actions (Undo,
-  // kudos, Explore in dev chat, priority/assignee chips). The settled tally
+  // kudos, Explore in dev chat). The priority/assignee/category chips DO
+  // stay: moving a task to Done settles the close vote, not its metadata —
+  // /merged attaches the closed issue's own tally, and the chips keep
+  // targeting ('issue', issueNumber) so collaborators can still correct
+  // them, exactly like on a merged PR card. The settled tally
   // pill mirrors the merged-PR treatment: payload.required is the threshold
   // snapshotted at apply time; status 'merged' keeps the pill clock-free.
   // Clicking opens the governance discussion via the delegated
@@ -9902,7 +9906,11 @@ const AppView = {
       meta,
       pill: pillState && pillState.label ? { state: pillState, inline: false } : null,
       linked: [],
-      badges: [],
+      // The closed issue's own community-voted chips, only when set — same
+      // omitUnset board default as every other card.
+      badges: issueN
+        ? AppView._attrChipSpecs('issue', issueN, row, { omitUnset: true })
+        : [],
       chatCount: parseInt(row.chat_count) || 0,
       // No actions at all on a settled close-issue row, so no ⋯ either. Its
       // action band is still RESERVED (empty) by the dense contract — this
