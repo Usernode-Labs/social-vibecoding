@@ -35,6 +35,7 @@ const { waitlistJoinLimiter, waitlistTokenLimiter } = require('../middleware/rat
 const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail } = require('../services/topochain/mailer');
+const { PRODUCTION_ORIGIN } = require('../services/cli-auth-constants');
 const { productionHostname } = require('../services/caddy');
 const { loadContributors, shapeContributor } = require('../services/contributors');
 
@@ -190,6 +191,9 @@ function publicApiRoutes(config) {
         email,
         ip: clientIp(req),
         answers: stage1.value,
+        // From /#waitlist?ref=<code>. An unresolvable code is ignored
+        // rather than refused — a stale link must never block a join.
+        inviteCode: typeof req.body?.invite_code === 'string' ? req.body.invite_code : null,
       });
       if (created) {
         log.info('public-api', 'Waitlist join', {});
@@ -282,12 +286,23 @@ function publicApiRoutes(config) {
       const row = await waitlist.getSignupByMoreToken(pool, req.params.token);
       if (!row) return res.status(404).json({ error: 'Unknown or expired link.' });
       const answers = row.answers && typeof row.answers === 'object' ? row.answers : {};
+      // The invite link is minted on this read, not at join: most signups
+      // never open the stage-2 form, and a code nobody will share is a
+      // row nobody needs.
+      const inviteCode = await waitlist.inviteCodeFor(pool, row.id);
+      const invited = await waitlist.invitedBySignup(pool, row.id);
       res.json({
         ok: true,
         answers,
         oauth: {
           github: !!(config.waitlistGithubClientId && config.waitlistGithubClientSecret),
           x: !!(config.waitlistXClientId && config.waitlistXClientSecret),
+          linkedin: !!(config.waitlistLinkedinClientId && config.waitlistLinkedinClientSecret),
+        },
+        invite: {
+          url: inviteCode ? `${PRODUCTION_ORIGIN}/#waitlist?ref=${inviteCode}` : null,
+          count: invited.count,
+          emails: invited.emails,
         },
       });
     } catch (err) {

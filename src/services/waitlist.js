@@ -33,19 +33,81 @@ function normalizeEmail(raw) {
 // row, and moreToken is null in that case: the stage-2 capability link
 // only goes to the FIRST join (and its email), never to whoever types
 // the same address again later.
-async function joinWaitlist(pool, { email, ip = null, answers = null }) {
+async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode = null }) {
   const moreToken = crypto.randomBytes(24).toString('hex');
   const stored = answers
     ? { _version: ANSWERS_VERSION, ...answers }
     : null;
+
+  // Resolve the inviter BEFORE the insert, and treat an unresolvable code
+  // as no code at all: someone arriving on a stale, mistyped or invented
+  // ?ref= link must still be able to join.
+  let invitedBy = null;
+  if (typeof inviteCode === 'string' && /^[a-z0-9]{10}$/.test(inviteCode)) {
+    const { rows } = await pool.query(
+      'SELECT id FROM waitlist_signups WHERE invite_code = $1',
+      [inviteCode]
+    );
+    if (rows[0]) invitedBy = rows[0].id;
+  }
+
+  // Attribution rides on the INSERT, so ON CONFLICT DO NOTHING already
+  // means an existing row can never be re-parented by someone
+  // re-submitting with a different code. There is deliberately no
+  // separate UPDATE path.
   const { rowCount } = await pool.query(
-    `INSERT INTO waitlist_signups (email, ip, answers, more_token)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (email) DO NOTHING`,
-    [email, ip, stored ? JSON.stringify(stored) : null, moreToken]
+    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy]
   );
   const created = rowCount > 0;
   return { created, moreToken: created ? moreToken : null };
+}
+
+// The shareable half of a signup's invite link. Minted on first ask and
+// stable thereafter — by the second call the link may already be in
+// somebody's group chat. Returns null for a signup that does not exist,
+// rather than minting a code for nothing.
+async function inviteCodeFor(pool, signupId) {
+  const { rows } = await pool.query(
+    'SELECT invite_code FROM waitlist_signups WHERE id = $1',
+    [signupId]
+  );
+  if (!rows[0]) return null;
+  if (rows[0].invite_code) return rows[0].invite_code;
+
+  const code = crypto.randomBytes(8).toString('hex').slice(0, 10);
+  // COALESCE so two concurrent asks cannot hand out two different links
+  // for the same signup; the first write wins and both callers see it.
+  const { rows: updated } = await pool.query(
+    `UPDATE waitlist_signups
+        SET invite_code = COALESCE(invite_code, $1)
+      WHERE id = $2
+      RETURNING invite_code`,
+    [code, signupId]
+  );
+  return updated[0] ? updated[0].invite_code : null;
+}
+
+// Mask an address for display back to the person who invited it. Enough
+// to recognise a friend who joined, never a harvestable list — and never
+// something that still looks like a working address when the column holds
+// something unexpected.
+function maskEmail(email) {
+  const [local, domain] = String(email == null ? '' : email).split('@');
+  if (!domain || !local) return '***';
+  return `${local.slice(0, 2)}***@${domain}`;
+}
+
+// Who this signup brought in, oldest first. The count is the honest
+// number; the addresses are masked.
+async function invitedBySignup(pool, signupId) {
+  const { rows } = await pool.query(
+    'SELECT email FROM waitlist_signups WHERE invited_by = $1 ORDER BY submitted_at ASC, id ASC',
+    [signupId]
+  );
+  return { count: rows.length, emails: rows.map((r) => maskEmail(r.email)) };
 }
 
 // Look up a signup by its stage-2 capability token. Returns the row
@@ -279,6 +341,9 @@ module.exports = {
   confirmSignupByMoreToken,
   issueVerificationCode,
   confirmSignupByCode,
+  inviteCodeFor,
+  invitedBySignup,
+  maskEmail,
   mergeMoreAnswers,
   setVerifiedHandle,
   grantPlatformAccess,

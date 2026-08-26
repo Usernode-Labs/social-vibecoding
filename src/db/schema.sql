@@ -6127,3 +6127,29 @@ CREATE TABLE IF NOT EXISTS waitlist_verification_codes (
 CREATE INDEX IF NOT EXISTS idx_waitlist_verification_codes_email
   ON waitlist_verification_codes (email);
 COMMENT ON TABLE waitlist_verification_codes IS 'staging:private';
+
+-- ── Waitlist invite links ──────────────────────────────────────────────
+--
+-- `invite_code` is the shareable half of a signup's link
+-- (/#waitlist?ref=<code>), minted on demand the first time the stage-2
+-- form asks for it and stable thereafter — by the second ask it may
+-- already be in somebody's group chat.
+--
+-- `invited_by` is who that link brought in. It is set at INSERT time and
+-- therefore only on a FIRST join, so re-submitting with a different code
+-- can never re-parent an existing row: ON CONFLICT DO NOTHING enforces
+-- that for free rather than a separate guard having to.
+--
+-- This replaces the five typed email addresses the stage-2 form used to
+-- collect, which sent nothing and attributed nothing.
+--
+-- The graph is recorded and displayed; NOTHING consumes it to form a
+-- cohort. Admitting people together is a later, separate decision.
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS invite_code VARCHAR(32);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_signups_invite_code
+  ON waitlist_signups (invite_code) WHERE invite_code IS NOT NULL;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS invited_by BIGINT
+  REFERENCES waitlist_signups(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_waitlist_signups_invited_by
+  ON waitlist_signups (invited_by);
+COMMENT ON COLUMN waitlist_signups.invite_code IS 'staging:private';

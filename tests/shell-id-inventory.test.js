@@ -109,6 +109,15 @@ const RETIRED_IDS = {
   // helps you move up rather than a gate on joining.
   'waitlist-made-url': 'Moved to the stage-2 survey as #more-made-url; joining no longer asks it.',
   'waitlist-made-note': 'Moved to the stage-2 survey as #more-made-note, with its url field.',
+  // ── Andrea's simpler waitlist flow: the invite link is real now ────
+  // The five typed-address rows collected emails and did nothing with
+  // them: no invite was sent, no attribution was recorded, no count was
+  // ever shown. They are replaced by a share link whose joins ARE
+  // attributed (waitlist_signups.invited_by), which is the mechanic the
+  // doc asks for. Nothing that worked was removed, because nothing here
+  // worked.
+  'more-invites': 'Typed-address invite rows retired for the share link (#more-invite-url); they sent nothing.',
+  'more-invite-add': 'The "add another" button for the retired invite rows.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -123,6 +132,10 @@ const ADDED_IDS = {
   'waitlist-confirm': 'The confirm-your-email block on the join success state. Hides once the code is accepted.',
   'waitlist-code': 'Six-digit email verification code; confirms the same row the mailed link does.',
   'waitlist-code-submit': 'Submits the verification code.',
+  // The share link that replaced the typed rows (see RETIRED_IDS above).
+  'more-invite-url': "The signup's shareable invite link; joins through it set waitlist_signups.invited_by.",
+  'more-invite-copy': 'Copies the invite link to the clipboard.',
+  'more-invite-joined': 'How many people joined through this link. Empty until the stage-2 load effect fills it.',
   // ── #1372: the mobile-browser install strip ──────────────────────
   // A visitor on a phone browser is offered the native app. The strip is
   // always in the document and starts `hidden` (the island rule: data loads

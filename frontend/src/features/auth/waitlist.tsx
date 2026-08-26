@@ -65,6 +65,14 @@ export function WaitlistScreen() {
   const email = useRef<HTMLInputElement>(null);
   const code = useRef<HTMLInputElement>(null);
   const country = useRef<HTMLSelectElement>(null);
+  /**
+   * The inviter's code, from `/#waitlist?ref=<code>`. It rides in the hash's
+   * own query segment — after the `?` INSIDE the fragment — the same place
+   * the OAuth connect round trip puts its status, so it never reaches a
+   * server log, ours or a proxy's. Read on show rather than at mount: this
+   * screen stays mounted across navigations.
+   */
+  const inviteRef = useRef<string | null>(null);
   const city = useRef<HTMLInputElement>(null);
   const discoveryDetail = useRef<HTMLInputElement>(null);
   const referrer = useRef<HTMLInputElement>(null);
@@ -87,6 +95,16 @@ export function WaitlistScreen() {
       setMsg(null);
       setJoined(true);
       setOffer(true);
+    }
+
+    // Who invited them, if they arrived on somebody's share link. A code
+    // that doesn't resolve is dropped server-side rather than refused, so a
+    // stale link never blocks a join.
+    try {
+      const ref = new URLSearchParams(location.hash.split('?')[1] || '').get('ref');
+      inviteRef.current = ref && /^[a-z0-9]{10}$/.test(ref) ? ref : null;
+    } catch {
+      inviteRef.current = null;
     }
 
     const session = sessionExists();
@@ -126,6 +144,7 @@ export function WaitlistScreen() {
             discovery_source: discovery || undefined,
             discovery_detail: discoveryDetail.current?.value.trim() || undefined,
             referrer_handle: referrer.current?.value.trim() || undefined,
+            invite_code: inviteRef.current || undefined,
           }),
         });
         const data = await res.json().catch(() => null);

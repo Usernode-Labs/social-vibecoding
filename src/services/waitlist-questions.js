@@ -167,8 +167,6 @@ const COUNTRIES = {
   },
 };
 
-const MAX_INVITES = 5;
-
 // Every country code offered by the form, flattened out of the regions.
 function countryCodes() {
   return Object.values(COUNTRIES).flatMap((region) => Object.keys(region));
@@ -222,7 +220,10 @@ function validateStage1(body) {
 
 // Stage 2: everything optional; unknown enum keys are rejected rather
 // than silently stored. Produces the section shape stored in
-// answers.group / answers.loss / answers.handles / answers.invites.
+// answers.made_url / answers.group / answers.loss / answers.handles.
+// Who invited whom is NOT in here — it lives in the invite_code /
+// invited_by columns, because it is a relationship between rows rather
+// than an answer somebody typed.
 function validateStage2(body) {
   const value = {};
 
@@ -300,14 +301,10 @@ function validateStage2(body) {
   }
   if (Object.keys(handles).length) value.handles = handles;
 
-  if (body?.invites != null) {
-    if (!Array.isArray(body.invites)) return { ok: false, error: 'invites must be a list.' };
-    const invites = body.invites
-      .map((v) => str(v, 255))
-      .filter(Boolean)
-      .slice(0, MAX_INVITES);
-    if (invites.length) value.invites = invites;
-  }
+  // `invites` (five typed addresses) was retired for the share link:
+  // it sent nothing, attributed nothing and was never read back, so the
+  // key is deliberately dropped rather than validated. A stale client
+  // still sending it gets a normal save with the key ignored.
 
   if (body?.admit_together != null) value.admit_together = !!body.admit_together;
 
@@ -329,7 +326,6 @@ function publicOptions() {
     loss_answers: LOSS_ANSWERS,
     loss_kinds: LOSS_KINDS,
     countries: COUNTRIES,
-    max_invites: MAX_INVITES,
   };
 }
 
@@ -343,7 +339,6 @@ module.exports = {
   LOSS_ANSWERS,
   LOSS_KINDS,
   COUNTRIES,
-  MAX_INVITES,
   countryCodes,
   validateStage1,
   validateStage2,

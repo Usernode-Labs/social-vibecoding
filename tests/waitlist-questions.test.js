@@ -11,9 +11,10 @@
 //      Unknown enum values are still rejected, never stored, and
 //      made_url has moved to stage 2.
 //   2. Stage 2 is all-optional but still validates enum keys (group
-//      size/role/tools, loss answers/kinds) and caps invites at
-//      MAX_INVITES. The cleaned payload contains only known keys — a
-//      hostile body can't smuggle arbitrary JSON into answers.
+//      size/role/tools, loss answers/kinds). The cleaned payload contains
+//      only known keys — a hostile body can't smuggle arbitrary JSON into
+//      answers, and the retired `invites` key is dropped rather than
+//      rejected so a stale client still saves.
 //   3. publicOptions() (what the SPA renders from) exposes exactly the
 //      option sets the validators accept, so client and server can't
 //      drift.
@@ -28,7 +29,7 @@ const q = require('../src/services/waitlist-questions');
 
 // ─── 1. Stage 1 ───────────────────────────────────────────────────────
 
-test('stage 1 accepts an email-only join \u2014 every survey field is optional', () => {
+test('stage 1 accepts an email-only join — every survey field is optional', () => {
   const bare = q.validateStage1({});
   assert.equal(bare.ok, true);
   assert.deepEqual(bare.value, {});
@@ -42,7 +43,7 @@ test('stage 1 still rejects unknown enum values it is given', () => {
   }
 });
 
-test('stage 1 no longer accepts made_url \u2014 it belongs to stage 2 now', () => {
+test('stage 1 no longer accepts made_url — it belongs to stage 2 now', () => {
   const r = q.validateStage1({ made_url: 'https://example.com', made_note: 'a bot' });
   assert.equal(r.ok, true);
   assert.equal(r.value.made_url, undefined);
@@ -111,7 +112,7 @@ test('stage 2 validates enum keys in every section', () => {
   assert.equal(ok.value.loss.had, 'yes');
 });
 
-test('stage 2 shapes handles/invites and caps invites at MAX_INVITES', () => {
+test('stage 2 shapes handles and no longer accepts typed invites', () => {
   const r = q.validateStage2({
     farcaster: '@fc',
     discord: 'disc',
@@ -125,7 +126,10 @@ test('stage 2 shapes handles/invites and caps invites at MAX_INVITES', () => {
   assert.deepEqual(r.value.handles, {
     farcaster: '@fc', discord: 'disc', telegram: '@tg', other: 'twitch.tv/me',
   });
-  assert.equal(r.value.invites.length, q.MAX_INVITES);
+  // The share link replaced the typed rows, so a stale client still
+  // sending `invites` gets a NORMAL save with the key dropped — not a
+  // validation error somebody would have to debug.
+  assert.equal(r.value.invites, undefined);
   assert.equal(r.value.admit_together, true);
   assert.equal(r.value.referrer_handle, '@ref');
 });
@@ -147,7 +151,8 @@ test('publicOptions exposes exactly the option sets the validators accept', () =
   assert.deepEqual(opts.loss_answers, q.LOSS_ANSWERS);
   assert.deepEqual(opts.loss_kinds, q.LOSS_KINDS);
   assert.deepEqual(opts.countries, q.COUNTRIES);
-  assert.equal(opts.max_invites, q.MAX_INVITES);
+  // max_invites went with the typed invite rows.
+  assert.equal('max_invites' in opts, false);
   // Every detail label points at a real source.
   for (const key of Object.keys(q.DISCOVERY_DETAIL_LABELS)) {
     assert.ok(key in q.DISCOVERY_SOURCES, `label for unknown source: ${key}`);

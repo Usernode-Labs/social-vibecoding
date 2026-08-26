@@ -113,6 +113,7 @@ const DENIED_COLUMNS = {
   waitlist_signups: [
     'ip',         // submitter IP — same treatment as users.waitlist_ip
     'more_token', // stage-2 survey capability — editing rights over the signup's answers
+    'invite_code', // shareable capability — anyone holding it is attributed as this signup's invitee
   ],
 };
 

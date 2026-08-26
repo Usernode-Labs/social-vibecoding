@@ -13,8 +13,8 @@
  * notice — because that is what the hand-written document shipped and the
  * prerender pass has to reproduce it byte for byte. Same for everything the
  * options payload fills: the two selects hold only their placeholder `<option>`,
- * the three chip rows are empty `<div>`s, the connect row and the invites list
- * are empty, and the loss detail block keeps its `hidden`. Nothing is fetched
+ * the three chip rows are empty `<div>`s, the connect row is empty, the invite
+ * link and its joined-count are empty, and the loss detail block keeps its `hidden`. Nothing is fetched
  * until the router shows the screen.
  *
  * ── Uncontrolled inputs, on purpose ──────────────────────────────────
@@ -52,9 +52,6 @@ import {
   WaitlistOptions,
 } from './waitlist-shared';
 
-/** Hard ceiling on invite rows, matching `_addInviteRow`'s own cap. */
-const MAX_INVITE_ROWS = 5;
-
 /** `GET /api/public/waitlist/more/<token>`. Every field is optional. */
 interface MoreAnswers {
   made_url?: string;
@@ -63,7 +60,6 @@ interface MoreAnswers {
   loss?: { had?: string; product?: string; kind?: string[]; story?: string };
   handles?: { farcaster?: string; discord?: string; telegram?: string; other?: string };
   verified?: Record<string, string>;
-  invites?: string[];
   admit_together?: boolean;
   referrer_handle?: string;
 }
@@ -72,12 +68,8 @@ interface MorePayload {
   ok?: boolean;
   answers?: MoreAnswers;
   oauth?: Record<string, boolean>;
-}
-
-/** One invite row. The id keys the row; the value is only its initial one. */
-interface InviteRow {
-  id: number;
-  initial: string;
+  /** The signup's own share link, and who has joined through it so far. */
+  invite?: { url?: string | null; count?: number; emails?: string[] };
 }
 
 export function MoreScreen() {
@@ -97,7 +89,10 @@ export function MoreScreen() {
     verified: Record<string, string>;
     oauth: Record<string, boolean>;
   }>({ verified: {}, oauth: {} });
-  const [invites, setInvites] = useState<InviteRow[]>([]);
+  const [inviteUrl, setInviteUrl] = useState('');
+  const [inviteCount, setInviteCount] = useState(0);
+  const [inviteEmails, setInviteEmails] = useState<string[]>([]);
+  const [copied, setCopied] = useState(false);
   const [msg, setMsg] = useState<{ text: string; tone: MsgTone } | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -116,27 +111,8 @@ export function MoreScreen() {
   const admitTogether = useRef<HTMLInputElement>(null);
   const referrer = useRef<HTMLInputElement>(null);
 
-  // The token from `#more/<token>`, and the next invite row's key.
+  // The token from `#more/<token>`.
   const token = useRef<string | null>(null);
-  const nextInviteId = useRef(0);
-  const inviteEls = useRef(new Map<number, HTMLInputElement | null>());
-
-  /**
-   * The invite rows, mirrored in a ref. Add and remove used to read
-   * `#more-invites`'s live child count, so several clicks in one tick each saw
-   * the previous one's row; reading `invites` instead would see the value from
-   * the last render and let a fast clicker past the cap. The ref restores the
-   * live read, and every write goes through {@link setInviteRows}.
-   */
-  const invitesRef = useRef<InviteRow[]>([]);
-  const setInviteRows = useCallback((next: InviteRow[]) => {
-    invitesRef.current = next;
-    setInvites(next);
-  }, []);
-
-  const inviteRows = useCallback((values: string[]): InviteRow[] => {
-    return values.map((initial) => ({ id: nextInviteId.current++, initial }));
-  }, []);
 
   /**
    * Read the OAuth round trip's outcome out of the hash's own query string.
@@ -191,6 +167,13 @@ export function MoreScreen() {
       if (madeUrl.current) madeUrl.current.value = a.made_url || '';
       if (madeNote.current) madeNote.current.value = a.made_note || '';
 
+      // The share link and its joined-count. Both start empty so the first
+      // render matches the prerender; this effect is the only thing that
+      // fills them.
+      setInviteUrl(payload.invite?.url || '');
+      setInviteCount(payload.invite?.count || 0);
+      setInviteEmails(Array.isArray(payload.invite?.emails) ? payload.invite.emails : []);
+
       if (admitTogether.current) admitTogether.current.checked = !!a.admit_together;
       if (referrer.current) referrer.current.value = a.referrer_handle || '';
 
@@ -243,15 +226,12 @@ export function MoreScreen() {
     // dropped, which is exactly why `_renderMore` called `_fillSelect` first.
     // flushSync reproduces that order — options rendered, then values assigned,
     // all in this tick, so the reveal below is still a single paint.
-    const stored = Array.isArray(data.answers?.invites) ? data.answers.invites.slice() : [];
-    while (stored.length < 2) stored.push('');
     flushSync(() => {
       setOpts(loaded);
-      setInviteRows(inviteRows(stored.slice(0, loaded.max_invites || MAX_INVITE_ROWS)));
     });
     render(data);
     setStatus('ready');
-  }, [inviteRows, render, setInviteRows]);
+  }, [render]);
 
   const moreOnShow = useCallback(
     (value?: string) => {
@@ -268,33 +248,27 @@ export function MoreScreen() {
     setLossKinds((prev) => toggleChip(prev, key));
   }, []);
 
-  const addInvite = useCallback(() => {
-    const rows = invitesRef.current;
-    if (rows.length >= MAX_INVITE_ROWS) return;
-    setInviteRows([...rows, ...inviteRows([''])]);
-  }, [inviteRows, setInviteRows]);
-
-  /** Drop the row, or — when it's the last one — just empty it. */
-  const removeInvite = useCallback(
-    (id: number) => {
-      const rows = invitesRef.current;
-      if (rows.length > 1) {
-        setInviteRows(rows.filter((row) => row.id !== id));
-        return;
-      }
-      const el = inviteEls.current.get(id);
-      if (el) el.value = '';
-    },
-    [setInviteRows],
-  );
+  /**
+   * Copy the invite link. clipboard.writeText rejects on an insecure origin
+   * and is absent in some in-app WebViews, so a failure selects the text for
+   * the person to copy by hand rather than silently doing nothing.
+   */
+  const onCopyInvite = useCallback(async () => {
+    const el = document.getElementById('more-invite-url') as HTMLInputElement | null;
+    if (!el || !el.value) return;
+    try {
+      await navigator.clipboard.writeText(el.value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      el.select();
+    }
+  }, []);
 
   const onSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       const value = token.current;
-      const typed = [...document.querySelectorAll<HTMLInputElement>('#more-invites [data-invite]')]
-        .map((el) => el.value.trim())
-        .filter(Boolean);
       setSaving(true);
       try {
         const res = await fetch('/api/public/waitlist/more/' + encodeURIComponent(value || ''), {
@@ -316,7 +290,6 @@ export function MoreScreen() {
             discord: discord.current?.value.trim() || undefined,
             telegram: telegram.current?.value.trim() || undefined,
             other_handle: other.current?.value.trim() || undefined,
-            invites: typed,
             admit_together: !!admitTogether.current?.checked,
             referrer_handle: referrer.current?.value.trim() || undefined,
           }),
@@ -613,47 +586,49 @@ export function MoreScreen() {
               />
             </div>
           </div>
-          {/* 8 · Friends */}
+          {/* 8 · Friends. The typed-address rows that used to live here sent
+              nothing and attributed nothing; this is a real link, and a join
+              through it sets waitlist_signups.invited_by. Everything below
+              renders empty until the load effect fills it, so the first
+              render still matches the prerender. */}
           <div>
-            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
-              Would you join with friends?
+            <label
+              htmlFor="more-invite-url"
+              className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
+            >
+              Bring someone you&rsquo;d build with
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
-              A network is more fun with people you already know. Drop their handles or emails and we&rsquo;ll try to bring you in together.
+              We try to admit people together. Things are more fun with people you know. Share your link, and if they join we&rsquo;ll connect your applications so we can try to bring you in together.
             </p>
-            <div id="more-invites" className="space-y-2">
-              {invites.map((row) => (
-                <div key={row.id} className="flex items-center gap-2">
-                  <input
-                    ref={(el) => {
-                      inviteEls.current.set(row.id, el);
-                    }}
-                    type="text"
-                    maxLength={255}
-                    placeholder="@handle or email"
-                    defaultValue={row.initial}
-                    className="flex-1 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                    data-invite="1"
-                  />
-                  <button
-                    type="button"
-                    aria-label="Remove"
-                    className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
-                    onClick={() => removeInvite(row.id)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+            <div className="flex gap-2">
+              <input
+                id="more-invite-url"
+                type="text"
+                readOnly={true}
+                value={inviteUrl}
+                placeholder="Your link appears here"
+                className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              />
+              <button
+                type="button"
+                id="more-invite-copy"
+                onClick={onCopyInvite}
+                className="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-2 text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+              >
+                {copied ? 'Copied' : 'Copy'}
+              </button>
             </div>
-            <button
-              type="button"
-              id="more-invite-add"
-              className="mt-2 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
-              onClick={addInvite}
-            >
-              + Add another
-            </button>
+            <div id="more-invite-joined" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+              {inviteCount > 0 ? (
+                <>
+                  <span className="font-medium text-zinc-700 dark:text-zinc-200">
+                    {`${inviteCount} ${inviteCount === 1 ? 'person' : 'people'} from your invite joined 🎉 `}
+                  </span>
+                  {inviteEmails.join(', ')}
+                </>
+              ) : null}
+            </div>
             <label className="mt-3 flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-300 cursor-pointer">
               <input
                 ref={admitTogether}
@@ -661,7 +636,7 @@ export function MoreScreen() {
                 type="checkbox"
                 className="mt-0.5 size-4 shrink-0 rounded accent-violet-600"
               />
-              Only let me in when at least one of them gets in too
+              Only let me in when at least one person from my link gets in too
             </label>
             <input
               ref={referrer}
