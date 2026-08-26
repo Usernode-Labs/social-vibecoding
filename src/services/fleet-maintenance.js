@@ -420,7 +420,7 @@ async function openCampaignProposal({ config, pool, campaign, app, files, summar
   const { active: activeUsers, majority } = await getActiveUserStats(pool, app.id);
 
   await sendSystemMessage(pool, app.id,
-    `Platform maintenance: "${campaign.title}" — opened PR #${prData.number}. ` +
+    `Platform maintenance: "${campaign.title}" opened PR #${prData.number}. ` +
     `Needs ${majority}/${activeUsers} votes to land (or a platform admin merges it once checks pass).`,
     'vote',
     { vote: { sessionId, prNumber: prData.number } }

@@ -96,7 +96,7 @@ async function createApp(config, appRow) {
         // SAME slug, so the repo already exists on the bot account and a
         // plain create would 422 "name already exists" on every retry.
         const repo = await github.createRepo(botUsername, slug, {
-          description: `${name} — built on Usernode Social Vibecoding`,
+          description: `${name}: built on Usernode Social Vibecoding`,
           adoptExisting: true,
         });
         repoUrl = repo.html_url;

@@ -61,11 +61,11 @@ function validateContent(content) {
     return { ok: false, error: 'File content is required' };
   }
   if (content.includes('\u0000')) {
-    return { ok: false, error: 'File must be plain text (markdown or .txt) — binary content is not allowed' };
+    return { ok: false, error: 'File must be plain text (markdown or .txt); binary content is not allowed' };
   }
   const sizeBytes = Buffer.byteLength(content, 'utf8');
   if (sizeBytes > MAX_FILE_BYTES) {
-    return { ok: false, error: `File is too large (${Math.ceil(sizeBytes / 1024)} KB) — the limit is ${MAX_FILE_BYTES / 1024} KB` };
+    return { ok: false, error: `File is too large (${Math.ceil(sizeBytes / 1024)} KB). The limit is ${MAX_FILE_BYTES / 1024} KB` };
   }
   return { ok: true, sizeBytes };
 }
@@ -235,7 +235,7 @@ async function upsertFile(pool, userId, { kind, name, description, content, size
       [userId, kind]
     );
     if (countRows[0].n >= MAX_FILES_PER_KIND) {
-      const err = new Error(`You already have ${MAX_FILES_PER_KIND} ${kind} files — remove one first`);
+      const err = new Error(`You already have ${MAX_FILES_PER_KIND} ${kind} files. Remove one first`);
       err.code = 'kind_cap';
       throw err;
     }

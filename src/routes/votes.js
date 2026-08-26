@@ -65,7 +65,7 @@ function stagingMockProposals(viewer) {
     pr_title: title,
     pr_title_fallback: false,
     pr_summary_md: 'This is a sample plain-language summary so testers can see '
-      + 'the new explanation that now appears at the top of a proposal — written '
+      + 'the new explanation that now appears at the top of a proposal, written '
       + 'in everyday words, with no technical jargon.',
     staging_url: null,
     testing_md: null,
@@ -426,7 +426,7 @@ function stagingMockProposals(viewer) {
         '[Mock] Checks-skipped test: nothing to test for this proposal',
         3, 9, 0, 1),
       check_state: 'skipped',
-      check_error_detail: 'branch has no commits beyond main — nothing to test',
+      check_error_detail: 'branch has no commits beyond main, so there is nothing to test',
       recheckable: true,
       test_results: [],
     },
@@ -561,9 +561,9 @@ function stagingMockProposals(viewer) {
       source: 'imported',
       imported_pr_author: 'staging-tester',
       external_agent: 'claude-code',
-      testing_md: '1. Open the board — the new "Snap to grid" toggle sits above the columns.\n'
+      testing_md: '1. Open the board. The new "Snap to grid" toggle sits above the columns.\n'
         + '2. Turn it on and drag a card: it should snap to the nearest column.\n'
-        + '3. Reload the page — the toggle keeps its setting.',
+        + '3. Reload the page. The toggle keeps its setting.',
       testing_path: '/board?demo-pr=1',
       check_state: 'failing',
       recheckable: true,
@@ -692,7 +692,7 @@ function stagingMockMerged() {
     pr_url: null,
     pr_title: title,
     pr_summary_md: 'This is a sample plain-language summary so testers can see '
-      + 'the new explanation at the top of a completed proposal — in everyday '
+      + 'the new explanation at the top of a completed proposal, in everyday '
       + 'words, with no technical jargon.',
     user_id: 0,
     status: 'merged',
@@ -1164,7 +1164,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
       enforced: true,
       blocked: true,
       transient: true,
-      reason: 'This proposal is being synced with main — try again in a moment.',
+      reason: 'This proposal is being synced with main. Try again in a moment.',
     };
   }
 
@@ -1288,7 +1288,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     // Our own commit, not the author's: say what actually happened instead of
     // asking everyone to re-review code they already approved.
     const label = session.pr_title
-      ? `PR #${session.pr_number} — ${session.pr_title}`
+      ? `PR #${session.pr_number}: ${session.pr_title}`
       : `PR #${session.pr_number}`;
     const how = move.resolvedTree
       ? 'was synced with main and its merge conflicts were resolved automatically'
@@ -1298,18 +1298,18 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
       : '';
     await sendSystemMessage(
       pool, session.app_id,
-      `${label} ${how} — existing votes were kept (now pinned to commit ${liveHead.slice(0, 8)}).${checksNote}`,
+      `${label} ${how}. Existing votes were kept (now pinned to commit ${liveHead.slice(0, 8)}).${checksNote}`,
       'system',
       { headChanged: true, votesKept: true, prNumber: session.pr_number, headSha: liveHead },
       { type: 'session', ref: session.id }
     ).catch(() => {});
   } else if (notify && !platformAdvance && (oldHead || votesDeleted > 0)) {
     const label = session.pr_title
-      ? `PR #${session.pr_number} — ${session.pr_title}`
+      ? `PR #${session.pr_number}: ${session.pr_title}`
       : `PR #${session.pr_number}`;
     const message = oldHead
-      ? `${label} was updated on GitHub — earlier votes were cleared, please re-review commit ${liveHead.slice(0, 8)}.`
-      : `${label} is now pinned to commit ${liveHead.slice(0, 8)} — earlier unbound votes were cleared, please re-review.`;
+      ? `${label} was updated on GitHub. Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`
+      : `${label} is now pinned to commit ${liveHead.slice(0, 8)}. Earlier unbound votes were cleared, so please re-review.`;
     await sendSystemMessage(
       pool, session.app_id, message, 'system',
       { headChanged: !!oldHead, prNumber: session.pr_number, headSha: liveHead },
@@ -1698,7 +1698,7 @@ function voteRoutes(config) {
               prError.requestId ? `request id ${prError.requestId}` : null,
             ].filter(Boolean).join(', ');
             return res.status(503).json({
-              error: `GitHub is currently failing to create pull requests (${detail}). This is a GitHub-side problem, not this change — the work is safe on its branch. Try proposing again in a few minutes; do not re-run the request or push extra commits.`,
+              error: `GitHub is currently failing to create pull requests (${detail}). This is a GitHub-side problem, not this change: the work is safe on its branch. Try proposing again in a few minutes; do not re-run the request or push extra commits.`,
             });
           }
           return res.status(502).json({
@@ -1741,7 +1741,7 @@ function voteRoutes(config) {
           }
           if (pr && pr.merged) {
             return res.status(409).json({
-              error: `PR #${session.pr_number} was already merged on GitHub — this change has landed, so there is nothing to vote on.`,
+              error: `PR #${session.pr_number} was already merged on GitHub. This change has landed, so there is nothing to vote on.`,
             });
           }
           if (pr && pr.state === 'closed') {
@@ -1760,7 +1760,7 @@ function voteRoutes(config) {
                 sessionId: session.id, pr: session.pr_number, err: err.message,
               });
               return res.status(409).json({
-                error: `This proposal's pull request (#${session.pr_number}) was closed on GitHub and couldn't be reopened — re-propose it as a fresh proposal.`,
+                error: `This proposal's pull request (#${session.pr_number}) was closed on GitHub and couldn't be reopened. Re-propose it as a fresh proposal.`,
               });
             }
           }
@@ -1890,7 +1890,7 @@ function voteRoutes(config) {
       // centering fix for voting" instead of the opaque "PR #8 for
       // voting" which gives no hint about what's being voted on.
       const promoLabel = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `${req.user.username} promoted ${promoLabel} for voting`,
@@ -2371,7 +2371,7 @@ function voteRoutes(config) {
 
       if (promote) {
         // Explicit submissions still announce the vote exactly as before.
-        const label = pr.title ? `PR #${prNumber} — ${pr.title}` : `PR #${prNumber}`;
+        const label = pr.title ? `PR #${prNumber}: ${pr.title}` : `PR #${prNumber}`;
         await sendSystemMessage(pool, app.id,
           `${req.user.username} imported ${label} for voting`,
           'vote',
@@ -2586,7 +2586,7 @@ function voteRoutes(config) {
       }
 
       const voteLabel = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `${req.user.username} voted ${vote} on ${voteLabel}`,
@@ -3583,7 +3583,7 @@ function voteRoutes(config) {
       if (!(await appAdmins.canForceMerge(pool, appForGate, req.user, { explicitApproval }))) {
         if (explicitApproval && await appAdmins.isAppAdmin(pool, session.app_id, req.user?.id)) {
           return res.status(403).json({
-            error: "This proposal changes the app's admins, so it needs explicit approval — only a platform admin can force-merge it",
+            error: "This proposal changes the app's admins, so it needs explicit approval: only a platform admin can force-merge it",
           });
         }
         return res.status(403).json({ error: 'Full admin access required' });
@@ -3815,7 +3815,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     if (stagingTeardown && stagingTeardown.leaked) {
       dstep({
         phase: 'staging_teardown',
-        message: 'Staging container could not be removed — left for the stale-preview sweeper.',
+        message: 'Staging container could not be removed. It is left for the stale-preview sweeper.',
       });
     } else {
       dstep({ phase: 'staging_teardown', message: 'Staging container torn down.' });
@@ -3892,7 +3892,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
           metadata: { issueNumber: n, prNumber: session.pr_number || null, count: awarded.length },
         });
         const recipient = session.user_id ? `<@${session.user_id}>` : 'the author';
-        const bountyMsg = `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} — PR #${session.pr_number || session.id} merged`;
+        const bountyMsg = `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} for PR #${session.pr_number || session.id}`;
         await sendSystemMessage(pool, session.app_id, bountyMsg, 'system').catch(() => {});
         // Dual-post into the proposal's thread (lifecycle in context).
         await sendSystemMessage(pool, session.app_id, bountyMsg, 'system',
@@ -4012,7 +4012,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // Announce in group chat, and dual-post into the proposal's own
     // thread so its discussion carries the outcome in context.
     const mergedLabel = session.pr_title
-      ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+      ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
       : `PR #${session.pr_number || session.id}`;
     const mergedSuffix = force && forceBy
       ? `force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
@@ -4205,7 +4205,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
     if (explicitApproval) {
       dstep({
         phase: 'gate:explicit_approval',
-        message: `Proposal changes dapp.json's admins block (${explicitApprovalSource} check) — time-based merge paths are off: no visibility window, no lazy consensus. The app's normal threshold still applies.`,
+        message: `Proposal changes dapp.json's admins block (${explicitApprovalSource} check). Time-based merge paths are off: no visibility window, no lazy consensus. The app's normal threshold still applies.`,
         detail: {
           explicitApproval: true, source: explicitApprovalSource, mode: gate.mode,
           ...(explicitApprovalDetail || {}),
@@ -4218,7 +4218,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         ? `Approval target reached: ${yesCount} qualifying approval${yesCount === 1 ? '' : 's'} (needed at least ${required}${gate.policy === 'invited' ? ' from invited approvers' : ''}).`
         : gate.thresholdMet
           ? `Vote threshold reached: ${yesCount} yes votes (needed ${required}) with the visibility window elapsed.`
-          : `Lazy-consensus window elapsed: ${yesCount} yes vote${yesCount === 1 ? '' : 's'} (threshold ${required}) with no opposition — silence is consent.`,
+          : `Lazy-consensus window elapsed: ${yesCount} yes vote${yesCount === 1 ? '' : 's'} (threshold ${required}) with no opposition, so silence is consent.`,
       detail: { yesCount, required, majority, noCount, activeCount, lazyArmed: gate.lazyArmed, mode: gate.mode, policy: gate.policy },
     });
 
@@ -4235,13 +4235,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
         log.info('votes', 'Threshold + window met but app is locked; awaiting admin yes', {
           sessionId: session.id, yesCount, required,
         });
-        dstep({ phase: 'gate:lock', level: 'warn', message: 'App is locked and has no admin yes vote yet — merge blocked.', detail: { locked: true, adminYes: false } });
-        dend('blocked', 'Blocked — locked app awaiting an admin yes vote.');
+        dstep({ phase: 'gate:lock', level: 'warn', message: 'App is locked and has no admin yes vote yet, so the merge is blocked.', detail: { locked: true, adminYes: false } });
+        dend('blocked', 'Blocked: locked app awaiting an admin yes vote.');
         return { merged: false, yesCount, needed: required, awaitingAdmin: true };
       }
-      dstep({ phase: 'gate:lock', message: 'App is locked — admin yes vote present.', detail: { locked: true, adminYes: true } });
+      dstep({ phase: 'gate:lock', message: 'App is locked, and an admin yes vote is present.', detail: { locked: true, adminYes: true } });
     } else {
-      dstep({ phase: 'gate:lock', message: 'App is not locked — no admin-yes requirement.' });
+      dstep({ phase: 'gate:lock', message: 'App is not locked, so there is no admin-yes requirement.' });
     }
 
     // #8: refuse the merge if the branch is behind origin/main. We don't
@@ -4257,9 +4257,9 @@ async function checkAndMerge(config, pool, session, options = {}) {
     if ((session.behind_main || 0) > 0) {
       const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
       const label = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
-      const behindMsg = `${label} is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main — syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`;
+      const behindMsg = `${label} is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main. Syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`;
       await sendSystemMessage(pool, session.app_id, behindMsg, 'system');
       // Dual-post into the proposal's thread (lifecycle in context).
       await sendSystemMessage(pool, session.app_id, behindMsg, 'system',
@@ -4267,8 +4267,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
       log.info('votes', 'Merge blocked: branch behind main', {
         sessionId: session.id, behind: session.behind_main,
       });
-      dstep({ phase: 'gate:behind_main', level: 'warn', message: `Branch is ${session.behind_main} commit(s) behind main — auto-sync queued, merge deferred.`, detail: { behind: session.behind_main } });
-      dend('conflict_resolving', 'Behind main — auto-sync queued; see the conflict-resolution run.');
+      dstep({ phase: 'gate:behind_main', level: 'warn', message: `Branch is ${session.behind_main} commit(s) behind main. Auto-sync queued, merge deferred.`, detail: { behind: session.behind_main } });
+      dend('conflict_resolving', 'Behind main: auto-sync queued; see the conflict-resolution run.');
       // Auto-heal: sync the branch with main (worker git-merge +
       // Claude-on-markers) and retry the merge. The PR keeps its votes
       // because the sync push doesn't go through the vote-resetting
@@ -4355,7 +4355,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         ? checkRows[0].test_results.filter((r) => r && r.status !== 'pass').length
         : 0;
       const label = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       // #237: for the 'error' state, surface the captured reason (usually a
       // staging preview that crashed on boot, e.g. a bad migration/seed) so
@@ -4365,10 +4365,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
         ? `has ${failingCount || 'failing'} test${failingCount === 1 ? '' : 's'} failing`
         : checkState === 'error'
           ? (errorDetail
-            ? `couldn't run its tests — its staging preview failed to start (${errorDetail})`
+            ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
             : "couldn't run its tests")
           : 'is still running its tests';
-      const blockMsg = `${label} reached the vote threshold but ${reason} — merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
+      const blockMsg = `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
       await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
       await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
         null, { type: 'session', ref: session.id }).catch(() => {});
@@ -4377,7 +4377,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         checksRevisionMismatch,
       });
       dstep({ phase: 'gate:checks', level: 'warn', message: `Merge blocked: checks not passing (state = ${checkState || 'pending'}${failingCount ? `, ${failingCount} failing` : ''}).`, detail: { checkState: checkState || 'pending', failingCount, checksRevisionMismatch } });
-      dend('blocked', 'Blocked — votes reached but checks must pass first.');
+      dend('blocked', 'Blocked: votes reached, but checks must pass first.');
       return {
         merged: false, yesCount, needed: required,
         checksBlocked: true, checkState: checkState || 'pending', failingCount,
@@ -4415,7 +4415,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
       if (envVerdict.state === 'failing') {
         const label = session.pr_title
-          ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+          ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
           : `PR #${session.pr_number || session.id}`;
         const blockMsg = platformEnvCheck.describeBlock(envVerdict.detail, label);
         await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
@@ -4429,7 +4429,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
           message: `Merge blocked: ${envVerdict.detail.missing.length} platform variable(s) declared but not set.`,
           detail: envVerdict.detail,
         });
-        dend('blocked', 'Blocked — a new platform variable has no value set.');
+        dend('blocked', 'Blocked: a new platform variable has no value set.');
         return {
           merged: false, yesCount, needed: required,
           platformEnvBlocked: true,
@@ -4458,7 +4458,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // Force-merge skips the gate block above, so its run opens here.
   await startDebugIfNeeded();
   if (force) {
-    dstep({ phase: 'gate:majority', message: `Force-merge by ${forceBy?.username || 'an admin'} — bypassing the vote/checks gates.`, detail: { yesCount, majority, forced: true } });
+    dstep({ phase: 'gate:majority', message: `Force-merge by ${forceBy?.username || 'an admin'}, bypassing the vote/checks gates.`, detail: { yesCount, majority, forced: true } });
   }
 
   const { rows: claim } = await pool.query(
@@ -4471,7 +4471,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
     log.info('votes', 'Merge already claimed by another request, skipping', {
       sessionId: session.id,
     });
-    dstep({ phase: 'claim', message: 'Merge already claimed by another request — skipping.' });
+    dstep({ phase: 'claim', message: 'Merge already claimed by another request, so skipping.' });
     dend('noop', 'Another request is already merging this proposal.');
     return { merged: false, inProgress: true };
   }
@@ -4596,7 +4596,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
                   message: 'GitHub refused the merge and the live native revision could not be verified.',
                   detail: { revisionBlocked: true, pinnedSha, reason },
                 });
-                dend('deferred', 'Merge deferred — current GitHub revision could not be verified.');
+                dend('deferred', 'Merge deferred: the current GitHub revision could not be verified.');
                 return {
                   merged: false,
                   revisionBlocked: true,
@@ -4628,13 +4628,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
             // is a re-pin and an immediate retry — not a return to review.
             const votesKept = !isImported && !!nativeRefresh?.votesKept;
             const movedLabel = session.pr_title
-              ? `PR #${session.pr_number} — ${session.pr_title}`
+              ? `PR #${session.pr_number}: ${session.pr_title}`
               : `PR #${session.pr_number}`;
             const movedMessage = isImported
-              ? `${movedLabel} wasn't merged — the PR was updated on GitHub since the vote, so GitHub declined to merge the older commit. It'll be re-checked against the new commit and can merge again once it passes.`
+              ? `${movedLabel} wasn't merged, because the PR was updated on GitHub since the vote, so GitHub declined to merge the older commit. It'll be re-checked against the new commit and can merge again once it passes.`
               : votesKept
-                ? `${movedLabel} wasn't merged on this attempt — it had just been synced with main, so the merge is now pinned to commit ${String(nativeRefresh.headSha).slice(0, 8)}. Existing votes were kept and the merge retries automatically.`
-                : `${movedLabel} wasn't merged — its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`;
+                ? `${movedLabel} wasn't merged on this attempt: it had just been synced with main, so the merge is now pinned to commit ${String(nativeRefresh.headSha).slice(0, 8)}. Existing votes were kept and the merge retries automatically.`
+                : `${movedLabel} wasn't merged, because its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`;
             await sendSystemMessage(pool, session.app_id,
               movedMessage,
               'system', null, { type: 'session', ref: session.id }
@@ -4645,10 +4645,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
                 ? 'GitHub refused the merge: the pinned commit was superseded by the platform\'s own sync. Re-pinned to it with votes intact and re-queued the merge.'
                 : 'GitHub refused the merge: the native PR head moved since review. Released the merge claim and reset the proposal to the new revision.', detail: { headMoved: true, votesKept, pinnedSha, refreshedHeadSha: nativeRefresh?.headSha || null } });
             dend('deferred', isImported
-              ? 'Head moved since the reviewed commit — deferred to the sync poller.'
+              ? 'Head moved since the reviewed commit, so it is deferred to the sync poller.'
               : votesKept
-                ? 'Superseded by the platform\'s own sync commit — re-queued with votes intact.'
-                : 'Head moved since review — returned to review on the new commit.');
+                ? 'Superseded by the platform\'s own sync commit, so it is re-queued with votes intact.'
+                : 'Head moved since review, so it returned to review on the new commit.');
             if (votesKept) {
               // Re-drive the app drain so the merge is re-attempted against the
               // corrected pin instead of waiting for the hourly sweeper. It
@@ -4676,7 +4676,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         dstep({ phase: 'github_merge', message: `GitHub merged PR #${session.pr_number}${mergeCommitSha ? ` as commit ${String(mergeCommitSha).slice(0, 9)}` : ''}.`, detail: { sha: mergeCommitSha } });
       }
     } else {
-      dstep({ phase: 'github_merge', message: 'GitHub not enabled or PR-less — skipping the GitHub merge call.' });
+      dstep({ phase: 'github_merge', message: 'GitHub not enabled or PR-less, so skipping the GitHub merge call.' });
     }
 
     // #687 Slice 4: run the shared post-merge finalizer. Both native and
@@ -4722,7 +4722,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         }));
 
       const failLabel = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
@@ -4794,10 +4794,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
       if (prState && prState.state === 'closed' && !prState.merged) {
         try {
           await github.reopenPR(prOwner, prRepo, session.pr_number);
-          dstep({ phase: 'reopened_closed_pr', message: `PR #${session.pr_number} was closed on GitHub — reopened it; continuing with the normal conflict handling.` });
+          dstep({ phase: 'reopened_closed_pr', message: `PR #${session.pr_number} was closed on GitHub. Reopened it; continuing with the normal conflict handling.` });
         } catch (reopenErr) {
           const closedLabel = session.pr_title
-            ? `PR #${session.pr_number} — ${session.pr_title}`
+            ? `PR #${session.pr_number}: ${session.pr_title}`
             : `PR #${session.pr_number}`;
           // Drop out of 'promoted' so no vote/sweep re-picks a proposal
           // whose PR can never merge. 'paused' keeps the branch + CC
@@ -4808,7 +4808,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
             [session.id]
           ).catch(() => {});
           await sendSystemMessage(pool, session.app_id,
-            `${closedLabel} is closed on GitHub and couldn't be reopened — it has been taken off the vote panel. Re-propose it from the session's dev-chat.`,
+            `${closedLabel} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`,
             'system'
           ).catch(() => {});
           try {
@@ -4906,7 +4906,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
       const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
       const label = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       // Honest wording: the auto-resolver drain only picks up proposals
       // that are vote-eligible to merge, so "syncing automatically" was a
@@ -4916,7 +4916,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // with main", which is the path that always works.
       await sendSystemMessage(pool, session.app_id,
         (force && autoResolve)
-          ? `${label} hit a conflict with main during an admin merge — resolving the conflict automatically and retrying the merge.`
+          ? `${label} hit a conflict with main during an admin merge. Resolving the conflict automatically and retrying the merge.`
           : `${label} hit a conflict with main during a merge attempt. ${owner}: finish the merge by running "Sync with main" from the session's dev-chat. (Auto-resolution retries only when the proposal is eligible to merge on votes.)`,
         'system'
       );
@@ -4959,7 +4959,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
     if (isConflict) {
       dstep({
         phase: 'conflict_detected', level: 'warn',
-        message: 'GitHub rejected the merge as a conflict — '
+        message: 'GitHub rejected the merge as a conflict. '
           + (!autoResolve ? 'auto-resolver not run (resolver re-entry).'
             : force ? 'per-session resolver dispatched directly with the force intent preserved.'
               : 'auto-resolver queued.'),
@@ -5073,7 +5073,7 @@ async function checkAndOpenRevert(config, pool, session, decider) {
         [session.id]
       ).catch(() => {});
       const label = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `Couldn't auto-revert ${label}: ${backfillReason}. Please open the revert PR manually.`,
@@ -5122,7 +5122,7 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     ).catch(() => {});
     log.error('votes', 'Revert PR creation failed', { sessionId: session.id, err: err.message });
     const label = session.pr_title
-      ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+      ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
       : `PR #${session.pr_number || session.id}`;
     await sendSystemMessage(pool, session.app_id,
       `Couldn't auto-revert ${label}: ${err.message}. ` +
@@ -5160,10 +5160,10 @@ async function checkAndOpenRevert(config, pool, session, decider) {
   // Announce in group chat so the new revert PR shows up in the vote
   // panel with context. Tag the original PR # for breadcrumbs.
   const label = session.pr_title
-    ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+    ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
     : `PR #${session.pr_number || session.id}`;
   await sendSystemMessage(pool, session.app_id,
-    `${decider.username} proposed undoing ${label}. Opened revert PR #${revertInfo.prNumber} — needs ${majority}/${activeCount} votes to land.`,
+    `${decider.username} proposed undoing ${label}. Opened revert PR #${revertInfo.prNumber}, which needs ${majority}/${activeCount} votes to land.`,
     'system'
   );
 
@@ -5232,7 +5232,7 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
     const prBody =
       `Automated revert of ${origLabel}.\n\n` +
       `Undo vote reached majority on the original PR; deciding vote cast by \`${deciderUsername}\`. ` +
-      `This PR still needs a regular merge vote to land — vote in the app's group chat panel.\n\n` +
+      `This PR still needs a regular merge vote to land. Vote in the app's group chat panel.\n\n` +
       `Reverts commit ${mergeSha}.`;
 
     const prData = await github.createPR(repoOwner, repoName, {

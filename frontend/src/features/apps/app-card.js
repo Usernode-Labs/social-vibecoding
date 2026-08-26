@@ -100,7 +100,7 @@ export function appPillsFor(app) {
     chipDefs.push({
       cls: 'bg-red-500/10 text-red-700 dark:text-red-400',
       label: 'Missing secrets',
-      tip: `${n} required secret${n === 1 ? '' : 's'} unset — set values in the app's Secrets panel`,
+      tip: `${n} required secret${n === 1 ? '' : 's'} unset. Set values in the app's Secrets panel`,
     });
   }
   if (openPrs > 0) {

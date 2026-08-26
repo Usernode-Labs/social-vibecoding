@@ -110,7 +110,7 @@ export function UnRow({ row }: { row: UnStatusRow }): ReactNode {
   return (
     <button
       id={row.id} type="button" className={ROW_BASE + ROW_TAP} disabled={busy}
-      aria-label={row.hint ? `${row.label} — ${row.hint}` : undefined}
+      aria-label={row.hint ? `${row.label}: ${row.hint}` : undefined}
       onClick={() => run(row.action as string)}
     >{inner}</button>
   );

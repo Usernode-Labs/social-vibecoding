@@ -331,7 +331,7 @@ export function AppGrid() {
       ) : null}
       {state.emptyQuery !== null ? (
         <div className="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
-          {`No apps match “${state.emptyQuery}” — clear the search and try `}
+          {`No apps match “${state.emptyQuery}”. Clear the search and try `}
           <span className="text-violet-700 dark:text-violet-400">Discover</span>
           {' below.'}
         </div>

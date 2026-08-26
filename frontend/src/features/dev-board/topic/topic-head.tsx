@@ -86,7 +86,7 @@ export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
               <li key={j} className={(it.kind || it.mono) ? 'font-mono text-[0.7rem] break-all' : undefined}>
                 {it.kind ? <span className="opacity-70">{`[${it.kind}] `}</span> : null}
                 {it.code ? <code className="font-mono">{it.code}</code> : null}
-                {it.text ? (it.code ? ` — ${it.text}` : it.text) : null}
+                {it.text ? (it.code ? `: ${it.text}` : it.text) : null}
                 {it.source ? <span className="opacity-60">{` (${it.source})`}</span> : null}
               </li>
             ))}

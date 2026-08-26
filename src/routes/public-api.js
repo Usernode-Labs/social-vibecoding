@@ -322,7 +322,7 @@ function publicApiRoutes(config) {
     try {
       const merged = await waitlist.mergeMoreAnswers(pool, req.params.token, stage2.value);
       if (!merged) return res.status(404).json({ error: 'Unknown or expired link.' });
-      res.json({ ok: true, message: 'Saved — thanks. You can come back and add to this any time.' });
+      res.json({ ok: true, message: 'Saved, thanks. You can come back and add to this any time.' });
     } catch (err) {
       log.error('public-api', 'waitlist more save failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

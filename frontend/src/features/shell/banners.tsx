@@ -51,7 +51,7 @@ export function OfflineBanner() {
 
   return (
     <Alert ref={ref} id={OFFLINE_BANNER_ID} variant="banner" startHidden>
-      You&apos;re offline — showing saved content
+      You&apos;re offline. Showing saved content
     </Alert>
   );
 }

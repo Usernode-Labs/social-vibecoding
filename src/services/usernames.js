@@ -105,7 +105,7 @@ function validateUsername(raw) {
     return { ok: false, error: `Usernames are at most ${MAX_USERNAME_LEN} characters.` };
   }
   if (!USERNAME_RE.test(value)) {
-    return { ok: false, error: 'Use letters, numbers and underscores only — so people can still @mention you.' };
+    return { ok: false, error: 'Use letters, numbers and underscores only, so people can still @mention you.' };
   }
   if (isReserved(value)) {
     return { ok: false, error: 'That name is reserved for the platform.' };

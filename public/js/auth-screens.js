@@ -110,7 +110,7 @@
     try { offline = !!(window.Offline && Offline.isOffline()); } catch (_) { offline = false; }
     if (!offline) return false;
     if (errorEl) {
-      showError(errorEl, "You're offline — signing in needs a connection.");
+      showError(errorEl, "You're offline. Signing in needs a connection.");
     }
     try { window.Offline.nudge(); } catch (_) { /* ignore */ }
     return true;

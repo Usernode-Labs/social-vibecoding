@@ -161,12 +161,12 @@ export function WaitlistScreen() {
           }
         } else {
           setMsg({
-            text: (data && data.error) || 'Something went wrong — try again.',
+            text: (data && data.error) || 'Something went wrong. Try again.',
             tone: 'error',
           });
         }
       } catch {
-        setMsg({ text: 'Connection issue — try again.', tone: 'error' });
+        setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
       }
       setSubmitting(false);
     },
@@ -241,12 +241,12 @@ export function WaitlistScreen() {
           Usernode Social Vibecoding is a place where users describe the app
         they want in chat, an AI builds it, and the community votes the
         changes in. Every app in the directory was built here by the people
-        who use it — they run on the Usernode chain, and contributors own a
+        who use it. They run on the Usernode chain, and contributors own a
         share of what they build.
         </p>
         <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
           Platform access opens in batches. Join the waitlist and we'll email
-        you when your spot opens — the public apps are open to everyone right
+        you when your spot opens. The public apps are open to everyone right
         now.
           <span className="font-medium text-zinc-700 dark:text-zinc-200">
             Just your email to join.
@@ -293,7 +293,7 @@ export function WaitlistScreen() {
               </span>
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
-              We balance each group across regions. It&rsquo;s never used to reject anyone — leave it blank if you&rsquo;d rather not say.
+              We balance each group across regions. It&rsquo;s never used to reject anyone, so leave it blank if you&rsquo;d rather not say.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <select
@@ -345,7 +345,7 @@ export function WaitlistScreen() {
               id="waitlist-discovery-detail"
               type="text"
               maxLength={255}
-              placeholder={detailLabel + ' — optional'}
+              placeholder={detailLabel + ' (optional)'}
               className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
             <input
@@ -353,7 +353,7 @@ export function WaitlistScreen() {
               id="waitlist-referrer"
               type="text"
               maxLength={255}
-              placeholder="Did someone refer you? Their handle — optional"
+              placeholder="Did someone refer you? Their handle (optional)"
               className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
           </div>
@@ -431,13 +431,13 @@ export function WaitlistScreen() {
             )}
           >
             <p className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400">
-              Optional — moves you up the list
+              Optional (moves you up the list)
             </p>
             <h3 className="mt-1 text-base font-semibold">
               Want in sooner?
             </h3>
             <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
-              Four more questions, about three minutes — the group you&rsquo;d bring,
+              Four more questions, about three minutes: the group you&rsquo;d bring,
             a tool you&rsquo;ve lost, where else you are. These are the answers we
             actually read when we pick the next group.
             </p>
@@ -450,7 +450,7 @@ export function WaitlistScreen() {
                 Answer them now
               </a>
               <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                Or stop here — you&rsquo;re on the list either way, and the link is in your email.
+                Or stop here. You&rsquo;re on the list either way, and the link is in your email.
               </span>
             </div>
           </div>
@@ -464,7 +464,7 @@ export function WaitlistScreen() {
           id="waitlist-queued"
           className={hiddenFirst(!hasSession, 'mt-8 text-sm text-zinc-500 dark:text-zinc-400')}
         >
-          You're already on the waitlist — we'll email you when your spot opens.
+          You're already on the waitlist. We'll email you when your spot opens.
         </p>
       </div>
     </main>

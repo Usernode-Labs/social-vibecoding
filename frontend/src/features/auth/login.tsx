@@ -131,7 +131,7 @@ const SENT_MSG =
 const ADMIN_LEAD_SHIPPED =
   "Accounts here have no email on file, so a password can't be reset automatically from the web.";
 const ADMIN_LEAD_WITH_EMAIL =
-  'No confirmed email on your account? The link above can only go to a confirmed address — but an admin can still get you back in.';
+  'No confirmed email on your account? The link above can only go to a confirmed address, but an admin can still get you back in.';
 
 export function LoginScreen() {
   const rootRef = useRef<HTMLElement>(null);
@@ -484,7 +484,7 @@ export function LoginScreen() {
       const loginData = await loginRes.json();
       if (!loginRes.ok) {
         setOtpStatus(null);
-        setOtpError(loginData.error || 'Sign-in failed — try the password form');
+        setOtpError(loginData.error || 'Sign-in failed. Try the password form');
         return;
       }
       setOtpStatus('Signed in!');
@@ -635,7 +635,7 @@ export function LoginScreen() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setEmailResetError(data.error || 'Could not send the link — try again in a minute');
+        setEmailResetError(data.error || 'Could not send the link. Try again in a minute');
         return;
       }
       // Anti-enumeration: the server answers the same whether or not the
@@ -671,7 +671,7 @@ export function LoginScreen() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setResetError(res.status === 401 ? EXPIRED_MSG : data.error || 'Reset failed — try again');
+        setResetError(res.status === 401 ? EXPIRED_MSG : data.error || 'Reset failed. Try again');
         return;
       }
       // The reset revoked every session on purpose; signing in with the new
@@ -771,7 +771,7 @@ export function LoginScreen() {
               You're offline
             </h2>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Signing in needs a connection — your username and password are checked on the server.
+              Signing in needs a connection. Your username and password are checked on the server.
             Reconnect and try again; if you were signed in on this device before, reloading once
             you're back online will take you straight in.
             </p>
@@ -973,7 +973,7 @@ export function LoginScreen() {
             </div>
             <div id="otp-step-password" className={hiddenFirst(otpStep !== 'password', 'space-y-3')}>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                Code verified — now choose a password for your account.
+                Code verified. Now choose a password for your account.
               </p>
               <div>
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">

@@ -170,7 +170,7 @@ function AttachmentImage({ att }: { att: Attachment }) {
     );
   }
   return (
-    <a href={att.url} target="_blank" rel="noopener" title={`${att.name} — open full size`}>
+    <a href={att.url} target="_blank" rel="noopener" title={`${att.name}: open full size`}>
       <img
         className="dc-msg-att-img"
         src={att.url}
@@ -323,7 +323,7 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
         <button
           type="button"
           className={saved ? 'gc-msg-save gc-msg-saved' : 'gc-msg-save'}
-          title={saved ? 'Saved — click to unsave' : 'Save to your notifications'}
+          title={saved ? 'Saved. Click to unsave' : 'Save to your notifications'}
           aria-label={saved ? 'Unsave message' : 'Save message'}
           aria-pressed={saved}
         >

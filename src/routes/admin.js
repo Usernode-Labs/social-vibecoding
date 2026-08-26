@@ -1491,7 +1491,7 @@ function adminRoutes(config) {
         if (dbExport.isExportInProgress()) {
           await recordExportAudit(req, { status: 'denied', deniedReason: 'in_progress', dbName: target.dbName });
           return res.status(409).json({
-            error: 'An export is already in progress — try again shortly.',
+            error: 'An export is already in progress. Try again shortly.',
             code: 'in_progress',
           });
         }
@@ -1501,7 +1501,7 @@ function adminRoutes(config) {
         // export that dies before producing a byte is on the books.
         const auditId = await recordExportAudit(req, { status: 'requested', dbName: target.dbName });
         if (!auditId) {
-          return res.status(500).json({ error: 'Could not record the export — refusing to run it.' });
+          return res.status(500).json({ error: 'Could not record the export, so it will not be run.' });
         }
 
         const { token, expiresInSeconds } = dbExport.issueTicket({
@@ -1545,7 +1545,7 @@ function adminRoutes(config) {
           by: req.user.username, ip: clientIp(req),
         });
         return res.status(403).json({
-          error: 'This export link has expired — start the export again.',
+          error: 'This export link has expired. Start the export again.',
           code: 'ticket_invalid',
         });
       }
@@ -1572,7 +1572,7 @@ function adminRoutes(config) {
       if (!dbExport.beginExport({ userId: req.user.id, username: req.user.username })) {
         await finishExportAudit(auditId, { status: 'denied', error: 'another export was already running' });
         return res.status(409).json({
-          error: 'An export is already in progress — try again shortly.',
+          error: 'An export is already in progress. Try again shortly.',
           code: 'in_progress',
         });
       }

@@ -108,7 +108,7 @@ test('two reasons at once: the pill names the worst and counts the rest', () => 
   });
   const html = proposalCardHtml(AppView, pr);
   assert.match(html, /Behind main · 3/, 'the worst reason is the pill label');
-  assert.match(html, /and 1 more reason — open for details/, 'the rest are counted, not hidden');
+  assert.match(html, /and 1 more reason, open for details/, 'the rest are counted, not hidden');
   assert.doesNotMatch(html, /gc-warning-badge/, 'no second badge stacked beside it');
 
   // blockReasons is the shared source of truth for both.

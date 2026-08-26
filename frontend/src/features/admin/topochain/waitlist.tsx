@@ -146,13 +146,13 @@ function SurveyAnswers({ answers }: { answers: Answers }) {
     line('Made', (
       <>
         <span className="select-all break-all">{a.made_url}</span>
-        {a.made_note ? ` — ${a.made_note}` : ''}
+        {a.made_note ? ` (${a.made_note})` : ''}
       </>
     ));
   }
   if (a.country || a.city) line('Where', [a.city, a.country].filter(Boolean).join(', '));
   if (a.discovery && a.discovery.source) {
-    line('Found us', a.discovery.source + (a.discovery.detail ? ` — ${a.discovery.detail}` : ''));
+    line('Found us', a.discovery.source + (a.discovery.detail ? ` (${a.discovery.detail})` : ''));
   }
   if (a.referrer_handle) line('Referred by', a.referrer_handle);
   if (a.group && Object.keys(a.group).length) {
@@ -316,7 +316,7 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
         ) : (
           <span
             className="text-zinc-500 dark:text-zinc-400 text-xs"
-            title="Never followed the confirm link in the join email — this address is unproven"
+            title="Never followed the confirm link in the join email, so this address is unproven"
           >
             {' unconfirmed'}
           </span>
@@ -390,7 +390,7 @@ function WaitlistScreen() {
     if (!canWrite()) return;
     const okd = await topo()._confirm({
       title: 'Release off the waitlist?',
-      message: `${w.email} gets platform access — immediately if they already have an account, otherwise the moment they create one. They'll be emailed a link to sign in or create their account.`,
+      message: `${w.email} gets platform access: immediately if they already have an account, otherwise the moment they create one. They'll be emailed a link to sign in or create their account.`,
       confirmLabel: 'Release',
     });
     if (!okd) return;

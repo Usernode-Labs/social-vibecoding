@@ -108,13 +108,13 @@ const DevChat = {
   // _setStreamingUI swaps it for the busy variant while a turn runs and
   // has to put the original back afterwards.
   COMPOSER_PLACEHOLDER:
-    'Describe a change in plain English — e.g. "add a dark mode toggle". No coding needed.',
+    'Describe a change in plain English, e.g. "add a dark mode toggle". No coding needed.',
   // #810: the save icon exists ONLY while a turn runs (that's the state
   // where sending is impossible), so the busy copy points at it again.
   COMPOSER_PLACEHOLDER_BUSY:
-    'Claude is working — type your next note and tap 💾 to save it for later.',
+    'Claude is working. Type your next note and tap 💾 to save it for later.',
   SAVE_DRAFT_TITLE:
-    'Save this text as a draft (Ctrl+Enter) — it stays here until you send it',
+    'Save this text as a draft (Ctrl+Enter). It stays here until you send it',
   // #920: the hint under the composer names whatever Ctrl/Cmd+Enter does
   // RIGHT NOW. While a turn runs sending is impossible and the keystroke
   // parks the text as a draft instead, so the copy follows the action.
@@ -216,7 +216,7 @@ const DevChat = {
       label: 'Fable 5',
       changeSize: {
         short: 'design, taste, and difficult coding',
-        long: 'Design and taste — how a screen looks, reads, and feels — plus the most difficult coding work.',
+        long: 'Design and taste (how a screen looks, reads, and feels) plus the most difficult coding work.',
       },
     },
   },
@@ -645,7 +645,7 @@ const DevChat = {
     const name = DevChat._agentBackend(DevChat.currentSession) === 'codex_openrouter'
       ? 'OpenRouter'
       : 'Claude';
-    return `${name} is working — type your next note and tap 💾 to save it for later.`;
+    return `${name} is working. Type your next note and tap 💾 to save it for later.`;
   },
 
   _formatOpenRouterPrice(value) {
@@ -677,7 +677,7 @@ const DevChat = {
     const compatibility = model?.compatibility === 'verified'
       ? ' · verified'
       : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
-    return `${model?.name || model?.id || 'Unknown model'} — ${this._openRouterModelCostSummary(model)}${compatibility}`;
+    return `${model?.name || model?.id || 'Unknown model'}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
   },
 
   _openRouterModelCompatibilitySummary(model) {
@@ -1189,7 +1189,7 @@ const DevChat = {
   // Generate-proposal popup in app-view.js, so the two pickers can't
   // drift. Nothing measured feeds either one.
 
-  MODEL_GUIDANCE_TOOLTIP: 'A suggestion, not a rule — any model can attempt any change. Opus is the general coding pick; reach for Fable when design judgment matters or the coding is genuinely difficult. Both cost more per change than Sonnet.',
+  MODEL_GUIDANCE_TOOLTIP: 'A suggestion, not a rule. Any model can attempt any change. Opus is the general coding pick; reach for Fable when design judgment matters or the coding is genuinely difficult. Both cost more per change than Sonnet.',
 
   // Plain text for one <option>. Degrades to the bare label when the
   // server sent no guidance (e.g. an older payload) — a picker that
@@ -1199,7 +1199,7 @@ const DevChat = {
     const label = meta.label || '';
     const hint = meta.changeSize && meta.changeSize.short;
     if (!hint) return label;
-    return `${label} — ${hint}`;
+    return `${label}: ${hint}`;
   },
 
   // Full-sentence caption for a model. The COMPOSER no longer renders one
@@ -1217,7 +1217,7 @@ const DevChat = {
     // "One small thing at a time: …" reads as "best for one small thing
     // at a time: …" once it follows the label.
     const guidance = long.charAt(0).toLowerCase() + long.slice(1);
-    return `${label} — best for ${guidance}`;
+    return `${label}: best for ${guidance}`;
   },
 
   // Clears all per-app state. Called when the user leaves an app (via
@@ -2500,7 +2500,7 @@ const DevChat = {
         await navigator.clipboard.writeText(text);
         copied = true;
       } catch { copied = false; }
-      if (copied) flow.notice = 'Work order copied — paste it into your agent.';
+      if (copied) flow.notice = 'Work order copied. Paste it into your agent.';
       else flow.error = 'Could not reach the clipboard. Open the work order below and copy it by hand.';
       DevChat._repaintDevFlow();
       return;
@@ -2530,8 +2530,8 @@ const DevChat = {
     const brief = input ? String(input.value || '').trim() : '';
     if (!brief) {
       flow.error = box
-        ? 'Say what to build first — the work order needs something to hand your agent.'
-        : 'Describe the change in the message box below first — the work order needs something to hand your agent.';
+        ? 'Say what to build first. The work order needs something to hand your agent.'
+        : 'Describe the change in the message box below first. The work order needs something to hand your agent.';
       DevChat._repaintDevFlow();
       // Repainting replaced the node, so focus what is on screen NOW rather
       // than the detached element captured above.
@@ -2567,7 +2567,7 @@ const DevChat = {
         input.style.height = 'auto';
       }
       flow.notice = data.reused
-        ? 'You already had a work order for this app — reusing it.'
+        ? 'You already had a work order for this app, so this reuses it.'
         : 'Work order ready.';
     } catch (err) {
       flow.error = `Network error: ${err.message}`;
@@ -2664,7 +2664,7 @@ const DevChat = {
         // Nothing landed, so the card stays: the branch is still the thing
         // the user is waiting on, and dismissing the walkthrough here would
         // take away the only place to press again.
-        flow.notice = 'Nothing new to submit — this session is already on that commit.';
+        flow.notice = 'Nothing new to submit. This session is already on that commit.';
         DevChat._repaintDevFlow();
         return;
       }
@@ -2673,7 +2673,7 @@ const DevChat = {
         // start. Saying so is the whole point — silence here looks broken.
         PlatformUI.toast('Update landed. Reopen this session to rebuild its preview and re-run its checks.');
       } else if (data.votesCleared) {
-        PlatformUI.toast(`Update submitted — ${data.votesCleared} vote${data.votesCleared === 1 ? '' : 's'} cleared`);
+        PlatformUI.toast(`Update submitted: ${data.votesCleared} vote${data.votesCleared === 1 ? '' : 's'} cleared`);
       } else {
         PlatformUI.toast('Update submitted');
       }
@@ -4552,7 +4552,7 @@ const DevChat = {
     const stuck = () => {
       const row = DevChat._stoppingRow();
       if (!row) return;
-      row.content = 'Still stopping — the agent isn’t responding.';
+      row.content = 'Still stopping. The agent isn’t responding.';
       row._forceOffered = true;
       DevChat.renderMessages();
     };
@@ -4765,7 +4765,7 @@ const DevChat = {
       // work is already committed; only the summary is still being written.
       DevChat.messages.push({
         role: 'system',
-        content: 'Almost done — the wrap-up can’t be interrupted.',
+        content: 'Almost done. The wrap-up can’t be interrupted.',
         created_at: new Date().toISOString(),
         _slug: Math.random().toString(36).slice(2, 8),
       });
@@ -4792,7 +4792,7 @@ const DevChat = {
     DevChat._clearStoppingState();
     DevChat.messages.push({
       role: 'system',
-      content: 'Couldn’t stop the agent — please try again.',
+      content: 'Couldn’t stop the agent. Please try again.',
       created_at: new Date().toISOString(),
       _slug: Math.random().toString(36).slice(2, 8),
     });
@@ -5284,7 +5284,7 @@ const DevChat = {
     const checksNeedAttention = checkState === 'failing' || checkState === 'error';
     const content = session.staging_url
       ? 'Staging deployed!'
-      : (checksNeedAttention ? 'Changes ready — checks need attention.' : 'Changes ready.');
+      : (checksNeedAttention ? 'Changes ready. Checks need attention.' : 'Changes ready.');
     return [...messages, {
       role: 'system',
       content,
@@ -5503,7 +5503,7 @@ const DevChat = {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok && res.status !== 409) {
-        PlatformUI.toast(data.error || 'Failed — try again');
+        PlatformUI.toast(data.error || 'Failed. Try again');
         if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
         return;
       }
@@ -5833,7 +5833,7 @@ const DevChat = {
           }
           let action = { kind: 'none' };
           if (d.status === 'filed' && d.issueUrl) {
-            action = { kind: 'link', href: d.issueUrl, label: `Reported — issue #${d.issueNumber}` };
+            action = { kind: 'link', href: d.issueUrl, label: `Reported: issue #${d.issueNumber}` };
           } else if (d.status === 'filed') {
             action = { kind: 'note', text: isAppTarget ? "Filed on this app's repo" : 'Reported to the platform' };
           } else if (d.status === 'dismissed') {
@@ -5849,7 +5849,7 @@ const DevChat = {
               elapsed: null, stamp,
             },
             msgId: d.msgId || null,
-            destLabel: isAppTarget ? `Issue draft — ${d.appName || 'this app'}` : 'Suggested platform report',
+            destLabel: isAppTarget ? `Issue draft: ${d.appName || 'this app'}` : 'Suggested platform report',
             title: d.title || '',
             body, action,
           });
@@ -6058,7 +6058,7 @@ const DevChat = {
         stamp: msgStamp,
         contentHtml: content.trim()
           ? DevChat.renderMarkdown(content)
-          : '<span style="color:var(--text-muted);font-style:italic">(no visible reply — see reasoning below)</span>',
+          : '<span style="color:var(--text-muted);font-style:italic">(no visible reply, see reasoning below)</span>',
         ...(msgIdx === liveIdx ? { live: true } : null),
         ...(isUser ? { attachments: DevChat._attachmentRows(msg) } : null),
         // For any assistant message that carried a [CHAT_ONLY] tag, surface
@@ -6532,7 +6532,7 @@ const DevChat = {
     // behind a small notice so the degradation is obvious and diagnosable.
     if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
       const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      return `<div class="dc-md-fallback-notice">Rich text formatting is unavailable right now — showing raw markdown.</div>`
+      return `<div class="dc-md-fallback-notice">Rich text formatting is unavailable right now, so this is the raw markdown.</div>`
         + `<pre class="dc-md-fallback">${escaped}</pre>`;
     }
 
@@ -7132,7 +7132,7 @@ const DevChat = {
       id: v.id,
       label: v.label,
       title: 'Building in ' + v.label + '. ' + v.blurb
-        + ' Pick a different venue — on Usernode, on your computer, or handed to'
+        + ' Pick a different venue: on Usernode, on your computer, or handed to'
         + ' Claude Code or Codex on the web.',
       // Mid-turn the venue is not changeable: a running turn holds the
       // worker, and moving it under itself is the failure the old
@@ -7154,7 +7154,7 @@ const DevChat = {
       branch: s.branch_name || '',
       pr: s.pr_number || null,
       prTitle: s.pr_number
-        ? `This session's pull request — every change in this chat goes to PR #${s.pr_number}. `
+        ? `This session's pull request. Every change in this chat goes to PR #${s.pr_number}. `
           + 'Use “Start a new change” for separate work.'
         : '',
       newChangeTitle: 'This chat is one change → one pull request. A PR opens after the first build.',
@@ -7848,7 +7848,7 @@ const DevChat = {
     // "(attached files)" stub caption.
     if ((!msg && !atts.length) || DevChat.isStreaming) return;
     if (DevChat.pendingAttachments.some((a) => a.uploading)) {
-      DevChat._setAttachError('Still uploading — one moment…');
+      DevChat._setAttachError('Still uploading, one moment…');
       return;
     }
     input.value = '';
@@ -7949,18 +7949,18 @@ const DevChat = {
     const ext = (file.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
     if (L.imageExts.includes(ext)) {
       if (file.size > L.maxImageBytes) {
-        return { error: `"${file.name}" is too big — images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.` };
+        return { error: `"${file.name}" is too big. Images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.` };
       }
       return { kind: 'image' };
     }
     if (ext === 'zip') {
       if (file.size > L.maxZipBytes) {
-        return { error: `"${file.name}" is too big — zip archives max ${Math.round(L.maxZipBytes / 1024 / 1024)} MB.` };
+        return { error: `"${file.name}" is too big. Zip archives max ${Math.round(L.maxZipBytes / 1024 / 1024)} MB.` };
       }
       return { kind: 'zip' };
     }
     if (file.size > L.maxBinaryBytes) {
-      return { error: `"${file.name}" is too big — files max ${Math.round(L.maxBinaryBytes / 1024 / 1024)} MB.` };
+      return { error: `"${file.name}" is too big. Files max ${Math.round(L.maxBinaryBytes / 1024 / 1024)} MB.` };
     }
     if (file.size <= L.maxTextBytes) {
       try {
@@ -8450,7 +8450,7 @@ const DevChat = {
 
     if (dropped) {
       DevChat._toast(
-        `That's ${DevChat.MAX_SAVED_DRAFTS} saved drafts — ${dropped} newer `
+        `That's ${DevChat.MAX_SAVED_DRAFTS} saved drafts. ${dropped} newer `
         + `${dropped === 1 ? 'draft was' : 'drafts were'} dropped. Send or delete one first.`
       );
     }
@@ -8610,7 +8610,7 @@ const DevChat = {
     if (!text) return;
     const drafts = DevChat._getSavedDrafts(session.id);
     if (drafts.length >= DevChat.MAX_SAVED_DRAFTS) {
-      DevChat._toast(`That's ${DevChat.MAX_SAVED_DRAFTS} saved drafts — send or delete one first`);
+      DevChat._toast(`That's ${DevChat.MAX_SAVED_DRAFTS} saved drafts. Send or delete one first`);
       return;
     }
     const saved = { id: DevChat._newDraftId(), text, savedAt: new Date().toISOString(), synced: false };
@@ -8624,7 +8624,7 @@ const DevChat = {
     DevChat._setDraft(session.id, '');
     DevChat._syncSaveDraftBtn();
     DevChat._renderSavedDrafts();
-    DevChat._toast('Draft saved — send it whenever you\'re ready');
+    DevChat._toast('Draft saved. Send it whenever you\'re ready');
     if (!DevChat._isCoarsePointer()) { try { input.focus(); } catch {} }
   },
 
@@ -8635,14 +8635,14 @@ const DevChat = {
     const session = DevChat.currentSession;
     if (!session) return;
     if (DevChat.isStreaming) {
-      DevChat._toast('Claude is still working — this will send once the turn finishes');
+      DevChat._toast('Claude is still working. This will send once the turn finishes');
       return;
     }
     const drafts = DevChat._getSavedDrafts(session.id);
     const draft = drafts.find((d) => d.id === id);
     if (!draft) return;
     if (DevChat.pendingAttachments.some((a) => a.uploading)) {
-      DevChat._toast('Still uploading a file — one moment…');
+      DevChat._toast('Still uploading a file, one moment…');
       return;
     }
     DevChat._setSavedDrafts(session.id, drafts.filter((d) => d.id !== id));

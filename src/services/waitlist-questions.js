@@ -65,7 +65,7 @@ const GROUP_TOOLS = {
   spreadsheet: 'A spreadsheet somebody maintains',
   docs: 'Notion or Google Docs',
   forum: 'A forum',
-  nothing: "Nothing — it's word of mouth",
+  nothing: "Nothing, it's word of mouth",
 };
 
 // ── Stage 2: the loss ───────────────────────────────────────────────────

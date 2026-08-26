@@ -267,7 +267,7 @@ function GallerySection() {
       }
       if (!alive.current) return;
       if (!me.user?.isAdmin) {
-        setGate('Admins only — this section shows before/after screenshots for merged proposals.');
+        setGate('Admins only. This section shows before/after screenshots for merged proposals.');
         return;
       }
       setReady(true);

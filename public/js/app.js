@@ -1137,7 +1137,7 @@ const App = {
       const staging = info.env === 'staging';
       const label = staging ? 'staging' : 'dev';
       const tip = staging
-        ? 'Staging preview of the platform — built without a commit SHA, so there is no revision to link'
+        ? 'Staging preview of the platform, built without a commit SHA, so there is no revision to link'
         : 'Running outside of a deploy (no GIT_SHA set)';
       paint(`
         <span class="drawer-ver drawer-ver--dev" title="${tip}">${label}</span>`);

@@ -21,7 +21,7 @@ export function LanguageSection() {
         </SectionHeading>
         <Select id="settings-locale" variant="plain">
           <option value="">
-            Auto — use device language
+            Auto: use device language
           </option>
           <option value="en">
             English
