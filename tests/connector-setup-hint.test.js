@@ -133,9 +133,9 @@ test('every read tool returns through readResult and no others do', () => {
   const hinted = [...TOOLS_SRC.matchAll(/return readResult\('([a-z_]+)'/g)]
     .map((m) => m[1]);
   assert.deepEqual([...new Set(hinted)].sort(), [
-    'get_app', 'get_connector_guidance', 'get_platform_build',
-    'get_platform_conventions', 'get_proposal', 'get_request',
-    'list_apps', 'list_my_proposals', 'list_requests', 'whoami',
+    'get_app', 'get_checkout_status', 'get_connector_guidance',
+    'get_platform_build', 'get_platform_conventions', 'get_proposal',
+    'get_request', 'list_apps', 'list_my_proposals', 'list_requests', 'whoami',
   ]);
   for (const name of hinted) {
     assert.equal(tools.isHintEligibleTool(name), true);

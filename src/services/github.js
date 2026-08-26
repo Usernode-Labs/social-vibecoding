@@ -719,6 +719,36 @@ async function getBranchSha(owner, repo, branchName) {
   return ref.object.sha;
 }
 
+// #1433: where a repository's default branch actually points, right now.
+//
+// The default branch is READ rather than assumed. `main` is the platform's
+// own convention (DEFAULT_BASE_BRANCH in services/external-agent-tasks.js)
+// and it is right for every repo the platform creates, but this runs against
+// whatever repository an app was pointed at — including imported ones, whose
+// default branch is somebody else's decision.
+//
+// Two small calls rather than one large one: `repos.getCommit` would answer
+// both halves in a single request, but it carries the commit's full file
+// list, and a merge commit on this repository routinely runs to hundreds of
+// entries. `listCommits` with `per_page: 1` returns the same sha and date in
+// a fixed-size payload.
+async function getRepoHead(owner, repo) {
+  const octokit = await getOctokit(owner);
+  const { data: info } = await octokit.rest.repos.get({ owner, repo });
+  const defaultBranch = info.default_branch || 'main';
+  const { data: commits } = await octokit.rest.repos.listCommits({
+    owner, repo, sha: defaultBranch, per_page: 1,
+  });
+  const top = Array.isArray(commits) && commits[0] ? commits[0] : null;
+  return {
+    defaultBranch,
+    headSha: top && typeof top.sha === 'string' ? top.sha.toLowerCase() : null,
+    headCommittedAt: top && top.commit && top.commit.committer
+      ? (top.commit.committer.date || null)
+      : null,
+  };
+}
+
 // Fast-forward a CLI handoff's platform branch to an exact pushed commit.
 // `force:false` is intentional even though callers preflight ancestry: it
 // closes the race if another writer moves the ref between compare + update.
@@ -2086,6 +2116,7 @@ module.exports = {
   compareCommitAncestry,
   getCommitParents,
   getBranchSha,
+  getRepoHead,
   advanceBranchToSha,
   createProposalCommit,
   createPR,
