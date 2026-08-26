@@ -40,6 +40,13 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #1436: the hamburger's button, and the rows that outgrew it ──
+  // The SURFACE is not retired — #header-menu-panel / #header-menu-overlay
+  // are the app-switcher menu now, same controller, same kit adoption. What
+  // went is the unlabeled TRIGGER and two rows that were never "where am I"
+  // or "you", which is the rule that keeps the menu from decaying back into
+  // a catch-all.
+  'header-menu-btn': 'The hamburger. Its surface is opened by #app-switcher-btn now — a labelled chip naming the app you are in, whose primary action is switching.',
   'drawer-row-app-version': 'Per-dApp SHA removed from platform information; app versions remain on app cards.',
   'app-version-pill-slot': 'Drawer-only per-dApp SHA renderer removed with its row.',
   // ── THE UI OVERHAUL: four header controls became one ──────────────
@@ -76,8 +83,6 @@ const RETIRED_IDS = {
   // ── THE UI OVERHAUL: three top-right drawers became one ──────────
   // The bell and the cog merged INTO the hamburger. Nothing they carried was
   // dropped without a new home; each entry below names it.
-  'notifications-btn': 'The bell. Its list is the first thing in the hamburger now, and both its badges ride that button.',
-  'notifications-panel': 'The bell dropdown. features/notifications keeps its store, list components and module — only the panel around them is gone.',
   'work-drawer-panel': 'The cog drawer. Its session list is the Improve panel\'s (this app, plus an overflow for every other); its pinned rows are ordinary notifications in the merged hamburger.',
   'work-drawer-close': 'Close button of the retired cog drawer.',
   'work-drawer-mark-all': 'Mark-all-read of the retired cog drawer — the merged list has one, #notifications-mark-all.',
@@ -104,6 +109,11 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  'drawer-messages-badge': 'Aggregate unread conversation count (#488). It kept this id when #1436 moved it off the retired drawer row onto #messages-btn in the header, so the Messages store paints it unchanged.',
+  // ── #1436: the two inboxes get their own controls ────────────────
+  'messages-btn': 'The Messages control. A real anchor, not a button: #messages is a route with per-conversation routes under it, so modified clicks have to work. Carries #drawer-messages-badge, which kept its id and its writer when it moved off the retired drawer row.',
+  'notifications-overlay': "The notifications sheet's backdrop. Mirrors #improve-overlay exactly, including never using `hidden` — opacity carries the fade and pointer-events is what stops a transparent backdrop eating clicks while the sheet is shut.",
+  'notifications-body-scroll': 'The single scroller inside the notifications sheet. It is here rather than on #notifications-list because the saved and invites sections are capped at max-h-48 EACH, so on a short viewport those two caps alone can leave the list at zero height.',
   // ── #1436: the app-switcher chip ─────────────────────────────────
   // The header's left-hand control — your avatar, the app you are in, a
   // chevron — and the drawer's trigger. It replaced the hamburger BUTTON;
@@ -185,7 +195,6 @@ const ADDED_IDS = {
   'notifications-caught-up': 'The drawer\'s "you\'re all caught up" state — nothing unread, but there IS history behind "See more notifications". Deliberately a different node and sentence from #notifications-empty, which still means "you have never had a notification".',
   'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
   'improve-footer': 'Reference block: View on GitHub, Share app, version — all three moved out of the hamburger drawer.',
-  'drawer-notifications': 'The notifications region at the top of the hamburger, where the bell dropdown\'s body now renders.',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────
   // Your apps, Discover, Challenges, Create app — stacked, in that order.
@@ -260,8 +269,6 @@ const ADDED_IDS = {
   'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
   'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
   'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
-  'drawer-row-messages': 'Platform Messages destination in the global navigation drawer (#488).',
-  'drawer-messages-badge': 'Aggregate unread conversation count in the global navigation drawer (#488).',
   'notifications-saved': 'Pinned "Saved" section at the top of the bell drawer, holding the messages this user bookmarked (#1280).',
   // #1344 — verified users may claim one company-funded OpenRouter key.
   // These are static settings controls; settings.js owns their state and the

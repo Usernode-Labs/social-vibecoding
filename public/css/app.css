@@ -6684,7 +6684,15 @@ a.drawer-ver--fork:hover {
    The overlay never uses `hidden`: opacity carries the fade and
    pointer-events is what stops a transparent backdrop from eating clicks
    while the panel is closed. */
-#improve-panel {
+/* #1436 generalised these from `#improve-panel` to a CLASS, because the
+   notifications sheet is the second surface to want exactly this and a
+   third near-identical copy is how two sheets start disagreeing about
+   how far up the screen a sheet may come. The rules are unchanged — the
+   Improve panel renders `.shell-sheet` and looks the same as it did.
+
+   `.improve-panel-transition` is kept as an alias rather than renamed:
+   a declared check selects on it. */
+.shell-sheet {
   top: 0;
   right: 0;
   bottom: 0;
@@ -6693,18 +6701,19 @@ a.drawer-ver--fork:hover {
   border-left-width: 1px;
   transform: translateX(100%);
 }
-#improve-panel[data-open] {
+.shell-sheet[data-open] {
   transform: translateX(0);
 }
+.shell-sheet-transition,
 .improve-panel-transition {
   transition: transform 200ms ease-out;
 }
-#improve-overlay {
+.shell-sheet-overlay {
   opacity: 0;
   pointer-events: none;
   transition: opacity 200ms ease-out;
 }
-#improve-overlay[data-open] {
+.shell-sheet-overlay[data-open] {
   opacity: 1;
   pointer-events: auto;
 }
@@ -6715,7 +6724,7 @@ a.drawer-ver--fork:hover {
    sheet's own 70vh cap so the two presentations agree on how much of the
    screen a sheet may take. */
 @media (max-width: 639px) {
-  #improve-panel {
+  .shell-sheet {
     top: auto;
     left: 0;
     right: 0;
@@ -6729,7 +6738,7 @@ a.drawer-ver--fork:hover {
     border-top-right-radius: 1rem;
     transform: translateY(100%);
   }
-  #improve-panel[data-open] {
+  .shell-sheet[data-open] {
     transform: translateY(0);
   }
 }

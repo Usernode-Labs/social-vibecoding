@@ -81,7 +81,6 @@ import {
   XIcon,
 } from '@/components/ui/icons';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { NotificationsBody } from '../notifications/notifications-list';
 // Two side-effect modules whose ROWS moved out of this drawer — the AI-credit
 // figure to Settings → Anthropic API key, the mobile-app version to the
 // Improve panel's footer — but whose imports stay here on purpose. Both
@@ -105,7 +104,6 @@ import './header-menu-controller.js';
 // The bell's module, imported here because its list is rendered here now.
 // ../notifications/mount.ts installs the store's flush and publishes the
 // controller; this pulls both in with the markup they drive.
-import '../notifications/mount';
 
 export function HeaderMenu() {
   // ── The notifications AREA is not collapsible ────────────────────────
@@ -131,25 +129,10 @@ export function HeaderMenu() {
     // The drawer's own open/close wiring — app.js's bindEvents() used to call
     // this; it lives beside the markup it drives now (#1079 chunk B).
     window.HeaderMenu?.init();
-    // Notifications init from HERE now, not from the retired
-    // #notifications-panel island. A LAYOUT effect, not a passive one: it runs
-    // inside main.tsx's flushSync(hydrateRoot), which is before
-    // DOMContentLoaded — where the classic script's init() used to run, only
-    // earlier still. A passive effect could be scheduled after app.js's init,
-    // and `sv:authed` fires at most once, so a late listener would never get
-    // the first fetch.
-    window.Notifications?.init();
-    // The list's pull-to-refresh, a kit attachment on a node this island owns.
-    // The list is never re-created, so attaching it once here — from the same
-    // effect as init() — is the same contract the bell's island had. The kit
-    // no-ops it on desktop, exactly as before.
-    const list = document.getElementById('notifications-list');
-    if (list && window.PlatformUI?.pullToRefresh) {
-      window.PlatformUI.pullToRefresh(
-        list,
-        () => window.Notifications?.refresh() ?? Promise.resolve(),
-      );
-    }
+    // #1436: notifications' init() and its pull-to-refresh attachment moved
+    // WITH the list, to ../notifications/notifications-sheet.tsx. They belong
+    // to whichever island renders #notifications-list, and that is no longer
+    // this one.
   }, []);
 
   return (
@@ -193,60 +176,28 @@ export function HeaderMenu() {
         */}
         <div id="header-menu-rows" className="flex-1 min-h-0 overflow-hidden flex flex-col">
           {/*
-              NOTIFICATIONS, anchored to the TOP of the drawer (#1367).
+              NOTIFICATIONS LEFT THIS DRAWER in #1436.
 
-              THE UI OVERHAUL merged the bell into the hamburger: two
-              top-right drawers that opened the same way, one slot apart,
-              were one affordance too many, and "what happened while I was
-              away" belongs at the top of the catch-all menu rather than
-              behind an icon of its own. #notifications-panel is gone; its
-              whole body lives here, rendered by the same components from
-              the same store, so ./notifications.js is unchanged.
+              THE UI OVERHAUL merged the bell in here, on the reasoning that
+              two top-right drawers opening the same way one slot apart were
+              one affordance too many. That was right about the DRAWERS and
+              wrong about the destination: it left "what happened while I was
+              away" as a list inside an unlabeled menu.
 
-              It is a SIBLING of #drawer-main-rows now rather than its first
-              child, which is what lets the two ends of the panel be anchored
-              independently: this block sits at the top, the navigation rows
-              carry `mt-auto` and hug the bottom, and the free space between
-              them belongs to neither. Both keep their ids — nothing moved
-              out of the drawer, the nesting changed.
+              #1436 does not undo the merge, it finishes it. The hamburger is
+              gone — this surface is opened by the labeled app-switcher chip
+              on the left now — so the bell is no longer a second drawer
+              beside a first one. The list is
+              ../notifications/notifications-sheet.tsx, with the same
+              components, the same store and the same ids un-retired, so
+              ../notifications/notifications.js is untouched by the move.
 
-              THIS is the block that flexes, and the only one that scrolls.
-              `flex-1 min-h-0` hands it whatever the navigation rows below do
-              not use; `overflow-y-auto` keeps everything inside it — the
-              saved section, the invites, the list — within that height. The
-              comment here promised "bounded height with its own scroller" and
-              the element was `shrink-0`, so it had neither.
-
-              The scroll is on THIS element rather than on #notifications-list
-              deliberately. Making this a column flex and giving the list the
-              `flex-1` it already carries looks tidier and behaves worse: the
-              saved and invites sections are capped at `max-h-48` EACH, so on
-              a short viewport those two caps alone can consume the whole
-              block and leave the list at zero height — the notifications
-              themselves, invisible, in the notifications drawer. One scroller
-              over all three lets them share the space in the order they are
-              written.
+              What is left in here is the SWITCHER: where you are, where else
+              you can go, and your account as a terminal group at the bottom.
+              That is the spine the hamburger never had, and the rule that
+              keeps it: a row that is neither "where am I" nor "you" does not
+              belong in this menu.
           */}
-          <div
-            id="drawer-notifications"
-            className="flex-1 min-h-0 overflow-y-auto border-b border-zinc-100 dark:border-zinc-800"
-          >
-            <div className="flex items-center gap-2 px-4 py-2">
-              <span className="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">
-                Notifications
-              </span>
-              <span className="flex-1">
-              </span>
-              <button
-                id="notifications-mark-all"
-                className="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
-                disabled={true}
-              >
-                Mark all read
-              </button>
-            </div>
-            <NotificationsBody />
-          </div>
           {/*
               THE NAVIGATION ROWS, at the BOTTOM and always on screen.
 
@@ -355,36 +306,22 @@ export function HeaderMenu() {
                 Profile
               </span>
             </a>
-            {/* Platform-wide direct and group conversations (#488). A real
-                anchor keeps deep links and modified clicks browser-native;
-                the badge is updated by the React Messages store. */}
-            <a
-              id="drawer-row-messages"
-              href="#messages"
-              className="flex items-center gap-3 px-4 min-h-[44px] relative after:absolute after:bottom-0 after:left-12 after:right-0 after:h-px after:bg-zinc-100 dark:after:bg-zinc-800 after:content-[''] text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
-            >
-              <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-medium">Messages</span>
-              <span id="drawer-messages-badge" className="hidden ml-auto min-w-[18px] h-[18px] px-1 rounded-full bg-violet-600 text-white text-[10px] font-bold leading-[18px] text-center" aria-label="Unread messages"></span>
-            </a>
             {/*
-                The Leaderboard row used to sit here — the one entry point for
-                shared progress (Topochain standings, Kudos, the season's
-                challenges), itself the replacement for the header trophy.
+                MESSAGES LEFT THIS MENU in #1436, and its badge went with it.
 
-                THE UI OVERHAUL moved it to the HOME SCREEN, into the header of
-                the Challenges area, which is the one place on the platform
-                already showing the season's shared progress. A menu row is
-                where you go when you remember the feature exists; a link
-                beside the challenges themselves is where you notice it.
-                #leaderboard is unchanged as a route.
-            */}
-            {/*
-                Settings — always shown; green dot is the BYOK "key configured"
-                indicator, toggled directly by settings.js _renderIndicator().
-                Real anchor (like Challenges / Profile) since Settings became the
-                #settings screen: navigation rides the anchor's hash and the click
-                handler in App.HeaderMenu.init just closes the drawer.
+                It is an INBOX, and this menu is the switcher: where you are,
+                where else you can go, and your account. An inbox is neither,
+                which is the rule that stops this drawer drifting back into
+                the catch-all it used to be. Messages has its own header
+                control beside the bell now — #messages-btn — and
+                #drawer-messages-badge moved onto it, keeping its id and its
+                writer so the Messages store paints it unchanged.
+
+                That move is also what ended the double-count: one incoming
+                direct message used to light this badge AND the red one on the
+                button containing it, because `conversation_message` is a
+                notification kind. Notifications._bellUnread() excludes it
+                now — see the note there.
             */}
             <a
               id="drawer-row-settings"

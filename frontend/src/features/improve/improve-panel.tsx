@@ -202,7 +202,7 @@ export function ImprovePanel() {
         id="improve-overlay"
         aria-hidden="true"
         {...(open ? { 'data-open': '' } : {})}
-        className="fixed inset-0 z-40 bg-black/40"
+        className="shell-sheet-overlay fixed inset-0 z-40 bg-black/40"
         onClick={close}
       >
       </div>
@@ -215,7 +215,7 @@ export function ImprovePanel() {
         aria-label={target === 'platform' ? 'Improve the platform' : 'Improve this app'}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
-        className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl improve-panel-transition"
+        className="shell-sheet shell-sheet-transition improve-panel-transition fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl"
       >
         <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 shrink-0">
           <span className="flex-1 min-w-0">

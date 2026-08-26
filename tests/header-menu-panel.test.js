@@ -210,20 +210,54 @@ test('the theme segments left the drawer entirely', () => {
     'and the settings screen makes that announcement in its place');
 });
 
-test('notifications lead the drawer, and the bell is gone', () => {
-  // The merge: two top-right drawers that opened the same way, one slot apart,
-  // became one. The LIST is rendered here from the same store, so the module
-  // is unchanged; what had to move is the init, because the island that used
-  // to own it is retired.
-  assert.match(headerMenuTsx, /<NotificationsBody \/>/,
-    'the drawer renders the notifications body');
-  assert.match(headerMenuTsx, /window\.Notifications\?\.init\(\)/,
-    'and initialises the module from its layout effect, before DOMContentLoaded');
-  assert.match(headerMenuTsx, /id="drawer-notifications"/, 'inside its own region');
-  assert.equal(html.indexOf('id="notifications-panel"'), -1,
-    'the retired bell panel must not still ship');
-  assert.equal(html.indexOf('id="notifications-btn"'), -1,
-    'nor the button that opened it');
+test('#1436: notifications LEFT the drawer, and the bell came back', () => {
+  // THE UI OVERHAUL merged the bell in here on the reasoning that two
+  // top-right drawers opening the same way one slot apart were one affordance
+  // too many. #1436 does not undo that merge, it finishes it: the hamburger is
+  // gone entirely — the surface is opened by the labelled app-switcher chip on
+  // the LEFT — so the bell is no longer a second drawer beside a first one.
+  assert.equal(headerMenuTsx.indexOf('<NotificationsBody />'), -1,
+    'the drawer must not render the notifications body any more');
+  assert.equal(headerMenuTsx.indexOf('id="drawer-notifications"'), -1,
+    'nor carry the region it lived in');
+  assert.match(html, /id="notifications-panel"/,
+    'the bell panel is back, as its own sheet');
+  assert.match(html, /id="notifications-btn"/, 'with its own control');
+  assert.match(html, /id="notifications-badge"/,
+    'carrying the red unread count it was named for');
+  assert.equal(html.indexOf('id="header-menu-btn"'), -1,
+    'and the hamburger button is gone');
+  assert.match(html, /id="app-switcher-btn"/,
+    'replaced by the chip that opens the same surface');
+});
+
+test('#1436: the drawer keeps its surface, and its module keeps its boot role', () => {
+  // The re-aim is deliberately NOT a rewrite. #header-menu-panel, its
+  // controller and its kit `panel` adoption are untouched, which is what lets
+  // this island keep the side-effect imports that install window.AiCredit,
+  // NodePill, WalletSheet and NativeAppVersion — it is still the earliest
+  // island in the bundle, and their init() calls still run in its layout
+  // effect, inside flushSync(hydrateRoot) and before DOMContentLoaded.
+  assert.match(html, /id="header-menu-panel"/, 'the surface survives');
+  assert.match(headerMenuTsx, /window\.NodePill\?\.init\(\)/, 'node pill still boots here');
+  assert.match(headerMenuTsx, /window\.WalletSheet\?\.init\(\)/, 'wallet too');
+  assert.match(headerMenuTsx, /window\.NativeAppVersion\?\.init\(\)/, 'and the app version');
+  assert.match(headerMenuTsx, /window\.HeaderMenu\?\.init\(\)/, 'and the drawer wiring itself');
+  // The notifications module's init moved WITH the list, to the sheet.
+  assert.equal(headerMenuTsx.indexOf('window.Notifications?.init()'), -1,
+    'notifications init moved to the sheet that renders the list');
+});
+
+test('#1436: Messages is an inbox, so it is not a row in the switcher menu', () => {
+  // The rule that keeps this menu from decaying back into the catch-all it
+  // used to be: a row that is neither "where am I" nor "you" does not belong.
+  // An inbox is neither, and it has its own control beside the bell.
+  assert.equal(headerMenuTsx.indexOf('id="drawer-row-messages"'), -1,
+    'the Messages row is gone from the drawer');
+  assert.match(html, /id="messages-btn"/, 'it is a header control now');
+  // The badge kept its id and therefore its writer.
+  assert.match(html, /id="drawer-messages-badge"/,
+    'and its unread count rode along, unchanged, onto that control');
 });
 
 test('PlatformUI exposes panel() with the same null-degradation contract', () => {
@@ -270,14 +304,23 @@ test('.platform-sheet-adopted survives for the surfaces still using it', () => {
     "and kind: 'sheet' is what still produces the class app.css styles");
   // notifications.js was the fifth copy of the adoption dance and was NOT part
   // of slice 3's four — it wrote the class itself. THE UI OVERHAUL removed
-  // that copy along with the panel it presented: the list renders inside the
-  // hamburger now, and the hamburger's own adoption is the only one left.
+  // that copy along with the panel it presented. #1436 gave the list its own
+  // sheet back, and the copy did NOT come back with it: the presentation lives
+  // in ../notifications/sheet-controller.js and goes through the shared
+  // adoptKitSurface, like every other surface.
   const notifications = fs.readFileSync(
     path.join(root, 'frontend/src/features/notifications/notifications.js'), 'utf8');
   assert.ok(!/platform-sheet-adopted/.test(notifications),
     'the retired fifth copy of the adoption dance must not linger');
-  assert.match(notifications, /window\.HeaderMenu\?\.open\?\.\(\)/,
-    'show() forwards to the drawer that actually presents the list');
+  assert.match(notifications, /window\.NotificationsSheet\?\.open\?\.\(\)/,
+    'show() forwards to the controller that actually presents the list');
+  const sheetController = fs.readFileSync(
+    path.join(root, 'frontend/src/features/notifications/sheet-controller.js'), 'utf8');
+  assert.ok(!/platform-sheet-adopted/.test(sheetController),
+    'and the new controller does not re-introduce the hand-written class either');
+  assert.match(sheetController, /adoptKitSurface\(/,
+    'it uses the shared lift');
+  assert.match(sheetController, /kind: 'sheet'/, 'asking for the sheet kind');
 });
 
 test('a dapp check pins the drawer to the panel on a forced-touch route', () => {
@@ -303,70 +346,53 @@ test('a dapp check pins the drawer to the panel on a forced-touch route', () => 
 // list, both still render — so each strand is pinned against the source and
 // against the prerendered document in the style of the contracts above.
 
-test('notifications anchor to the top of the drawer, the nav rows to the bottom', () => {
-  // Opposite ends of one column flex. #drawer-notifications is a SIBLING of
-  // #drawer-main-rows now rather than its first child — that nesting is what
-  // made independent anchoring impossible.
-  const rowsAt = html.indexOf('id="header-menu-rows"');
-  const notifAt = html.indexOf('id="drawer-notifications"');
-  const navAt = html.indexOf('id="drawer-main-rows"');
-  assert.ok(rowsAt !== -1 && notifAt !== -1 && navAt !== -1, 'all three ids survive');
-  assert.ok(rowsAt < notifAt && notifAt < navAt,
-    'notifications first, navigation rows after, both inside #header-menu-rows');
-
-  const rowsTag = html.slice(rowsAt, html.indexOf('>', rowsAt));
-  assert.match(rowsTag, /flex flex-col/,
-    '#header-menu-rows stays the column flex the anchoring depends on');
-
-  // WHICH BLOCK ABSORBS THE FREE SPACE, and therefore which one scrolls.
+test('#1436: the sheet holds one scroller, and the drawer keeps its nav rows', () => {
+  // Both halves of what #1367 settled, carried across the move rather than
+  // re-decided. The sheet inherits the scrolling rule; the drawer keeps the
+  // anchoring one.
   //
-  // The nav rows used to hug the bottom with `mt-auto`, which collects the
-  // space ABOVE them — and so did nothing in the one case that mattered, a
-  // notification list long enough to leave none: Profile / Messages /
-  // Settings / Admin then sat below the fold behind a scroll nobody expects
-  // in a menu. It is the other way round now. The notifications block is the
-  // flexing, scrolling one; the rows are `shrink-0` and unconditional.
-  const navTag = html.slice(navAt, html.indexOf('>', navAt));
-  assert.match(navTag, /\bshrink-0\b/, 'the navigation rows keep their height');
-  assert.ok(!/\bmt-auto\b/.test(navTag),
-    'and do not depend on free space existing above them');
-  const notifTag = html.slice(notifAt, html.indexOf('>', notifAt));
-  assert.match(notifTag, /\bflex-1\b/, 'the notifications block takes what is left');
-  assert.match(notifTag, /\bmin-h-0\b/,
+  // WHY THE SCROLL IS ON THE WRAPPER, not on #notifications-list: the saved
+  // and invites sections are capped at `max-h-48` EACH, so on a short viewport
+  // those two caps alone can consume the whole block and leave the list at
+  // zero height — the notifications themselves, invisible, in the
+  // notifications panel. One scroller over all three lets them share the space
+  // in the order they are written.
+  const panelAt = html.indexOf('id="notifications-panel"');
+  const scrollAt = html.indexOf('id="notifications-body-scroll"');
+  const listAt = html.indexOf('id="notifications-list"');
+  assert.ok(panelAt !== -1 && scrollAt !== -1 && listAt !== -1, 'all three ids ship');
+  assert.ok(panelAt < scrollAt && scrollAt < listAt, 'panel > scroller > list');
+
+  const scrollTag = html.slice(scrollAt, html.indexOf('>', scrollAt));
+  assert.match(scrollTag, /\bflex-1\b/, 'the scroller takes what the header leaves');
+  assert.match(scrollTag, /\bmin-h-0\b/,
     'and may shrink below its content, which is what lets it scroll');
-  assert.ok(!/\boverflow-y-auto\b/.test(rowsTag),
-    '#header-menu-rows itself must not scroll — only the list inside it does');
+  assert.match(scrollTag, /\boverflow-y-auto\b/, 'and is the element that scrolls');
+
+  // The drawer's own rows are unchanged by the move.
+  const rowsAt = html.indexOf('id="header-menu-rows"');
+  const navAt = html.indexOf('id="drawer-main-rows"');
+  assert.ok(rowsAt !== -1 && navAt !== -1, 'the drawer keeps its structure');
+  assert.match(html.slice(rowsAt, html.indexOf('>', rowsAt)), /flex flex-col/,
+    '#header-menu-rows stays the column flex');
 });
 
-// ── The follow-up: the SECTION is not collapsible; its GROUPS are ────
-//
-// #1367 collapsed the whole notifications section behind a disclosure and the
-// follow-up took that back out: the useful grain is each app group inside the
-// section, not the section itself. Both halves are pinned here — the section
-// has no disclosure, and the groups re-fold on every drawer open — because
-// each fails silently if it drifts (a section that quietly ships collapsed
-// again, or groups that stay expanded from the last visit).
-
-test('the notifications SECTION has no disclosure of its own', () => {
+test('#1436: the notifications SECTION still has no disclosure of its own', () => {
+  // #1367 collapsed the whole section behind a disclosure and its follow-up
+  // took that back out: the useful grain is each app GROUP inside the section,
+  // not the section itself. That decision travels with the list to the sheet,
+  // and is pinned here because it fails silently if it drifts.
   const block = html.slice(
-    html.indexOf('id="drawer-notifications"'),
-    html.indexOf('id="drawer-main-rows"'),
+    html.indexOf('id="notifications-panel"'),
+    html.indexOf('id="notifications-list"') + 200,
   );
-  // The body is rendered plainly — not behind a `hidden` wrapper, which is
-  // what the retired disclosure used and what took the saved-message rows out
-  // of `document.body.innerText` and broke #1280's two checks.
   assert.ok(!/<div class="hidden">/.test(block),
     'the section body must not ship inside a hidden wrapper');
-  assert.ok(!/aria-expanded/.test(block),
-    'and its header must not be a disclosure control');
-  // The island holds no state for it either.
-  assert.ok(!/notificationsOpen/.test(headerMenuTsx),
-    'no section-collapse state survives in the island');
-  assert.ok(!/sv:notifications-expand/.test(headerMenuTsx),
-    'and no expand channel for it');
-  // The rows it must still contain.
-  assert.ok(block.includes('id="notifications-list"'));
-  assert.ok(block.includes('id="notifications-mark-all"'));
+  const sheetTsx = fs.readFileSync(
+    path.join(root, 'frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
+  assert.ok(!/notificationsOpen/.test(sheetTsx),
+    'no section-collapse state in the island that renders it');
+  assert.ok(!/sv:notifications-expand/.test(sheetTsx), 'and no expand channel for it');
 });
 
 test('each drawer open starts on what is NEW', () => {

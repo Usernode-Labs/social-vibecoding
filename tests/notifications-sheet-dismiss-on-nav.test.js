@@ -8,13 +8,17 @@
 // Notifications._dismissSheetForNav() first, and it is a strict no-op when
 // nothing is presented.
 //
-// THE UI OVERHAUL changed two things about it. The list lives in the hamburger
-// now, so what gets dismissed is that drawer (HeaderMenu.close) rather than a
-// panel this module presented itself. And the rule applies at EVERY width: the
-// desktop "keep-open" behaviour below existed because the anchored dropdown sat
-// in a corner and covered nothing, while a side drawer covers the screen you
-// just navigated to. The touch/desktop split in these tests is therefore about
-// which PRESENTATION the drawer uses, not about whether it closes.
+// THE UI OVERHAUL moved the list into the hamburger, so what got dismissed
+// became that drawer. #1436 moved it back OUT, into its own sheet with its own
+// bell — so the thing dismissed is NotificationsSheet.close() again. The
+// contract is identical either way, which is the point: this module calls
+// _dismissSheetForNav() and does not care which surface answers.
+//
+// The rule applies at EVERY width. The desktop "keep-open" behaviour these
+// tests once asserted existed because the anchored dropdown sat in a corner
+// and covered nothing; a sheet covers the screen you just navigated to. The
+// touch/desktop split below is therefore about which PRESENTATION is used,
+// not about whether it closes.
 //
 // The REAL shipped notifications.js is evaluated in a vm sandbox (so the
 // assertions can't drift from what runs); only display plumbing the harness
@@ -55,11 +59,11 @@ function makeClassList(initial) {
 function load({ touch = true, fetchImpl } = {}) {
   const calls = [];
   const panel = { classList: makeClassList(['hidden']) };
-  // The hamburger owns the presentation now, so the harness stubs it the way
-  // the real controller behaves: a kit sheet/panel on touch, a CSS slide-over
-  // on desktop, and `isPresenting()` as the single source of "is it up".
+  // #1436: the SHEET owns the presentation, so the harness stubs it the way
+  // the real controller behaves: a kit sheet on touch, a CSS slide-over on
+  // desktop, and `isPresenting()` as the single source of "is it up".
   let presenting = false;
-  const headerMenu = {
+  const notificationsSheet = {
     isPresenting: () => presenting,
     open() {
       if (presenting) return;
@@ -89,7 +93,7 @@ function load({ touch = true, fetchImpl } = {}) {
     URLSearchParams,
     document: {
       title: '',
-      getElementById: (id) => (id === 'header-menu-panel' ? panel : null),
+      getElementById: (id) => (id === 'notifications-panel' ? panel : null),
       addEventListener: () => {},
       querySelectorAll: () => ({ forEach: () => {} }),
       body: { appendChild: () => {} },
@@ -99,7 +103,7 @@ function load({ touch = true, fetchImpl } = {}) {
       if (fetchImpl) return fetchImpl(url, opts);
       return { ok: false, json: async () => ({}) };
     },
-    HeaderMenu: headerMenu,
+    NotificationsSheet: notificationsSheet,
     PlatformUI: {
       isTouch: () => touch,
       toast: (msg) => calls.push(['toast', String(msg)]),

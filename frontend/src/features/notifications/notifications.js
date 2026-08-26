@@ -102,11 +102,16 @@ const Notifications = {
   _networkFreshnessFloor: false,
 
   init() {
-    // THE UI OVERHAUL merged the bell into the hamburger, so #notifications-btn
-    // is gone and so is the outside-click dismissal that used to live here:
-    // opening, closing and dismissing this list are all the drawer's business
-    // now (features/header/header-menu-controller.js). What is left is the
-    // "Mark all read" control, which is still this module's.
+    // #1436: the bell is a control again, but its click is NOT wired here.
+    // #notifications-btn is React-owned end to end (features/header/
+    // platform-header.tsx calls NotificationsSheet.toggle() directly), and a
+    // second listener attached by id would fire alongside it — a toggle bound
+    // twice is a toggle that never opens. Dismissal is the sheet's business
+    // too: the backdrop and the kit's drag-to-dismiss both route through
+    // ../notifications/sheet-controller.js.
+    //
+    // What is left here is the "Mark all read" control, which is still this
+    // module's and is not React-owned.
     const markAll = document.getElementById('notifications-mark-all');
     if (markAll) markAll.addEventListener('click', Notifications.markAllRead);
 
@@ -338,7 +343,7 @@ const Notifications = {
   // exit is deferred behind a spring (see HeaderMenu.isPresenting), so a flag
   // set here would disagree with what is on screen for ~200ms after a close.
   get open() {
-    return !!window.HeaderMenu?.isPresenting?.();
+    return !!window.NotificationsSheet?.isPresenting?.();
   },
 
   toggle() {
@@ -346,12 +351,21 @@ const Notifications = {
     else Notifications.show();
   },
 
+  // #1436: these forwarded to the hamburger while the list lived inside it.
+  // The list is its own sheet again, so they forward to its controller —
+  // which is what keeps `toggle()`, `?shot=notifications` and
+  // `_dismissSheetForNav()` working unchanged above and below this point.
+  //
+  // Reached through `window` rather than imported for the reason the header of
+  // ./mount.ts gives: nine vm sandboxes across tests/devchat-alerts.test.js
+  // and tests/social-push-web.test.js compile this file's real shipped source
+  // as a CLASSIC script, where a top-level `import` is a syntax error.
   show() {
-    window.HeaderMenu?.open?.();
+    window.NotificationsSheet?.open?.();
   },
 
   hide() {
-    window.HeaderMenu?.close?.();
+    window.NotificationsSheet?.close?.();
   },
 
   // Screenshot-state deep link (`?shot=notifications`): the list only exists
@@ -618,10 +632,37 @@ const Notifications = {
     return Notifications.items.filter((n) => n && n.kind === 'session_done' && !n.readAt).length;
   },
 
-  // The bell's own unread count: everything except the session-related
-  // kinds that live in the cog drawer now.
+  // Direct and group messages. `conversation_message` is a notification kind
+  // like any other, which is how ONE incoming message used to light TWO
+  // badges: it counted here for the bell, and again on the Messages row's own
+  // unread count. Two colours, one event, one nested inside the other.
+  //
+  // #1436 gave Messages its own header control beside the bell, which made
+  // that double-count visible rather than merely wrong. The rule is one
+  // event, one badge, on the surface that owns it — and Messages owns this
+  // one: its count is per-conversation and survives being read there, which
+  // the bell's flat total cannot express.
+  //
+  // Split OUT rather than filtered at the source: the rows themselves still
+  // belong in the notifications list, because "@Bruno sent you a message" is
+  // part of what happened while you were away. It is only the COUNT that
+  // moves.
+  _conversationUnread() {
+    return Notifications.items.filter(
+      (n) => n && n.kind === 'conversation_message' && !n.readAt
+    ).length;
+  },
+
+  // The bell's own unread count: everything except the session-related kinds
+  // that live on #improve-btn and the conversation kinds that Messages counts
+  // for itself.
   _bellUnread() {
-    return Math.max(0, Notifications.unread - Notifications._sessionUnread());
+    return Math.max(
+      0,
+      Notifications.unread
+        - Notifications._sessionUnread()
+        - Notifications._conversationUnread()
+    );
   },
 
   _renderBadge() {

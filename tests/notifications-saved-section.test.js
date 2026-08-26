@@ -209,16 +209,17 @@ test('the section is rendered on every refresh, not on open', () => {
   // measured the right height — so the paths that mattered were the two
   // branches of show() plus a refresh landing while it was already open.
   //
-  // The list lives in the hamburger now, which is always mounted (translated
-  // off-screen, not built on open). There is no "before presenting" to render
-  // at, so the render is unconditional and the drawer opens onto CURRENT rows
-  // rather than last-open's.
+  // The list is always mounted — translated off-screen, not built on open —
+  // which was true while it lived in the hamburger and stays true now that
+  // #1436 gave it back its own sheet. There is no "before presenting" to
+  // render at, so the render is unconditional and the surface opens onto
+  // CURRENT rows rather than last-open's.
   const show = SRC.match(/\n  show\(\) \{([\s\S]*?)\n  \},/);
   assert.ok(show, 'show() found');
   assert.equal((show[1].match(/_renderSaved\(\)/g) || []).length, 0,
-    'show() forwards to the drawer and renders nothing itself');
-  assert.match(show[1], /HeaderMenu\?\.open\?\(\)|HeaderMenu\?\.open\?\.\(\)/,
-    'it forwards to the drawer that actually presents the list');
+    'show() forwards to the sheet and renders nothing itself');
+  assert.match(show[1], /NotificationsSheet\?\.open\?\.\(\)/,
+    'it forwards to the controller that actually presents the list (#1436)');
   const refresh = SRC.match(/\n  async refresh\(options\) \{([\s\S]*?)\n  \},/);
   assert.ok(refresh, 'refresh() found');
   assert.match(refresh[1], /Notifications\._renderSaved\(\);/,

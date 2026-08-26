@@ -76,6 +76,7 @@ import { ImproveIsland } from './features/improve';
 import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
+import { NotificationsPanel } from './features/notifications/notifications-sheet';
 import { MessagesScreen } from './features/messages';
 import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
@@ -125,6 +126,11 @@ export function Shell() {
           App.HeaderMenu in app.js.
       */}
       <Island name="HeaderMenu"><HeaderMenu /></Island>
+      {/* #1436: the bell's surface, back as its own sheet. A sibling of the
+          drawer rather than a child of it — they are two independent
+          surfaces now, each with its own trigger, and only one is ever
+          presenting (see NotificationsSheet.open). */}
+      <Island name="NotificationsPanel"><NotificationsPanel /></Island>
       {/*
           Persistent banner shown only while an admin has flipped the
           "View as non-admin" toggle in Settings — a React island since

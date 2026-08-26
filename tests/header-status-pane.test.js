@@ -83,25 +83,35 @@ test('none of the moved slots are duplicated in the header', () => {
     'the admin shield left the header (it is #drawer-row-admin now)');
 });
 
-test('the header keeps navigation + alerting only, hamburger last', () => {
-  // THE UI OVERHAUL took four controls out of this group — #app-mode-switch,
-  // #feedback-btn, #work-drawer-btn and #dev-console-btn — and put the whole
-  // of what they did behind #improve-btn. What is left is Improve, the bell
-  // and the hamburger, in that order.
-  const order = ['improve-btn', 'header-menu-btn'];
+test('#1436: the header is four controls, and only one of them is a menu', () => {
+  // THE UI OVERHAUL collapsed four controls into #improve-btn. #1436 finishes
+  // the job by giving the two INBOXES their own controls and retiring the
+  // hamburger, so what is left answers four different questions:
+  //
+  //   the chip   — which app am I in?        (and where else can I go)
+  //   messages   — my conversations
+  //   the bell   — what happened while I was away
+  //   Improve    — what can I do to this app
+  //
+  // Only Improve opens a list of choices. Everything else GOES somewhere,
+  // which is the property the hamburger never had and the reason it is gone.
+  const order = ['app-switcher-btn', 'messages-btn', 'notifications-btn', 'improve-btn'];
   let prev = -1;
   for (const id of order) {
     const at = header.indexOf(`id="${id}"`);
-    assert.ok(at > -1, `#${id} is still in the header`);
+    assert.ok(at > -1, `#${id} is in the header`);
     assert.ok(at > prev, `#${id} comes after the previous header control`);
     prev = at;
   }
-  // Two controls left, and the hamburger owns the last slot: it is the
-  // catch-all menu AND the notifications surface now.
-  // The retired five must not creep back in as a second way to do the same
-  // things — that split is exactly what the overhaul removed.
+  // The chip is FIRST because it is on the left — identity and context on one
+  // side, actions on the other.
+  assert.ok(header.indexOf('id="app-switcher-btn"') < header.indexOf('id="improve-btn"'),
+    'the chip leads the bar; the action controls trail it');
+
+  // The retired ones must not creep back as a second way to do the same
+  // thing — that split is exactly what the overhaul removed.
   for (const id of ['app-mode-switch', 'feedback-btn', 'work-drawer-btn',
-    'dev-console-btn', 'notifications-btn']) {
+    'dev-console-btn', 'header-menu-btn']) {
     assert.equal(header.indexOf(`id="${id}"`), -1,
       `#${id} was retired and must not return to the header`);
   }
@@ -157,8 +167,12 @@ test('the version dot rides the Improve button, hidden by default', () => {
   const end = html.indexOf('</button>', at);
   assert.ok(html.slice(at, end).includes('id="notifications-badge-ai"'),
     'the green session count sits on the Improve button, beside the sessions it counts');
-  assert.match(header.match(/<button id="header-menu-btn"[^>]*>[\s\S]*?<\/button>/)[0],
-    /id="notifications-badge"/, 'the bell\'s red unread badge stays on the hamburger');
+  // #1436: the red unread badge went back to the BELL it was named for, which
+  // is a control of its own again rather than a second reason to open the
+  // hamburger. The two badges still read as one convention across two
+  // controls — same corner, same geometry, only the colour differs.
+  assert.match(header.match(/<button id="notifications-btn"[^>]*>[\s\S]*?<\/button>/)[0],
+    /id="notifications-badge"/, "the bell carries its own red unread badge");
 });
 
 test('the deploy dot is derived from the rendered pills, not a duplicate flag', () => {
@@ -328,28 +342,34 @@ test('the drawer constrains a long pill so it cannot widen the 15rem panel', () 
 
 // ─── One scroller, and it is the notification list ──────────────────────
 
-test('the drawer body holds one scroller, notifications leading', () => {
+test('#1436: the drawer is the switcher menu, and its rows always fit', () => {
   const scroller = html.match(/<div id="header-menu-rows"[^>]*>/);
   assert.ok(scroller, '#header-menu-rows exists');
-  // The BODY does not scroll. It did, and the navigation rows below the list
-  // went with it — off the bottom of a short viewport, behind a scroll nobody
-  // expects in a menu. The list scrolls inside #drawer-notifications instead;
-  // the rows are `shrink-0` and always on screen.
+  // The BODY does not scroll. It did, and the navigation rows below went with
+  // it — off the bottom of a short viewport, behind a scroll nobody expects in
+  // a menu.
   assert.ok(!/overflow-y-auto/.test(scroller[0]),
     'the drawer body itself must not scroll');
   assert.match(scroller[0], /min-h-0/,
     'min-h-0 is required for a flex child to bound its children rather than grow');
-  const notif = html.match(/<div id="drawer-notifications"[^>]*>/);
-  assert.match(notif[0], /flex-1/, 'the notifications block takes the free space');
-  assert.match(notif[0], /min-h-0/, 'and may shrink below its content, so it can scroll');
+
+  // NOTIFICATIONS ARE NOT IN HERE ANY MORE. The rule that keeps this menu
+  // from decaying back into the catch-all it used to be: a row that is
+  // neither "where am I" nor "you" does not belong. An inbox is neither.
+  assert.equal(html.indexOf('id="drawer-notifications"'), -1,
+    'notifications left the drawer for their own sheet');
+  assert.equal(html.indexOf('id="drawer-row-messages"'), -1,
+    'and so did messages');
+
+  // What is left is navigation plus the account group at the bottom.
   const at = html.indexOf('id="header-menu-rows"');
-  for (const id of ['drawer-notifications', 'drawer-row-admin']) {
-    assert.ok(html.indexOf(`id="${id}"`) > at, `#${id} is inside the scroller`);
+  for (const id of ['drawer-main-rows', 'drawer-row-profile', 'drawer-row-settings',
+    'drawer-row-admin']) {
+    assert.ok(html.indexOf(`id="${id}"`) > at, `#${id} is inside the drawer body`);
   }
-  // Notifications lead: the bell merged INTO this drawer, and "what happened
-  // while I was away" is what the catch-all menu opens onto now.
-  assert.ok(html.indexOf('id="drawer-notifications"') < html.indexOf('id="drawer-row-node"'),
-    'notifications come before every navigation row');
+  // Profile and Settings are the TERMINAL group — last, after the navigation.
+  assert.ok(html.indexOf('id="drawer-row-profile"') < html.indexOf('id="drawer-row-settings"'),
+    'Profile leads the account group');
 });
 
 // ─── The kudos badge no longer pokes at header layout ────────────────────

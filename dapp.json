@@ -1663,7 +1663,7 @@
     {
       "name": "Saved messages pin to the top of the notifications drawer (#1280)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#header-menu-panel #notifications-saved [data-saved-message]",
+      "expectSelector": "#notifications-panel #notifications-saved [data-saved-message]",
       "expectText": "The deploy runbook lives in docs/deploy.md"
     },
     {
@@ -1678,9 +1678,9 @@
       "expectSelector": "#improve-panel #improve-row-feedback"
     },
     {
-      "name": "The hamburger carries the notifications list, first in the panel",
-      "path": "/?demo=1",
-      "expectSelector": "#header-menu-rows > #drawer-notifications #notifications-list"
+      "name": "The bell opens the notifications list in its own sheet (#1436)",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-panel #notifications-body-scroll #notifications-list"
     },
     {
       "name": "The hamburger ships the native Node status row",
@@ -1734,9 +1734,9 @@
       "expectSelector": "#improve-body > #improve-footer > #improve-row-github"
     },
     {
-      "name": "Main nav order is Profile, Messages, Settings, Admin & moderation",
+      "name": "Switcher menu account group is Profile, Settings, Admin & moderation",
       "path": "/?shot=menu",
-      "expectSelector": "#drawer-row-profile + #drawer-row-messages + #drawer-row-settings + #drawer-row-admin"
+      "expectSelector": "#drawer-row-profile + #drawer-row-settings + #drawer-row-admin"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -2274,9 +2274,9 @@
       "expectSelector": ".un-panel[data-un-side=\"right\"] #header-menu-panel.platform-panel-adopted #header-menu-rows"
     },
     {
-      "name": "The hamburger opens as a kit panel with notifications at its top",
+      "name": "The switcher menu opens as a kit panel with its navigation rows",
       "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-notifications"
+      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-main-rows"
     },
     {
       "name": "Hamburger status area shows the viewer's own AI credit (#555)",

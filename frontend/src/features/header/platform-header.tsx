@@ -29,7 +29,8 @@
 import { useRef } from 'react';
 
 import {
-  Bars3Icon,
+  BellIcon,
+  ChatIcon,
   ChevronLeftIcon,
   HomeIcon,
 } from '@/components/ui/icons';
@@ -42,6 +43,7 @@ import { ImproveViewToggle } from '../improve/view-toggle';
 import { improveStore } from '../improve/improve-store.js';
 import { SwitcherChip } from '../switcher/switcher-chip';
 import { useStoreState } from '../../lib/use-store-state';
+import { NotificationsSheet } from '../notifications/sheet-controller.js';
 import { useHeaderLayout } from './use-header-layout';
 
 export function PlatformHeader() {
@@ -241,7 +243,6 @@ export function PlatformHeader() {
               title would overlap it at exactly the widths where this renders.
           */}
           <ImproveViewToggle compact={true} />
-          <ImproveButton />
           {/*
               The bell (#notifications-btn) used to sit here, between Improve
               and the hamburger. THE UI OVERHAUL merged it INTO the hamburger:
@@ -252,59 +253,68 @@ export function PlatformHeader() {
               Notifications._renderBadge paints exactly as it painted this one.
           */}
           {/*
-              Hamburger: LAST in the group at every width — it's the catch-all
-              menu now (build status, kudos, standings, admin, theme), so the
-              rightmost slot is the conventional home for it.
-              
-              It carries ONE indicator now — the bell's red unread count. The
-              deploy dot and the green session count moved to #improve-btn
-              with the things they are about; see the note on the button
-              itself for which corner each took and why.
+              #1436: MESSAGES and the BELL, the two inboxes, each with its own
+              control and its own badge.
+
+              They were one row and one list inside the hamburger, which is
+              also why a single incoming direct message used to light TWO
+              badges: `conversation_message` is a notification kind, so it
+              counted once on #drawer-messages-badge and again on the red
+              count of the button that contained it. Two colours, one event.
+              The rule now is one event, one badge, on the surface that owns
+              it — see Notifications._renderBadge, which excludes the
+              conversation kind from the bell's count.
+
+              Messages is a real ANCHOR, not a button: `#messages` is a route
+              with per-conversation routes under it, so cmd/ctrl-click and
+              middle-click have to work. The bell opens a sheet, so it is a
+              button.
           */}
-          <button
-            id="header-menu-btn"
+          <a
+            id="messages-btn"
+            href="#messages"
             className="relative w-7 h-7 flex items-center justify-center rounded-full bg-white hover:bg-zinc-50 dark:bg-zinc-900 dark:hover:bg-zinc-800 shadow-sm transition-colors un-touch-target text-zinc-900 dark:text-zinc-100 mr-2.5"
-            aria-label="Open menu"
-            aria-expanded="false"
+            aria-label="Messages"
           >
-            {/*
-                16px, not 24px. The disc is 28px — the header content row's
-                ceiling, so it cannot grow — and a 24px glyph left 2px of ring
-                on each side, which reads as a bar crammed into a circle rather
-                than as a control on a disc. 16px is also exactly the glyph
-                size its neighbour uses (#improve-btn's lightbulb at the same
-                h-7), so the two controls now share one optical weight.
-            */}
-            <Bars3Icon className="w-4 h-4" />
-            {/*
-                THE BELL'S RED UNREAD BADGE — the only indicator left here.
-
-                Two others used to sit on this button and both have gone to
-                #improve-btn, because both were about things that live behind
-                THAT control:
-
-                  - the green session count (#notifications-badge-ai). Sessions
-                    are not notifications, and this drawer is not where you go
-                    to look at one. Green-and-red on one icon was what let the
-                    hamburger say "two different reasons to open me"; the two
-                    reasons are two controls now, which says it better.
-                  - the amber deploy dot (#header-menu-deploy-dot). It read the
-                    platform version row, and THE UI OVERHAUL had already moved
-                    that row into the Improve panel's footer — so the dot was
-                    pointing at something behind a different button. It is
-                    #improve-version-dot there, and it can show the violet
-                    "platform rolled past this tab" state too.
-
-                What is left keeps its id, its writer
-                (Notifications._renderBadge) and its geometry, so the two
-                badges still read as one convention across the two controls.
-            */}
+            <ChatIcon className="w-4 h-4" />
+            {/* Same id and same writer as the drawer row's badge, so the
+                Messages store keeps painting it with no change. Violet, not
+                red: it is a count of conversations, and the bell beside it is
+                the red one. */}
+            <span
+              id="drawer-messages-badge"
+              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-violet-600 text-white text-[0.65rem] font-bold flex items-center justify-center"
+              aria-label="Unread messages"
+            >
+            </span>
+          </a>
+          <button
+            id="notifications-btn"
+            type="button"
+            className="relative w-7 h-7 flex items-center justify-center rounded-full bg-white hover:bg-zinc-50 dark:bg-zinc-900 dark:hover:bg-zinc-800 shadow-sm transition-colors un-touch-target text-zinc-900 dark:text-zinc-100 mr-2.5"
+            aria-label="Notifications"
+            aria-haspopup="dialog"
+            onClick={() => NotificationsSheet.toggle()}
+          >
+            {/* 16px, matching #improve-btn's lightbulb and the chip's
+                chevron, so every glyph on this bar carries one optical
+                weight. */}
+            <BellIcon className="w-4 h-4" />
+            {/* THE RED UNREAD COUNT, back on the bell it was named for.
+                Unchanged id, unchanged writer (Notifications._renderBadge),
+                unchanged geometry — so it still reads as one badge convention
+                with the green session count on #improve-btn. */}
             <span
               id="notifications-badge"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
             >
             </span>
           </button>
+          {/* Improve is LAST, i.e. rightmost. It is the only control here
+              that opens a list of choices rather than going somewhere, and
+              the only one with a word on it — the thumb-nearest slot on a
+              phone belongs to the product's primary action. */}
+          <ImproveButton />
           {/*
               The "Create new app" entry point used to live here in the header
               as a "+" pill; it's been moved into the home-screen feed itself,

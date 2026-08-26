@@ -25,10 +25,20 @@ import { flushSync } from 'react-dom';
 
 import './notifications.js';
 import { notificationsStore } from './notifications-store.js';
+import { NotificationsSheet } from './sheet-controller.js';
+import { notificationsSheetStore } from './sheet-store.js';
 
 notificationsStore.setFlush(flushSync);
 
-export { notificationsStore };
+// #1436: the sheet's own presentation flag needs the same synchronous
+// contract. `NotificationsSheet.open()` publishes `open: true` and then hands
+// #notifications-panel to the kit, which measures the content's height ONCE
+// at present time to seed the slide-up spring. Batched, that measurement
+// reads the previous frame — a panel translated off-screen — and the sheet
+// springs to the wrong height.
+notificationsSheetStore.setFlush(flushSync);
+
+export { notificationsStore, notificationsSheetStore, NotificationsSheet };
 
 if (typeof window !== 'undefined') {
   const host = window as unknown as {
@@ -38,4 +48,7 @@ if (typeof window !== 'undefined') {
   if (host.Notifications) host.Notifications._store = notificationsStore;
   const bridge = (host.UsernodeReact ||= {});
   bridge.notifications = host.Notifications;
+  // The sheet's controller, published beside the list's, so a classic module
+  // can dismiss it before navigating the way it can the Improve panel.
+  bridge.notificationsSheet = NotificationsSheet;
 }

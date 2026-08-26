@@ -321,9 +321,13 @@ test('#improve-btn lives inside the header, leading the icon group', () => {
     header.indexOf('id="improve-btn"') > header.indexOf('id="header-title"'),
     'Improve must sit after the title, in the right group'
   );
+  // #1436: Improve is LAST now, not first. It is the only control in the bar
+  // that opens a list of choices rather than going somewhere, and the only one
+  // with a word on it, so it takes the thumb-nearest slot. The chip on the
+  // LEFT is what leads the bar.
   assert.ok(
-    header.indexOf('id="improve-btn"') < header.indexOf('id="header-menu-btn"'),
-    'Improve must lead the icon group'
+    header.indexOf('id="improve-btn"') > header.indexOf('id="notifications-btn"'),
+    'Improve must trail the two inbox controls'
   );
 });
 
@@ -600,10 +604,22 @@ test('app.css drops the tab-bar rules and draws the Improve panel', () => {
   assert.ok(!css.includes('.app-mode-seg'), 'orphan App/Dev segment rules survive');
   // Desktop side panel, mobile bottom sheet — one element, two idioms, and
   // the requirement holds in a mobile browser with no native kit loaded.
-  assert.ok(css.includes('#improve-panel'), 'the Improve panel has no chrome');
-  assert.ok(css.includes('#improve-panel[data-open]'), 'nothing slides the panel in');
-  assert.ok(/@media \(max-width: 639px\)[\s\S]{0,900}#improve-panel[\s\S]{0,400}translateY/
-    .test(css), 'below sm the panel must come up from the bottom, not in from the side');
-  assert.ok(/#improve-panel \{[\s\S]{0,300}translateX/.test(css),
-    'at sm and up the panel must slide in from the side');
+  // #1436 generalised these from `#improve-panel` to `.shell-sheet`, because
+  // the notifications sheet is the second surface to want exactly this and a
+  // third near-identical copy is how two sheets start disagreeing about how
+  // far up the screen a sheet may come. The rules themselves are unchanged.
+  assert.ok(css.includes('.shell-sheet'), 'the sheet idiom has no chrome');
+  assert.ok(css.includes('.shell-sheet[data-open]'), 'nothing slides a sheet in');
+  assert.ok(/@media \(max-width: 639px\)[\s\S]{0,900}\.shell-sheet[\s\S]{0,400}translateY/
+    .test(css), 'below sm a sheet must come up from the bottom, not in from the side');
+  assert.ok(/\.shell-sheet \{[\s\S]{0,300}translateX/.test(css),
+    'at sm and up a sheet must slide in from the side');
+  // And BOTH surfaces render it, which is what makes it one idiom rather than
+  // a class only one caller uses.
+  const improvePanel = read('frontend/src/features/improve/improve-panel.tsx');
+  const notifSheet = read('frontend/src/features/notifications/notifications-sheet.tsx');
+  for (const [name, src] of [['Improve panel', improvePanel], ['notifications sheet', notifSheet]]) {
+    assert.ok(/className="shell-sheet /.test(src), `the ${name} renders .shell-sheet`);
+    assert.ok(src.includes('shell-sheet-overlay'), `the ${name} renders the shared overlay`);
+  }
 });

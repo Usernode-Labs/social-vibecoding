@@ -215,6 +215,16 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M21.4 11.6l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.4-8.4',
     'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
     'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
+    // ── #1436: two glyphs left the prerender with their controls ────
+    // Bars3Icon — the hamburger. Retired outright: the drawer is opened by
+    // the labelled app-switcher chip now, and this was its only call site in
+    // <Shell/>. BellIcon moved the other way in the same change and is off
+    // this list, because the bell is a control again.
+    'M4 6h16M4 12h16M4 18h16',
+    // ChatBubbleTailIcon — the drawer's Messages row, which #1436 retired.
+    // #messages-btn draws ChatIcon instead, so the tailed bubble has no
+    // prerendered call site left.
+    'M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z',
     // ── The Dev card's glyphs (#1367's card chunk) ──────────────────
     // The card family renders inside #dev-feed / #dev-kanban-board /
     // #gc-thread-head, all of which app-view.js mounts at runtime on the Dev
@@ -250,7 +260,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z',
     // BellIcon — the bell BUTTON itself, retired when the notifications list
     // merged into the hamburger. The badges it carried moved to that button.
-    'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9',
     // SunIcon — the theme control's row icon. Theme is a Settings section now,
     // and its pane renders the segmented track without a row glyph.
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
