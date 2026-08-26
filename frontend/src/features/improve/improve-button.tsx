@@ -76,15 +76,27 @@ import { Improve } from './improve-controller.js';
  * header's height there.
  */
 // A FILLED accent pill, per the Streamlined Concept board's session bar
-// (node 380:9325 / 390:10516 — the CHAT UI and APP PREVIEW frames).
+// (nodes 380:9672 and 380:9324 — the CHAT UI and APP PREVIEW frames).
 //
-// This reverses an earlier owner review, recorded here twice, that made it a
-// plain violet text action with no fill and no border. That call was right
-// while Improve was CONTEXTUAL — one of several things that could occupy the
-// slot, and quiet on purpose. It is the standing action on every screen now,
-// and the board draws it as the bar's one filled control. A text action
-// sitting beside two glyphs reads as a third glyph's label rather than as
-// the primary thing to do.
+// ── Read this before "restoring" the plain text action ─────────────────
+//
+// `git log -S "Improve is NOT a button"` finds a93c77f1, "Owner review round
+// 2: drawer regrouped, Improve as plain text", which moved this run off
+// exactly this fill and left a comment saying the owner had called it twice.
+// That looks like this pill is a regression. It is not, and the reason is a
+// date: THE BOARD IS NEWER THAN THAT REVIEW, confirmed by the owner — it is
+// where the current toolbar concept comes from (Improve beside the bell and
+// messages glyphs, with the title tab's dropdown opening the Apps sheet), and
+// it draws Improve filled.
+//
+// The review is not wrong either, for the bar it was written about. At
+// a93c77f1 the header's right group was the hamburger and this control, full
+// stop — no bell, no chat bubble — and "the header stays quiet and the word
+// carries it" is right for that bar. That bar no longer exists: the hamburger
+// is retired, two glyphs stand where it was, and Improve became the standing
+// action on every screen rather than a contextual one. A bare word among
+// glyphs reads as their caption; the board's answer is the one filled control
+// in the bar.
 //
 // `violet-600` is #0a6ee0 — the shell's accent is a BLUE, not a violet (see
 // tailwind.config.js: the scale name is an identity, not a hue), which is

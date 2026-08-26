@@ -103,7 +103,9 @@ const ALLOWED_BUTTON_FILES = new Set([
   // a 24px glyph — which is a cva table of its own, for one control.
   'dev-chat/session-header.tsx',
   // #improve-btn, the header's standing action. It genuinely IS a primary
-  // filled button now (the Streamlined Concept board draws it that way), and
+  // filled button now (the Streamlined Concept board draws it that way — and
+  // that board is NEWER than the review that once made this plain text; see
+  // the note above IMPROVE_BTN_CLASS before touching it), and
   // it is listed rather than routed for two reasons the primitive cannot
   // meet. Its height is pinned to the header's 28px content row with NO
   // vertical padding — the invariant #909 exists to protect and
