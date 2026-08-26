@@ -101,6 +101,8 @@ import { WalletRow } from './wallet-row';
 import './node-pill.js';
 import './wallet-sheet.js';
 import './header-menu-controller.js';
+import { SwitcherApps } from '../switcher/switcher-apps';
+import { AppSwitcher } from '../switcher/switcher-controller.js';
 // The bell's module, imported here because its list is rendered here now.
 // ../notifications/mount.ts installs the store's flush and publishes the
 // controller; this pulls both in with the markup they drive.
@@ -129,6 +131,10 @@ export function HeaderMenu() {
     // The drawer's own open/close wiring — app.js's bindEvents() used to call
     // this; it lives beside the markup it drives now (#1079 chunk B).
     window.HeaderMenu?.init();
+    // #1436: the app list loads on `sv:drawer-open`, the drawer's own
+    // announcement — so it refreshes however the surface was opened, and the
+    // store stays empty at render time, which is what the prerender emits.
+    AppSwitcher.init();
     // #1436: notifications' init() and its pull-to-refresh attachment moved
     // WITH the list, to ../notifications/notifications-sheet.tsx. They belong
     // to whichever island renders #notifications-list, and that is no longer
@@ -198,6 +204,11 @@ export function HeaderMenu() {
               keeps it: a row that is neither "where am I" nor "you" does not
               belong in this menu.
           */}
+          {/* WHERE YOU CAN GO — your apps, then Home and Discover. The
+              drawer opens onto the thing it is FOR now, rather than onto
+              notifications, which were the least bad thing for a catch-all to
+              lead with. See ../switcher/switcher-apps.tsx. */}
+          <SwitcherApps />
           {/*
               THE NAVIGATION ROWS, at the BOTTOM and always on screen.
 

@@ -110,6 +110,15 @@ const RETIRED_IDS = {
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
   'drawer-messages-badge': 'Aggregate unread conversation count (#488). It kept this id when #1436 moved it off the retired drawer row onto #messages-btn in the header, so the Messages store paints it unchanged.',
+  // ── #1436: the switcher menu's top half ──────────────────────────
+  // The drawer opens onto what it is FOR now — your apps — rather than onto
+  // notifications, which were the least bad thing for a catch-all to lead
+  // with. Every row is a real anchor: these are hash routes, so modified
+  // clicks have to work.
+  'switcher-nav': "The switcher menu's navigation section: your apps, then Home and Discover.",
+  'switcher-app-list': 'The app rows. Empty in the prerender and filled on `sv:drawer-open` from Home._apps (or one /api/apps fetch on a cold boot) — rows on first render would be a hydration mismatch.',
+  'switcher-row-home': 'Home, under the app list.',
+  'switcher-row-discover': 'Discover (#apps), under Home.',
   // ── #1436: the two inboxes get their own controls ────────────────
   'messages-btn': 'The Messages control. A real anchor, not a button: #messages is a route with per-conversation routes under it, so modified clicks have to work. Carries #drawer-messages-badge, which kept its id and its writer when it moved off the retired drawer row.',
   'notifications-overlay': "The notifications sheet's backdrop. Mirrors #improve-overlay exactly, including never using `hidden` — opacity carries the fade and pointer-events is what stops a transparent backdrop eating clicks while the sheet is shut.",

@@ -2708,6 +2708,26 @@
       "path": "/?demo=1&sort=active#apps",
       "expectSelector": "#browse-list[data-sort=\"active\"] .browse-row",
       "expectText": "merged in 30d"
+    },
+    {
+      "name": "The header leads with the app-switcher chip, not a hamburger (#1436)",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-header #app-switcher-btn #app-switcher-name"
+    },
+    {
+      "name": "Messages and the bell are their own header controls (#1436)",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-header #messages-btn[href='#messages'] + #notifications-btn #notifications-badge"
+    },
+    {
+      "name": "The switcher menu opens onto your apps, then Home and Discover (#1436)",
+      "path": "/?shot=menu&demo=1",
+      "expectSelector": "#header-menu-rows > #switcher-nav #switcher-row-home + #switcher-row-discover"
+    },
+    {
+      "name": "The switcher menu lists an app to switch to (#1436)",
+      "path": "/?shot=menu&demo=1",
+      "expectSelector": "#switcher-nav #switcher-app-list a[data-slug]"
     }
   ],
   "governance": {
