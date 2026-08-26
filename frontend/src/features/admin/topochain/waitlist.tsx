@@ -38,6 +38,18 @@ import type { Column, PageMeta } from './ui.tsx';
 const STATUSES = ['pending', 'released', 'all'] as const;
 type Status = typeof STATUSES[number];
 
+// A second, optional narrowing on the waitlist queue: rows whose address is
+// proved, and rows that brought somebody in. Both are FILTERS an admin
+// chooses, not an automatic ranking — nothing on this screen reorders the
+// queue by itself.
+const ONLY = ['any', 'confirmed', 'invited'] as const;
+type Only = typeof ONLY[number];
+const ONLY_LABELS: Record<Only, string> = {
+  any: 'Everyone',
+  confirmed: 'Confirmed only',
+  invited: 'Brought someone',
+};
+
 const topo = () => (window as any).AdminTopochain;
 const canWrite = () => !!topo()?.canWrite();
 
@@ -50,6 +62,13 @@ type WaitlistRow = {
   linked_username?: string | null;
   has_platform_access?: boolean;
   answers?: Answers | null;
+  /** Facts about what this signup did. Deliberately carries no score. */
+  signals?: {
+    confirmed: boolean;
+    verified: string[];
+    sections: string[];
+    invited: number;
+  };
 };
 
 type BpRow = {
@@ -72,6 +91,12 @@ type Answers = {
   loss?: { had?: string; product?: string; kind?: string[]; story?: string };
   verified?: Record<string, string>;
   handles?: Record<string, string>;
+  /**
+   * LEGACY. The stage-2 form collected up to five typed addresses before the
+   * share link replaced them. Nothing writes this any more, but rows that
+   * predate the change still carry it and an admin reading one should still
+   * see what that person typed.
+   */
   invites?: string[];
   admit_together?: boolean;
 };
@@ -148,8 +173,10 @@ function SurveyAnswers({ answers }: { answers: Answers }) {
   if (a.handles && Object.keys(a.handles).length) {
     line('Handles', Object.entries(a.handles).map(([pf, h]) => `${pf}: ${h}`).join(' · '));
   }
+  // Legacy rows only — see Answers.invites. New signups record who they
+  // brought in through invited_by, which surfaces in the Signals column.
   if (Array.isArray(a.invites) && a.invites.length) {
-    line('Invites', (
+    line('Invites (typed)', (
       <>
         {a.invites.join(', ')}
         {a.admit_together ? <span className="text-zinc-500 dark:text-zinc-400">{' (only together)'}</span> : null}
@@ -166,7 +193,7 @@ function SurveyAnswers({ answers }: { answers: Answers }) {
 // they differ only in their endpoint, their columns and what Release means.
 function Queue<T>({
   hostId, title, subtitle, filterId, filterLabel, endpoint, columns, rowKey,
-  emptyTitle, emptyBody, errorTitle, actions, extra,
+  emptyTitle, emptyBody, errorTitle, actions, extra, onlyFilterId,
 }: {
   hostId: string;
   title: string;
@@ -181,8 +208,11 @@ function Queue<T>({
   errorTitle: string;
   actions?: (item: T, reload: () => void) => ReactNode;
   extra?: (item: T) => ReactNode;
+  /** Set to render the second `?only=` narrowing. Omitted: no second select. */
+  onlyFilterId?: string;
 }) {
   const [status, setStatus] = useState<Status>('pending');
+  const [only, setOnly] = useState<Only>('any');
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<T[] | null>(null);
   const [meta, setMeta] = useState<PageMeta | null>(null);
@@ -193,6 +223,7 @@ function Queue<T>({
   const load = useCallback(async () => {
     const params = new URLSearchParams({ page: String(page), per_page: '50' });
     if (status !== 'all') params.set('status', status);
+    if (onlyFilterId && only !== 'any') params.set('only', only);
     const res = await fetchJson(`${endpoint}?${params}`);
     if (!alive.current) return;
     if (res.ok && res.data?.success) {
@@ -204,7 +235,7 @@ function Queue<T>({
     setItems([]);
     setMeta(null);
     setError({ status: res.status, message: (res.data && res.data.error) || null });
-  }, [endpoint, page, status]);
+  }, [endpoint, only, onlyFilterId, page, status]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -214,12 +245,27 @@ function Queue<T>({
         title={title}
         subtitle={subtitle}
         actions={(
-          <StatusSelect
-            id={filterId}
-            label={filterLabel}
-            value={status}
-            onChange={(next) => { setStatus(next); setPage(1); }}
-          />
+          <>
+            <StatusSelect
+              id={filterId}
+              label={filterLabel}
+              value={status}
+              onChange={(next) => { setStatus(next); setPage(1); }}
+            />
+            {onlyFilterId ? (
+              <Select
+                id={onlyFilterId}
+                aria-label="Filter by what the signup did"
+                className="sm:w-44"
+                value={only}
+                onChange={(e) => { setOnly(e.target.value as Only); setPage(1); }}
+              >
+                {ONLY.map((v) => (
+                  <option key={v} value={v}>{ONLY_LABELS[v]}</option>
+                ))}
+              </Select>
+            ) : null}
+          </>
         )}
       />
       <div id={hostId}>
@@ -279,6 +325,23 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
     ),
   },
   { label: 'Joined', cell: (w) => fmt(w.submitted_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+  {
+    // What this signup DID, from services/waitlist-signals.js. Facts, not a
+    // score: nothing here reorders the queue, and how much each of these is
+    // worth is still an open product decision.
+    label: 'Signals',
+    cell: (w) => {
+      const s = w.signals;
+      if (!s) return <span className="text-xs text-zinc-500 dark:text-zinc-400">&mdash;</span>;
+      const bits: string[] = [];
+      if (s.sections.length) bits.push(`${s.sections.length}/6 answered`);
+      if (s.verified.length) bits.push(s.verified.join(', '));
+      if (s.invited) bits.push(`invited ${s.invited}`);
+      return bits.length
+        ? <span className="text-xs text-zinc-600 dark:text-zinc-300">{bits.join(' · ')}</span>
+        : <span className="text-xs text-zinc-500 dark:text-zinc-400">nothing yet</span>;
+    },
+  },
   {
     label: 'Account',
     cell: (w) => (w.linked_username ? (
@@ -357,6 +420,7 @@ function WaitlistScreen() {
         subtitle="Signups from the public join form. Releasing grants access."
         filterId="admin-topo-wl-status"
         filterLabel="Filter the waitlist by status"
+        onlyFilterId="admin-topo-wl-only"
         endpoint="/api/v4/admin/waitlist"
         columns={WAITLIST_COLUMNS}
         rowKey={(w) => w.id}

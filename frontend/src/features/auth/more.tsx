@@ -619,14 +619,15 @@ export function MoreScreen() {
                 placeholder="Your link appears here"
                 className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
-              <button
+              <Button
                 type="button"
                 id="more-invite-copy"
+                layout="shrink"
+                size="narrow"
                 onClick={onCopyInvite}
-                className="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-2 text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
               >
                 {copied ? 'Copied' : 'Copy'}
-              </button>
+              </Button>
             </div>
             <div id="more-invite-joined" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
               {inviteCount > 0 ? (

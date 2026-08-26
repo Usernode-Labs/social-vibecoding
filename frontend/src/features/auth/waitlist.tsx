@@ -410,15 +410,17 @@ export function WaitlistScreen() {
                 placeholder="000000"
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
-              <button
+              <Button
                 id="waitlist-code-submit"
                 type="button"
                 disabled={submitting}
+                disabledStyle="dim"
+                layout="shrink"
+                size="narrow"
                 onClick={onConfirmCode}
-                className="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-60 px-3 py-2 text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
               >
                 Confirm
-              </button>
+              </Button>
             </div>
           </div>
           <div
