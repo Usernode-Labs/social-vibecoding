@@ -289,6 +289,87 @@ test('the stage-2 payload reports each provider unavailable on its own', async (
   }
 });
 
+// ── the origin the redirect_uri is built from ──────────────────────────
+//
+// All three providers validate redirect_uri against the app's registered
+// callback BEFORE any platform code runs, so a wrong value fails on the
+// provider's own page, after the person has already left the site. There is
+// no log line, no error handler and no way to recover the session.
+//
+// The three cases below exist because the fixtures above hard-code
+// `env: 'production'` — and that assumption is exactly what hid a live
+// production bug on 2026-08-27. `connectOrigin` returned the canonical
+// origin only when `config.env === 'production'` and fell through to
+// `http://localhost:${port}` for everything else. But `config.env` is
+// `process.env.NODE_ENV || 'development'` (src/config.js) and the platform
+// injects USERNODE_ENV, not NODE_ENV — so production took the localhost
+// branch and sent every real signup to
+// `http://localhost:3000/waitlist/connect/<provider>/callback`. GitHub
+// answered "The redirect_uri is not associated with this application"; X
+// answered "You weren't able to give access to the App".
+//
+// The rule now: an unset variable can never produce a redirect_uri that is
+// unusable on a deployed host. The canonical origin is the DEFAULT, and
+// localhost requires a positive local-dev signal.
+
+test('an unset NODE_ENV still builds the deployment origin, not localhost', async () => {
+  const prodShaped = { ...CONFIGURED, env: 'development' };
+  const s = await serve(waitlistConnectRoutes(prodShaped));
+  try {
+    for (const provider of ['github', 'x', 'linkedin']) {
+      const res = await get(s.base, `/waitlist/connect/${provider}?token=${TOKEN}`);
+      const url = new URL(res.headers.get('location'));
+      assert.equal(
+        url.searchParams.get('redirect_uri'),
+        `${PRODUCTION_ORIGIN}/waitlist/connect/${provider}/callback`,
+        `${provider}: an unset NODE_ENV must not produce a localhost redirect_uri`,
+      );
+    }
+  } finally {
+    s.server.close();
+  }
+});
+
+test('a positively identified local run still gets localhost', async () => {
+  // cliAuthLocalMode is `USERNODE_LOCAL_DEV === '1'` (src/config.js). It is
+  // the only thing that says "a developer is running this on their laptop",
+  // as opposed to "NODE_ENV happens to be unset", which a container can say
+  // by accident and production did.
+  const local = { ...CONFIGURED, env: 'development', cliAuthLocalMode: true, port: 4321 };
+  const s = await serve(waitlistConnectRoutes(local));
+  try {
+    const res = await get(s.base, `/waitlist/connect/github?token=${TOKEN}`);
+    const url = new URL(res.headers.get('location'));
+    assert.equal(
+      url.searchParams.get('redirect_uri'),
+      'http://localhost:4321/waitlist/connect/github/callback',
+    );
+  } finally {
+    s.server.close();
+  }
+});
+
+test('WAITLIST_OAUTH_ORIGIN overrides both', async () => {
+  const staged = {
+    ...CONFIGURED,
+    env: 'development',
+    cliAuthLocalMode: true,
+    waitlistOauthOrigin: 'https://staging.example.test',
+  };
+  const s = await serve(waitlistConnectRoutes(staged));
+  try {
+    const res = await get(s.base, `/waitlist/connect/x?token=${TOKEN}`);
+    const url = new URL(res.headers.get('location'));
+    assert.equal(
+      url.searchParams.get('redirect_uri'),
+      'https://staging.example.test/waitlist/connect/x/callback',
+      'an explicit override wins even over a local run',
+    );
+  } finally {
+    s.server.close();
+  }
+});
+
 test('an id without a secret counts as unconfigured', async () => {
   // Half-configured is the easiest way to ship a button that dead-ends at
   // the provider. Both halves or neither.

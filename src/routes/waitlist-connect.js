@@ -90,14 +90,32 @@ function providerConfig(config, provider) {
   return null;
 }
 
-// The redirect_uri registered with the OAuth apps. Overridable for
-// staging (WAITLIST_OAUTH_ORIGIN); defaults to the production origin in
-// production and localhost in dev. The provider validates it against
-// the app's registered callback either way.
+// The redirect_uri registered with the OAuth apps. All three providers
+// validate it against the app's registered callback BEFORE any platform
+// code runs, so a wrong value fails on the provider's own page — after the
+// person has left the site, with no log line and no way back into the
+// flow.
+//
+// That asymmetry decides the order of the checks below. It used to read
+// `if (config.env === 'production') return PRODUCTION_ORIGIN;` with
+// localhost as the fallback, which made the DEFAULT a value that cannot
+// work anywhere but a laptop. `config.env` is
+// `process.env.NODE_ENV || 'development'` (src/config.js) and the platform
+// injects USERNODE_ENV, not NODE_ENV — so production took the fallback and
+// sent every real signup to
+// `http://localhost:3000/waitlist/connect/<provider>/callback`. GitHub
+// answered "The redirect_uri is not associated with this application", X
+// "You weren't able to give access to the App", for as long as it took
+// somebody to report it.
+//
+// So the canonical origin is the default and localhost is opt-in, keyed on
+// the one flag that positively means "a developer is running this on their
+// laptop" rather than "an environment variable happens to be missing" —
+// which a container can say by accident, and this one did.
 function connectOrigin(config) {
   if (config.waitlistOauthOrigin) return config.waitlistOauthOrigin;
-  if (config.env === 'production') return PRODUCTION_ORIGIN;
-  return `http://localhost:${config.port}`;
+  if (config.cliAuthLocalMode) return `http://localhost:${config.port || 3000}`;
+  return PRODUCTION_ORIGIN;
 }
 
 function callbackUrl(config, provider) {
