@@ -3771,17 +3771,13 @@ const App = {
     // Pre-hydration only: app.js is a classic script and the bundle is a
     // module, so there is a window in which the bridge does not exist yet
     // and the first navigation's back state would otherwise be dropped.
-    const home = document.getElementById('back-icon-home');
-    const chevron = document.getElementById('back-icon-arrow');
-    if (home) home.classList.toggle('hidden', arrow);
-    if (chevron) chevron.classList.toggle('hidden', !arrow);
     const btn = document.getElementById('back-btn');
     if (btn) {
       // `mode` is really a boolean: 'arrow' shows the anchor, anything else
-      // hides it and leaves the slot to the app glyph
-      // (features/header/header-app-icon.tsx). Single owner, both ways.
+      // hides it — and with #back-icon-home retired (#1443) the anchor is the
+      // whole of the state. There is no second glyph to swap to, and no other
+      // occupant of the slot: hidden means the chip sits flush left.
       btn.classList.toggle('hidden', !arrow);
-      btn.setAttribute('aria-label', arrow ? 'Back' : 'Home');
       btn.setAttribute('href', target);
     }
   },

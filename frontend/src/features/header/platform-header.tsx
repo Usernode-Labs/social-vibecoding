@@ -12,7 +12,7 @@
  * React must never reconcile over those nodes: every class string below is a
  * constant prop, rendered once at hydration and never again. The exceptions
  * are React-owned end to end: <ImproveButton/> (which carries the work-in-
- * flight indicators), <HeaderTitleTab/> and <HeaderAppIcon/> — all of whose
+ * flight indicators) and <HeaderTitleTab/> — both of whose
  * writers publish through improveStore rather than touching the DOM.
  *
  * The bar's OWN visibility is the one piece of state it holds. Chromeless mode
@@ -32,9 +32,7 @@ import { useRef } from 'react';
 
 import {
   BellIcon,
-  ChatBubbleTailIcon,
   ChevronLeftIcon,
-  HomeIcon,
 } from '@/components/ui/icons';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -42,7 +40,6 @@ import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
-import { HeaderAppIcon } from './header-app-icon';
 import { HeaderTitleTab } from './header-title-tab';
 import { ImproveButton } from '../improve/improve-button';
 import { improveStore } from '../improve/improve-store.js';
@@ -221,25 +218,24 @@ export function PlatformHeader() {
         className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 shrink-0"
       >
         {/*
-            The LEFT group, and it is the board's own header cluster: ONE
-            28px icon slot, then the title tab beside it.
+            The LEFT group: the back chevron when there is somewhere to go
+            back to, then the chip. Nothing else, and NO RESERVED SLOT.
 
-            The slot has two occupants and they are disjoint BY ROUTING, not
-            by a branch. The back anchor shows exactly when
-            App.setBackIcon('arrow') has run — a dev session, a drilled
-            settings/admin/browse level, or any of the root platform screens —
-            and in every one of those states the improve store either has no
-            target or is on the sessions subtab, which is precisely when
-            <HeaderAppIcon/> renders null. Two owners, no shared state, no
-            way for both to draw at once.
+            #1443 took the fixed 28px box out. It existed to keep the title
+            from shifting as the back anchor came and went, and with the
+            title centred that mattered; the chip is flush left and the box
+            was simply an inch of dead space at the top-left of every root
+            screen — which is what "there's an extra space for an icon right
+            now that isn't used" was. `#back-btn` is a direct child now, so
+            `hidden` collapses it and the chip moves to the edge.
 
-            The hamburger that used to lead this group is gone. Its badge
-            cluster went with it, onto #improve-btn where the work it reports
-            actually lives (see ../improve/improve-button.tsx).
+            The house glyph went with it. Both occupants of that box were
+            about where you are NOT: a hamburger with no label, then a home
+            icon an inch from the chip's own Home row. The chevron is the
+            only survivor, and it means one thing — back a level.
         */}
-        <div ref={leftGroupRef} className="h-7 shrink-0 flex items-center gap-1">
-          <div className="w-7 h-7 shrink-0 flex items-center justify-center">
-            {/*
+        <div ref={leftGroupRef} className="h-7 shrink-0 flex items-center gap-1.5 min-w-0">
+          {/*
                 #1036: a real anchor, not a button, so cmd/ctrl-click,
                 middle-click and right-click → "Open in new tab" work on it.
                 Its href is maintained by App.setBackIcon(mode, href) — the
@@ -253,25 +249,26 @@ export function PlatformHeader() {
                 system browser.
 
                 RENDERED FROM A STORE, not written by classList from outside.
-                setBackIcon used to toggle `hidden` on all three of these
-                nodes directly, which held only while this island never
-                re-rendered. It does now — the slot is `#back-btn` XOR
-                <HeaderAppIcon/>, and the bar carries <SessionStatusPill/> —
-                and React rewrites a rendered className from its own props on
-                every render, so the legacy write was being undone. The store
-                is ./back-button-store.js; setBackIcon publishes into it.
+                setBackIcon used to toggle `hidden` on these nodes directly,
+                which held only while this island never re-rendered. It does
+                now — the bar carries <SessionStatusPill/> — and React
+                rewrites a rendered className from its own props on every
+                render, so the legacy write was being undone. The store is
+                ./back-button-store.js; setBackIcon publishes into it.
+
+                The chevron's own className is a CONSTANT now: with the house
+                glyph retired the anchor has one child, so the anchor's
+                `hidden` is the whole of the visibility state. One node
+                toggles, not three.
             */}
-            <a
-              id="back-btn"
-              className={BACK_BTN_CLASS + (backArrow ? '' : ' hidden')}
-              aria-label={backArrow ? 'Back' : 'Home'}
-              {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
-            >
-              <HomeIcon id="back-icon-home" className={'w-5 h-5' + (backArrow ? ' hidden' : '')} />
-              <ChevronLeftIcon id="back-icon-arrow" className={'w-5 h-5' + (backArrow ? '' : ' hidden')} />
-            </a>
-            <HeaderAppIcon />
-          </div>
+          <a
+            id="back-btn"
+            className={BACK_BTN_CLASS + (backArrow ? '' : ' hidden')}
+            aria-label="Back"
+            {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
+          >
+            <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5" />
+          </a>
           <SessionStatusPill />
         </div>
         {/*
@@ -367,26 +364,6 @@ export function PlatformHeader() {
               and it is checked BEFORE preventDefault — the rule
               tests/nav-new-tab.test.js pins across the whole shell.
           */}
-          <a
-            id="messages-btn"
-            href="#messages"
-            className="relative w-7 h-7 mr-1 flex items-center justify-center rounded-full un-touch-target bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
-            aria-label="Messages"
-            aria-haspopup="dialog"
-            onClick={(event) => {
-              if ((window as any).NavLink?.isNativeClick?.(event)) return;
-              event.preventDefault();
-              (window as any).MessagesSheet?.toggle?.();
-            }}
-          >
-            <ChatBubbleTailIcon className="w-5 h-5" />
-            <span
-              id="drawer-messages-badge"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-violet-600 text-white text-[0.65rem] font-bold flex items-center justify-center"
-              aria-label="Unread messages"
-            >
-            </span>
-          </a>
           <a
             id="notifications-btn"
             href="#notifications"
