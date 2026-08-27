@@ -348,3 +348,120 @@ test('STATE_BADGE_KEYS covers the merge-pipeline / conflict / ready states only'
     assert.ok(MergeStatus.STATE_BADGE_KEYS.indexOf(k) === -1, `${k} excluded`);
   }
 });
+
+// ── #1442: predicted conflict and the measured behind count ────────────
+//
+// behind_main and merge_conflict_state are both written by events a WAITING
+// proposal does not have, so proposal 3590 read "in vote, all checks passed"
+// while it was eight commits behind and conflicting in seven files. The
+// freshness measurement is the only thing that knows, so the lifecycle has to
+// read it — under a real merge attempt, over the checks states.
+
+test('#1442 state 4c — a predicted conflict is a red rung of its own', () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing', yes_count: 1, majority: 1,
+    freshness: { mergeability: 'conflict', mergeabilityFiles: ['a.js', 'b.js'], behindBy: 8 },
+  });
+  assert.equal(life.key, 'mergeability_conflict');
+  assert.equal(life.label, 'Conflicts with main · 2');
+  assert.equal(life.tone, 'red');
+  assert.equal(life.spinner, false);
+  assert.match(life.title, /no longer merges/i);
+  assert.match(life.title, /Sync with main/);
+});
+
+test('#1442 state 4c — with no located files the count is dropped, not zeroed', () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing',
+    freshness: { mergeability: 'conflict', mergeabilityFiles: [] },
+  });
+  assert.equal(life.label, 'Conflicts with main');
+});
+
+test('#1442 — an ATTEMPTED merge failure still outranks the prediction', () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', merge_conflict_state: 'conflict', check_state: 'passing',
+    freshness: { mergeability: 'conflict', mergeabilityFiles: ['a.js'] },
+  });
+  assert.notEqual(life.key, 'mergeability_conflict', 'the real attempt is the better answer');
+});
+
+test('#1442 — a predicted conflict outranks failing checks', () => {
+  // Deliberate, and the same order AppView.blockReasons uses: a conflict has
+  // one remedy (sync and resolve), and checks that failed against a base main
+  // has moved past are frequently a symptom of the same drift. Fixing the
+  // drift is what makes the checks meaningful again, so it is the thing to
+  // put in front of the voter.
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'failing',
+    freshness: { mergeability: 'conflict', mergeabilityFiles: ['a.js'] },
+  });
+  assert.equal(life.key, 'mergeability_conflict');
+  assert.equal(life.tone, 'red', 'either way the pill is blocked, never a tally');
+});
+
+test("#1442 — 'clean' and 'unknown' never produce a conflict rung", () => {
+  for (const m of ['clean', 'unknown', null, undefined, 'mergeable']) {
+    const life = MergeStatus.lifecycle({
+      status: 'promoted', check_state: 'passing', yes_count: 0, majority: 3,
+      freshness: { mergeability: m },
+    });
+    assert.notEqual(life.key, 'mergeability_conflict', `${m} is not a conflict`);
+  }
+});
+
+test('#1442 — the measured behind count beats a stale behind_main', () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing', behind_main: 0,
+    freshness: { mergeability: 'clean', behindBy: 8 },
+  });
+  assert.equal(life.key, 'behind');
+  assert.equal(life.label, 'Behind main · 8',
+    'the frozen 0 is exactly the number that made 3590 look ready');
+});
+
+test('#1442 — a measured zero clears a stale non-zero behind_main', () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing', behind_main: 5, yes_count: 0, majority: 3,
+    freshness: { mergeability: 'clean', behindBy: 0 },
+  });
+  assert.notEqual(life.key, 'behind', 'a sync happened; the badge goes away');
+});
+
+test('#1442 — an unmeasured row behaves exactly as before', () => {
+  const before = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing', behind_main: 3,
+  });
+  const after = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing', behind_main: 3,
+    freshness: { mergeability: null, behindBy: null },
+  });
+  assert.equal(after.key, before.key);
+  assert.equal(after.label, before.label);
+  assert.equal(after.label, 'Behind main · 3');
+});
+
+test('#1442 — the flat columns are read when no nested block is present', () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing',
+    mergeability: 'conflict', mergeability_files: ['x.js'],
+  });
+  assert.equal(life.key, 'mergeability_conflict');
+  assert.equal(life.label, 'Conflicts with main · 1');
+});
+
+test('#1442 — merged and merging still outrank everything measured', () => {
+  for (const status of ['merged', 'merging']) {
+    const life = MergeStatus.lifecycle({
+      status,
+      freshness: { mergeability: 'conflict', mergeabilityFiles: ['a.js'], behindBy: 9 },
+    });
+    assert.equal(life.key, status);
+  }
+});
+
+test('#1442 — junk in the freshness block cannot throw', () => {
+  for (const freshness of ['nope', 42, [], { mergeabilityFiles: 'oops' }, null]) {
+    assert.doesNotThrow(() => MergeStatus.lifecycle({ status: 'promoted', freshness }));
+  }
+});

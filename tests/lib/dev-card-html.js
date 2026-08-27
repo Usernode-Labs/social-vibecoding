@@ -122,6 +122,9 @@ function noteBoxHtml(box) {
 const platformEnvHtml = (AppView, pr) => noteBoxHtml(AppView._platformEnvNote(pr));
 const consoleCheckHtml = (AppView, pr) => noteBoxHtml(AppView._consoleCheckNote(pr));
 const mergeConflictHtml = (AppView, pr) => noteBoxHtml(AppView._mergeConflictNote(pr));
+// #1442: the PREDICTED conflict, which is a different box from the one above
+// (that one records a merge that was attempted and failed).
+const mergeabilityHtml = (AppView, pr) => noteBoxHtml(AppView._mergeabilityNote(pr));
 
 /** The checks block: the verdict when there is one, else its status note. */
 function checksHtml(AppView, pr) {
@@ -225,6 +228,7 @@ module.exports = {
   platformEnvHtml,
   consoleCheckHtml,
   mergeConflictHtml,
+  mergeabilityHtml,
   checksHtml,
   budgets,
   actionRefs,

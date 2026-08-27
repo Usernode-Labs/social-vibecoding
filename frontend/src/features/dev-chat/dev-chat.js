@@ -7276,6 +7276,13 @@ const DevChat = {
       // copy them onto the live row either way.
       const watch = ['status', 'check_state', 'merge_conflict_state', 'behind_main',
                      'yes_count', 'no_count', 'majority', 'merged_at',
+                     // #1442: the freshness measurement. `behind_main` above
+                     // is written through from the same pass, but these are
+                     // what the conflict / superseded-base notes read, so a
+                     // re-measurement has to count as a visible change.
+                     'mergeability', 'mergeability_files_complete',
+                     'checks_base_sha', 'checks_base_verdict', 'checks_base_behind_by',
+                     'freshness_behind_by', 'freshness_checked_at', 'freshness_error',
                      // #695: governance-aware gate fields (approver-only
                      // tallies + per-row requirement) the header pill reads.
                      'votes_required', 'approval_policy', 'approvals_required',
@@ -7288,6 +7295,9 @@ const DevChat = {
       // Arrays/objects the card reads are refreshed unconditionally.
       if (session.test_results !== undefined) DevChat.currentSession.test_results = session.test_results;
       if (session.conflict_files !== undefined) DevChat.currentSession.conflict_files = session.conflict_files;
+      // #1442: arrays/objects, so the same unconditional copy as above.
+      if (session.mergeability_files !== undefined) DevChat.currentSession.mergeability_files = session.mergeability_files;
+      if (session.freshness !== undefined) DevChat.currentSession.freshness = session.freshness;
       if (!changed) return;
       if (DevChat.isStreaming) DevChat._repaintSessionHeader();
       else DevChat.renderChatView();
@@ -7548,6 +7558,47 @@ const DevChat = {
     }
     DevChat.currentSession.behind_main = behindMain;
     DevChat._applySyncBanner();
+  },
+
+  // #1442 — the freshness pass re-measured this proposal against main.
+  // Shaped like applyBehindMainUpdate because it supersedes it: the same
+  // `behind_main` the sync banner reads rides along, so a stale banner is
+  // corrected by the same event that corrects the conflict note. The nested
+  // `freshness` block AND the flat columns are both patched, because
+  // AppView._freshnessOf accepts either shape and the change card may be
+  // rendering from a row loaded before this event.
+  applyFreshnessUpdate(data) {
+    const sessionId = data && data.sessionId;
+    if (sessionId == null) return;
+    const f = (data && data.freshness && typeof data.freshness === 'object') ? data.freshness : {};
+    const behindMain = typeof data.behindMain === 'number' ? data.behindMain : null;
+    const patch = (row) => {
+      if (!row) return;
+      row.freshness = f;
+      if (behindMain !== null) row.behind_main = behindMain;
+      row.mergeability = f.mergeability === undefined ? row.mergeability : f.mergeability;
+      row.mergeability_files = f.mergeabilityFiles === undefined ? row.mergeability_files : f.mergeabilityFiles;
+      row.mergeability_files_complete = f.mergeabilityFilesComplete === undefined
+        ? row.mergeability_files_complete : f.mergeabilityFilesComplete;
+      row.checks_base_sha = f.checksRanOnBase === undefined ? row.checks_base_sha : f.checksRanOnBase;
+      row.checks_base_verdict = f.checksBaseVerdict === undefined ? row.checks_base_verdict : f.checksBaseVerdict;
+      row.checks_base_behind_by = f.checksBaseBehindBy === undefined
+        ? row.checks_base_behind_by : f.checksBaseBehindBy;
+      row.freshness_behind_by = f.behindBy === undefined ? row.freshness_behind_by : f.behindBy;
+      row.freshness_checked_at = f.checkedAt === undefined ? row.freshness_checked_at : f.checkedAt;
+      row.freshness_error = f.error === undefined ? row.freshness_error : f.error;
+    };
+    if (Array.isArray(DevChat.sessions)) {
+      patch(DevChat.sessions.find((s) => Number(s.id) === Number(sessionId)));
+    }
+    if (!DevChat.currentSession || Number(DevChat.currentSession.id) !== Number(sessionId)) return;
+    patch(DevChat.currentSession);
+    DevChat._applySyncBanner();
+    // The change card carries the conflict / checks-base notes, so it has to
+    // repaint. Mid-stream the header-only repaint keeps the live turn intact,
+    // exactly as refreshCurrentSessionStatus decides it.
+    if (DevChat.isStreaming) DevChat._repaintSessionHeader();
+    else if (document.getElementById('dc-view')) DevChat.renderChatView();
   },
 
   // ── Chat view ─────────────────────────────────────────────

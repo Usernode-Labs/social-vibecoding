@@ -2542,3 +2542,167 @@ test('a proposal reports the description the group is voting on', () => {
   // not knowably "empty".
   assert.equal(tools.shapeProposal({ id: 8, app_slug: 'recipe-box' }, ORIGIN).description, null);
 });
+
+// ── #1442: proposal freshness on the connector surface ──────────────────
+//
+// The bug this covers is not a crash. A model asked "is proposal 3590 ready
+// to merge?" was told behindMain 0, checks 412/412 passing, and — for the
+// app it belonged to — zero proposals up for a vote. Every one of those was
+// wrong, and each was wrong in a way that reads as good news, so the model
+// recommended merging a proposal that conflicts in seven files.
+
+test('#1442 — checks report the BASE they ran against, not just the branch', () => {
+  const head = 'a'.repeat(40);
+  const shaped = tools.shapeChecks({
+    check_state: 'passing',
+    checks_commit_sha: head,
+    reviewed_head_sha: head,
+    checks_base_sha: 'd'.repeat(40),
+    checks_base_verdict: 'superseded',
+    checks_base_behind_by: 8,
+  });
+  // The branch has not moved, so the pre-existing signal is truthfully false.
+  // That is exactly why the base fields had to be additive: `stale: false` is
+  // a correct answer to a different question.
+  assert.equal(shaped.stale, false);
+  assert.equal(shaped.ranOnBase, 'd'.repeat(40));
+  assert.equal(shaped.baseVerdict, 'superseded');
+  assert.equal(shaped.baseBehindBy, 8);
+});
+
+test('#1442 — a base with no verdict yet reads unknown, never current', () => {
+  const measured = tools.shapeChecks({ checks_base_sha: 'd'.repeat(40) });
+  assert.equal(measured.baseVerdict, 'unknown',
+    'the column exists and nothing has compared it: that is not "current"');
+  assert.equal(measured.baseBehindBy, null);
+
+  // A row from before the column exists at all reports null across the board,
+  // which is knowably "this platform never recorded it".
+  const legacy = tools.shapeChecks({ check_state: 'passing' });
+  assert.equal(legacy.ranOnBase, null);
+  assert.equal(legacy.baseVerdict, null);
+  assert.equal(legacy.baseBehindBy, null);
+
+  // Zero is a measurement, not an absence.
+  assert.equal(
+    tools.shapeChecks({ checks_base_sha: 'd'.repeat(40), checks_base_verdict: 'current', checks_base_behind_by: 0 })
+      .baseBehindBy,
+    0
+  );
+});
+
+test('#1442 — a proposal reports predicted mergeability and its freshness snapshot', () => {
+  const shaped = tools.shapeProposal({
+    id: 3590, app_slug: 'social-vibecoding', pr_number: 1431, status: 'promoted',
+    behind_main: 8,
+    mergeability: 'conflict',
+    mergeability_files: ['src/db/migrate.js', 'src/routes/votes.js'],
+    mergeability_files_complete: true,
+    freshness_behind_by: 8,
+    freshness_ahead_by: 3,
+    freshness_main_sha: 'f'.repeat(40),
+    freshness_merge_base_sha: 'b'.repeat(40),
+    checks_base_sha: 'd'.repeat(40),
+    checks_base_verdict: 'superseded',
+    checks_base_behind_by: 8,
+    freshness_checked_at: new Date('2026-08-27T10:00:00.000Z'),
+  }, ORIGIN);
+
+  assert.equal(shaped.mergeability, 'conflict');
+  assert.equal(shaped.freshness.mergeability, 'conflict');
+  assert.deepEqual(shaped.freshness.mergeabilityFiles,
+    ['src/db/migrate.js', 'src/routes/votes.js']);
+  assert.equal(shaped.freshness.mergeabilityFilesComplete, true);
+  assert.equal(shaped.freshness.behindBy, 8);
+  assert.equal(shaped.freshness.aheadBy, 3);
+  assert.equal(shaped.freshness.checksBaseVerdict, 'superseded');
+  assert.equal(shaped.freshness.checkedAt, '2026-08-27T10:00:00.000Z');
+  // behindMain and freshness.behindBy are the same number reported twice, on
+  // purpose: the first is where every existing caller already looks.
+  assert.equal(shaped.behindMain, 8);
+});
+
+test('#1442 — an unmeasured proposal says so instead of saying clean', () => {
+  const shaped = tools.shapeProposal({ id: 9, app_slug: 'recipe-box' }, ORIGIN);
+  assert.equal(shaped.mergeability, null);
+  assert.equal(shaped.freshness.mergeability, null);
+  assert.equal(shaped.freshness.checkedAt, null);
+  assert.equal(shaped.freshness.mergeabilityFilesComplete, null,
+    'false would claim the (empty) file list was truncated');
+  assert.deepEqual(shaped.freshness.mergeabilityFiles, []);
+
+  // And a refresh that failed reports the reason rather than a verdict.
+  const errored = tools.shapeProposal({
+    id: 10, app_slug: 'recipe-box',
+    mergeability: 'unknown',
+    freshness_error: 'GitHub API unreachable',
+    freshness_checked_at: new Date('2026-08-27T10:00:00.000Z'),
+  }, ORIGIN);
+  assert.equal(errored.freshness.mergeability, 'unknown');
+  assert.equal(errored.freshness.error, 'GitHub API unreachable');
+});
+
+test('#1442 — the conflicting-file list is capped, and says when it is partial', () => {
+  const many = Array.from({ length: 300 }, (_, i) => `src/file-${i}.js`);
+  const shaped = tools.shapeProposal({
+    id: 11, app_slug: 'recipe-box',
+    mergeability: 'conflict',
+    mergeability_files: many,
+    mergeability_files_complete: false,
+  }, ORIGIN);
+  assert.equal(shaped.freshness.mergeabilityFiles.length, 50);
+  assert.equal(shaped.freshness.mergeabilityFilesComplete, false,
+    'the model must not read 50 names as the whole conflict');
+});
+
+test('#1442 — get_proposal describes both staleness axes so they cannot be conflated', () => {
+  const block = registration('get_proposal');
+  // The one-word field name is not enough: `stale` and `baseVerdict` are both
+  // "is this verdict still good?" and an agent that reads only the first
+  // recommends the merge that started this issue.
+  assert.match(block, /BRANCH staleness only; read baseVerdict for the other axis/);
+  assert.match(block, /ranOnBase/);
+  assert.match(block, /superseded/);
+  assert.match(block, /mergeability/);
+  // 'unknown' has to be documented as a real answer, because GitHub computes
+  // mergeability lazily and a null read is not a clean read.
+  assert.match(block, /'unknown' is a real answer/);
+});
+
+test('#1442 — get_app counts the proposals actually up for a vote', async () => {
+  const { handlers, restore } = connector((method, pathname) => {
+    if (pathname.endsWith('/github-issues')) return { issues: [] };
+    if (pathname.endsWith('/promoted')) {
+      // The shape the route has always returned. Reading `sessions` here is
+      // what pinned this number at 0 for every app ever asked.
+      return {
+        promoted: [
+          { id: 1, status: 'promoted' },
+          { id: 2, status: 'promoted' },
+          { id: 3, status: 'merging' },
+        ],
+      };
+    }
+    return { app: { slug: 'recipe-box', name: 'Recipe Box', status: 'running' } };
+  });
+  try {
+    const out = (await handlers.get('get_app')({ slug: 'recipe-box' })).structuredContent;
+    assert.equal(out.openProposalCount, 2,
+      'two up for a vote; the merging row is already on its way in');
+  } finally { restore(); }
+});
+
+test('#1442 — get_app still answers when the promoted route is unavailable', async () => {
+  const { handlers, restore } = connector((method, pathname) => {
+    if (pathname.endsWith('/github-issues')) return { issues: [] };
+    if (pathname.endsWith('/promoted')) {
+      return { __http: { ok: false, status: 500, body: { error: 'boom' } } };
+    }
+    return { app: { slug: 'recipe-box', name: 'Recipe Box' } };
+  });
+  try {
+    const out = (await handlers.get('get_app')({ slug: 'recipe-box' })).structuredContent;
+    assert.equal(out.openProposalCount, 0, 'degraded to 0 rather than failing the lookup');
+    assert.equal(out.slug, 'recipe-box');
+  } finally { restore(); }
+});

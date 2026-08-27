@@ -2556,6 +2556,41 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         log.warn('sessions', 'drafts load failed', { sessionId: session.id, err: err.message });
       }
 
+      // #1442: opening a promoted proposal is the one moment its freshness
+      // numbers are about to be READ by a person deciding how to vote, so
+      // this is where they are worth re-measuring. TTL-gated (60s) and
+      // single-flighted per session in the service, so the dev chat's
+      // frequent machine refetches and several voters opening the same
+      // proposal at once still cost at most one pair of GitHub calls a
+      // minute. Never throws, and the refreshed block is folded onto the row
+      // that is about to be serialized so the response carries the number it
+      // just measured rather than the one it read a moment earlier.
+      if (session.status === 'promoted' && session.repo_url) {
+        try {
+          const freshnessSvc = require('../services/proposal-freshness');
+          const written = await freshnessSvc.refreshFreshnessDeduped(
+            { gh: require('../services/github'), pool }, session
+          );
+          if (written && !written.skipped) {
+            session.freshness_checked_at = written.checkedAt;
+            session.freshness_main_sha = written.mainSha;
+            session.freshness_merge_base_sha = written.mergeBaseSha;
+            session.freshness_behind_by = written.behindBy;
+            session.freshness_ahead_by = written.aheadBy;
+            session.mergeability = written.mergeability;
+            session.mergeability_files = written.mergeabilityFiles;
+            session.mergeability_files_complete = written.mergeabilityFilesComplete;
+            session.checks_base_verdict = written.checksBaseVerdict;
+            session.checks_base_behind_by = written.checksBaseBehindBy;
+            session.freshness_error = written.error;
+            if (written.behindBy != null) session.behind_main = Math.max(0, written.behindBy);
+          }
+        } catch (err) {
+          log.warn('sessions', 'freshness refresh failed', { sessionId: session.id, err: err.message });
+        }
+      }
+      session.freshness = require('../services/proposal-freshness').readFreshness(session);
+
       res.json({ session, messages, drafts });
     } catch (err) {
       log.error('sessions', 'Failed to get session', { message: err.message });

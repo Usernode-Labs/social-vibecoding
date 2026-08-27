@@ -117,6 +117,24 @@ function stagingMockProposals(viewer) {
       { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [], failureReason: '' },
     ],
     checks_checked_at: hoursAgo(hours),
+    // #1442: the freshness snapshot. Measured-and-clean by default, which
+    // is what the great majority of real promoted proposals look like, so
+    // adding these columns does not make every existing fixture render an
+    // "unknown" caption. The four dedicated fixtures below override them so
+    // each of the three states this issue is about is reviewable via
+    // ?demo=1 rather than only reachable by waiting for main to move.
+    mergeability: 'clean',
+    mergeability_files: [],
+    mergeability_files_complete: true,
+    checks_base_sha: 'aaaa1111bbbb2222cccc3333dddd4444eeee5555',
+    checks_base_verdict: 'current',
+    checks_base_behind_by: 0,
+    freshness_main_sha: 'aaaa1111bbbb2222cccc3333dddd4444eeee5555',
+    freshness_merge_base_sha: 'aaaa1111bbbb2222cccc3333dddd4444eeee5555',
+    freshness_behind_by: 0,
+    freshness_ahead_by: 1,
+    freshness_checked_at: hoursAgo(0),
+    freshness_error: null,
     // Community-voted priority + assignee + category chips. Populated so
     // the card states are reviewable on staging via ?demo=1.
     priority: { top: 'high', count: 2, myValue: null },
@@ -278,6 +296,90 @@ function stagingMockProposals(viewer) {
         '[Mock] Explicit-approval test: admins change nobody wants (rejecting)',
         22, 0, 3, 3, { required: 3, rejectEndsAt: hoursAhead(9), rejectionArmed: true }),
       requires_explicit_approval: true,
+    },
+    // ── #1442 freshness fixtures ───────────────────────────────────────
+    //
+    // The three states the issue is about, each of which used to be
+    // invisible on a promoted proposal because nothing re-measured it. They
+    // exist as fixtures because none of them can be reached in a preview by
+    // clicking: they need main to move underneath a proposal that is already
+    // waiting for votes.
+    //
+    // (a) Behind main but still merging cleanly. This is the mild case, and
+    // the one the old card got LOUDEST about — being behind used to render
+    // an amber "Behind main · N" block reason, which meant the pill said
+    // "attention" for something that resolves itself. It is now a plain
+    // caption and the vote tally stays visible.
+    {
+      ...mk(9000033, 900133,
+        '[Mock] Freshness test: eight commits behind main, still merges cleanly',
+        6, 2, 0, 3, { required: 3, windowEndsAt: hoursAhead(20) }),
+      behind_main: 8,
+      freshness_behind_by: 8,
+      freshness_main_sha: 'bbbb2222cccc3333dddd4444eeee5555ffff6666',
+      freshness_merge_base_sha: 'aaaa1111bbbb2222cccc3333dddd4444eeee5555',
+      mergeability: 'clean',
+    },
+    // (b) The issue's own proposal: behind main AND predicted to conflict.
+    // The seven paths are the ones `git merge-tree` reported for PR #1431,
+    // so the conflicting-file list renders at a realistic length. This is a
+    // PREDICTION, which is why it sets `mergeability` and NOT
+    // merge_conflict_state — nothing has attempted a merge, so the
+    // conflict-resolver must not see this row as one it can drain.
+    {
+      ...mk(9000034, 900134,
+        '[Mock] Freshness test: conflicts with main in seven files',
+        9, 3, 0, 5, { required: 4 }),
+      behind_main: 8,
+      freshness_behind_by: 8,
+      freshness_main_sha: 'bbbb2222cccc3333dddd4444eeee5555ffff6666',
+      freshness_merge_base_sha: 'aaaa1111bbbb2222cccc3333dddd4444eeee5555',
+      mergeability: 'conflict',
+      mergeability_files: [
+        'public/js/app-view.js',
+        'public/js/merge-status.js',
+        'src/routes/votes.js',
+        'src/services/mcp-tools.js',
+        'src/services/visuals.js',
+        'src/db/schema.sql',
+        'dapp.json',
+      ],
+      mergeability_files_complete: true,
+    },
+    // (c) Checks passed, against a base main has since moved past. The
+    // verdict is real and the tests did pass; what they passed against is no
+    // longer what this would merge into. Soft on purpose: it is a caveat on
+    // a green result, not a failure, so it never blocks the vote.
+    {
+      ...mk(9000035, 900135,
+        '[Mock] Freshness test: checks passed on a base main has moved past',
+        14, 2, 0, 2, { required: 3, windowEndsAt: hoursAhead(30) }),
+      checks_base_sha: '1111aaaa2222bbbb3333cccc4444dddd5555eeee',
+      checks_base_verdict: 'superseded',
+      checks_base_behind_by: 12,
+      freshness_main_sha: 'bbbb2222cccc3333dddd4444eeee5555ffff6666',
+      behind_main: 3,
+      freshness_behind_by: 3,
+    },
+    // (d) Nothing measured yet, plus a recorded failure. GitHub answers
+    // `mergeable: null` while it computes a merge, and the whole point of
+    // the nullable columns is that this reads as "not measured" rather than
+    // as "clean" — a fixture exists so the unknown wording is reviewable
+    // instead of only appearing during a GitHub outage.
+    {
+      ...mk(9000036, 900136,
+        '[Mock] Freshness test: freshness not measured yet (GitHub unreachable)',
+        1, 1, 0, 0, { required: 3 }),
+      mergeability: 'unknown',
+      mergeability_files: [],
+      mergeability_files_complete: null,
+      checks_base_verdict: 'unknown',
+      checks_base_behind_by: null,
+      freshness_behind_by: null,
+      freshness_ahead_by: null,
+      freshness_main_sha: null,
+      freshness_merge_base_sha: null,
+      freshness_error: 'Could not read the repository from GitHub (request failed).',
     },
     // #381: a proposal whose staging preview logged console errors, so the
     // amber "⚠ Console errors" badge and the expanded error list in the
@@ -2732,6 +2834,12 @@ function voteRoutes(config) {
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
                 cs.check_state, cs.check_error_detail, cs.check_phase, cs.check_trigger,
+                -- #1442: the same freshness cache /promoted reads, so the
+                -- home strip's pill and the proposal card cannot disagree
+                -- about whether a proposal is ready to merge.
+                cs.checks_base_sha, cs.checks_base_verdict, cs.checks_base_behind_by,
+                cs.mergeability, cs.mergeability_files, cs.mergeability_files_complete,
+                cs.freshness_behind_by, cs.freshness_checked_at,
                 cs.requires_explicit_approval,
                 -- #866: so the home strip can derive the same
                 -- building/unavailable preview state the proposal card
@@ -2842,6 +2950,18 @@ function voteRoutes(config) {
             check_state: m.check_state || null,
             test_results: m.test_results || [],
             checks_checked_at: m.checks_checked_at || null,
+            // #1442: the freshness fixtures carry through here too, so the
+            // home strip's pill can be reviewed against the same three
+            // states the proposal card renders.
+            mergeability: m.mergeability || null,
+            mergeability_files: m.mergeability_files || [],
+            mergeability_files_complete: m.mergeability_files_complete == null
+              ? null : m.mergeability_files_complete,
+            checks_base_sha: m.checks_base_sha || null,
+            checks_base_verdict: m.checks_base_verdict || null,
+            checks_base_behind_by: m.checks_base_behind_by == null ? null : m.checks_base_behind_by,
+            freshness_behind_by: m.freshness_behind_by == null ? null : m.freshness_behind_by,
+            freshness_checked_at: m.freshness_checked_at || null,
             // #866: carry the mock preview state through so the imported-PR
             // fixtures read the same on the home strip as on the card.
             source: m.source || null,
@@ -2940,6 +3060,19 @@ function voteRoutes(config) {
            -- per-test detail block. Unlike the console snapshot this GATES
            -- merge (checkAndMerge blocks a non-'passing' proposal).
            cs.check_state, cs.test_results, cs.checks_checked_at,
+           cs.checks_commit_sha,
+           -- #1442: the freshness cache. behind_main above is now written
+           -- THROUGH from freshness_behind_by, so it and these agree; the
+           -- rest are the answers nothing used to re-derive once a proposal
+           -- was promoted — whether it still merges cleanly, and whether the
+           -- base its checks passed against is still on main. All nullable:
+           -- NULL is "not measured", which the card reads as unknown rather
+           -- than as a claim.
+           cs.checks_base_sha, cs.checks_base_verdict, cs.checks_base_behind_by,
+           cs.mergeability, cs.mergeability_files, cs.mergeability_files_complete,
+           cs.freshness_main_sha, cs.freshness_merge_base_sha,
+           cs.freshness_behind_by, cs.freshness_ahead_by,
+           cs.freshness_checked_at, cs.freshness_error,
            -- Which half of a 'pending' run is in flight ('building' |
            -- 'testing'), so the checks card names the stage instead of
            -- showing one opaque "still running". NULL = legacy wording.
@@ -3130,6 +3263,16 @@ function voteRoutes(config) {
         row.requires_explicit_approval = !!row.requires_explicit_approval;
         row.qualified_yes_count = gate.qualifiedYes;
         row.qualified_no_count = gate.qualifiedNo;
+      }
+
+      // #1442: the freshness snapshot also rides as a nested camelCase block
+      // for API consumers (the connector's get_proposal shapes from the same
+      // vocabulary). The flat snake_case columns stay exactly where they were
+      // — public/js/app-view.js reads those — so this is additive on both
+      // sides rather than a rename anything has to follow.
+      {
+        const freshnessSvc = require('../services/proposal-freshness');
+        for (const row of rows) row.freshness = freshnessSvc.readFreshness(row);
       }
 
       res.json({

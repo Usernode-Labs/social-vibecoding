@@ -100,6 +100,8 @@ export interface ChecksVerdict {
   foldPasses: boolean;
   advisoryNote: string | null;
   checkedNote: string | null;
+  /** #1442: "these ran against a main that has since moved on". */
+  baseNote: string | null;
   fixNote: string | null;
   action: ActionSpec | null;
 }

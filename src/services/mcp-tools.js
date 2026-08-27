@@ -510,6 +510,26 @@ function shapeChecks(session) {
     // mismatch must not read as a proven one.
     ranOnCommit: ranOn,
     stale: !!(ranOn && head && ranOn.toLowerCase() !== head.toLowerCase()),
+    // #1442. `stale` above is BRANCH-scoped: did this proposal's own head
+    // move since the tests ran? These three are BASE-scoped: has main moved
+    // out from under the commit they ran against? Both can be false while a
+    // green verdict is worthless — which is what happened on PR #1431, where
+    // 412 of 412 checks passed against a base eight commits stale and every
+    // staleness signal the platform had said "current".
+    //
+    // Deliberately additive rather than folded into `stale`: an agent reading
+    // "the branch has not moved" is reading something true, and overloading
+    // that field would make it mean two things at once.
+    //
+    //   ranOnBase     the commit on main the run's verdict is about, or null
+    //                 on a row that predates the column.
+    //   baseVerdict   'current' | 'superseded' | 'unknown'. 'unknown' when
+    //                 nothing has measured it, which is not 'current'.
+    //   baseBehindBy  how far main has moved since.
+    ranOnBase: session.checks_base_sha || null,
+    baseVerdict: session.checks_base_verdict || (session.checks_base_sha ? 'unknown' : null),
+    baseBehindBy: typeof session.checks_base_behind_by === 'number'
+      ? session.checks_base_behind_by : null,
     failing: failed
       .slice(0, MAX_LIST_ITEMS)
       .map((t) => untrusted(t.name || t.path || 'unnamed test', MAX_TITLE_CHARS)),
@@ -756,6 +776,17 @@ function shapeProposal(session, origin) {
     // that predates the job table, or a staging clone (the job table is
     // staging:private). Null means unknown — never "use main".
     baseSha: session.base_sha || null,
+    // #1442. Whether this proposal, right now, still merges cleanly into
+    // main — and how far behind it has drifted while waiting for votes.
+    // `behindMain` above is the same number as `freshness.behindBy` (the
+    // freshness pass writes through to that column), reported in both places
+    // because the merge gate reads one and the vocabulary here is the other.
+    //
+    // 'unknown' and null are load-bearing values: GitHub answers `mergeable:
+    // null` while it computes a merge, and a proposal nothing has measured
+    // yet must not report itself clean.
+    mergeability: session.mergeability || null,
+    freshness: require('./proposal-freshness').readFreshness(session),
     externalAgent: session.external_agent || null,
     webPath: session.app_slug
       ? `${origin}/#app/${session.app_slug}/dev/sessions/${session.id}`
@@ -1379,9 +1410,19 @@ function registerTools(server, ctx) {
     if (issues.ok && Array.isArray(issues.body && issues.body.issues)) {
       openRequestCount = issues.body.issues.length;
     }
+    // #1442: the response key is `promoted`, and has been since the route was
+    // written. Reading `sessions` meant this silently answered 0 for every
+    // app that has ever been asked — an agent deciding whether to open a
+    // proposal was told there were none in flight, on an app with a dozen.
+    // Nothing failed and nothing logged; a wrong key reads as an empty list.
+    //
+    // Counted as "up for a vote", which is narrower than "in the list": the
+    // route also returns 'merging' rows, and a proposal already on its way in
+    // is not something a caller can influence.
     const promoted = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/promoted`);
-    if (promoted.ok && Array.isArray(promoted.body && promoted.body.sessions)) {
-      openProposalCount = promoted.body.sessions.length;
+    if (promoted.ok && Array.isArray(promoted.body && promoted.body.promoted)) {
+      openProposalCount = promoted.body.promoted
+        .filter((p) => p && p.status === 'promoted').length;
     }
     // Where the app's canonical default branch points, right now (#1433).
     // Best-effort for the same reason the counts above are: a GitHub hiccup
@@ -1957,7 +1998,18 @@ function registerTools(server, ctx) {
           .describe('The commit this verdict describes.'),
         stale: z.boolean()
           .describe('True when ranOnCommit is no longer the head, so even a passing verdict describes superseded '
-            + 'code. False when either side is unknown — an unprovable mismatch is not a proven one.'),
+            + 'code. False when either side is unknown — an unprovable mismatch is not a proven one. This is '
+            + 'BRANCH staleness only; read baseVerdict for the other axis.'),
+        ranOnBase: z.string().nullable()
+          .describe('The commit on the app\'s default branch that this run\'s verdict is a statement ABOUT. Null on '
+            + 'a row that predates the column.'),
+        baseVerdict: z.enum(['current', 'superseded', 'unknown']).nullable()
+          .describe("'superseded' means the default branch has moved past ranOnBase, so a passing verdict was "
+            + 'earned against code this proposal would no longer merge into. It does NOT mean the checks were '
+            + 'wrong, and it does not block the merge — but it is the reason a proposal can read 412 of 412 '
+            + "passing and still conflict. 'unknown' means nothing has measured it, which is not 'current'."),
+        baseBehindBy: z.number().nullable()
+          .describe('How many commits the default branch has moved since ranOnBase. Null when unmeasured.'),
         failing: z.array(z.string())
           .describe('Names of the tests that are not passing, capped at 50. While state is pending these are left '
             + 'over from the PREVIOUS run and may already be fixed.'),
@@ -1995,7 +2047,41 @@ function registerTools(server, ctx) {
       yesVotes: z.number().nullable(),
       noVotes: z.number().nullable(),
       votesRequired: z.number().nullable(),
-      behindMain: z.number().nullable(),
+      behindMain: z.number().nullable()
+        .describe('Commits the default branch has that this proposal does not, re-measured while the proposal '
+          + 'waits for votes rather than frozen at submission. 0 is a measurement; null means unmeasured.'),
+      mergeability: z.enum(['clean', 'conflict', 'unknown']).nullable()
+        .describe("Whether this proposal still merges into the default branch WITHOUT a human resolving anything. "
+          + "'conflict' is a prediction from GitHub, made before any merge is attempted, so it is the earliest "
+          + 'warning available and the one thing worth acting on before the vote finishes: sync with main and '
+          + "resubmit. 'unknown' is a real answer — GitHub computes mergeability lazily and reports nothing "
+          + 'while it does — and must never be read as clean.'),
+      freshness: z.object({
+        checkedAt: z.string().nullable()
+          .describe('When these numbers were last measured. Everything else in this block is null or stale '
+            + 'relative to this timestamp, not to now.'),
+        mainSha: z.string().nullable(),
+        mergeBaseSha: z.string().nullable()
+          .describe('The common ancestor of the default branch and this proposal\'s head — the commit a diff of '
+            + 'this proposal is actually against.'),
+        behindBy: z.number().nullable(),
+        aheadBy: z.number().nullable(),
+        mergeability: z.enum(['clean', 'conflict', 'unknown']).nullable(),
+        mergeabilityFiles: z.array(z.string())
+          .describe('Paths that could conflict: files BOTH sides changed since the merge base. GitHub exposes no '
+            + 'conflicting-file list, so this is an upper bound — two edits to opposite ends of one file appear '
+            + 'here and would merge fine. Start looking here, do not treat it as the conflict itself.'),
+        mergeabilityFilesComplete: z.boolean().nullable()
+          .describe('False when a compare hit GitHub\'s 300-file cap, so the list above is a sample.'),
+        checksRanOnBase: z.string().nullable(),
+        checksBaseVerdict: z.enum(['current', 'superseded', 'unknown']).nullable(),
+        checksBaseBehindBy: z.number().nullable(),
+        error: z.string().nullable()
+          .describe('Why the last measurement could not answer. When set, the numbers beside it are the previous '
+            + 'successful reading, not a fresh one.'),
+      }).describe('How this proposal stands against the default branch RIGHT NOW. These three numbers used to be '
+        + 'frozen at submission, so a proposal eight commits behind and conflicting in seven files reported itself '
+        + 'ready to merge with every check green. Read them before concluding a proposal is ready.'),
       baseSha: z.string().nullable()
         .describe('The upstream commit this proposal\'s branch started from. Compare all forty characters against '
           + 'your checkout\'s HEAD before writing code: a wrong base is otherwise caught only at submit_work, after '

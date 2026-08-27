@@ -19,7 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { mergeConflictHtml, proposalCardHtml } = require('./lib/dev-card-html');
+const { mergeConflictHtml, mergeabilityHtml, proposalCardHtml } = require('./lib/dev-card-html');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -171,3 +171,118 @@ test("detail: a 'failed' snapshot renders the red 'resolution failed' detail box
 // ordinary notifications in the merged hamburger. The card and detail
 // assertions above are the whole surface now, and MergeStatus is still the one
 // owner of the badge across every one of them.
+
+// ── #1442: the conflict nobody has attempted yet ───────────────────────
+//
+// Everything above is about merge_conflict_state, which is written only when
+// a real merge attempt failed. Proposal 3590 never got that far: the gate
+// only attempts a merge once a proposal already looks mergeable, so for the
+// entire time it was unmergeable it showed green checks and no conflict at
+// all. `mergeability` is GitHub's PREDICTION, measured while the votes are
+// still coming in, and these lock the two apart.
+
+const FRESH = (over) => ({
+  checkedAt: '2026-06-02T00:00:00Z',
+  mainSha: 'a'.repeat(40),
+  mergeBaseSha: 'b'.repeat(40),
+  behindBy: 8, aheadBy: 3,
+  mergeability: 'conflict',
+  mergeabilityFiles: ['dapp.json', 'src/routes/votes.js'],
+  mergeabilityFilesComplete: true,
+  checksRanOnBase: null, checksBaseVerdict: 'current', checksBaseBehindBy: 0,
+  error: null,
+  ...over,
+});
+
+test('detail: a predicted conflict renders its own box, distinct from the attempted one', () => {
+  const AppView = makeAppView(ME);
+  const html = mergeabilityHtml(AppView, baseProposal({ freshness: FRESH() }));
+  assert.match(html, /no longer merges into main on its own/, 'names the prediction, not an attempt');
+  assert.match(html, /Changed on both sides:/);
+  assert.match(html, /dapp\.json/);
+  assert.match(html, /src\/routes\/votes\.js/);
+  assert.match(html, /Some of those may still merge cleanly/,
+    'the file list is an upper bound and says so');
+  assert.match(html, /me<\/span> needs to bring it up to date/, 'names the creator');
+  assert.match(html, /Sync with main/, 'points at the way out');
+  assert.doesNotMatch(html, /A merge was attempted/, 'no attempt has been made');
+});
+
+test('detail: a capped file list is described as a sample', () => {
+  const AppView = makeAppView(ME);
+  const html = mergeabilityHtml(AppView, baseProposal({
+    freshness: FRESH({ mergeabilityFilesComplete: false }),
+  }));
+  assert.match(html, /That is a sample of the files/);
+});
+
+test('detail: a predicted conflict with no located files still explains itself', () => {
+  const AppView = makeAppView(ME);
+  const html = mergeabilityHtml(AppView, baseProposal({
+    freshness: FRESH({ mergeabilityFiles: [], mergeabilityFilesComplete: null }),
+  }));
+  assert.match(html, /no longer merges into main on its own/);
+  assert.doesNotMatch(html, /Changed on both sides/, 'no empty list header');
+});
+
+test('detail: an ATTEMPTED merge failure outranks the prediction', () => {
+  const AppView = makeAppView(ME);
+  const pr = baseProposal({
+    merge_conflict_state: 'conflict',
+    conflict_files: ['src/app.js'],
+    freshness: FRESH(),
+  });
+  assert.equal(mergeabilityHtml(AppView, pr), '', 'the prediction stands down');
+  assert.match(mergeConflictHtml(AppView, pr), /A merge was attempted/,
+    'and the record of the real attempt is what renders');
+});
+
+test('detail: a resolve in flight silences the prediction too', () => {
+  const AppView = makeAppView(ME);
+  assert.equal(
+    mergeabilityHtml(AppView, baseProposal({ resolving: true, freshness: FRESH() })),
+    '',
+    'no stale conflict box while a resolve is actively running'
+  );
+});
+
+test("detail: 'clean' and 'unknown' render nothing", () => {
+  const AppView = makeAppView(ME);
+  for (const m of ['clean', 'unknown', null]) {
+    assert.equal(
+      mergeabilityHtml(AppView, baseProposal({ freshness: FRESH({ mergeability: m }) })),
+      '',
+      `${m} is not a conflict`
+    );
+  }
+});
+
+test('detail: flat columns are read when the nested block is absent', () => {
+  // The votes routes serialize both — the nested `freshness` block and the
+  // raw columns — and older cached rows in the client only have the columns.
+  const AppView = makeAppView(ME);
+  const html = mergeabilityHtml(AppView, baseProposal({
+    mergeability: 'conflict',
+    mergeability_files: ['src/db/schema.sql'],
+    mergeability_files_complete: true,
+  }));
+  assert.match(html, /no longer merges into main on its own/);
+  assert.match(html, /src\/db\/schema\.sql/);
+});
+
+test('card: a predicted conflict is a blocked pill, not a green tally', () => {
+  const AppView = makeAppView(ME);
+  const html = proposalCardHtml(AppView, baseProposal({ freshness: FRESH() }));
+  assert.match(html, /Conflicts with main · 2/, 'the pill names it and counts the files');
+  assert.match(html, /gc-vote-count-blocked/, 'blocked tone, because it cannot merge');
+  assert.doesNotMatch(html, /Behind main/, 'the conflict outranks the behind badge');
+});
+
+test('card: the attempted-merge pill still wins over the predicted one', () => {
+  const AppView = makeAppView(ME);
+  const html = proposalCardHtml(AppView, baseProposal({
+    merge_conflict_state: 'conflict', freshness: FRESH(),
+  }));
+  assert.match(html, /Merge conflict/);
+  assert.doesNotMatch(html, /Conflicts with main/, 'one conflict pill, and it is the real one');
+});

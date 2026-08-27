@@ -6181,3 +6181,80 @@ ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS invited_by BIGINT
 CREATE INDEX IF NOT EXISTS idx_waitlist_signups_invited_by
   ON waitlist_signups (invited_by);
 COMMENT ON COLUMN waitlist_signups.invite_code IS 'staging:private';
+
+-- ── Proposal freshness (#1442) ─────────────────────────────────────────
+--
+-- Three numbers a voter reads off a promoted proposal — how far behind main
+-- it is, whether it merges cleanly, and what its checks ran against — were
+-- all frozen at submission time. Nothing re-derived them once a proposal was
+-- promoted and waiting for votes: every existing writer of behind_main and
+-- merge_conflict_state needs a worker turn, an imported-PR head change, or a
+-- merge attempt the gate only makes once a proposal is already mergeable. So
+-- a proposal eight commits behind main, conflicting in seven files, with 412
+-- checks passing against a base that had since been superseded, presented as
+-- ready to merge.
+--
+-- These columns are a WRITE-THROUGH CACHE of GitHub's own answers, filled by
+-- services/proposal-freshness.js from a leader-only sweeper pass and a
+-- TTL-gated refresh on single-proposal reads. Every one is nullable and
+-- advisory: NULL means "not measured yet", which reads as "unknown" rather
+-- than as a claim, and no merge gate consults any of them.
+--
+-- The one exception is behind_main, which keeps its existing column and its
+-- existing role in the merge gate. The freshness pass writes THROUGH to it
+-- from freshness_behind_by, so the gate keeps reading one number and that
+-- number stops being stale.
+--
+-- Why NOT reuse merge_conflict_state / conflict_files for the predicted
+-- conflict: those two mean "a merge was actually attempted and this is what
+-- happened", which is what conflict-resolver.js's `unblocked` query and the
+-- merge gate both key off. A PREDICTION is a different claim, so it gets its
+-- own columns and the resolver never sees it.
+--
+--   checks_base_sha            main's head at the moment this proposal's
+--                              checks snapshot was opened. The missing
+--                              column: without it, checks staleness could
+--                              only ever be branch-scoped ("did the branch
+--                              move?"), never base-scoped ("is what it was
+--                              tested against still what it would merge
+--                              into?").
+--   freshness_main_sha         main's head at the last refresh.
+--   freshness_merge_base_sha   merge base of main and the proposal head.
+--   freshness_behind_by        commits on main the proposal does not have.
+--   freshness_ahead_by         commits the proposal has that main does not.
+--   mergeability               'clean' | 'conflict' | 'unknown', from the
+--                              pull request's own `mergeable` field. GitHub
+--                              answers null while it computes, which is why
+--                              'unknown' is a first-class value and never
+--                              overwrites a known 'conflict'.
+--   mergeability_files         predicted conflicting paths: the intersection
+--                              of both sides' changed files. GitHub exposes
+--                              no conflicting-file list, so this is an upper
+--                              bound on where a human would have to look.
+--   mergeability_files_complete  false when either compare hit GitHub's
+--                              300-file cap, so the list is a sample.
+--   checks_base_verdict        'current' | 'superseded' | 'unknown' —
+--                              whether checks_base_sha is still an ancestor
+--                              of main's head.
+--   checks_base_behind_by      how many commits main has moved since.
+--   freshness_checked_at       when the last refresh ran, successful or not.
+--   freshness_error            why the last refresh could not answer. A
+--                              refresh NEVER throws; it records this and
+--                              leaves the previous numbers in place.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_base_sha VARCHAR(40);
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS freshness_main_sha VARCHAR(40);
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS freshness_merge_base_sha VARCHAR(40);
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS freshness_behind_by INTEGER;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS freshness_ahead_by INTEGER;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS mergeability TEXT;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS mergeability_files JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS mergeability_files_complete BOOLEAN;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_base_verdict TEXT;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_base_behind_by INTEGER;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS freshness_checked_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS freshness_error TEXT;
+-- The sweeper's candidate ordering: promoted rows, least-recently-checked
+-- first, NULLs (never checked) ahead of everything.
+CREATE INDEX IF NOT EXISTS chat_sessions_freshness_checked_idx
+  ON chat_sessions (freshness_checked_at NULLS FIRST)
+  WHERE status = 'promoted';
