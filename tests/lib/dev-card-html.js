@@ -74,6 +74,20 @@ function kanbanHtml(AppView) {
   return renderToHtml(createElement(m.DevKanban));
 }
 
+/**
+ * Render the board's tab strip from the same `AppView._kanbanView()`.
+ *
+ * A SEPARATE call from kanbanHtml, because the strip is a separate ROW: it
+ * lives in the frame above `#dev-body` rather than inside the board, so
+ * `All` can render the stream without deleting the control that asked for
+ * it. Both read `devKanbanStore`, which is why one publish serves both.
+ */
+function boardTabsHtml(AppView) {
+  const m = mod();
+  m.devKanbanStore.set(AppView._kanbanView());
+  return renderToHtml(createElement(m.BoardTabs));
+}
+
 // ── The topic head's body blocks ────────────────────────────────────────
 //
 // `_detailActionsHtml`, `_proposalDetailsHtml`, `_checksDetailHtml`,
@@ -240,6 +254,7 @@ module.exports = {
   mergedRowHtml,
   feedHtml,
   kanbanHtml,
+  boardTabsHtml,
   listRowHtml,
   columnHtml,
   setCardNow,

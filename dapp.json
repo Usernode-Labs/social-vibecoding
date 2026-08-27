@@ -1361,7 +1361,7 @@
       "expectSelector": "#dev-forum-scroll #dev-body"
     },
     {
-      "name": "A ?view=kanban deep link resolves onto the kanban board",
+      "name": "?view=kanban still forces the columns as a deep-link layout override",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body #dev-kanban-board"
     },
@@ -1397,14 +1397,29 @@
       "expectSelector": "#board-filters-modal #board-filters-assignee"
     },
     {
-      "name": "Mobile kanban tab strip ships one tab per column (#814)",
+      "name": "The board's tab strip ships one tab per column (#814)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"inreview\"]"
     },
     {
-      "name": "Kanban board marks exactly one active column for the tabs (#814)",
+      "name": "The strip leads with All, at every width — it is no longer phone-only",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban[data-kanban-active=\"issues\"] .dev-kanban-col-active"
+      "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"all\"][aria-selected=\"true\"]"
+    },
+    {
+      "name": "The strip is pinned above the card scroller, not inside it",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-tabs + #dev-forum-scroll"
+    },
+    {
+      "name": "All draws every column on a wide screen, and marks none of them active",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban[data-kanban-active=\"all\"] #dev-kanban-col-done:not(.dev-kanban-col-active)"
+    },
+    {
+      "name": "A column tab marks exactly one active column for the strip (#814)",
+      "path": "/?demo=1&col=issues#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban[data-kanban-active=\"issues\"] #dev-kanban-col-issues.dev-kanban-col-active"
     },
     {
       "name": "?col= deep link selects that kanban tab (#814)",
@@ -1443,9 +1458,9 @@
       "expectSelector": "#dev-body #dev-feed"
     },
     {
-      "name": "Kanban survives as the resolved mode on a ?view=kanban deep link",
-      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-kanban-board"
+      "name": "?col= wins over ?view= — a column tab beats a layout override",
+      "path": "/?demo=1&view=feed&col=done#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban[data-kanban-active=\"done\"] #dev-kanban-col-done.dev-kanban-col-active"
     },
     {
       "name": "The Feed renders activity rows into #dev-feed",

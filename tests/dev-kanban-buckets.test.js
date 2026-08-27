@@ -491,97 +491,17 @@ test('loadMoreMerged repaints the body in Feed mode too, and never #gc-merged', 
   assert.equal(writes.length, 0, '#gc-merged is never touched — it does not exist');
 });
 
-// ── _getViewMode default: explicit preference, else width-based (#462) ─────
-
-// A matchMedia stub that answers `wide` for the 640px multi-column query and
-// counts how
-// many times it is evaluated (for the once-per-page-load memoization test).
-const mediaStub = (wide, counter) => (query) => {
-  if (counter) counter.n += 1;
-  return { media: query, matches: wide };
-};
-
-test('no stored value + wide viewport → kanban by default', () => {
-  const ctx = makeCtx({
-    localStorage: { getItem: () => null, setItem: () => {} },
-    matchMedia: mediaStub(true),
-  });
-  assert.equal(ctx.__AppView._getViewMode(), 'kanban');
-});
-
-test('no stored value + narrow viewport → feed by default', () => {
-  const ctx = makeCtx({
-    localStorage: { getItem: () => null, setItem: () => {} },
-    matchMedia: mediaStub(false),
-  });
-  assert.equal(ctx.__AppView._getViewMode(), 'feed');
-});
-
-test("a stored 'list' migrates to feed, and still beats the kanban default", () => {
-  // 'list' is the retired name for exactly this surface, so a viewer who last
-  // left the board there must land on the Feed — not on the width default,
-  // which at this viewport would silently override their choice with kanban.
-  const ctx = makeCtx({
-    localStorage: { getItem: () => 'list', setItem: () => {} },
-    matchMedia: mediaStub(true),
-  });
-  assert.equal(ctx.__AppView._getViewMode(), 'feed');
-});
-
-test('a stored pm / report preference migrates to the board', () => {
-  // The two retired overviews were board-shaped, so the board is the nearest
-  // surviving surface. Anything else would read as "my setting was forgotten".
-  for (const stored of ['pm', 'report']) {
-    const ctx = makeCtx({
-      localStorage: { getItem: () => stored, setItem: () => {} },
-      matchMedia: mediaStub(false),
-    });
-    assert.equal(ctx.__AppView._getViewMode(), 'kanban', `${stored} → kanban`);
-  }
-});
-
-test('stored kanban beats the narrow-viewport list default', () => {
-  const ctx = makeCtx({
-    localStorage: { getItem: () => 'kanban', setItem: () => {} },
-    matchMedia: mediaStub(false),
-  });
-  assert.equal(ctx.__AppView._getViewMode(), 'kanban');
-});
-
-test('no matchMedia in the environment → feed (guarded fallback)', () => {
-  const ctx = makeCtx({
-    localStorage: { getItem: () => null, setItem: () => {} },
-  });
-  assert.equal(ctx.__AppView._getViewMode(), 'feed');
-});
-
-test('unrecognized stored garbage falls through to the width-based default', () => {
-  const ctx = makeCtx({
-    localStorage: { getItem: () => 'banana', setItem: () => {} },
-    matchMedia: mediaStub(true),
-  });
-  assert.equal(ctx.__AppView._getViewMode(), 'kanban');
-});
-
-test('width-based default is memoized: media query evaluated once per context', () => {
-  const counter = { n: 0 };
-  const ctx = makeCtx({
-    localStorage: { getItem: () => null, setItem: () => {} },
-    matchMedia: mediaStub(true, counter),
-  });
-  const AppView = ctx.__AppView;
-  assert.equal(AppView._getViewMode(), 'kanban');
-  assert.equal(AppView._getViewMode(), 'kanban');
-  assert.equal(AppView._getViewMode(), 'kanban');
-  assert.equal(counter.n, 1, 'matchMedia consulted exactly once');
-});
-
-test('auto-default is never written back to localStorage', () => {
-  const writes = [];
-  const ctx = makeCtx({
-    localStorage: { getItem: () => null, setItem: (k, v) => writes.push([k, v]) },
-    matchMedia: mediaStub(true),
-  });
-  assert.equal(ctx.__AppView._getViewMode(), 'kanban');
-  assert.equal(writes.length, 0, 'reading the mode must not persist the default');
-});
+// ── The layout preference, retired ─────────────────────────────────────
+//
+// Nine tests stood here, over `_getViewMode()`: the width-based default
+// (#462), a stored `devViewMode`, the `list` / `pm` / `report` migrations,
+// the once-per-page-load memoization, and the rule that reading the default
+// never persisted it.
+//
+// There is no preference left to read. The board's layout falls out of the
+// tab and the viewport (`_boardLayout()`), nobody picks it and nothing
+// stores it — so what survives of these is in tests/dev-kanban-tabs.test.js,
+// under "The layout: a consequence of the tab and the viewport": the
+// viewport default, the guarded no-matchMedia fallback, the once-per-load
+// memoization, and the `?view=` deep-link alias that inherited the
+// migration table.

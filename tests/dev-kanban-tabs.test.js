@@ -1,19 +1,32 @@
-// #814: mobile kanban tabs. Below 640px the Dev board renders ONE column at
-// a time behind a tab strip instead of scrolling sideways. The switch is
-// presentation-only — every column stays in the markup and CSS (app.css,
-// @media max-width: 639px) decides what's visible — so these tests assert
-// the STRING _renderKanbanInner() produces:
+// #814, re-cut: THE BOARD'S ONE STRIP.
 //
-//   - one tab per column, in board order, labelled with the same count the
-//     column header shows (Done = the server total, or the matching count
-//     while filtering)
-//   - exactly one column carries `dev-kanban-col-active`, agreeing with
-//     #dev-kanban's data-kanban-active
-//   - the active tab comes from the per-app sessionStorage value or the
-//     `?col=` URL override, and anything unrecognized falls back to Issues
+// The board used to carry two display controls for one question. A
+// Kanban|Feed mode (a localStorage preference, last drawn as a pair of pills
+// under the Improve panel's Board row) chose the LAYOUT, and inside kanban
+// this strip chose the COLUMN — except CSS hid the strip above 640px, so on a
+// desktop it did not exist and on a phone the layout pills governed a board
+// you could only see one column of anyway.
 //
-// Plus the `?view=` override on _getViewMode() (the screenshot/deep-link
-// escape hatch that lets a fresh 390px browser land on the board at all).
+// There is one strip now, at every width:
+//
+//     All · Issues · Underway · In review · Done
+//
+//   - `All` is the whole board drawn to fit: the four columns side by side
+//     where there is room, the recency-ordered stream where there is not.
+//     It marks NO column active, and carries no count (Done reports a
+//     lifetime total, so any sum is either wrong or enormous).
+//   - every other tab is that column alone, on a phone and on a desktop
+//     alike — `#dev-kanban[data-kanban-active]` is what CSS reads, not a
+//     media query.
+//
+// So these tests assert three things: the strip's markup (which now comes
+// from board-tabs.tsx, a row of the FRAME — it has to outlive the body it
+// switches), the columns' markup (still dev-kanban.tsx), and the resolution
+// of a tab from `?col=`, the per-app sessionStorage value and the default.
+//
+// `?view=` survives as a deep-link/capture LAYOUT override with no control
+// behind it: dapp.json shoots every check at 1280x800, where `All` is the
+// columns, so without it the stream would have no end-to-end coverage.
 //
 // Same vm-sandbox approach as tests/dev-kanban-buckets.test.js: app-view.js
 // is loaded into a context with just enough globals, and the render helpers
@@ -28,7 +41,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { kanbanHtml } = require('./lib/dev-card-html');
+const { kanbanHtml, boardTabsHtml, api } = require('./lib/dev-card-html');
+const { renderToHtml, createElement } = require('./lib/render-tsx');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -120,39 +134,76 @@ const activeCols = (html) =>
 
 const activeAttr = (html) => (html.match(/data-kanban-active="([^"]+)"/) || [])[1];
 
+const ALL_TABS = ['all', 'issues', 'inprogress', 'inreview', 'done'];
+
 // ── Tab strip shape ────────────────────────────────────────────────────────
 
-test('renders one tab per column, in board order, inside a hidden-at-sm tablist', () => {
+test('renders All plus one tab per column, in board order, in one tablist', () => {
   const AppView = makeAppView();
   seedBoard(AppView);
-  const html = kanbanHtml(AppView);
-  assert.deepEqual(tabKeys(html), ['issues', 'inprogress', 'inreview', 'done']);
+  const html = boardTabsHtml(AppView);
+  assert.deepEqual(tabKeys(html), ALL_TABS);
   assert.match(html, /id="dev-kanban-tabs"[^>]*role="tablist"/);
-  // Desktop keeps every column: the strip is the only thing hidden there.
-  assert.match(html, /id="dev-kanban-tabs"[^>]*class="sm:hidden/);
 });
 
-test('the tab strip is emitted before the board, which keeps its #dev-kanban id', () => {
+test('the strip is NOT hidden above 640px any more — it is the board control', () => {
   const AppView = makeAppView();
   seedBoard(AppView);
-  const html = kanbanHtml(AppView);
-  assert.ok(html.indexOf('id="dev-kanban-tabs"') < html.indexOf('id="dev-kanban"'),
-    'tabs render above the columns');
+  const html = boardTabsHtml(AppView);
+  // `sm:hidden` is exactly what made this control phone-only, which is the
+  // whole bug: above 640px the board had no way to pick a column and the
+  // layout pills lived in another surface entirely.
+  assert.doesNotMatch(html, /id="dev-kanban-tabs"[^>]*sm:hidden/);
+});
+
+test('the strip is a separate row from the board, so All can render the stream', () => {
+  const AppView = makeAppView();
+  seedBoard(AppView);
+  // It used to be emitted inside the kanban's own markup, which put it
+  // inside #dev-body — the host _repaintDevBody() replaces wholesale. A
+  // control that deleted itself the first time you asked for the stream.
+  assert.doesNotMatch(kanbanHtml(AppView), /id="dev-kanban-tabs"/);
+  assert.match(boardTabsHtml(AppView), /id="dev-kanban-tabs"/);
   // The shipped dapp.json test asserts #dev-kanban — it must survive.
-  assert.match(html, /<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2"/);
+  assert.match(kanbanHtml(AppView), /<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2"/);
 });
 
-test('each tab is a real button wired to its column for assistive tech', () => {
+test('each column tab is a real button wired to its column for assistive tech', () => {
   const AppView = makeAppView();
   seedBoard(AppView);
-  const html = kanbanHtml(AppView);
+  const html = boardTabsHtml(AppView);
+  const cols = kanbanHtml(AppView);
   for (const key of ['issues', 'inprogress', 'inreview', 'done']) {
     assert.match(html, new RegExp(`role="tab" id="dev-kanban-tab-${key}"`));
     assert.match(html, new RegExp(`aria-controls="dev-kanban-col-${key}"`));
-    assert.match(html, new RegExp(`id="dev-kanban-col-${key}"`));
+    assert.match(cols, new RegExp(`id="dev-kanban-col-${key}"`));
   }
+  // `All` controls whichever surface is under the strip — on a narrow
+  // viewport that is #dev-feed — so it names no single element.
+  assert.match(html, /role="tab" id="dev-kanban-tab-all"/);
+  const allTab = html.slice(html.indexOf('id="dev-kanban-tab-all"'), html.indexOf('</button>'));
+  assert.doesNotMatch(allTab, /aria-controls=/);
   // Exactly one tab is selected at a time.
   assert.equal((html.match(/aria-selected="true"/g) || []).length, 1);
+});
+
+test('the strip renders nothing until the first publish, then skeleton counts', () => {
+  // It ships in the FRAME, mounted before app-view.js has published anything,
+  // so a cold board would otherwise paint five tabs with nothing behind them.
+  // The store's initial `cols: []` is that moment.
+  const m = api();
+  m.devKanbanStore.set({ activeTab: 'all', cols: [], loading: true });
+  assert.equal(renderToHtml(createElement(m.BoardTabs)), '');
+
+  // Once the board publishes, the counts are placeholders rather than zeros
+  // while the fetch is in flight — the same skeleton the columns draw, and
+  // for the same reason: a confident `0` reads as an empty board.
+  const AppView = makeAppView();
+  seedBoard(AppView);
+  AppView._devDataReady = false;
+  const html = boardTabsHtml(AppView);
+  assert.deepEqual(tabKeys(html), ALL_TABS);
+  assert.doesNotMatch(html, /data-kanban-tab="issues"[\s\S]{0,400}?>2</);
 });
 
 // ── Counts match the column headers ────────────────────────────────────────
@@ -160,90 +211,101 @@ test('each tab is a real button wired to its column for assistive tech', () => {
 test('tab counts mirror the column header counts', () => {
   const AppView = makeAppView();
   seedBoard(AppView, { issues: 2, merged: 3 });
-  const html = kanbanHtml(AppView);
+  const html = boardTabsHtml(AppView);
   assert.equal(tabCount(html, 'issues'), '2');
   assert.equal(tabCount(html, 'inreview'), '1');
   assert.equal(tabCount(html, 'done'), '3');
-  // Same numbers in the (desktop-only) column headings.
-  assert.match(html, /Issues <span[^>]*>· 2<\/span>/);
-  assert.match(html, /Done <span[^>]*>· 3<\/span>/);
+  // Same numbers in the column headings.
+  const cols = kanbanHtml(AppView);
+  assert.match(cols, /Issues <span[^>]*>· 2<\/span>/);
+  assert.match(cols, /Done <span[^>]*>· 3<\/span>/);
+});
+
+test('All carries no number — it is the absence of a filter, not a bucket', () => {
+  // A fifth number in this strip would read as the sum of the other four and
+  // could not be one: Done reports the true merged TOTAL rather than the rows
+  // it has loaded (#433), so the honest sum is a lifetime figure that dwarfs
+  // the rest of the strip.
+  const AppView = makeAppView();
+  seedBoard(AppView, { issues: 2, merged: 3, total: 250 });
+  assert.equal(tabCount(boardTabsHtml(AppView), 'all'), '');
 });
 
 test('Done tab shows the server total, not the loaded page length', () => {
   const AppView = makeAppView();
   seedBoard(AppView, { merged: 3, total: 25 });
-  const html = kanbanHtml(AppView);
-  assert.equal(tabCount(html, 'done'), '25');
-  assert.match(html, /Done <span[^>]*>· 25<\/span>/);
+  assert.equal(tabCount(boardTabsHtml(AppView), 'done'), '25');
+  assert.match(kanbanHtml(AppView), /Done <span[^>]*>· 25<\/span>/);
 });
 
 test('while filtering, the Done tab shows the matching count instead of the total', () => {
   const AppView = makeAppView();
   seedBoard(AppView, { merged: 3, total: 25 });
   AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'PR 1' };
-  const html = kanbanHtml(AppView);
-  assert.equal(tabCount(html, 'done'), '1');
-  assert.match(html, /Done <span[^>]*>· 1<\/span>/);
+  assert.equal(tabCount(boardTabsHtml(AppView), 'done'), '1');
+  assert.match(kanbanHtml(AppView), /Done <span[^>]*>· 1<\/span>/);
 });
 
 test('an empty column keeps its tab, showing 0 next to the in-column placeholder', () => {
   const AppView = makeAppView();
   seedBoard(AppView, { issues: 0, merged: 0 });
-  const html = kanbanHtml(AppView);
-  assert.deepEqual(tabKeys(html), ['issues', 'inprogress', 'inreview', 'done']);
+  const html = boardTabsHtml(AppView);
+  assert.deepEqual(tabKeys(html), ALL_TABS);
   assert.equal(tabCount(html, 'issues'), '0');
   assert.equal(tabCount(html, 'done'), '0');
-  assert.match(html, /Nothing here yet/);
+  assert.match(kanbanHtml(AppView), /Nothing here yet/);
 });
 
 test('an emptied-by-filter column keeps its tab and says so in the column', () => {
   const AppView = makeAppView();
   seedBoard(AppView, { issues: 2, merged: 2 });
   AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'zzz-no-match' };
-  const html = kanbanHtml(AppView);
-  assert.equal(tabCount(html, 'issues'), '0');
-  assert.match(html, /No matching cards/);
+  assert.equal(tabCount(boardTabsHtml(AppView), 'issues'), '0');
+  assert.match(kanbanHtml(AppView), /No matching cards/);
 });
 
-// ── Active column marking ──────────────────────────────────────────────────
+// ── Active marking ─────────────────────────────────────────────────────────
 
-test('exactly one column is marked active, and it agrees with data-kanban-active', () => {
+test('All is the default, and marks NO column active', () => {
   const AppView = makeAppView();
   seedBoard(AppView);
-  const html = kanbanHtml(AppView);
-  assert.deepEqual(activeCols(html), ['issues']);
-  assert.equal(activeAttr(html), 'issues');
+  assert.match(boardTabsHtml(AppView), /id="dev-kanban-tab-all"[^>]*aria-selected="true"/);
+  const cols = kanbanHtml(AppView);
+  assert.deepEqual(activeCols(cols), []);
+  // CSS reads this attribute, not a media query: `all` draws every column.
+  assert.equal(activeAttr(cols), 'all');
 });
 
-test('the active tab defaults to Issues with nothing stored', () => {
+test('a column tab marks exactly one column, agreeing with data-kanban-active', () => {
   const AppView = makeAppView();
+  AppView._boardTab = 'inreview';
   seedBoard(AppView);
-  const html = kanbanHtml(AppView);
-  assert.match(html, /id="dev-kanban-tab-issues"[^>]*aria-selected="true"/);
+  assert.deepEqual(activeCols(kanbanHtml(AppView)), ['inreview']);
+  assert.equal(activeAttr(kanbanHtml(AppView)), 'inreview');
+  assert.match(boardTabsHtml(AppView), /id="dev-kanban-tab-inreview"[^>]*aria-selected="true"/);
 });
 
 test('a stored per-app tab is honoured by the render', () => {
   const AppView = makeAppView({
     sessionStorage: { getItem: (k) => (k === 'devKanbanTab:demo-app' ? 'done' : null), setItem: () => {}, removeItem: () => {} },
   });
-  AppView._kanbanTab = AppView._loadKanbanTab('demo-app');
+  AppView._boardTab = AppView._loadBoardTab('demo-app');
   seedBoard(AppView);
-  const html = kanbanHtml(AppView);
-  assert.deepEqual(activeCols(html), ['done']);
-  assert.equal(activeAttr(html), 'done');
-  assert.match(html, /id="dev-kanban-tab-done"[^>]*aria-selected="true"/);
+  assert.deepEqual(activeCols(kanbanHtml(AppView)), ['done']);
+  assert.equal(activeAttr(kanbanHtml(AppView)), 'done');
+  assert.match(boardTabsHtml(AppView), /id="dev-kanban-tab-done"[^>]*aria-selected="true"/);
 });
 
-test('an unknown stored tab falls back to Issues rather than hiding every column', () => {
+test('an unknown stored tab falls back to All rather than hiding every column', () => {
   const AppView = makeAppView({
     sessionStorage: { getItem: () => 'backlog', setItem: () => {}, removeItem: () => {} },
   });
-  assert.equal(AppView._loadKanbanTab('demo-app'), 'issues');
-  AppView._kanbanTab = 'backlog';
+  assert.equal(AppView._loadBoardTab('demo-app'), 'all');
+  AppView._boardTab = 'backlog';
   seedBoard(AppView);
-  const html = kanbanHtml(AppView);
-  assert.deepEqual(activeCols(html), ['issues']);
-  assert.equal(activeAttr(html), 'issues');
+  // The render never trusts the field blindly either.
+  assert.equal(activeAttr(kanbanHtml(AppView)), 'all');
+  assert.deepEqual(activeCols(kanbanHtml(AppView)), []);
 });
 
 test('the default tab is stored as absence, a non-default tab is persisted', () => {
@@ -256,12 +318,17 @@ test('the default tab is stored as absence, a non-default tab is persisted', () 
       removeItem: (k) => { removed.push(k); },
     },
   });
-  AppView._kanbanTab = 'inreview';
-  AppView._saveKanbanTab('demo-app');
+  AppView._boardTab = 'inreview';
+  AppView._saveBoardTab('demo-app');
   assert.equal(writes['devKanbanTab:demo-app'], 'inreview');
-  AppView._kanbanTab = 'issues';
-  AppView._saveKanbanTab('demo-app');
+  // `all` is the default now, so IT is the one that leaves no residue —
+  // `issues` is an ordinary stored choice.
+  AppView._boardTab = 'all';
+  AppView._saveBoardTab('demo-app');
   assert.deepEqual(removed, ['devKanbanTab:demo-app']);
+  AppView._boardTab = 'issues';
+  AppView._saveBoardTab('demo-app');
+  assert.equal(writes['devKanbanTab:demo-app'], 'issues');
 });
 
 // ── ?col= override ─────────────────────────────────────────────────────────
@@ -271,11 +338,18 @@ test('?col= seeds the active tab and beats the stored value', () => {
     search: '?demo=1&col=inreview',
     sessionStorage: { getItem: () => 'done', setItem: () => {}, removeItem: () => {} },
   });
-  AppView._kanbanTab = AppView._loadKanbanTab('demo-app');
+  AppView._boardTab = AppView._loadBoardTab('demo-app');
   seedBoard(AppView);
-  const html = kanbanHtml(AppView);
-  assert.deepEqual(activeCols(html), ['inreview']);
-  assert.equal(activeAttr(html), 'inreview');
+  assert.deepEqual(activeCols(kanbanHtml(AppView)), ['inreview']);
+  assert.equal(activeAttr(kanbanHtml(AppView)), 'inreview');
+});
+
+test('?col=all is valid and means the whole board', () => {
+  const AppView = makeAppView({
+    search: '?col=all',
+    sessionStorage: { getItem: () => 'done', setItem: () => {}, removeItem: () => {} },
+  });
+  assert.equal(AppView._loadBoardTab('demo-app'), 'all');
 });
 
 test('a garbage ?col= is ignored in favour of the stored tab', () => {
@@ -283,95 +357,124 @@ test('a garbage ?col= is ignored in favour of the stored tab', () => {
     search: '?col=nonsense',
     sessionStorage: { getItem: () => 'done', setItem: () => {}, removeItem: () => {} },
   });
-  assert.equal(AppView._loadKanbanTab('demo-app'), 'done');
+  assert.equal(AppView._loadBoardTab('demo-app'), 'done');
 });
 
-test('no ?col= and no stored value → Issues', () => {
+test('no ?col= and no stored value → All', () => {
   const AppView = makeAppView({ search: '?demo=1' });
-  assert.equal(AppView._loadKanbanTab('demo-app'), 'issues');
+  assert.equal(AppView._loadBoardTab('demo-app'), 'all');
 });
 
-// ── ?view= override on the view mode ───────────────────────────────────────
+// ── The layout: a consequence of the tab and the viewport ──────────────────
 
-test('?view=kanban wins over the narrow-viewport list default', () => {
-  const AppView = makeAppView({
-    search: '?view=kanban',
-    matchMedia: () => ({ matches: false }), // phone frame
-  });
-  assert.equal(AppView._getViewMode(), 'kanban');
-});
-
-test('?view=feed wins over a stored kanban preference', () => {
-  const AppView = makeAppView({
-    search: '?view=feed',
-    matchMedia: () => ({ matches: true }),
-    localStorage: { getItem: () => 'kanban', setItem: () => {} },
-  });
-  assert.equal(AppView._getViewMode(), 'feed');
-});
-
-test('?view=list still resolves — the override is migrated, not just validated', () => {
-  // `?view=list` is in the wild: capture routes, bookmarks and the dapp.json
-  // checks all carry it, and #814's whole point was that a fresh browser can
-  // be pointed straight at a given view. Rejecting it would silently fall back
-  // to the width default, which at a desktop viewport is the OTHER tab.
-  const AppView = makeAppView({
-    search: '?view=list',
-    matchMedia: () => ({ matches: true }),
-    localStorage: { getItem: () => 'kanban', setItem: () => {} },
-  });
-  assert.equal(AppView._getViewMode(), 'feed');
-});
-
-test('an unrecognized ?view= leaves the existing resolution untouched', () => {
-  const AppView = makeAppView({
-    search: '?view=sideways',
-    matchMedia: () => ({ matches: true }),
-  });
-  assert.equal(AppView._getViewMode(), 'kanban'); // width default, unchanged
-});
-
-test('toggling the view mode retires the ?view= override so the click sticks', () => {
-  const store = { devViewMode: 'kanban' };
-  const AppView = makeAppView({
-    search: '?view=kanban',
-    matchMedia: () => ({ matches: false }),
-    localStorage: {
-      getItem: (k) => (k in store ? store[k] : null),
-      setItem: (k, v) => { store[k] = v; },
-    },
-  });
-  assert.equal(AppView._getViewMode(), 'kanban');
-  AppView._setViewMode('feed');
-  assert.equal(AppView._getViewMode(), 'feed', 'the explicit choice wins over the URL');
-});
-
-test('no ?view= at all keeps the #462 width default', () => {
+test('All is the columns where there is room and the stream where there is not', () => {
   const wide = makeAppView({ search: '', matchMedia: () => ({ matches: true }) });
-  assert.equal(wide._getViewMode(), 'kanban');
+  assert.equal(wide._boardLayout(), 'columns');
   const narrow = makeAppView({ search: '', matchMedia: () => ({ matches: false }) });
-  assert.equal(narrow._getViewMode(), 'feed');
+  assert.equal(narrow._boardLayout(), 'stream');
+});
+
+test('a named column is ALWAYS the columns — there is no single-column stream', () => {
+  const narrow = makeAppView({ search: '', matchMedia: () => ({ matches: false }) });
+  narrow._boardTab = 'done';
+  assert.equal(narrow._boardLayout(), 'columns');
+});
+
+test('no matchMedia in the environment → the stream (guarded fallback)', () => {
+  const AppView = makeAppView({ search: '', matchMedia: undefined });
+  assert.equal(AppView._boardLayout(), 'stream');
+});
+
+test('the viewport is resolved once per page load, not per read', () => {
+  // The two paired reads inside async flows like loadMoreMerged must not
+  // disagree because the window crossed 640px between them.
+  let calls = 0;
+  const AppView = makeAppView({
+    search: '',
+    matchMedia: () => { calls += 1; return { matches: true }; },
+  });
+  AppView._boardLayout();
+  AppView._boardLayout();
+  AppView._boardLayout();
+  assert.equal(calls, 1);
+});
+
+// ── ?view= as a deep-link layout override ──────────────────────────────────
+
+test('?view=feed forces the stream on a wide viewport', () => {
+  // The capture container shoots at 1280x800, where `All` is the columns.
+  // Without this the stream — a real surface every phone sees — would have no
+  // end-to-end coverage at all.
+  const AppView = makeAppView({ search: '?view=feed', matchMedia: () => ({ matches: true }) });
+  assert.equal(AppView._boardLayout(), 'stream');
+});
+
+test('?view=kanban forces the columns on a narrow viewport', () => {
+  const AppView = makeAppView({ search: '?view=kanban', matchMedia: () => ({ matches: false }) });
+  assert.equal(AppView._boardLayout(), 'columns');
+});
+
+test('?view=list still resolves — the alias is migrated, not just validated', () => {
+  // `?view=list` is in the wild: capture routes, bookmarks and the dapp.json
+  // checks all carry it. Rejecting it would silently fall back to the
+  // viewport, which at a desktop width is the OTHER layout.
+  const AppView = makeAppView({ search: '?view=list', matchMedia: () => ({ matches: true }) });
+  assert.equal(AppView._boardLayout(), 'stream');
+});
+
+test('the retired board-shaped names resolve to the columns', () => {
+  for (const name of ['pm', 'report']) {
+    const AppView = makeAppView({ search: `?view=${name}`, matchMedia: () => ({ matches: false }) });
+    assert.equal(AppView._boardLayout(), 'columns', `?view=${name}`);
+  }
+});
+
+test('an unrecognized ?view= leaves the viewport to decide', () => {
+  const AppView = makeAppView({ search: '?view=sideways', matchMedia: () => ({ matches: true }) });
+  assert.equal(AppView._boardLayout(), 'columns');
+});
+
+test('?col= wins over ?view= — one column is a narrower instruction', () => {
+  const AppView = makeAppView({ search: '?view=feed&col=done', matchMedia: () => ({ matches: true }) });
+  AppView._boardTab = AppView._loadBoardTab('demo-app');
+  assert.equal(AppView._boardTab, 'done');
+  assert.equal(AppView._boardLayout(), 'columns');
+});
+
+test('there is no stored layout preference left to read or write', () => {
+  // The Kanban|Feed pills wrote localStorage `devViewMode`. Nothing reads it
+  // now, and a value an older build left there is inert rather than migrated:
+  // both modes it can name resolve to what `All` already shows.
+  // Comments still name them, deliberately — the retirement is the thing a
+  // future editor needs to find. This is about live code.
+  const code = APP_VIEW_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  assert.doesNotMatch(code, /devViewMode/);
+  assert.doesNotMatch(code, /_getViewMode|_setViewMode|_selectViewMode/);
 });
 
 // ── The single-column ↔ multi-column breakpoint ─────────────────────────────
-// One number lives in three places (the JS width default, the tab-strip CSS
-// block, the Tailwind class that hides the strip). It was lowered from 1024px
-// to 640px, so pin all three together — a future edit to one of them alone
-// would silently split the board's layout from its tab strip.
+// One number lives in two places now (the JS viewport check and the
+// 640-1023px CSS band). It used to live in three — the third was `sm:hidden`
+// on the strip, which is what made the control phone-only.
 
-test('the 640px breakpoint agrees across the JS default, app.css and sm:hidden', () => {
+test('the 640px breakpoint agrees between the JS check and app.css', () => {
   const AppView = makeAppView();
   assert.equal(AppView.KANBAN_MULTICOL_MEDIA, '(min-width: 640px)');
 
   const css = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8'
   );
-  // Single column (tab strip) strictly below 640px …
-  assert.match(css, /@media \(max-width: 639px\) \{[^}]*#dev-kanban \{ overflow-x: hidden; \}/);
-  // … and from 640px up the columns are side by side. In the band the
-  // breakpoint reclaimed they stay in ONE row at the readable 16rem width
-  // and the board scrolls sideways — it must never wrap, and it must never
-  // lift the floor (that would squeeze four columns into ~150px each).
+  // WHICH columns show is an attribute, at every width — not a media query.
+  assert.match(css, /#dev-kanban:not\(\[data-kanban-active="all"\]\) \{ overflow-x: hidden; \}/);
+  assert.match(css, /#dev-kanban:not\(\[data-kanban-active="all"\]\) \.dev-kanban-col \{\s*display: none;/);
+  assert.match(css, /#dev-kanban:not\(\[data-kanban-active="all"\]\) \.dev-kanban-col\.dev-kanban-col-active \{\s*display: block;/);
+  assert.doesNotMatch(css, /@media \(max-width: 639px\) \{[^}]*#dev-kanban \{ overflow-x: hidden; \}/,
+    'the phone-only block is gone — a column is pickable at every width');
+
+  // From 640px up the columns are side by side. In the band the breakpoint
+  // reclaimed they stay in ONE row at the readable 16rem width and the board
+  // scrolls sideways — it must never wrap, and it must never lift the floor
+  // (that would squeeze four columns into ~150px each).
   const band = css.match(
     /@media \(min-width: 640px\) and \(max-width: 1023px\) \{([\s\S]*?)\n\}/
   );
@@ -382,7 +485,7 @@ test('the 640px breakpoint agrees across the JS default, app.css and sm:hidden',
   assert.doesNotMatch(band[1], /min-width: 0/);
   // The floor and the flex sizing must live in app.css, not as Tailwind
   // utilities in the markup — those land later in the cascade and would
-  // beat every media query above.
+  // beat every rule above.
   assert.match(css, /\.dev-kanban-col \{\s*flex: 1 1 0;\s*min-width: 16rem;\s*\}/);
   // From 1024px up the four columns fit in one row with NO sideways scroll,
   // which needs a floor low enough for the bottom of that range: four 16rem
@@ -393,11 +496,6 @@ test('the 640px breakpoint agrees across the JS default, app.css and sm:hidden',
   const floorPx = parseFloat(wide[1]) * 16;
   assert.ok(floorPx * 4 + 12 * 3 <= 1000,
     `four ${floorPx}px columns + gaps must fit a 1024px window without scrolling`);
-  assert.doesNotMatch(css, /@media \(max-width: 1023px\) \{\s*\/\* No sideways scroll/);
-
-  seedBoard(AppView);
-  // Tailwind's sm: is min-width 640px, i.e. the same line.
-  assert.match(kanbanHtml(AppView), /id="dev-kanban-tabs"[^>]*class="sm:hidden/);
 });
 
 // ── Environment tolerance ──────────────────────────────────────────────────
@@ -405,10 +503,11 @@ test('the 640px breakpoint agrees across the JS default, app.css and sm:hidden',
 test('rendering works with neither sessionStorage nor location present', () => {
   const AppView = makeAppView(); // no sessionStorage, no location
   seedBoard(AppView);
-  let html;
-  assert.doesNotThrow(() => { html = kanbanHtml(AppView); });
-  assert.deepEqual(tabKeys(html), ['issues', 'inprogress', 'inreview', 'done']);
-  assert.equal(activeAttr(html), 'issues');
-  assert.doesNotThrow(() => AppView._saveKanbanTab('demo-app'));
-  assert.equal(AppView._loadKanbanTab('demo-app'), 'issues');
+  let tabs;
+  assert.doesNotThrow(() => { tabs = boardTabsHtml(AppView); });
+  assert.deepEqual(tabKeys(tabs), ALL_TABS);
+  assert.equal(activeAttr(kanbanHtml(AppView)), 'all');
+  assert.doesNotThrow(() => AppView._saveBoardTab('demo-app'));
+  assert.equal(AppView._loadBoardTab('demo-app'), 'all');
+  assert.doesNotThrow(() => AppView._boardLayout());
 });

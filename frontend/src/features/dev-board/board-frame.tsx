@@ -13,11 +13,13 @@
  *
  * React-owned, and now stateful:
  *   * the header bar — the "+" button and its dropdown, including every
- *     `data-plus` row and the two `data-plus-group` headings. The Feed/Kanban
- *     tab strip is NOT here any more: the Board's two layouts are a choice
- *     under the Improve panel's Board row now (see improve-panel.tsx), because
- *     a strip whose first tab restated the destination the header chip had
- *     just named was navigation drawn twice;
+ *     `data-plus` row and the two `data-plus-group` headings;
+ *   * `#dev-kanban-tabs` — the board's ONE display control (./board-tabs.tsx).
+ *     It was the kanban's own markup, inside `#dev-body`; it is a row of this
+ *     frame because `All` renders the stream on a narrow viewport, and a
+ *     control that lived inside the host it repaints would delete itself the
+ *     first time you used it. The Improve panel's Kanban|Feed pills are gone
+ *     with the mode they set;
  *   * `#dev-forum-scroll` and the General-chat card.
  *
  * Legacy-owned hosts, rendered by React but never reconciled into:
@@ -49,7 +51,7 @@
  * mutations the migration explicitly sanctions on React-rendered nodes. Moving
  * them would be a rewrite, and this chunk is a conversion. The one exception is
  * `_updateViewToggleUI()`, which assigned `btn.className` outright; that is
- * retired in favour of ./view-mode-store.ts.
+ * retired along with the Kanban|Feed mode it painted — see ./board-tabs.tsx.
  *
  * The frame is mounted by an interim root (../../lib/interim-root.ts) rather
  * than by `<Shell/>`, because `#app-content` ships empty and this surface only
@@ -57,6 +59,7 @@
  */
 
 import { useStoreState } from '../../lib/use-store-state';
+import { BoardTabs } from './board-tabs';
 import { skeletonListHtml } from './card/skeleton';
 import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store';
 
@@ -303,6 +306,12 @@ export function DevBoardFrame({
           </div>
         </div>
       </div>
+
+      {/* The board's one display control, PINNED above the scroller rather
+          than scrolling away with the cards — the board draws it as chrome,
+          and it is the only thing on screen that says which part of the
+          board you are reading. See ./board-tabs.tsx. */}
+      <BoardTabs />
 
       {/* The card list: locked notice, general-chat card, session rows, the
           intermixed feed, and the Completed section. */}

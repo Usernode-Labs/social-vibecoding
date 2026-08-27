@@ -45,11 +45,9 @@ const MOUNT = read('frontend/src/features/dev-board/mount.ts');
 const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
 const CHAT_FRAME = read('frontend/src/features/dev-board/chat-frame.tsx');
 const SESSION_FRAME = read('frontend/src/features/dev-board/session-frame.tsx');
-const STORE = read('frontend/src/features/dev-board/view-mode-store.ts');
-// The Kanban|Feed control lives here now, not in the board frame.
+const TABS = read('frontend/src/features/dev-board/board-tabs.tsx');
+// The Kanban|Feed pills used to live here. They are gone with the mode.
 const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
-// Streamlined Concept: the Board draws its own Kanban|Feed control now,
-// inside the frame itself — there is no separate toggle module to read.
 const MAIN = read('frontend/src/main.tsx');
 const APP_VIEW = read('public/js/app-view.js');
 const APP = read('public/js/app.js');
@@ -310,58 +308,77 @@ test('the locked-app banner has one writer', () => {
   assert.match(fn[1], /publishLockedNotice\(\s*!!\(AppView\._proposalsCtx && AppView\._proposalsCtx\.locked\)\)/);
 });
 
-test('the view toggle is real React state, and the className writer is gone', () => {
+test('the board has ONE display control, and no className writer behind it', () => {
   // _updateViewToggleUI assigned btn.className outright — two owners of one
   // attribute, which is the conflict the migration forbids.
-  // Asserted against comment-stripped source: all four names still appear in
-  // the comment block that records WHY each one went, which is the point of
-  // that comment. What must be gone is the code.
+  // Asserted against comment-stripped source: the retired names still appear
+  // in the comment block that records WHY each one went, which is the point
+  // of that comment. What must be gone is the code.
   const code = APP_VIEW.replace(/^\s*\/\/.*$/gm, '');
   for (const gone of [
     '_updateViewToggleUI',
     '_renderViewToggle',
     '_wireViewToggle',
     '_viewToggleBtnCls',
+    // …and, with the Kanban|Feed mode itself, its two entry points and the
+    // whole preference behind them.
+    '_selectViewMode',
+    '_setViewMode',
+    '_getViewMode',
+    'openDevView',
   ]) {
     assert.ok(!code.includes(gone), `${gone} has no definition or call site left`);
   }
-  // What replaced it: the module publishes, React renders.
-  assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.publishViewMode\(next\);/,
-    '_setViewMode publishes the new mode');
-  assert.match(STORE, /useSyncExternalStore\(subscribe, getSnapshot/,
-    'the frame subscribes through useSyncExternalStore');
-  // The control moved to the Improve panel's Board row, so the PANEL is the
-  // store's reader now and the frame draws no view control at all. The store
-  // itself is unchanged — which is the point of asserting both halves here.
-  assert.match(PANEL, /useDevViewMode\(\)/, 'the layout control reads the store');
-  assert.ok(!/useDevViewMode\(\)/.test(FRAME), 'the frame reads no view mode');
-  assert.ok(!FRAME.includes('id="dev-view-toggle"'),
-    'the Board draws no view tab strip above its cards');
-  // The click still runs the module's behaviour, unchanged.
-  assert.match(APP_VIEW, /_selectViewMode\(v\) \{/, 'the click handler lives in the module');
-  assert.match(APP_VIEW, /AppView\._setViewMode\(mode\);\s*\n\s*\/\/[^\n]*\n\s*AppView\._repaintDevBody\(\);/,
-    'a mode change still persists and repaints, in that order');
-  // THE UI OVERHAUL cut four icon buttons down to two labelled tabs; the
-  // follow-up to #1367 removed the strip entirely, because the header's
-  // App/Feed/Kanban toggle offers the same two destinations plus the app
-  // itself. Every id it drew must be really gone rather than merely unstyled.
+
+  // What replaced it: the module publishes, React renders — one strip, from
+  // the same store the columns read.
+  assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.publishKanban\(AppView\._lastKanbanView\);/,
+    '_publishBoardView publishes the board view model');
+  assert.match(TABS, /useStoreState\(devKanbanStore\)/,
+    'the strip subscribes to the same store the columns do');
+
+  // THE STRIP IS A ROW OF THE FRAME, not of the board. It was the kanban's
+  // own markup, inside #dev-body — the host _repaintDevBody() replaces
+  // wholesale — which was survivable only while it never switched away from
+  // the kanban. `All` renders the STREAM on a narrow viewport, so a control
+  // living in there would delete itself the first time it was used.
+  assert.match(FRAME, /<BoardTabs \/>/, 'the frame renders the strip');
+  assert.match(FRAME, /import \{ BoardTabs \} from '\.\/board-tabs';/);
+  assert.ok(!/id="dev-kanban-tabs"/.test(read('frontend/src/features/dev-board/card/dev-kanban.tsx')),
+    'and the board does not draw it any more');
+
+  // The Improve panel drew a Kanban|Feed pair under its Board row. A LAYOUT
+  // control filed among DESTINATIONS, shown only where you could already see
+  // its effect, costing the session list two rows. Gone with the mode.
+  for (const gone of ['improve-board-layouts', 'useDevViewMode', 'data-view-segment']) {
+    assert.ok(!PANEL.includes(gone), `${gone} retired from the Improve panel`);
+  }
+
+  // Every id the retired strips drew must be really gone rather than merely
+  // unstyled.
   for (const id of ['dev-view-feed', 'dev-view-kanban', 'dev-view-tabs',
     'dev-view-list', 'dev-view-pm', 'dev-view-report']) {
     assert.ok(!FRAME.includes(`id: '${id}'`) && !FRAME.includes(`id="${id}"`),
       `${id} was retired with the dev-screen tab strip`);
   }
-  // The control still reports the live mode to the a11y tree. It is a pair of
-  // toggle buttons rather than a tablist now, because it no longer selects
-  // between panels of content — it restates one panel in another layout, and
-  // `aria-pressed` is what that means.
-  assert.match(PANEL, /aria-pressed=\{active \? 'true' : 'false'\}/,
-    'aria-pressed reflects the active layout');
-  assert.match(PANEL, /data-view-segment=\{key\}/,
-    'each layout still names itself with data-view-segment');
-  // Seeded from the module before the first paint, so ?view=kanban does not
-  // flash list first.
-  assert.match(MOUNT, /publishViewMode\(options\.viewMode\);/, 'the store is seeded at mount');
-  assert.match(APP_VIEW, /viewMode: AppView._getViewMode\(\)/, 'seeded from the resolved mode');
+
+  // The strip reports the live tab to the a11y tree as a TABLIST, which is
+  // what it is: it selects between panels of content, and `All` selects the
+  // whole board.
+  assert.match(TABS, /role="tablist"/);
+  assert.match(TABS, /aria-selected=\{active\}/);
+
+  // Seeded from the module before the first paint, so ?col=done does not
+  // flash All first.
+  assert.match(MOUNT, /devKanbanStore\.set\(\(s\) => \(\{ \.\.\.s, activeTab: options\.boardTab \}\)\);/,
+    'the store is seeded at mount');
+  assert.match(APP_VIEW, /boardTab: AppView\._boardTab,/, 'seeded from the resolved tab');
+  // …which is itself resolved ONCE per mount, not re-read on every repaint —
+  // _repaintDevBody runs again whenever the layout flips, and re-seeding
+  // there would undo the tab just tapped.
+  assert.match(APP_VIEW, /AppView\._boardTab = AppView\._loadBoardTab\(App\.currentApp\);/);
+  assert.equal((APP_VIEW.match(/AppView\._boardTab = AppView\._loadBoardTab\(/g) || []).length, 1,
+    'exactly one seeding site');
 });
 
 test('the wiring the module still owns is untouched', () => {

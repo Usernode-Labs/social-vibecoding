@@ -7395,14 +7395,21 @@ button.attr-chip { cursor: pointer; }
 .voting-help-rules { list-style: disc; padding-left: 16px; margin: 0; display: flex; flex-direction: column; gap: 5px; line-height: 1.4; }
 .voting-help-rules strong { color: var(--text-primary); font-weight: 600; }
 
-/* ── Mobile kanban tabs (#814) ─────────────────────────────────────
-   Below 640px the Dev board shows ONE column at a time behind the
-   #dev-kanban-tabs strip instead of scrolling sideways — four columns
-   can't fit a phone, which is exactly why _getViewMode()'s width
-   default (min-width: 640px) draws the line here too. Presentation
-   only: the markup always carries all four columns, and JS only ever
-   moves the `dev-kanban-col-active` class. At >=640px none of this
-   applies and every column is on screen at once.
+/* ── The board's columns, and which of them show (#814, re-cut) ────
+   ONE ATTRIBUTE DECIDES, NOT A MEDIA QUERY. #dev-kanban-tabs offers
+   `All` plus one tab per column at every width, and #dev-kanban carries
+   the choice as `data-kanban-active`. `all` draws every column; any
+   other value draws that one, on a phone and on a desktop alike.
+
+   This replaces a `max-width: 639px` block that hid the other three
+   columns, because the strip itself was phone-only: below 640px you
+   could pick a column and above it you could not. The width still
+   decides ONE thing — whether `All` is worth drawing as columns at all
+   — but it decides it in JS (AppView._boardLayout), and below 640px
+   `All` is the recency-ordered stream rather than a narrow board.
+
+   Presentation only, as before: the markup always carries all four
+   columns and JS only ever moves the `dev-kanban-col-active` class.
 
    The single-column line was 1024px (Tailwind's lg) until it was
    lowered to 640px (Tailwind's sm): the board is useful well below a
@@ -7423,22 +7430,27 @@ button.attr-chip { cursor: pointer; }
   min-width: 16rem;
 }
 
-@media (max-width: 639px) {
-  /* No sideways scroll left to do — one column fills the width. */
-  #dev-kanban { overflow-x: hidden; }
+/* A single column, at any width. The id carries these so they beat both
+   the base rule above and the >=1024px floor below — and Tailwind's own
+   utilities, which land later in the cascade at plain class
+   specificity. */
 
-  /* The floor lifts so the single visible column still fits a
-     320px-wide phone. */
-  .dev-kanban-col {
-    display: none;
-    min-width: 0;
-  }
+/* No sideways scroll left to do — one column fills the width. */
+#dev-kanban:not([data-kanban-active="all"]) { overflow-x: hidden; }
 
-  .dev-kanban-col.dev-kanban-col-active { display: block; }
-
-  /* The active tab already names the column and shows its count. */
-  .dev-kanban-col-head { display: none; }
+/* The floor lifts so the single visible column still fits a 320px-wide
+   phone, and is not needed on a desktop where it is the only column. */
+#dev-kanban:not([data-kanban-active="all"]) .dev-kanban-col {
+  display: none;
+  min-width: 0;
 }
+
+#dev-kanban:not([data-kanban-active="all"]) .dev-kanban-col.dev-kanban-col-active {
+  display: block;
+}
+
+/* The active tab already names the column and shows its count. */
+#dev-kanban:not([data-kanban-active="all"]) .dev-kanban-col-head { display: none; }
 
 /* The band the 640px line reclaimed from the tab strip (640-1023px):
    one row of four columns that the board scrolls sideways to cover.

@@ -1,7 +1,7 @@
 /**
  * `#dev-kanban-board` — the kanban board — as the only React writer below
- * that host. The host stays app-view.js's; the columns, the mobile tab
- * strip and every card render from `devKanbanStore`.
+ * that host. The host stays app-view.js's; the columns and every card
+ * render from `devKanbanStore`.
  *
  * ── The retired drag seam (#613) ──────────────────────────────────────
  *
@@ -15,12 +15,18 @@
  * `_kanbanView`, so a column somebody already arranged keeps its
  * arrangement; nothing in the UI can write a new one.
  *
- * ── Tabs (#814) ───────────────────────────────────────────────────────
+ * ── Tabs (#814, re-cut) ───────────────────────────────────────────────
  *
- * All four columns are always in the DOM; `dev-kanban-col-active` marks the
- * one the strip shows and CSS acts on it only below 640px. A tab tap calls
- * `AppView._onKanbanTabSelect`, which persists the choice and republishes
- * `activeTab` — replacing `_applyKanbanTab`'s class-toggling DOM pass.
+ * THE STRIP IS NOT HERE ANY MORE. It is a row of the frame above this host
+ * (../board-tabs.tsx), because `All` renders the STREAM on a narrow
+ * viewport and a control living inside `#dev-body` would be destroyed by
+ * the repaint it asked for.
+ *
+ * What stays is the half this file was always about: all four columns are
+ * in the DOM whatever the tab says, `dev-kanban-col-active` marks the one
+ * to draw, and CSS reads `#dev-kanban[data-kanban-active]` to decide
+ * whether that marker means anything — `all` draws every column, any other
+ * value draws that one, at every width.
  */
 
 import type { ReactNode } from 'react';
@@ -31,36 +37,6 @@ import { FooterView } from './dev-feed';
 import { ListRowView } from './list-rows';
 import type { KanbanColView, ListRow } from './model';
 import { CardSkeleton, CountSkeleton } from './skeleton';
-
-function selectTab(key: string): void {
-  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  if (av && typeof av._onKanbanTabSelect === 'function') av._onKanbanTabSelect(key);
-}
-
-function Tab({ col, active, loading }: { col: KanbanColView; active: boolean; loading: boolean }): ReactNode {
-  const cls = 'dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 flex flex-col items-center justify-center '
-    + 'border-b-2 transition-colors '
-    + (active
-      ? 'border-violet-500 text-violet-700 font-semibold dark:text-violet-400'
-      : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200');
-  const countCls = 'font-mono text-[11px] leading-tight '
-    + (active ? 'text-violet-700 dark:text-violet-400' : (col.count ? 'text-zinc-500 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-500'));
-  return (
-    <button
-      type="button"
-      role="tab"
-      id={`dev-kanban-tab-${col.key}`}
-      data-kanban-tab={col.key}
-      aria-selected={active}
-      aria-controls={`dev-kanban-col-${col.key}`}
-      className={cls}
-      onClick={() => selectTab(col.key)}
-    >
-      <span className="text-xs leading-tight truncate max-w-full">{col.title}</span>
-      <span className={countCls}>{loading ? <CountSkeleton /> : col.count}</span>
-    </button>
-  );
-}
 
 function Column({ col, active, loading }: { col: KanbanColView; active: boolean; loading: boolean }): ReactNode {
   let cards: ReactNode;
@@ -103,22 +79,10 @@ export function DevKanban(): ReactNode {
   const v = useStoreState(devKanbanStore);
   if (!v.cols.length) return null;
   return (
-    <>
-      <div
-        id="dev-kanban-tabs"
-        role="tablist"
-        aria-label="Board columns"
-        className="sm:hidden flex items-stretch gap-1 mb-2 border-b border-zinc-200 dark:border-zinc-800"
-      >
-        {v.cols.map((col) => (
-          <Tab key={col.key} col={col} active={col.key === v.activeTab} loading={!!v.loading} />
-        ))}
-      </div>
-      <div id="dev-kanban" className="flex gap-3 overflow-x-auto pb-2" data-kanban-active={v.activeTab}>
-        {v.cols.map((col) => (
-          <Column key={col.key} col={col} active={col.key === v.activeTab} loading={!!v.loading} />
-        ))}
-      </div>
-    </>
+    <div id="dev-kanban" className="flex gap-3 overflow-x-auto pb-2" data-kanban-active={v.activeTab}>
+      {v.cols.map((col) => (
+        <Column key={col.key} col={col} active={col.key === v.activeTab} loading={!!v.loading} />
+      ))}
+    </div>
   );
 }

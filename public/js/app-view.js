@@ -189,106 +189,84 @@ const AppView = {
   // How many feed items are visible (the rest sit behind "Show more").
   _feedShown: 20,
 
-  // ── Dev view mode (list ↔ kanban) ─────────────────────────────────
-  // A personal display preference, persisted to localStorage and shared
-  // across every app's Dev view (same pattern as DevConsole's MODE_KEY
-  // and the "view as non-admin" toggle). An explicitly saved choice
-  // always wins; with nothing saved the default is width-based (#462):
-  // 'kanban' on viewports ≥640px — Tailwind's sm breakpoint, lowered
-  // from 1024px (lg) because the board is worth having on a narrow
-  // window even though the four columns only fit at their readable
-  // width by scrolling sideways there (see the 640-1023px block in
-  // app.css) — and 'feed' (the historical default) below it.
-  // Read/written only through the two helpers below so the
-  // localStorage access stays guarded in one place.
-  VIEW_MODE_KEY: 'devViewMode',
-  // The single whitelist of dev view modes, in switcher order. Every place
-  // that resolves a mode — the ?view= override, the stored preference, the
-  // setter and the tab strip's click handler — validates against THIS array
-  // instead of repeating an inline chain, so changing the set is one edit
-  // rather than four. 'feed' is the terminal fallback for anything not here.
+  // ── Board layout ──────────────────────────────────────────────────
   //
-  // THE UI OVERHAUL cut this from four modes to two. 'list' became 'feed'
-  // (the same surface, re-sorted into one recency-ordered activity stream
-  // that folds the Completed block in rather than parking it below), and
-  // 'pm' and 'report' were retired outright — a display preference toggle
-  // was carrying four genuinely different products, three of which almost
-  // nobody switched to. What is left is the two answers people actually
-  // want from a board: what just happened, and what is in flight.
-  VIEW_MODES: ['feed', 'kanban'],
-  _isViewMode(v) { return AppView.VIEW_MODES.indexOf(v) !== -1; },
-  // Stored preferences from before the cut. A viewer who last left the board
-  // in PM or Reporting has a localStorage value naming a mode that no longer
-  // exists; without this they would silently land on the width default
-  // instead of the nearest surviving surface, which reads as "my setting was
-  // forgotten". 'list' is exactly 'feed'; the two retired overviews were
-  // board-shaped, so they resolve to the board.
-  RETIRED_VIEW_MODES: { list: 'feed', pm: 'kanban', report: 'kanban' },
-  _migrateViewMode(v) {
-    if (AppView._isViewMode(v)) return v;
-    return AppView.RETIRED_VIEW_MODES[v] || null;
-  },
+  // THERE IS NO LAYOUT PREFERENCE ANY MORE, and that is the whole of this
+  // change. The board carried TWO display controls for one question: a
+  // Kanban|Feed mode (a localStorage preference, last seen as a pair of
+  // pills under the Improve panel's Board row) and, inside kanban, a
+  // column tab strip that CSS hid above 640px. One control was invisible
+  // on a phone, the other invisible on a desktop, and picking either one
+  // was a thing you had to learn rather than a thing you could see.
+  //
+  // What is left is ONE strip, on every width:
+  //
+  //     All · Issues · Underway · In review · Done
+  //
+  //   All      the whole board, drawn to fit — the four columns side by
+  //            side where there is room, the recency-ordered stream where
+  //            there is not.
+  //   a column that column alone, at any width.
+  //
+  // The layout is a CONSEQUENCE of the tab and the viewport. Nobody picks
+  // it and nothing stores it: `devViewMode` is neither read nor written
+  // after this change, and a value an older build left in localStorage is
+  // inert rather than migrated — both of the modes it can name resolve to
+  // what `All` already shows.
+
   // The single source of truth in JS for where the board goes
-  // side-by-side. Must stay in step with the two kanban media queries in
-  // app.css (`max-width: 639px` for the tab strip, `min-width: 640px`
-  // for the multi-column band) and with `sm:hidden` on #dev-kanban-tabs.
+  // side-by-side. Must stay in step with the `#dev-kanban[data-kanban-active]`
+  // rules in app.css, which draw the columns from the same fact.
   KANBAN_MULTICOL_MEDIA: '(min-width: 640px)',
-  // Width-based default, resolved lazily ONCE per page load and never
-  // written to localStorage — so an undecided user keeps getting the
-  // responsive default on future visits, and the mode can't flip
-  // mid-flight between the paired _getViewMode() reads inside async
-  // flows like loadMoreMerged if the window is resized across 640px.
-  _viewModeAutoDefault: null,
-  // #814: `?view=list|kanban|pm` — a one-shot URL override that wins over
-  // BOTH the stored preference and the width default, resolved once per
-  // page load (undefined = not parsed yet, null = nothing usable in the
-  // URL). It exists so a fresh browser can be pointed straight at a given
-  // view: the capture container boots with empty localStorage at the
-  // 390x844 phone frame, where the width default below resolves to 'feed',
-  // so without this no mobile screenshot could ever show the board.
-  // Cleared by _setViewMode so an explicit toggle click always wins.
-  _viewModeUrlOverride: undefined,
-  _readViewModeOverride() {
-    if (AppView._viewModeUrlOverride !== undefined) return AppView._viewModeUrlOverride;
+  // Resolved lazily ONCE per page load — the retired width default was
+  // too, for a reason that survives it: the paired reads inside async
+  // flows like loadMoreMerged must not disagree because the window
+  // crossed 640px between them. So a resize does not re-flow the board
+  // until the next load, which is the behaviour that shipped; the columns
+  // scroll sideways rather than break down to ~640px anyway (app.css).
+  _multicolResolved: null,
+  _multicolForAll() {
+    if (AppView._multicolResolved === null) {
+      AppView._multicolResolved = !!(typeof window.matchMedia === 'function'
+        && window.matchMedia(AppView.KANBAN_MULTICOL_MEDIA).matches);
+    }
+    return AppView._multicolResolved;
+  },
+  // `?view=feed|kanban|list|pm|report` — A DEEP-LINK / CAPTURE OVERRIDE,
+  // AND NOTHING ELSE.
+  //
+  // Read this before deleting it as a leftover of the mode it used to
+  // set. There is no control behind it and no preference under it any
+  // more; what it still buys is the ability to point a fresh browser at a
+  // layout the viewport would not otherwise produce. `dapp.json` shoots
+  // every check at 1280x800, where `All` is the four columns, so without
+  // this the stream — a real surface every phone sees — would have no
+  // end-to-end coverage at all.
+  //
+  // It resolves to a LAYOUT, not to a mode: `feed`/`list` mean the
+  // stream, the three board-shaped names mean the columns. An explicit
+  // `?col=` still wins over it, because asking for one column is a
+  // narrower instruction than asking for a layout.
+  VIEW_LAYOUT_ALIASES: {
+    feed: 'stream', list: 'stream', kanban: 'columns', pm: 'columns', report: 'columns',
+  },
+  _layoutUrlOverride: undefined,
+  _readLayoutOverride() {
+    if (AppView._layoutUrlOverride !== undefined) return AppView._layoutUrlOverride;
     let v = null;
     try {
       const raw = new URLSearchParams(window.location.search).get('view');
-      // Migrated, not just validated: `?view=list` is in the wild (capture
-      // routes, bookmarks, the dapp.json checks) and must keep resolving.
-      v = AppView._migrateViewMode(raw);
+      v = AppView.VIEW_LAYOUT_ALIASES[raw] || null;
     } catch { v = null; }
-    AppView._viewModeUrlOverride = v;
+    AppView._layoutUrlOverride = v;
     return v;
   },
-  _getViewMode() {
-    try {
-      const override = AppView._readViewModeOverride();
-      if (override) return override;
-      const stored = AppView._migrateViewMode(
-        window.localStorage.getItem(AppView.VIEW_MODE_KEY));
-      if (stored) return stored;
-      if (AppView._viewModeAutoDefault === null) {
-        AppView._viewModeAutoDefault =
-          (typeof window.matchMedia === 'function'
-            && window.matchMedia(AppView.KANBAN_MULTICOL_MEDIA).matches)
-            ? 'kanban' : 'feed';
-      }
-      return AppView._viewModeAutoDefault;
-    } catch { return 'feed'; }
-  },
-  _setViewMode(mode) {
-    const next = AppView._migrateViewMode(mode) || 'feed';
-    // An explicit choice retires the URL override (#814) — otherwise
-    // ?view= would keep winning over every later toggle click.
-    AppView._viewModeUrlOverride = null;
-    try { window.localStorage.setItem(AppView.VIEW_MODE_KEY, next); } catch {}
-    // #1084 chunk G: the segmented control is React-rendered now, so the
-    // active mode has to be published rather than painted on. This replaces
-    // the _updateViewToggleUI() call that used to follow every _setViewMode.
-    // Publishing here (not only from _selectViewMode) covers the other
-    // callers too — a ?view= override resolving on mount, and anything that
-    // sets the mode without going through the toggle.
-    AppView._reactDevBoard()?.publishViewMode(next);
+  // Columns or stream, for the tab that is showing. A named column is
+  // always columns — there is no single-column stream — so the override
+  // and the viewport only ever decide what `All` looks like.
+  _boardLayout() {
+    if (AppView._activeBoardTab() !== 'all') return 'columns';
+    return AppView._readLayoutOverride() || (AppView._multicolForAll() ? 'columns' : 'stream');
   },
   // #482: kanban filter-bar state. The active object always reflects the
   // CURRENT app; it is (re)loaded per slug from sessionStorage whenever the
@@ -335,55 +313,61 @@ const AppView = {
       }
     } catch {}
   },
-  // #814: mobile kanban tabs. Below 640px the board shows ONE column at a
-  // time behind a tab strip instead of scrolling sideways; which column is
-  // showing is this key. Same storage shape and lifetime as the filters
-  // above — per-app sessionStorage, so the tab survives in-app navigation
-  // and a reload but resets when the browser tab closes. Purely a display
-  // preference: the markup always carries all four columns and CSS decides
-  // what's visible, so desktop never reads this beyond marking the column.
+  // #814, re-cut: THE BOARD'S ONE STRIP. Below 640px it used to be the
+  // only way to see a column, and CSS hid it above that; it is the board's
+  // whole navigation now, at every width, and it leads with `all`.
+  //
+  // Storage shape and lifetime are unchanged — per-app sessionStorage, so
+  // the tab survives in-app navigation and a reload but resets when the
+  // browser tab closes, and switching apps shows that app's own tab. The
+  // KEY is unchanged too, so a tab stored by an older build still resolves;
+  // only the default moved, from the leftmost COLUMN to `all`.
   KANBAN_TAB_KEY: 'devKanbanTab',
-  // Column identities, in board order. Shared by the render, the tab strip,
-  // the stored value and the ?col= override. NOTE: distinct from the
-  // drag-order column keys ('issues' / 'review', see routes/board-order.js)
-  // — same words in places, different namespace.
+  // Column identities, in board order — the render, the `#dev-kanban-col-*`
+  // ids and the stored drag orders. NOTE: distinct from the drag-order
+  // column keys ('issues' / 'review', see routes/board-order.js) — same
+  // words in places, different namespace.
   KANBAN_TABS: ['issues', 'inprogress', 'inreview', 'done'],
-  _kanbanTab: 'issues',
-  // `?col=<key>` — one-shot URL override for the active tab, mirroring
-  // ?view= above: it seeds the tab on mount, wins over the stored value,
-  // and is retired the moment the user taps a tab.
-  _kanbanTabUrlOverride: undefined,
-  _readKanbanTabOverride() {
-    if (AppView._kanbanTabUrlOverride !== undefined) return AppView._kanbanTabUrlOverride;
+  // What the strip offers, in strip order. `all` is not a column: it is the
+  // whole board, and _boardLayout() above is what decides how that draws.
+  BOARD_TABS: ['all', 'issues', 'inprogress', 'inreview', 'done'],
+  _boardTab: 'all',
+  // `?col=<key>` — one-shot URL override for the active tab: it seeds the
+  // tab on mount, wins over the stored value and over `?view=`, and is
+  // retired the moment the user taps a tab. `?col=all` is valid and means
+  // the whole board.
+  _boardTabUrlOverride: undefined,
+  _readBoardTabOverride() {
+    if (AppView._boardTabUrlOverride !== undefined) return AppView._boardTabUrlOverride;
     let v = null;
     try {
       const raw = new URLSearchParams(window.location.search).get('col');
-      if (AppView.KANBAN_TABS.includes(raw)) v = raw;
+      if (AppView.BOARD_TABS.includes(raw)) v = raw;
     } catch { v = null; }
-    AppView._kanbanTabUrlOverride = v;
+    AppView._boardTabUrlOverride = v;
     return v;
   },
   // Resolve the tab for an app slug: URL override first, then the stored
-  // per-app value, then the leftmost column. Anything unrecognized (a stale
-  // key from a future/older column set, a storage failure) degrades to
-  // 'issues' rather than leaving the board with no visible column.
-  _loadKanbanTab(slug) {
-    const override = AppView._readKanbanTabOverride();
+  // per-app value, then `all`. Anything unrecognized (a stale key from a
+  // future/older column set, a storage failure) degrades to `all` rather
+  // than leaving the board on a column nobody asked for.
+  _loadBoardTab(slug) {
+    const override = AppView._readBoardTabOverride();
     if (override) return override;
-    if (!slug) return 'issues';
+    if (!slug) return 'all';
     try {
       const raw = window.sessionStorage.getItem(`${AppView.KANBAN_TAB_KEY}:${slug}`);
-      return AppView.KANBAN_TABS.includes(raw) ? raw : 'issues';
-    } catch { return 'issues'; }
+      return AppView.BOARD_TABS.includes(raw) ? raw : 'all';
+    } catch { return 'all'; }
   },
-  // Persist the active tab under the app slug. The default column leaves no
+  // Persist the active tab under the app slug. The default leaves no
   // residue, matching _saveKanbanFilters' "clean state stores nothing" rule.
-  _saveKanbanTab(slug) {
+  _saveBoardTab(slug) {
     if (!slug) return;
     try {
       const key = `${AppView.KANBAN_TAB_KEY}:${slug}`;
-      if (AppView._kanbanTab && AppView._kanbanTab !== 'issues') {
-        window.sessionStorage.setItem(key, AppView._kanbanTab);
+      if (AppView._boardTab && AppView._boardTab !== 'all') {
+        window.sessionStorage.setItem(key, AppView._boardTab);
       } else {
         window.sessionStorage.removeItem(key);
       }
@@ -391,8 +375,8 @@ const AppView = {
   },
   // Active tab as used by the render — never trusts the field blindly, so a
   // bad assignment can't produce a board with every column hidden.
-  _activeKanbanTab() {
-    return AppView.KANBAN_TABS.includes(AppView._kanbanTab) ? AppView._kanbanTab : 'issues';
+  _activeBoardTab() {
+    return AppView.BOARD_TABS.includes(AppView._boardTab) ? AppView._boardTab : 'all';
   },
   // Session caches for the In progress area — see _refreshSessionCaches.
   _mySessions: [],
@@ -2136,6 +2120,10 @@ const AppView = {
     // The gate predicates stay HERE: _plusMenuShowsMembers() is the full
     // creator/admin/collaborator rule and reads AppView.appData, so the
     // component takes its answer rather than re-deriving it.
+    // This app's tab, resolved ONCE per board mount. It is deliberately not
+    // re-read in _repaintDevBody: that runs again every time the layout
+    // flips, and re-seeding there would undo the tab just tapped.
+    AppView._boardTab = AppView._loadBoardTab(App.currentApp);
     AppView._reactDevBoard()?.mountBoard(content, {
       selfHosted: !!AppView.appData?.self_hosted,
       readOnly: !!AppView.readOnly,
@@ -2143,12 +2131,12 @@ const AppView = {
       showsMembers: AppView._plusMenuShowsMembers(),
       cardCls: AppView.DEV_CARD_CLS,
       cardHoverCls: AppView.DEV_CARD_HOVER_CLS,
-      viewMode: AppView._getViewMode(),
+      boardTab: AppView._boardTab,
     });
 
-    // The card area is the BOARD (Streamlined Concept) — kanban and feed are
-    // its two display modes — and the header names it AS A SUBTITLE under the
-    // app's own name, so the chip never stops saying which app you are in.
+    // The card area is the BOARD (Streamlined Concept), and the header names
+    // it AS A SUBTITLE under the app's own name, so the chip never stops
+    // saying which app you are in.
     App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Board');
     AppView._wirePlusMenu(content);
     // Pull down on the dev feed to re-pull it (touch only; the scroller
@@ -2159,8 +2147,8 @@ const AppView = {
     }
     // The General-chat CARD is retired (Streamlined Concept): Activity is an
     // app-context sheet row and a first-class hash now, so the board no
-    // longer offers a second door to it. <DevBoardFrame/> binds its own
-    // Kanban|Feed control to _selectViewMode.
+    // longer offers a second door to it. <BoardTabs/> is the board's only
+    // display control and binds to _onBoardTabSelect.
 
     // Delegated card-open handler: tapping a topic card anywhere except
     // its links/pills opens that topic full-screen. Bound on the stable
@@ -3484,50 +3472,18 @@ const AppView = {
   // menu entry) was dissolved in #645 — Rename and App secrets now sit
   // directly in the "+" menu, alongside Members & visibility.
 
-  // ── View-mode tabs (Feed / Kanban) ──────────────────────────────────
+  // ── The board's display controls, retired ───────────────────────────
   //
-  // #1084 chunk G: the control itself is React — see
-  // frontend/src/features/dev-board/board-frame.tsx for the markup and
-  // ./view-mode-store.ts for how the active mode gets there. Four helpers
-  // retired with the template:
+  // `_selectViewMode` and `openDevView` were the Kanban|Feed switch's two
+  // entry points — the panel's layout pills and the retired
+  // #improve-row-kanban / #improve-row-feed rows. Both are gone with the
+  // switch: there is no mode to select, so the board's only display control
+  // is the strip, and the strip's entry point is _onBoardTabSelect below.
   //
-  //   _viewToggleBtnCls / _renderViewToggle — the component renders both;
-  //   _wireViewToggle                       — the component binds onClick;
-  //   _updateViewToggleUI                   — it assigned btn.className
-  //                                           outright, which is exactly the
-  //                                           two-owners-of-one-attribute
-  //                                           conflict the migration forbids.
-  //
-  // THE UI OVERHAUL turned the four-icon segmented toggle into a two-tab
-  // strip. What is left here is the BEHAVIOUR the old click listener had,
-  // unchanged.
-  _selectViewMode(v) {
-    const mode = AppView._migrateViewMode(v) || 'feed';
-    if (mode === AppView._getViewMode()) return;
-    // _setViewMode publishes the new mode to the store, which is what
-    // repaints the tab strip.
-    AppView._setViewMode(mode);
-    // Re-flow the already-cached data into the new layout. No refetch.
-    AppView._repaintDevBody();
-  },
-
-  // Open the Dev screen on a given tab.
-  //
-  // The Improve panel's entry point (features/improve/improve-controller.js's
-  // openDev), and the reason it is a method rather than that module reaching
-  // into _setViewMode itself: the panel navigates FIRST and then asks for a
-  // tab, so by the time this runs the board may not be mounted yet. Setting
-  // the mode before the repaint means the requested tab paints on the board's
-  // first frame instead of flashing the stored one.
-  //
-  // Safe to call when the board is already showing that tab (a no-op) and
-  // when #dev-body is not mounted at all (_repaintDevBody guards).
-  openDevView(mode) {
-    const next = AppView._migrateViewMode(mode);
-    if (!next) return;
-    AppView._setViewMode(next);
-    AppView._repaintDevBody();
-  },
+  // Also retired with the template in #1084 chunk G: _viewToggleBtnCls,
+  // _renderViewToggle, _wireViewToggle and _updateViewToggleUI (the last
+  // assigned btn.className outright, which is exactly the
+  // two-owners-of-one-attribute conflict the migration forbids).
 
   // ── "+" menu ────────────────────────────────────────────────────────
   // Gate for the menu's Members & visibility item — the full predicate
@@ -4213,7 +4169,7 @@ const AppView = {
     // below therefore ends in _reanchorCardMenu() rather than dismissing an
     // open menu outright; see that function for why that distinction is the
     // difference between the ⋯ working and appearing not to.
-    if (AppView._getViewMode() === 'kanban') {
+    if (AppView._boardLayout() === 'columns') {
       // #482: two-node shell — the filter bar is built + wired once per
       // mount and kept stable across repaints (so search-input focus and
       // typed text survive WS-driven refreshes); only the board region
@@ -4230,9 +4186,6 @@ const AppView = {
         // them across navigation / reload. Keyed per slug, so switching apps
         // shows that app's own filters (or a clean board).
         AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
-        // #814: restore this app's active mobile tab alongside its filters,
-        // so switching apps shows that app's own column (or Issues).
-        AppView._kanbanTab = AppView._loadKanbanTab(App.currentApp);
         body.innerHTML = '<div id="dev-kanban-board"></div>';
         AppView._renderKanbanFilterBar();
       }
@@ -4254,7 +4207,36 @@ const AppView = {
     // _kanbanFilters exactly as a fresh mount does.
     AppView._clearKanbanFilterBar();
     AppView._rerenderFeed();
+    // THE STRIP OUTLIVES THE BODY. #dev-kanban-tabs is a row of the React
+    // frame now, above this host, so it is on screen while the stream is —
+    // and its counts come from the same derivation the columns use. Without
+    // this the strip would hold whatever the last column render left it.
+    AppView._publishBoardView();
     AppView._reanchorCardMenu();
+  },
+
+  // The board's view model, published to the React side. Split out of
+  // _repaintKanbanBoard because the strip needs it in BOTH layouts and only
+  // one of them renders columns.
+  //
+  // THE STREAM'S COUNTS ARE UNFILTERED, and that is not a shortcut. The
+  // filter bar is a COLUMNS-only control — _repaintDevBody empties its host
+  // on the stream, where _rerenderFeed applies no filters — so a filter set
+  // on a column tab and then left behind would go on quietly subtracting
+  // from a strip whose surface shows everything. Counts nobody can explain
+  // are worse than counts nobody can narrow. The filters themselves survive
+  // untouched, so stepping back onto a column finds them exactly as they
+  // were.
+  _publishBoardView() {
+    const stream = AppView._boardLayout() === 'stream';
+    const saved = AppView._kanbanFilters;
+    if (stream) AppView._kanbanFilters = AppView._defaultKanbanFilters();
+    try {
+      AppView._lastKanbanView = AppView._kanbanView();
+    } finally {
+      if (stream) AppView._kanbanFilters = saved;
+    }
+    AppView._reactDevBoard()?.publishKanban(AppView._lastKanbanView);
   },
 
   // Locked-app banner at the very top of the card list (above the
@@ -5191,11 +5173,8 @@ const AppView = {
     // sync. WS-driven repaints re-save the same values — idempotent.
     AppView._saveKanbanFilters(App.currentApp);
     const react = AppView._reactDevBoard();
-    AppView._lastKanbanView = AppView._kanbanView();
-    if (react) {
-      react.mountKanban(board);
-      react.publishKanban(AppView._lastKanbanView);
-    }
+    if (react) react.mountKanban(board);
+    AppView._publishBoardView();
     // The headless-state poller is keyed off the cached issue data, same
     // as the list feed — filtering a generating row off-screen doesn't
     // stop it.
@@ -5335,25 +5314,32 @@ const AppView = {
     // The In progress column's own empty note has to come after its rows are
     // built: the archived toggle counts as content even with no cards.
     if (!cols[1].rows.length) cols[1].empty = emptyNote;
-    return { activeTab: AppView._activeKanbanTab(), cols, loading: !AppView._devDataReady };
+    return { activeTab: AppView._activeBoardTab(), cols, loading: !AppView._devDataReady };
   },
 
-  // #814: the mobile tab strip is card/dev-kanban.tsx's markup now — one
-  // tab per column, hidden at ≥640px where all four columns show side by
-  // side. `_renderKanbanTabs` built it as a string and `_applyKanbanTab`
-  // moved the active marker by toggling six classes per tab in place;
-  // publishing `activeTab` does both.
-  //
-  // Switching tabs deliberately does NOT rebuild the columns: all four are
-  // already rendered, so moving the marker is enough — no scroll jump and
-  // no re-binding.
-  _onKanbanTabSelect(key) {
-    if (!AppView.KANBAN_TABS.includes(key)) return;
-    // An explicit tap retires the ?col= override, mirroring _setViewMode.
-    AppView._kanbanTabUrlOverride = null;
-    if (key === AppView._activeKanbanTab()) return;
-    AppView._kanbanTab = key;
-    AppView._saveKanbanTab(App.currentApp);
+  // #814, re-cut: the strip is board-tabs.tsx's markup now — one tab per
+  // column plus `All`, at every width. `_renderKanbanTabs` built it as a
+  // string and `_applyKanbanTab` moved the active marker by toggling six
+  // classes per tab in place; publishing `activeTab` does both.
+  _onBoardTabSelect(key) {
+    if (!AppView.BOARD_TABS.includes(key)) return;
+    // An explicit tap retires the ?col= override, so a deep-linked tab stops
+    // winning the moment the viewer chooses another one.
+    AppView._boardTabUrlOverride = null;
+    if (key === AppView._activeBoardTab()) return;
+    const wasLayout = AppView._boardLayout();
+    AppView._boardTab = key;
+    AppView._saveBoardTab(App.currentApp);
+    // A tab change only sometimes changes WHAT IS UNDER THE STRIP. Between
+    // two columns — and between `All` and a column on a wide viewport —
+    // every column is already rendered, so moving the active marker is the
+    // whole of it: no scroll jump, no re-binding, no refetch. On a narrow
+    // viewport `All` is the STREAM and a column is the board, which are two
+    // different renderers, so that crossing needs the body repainted.
+    if (AppView._boardLayout() !== wasLayout) {
+      AppView._repaintDevBody();
+      return;
+    }
     AppView._reactDevBoard()?.publishKanban({
       ...AppView._lastKanbanView, activeTab: key,
     });
@@ -5361,7 +5347,7 @@ const AppView = {
 
   // The last published board, so a tab tap can republish it with a new
   // active key without rebuilding every card.
-  _lastKanbanView: { activeTab: 'issues', cols: [] },
+  _lastKanbanView: { activeTab: 'all', cols: [] },
 
 
 

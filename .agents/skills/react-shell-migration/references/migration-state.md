@@ -409,7 +409,8 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    | an issue's GitHub thread | `#dev-issue-comments` |
    | the locked-app banner | `#dev-locked-notice` |
    | **the list feed, every card in it** | `#dev-feed` |
-   | **the kanban board, its columns and tabs** | `#dev-kanban-board` |
+   | **the kanban board and its columns** | `#dev-kanban-board` |
+   | **the board's tab strip** | `#dev-kanban-tabs` |
    | **the opened topic's head — the card AND its body** | `#gc-thread-head` |
    | **the Generate-proposal dialog** | `#auto-session-modal` |
    | **the out-of-credits dialog** | `#credit-options-modal` |

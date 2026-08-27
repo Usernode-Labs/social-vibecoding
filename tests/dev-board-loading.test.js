@@ -161,9 +161,9 @@ test('EVERY feed view model carries `loading`, because the store merges', () => 
   }
   const kanban = code.slice(code.indexOf('_kanbanView() {'));
   assert.match(
-    kanban.slice(0, kanban.indexOf('_onKanbanTabSelect')),
-    /return \{ activeTab: AppView\._activeKanbanTab\(\), cols, loading: !AppView\._devDataReady \};/,
-    'the kanban model derives it from the flag, on its single return path'
+    kanban.slice(0, kanban.indexOf('_onBoardTabSelect')),
+    /return \{ activeTab: AppView\._activeBoardTab\(\), cols, loading: !AppView\._devDataReady \};/,
+    'the board model derives it from the flag, on its single return path'
   );
 });
 
