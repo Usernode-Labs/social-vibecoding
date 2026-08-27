@@ -857,6 +857,18 @@ async function becomeLeader() {
   // to 'error' so the creator can retry instead of staring at a spinner.
   await sweepStuckCreatingApps(getPool(config)).catch(() => {});
 
+  // A normal failed build deletes itself in services/kubernetes.js. This
+  // leader-only boot pass catches terminal Builds left behind if the platform
+  // was restarted between kpack reporting failure and that cleanup.
+  const applicationRuntime = require('./src/services/application-runtime');
+  applicationRuntime.cleanupFailedBuilds(config)
+    .then((result) => {
+      if (result.deleted) log.info('server', 'Removed failed kpack Builds', result);
+    })
+    .catch((err) => {
+      log.warn('server', 'Failed kpack Build sweep failed', { err: err.message });
+    });
+
   // Backfill `main_sha` for apps created before #21 added the column.
   // Non-blocking: we log and continue so a single slow/unauthorized
   // repo doesn't delay the server coming up.

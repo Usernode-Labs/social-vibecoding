@@ -421,6 +421,25 @@ node_modules
 `,
     },
     {
+      path: '.gitignore',
+      content: `.env
+.env.*
+node_modules/
+public/tailwind.css
+`,
+    },
+    {
+      path: 'project.toml',
+      content: `[_]
+schema-version = "0.2"
+
+[io.buildpacks]
+exclude = [
+  "node_modules/",
+]
+`,
+    },
+    {
       // Per-app secrets manifest. Empty by default — apps that need
       // env vars beyond the platform-injected DATABASE_URL/
       // USERNODE_JWT_PUBLIC_KEY/USERNODE_APP_ID/PORT/USERNODE_ENV add
