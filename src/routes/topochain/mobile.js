@@ -51,10 +51,12 @@
 'use strict';
 
 const { Router } = require('express');
+const bcrypt = require('bcrypt');
 const { clientIp } = require('../../services/client-ip');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { mobileTokenAuth, optionalSessionAuth } = require('../../middleware/topochain-auth');
+const { topochainMobileAuthLimiter } = require('../../middleware/rate-limits');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
@@ -109,6 +111,15 @@ function toBool(v) {
   if (v === true || v === 1 || v === '1' || v === 'true') return true;
   if (v === false || v === 0 || v === '0' || v === 'false') return false;
   return undefined;
+}
+
+const WALLET_CLAIM_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const WALLET_CLAIM_MAX_OTP_ATTEMPTS = 5;
+
+function walletClaimEmail(rawEmail) {
+  if (typeof rawEmail !== 'string') return null;
+  const email = rawEmail.trim().toLowerCase();
+  return email.length <= 255 && WALLET_CLAIM_EMAIL_RE.test(email) ? email : null;
 }
 
 // Same "real zero, never null" success-rate convention public.js documents
@@ -1844,6 +1855,189 @@ function topochainMobileRoutes(config) {
     }
   });
 
+  // ── POST /wallet/claim ────────────────────────────────────────────────
+  // A platform account can predate the mobile/social identity merge. In
+  // that case its current-season wallet remains attached to the legacy
+  // email-backed user while the native handoff authenticates a newer
+  // social user. When the seeded wallet pool is exhausted, provisioning
+  // cannot repair that split by allocating another pre-funded key.
+  //
+  // This endpoint lets the CURRENT authenticated user prove control of the
+  // legacy user's email with the existing short-lived OTP mechanism, then
+  // moves only the current-season on-chain account. Historical activity and
+  // the legacy user row stay where they are; a season-wide enrollment is
+  // added for the target so current challenges work. Source mobile tokens
+  // are revoked after the wallet moves, preventing an old device session
+  // from continuing to act as the former wallet owner.
+  router.post(
+    '/api/v4/mobile/wallet/claim',
+    mobileTokenAuth(config),
+    topochainMobileAuthLimiter,
+    async (req, res) => {
+      const email = walletClaimEmail(req.body?.email);
+      const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+      const details = {};
+      if (!email) details.email = ['The email must be a valid email address.'];
+      if (!/^\d{6}$/.test(code)) details.code = ['The code must be 6 digits.'];
+      if (Object.keys(details).length) {
+        return fail(res, 422, 'The given data was invalid.', { details, code: 'wallet_claim_invalid' });
+      }
+
+      let client;
+      try {
+        client = await pool.connect();
+        await client.query('BEGIN');
+
+        const { rows: otpRows } = await client.query(
+          `SELECT id, code_hash, attempts, expires_at
+             FROM mobile_otp_codes
+            WHERE email = $1 AND consumed_at IS NULL
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            FOR UPDATE`,
+          [email]
+        );
+        const otp = otpRows[0];
+        const otpInvalid = !otp
+          || new Date(otp.expires_at) < new Date()
+          || Number(otp.attempts) >= WALLET_CLAIM_MAX_OTP_ATTEMPTS;
+        if (otpInvalid) {
+          await client.query('ROLLBACK');
+          return fail(res, 422, 'Invalid or expired code.', { code: 'wallet_claim_invalid' });
+        }
+
+        if (!(await bcrypt.compare(code, otp.code_hash))) {
+          await client.query(
+            'UPDATE mobile_otp_codes SET attempts = attempts + 1, updated_at = NOW() WHERE id = $1',
+            [otp.id]
+          );
+          await client.query('COMMIT');
+          return fail(res, 422, 'Invalid or expired code.', { code: 'wallet_claim_invalid' });
+        }
+
+        // Resolve the legacy identity, then lock both users in id order.
+        // Re-check the source email after locking so a concurrent profile
+        // update cannot make a code authorize a now-different address.
+        const { rows: sourceLookupRows } = await client.query(
+          'SELECT id FROM users WHERE LOWER(email) = $1 LIMIT 1',
+          [email]
+        );
+        const sourceId = sourceLookupRows[0] ? Number(sourceLookupRows[0].id) : null;
+        if (!sourceId || sourceId === Number(req.user.id)) {
+          await client.query('ROLLBACK');
+          return fail(res, 409, 'No different programme wallet is linked to that email.', {
+            code: 'wallet_claim_not_found',
+          });
+        }
+
+        const { rows: lockedUsers } = await client.query(
+          `SELECT id, email FROM users
+            WHERE id = ANY($1::bigint[])
+            ORDER BY id
+            FOR UPDATE`,
+          [[Number(req.user.id), sourceId]]
+        );
+        const lockedSource = lockedUsers.find((user) => Number(user.id) === sourceId);
+        const lockedTarget = lockedUsers.find((user) => Number(user.id) === Number(req.user.id));
+        if (!lockedSource || !lockedTarget || String(lockedSource.email || '').trim().toLowerCase() !== email) {
+          await client.query('ROLLBACK');
+          return fail(res, 409, 'No programme wallet is linked to that email.', {
+            code: 'wallet_claim_not_found',
+          });
+        }
+
+        const { rows: seasonRows } = await client.query(
+          `SELECT id FROM seasons
+            WHERE internal = FALSE AND is_active = TRUE
+              AND starts_at <= NOW() AND ends_at >= NOW()
+            ORDER BY starts_at DESC, id DESC LIMIT 1`
+        );
+        if (!seasonRows.length) {
+          await client.query('ROLLBACK');
+          return fail(res, 422, 'No active season is available.', { code: 'wallet_claim_no_season' });
+        }
+        const seasonId = Number(seasonRows[0].id);
+
+        const { rows: targetAccounts } = await client.query(
+          `SELECT id FROM onchain_accounts
+            WHERE user_id = $1 AND season_id = $2
+            LIMIT 1
+            FOR UPDATE`,
+          [req.user.id, seasonId]
+        );
+        if (targetAccounts.length) {
+          await client.query('ROLLBACK');
+          return fail(res, 409, 'This account already has a wallet for the current season.', {
+            code: 'wallet_claim_conflict',
+          });
+        }
+
+        const { rows: sourceAccounts } = await client.query(
+          `SELECT id, address, public_key, season_event_id
+             FROM onchain_accounts
+            WHERE user_id = $1 AND season_id = $2
+            ORDER BY (season_event_id IS NULL) DESC, id ASC
+            FOR UPDATE`,
+          [sourceId, seasonId]
+        );
+        if (!sourceAccounts.length) {
+          await client.query('ROLLBACK');
+          return fail(res, 409, 'No current-season programme wallet is linked to that email.', {
+            code: 'wallet_claim_not_found',
+          });
+        }
+
+        await client.query(
+          `UPDATE onchain_accounts
+              SET user_id = $1, updated_at = NOW()
+            WHERE user_id = $2 AND season_id = $3`,
+          [req.user.id, sourceId, seasonId]
+        );
+
+        const { rows: enrollmentRows } = await client.query(
+          `SELECT id FROM user_enrollments
+            WHERE user_id = $1 AND season_id = $2
+            LIMIT 1`,
+          [req.user.id, seasonId]
+        );
+        if (!enrollmentRows.length) {
+          await client.query(
+            `INSERT INTO user_enrollments (season_event_id, user_id, season_id, registered_at, created_at, updated_at)
+             VALUES (NULL, $1, $2, NOW(), NOW(), NOW())`,
+            [req.user.id, seasonId]
+          );
+        }
+
+        await client.query(
+          'UPDATE mobile_otp_codes SET consumed_at = NOW(), updated_at = NOW() WHERE id = $1',
+          [otp.id]
+        );
+        await client.query('DELETE FROM mobile_auth_tokens WHERE user_id = $1', [sourceId]);
+        await client.query('COMMIT');
+
+        const account = sourceAccounts[0];
+        return ok(res, {
+          claimed: true,
+          address: account.address,
+          public_key: account.public_key,
+          season_id: seasonId,
+          season_event_id: account.season_event_id != null ? Number(account.season_event_id) : null,
+        });
+      } catch (err) {
+        if (client) await client.query('ROLLBACK').catch(() => {});
+        if (err.code === '23505') {
+          return fail(res, 409, 'The wallet could not be connected because this account already has one.', {
+            code: 'wallet_claim_conflict',
+          });
+        }
+        log.error('topochain-mobile', 'POST /wallet/claim failed', { message: err.message });
+        return fail(res, 500, 'Internal server error.');
+      } finally {
+        if (client) client.release();
+      }
+    }
+  );
+
   // ── POST /wallet/provision ────────────────────────────────────────────
   // Replaces the retired v2 /register flow's account allocation for
   // platform-auth (OTP/password) users. The mobile app calls this after
@@ -1886,6 +2080,12 @@ function topochainMobileRoutes(config) {
       try {
         await client.query('BEGIN');
 
+        // Serialize normal allocation with /wallet/claim for this user. The
+        // claim route locks the same user row before moving a legacy wallet,
+        // so an event-scoped legacy account cannot race a fresh season-wide
+        // pool allocation and leave the target holding both.
+        await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [req.user.id]);
+
         // Existing allocation wins. Prefer a season-wide account (matches
         // every event's wallet check) over an event-scoped one.
         const { rows: existingRows } = await client.query(
@@ -1912,7 +2112,9 @@ function topochainMobileRoutes(config) {
           );
           if (!poolRows.length) {
             await client.query('ROLLBACK');
-            return fail(res, 409, 'No on-chain accounts are available for the current season.');
+            return fail(res, 409, 'No on-chain accounts are available for the current season.', {
+              code: 'wallet_pool_exhausted',
+            });
           }
           account = poolRows[0];
           try {

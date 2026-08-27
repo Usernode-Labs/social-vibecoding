@@ -13,6 +13,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const bcrypt = require('bcrypt');
 const express = require('express');
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -30,6 +31,8 @@ const USERS = [
   { id: 2, email: 'migrated@example.com' }, // event-scoped account + enrollment (topochain import)
   { id: 3, email: 'both@example.com' }, // season-wide AND event-scoped accounts
   { id: 4, email: 'late@example.com' }, // fresh user hitting an exhausted pool
+  { id: 5, email: null }, // current social identity claiming its legacy wallet
+  { id: 6, email: 'legacy@example.com' }, // legacy programme identity
 ];
 
 const TOKENS = [
@@ -37,7 +40,12 @@ const TOKENS = [
   { user_id: 2, raw: 'migrated-token' },
   { user_id: 3, raw: 'both-token' },
   { user_id: 4, raw: 'late-token' },
+  { user_id: 5, raw: 'social-token' },
+  { user_id: 6, raw: 'legacy-token' },
 ].map((t) => ({ ...t, token_hash: crypto.createHash('sha256').update(t.raw).digest('hex'), ability: 'session', expires_at: T(1) }));
+
+const CLAIM_CODE = '123456';
+const CLAIM_CODE_HASH = bcrypt.hashSync(CLAIM_CODE, 4);
 
 // Season 10: the current active public season. Season 20: internal (must
 // never be picked by the fallback).
@@ -56,6 +64,7 @@ function initialAccounts() {
     { id: 200, address: 'ut1migrated', public_key: 'utpk1migrated', secret_key: 'utsk1migrated', season_id: 10, season_event_id: 100, user_id: 2, is_used: true },
     { id: 300, address: 'ut1both-event', public_key: 'utpk1both-event', secret_key: 'utsk1both-event', season_id: 10, season_event_id: 100, user_id: 3, is_used: true },
     { id: 301, address: 'ut1both-season', public_key: 'utpk1both-season', secret_key: 'utsk1both-season', season_id: 10, season_event_id: null, user_id: 3, is_used: true },
+    { id: 400, address: 'ut1legacy', public_key: 'utpk1legacy', secret_key: 'utsk1legacy', season_id: 10, season_event_id: null, user_id: 6, is_used: true },
   ];
 }
 
@@ -68,11 +77,23 @@ function initialEnrollments() {
 
 let accounts = initialAccounts();
 let enrollments = initialEnrollments();
+let activeTokens = TOKENS.map((token) => ({ ...token }));
+let otps = [];
 let nextEnrollmentId = 10;
 
 function resetState() {
   accounts = initialAccounts();
   enrollments = initialEnrollments();
+  activeTokens = TOKENS.map((token) => ({ ...token }));
+  otps = [{
+    id: 1,
+    email: 'legacy@example.com',
+    code_hash: CLAIM_CODE_HASH,
+    attempts: 0,
+    expires_at: T(1),
+    consumed_at: null,
+    created_at: new Date(),
+  }];
   nextEnrollmentId = 10;
   global.__noCurrentSeason = false;
   global.__raceWinnerAccountId = null;
@@ -87,12 +108,49 @@ function handleQuery(rawSql, params = []) {
 
   // mobileTokenAuth.
   if (sql.startsWith('SELECT t.id, t.user_id, t.ability, t.expires_at, u.username FROM mobile_auth_tokens')) {
-    const tok = TOKENS.find((t) => t.token_hash === params[0]);
+    const tok = activeTokens.find((t) => t.token_hash === params[0]);
     if (!tok) return { rows: [] };
     const user = USERS.find((u) => u.id === tok.user_id);
     return { rows: [{ id: tok.user_id, user_id: tok.user_id, ability: tok.ability, expires_at: tok.expires_at, username: user.email }] };
   }
   if (sql.startsWith('UPDATE mobile_auth_tokens SET last_used_at')) return { rows: [] };
+
+  // One-time email proof used by wallet claim.
+  if (sql.startsWith('SELECT id, code_hash, attempts, expires_at FROM mobile_otp_codes')) {
+    const rows = otps
+      .filter((otp) => otp.email === params[0] && otp.consumed_at == null)
+      .sort((a, b) => b.created_at - a.created_at || b.id - a.id)
+      .slice(0, 1)
+      .map((otp) => ({ ...otp }));
+    return { rows };
+  }
+  if (sql.startsWith('UPDATE mobile_otp_codes SET attempts = attempts + 1')) {
+    const otp = otps.find((row) => row.id === params[0]);
+    otp.attempts += 1;
+    return { rows: [] };
+  }
+  if (sql.startsWith('UPDATE mobile_otp_codes SET consumed_at = NOW()')) {
+    const otp = otps.find((row) => row.id === params[0]);
+    otp.consumed_at = new Date();
+    return { rows: [] };
+  }
+
+  // Legacy identity lookup and deterministic user locks.
+  if (sql.startsWith('SELECT id FROM users WHERE LOWER(email) = $1 LIMIT 1')) {
+    const user = USERS.find((row) => String(row.email || '').toLowerCase() === params[0]);
+    return { rows: user ? [{ id: user.id }] : [] };
+  }
+  if (sql.startsWith('SELECT id, email FROM users WHERE id = ANY($1::bigint[])')) {
+    return {
+      rows: USERS.filter((user) => params[0].includes(user.id))
+        .sort((a, b) => a.id - b.id)
+        .map((user) => ({ id: user.id, email: user.email })),
+    };
+  }
+  if (sql.startsWith('SELECT id FROM users WHERE id = $1 FOR UPDATE')) {
+    const user = USERS.find((row) => row.id === params[0]);
+    return { rows: user ? [{ id: user.id }] : [] };
+  }
 
   // Current active public season fallback.
   if (sql.startsWith('SELECT id FROM seasons WHERE internal = FALSE AND is_active = TRUE')) {
@@ -143,6 +201,30 @@ function handleQuery(rawSql, params = []) {
     return { rows: [] };
   }
 
+  // Wallet claim target/source locks and ownership transfer.
+  if (sql.startsWith('SELECT id FROM onchain_accounts WHERE user_id = $1 AND season_id = $2')) {
+    const row = accounts.find((account) => account.user_id === params[0] && account.season_id === params[1]);
+    return { rows: row ? [{ id: row.id }] : [] };
+  }
+  if (sql.startsWith('SELECT id, address, public_key, season_event_id FROM onchain_accounts WHERE user_id = $1 AND season_id = $2')) {
+    const rows = accounts
+      .filter((account) => account.user_id === params[0] && account.season_id === params[1])
+      .sort((a, b) => Number(b.season_event_id == null) - Number(a.season_event_id == null) || a.id - b.id)
+      .map((account) => ({
+        id: account.id,
+        address: account.address,
+        public_key: account.public_key,
+        season_event_id: account.season_event_id,
+      }));
+    return { rows };
+  }
+  if (sql.startsWith('UPDATE onchain_accounts SET user_id = $1, updated_at = NOW() WHERE user_id = $2 AND season_id = $3')) {
+    for (const account of accounts) {
+      if (account.user_id === params[1] && account.season_id === params[2]) account.user_id = params[0];
+    }
+    return { rows: [] };
+  }
+
   // Block-producer release lookup (onboarding flow alignment): provision
   // reports bp_released alongside the wallet so the app can gate producer
   // setup. No fixture user is released.
@@ -157,6 +239,11 @@ function handleQuery(rawSql, params = []) {
   }
   if (sql.startsWith('INSERT INTO user_enrollments (season_event_id, user_id, season_id, registered_at')) {
     enrollments.push({ id: nextEnrollmentId++, user_id: params[0], season_id: params[1], season_event_id: null });
+    return { rows: [] };
+  }
+
+  if (sql.startsWith('DELETE FROM mobile_auth_tokens WHERE user_id = $1')) {
+    activeTokens = activeTokens.filter((token) => token.user_id !== params[0]);
     return { rows: [] };
   }
 
@@ -218,10 +305,19 @@ const FRESH = bearer('fresh-token');
 const MIGRATED = bearer('migrated-token');
 const BOTH = bearer('both-token');
 const LATE = bearer('late-token');
+const SOCIAL = bearer('social-token');
 
 function provision(base, headers) {
   return fetch(`${base}/api/v4/mobile/wallet/provision`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...(headers || {}) }, body: '{}',
+  });
+}
+
+function claim(base, { headers, email = 'legacy@example.com', code = CLAIM_CODE } = {}) {
+  return fetch(`${base}/api/v4/mobile/wallet/claim`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(headers || {}) },
+    body: JSON.stringify({ email, code }),
   });
 }
 
@@ -315,6 +411,7 @@ test('409 when the season pool is exhausted', async () => {
     const body = await resp.json();
     assert.equal(body.success, false);
     assert.match(body.error, /No on-chain accounts are available/);
+    assert.equal(body.code, 'wallet_pool_exhausted');
   });
 });
 
@@ -345,5 +442,80 @@ test('losing the per-(user, season) unique race returns the winner\'s account id
     assert.equal(accounts.filter((a) => a.user_id === 1).length, 1);
     assert.equal(accounts.find((a) => a.id === 100).user_id, null);
     assert.equal(enrollments.filter((e) => e.user_id === 1).length, 1);
+  });
+});
+
+test('wallet claim requires the current social account session token', async () => {
+  resetState();
+  await withServer(async (base) => {
+    const resp = await claim(base);
+    assert.equal(resp.status, 401);
+  });
+});
+
+test('wallet claim rejects a wrong one-time code and records the attempt', async () => {
+  resetState();
+  await withServer(async (base) => {
+    const resp = await claim(base, { headers: SOCIAL, code: '999999' });
+    assert.equal(resp.status, 422);
+    const body = await resp.json();
+    assert.equal(body.code, 'wallet_claim_invalid');
+    assert.equal(otps[0].attempts, 1);
+    assert.equal(otps[0].consumed_at, null);
+    assert.equal(accounts.find((account) => account.id === 400).user_id, 6);
+  });
+});
+
+test('verified wallet claim moves the current-season wallet, enrolls the target, and revokes source sessions', async () => {
+  resetState();
+  await withServer(async (base) => {
+    const resp = await claim(base, { headers: SOCIAL });
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.success, true);
+    assert.equal(body.claimed, true);
+    assert.equal(body.address, 'ut1legacy');
+    assert.equal(body.season_id, 10);
+
+    assert.equal(accounts.find((account) => account.id === 400).user_id, 5);
+    assert.ok(enrollments.find((enrollment) => enrollment.user_id === 5 && enrollment.season_id === 10));
+    assert.ok(otps[0].consumed_at instanceof Date);
+    assert.equal(activeTokens.some((token) => token.user_id === 6), false);
+    assert.equal(activeTokens.some((token) => token.user_id === 5), true);
+
+    // The normal reconciliation endpoint now returns the transferred key;
+    // the client does not need a special secret-bearing claim response.
+    const provisionResp = await provision(base, SOCIAL);
+    assert.equal(provisionResp.status, 200);
+    const provisionBody = await provisionResp.json();
+    assert.equal(provisionBody.data.address, 'ut1legacy');
+    assert.equal(provisionBody.data.secret_key, 'utsk1legacy');
+    assert.equal(provisionBody.data.newly_allocated, false);
+  });
+});
+
+test('wallet claim refuses to overwrite a current-season wallet already held by the target', async () => {
+  resetState();
+  accounts.find((account) => account.id === 100).user_id = 5;
+  accounts.find((account) => account.id === 100).is_used = true;
+  await withServer(async (base) => {
+    const resp = await claim(base, { headers: SOCIAL });
+    assert.equal(resp.status, 409);
+    const body = await resp.json();
+    assert.equal(body.code, 'wallet_claim_conflict');
+    assert.equal(accounts.find((account) => account.id === 400).user_id, 6);
+    assert.equal(otps[0].consumed_at, null);
+  });
+});
+
+test('wallet claim reports a verified email with no current-season programme wallet', async () => {
+  resetState();
+  accounts.find((account) => account.id === 400).user_id = 99;
+  await withServer(async (base) => {
+    const resp = await claim(base, { headers: SOCIAL });
+    assert.equal(resp.status, 409);
+    const body = await resp.json();
+    assert.equal(body.code, 'wallet_claim_not_found');
+    assert.equal(otps[0].consumed_at, null);
   });
 });
