@@ -85,15 +85,54 @@
   // this session was opened from, when there was one. With it, the agent
   // can pull the request's own title and body through prepare_work and
   // needs nothing else; without it, the session's title is the brief.
+  //
+  // TWO SHAPES, since #1350 made "this session has no branch" an ordinary
+  // state rather than an impossible one:
+  //
+  //   'new'                  – nothing has been built here. The agent cuts
+  //                            a fresh branch on its own fork and Usernode
+  //                            opens a new proposal from it.
+  //   'session' / 'proposal' – a turn HAS run here, so there is a branch
+  //                            with commits on it. The agent must continue
+  //                            THAT work, and the only way to say so is
+  //                            `proposalId`: prepare_work then bases the
+  //                            work order at this session's current head
+  //                            instead of at the app's default branch.
+  //
+  // Getting that second case wrong is not cosmetic. An agent handed the
+  // 'new' text for a session that already has commits starts from main,
+  // rebuilds from scratch, and submits a proposal that silently drops
+  // everything the session had done. This is the "instructions on resuming
+  // a branch when handing off from an on-platform branch" half of #1350.
+  //
+  // `targetKind` and `targetId` come from build-venues.js's webTargetKind /
+  // choicesFor, so the copy and the wizard's own door agree about which of
+  // the two a session is in.
+  function resumeTarget(state) {
+    var s = state || {};
+    var kind = String(s.targetKind || '');
+    if (kind !== 'session' && kind !== 'proposal') return null;
+    var branch = String(s.branchName || '').trim();
+    var id = Number(s.targetId);
+    if (!branch || !Number.isFinite(id) || id <= 0) return null;
+    return { kind: kind, branch: branch, id: id };
+  }
+
   function prefillText(state) {
     var s = state || {};
     var slug = String(s.slug || '').trim();
     var issue = Number(s.issueNumber);
     var hasIssue = Number.isFinite(issue) && issue > 0;
     var title = String(s.sessionTitle || '').trim();
+    var resume = resumeTarget(s);
 
     var lines = [];
-    lines.push('Build a change to the Usernode app `' + (slug || '<app slug>') + '`.');
+    if (resume) {
+      lines.push('Continue work already started on the Usernode app `'
+        + (slug || '<app slug>') + '`.');
+    } else {
+      lines.push('Build a change to the Usernode app `' + (slug || '<app slug>') + '`.');
+    }
     lines.push('');
     if (hasIssue) {
       lines.push('What to build: request #' + issue
@@ -105,6 +144,30 @@
       lines.push('What to build: <describe the change here>');
     }
     lines.push('');
+    if (resume) {
+      lines.push('IMPORTANT: this work already has a branch on Usernode, `'
+        + resume.branch + '`, with commits on it.');
+      lines.push('Do not start over from the app’s default branch. Use the Usernode MCP');
+      lines.push('connector, in this order:');
+      lines.push('1. Call `prepare_work` with slug `' + (slug || '<app slug>')
+        + '` and proposalId ' + resume.id + '.');
+      lines.push('2. Follow the work order it returns EXACTLY. Its base commit is the');
+      lines.push('   CURRENT head of that branch, all 40 characters. Starting anywhere else');
+      lines.push('   drops the work already done here.');
+      lines.push('3. Implement and test the change, then push to a branch on your own fork.');
+      lines.push('   Any branch name is fine; report the one you pushed.');
+      lines.push('4. Call `submit_work` with the task id and the branch you pushed, plus');
+      lines.push('   `testingPaths` naming the screens you changed.');
+      if (resume.kind === 'proposal') {
+        lines.push('   Usernode moves the existing proposal onto your commit instead of');
+        lines.push('   opening a second one, and everyone who already approved it is asked');
+        lines.push('   to re-review.');
+      } else {
+        lines.push('   Usernode moves this session’s branch onto your commit instead of');
+        lines.push('   opening a second proposal for the same work.');
+      }
+      return lines.join('\n');
+    }
     lines.push('Use the Usernode MCP connector, in this order:');
     lines.push('1. Call `prepare_work` with slug `' + (slug || '<app slug>') + '`'
       + (hasIssue ? ' and requestNumber ' + issue : '') + '.');
@@ -116,6 +179,50 @@
     lines.push('   `testingPaths` naming the screens you changed. Usernode opens the pull');
     lines.push('   request and puts it to the group’s vote.');
     return lines.join('\n');
+  }
+
+  // ── The resume banner ───────────────────────────────────────────────
+  //
+  // One line above the steps saying which of the two situations this
+  // session is in, because the difference is invisible otherwise and the
+  // consequence of missing it is lost work.
+  //
+  // Rendered for BOTH launchpad shapes: `own-tools-pr` puts it above its
+  // own steps, and dev-chat.js prepends it to the web-venue wizard, which
+  // has no idea a session can be branchless. That is why the markup lives
+  // here rather than in either of them.
+  //
+  // Returns '' when there is nothing worth saying, so a caller can
+  // concatenate it unconditionally.
+  function resumeBannerHtml(state) {
+    var s = state || {};
+    var resume = resumeTarget(s);
+    if (resume) {
+      return ''
+        + '<div class="dc-launchpad-resume" data-launchpad-resume="continue">'
+        + '<div class="dc-launchpad-resume-title">Continuing this session’s branch</div>'
+        + '<div class="dc-launchpad-resume-detail">There is work on <code>'
+        + escapeHtml(resume.branch) + '</code> already. The instructions below tell your '
+        + 'agent to start from its current commit, so nothing done here is lost. Copy them '
+        + 'as they are: an agent that starts from the app’s default branch instead would '
+        + 'rebuild this from scratch.</div>'
+        + '</div>';
+    }
+    // A session with no branch yet is the normal case for a hand-off made
+    // straight from the start screen (#1350). Say so plainly: there is
+    // nothing to resume, and no branch will ever be created on Usernode
+    // for it, because the agent works on its own fork.
+    if (String(s.targetKind || '') === 'new') {
+      return ''
+        + '<div class="dc-launchpad-resume" data-launchpad-resume="new">'
+        + '<div class="dc-launchpad-resume-title">Starting new work</div>'
+        + '<div class="dc-launchpad-resume-detail">Nothing has been built in this session '
+        + 'yet, so there is nothing to resume. Your agent starts from the app’s current '
+        + 'code on its own fork, and Usernode opens the pull request when it '
+        + 'submits.</div>'
+        + '</div>';
+    }
+    return '';
   }
 
   function stepHtml(n, title, body) {
@@ -152,6 +259,11 @@
   //   canImport     – false for a viewer who cannot push branches to the
   //                   app; the final step then explains instead of offering
   //                   a button that would be refused
+  //   targetKind    – 'new' | 'session' | 'proposal' (build-venues.js's
+  //                   webTargetKind), which decides between the two prefills
+  //   targetId      – the session id to pass as `proposalId` when continuing
+  //   branchName    – chat_sessions.branch_name, named in the resume copy.
+  //                   NULL until the session has run a turn (#1350)
   function ownToolsHtml(state) {
     var s = state || {};
     var connect = mcpCommand(s.origin);
@@ -172,6 +284,7 @@
     return ''
       + '<div class="dc-launchpad" data-launchpad="own-tools-pr">'
       + '<div class="dc-launchpad-lead">Building with your own tools</div>'
+      + resumeBannerHtml(s)
       + '<div class="dc-launchpad-sub">There is no Usernode chat for this one. The conversation '
       + 'happens in your own agent. Usernode still opens the pull request, builds the preview '
       + 'and runs the checks.</div>'
@@ -230,6 +343,7 @@
     connectorUrl: connectorUrl,
     mcpCommand: mcpCommand,
     prefillText: prefillText,
+    resumeBannerHtml: resumeBannerHtml,
     ownToolsHtml: ownToolsHtml,
     wire: wire,
     escapeHtml: escapeHtml,

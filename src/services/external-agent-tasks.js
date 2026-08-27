@@ -1196,6 +1196,20 @@ function describeTargetProposal(session, user, app, origin) {
 
   const branchHome = proposalUpdate.branchHomeOf(session);
   const branchName = String(session.branch_name || '');
+  // #1350: a native session created but never given a turn has no branch
+  // yet, and that is a normal state rather than a fault. It used to fall
+  // into the platform_unavailable checks below, which tell the caller to
+  // "try again shortly" for something no amount of waiting fixes: there is
+  // nothing to continue until a turn has run, and a fresh work order for a
+  // new change is what the caller actually wants.
+  if (branchHome === 'app_repo' && !branchName) {
+    return fail(
+      'session_not_started',
+      `Session ${id} has not run a turn yet, so it has no branch to continue from. `
+        + 'Ask for a new change on this app instead, or send a message in the session '
+        + 'on Usernode first and then continue it.'
+    );
+  }
   // A proposal whose head is in the author's fork is advanced by pushing to
   // THAT branch — an open pull request cannot be repointed at another one —
   // so the work order has to name it, and a name git would reject means the

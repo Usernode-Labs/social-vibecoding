@@ -3269,6 +3269,21 @@ async function execPushFromWorker(sessionId, branchName) {
       + "your behalf. This needs a platform admin, and retrying won't help.";
     throw err;
   }
+  // #1350: a session created but never given a turn has no branch at all,
+  // so the push proxy has to name that case separately. Left to fall
+  // through, isValidBranchName rejects null and the message advises
+  // renaming a branch that does not exist, which is advice nobody can act
+  // on. The remedy is to run a turn.
+  if (branchName == null || branchName === '') {
+    const err = new Error(`Session ${sessionId} has no branch yet`);
+    err.code = 'no_branch';
+    err.permanent = true;
+    err.userMessage =
+      'This session does not have a git branch yet, so there is nothing to push to. '
+      + 'Send a message in the session first. Usernode creates the branch on the '
+      + 'first turn and the push will work from then on.';
+    throw err;
+  }
   if (!branchNames.isValidBranchName(branchName)) {
     const err = new Error(`Invalid branch name: ${branchName}`);
     err.code = 'bad_branch';

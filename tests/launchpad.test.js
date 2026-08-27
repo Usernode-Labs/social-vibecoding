@@ -407,3 +407,73 @@ test('the walkthrough carries its vendor toggle in every state', () => {
     assert.match(html, /dc-flow-vendor-on[^>]*>ChatGPT|ChatGPT<\/button>/);
   }
 });
+
+// ── #1350: continuing a branch vs starting fresh ────────────────────
+
+test('the prefill switches shape when there is a branch to continue', () => {
+  const resume = Launchpad.prefillText({
+    slug: 'usernode-2d5619',
+    sessionTitle: 'Rework build method UI',
+    targetKind: 'session',
+    targetId: 990401,
+    branchName: 'dev/evan-1750000000000',
+  });
+  // The whole point of the resume shape: an agent handed a branch that
+  // already has commits must not start over from the default branch.
+  assert.match(resume, /Continue work already started/);
+  assert.match(resume, /dev\/evan-1750000000000/, 'names the branch by hand');
+  assert.match(resume, /proposalId 990401/, 'and rides it on both connector calls');
+  assert.match(resume, /Do not start over/i);
+  assert.match(resume, /CURRENT head of that branch/);
+  assert.match(resume, /own fork/, 'the agent still pushes to its own fork');
+  assert.match(resume, /testingPaths/);
+
+  // A brand-new session (deferred branch, nothing run yet) keeps the
+  // original start-work shape rather than pointing at a branch that is
+  // not there.
+  const fresh = Launchpad.prefillText({
+    slug: 'usernode-2d5619',
+    sessionTitle: 'Rework build method UI',
+    targetKind: 'new',
+    targetId: 990409,
+    branchName: null,
+  });
+  assert.doesNotMatch(fresh, /Continue work already started/);
+  assert.doesNotMatch(fresh, /proposalId/);
+  assert.match(fresh, /prepare_work/);
+});
+
+test('a half-filled resume target falls back to starting work', () => {
+  // Each of these is a state the shell can genuinely be in mid-load. A
+  // prefill that named a blank branch would send the agent looking for a
+  // ref that does not exist, which is worse than starting clean.
+  const degenerate = [
+    { targetKind: 'session', targetId: 990401, branchName: '' },
+    { targetKind: 'session', targetId: null, branchName: 'dev/evan-1' },
+    { targetKind: 'new', targetId: 990401, branchName: 'dev/evan-1' },
+  ];
+  for (const extra of degenerate) {
+    const text = Launchpad.prefillText({ slug: 'app-1', sessionTitle: 'A change', ...extra });
+    assert.doesNotMatch(text, /Continue work already started/, JSON.stringify(extra));
+    assert.doesNotMatch(text, /undefined|null/);
+  }
+});
+
+test('the resume banner says which of the two things is happening', () => {
+  const cont = Launchpad.resumeBannerHtml({
+    targetKind: 'session', targetId: 990401, branchName: 'dev/evan-1750000000000',
+  });
+  assert.match(cont, /data-launchpad-resume="continue"/);
+  assert.match(cont, /dev\/evan-1750000000000/);
+
+  const fresh = Launchpad.resumeBannerHtml({ targetKind: 'new', targetId: 990409, branchName: null });
+  assert.match(fresh, /data-launchpad-resume="new"/);
+  assert.doesNotMatch(fresh, /<code/, 'no branch to name');
+
+  // A branch name is user-adjacent text that lands inside the markup.
+  const nasty = Launchpad.resumeBannerHtml({
+    targetKind: 'session', targetId: 1, branchName: 'dev/<img src=x onerror=alert(1)>',
+  });
+  assert.doesNotMatch(nasty, /<img/);
+  assert.match(nasty, /&lt;img/);
+});

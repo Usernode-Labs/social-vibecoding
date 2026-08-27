@@ -185,6 +185,19 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const prNumber = Number(session.pr_number) || null;
     const viaPullRef = !!(pinnedSha && prNumber);
 
+    // #1350: a native session gets its branch on its first turn, so a
+    // session that has never run one has nothing to clone. Refuse with a
+    // reason rather than letting `git clone --branch null` fail: the
+    // sweeps that call this already filter `branch_name IS NOT NULL`, so
+    // reaching here means a direct caller (a manual redeploy, a recovery
+    // pass) asked for a preview of work that does not exist yet.
+    if (!viaPullRef && !session.branch_name) {
+      throw new Error(
+        'This session has no branch yet, so there is nothing to build a preview from. '
+        + 'Send a message in the session first.'
+      );
+    }
+
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     // --recurse-submodules + --shallow-submodules so dapps that vendor
     // upstream sources via submodules (e.g. falling-sands → sandspiel)

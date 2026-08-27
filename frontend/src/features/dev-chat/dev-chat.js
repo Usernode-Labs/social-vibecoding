@@ -484,12 +484,38 @@ const DevChat = {
     return String(s.session_title || s.pr_title || '').trim();
   },
 
+  // What the launchpad copy has to say about work already done here
+  // (#1350). Three fields, read off the same derivation the venue sheet's
+  // row labels use, so "Continue this session with Claude Code" in the
+  // menu and the instructions the launchpad prints cannot disagree about
+  // whether there is anything to continue.
+  //
+  // Before #1350 every session had a branch from the moment it was
+  // created, so `targetKind` was only ever 'new' for a promoted one and
+  // the launchpad could ignore the question. Now a session that has never
+  // run a turn genuinely has none, and the two cases need different
+  // instructions: continuing means `proposalId` and the session's head
+  // commit, starting means neither.
+  _launchpadResumeState() {
+    const session = DevChat.currentSession || {};
+    const state = window.BuildVenues ? DevChat._venueSheetState() : null;
+    return {
+      targetKind: state ? BuildVenues.webTargetKind(state) : 'new',
+      targetId: session.id || null,
+      branchName: session.branch_name || null,
+    };
+  },
+
   _launchpadHtml() {
     const venue = DevChat._launchpadVenue();
     if (!venue) return '';
+    const resume = DevChat._launchpadResumeState();
     if (venue === 'own-tools-pr') {
       const session = DevChat.currentSession || {};
       return Launchpad.ownToolsHtml({
+        targetKind: resume.targetKind,
+        targetId: resume.targetId,
+        branchName: resume.branchName,
         origin: (typeof window !== 'undefined' && window.location)
           ? window.location.origin : '',
         slug: App.currentApp || '',
@@ -518,7 +544,14 @@ const DevChat = {
     // The walkthrough paints "checking where you are" while the first read
     // is in flight, so it has to be kicked here as well as by the picker.
     if (!flow.status) DevChat._devFlowEnsureStatus();
-    return DevFlowSelect.wizardHtml({
+    // The same banner the own-tools launchpad carries, prepended to the
+    // vendor walkthrough. The walkthrough is dev-flow-select.js's and
+    // predates #1350 by a long way: it knows how to hand a task to a web
+    // agent but nothing about whether this session already has commits.
+    // Rather than teach it, the one sentence that differs is rendered
+    // here, from launchpad.js, so both hand-off venues say it the same
+    // way and there is one copy to change.
+    return Launchpad.resumeBannerHtml(resume) + DevFlowSelect.wizardHtml({
       agent: venue === 'web-codex' ? 'codex' : 'claude-code',
       status: flow.status,
       busy: flow.busy,

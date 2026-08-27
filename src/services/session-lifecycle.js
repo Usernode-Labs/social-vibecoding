@@ -15,6 +15,7 @@ const worker = require('./worker');
 const { isSessionBusy } = require('./active-workers');
 const workerProgress = require('./worker-progress');
 const github = require('./github');
+const branchNames = require('./branch-names');
 
 // Parse "owner/repo" out of a stored GitHub repo URL. Returns [owner,
 // repo] or [] when the URL is missing/unparseable.
@@ -421,7 +422,109 @@ async function purgeArchivedCc({ pool, sessionId }) {
   return { purged: true };
 }
 
+
+// ── Deferred branch creation (#1350) ────────────────────────────────────
+//
+// A native session no longer gets a git branch when it is created. Nothing
+// is on the branch until an agent turn runs, and most created sessions
+// never run one: the branch was an empty ref off main, plus a GitHub API
+// call, minted for a session the owner might abandon on the start screen
+// or hand straight over to an off-platform agent that pushes to its own
+// fork. So the mint moved to the first thing that actually needs it.
+//
+// This helper is that mint, and it is the ONLY one on the deferred path.
+// Three properties it has to have, because the callers below are a first
+// chat turn, two worker-dispatch seams and the push proxy, any of which
+// can be the first to arrive and two of which can arrive at once:
+//
+//   idempotent  - a session that already has a branch returns it untouched.
+//   serialized  - SELECT ... FOR UPDATE holds the row for the whole mint,
+//                 so two concurrent callers cannot mint two names for one
+//                 session (the loser sees the winner's name on its read).
+//   all-or-nothing - the name is persisted ONLY after GitHub has the ref.
+//                 A stored branch_name whose ref does not exist is the one
+//                 state the worker cannot survive: run-cc.sh dies on
+//                 "branch missing upstream: origin/$BRANCH" for every
+//                 build and sync turn, forever, with no way back.
+//
+// Off-platform venues (web-claude-code, web-codex, own-tools-pr) never run
+// an on-platform turn, so they never reach any caller of this and never
+// mint a branch at all. That is the second half of #1350, and it falls out
+// of the deferral rather than needing its own switch.
+//
+// Params:
+//   pool      - pg pool
+//   sessionId - numeric session id
+//   username  - optional; the branch's owner segment. Defaults to the
+//               session owner's stored username.
+//
+// Returns { branchName, created }. Throws with `code` set when the session
+// is gone ('no_session') or GitHub refused the ref ('branch_create_failed',
+// carrying a userMessage safe to show in chat).
+async function ensureSessionBranch({ pool, sessionId, username = null }) {
+  const client = await pool.connect();
+  let open = false;
+  try {
+    await client.query('BEGIN');
+    open = true;
+    const { rows } = await client.query(
+      `SELECT cs.id, cs.branch_name, cs.user_id, u.username, a.repo_url
+         FROM chat_sessions cs
+         JOIN apps a ON a.id = cs.app_id
+         LEFT JOIN users u ON u.id = cs.user_id
+        WHERE cs.id = $1
+        FOR UPDATE OF cs`,
+      [sessionId]
+    );
+    const row = rows[0];
+    if (!row) {
+      await client.query('COMMIT');
+      open = false;
+      const err = new Error(`Session ${sessionId} not found`);
+      err.code = 'no_session';
+      throw err;
+    }
+    if (row.branch_name) {
+      await client.query('COMMIT');
+      open = false;
+      return { branchName: row.branch_name, created: false };
+    }
+
+    const branchName = branchNames.devBranchName(username || row.username || `u${row.user_id}`);
+    const [owner, repo] = ownerRepo(row.repo_url);
+    if (github.isEnabled() && owner && repo) {
+      try {
+        await github.createBranch(owner, repo, branchName);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        open = false;
+        log.warn('session-lifecycle', 'Deferred branch creation failed', {
+          sessionId, branch: branchName, err: err.message,
+        });
+        const wrapped = new Error(`Could not create branch ${branchName}: ${err.message}`);
+        wrapped.code = 'branch_create_failed';
+        wrapped.userMessage = 'Usernode could not create this session\'s branch on GitHub. '
+          + 'Send your message again in a moment. If it keeps failing, ask an admin to check '
+          + 'the GitHub connection for this app.';
+        throw wrapped;
+      }
+    }
+
+    await client.query(`UPDATE chat_sessions SET branch_name = $2 WHERE id = $1`, [sessionId, branchName]);
+    await client.query('COMMIT');
+    open = false;
+    log.info('session-lifecycle', 'Session branch created on first use', { sessionId, branch: branchName });
+    return { branchName, created: true };
+  } catch (err) {
+    if (open) { try { await client.query('ROLLBACK'); } catch { /* already unwound */ } }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
+  ensureSessionBranch,
   pauseSession,
   freeGlobalSlot,
   teardownStagingForSession,

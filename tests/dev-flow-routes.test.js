@@ -466,10 +466,19 @@ test('a target row that cannot be read is a 503, not a 500', async () => {
 test('a session with no usable branch name cannot be continued', async () => {
   // A native continuation is based at the head of THIS branch and pushed back
   // onto it: without a name there is no base to hand the agent.
-  stub.target = targetRow('active', { branch_name: '' });
-  const r = await prepare({ agent: 'codex', brief: 'x', proposalId: 990405 });
-  assert.equal(r.status, 503);
-  assert.match((await r.json()).error, /session 990405's branch/);
+  //
+  // #1350 made this an ordinary state rather than a platform fault: a session
+  // that has not run a turn yet genuinely has no branch, so the answer is a
+  // 409 naming what to do instead, not a 503 that reads as an outage.
+  for (const branch of ['', null]) {
+    stub.target = targetRow('active', { branch_name: branch });
+    const r = await prepare({ agent: 'codex', brief: 'x', proposalId: 990405 });
+    assert.equal(r.status, 409);
+    const j = await r.json();
+    assert.equal(j.code, 'session_not_started');
+    assert.match(j.error, /has not run a turn yet/);
+    assert.match(j.error, /send a message in the session/i);
+  }
 });
 
 test('restart is a boolean the caller cannot smuggle a value through', async () => {
