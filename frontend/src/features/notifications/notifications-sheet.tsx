@@ -50,6 +50,7 @@ import { useState, type ReactNode } from 'react';
 
 import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
+import { identityStyle } from '../../lib/identity-gradient';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
@@ -86,13 +87,31 @@ function startOfToday(): number {
   return d.getTime();
 }
 
+/**
+ * The actor mark on a notification row.
+ *
+ * This is the product's own version of the brand's activity chip — a
+ * notification IS "+Andrea just joined", and the identity square is what the
+ * kit puts in front of that sentence. A rounded SQUARE rather than the old
+ * circle, because the kit's circles are photographs and its squares are
+ * marks, and this is always a mark: an event glyph or an initial, never a
+ * portrait.
+ *
+ * Falls back to the neutral tile face when there is no `who` to hash — a
+ * system notice has no author, and inventing an identity for it would make
+ * two unrelated events look like the same person.
+ */
 function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
-  const initial = (view.who || '?').replace(/^@/, '').charAt(0).toUpperCase() || '?';
+  const who = (view.who || '').replace(/^@/, '');
+  const initial = who.charAt(0).toUpperCase() || '?';
   return (
     <span
       aria-hidden="true"
-      className={'w-8 h-8 shrink-0 rounded-full bg-violet-500/10 text-violet-500 '
+      className={'w-8 h-8 shrink-0 rounded-lg ring-1 ring-black/10 '
         + 'flex items-center justify-center text-sm font-semibold'}
+      style={who
+        ? identityStyle(who)
+        : { backgroundColor: '#fcfab3', color: '#0c0b09' }}
     >
       {view.icon || initial}
     </span>

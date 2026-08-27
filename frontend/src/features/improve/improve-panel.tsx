@@ -355,7 +355,7 @@ export function ImprovePanel() {
         aria-label={target === 'platform' ? 'Improve the platform' : 'Improve this app'}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
-        className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl improve-panel-transition"
+        className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border border-[var(--frame-line)] shadow-2xl improve-panel-transition"
       >
         {/*
             ONE LINE. It was a stacked title-over-subtitle pair with `py-3`,

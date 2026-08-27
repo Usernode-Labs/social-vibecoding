@@ -52,7 +52,23 @@ export function SectionHeader({ className, ...props }: React.HTMLAttributes<HTML
 export function GroupedList({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('mx-4 overflow-hidden rounded-2xl bg-white dark:bg-zinc-900', className)}
+      // FRAMED, and near-square. A grouped list is a window onto a set of
+      // rows, and the brand draws windows with a rule rather than floating
+      // them on tone alone (see --frame-line in public/css/app.css). This is
+      // the surface where it matters most inside the product: these lists sit
+      // on sheets and panels whose own ground is a step away from the rows',
+      // so without the rule the group's edge was doing almost no work.
+      //
+      // rounded-2xl → rounded-sm for the same reason the sheets tightened:
+      // the brand's card corner is effectively square, and a 20px radius on a
+      // framed rectangle reads as a bubble, which is the one thing it is not.
+      // The radius lives on the BUTTONS in this language, not the boxes —
+      // hard rectangles against round controls is the tension, and softening
+      // the rectangles is what was flattening it.
+      className={cn(
+        'mx-4 overflow-hidden rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900',
+        className,
+      )}
       {...props}
     />
   );

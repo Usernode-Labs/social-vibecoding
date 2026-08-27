@@ -103,7 +103,7 @@
   /* Radii */
   --un-radius: 0.5rem;
   --un-radius-full: 9999px;
-  --un-radius-card: 12px;
+  --un-radius-card: 4px;
 
   /* Motion — linear() spring curves pre-computed from the SAME integrator
      parameters native.js uses (mass/tension/friction: default 1/170/26,
@@ -537,6 +537,10 @@ html.un-android .un-switch:checked:active::before {
 .un-group {
   background: var(--un-group-bg);
   border-radius: var(--un-radius-card);
+  /* The frame (see --frame-line in the platform's app.css; hosted apps that
+     never set it fall back to the kit's own hairline). A grouped card is a
+     window onto a list, and the brand draws windows with a rule. */
+  border: 1px solid var(--frame-line, var(--un-hairline));
   overflow: hidden;
 }
 .un-group-header {
@@ -595,7 +599,11 @@ html.un-android .un-switch:checked:active::before {
   bottom: var(--un-kb-inset, 0px);
   z-index: 9991;
   background: var(--un-sheet-bg);
-  border-radius: 14px 14px 0 0;
+  /* 10px, not 14: the brand's corners are nearly square. Enough radius to
+     read as a sheet edge under a thumb, not enough to read as a pill. */
+  border-radius: 6px 6px 0 0;
+  border: 1px solid var(--frame-line, var(--un-hairline));
+  border-bottom: 0;
   box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22);
   padding-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
   transform: translateY(100%);
@@ -849,7 +857,7 @@ html.un-kb .un-action-sheet {
   overflow-y: auto;
   padding: 4px 0;
   background: var(--un-popover-bg);
-  border: 1px solid var(--un-hairline);
+  border: 1px solid var(--frame-line, var(--un-hairline));
   border-radius: var(--un-radius-card);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
   text-align: left;

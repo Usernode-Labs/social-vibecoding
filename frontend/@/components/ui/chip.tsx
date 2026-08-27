@@ -105,3 +105,60 @@ export function ChipRail({ className, ...props }: React.HTMLAttributes<HTMLDivEl
     />
   );
 }
+
+/**
+ * `ActivityChip` — the brand's event token.
+ *
+ * BRAND KIT 2026's landing page scrolls a rail of these under the hero:
+ * "+Lukas voted yes on change", "+Andrea just joined", "+Evan proposed a
+ * change". Each is a white rectangle with a 1px near-black rule, a flush
+ * identity gradient square on the leading edge, and a Geist label. It is the
+ * most characterful element the brand owns, and the product has the same
+ * thing to say — someone did something — on every activity surface.
+ *
+ * Three geometry decisions are the brand's, not preferences:
+ *
+ * - SQUARE. The reference chip has no radius at all. It is the counterweight
+ *   to the fully-round CTA: the brand's shape language is hard rectangles and
+ *   round buttons, and softening this one collapses that tension.
+ * - The gradient square is FLUSH — it bleeds to the chip's top, bottom and
+ *   leading edges with no padding, so the chip reads as two joined materials
+ *   rather than as an icon sitting inside a box. `overflow-hidden` on the
+ *   chip plus zero leading padding is what does it.
+ * - The shadow is a SOFT grey offset (not the CTA's hard black one). These
+ *   are ambient, many-at-once, and a hard shadow on a rail of them buzzes.
+ *
+ * Identity comes from `lib/identity-gradient` at the call site, passed as
+ * `identity` — this primitive does not import it, because @/components/ui
+ * must not depend on src/lib.
+ */
+export interface ActivityChipProps extends React.HTMLAttributes<HTMLSpanElement> {
+  /** The identity square's inline style — `identityStyle(name)` from the caller. */
+  identity?: React.CSSProperties;
+  /** What sits in the identity square: an initial, or an event glyph. */
+  mark?: React.ReactNode;
+}
+
+export function ActivityChip({ className, identity, mark, children, ...props }: ActivityChipProps) {
+  return (
+    <span
+      className={cn(
+        'inline-flex shrink-0 items-center gap-2 overflow-hidden bg-white dark:bg-zinc-900',
+        'border border-[var(--frame-line)] pr-3',
+        'shadow-[2px_2px_4px_0_rgba(161,152,152,0.25)] dark:shadow-none',
+        'text-[0.8125rem] text-zinc-900/80 dark:text-zinc-100/80',
+        className,
+      )}
+      {...props}
+    >
+      <span
+        aria-hidden="true"
+        className="flex h-8 w-8 shrink-0 items-center justify-center self-stretch font-bold"
+        style={identity}
+      >
+        {mark}
+      </span>
+      {children}
+    </span>
+  );
+}

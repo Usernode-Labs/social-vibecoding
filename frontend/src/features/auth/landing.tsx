@@ -778,7 +778,7 @@ export function LandingScreen() {
             // 2xl) is the landing grammar's card shape: hard cards, round
             // buttons — that tension is deliberate. Dark mode is not the
             // brand's stage; it keeps a quiet zinc hairline.
-            className="rounded-md bg-white border border-zinc-950 dark:bg-zinc-900/60 dark:border-zinc-700 p-5 mb-10"
+            className="bg-white border border-zinc-950 dark:bg-zinc-900/60 dark:border-zinc-700 p-5 mb-10"
           >
             <h2 className="text-lg font-semibold mb-1">
               Build apps together, own them together

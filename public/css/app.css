@@ -122,6 +122,18 @@
   --brand-blue: #3090e1;
   --brand-cream: #fffeea;
   --brand-ink: #000000;
+  /* ── The frame line ──────────────────────────────────────
+     The brand draws a FRAME around a floating surface rather than floating it
+     on a shadow: every card on the marketing site is a white rectangle with a
+     1px near-black rule and an almost-square corner. That is the y2k/print
+     read, and it is a different claim from the hairlines inside a list — those
+     separate rows, this one says "this is a window".
+
+     Applied ONLY to surfaces that already float above the page (dialogs,
+     sheets, popovers, the Improve panel, anchored panels). The 100+ resting
+     cards in the interior keep figure/ground: a frame on every one of them
+     would be a cage, not a language. */
+  --frame-line: rgba(12, 11, 9, 0.72);
 
 
   /* ── Safe-area tokens ────────────────────────────────────
@@ -845,6 +857,10 @@ html.un-kb .platform-safe-sheet {
   --accent-light: #92c9ff;
   --accent-tint: rgba(111, 183, 251, 0.14);
   --accent-ink: #0c0b09;
+  /* Dark mode frames from the light side: a near-black rule on a near-black
+     sheet is invisible, so the frame becomes a low-alpha WHITE rule — same
+     job (this is a window), inverted material. */
+  --frame-line: rgba(247, 246, 233, 0.22);
   /* One step UP from the page here, not white: the page is near-black, so a
      bubble has to be lighter than it or it stops being a bubble. */
   --bubble-bg: #1d1c19;
@@ -890,7 +906,7 @@ html.un-kb .platform-safe-sheet {
      floating dropdowns (.attr-popover, .gc-mention-menu). */
   --un-popover-bg: var(--bg-primary);
   --un-navbar-bg: rgba(255, 255, 255, 0.82);
-  --un-radius-card: 12px;
+  --un-radius-card: 4px;
   /* The tile-zoom overlay surface: the app view's screens paint on the
      body background, so the moving card must match it exactly. */
   --un-zoom-bg: var(--bg-primary);

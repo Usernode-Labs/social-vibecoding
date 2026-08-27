@@ -76,7 +76,9 @@ const dialogRootVariants = cva('hidden fixed inset-0 z-50', {
  * emits groups in declaration order — see button.tsx's header for why that
  * ordering rule is the whole mechanism here.
  */
-const dialogCardVariants = cva('bg-white dark:bg-zinc-900 rounded-xl p-6 w-full', {
+// Framed, near-square: a dialog is the clearest 'this is a window' surface
+// in the product, so it takes the brand's frame most literally.
+const dialogCardVariants = cva('bg-white dark:bg-zinc-900 border border-[var(--frame-line)] rounded-sm p-6 w-full', {
   variants: {
     size: {
       // rename, close-issue, fork, members, feedback, create.
