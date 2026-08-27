@@ -89,15 +89,19 @@ function makeMockPool(users) {
         && sql.includes('JOIN mobile_auth_tokens t')
         && sql.includes('JOIN users u')) {
       if (params[0] !== MOBILE_TOKEN_HASH) return { rows: [] };
+      const expiresAt = new Date(Date.now() + DAY);
       return {
         rows: [{
           id: 100, user_id: 1, ability: 'session',
-          expires_at: new Date(Date.now() + DAY), username: users[1].username,
+          expires_at: expiresAt,
+          credential_reference: `nsc_${'A'.repeat(43)}`,
+          credential_generation: 1,
+          installation_id: `nsi_${'B'.repeat(43)}`,
+          credential_expires_at: expiresAt,
+          renewal_due: false,
+          username: users[1].username,
         }],
       };
-    }
-    if (sql.startsWith('UPDATE mobile_auth_tokens SET last_used_at')) {
-      return { rows: [] };
     }
 
     // bp/state's user-row read.

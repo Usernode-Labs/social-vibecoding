@@ -10,6 +10,8 @@ const {
 } = require('../src/routes/topochain/mobile-push-registration');
 
 const INSTALLATION = '123e4567-e89b-12d3-a456-426614174000';
+const CREDENTIAL_ONE = `nsc_${'A'.repeat(43)}`;
+const CREDENTIAL_TWO = `nsc_${'B'.repeat(43)}`;
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const collapse = (sql) => sql.replace(/\s+/g, ' ').trim();
 
@@ -28,9 +30,18 @@ function input(revision, overrides = {}) {
 function fakeClient() {
   const state = {
     tokens: new Map([
-      ['10', { id: 10, userId: 1, active: true, expiresAt: new Date(Date.now() + 60_000) }],
-      ['11', { id: 11, userId: 1, active: true, expiresAt: new Date(Date.now() + 120_000) }],
-      ['20', { id: 20, userId: 2, active: true, expiresAt: new Date(Date.now() + 60_000) }],
+      ['10', {
+        id: 10, userId: 1, credentialReference: CREDENTIAL_ONE,
+        active: true, expiresAt: new Date(Date.now() + 60_000),
+      }],
+      ['11', {
+        id: 11, userId: 1, credentialReference: CREDENTIAL_ONE,
+        active: true, expiresAt: new Date(Date.now() + 120_000),
+      }],
+      ['20', {
+        id: 20, userId: 2, credentialReference: CREDENTIAL_TWO,
+        active: true, expiresAt: new Date(Date.now() + 60_000),
+      }],
     ]),
     fence: null,
     deployment: {
@@ -71,14 +82,16 @@ function fakeClient() {
     }
     if (sql.startsWith('SELECT t.id, t.expires_at FROM mobile_auth_tokens t')) {
       const token = state.tokens.get(String(params[0]));
-      return { rows: token && token.active && String(token.userId) === String(params[1])
+      return { rows: token && token.active
+        && String(token.userId) === String(params[1])
+        && token.credentialReference === params[2]
         ? [{ id: token.id, expires_at: token.expiresAt }] : [] };
     }
     if (sql.startsWith('SELECT pg_advisory_xact_lock')) return { rows: [{}] };
     if (sql.includes('FROM mobile_push_installation_mutations')) {
       return { rows: state.fence ? [{ ...state.fence }] : [] };
     }
-    if (sql.startsWith('SELECT id, user_id, environment')
+    if (sql.startsWith('SELECT id, user_id, native_session_credential_reference')
         && sql.includes('registration_hash = $3')) {
       const [environment, installationId, registrationHash] = params;
       return { rows: state.registrations.filter((row) => (
@@ -125,6 +138,7 @@ function fakeClient() {
       state.registrations.push({
         id,
         user_id: params[0],
+        native_session_credential_reference: params[9],
         environment: params[1],
         installation_id: params[2],
         provider: params[3],
@@ -150,6 +164,7 @@ function fakeClient() {
           row.platform = params[4];
           row.permission_status = params[5];
           row.session_expires_at = params[6];
+          row.native_session_credential_reference = params[7];
         }
       }
       return { rows: [] };
@@ -160,9 +175,11 @@ function fakeClient() {
 }
 
 function put(client, tokenId, userId, value) {
+  const credentialReference = client.state.tokens.get(String(tokenId))?.credentialReference;
   return putRegistration(client, {
     userId,
     tokenId,
+    credentialReference,
     environment: 'production',
     firebaseProjectId: 'social-prod',
     input: value,
@@ -172,8 +189,9 @@ function put(client, tokenId, userId, value) {
 }
 
 function del(client, tokenId, userId, value) {
+  const credentialReference = client.state.tokens.get(String(tokenId))?.credentialReference;
   return deleteRegistration(client, {
-    userId, tokenId, environment: 'production', input: value,
+    userId, tokenId, credentialReference, environment: 'production', input: value,
   });
 }
 
@@ -292,7 +310,7 @@ test('registration mutations lock deployment identity before session and registr
       && sql.includes('FOR SHARE OF c')
   ));
   const registrationLock = client.state.queries.findIndex((sql) => (
-    sql.startsWith('SELECT id, user_id, environment')
+    sql.startsWith('SELECT id, user_id, native_session_credential_reference')
   ));
   assert.ok(deploymentLock >= 0);
   assert.ok(deploymentLock < sessionLock);

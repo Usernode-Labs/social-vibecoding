@@ -88,6 +88,19 @@ async function revokeNativeSessionCredentials(client, scope) {
     );
   }
 
+  const credentialReferences = credentialRows
+    .map((row) => row.credential_reference)
+    .filter((reference) => typeof reference === 'string');
+  if (credentialReferences.length) {
+    await client.query(
+      `UPDATE mobile_push_registrations
+          SET session_expires_at = LEAST(session_expires_at, NOW()),
+              updated_at = NOW()
+        WHERE native_session_credential_reference = ANY($1::varchar[])`,
+      [[...new Set(credentialReferences)]]
+    );
+  }
+
   return {
     attemptsRevoked: attemptIds.length,
     credentialsRevoked: credentialRows.length,

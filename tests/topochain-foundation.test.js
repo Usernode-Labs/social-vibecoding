@@ -39,8 +39,11 @@ function fakeRes() {
   return {
     statusCode: 200,
     body: null,
+    headers: new Map(),
     status(code) { this.statusCode = code; return this; },
     json(obj) { this.body = obj; return this; },
+    setHeader(name, value) { this.headers.set(name.toLowerCase(), String(value)); },
+    getHeader(name) { return this.headers.get(name.toLowerCase()); },
   };
 }
 
@@ -234,17 +237,31 @@ function withMockPool(mockPool, fn) {
 function makeMobileTokenPool(tokensByHash, { failLookup = false } = {}) {
   const pool = {
     lastLookupSql: null,
+    connectCalls: 0,
     async query(sql, params) {
       if (/JOIN mobile_auth_tokens/.test(sql) && /SELECT/.test(sql)) {
         pool.lastLookupSql = sql;
         if (failLookup) throw new Error('connection reset');
         const row = tokensByHash[params[0]];
-        return { rows: row && row.nativeCredentialValid !== false ? [row] : [] };
-      }
-      if (/UPDATE mobile_auth_tokens SET last_used_at/.test(sql)) {
-        return { rows: [] };
+        const credentialExpiry = row?.credential_expires_at ?? row?.expires_at;
+        if (!row || row.nativeCredentialValid === false
+            || new Date(row.expires_at) <= new Date()
+            || new Date(row.expires_at).getTime() !== new Date(credentialExpiry).getTime()) {
+          return { rows: [] };
+        }
+        return { rows: [{
+          credential_reference: `nsc_${'A'.repeat(43)}`,
+          credential_generation: 1,
+          installation_id: `nsi_${'B'.repeat(43)}`,
+          renewal_due: false,
+          ...row,
+        }] };
       }
       throw new Error(`unexpected SQL in mock: ${sql.slice(0, 60)}`);
+    },
+    async connect() {
+      pool.connectCalls += 1;
+      throw new Error('a current lease must not open a write transaction');
     },
   };
   return pool;
@@ -337,8 +354,43 @@ test('mobileTokenAuth: valid session token -> next(), req.user resolved from the
     assert.deepEqual(result, { next: true });
     assert.equal(res.body, null);
     assert.deepEqual(req.user, { id: 42, username: 'racer42', isAdmin: false });
+    assert.deepEqual(req.mobileAuth, {
+      tokenId: 4,
+      ability: 'session',
+      expiresAt: FUTURE,
+      credentialReference: `nsc_${'A'.repeat(43)}`,
+      credentialGeneration: 1,
+    });
+    assert.equal(res.getHeader('Usernode-Credential-Reference'), `nsc_${'A'.repeat(43)}`);
+    assert.equal(res.getHeader('Usernode-Credential-Generation'), '1');
+    assert.equal(res.getHeader('Usernode-Credential-Lease-Expires-At'), FUTURE.toISOString());
+    assert.equal(pool.connectCalls, 0);
     assert.match(pool.lastLookupSql,
-      /FROM native_session_credentials c[\s\S]*JOIN mobile_auth_tokens t[\s\S]*t\.expires_at > NOW\(\)[\s\S]*c\.state = 'valid'[\s\S]*c\.expires_at > NOW\(\)/);
+      /FROM native_session_credentials c[\s\S]*JOIN mobile_auth_tokens t[\s\S]*t\.expires_at > NOW\(\)[\s\S]*c\.state = 'valid'[\s\S]*c\.expires_at > NOW\(\)[\s\S]*c\.expires_at = t\.expires_at/);
+  });
+});
+
+test('mobileTokenAuth: credential/token expiry drift fails closed', async () => {
+  const token = 'drifted-token';
+  const pool = makeMobileTokenPool({
+    [sha256(token)]: {
+      id: 5,
+      user_id: 42,
+      ability: 'session',
+      expires_at: FUTURE,
+      credential_expires_at: new Date(FUTURE.getTime() + 1000),
+      username: 'racer42',
+    },
+  });
+  await withMockPool(pool, async (mod) => {
+    const mw = mod.mobileTokenAuth({});
+    const res = fakeRes();
+    await runMiddleware(mw, {
+      headers: { authorization: `Bearer ${token}` },
+    }, res);
+    assert.equal(res.statusCode, 401);
+    assert.deepEqual(res.body, { success: false, error: 'Unauthenticated.' });
+    assert.equal(res.headers.size, 0);
   });
 });
 

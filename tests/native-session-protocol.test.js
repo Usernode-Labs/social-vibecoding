@@ -437,6 +437,7 @@ test('central web logout revokes attempts before credentials and deletes linked 
         return { rows: [{ credential_reference: opaque('nsc_', 1), mobile_auth_token_id: 88 }] };
       }
       if (sql.startsWith('DELETE FROM mobile_auth_tokens')) return { rows: [] };
+      if (sql.startsWith('UPDATE mobile_push_registrations')) return { rows: [] };
       throw new Error(`Unhandled revocation query: ${sql}`);
     },
   };
@@ -446,6 +447,7 @@ test('central web logout revokes attempts before credentials and deletes linked 
   assert.ok(calls[0].startsWith('UPDATE native_session_attempts'));
   assert.ok(calls[2].startsWith('UPDATE native_session_credentials'));
   assert.ok(calls[3].startsWith('DELETE FROM mobile_auth_tokens'));
+  assert.ok(calls[4].startsWith('UPDATE mobile_push_registrations'));
 });
 
 async function withNativeRoute(config, fn) {

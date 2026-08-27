@@ -4111,6 +4111,7 @@ CREATE TABLE IF NOT EXISTS mobile_push_installation_mutations (
 CREATE TABLE IF NOT EXISTS mobile_push_registrations (
   id                 BIGSERIAL PRIMARY KEY,
   user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  native_session_credential_reference VARCHAR(47),
   environment        VARCHAR(32) NOT NULL,
   installation_id    UUID NOT NULL,
   provider           VARCHAR(16) NOT NULL DEFAULT 'fcm' CHECK (provider = 'fcm'),
@@ -4130,8 +4131,13 @@ CREATE TABLE IF NOT EXISTS mobile_push_registrations (
   UNIQUE (environment, registration_hash),
   CHECK (BTRIM(environment) <> '')
 );
+ALTER TABLE mobile_push_registrations
+  ADD COLUMN IF NOT EXISTS native_session_credential_reference VARCHAR(47);
 CREATE INDEX IF NOT EXISTS idx_mobile_push_registrations_user
   ON mobile_push_registrations (user_id, environment);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_registrations_native_credential
+  ON mobile_push_registrations (native_session_credential_reference)
+  WHERE native_session_credential_reference IS NOT NULL;
 
 -- Short-lived, privacy-safe registration history for support diagnostics.
 -- The registration id is retained as an ordinary scalar so an event survives
@@ -4738,7 +4744,8 @@ CREATE TABLE IF NOT EXISTS native_session_credentials (
     REFERENCES onchain_accounts(id, user_id) ON DELETE RESTRICT,
   CHECK ((state = 'valid' AND revoked_at IS NULL AND revocation_reason IS NULL)
       OR (state = 'revoked' AND revoked_at IS NOT NULL AND revocation_reason IS NOT NULL)),
-  CHECK (expires_at = created_at + INTERVAL '90 days'),
+  CONSTRAINT native_session_credentials_expiry_order_check
+    CHECK (expires_at > created_at),
   CHECK (revoked_at IS NULL OR revoked_at >= created_at)
 );
 
@@ -4750,6 +4757,37 @@ CREATE TABLE IF NOT EXISTS native_session_credentials (
 -- constraint above and skip this compatibility branch.
 ALTER TABLE native_session_credentials
   DROP CONSTRAINT IF EXISTS native_session_credentials_revocation_reason_check;
+-- Sliding mobile leases may move beyond their initial 90-day bound. Replace
+-- the old unnamed exact-expiry constraint while retaining the database-owned
+-- requirement that every lease ends after credential creation.
+DO $$
+DECLARE
+  constraint_name TEXT;
+BEGIN
+  FOR constraint_name IN
+    SELECT conname
+      FROM pg_constraint
+     WHERE conrelid = 'native_session_credentials'::regclass
+       AND contype = 'c'
+       AND pg_get_constraintdef(oid) LIKE '%expires_at = (created_at +%90 days%'
+  LOOP
+    EXECUTE format(
+      'ALTER TABLE native_session_credentials DROP CONSTRAINT %I',
+      constraint_name
+    );
+  END LOOP;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'native_session_credentials_expiry_order_check'
+       AND conrelid = 'native_session_credentials'::regclass
+  ) THEN
+    ALTER TABLE native_session_credentials
+      ADD CONSTRAINT native_session_credentials_expiry_order_check
+      CHECK (expires_at > created_at);
+  END IF;
+END;
+$$;
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -4760,6 +4798,27 @@ BEGIN
     ALTER TABLE native_session_credentials
       ADD CONSTRAINT native_session_credentials_revocation_reason_closed_check
       CHECK (revocation_reason IN ('web_logout', 'account_recovery')) NOT VALID;
+  END IF;
+END;
+$$;
+CREATE UNIQUE INDEX IF NOT EXISTS native_session_credentials_reference_user_uidx
+  ON native_session_credentials (credential_reference, user_id);
+-- Replace the earlier reference-only draft constraint, if this uncommitted
+-- migration was exercised locally, with the final exact subject binding.
+ALTER TABLE mobile_push_registrations
+  DROP CONSTRAINT IF EXISTS mobile_push_registrations_native_credential_fk;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'mobile_push_registrations_native_credential_user_fk'
+       AND conrelid = 'mobile_push_registrations'::regclass
+  ) THEN
+    ALTER TABLE mobile_push_registrations
+      ADD CONSTRAINT mobile_push_registrations_native_credential_user_fk
+      FOREIGN KEY (native_session_credential_reference, user_id)
+      REFERENCES native_session_credentials(credential_reference, user_id)
+      ON DELETE CASCADE;
   END IF;
 END;
 $$;

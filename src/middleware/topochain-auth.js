@@ -31,6 +31,10 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { fail } = require('../routes/topochain/helpers');
 
+const CREDENTIAL_REFERENCE_HEADER = 'Usernode-Credential-Reference';
+const CREDENTIAL_GENERATION_HEADER = 'Usernode-Credential-Generation';
+const CREDENTIAL_LEASE_EXPIRES_HEADER = 'Usernode-Credential-Lease-Expires-At';
+
 // ─── optionalSessionAuth (SPEC §4.2, §4.9 "auth.optional", SPEC 900) ────
 //
 // Same `sessions JOIN users` lookup as src/middleware/auth.js, trimmed to
@@ -137,6 +141,140 @@ function extractBearerToken(req) {
   return match ? match[1].trim() : null;
 }
 
+function publishCredentialLease(res, row) {
+  res.setHeader(CREDENTIAL_REFERENCE_HEADER, row.credential_reference);
+  res.setHeader(CREDENTIAL_GENERATION_HEADER, String(row.credential_generation));
+  res.setHeader(
+    CREDENTIAL_LEASE_EXPIRES_HEADER,
+    new Date(row.expires_at).toISOString()
+  );
+}
+
+async function renewCredentialLease(pool, authenticated, tokenHash) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Credential first, then token: revocation uses the same order before it
+    // deletes the bearer. A concurrent logout therefore wins cleanly instead
+    // of allowing a stale lookup to extend revoked authority.
+    const { rows: credentialRows } = await client.query(
+      `SELECT credential_reference, credential_generation, user_id,
+              installation_id, mobile_auth_token_id, expires_at,
+              expires_at <= NOW() + INTERVAL '89 days' AS renewal_due
+         FROM native_session_credentials
+        WHERE credential_reference = $1
+          AND credential_generation = $2
+          AND user_id = $3
+          AND installation_id = $4
+          AND mobile_auth_token_id = $5
+          AND state = 'valid'
+          AND expires_at > NOW()
+        FOR UPDATE`,
+      [
+        authenticated.credential_reference,
+        authenticated.credential_generation,
+        authenticated.user_id,
+        authenticated.installation_id,
+        authenticated.id,
+      ]
+    );
+    const credential = credentialRows[0];
+    if (!credential) {
+      await client.query('COMMIT');
+      return null;
+    }
+
+    const { rows: tokenRows } = await client.query(
+      `SELECT t.id
+         FROM mobile_auth_tokens t
+         JOIN native_session_credentials c
+           ON c.credential_reference = $4
+        WHERE t.id = $1
+          AND t.user_id = $2
+          AND t.token_hash = $3
+          AND t.ability = 'session'
+          AND t.expires_at > NOW()
+          AND t.expires_at = c.expires_at
+        FOR UPDATE OF t`,
+      [
+        authenticated.id,
+        authenticated.user_id,
+        tokenHash,
+        authenticated.credential_reference,
+      ]
+    );
+    const bearer = tokenRows[0];
+    if (!bearer) {
+      await client.query('COMMIT');
+      return null;
+    }
+
+    // Another request may have renewed while this one waited for the lock.
+    // Rechecking under the fence keeps writes coalesced to at most once/day.
+    if (credential.renewal_due !== true) {
+      await client.query('COMMIT');
+      return { ...authenticated, expires_at: credential.expires_at };
+    }
+
+    const { rows: renewedRows } = await client.query(
+      `UPDATE native_session_credentials
+          SET expires_at = NOW() + INTERVAL '90 days'
+        WHERE credential_reference = $1
+          AND state = 'valid'
+        RETURNING expires_at`,
+      [authenticated.credential_reference]
+    );
+    const renewed = renewedRows[0];
+    if (!renewed) {
+      await client.query('COMMIT');
+      return null;
+    }
+
+    const tokenUpdate = await client.query(
+      `UPDATE mobile_auth_tokens t
+          SET expires_at = c.expires_at, last_used_at = NOW()
+         FROM native_session_credentials c
+        WHERE t.id = $1
+          AND t.user_id = $2
+          AND t.token_hash = $3
+          AND t.ability = 'session'
+          AND c.credential_reference = $4`,
+      [
+        authenticated.id,
+        authenticated.user_id,
+        tokenHash,
+        authenticated.credential_reference,
+      ]
+    );
+    if (tokenUpdate.rowCount !== 1) {
+      throw new Error('native_credential_lease_token_update_failed');
+    }
+
+    // Push installation UUIDs are intentionally independent from native key
+    // installation ids. Renew only rows explicitly bound at registration to
+    // this credential; never extend another device merely because it belongs
+    // to the same user.
+    await client.query(
+      `UPDATE mobile_push_registrations r
+          SET session_expires_at = c.expires_at, updated_at = NOW()
+         FROM native_session_credentials c
+        WHERE c.credential_reference = $1
+          AND r.native_session_credential_reference = c.credential_reference
+          AND r.session_expires_at < c.expires_at`,
+      [authenticated.credential_reference]
+    );
+
+    await client.query('COMMIT');
+    return { ...authenticated, expires_at: renewed.expires_at };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 function mobileTokenAuth(config) {
   const pool = getPool(config);
 
@@ -149,7 +287,11 @@ function mobileTokenAuth(config) {
     let row;
     try {
       const { rows } = await pool.query(
-        `SELECT t.id, c.user_id, t.ability, t.expires_at, u.username
+        `SELECT t.id, c.user_id, t.ability, t.expires_at,
+                c.credential_reference, c.credential_generation,
+                c.installation_id,
+                c.expires_at <= NOW() + INTERVAL '89 days' AS renewal_due,
+                u.username
            FROM native_session_credentials c
            JOIN mobile_auth_tokens t
              ON t.id = c.mobile_auth_token_id AND t.user_id = c.user_id
@@ -157,7 +299,8 @@ function mobileTokenAuth(config) {
           WHERE t.token_hash = $1
             AND t.expires_at > NOW()
             AND c.state = 'valid'
-            AND c.expires_at > NOW()`,
+            AND c.expires_at > NOW()
+            AND c.expires_at = t.expires_at`,
         [tokenHash]
       );
       row = rows[0];
@@ -170,13 +313,27 @@ function mobileTokenAuth(config) {
       return fail(res, 500, 'Internal server error.');
     }
 
-    if (!row || new Date(row.expires_at) < new Date()) {
+    if (!row) {
       return fail(res, 401, 'Unauthenticated.');
     }
 
     if (row.ability !== 'session') {
       return fail(res, 403, 'A participant session token is required.');
     }
+
+    if (row.renewal_due === true) {
+      try {
+        row = await renewCredentialLease(pool, row, tokenHash);
+      } catch (err) {
+        log.error('topochain-auth', 'mobileTokenAuth lease renewal failed', {
+          message: err.message,
+        });
+        return fail(res, 500, 'Internal server error.');
+      }
+      if (!row) return fail(res, 401, 'Unauthenticated.');
+    }
+
+    publishCredentialLease(res, row);
 
     req.user = { id: row.user_id, username: row.username, isAdmin: false };
     // Push registration mutations revalidate this credential inside their
@@ -186,12 +343,9 @@ function mobileTokenAuth(config) {
       tokenId: row.id,
       ability: row.ability,
       expiresAt: row.expires_at,
+      credentialReference: row.credential_reference,
+      credentialGeneration: row.credential_generation,
     };
-
-    // Fire-and-forget last_used_at bump — never blocks/fails the request
-    // over a bookkeeping write.
-    pool.query('UPDATE mobile_auth_tokens SET last_used_at = NOW() WHERE id = $1', [row.id])
-      .catch((err) => log.debug('topochain-auth', 'mobileTokenAuth last_used_at update failed', { message: err.message }));
 
     return next();
   };

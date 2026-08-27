@@ -197,7 +197,9 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // The encrypted FCM destination and its lookup hash. Every other
   // column (platform, permission_status, session_expires_at, last_seen_at)
   // is exactly what push debugging needs.
-  mobile_push_registrations: ['registration_enc', 'registration_hash'],
+  mobile_push_registrations: [
+    'native_session_credential_reference', 'registration_enc', 'registration_hash',
+  ],
   // Device-flow: the polled device code's hash, the user-visible pairing
   // code (live and typeable while pending), and the requester's IP —
   // masked for the same reason `users.waitlist_ip` is.

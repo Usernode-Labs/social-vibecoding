@@ -233,13 +233,23 @@ function handleQuery(rawSql, params = []) {
   if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
 
   // mobileTokenAuth.
-  if (sql.startsWith('SELECT t.id, c.user_id, t.ability, t.expires_at, u.username FROM native_session_credentials')) {
+  if (sql.startsWith('SELECT t.id, c.user_id, t.ability, t.expires_at,')) {
     const tok = TOKENS.find((t) => t.token_hash === params[0]);
     if (!tok) return { rows: [] };
     const user = USERS.find((u) => u.id === tok.user_id);
-    return { rows: [{ id: tok.user_id, user_id: tok.user_id, ability: tok.ability, expires_at: tok.expires_at, username: user.email }] };
+    return { rows: [{
+      id: tok.user_id,
+      user_id: tok.user_id,
+      ability: tok.ability,
+      expires_at: tok.expires_at,
+      credential_reference: `nsc_${'A'.repeat(43)}`,
+      credential_generation: 1,
+      installation_id: `nsi_${'B'.repeat(43)}`,
+      credential_expires_at: tok.expires_at,
+      renewal_due: false,
+      username: user.email,
+    }] };
   }
-  if (sql.startsWith('UPDATE mobile_auth_tokens SET last_used_at')) return { rows: [] };
 
   // ── GET /challenges: event/season existence + current-season fallback ──
   if (sql.startsWith('SELECT id FROM season_events WHERE id = $1')) {
