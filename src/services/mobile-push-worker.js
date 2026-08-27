@@ -3,6 +3,7 @@
 const { decrypt } = require('./secrets');
 const { ALLOWED_KINDS, buildMessage } = require('./mobile-push-policy');
 const { classifyError } = require('./mobile-push-provider');
+const { countUnread } = require('./notifications');
 const log = require('./logger');
 
 const CONVERSATION_NOTIFICATION_KINDS = new Set([
@@ -426,6 +427,26 @@ class MobilePushWorker {
     await this.finish(job, 'dead', code);
   }
 
+  // #1445: the recipient's unread total, for the homescreen icon badge.
+  // Reuses countUnread (the one place the unread predicate lives) rather
+  // than duplicating CONVERSATION_ACCESS_SQL in the delivery join. Clamped
+  // to at least 1 — the notification being delivered is itself unread (a
+  // read row was cancelled by invalidReason), so an alert push claiming
+  // badge 0 would be lying if a mid-send read races the count. Returns
+  // null on failure: the badge is display-only and must never kill a
+  // delivery, so a count problem just sends the pre-badge payload.
+  async unreadBadgeCount(row) {
+    try {
+      const count = await countUnread(this.pool, row.notification_user_id);
+      return Math.max(1, count);
+    } catch (err) {
+      log.warn('mobile-push', 'unread badge count failed', {
+        code: typeof err?.code === 'string' ? err.code : 'unknown',
+      });
+      return null;
+    }
+  }
+
   async processDelivery(job) {
     const row = await this.loadDelivery(job);
     if (!row) return;
@@ -443,6 +464,8 @@ class MobilePushWorker {
       return;
     }
 
+    const unreadCount = await this.unreadBadgeCount(row);
+
     let message;
     try {
       message = buildMessage({
@@ -453,6 +476,7 @@ class MobilePushWorker {
         installationId: row.installation_id,
         userId: row.notification_user_id,
         expiresAt: row.expires_at,
+        unreadCount,
         // Send-time display context (#3289). Every field is optional: the
         // policy degrades to the generic copy rather than failing a delivery.
         context: {

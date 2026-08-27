@@ -59,10 +59,18 @@ function harness({
   send = async () => 'provider-id',
   deleteRowCount = 1,
   registrationExists = true,
+  unreadCount = 3,
+  unreadCountError = null,
 } = {}) {
-  const calls = { sent: [], finished: [], deleted: [], events: [] };
+  const calls = { sent: [], finished: [], deleted: [], events: [], unreadCounts: [] };
   const pool = {
     async query(sql, params) {
+      // countUnread (src/services/notifications.js) — the #1445 icon badge.
+      if (sql.includes('FROM notifications AS n')) {
+        calls.unreadCounts.push(params[0]);
+        if (unreadCountError) throw unreadCountError;
+        return { rows: [{ c: unreadCount }] };
+      }
       if (sql.includes('DELETE FROM mobile_push_registrations')
           && sql.includes('INSERT INTO mobile_push_registration_events')) {
         calls.deleted.push({
@@ -110,6 +118,35 @@ test('eligible delivery sends one contextual bound message and marks it sent', a
     title: 'Your build is ready · MyPage',
     body: '"Fix login redirect loop" finished. Review it while it\'s fresh',
   });
+});
+
+test('the recipient unread total rides on the message as the icon badge', async () => {
+  // #1445: countUnread runs per send, for the notification's recipient,
+  // and lands as aps.badge (iOS) + notificationCount (Android launchers).
+  const { worker, calls } = harness({ unreadCount: 6 });
+  await worker.processDelivery(JOB);
+  assert.deepEqual(calls.unreadCounts, [7],
+    'counted once, for notification_user_id');
+  assert.equal(calls.sent[0].apns.payload.aps.badge, 6);
+  assert.equal(calls.sent[0].android.notification.notificationCount, 6);
+});
+
+test('a raced-to-zero unread count still badges 1 for the alert being sent', async () => {
+  // invalidReason already cancelled read rows, so the delivered
+  // notification is itself unread; an alert claiming badge 0 would lie.
+  const { worker, calls } = harness({ unreadCount: 0 });
+  await worker.processDelivery(JOB);
+  assert.equal(calls.sent[0].apns.payload.aps.badge, 1);
+  assert.equal(calls.sent[0].android.notification.notificationCount, 1);
+});
+
+test('an unread count failure sends the pre-badge payload, never a dead delivery', async () => {
+  const { worker, calls } = harness({ unreadCountError: new Error('boom') });
+  await worker.processDelivery(JOB);
+  assert.equal(calls.sent.length, 1);
+  assert.equal('badge' in calls.sent[0].apns.payload.aps, false);
+  assert.equal('notificationCount' in calls.sent[0].android.notification, false);
+  assert.deepEqual(calls.finished, [{ job: JOB, status: 'sent', code: null, availableAt: null }]);
 });
 
 test('a delivery with no context fields still sends with the generic fallback', async () => {

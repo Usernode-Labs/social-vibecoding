@@ -469,6 +469,33 @@ test('Social push state and tap methods stay behind the top-frame capability',
     assert.deepEqual(loaded.nativePosts[5].args, { notificationId: 42 });
   });
 
+test('the homescreen badge count is a privileged top-frame action', async () => {
+  // #1445: setSocialBadgeCount carries the unread total the OS icon badge
+  // shows. Same per-realm capability as the other social-push methods.
+  const loaded = loadBridge({
+    capabilities: [
+      'privilegedBridgeCapability',
+      'setSocialBadgeCount',
+    ],
+  });
+
+  await loaded.sandbox.usernode.setSocialBadgeCount(7);
+
+  assert.deepEqual(
+    loaded.nativePosts.map((post) => post.method),
+    [
+      'getBridgeInfo',
+      'getPrivilegedBridgeCapability',
+      'setSocialBadgeCount',
+    ]
+  );
+  assert.equal(
+    loaded.nativePosts[2].privilegedCapability,
+    'navigation-capability'
+  );
+  assert.deepEqual(loaded.nativePosts[2].args, { count: 7 });
+});
+
 test('notification permission actions require the top-frame capability',
   async () => {
     const methods = [

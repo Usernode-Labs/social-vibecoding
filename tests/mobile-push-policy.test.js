@@ -75,6 +75,34 @@ test('reviewed interaction kinds build and unknown kinds stay closed', () => {
   assert.throws(() => buildMessage({ ...INPUT, notificationId: 2147483648 }), /id_invalid/);
 });
 
+test('the unread total rides as the icon badge on both platforms', () => {
+  // #1445: iOS only badges the homescreen icon when a push carries
+  // `aps.badge`; Android launchers read `notificationCount`.
+  const message = buildMessage({ ...INPUT, unreadCount: 5 });
+  assert.deepEqual(message.apns.payload.aps, {
+    category: 'USERNODE_SOCIAL', threadId: 'usernode-social', badge: 5,
+  });
+  assert.equal(message.android.notification.notificationCount, 5);
+
+  // Zero is a valid count (it clears the badge), even though the worker
+  // clamps to 1 in practice because the delivered notification is unread.
+  const cleared = buildMessage({ ...INPUT, unreadCount: 0 });
+  assert.equal(cleared.apns.payload.aps.badge, 0);
+  assert.equal(cleared.android.notification.notificationCount, 0);
+});
+
+test('a missing or invalid unread count degrades to the pre-badge payload', () => {
+  // The badge is display-only: a count problem must never fail a delivery,
+  // so anything but a non-negative safe integer omits both fields.
+  for (const unreadCount of [undefined, null, -1, 1.5, NaN, '5', Infinity]) {
+    const message = buildMessage({ ...INPUT, unreadCount });
+    assert.equal('badge' in message.apns.payload.aps, false,
+      `aps.badge omitted for ${String(unreadCount)}`);
+    assert.equal('notificationCount' in message.android.notification, false,
+      `notificationCount omitted for ${String(unreadCount)}`);
+  }
+});
+
 const CONTEXT = {
   appName: 'MyPage',
   conversationTitle: 'Design crew',
