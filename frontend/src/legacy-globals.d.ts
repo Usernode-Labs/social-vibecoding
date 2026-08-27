@@ -38,6 +38,14 @@ declare global {
     Notifications?: {
       init(): void;
       refresh(): Promise<void>;
+      /**
+       * Clear this document's copy of one conversation's notifications, after
+       * the server has already cleared them (features/messages/store.ts calls
+       * it on the local read and on a `conversation_read` for this viewer).
+       * Declared rather than left to the index signature below, which types a
+       * lookup as `unknown` and so makes the call itself an error.
+       */
+      markConversationRead(conversationId: number): void;
       open: boolean;
       [key: string]: unknown;
     };

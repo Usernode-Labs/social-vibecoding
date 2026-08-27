@@ -202,16 +202,23 @@ function validId(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) > 0 && Number(value) <= MAX_ID;
 }
 
-function syncDrawerBadge(): void {
-  if (typeof document === 'undefined') return;
-  const count = state.conversations.reduce((sum, item) => sum + Math.max(0, item.unreadCount || 0), 0);
-  const badge = document.getElementById('drawer-messages-badge');
-  if (!badge) return;
-  badge.textContent = count > 99 ? '99+' : String(count);
-  badge.classList.toggle('hidden', count === 0);
+/**
+ * Tell the bell that a conversation has been read.
+ *
+ * `POST /api/conversations/:id/read` clears that conversation's notification
+ * rows server-side; this is the same clearing applied to the copy the open
+ * document is holding, so the badge falls when you read rather than at the
+ * next refresh. See Notifications.markConversationRead for why it is a window
+ * seam rather than an import (that module loads as a classic script in two
+ * test harnesses and cannot carry one).
+ *
+ * A no-op wherever the shell has not booted — the notifications module
+ * publishes itself on load, and the first refresh reconciles anything missed.
+ */
+function notifyConversationRead(conversationId: number): void {
+  if (typeof window === 'undefined') return;
+  window.Notifications?.markConversationRead?.(conversationId);
 }
-
-listeners.add(syncDrawerBadge);
 
 export function route(conversationId?: number | null): void {
   const nextId = validId(conversationId) ? conversationId : null;
@@ -466,6 +473,7 @@ export async function markRead(messageId: number): Promise<void> {
   if (!conversationId) return;
   const items = state.conversations.map((item) => item.id === conversationId ? { ...item, unreadCount: 0 } : item);
   publish({ conversations: items });
+  notifyConversationRead(conversationId);
   try { await api.markRead(conversationId, messageId); } catch { /* next open reconciles */ }
 }
 
@@ -506,6 +514,12 @@ export function handleEvent(raw: ConversationEvent): void {
     }
     case 'conversation_read':
       void loadConversations(true);
+      // The reader's OWN other tabs, and only those: the event goes to every
+      // member, and someone else reaching the end of the thread has cleared
+      // nothing of this viewer's.
+      if (api.strictId(event.userId ?? event.user_id) === currentUser().id) {
+        notifyConversationRead(conversationId);
+      }
       break;
     case 'conversation_membership_changed':
       void loadConversations(true);
@@ -595,8 +609,12 @@ export function initializeMessagesStore(): () => void {
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
   // The store is always mounted, but the endpoint is session-gated. Seed the
-  // drawer badge as soon as an already-resolved user exists, or wait for the
-  // shell's one-shot authenticated boot event on an anonymous document.
+  // conversation list as soon as an already-resolved user exists, or wait for
+  // the shell's one-shot authenticated boot event on an anonymous document.
+  //
+  // This ran for the Messages unread badge, which is retired — it stays
+  // because the list is what the SCREEN renders, and a warm one is the
+  // difference between Messages opening populated and opening on a spinner.
   if (window.App?.user) void loadConversations();
   else document.addEventListener('sv:authed', onAuthed, { once: true });
   publish({ online: navigator.onLine, demo: browserDemo() });

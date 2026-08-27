@@ -465,6 +465,43 @@ const Notifications = {
     }
   },
 
+  // Reading a conversation clears its notifications. Reflect that in THIS
+  // document, without a second round-trip.
+  //
+  // `POST /api/conversations/:id/read` already marks every unread
+  // notification row for that conversation read server-side (see markRead in
+  // services/conversations.js — including the invite, which carries no
+  // message id and so matches its NULL branch). Nothing needs asking for.
+  // What needs fixing is local: this tab's `items`/`unread` would otherwise
+  // stay stale until the next refresh, so the bell would go on counting
+  // messages you have just sat and read.
+  //
+  // That was survivable while the Messages row owned the messages count and
+  // the bell subtracted it. The bell owns it now, so a stale badge is the
+  // visible bug — which is why this reconcile lands in the same change.
+  //
+  // Called by the Messages store on a local read, and on a `conversation_read`
+  // for this same viewer in another tab. `window.Notifications` is the seam:
+  // this module stays import-free (see the top of the file), so the store
+  // calls in rather than being imported.
+  markConversationRead(conversationId) {
+    const id = Number(conversationId);
+    if (!Number.isSafeInteger(id) || id <= 0) return;
+    const now = new Date().toISOString();
+    let cleared = 0;
+    for (const n of Notifications.items) {
+      if (!n || n.readAt || Number(n.conversationId) !== id) continue;
+      n.readAt = now;
+      cleared += 1;
+    }
+    if (!cleared) return;
+    // `unread` is the server's account-wide total; only ever walk it down by
+    // what was actually cleared here, and never below zero.
+    Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications._renderBadge();
+    Notifications._renderList();
+  },
+
   _onItemClick(id) {
     const item = Notifications.items.find((n) => n.id === id);
     if (!item) return;
@@ -627,37 +664,33 @@ const Notifications = {
     return Notifications.items.filter((n) => n && n.kind === 'session_done' && !n.readAt).length;
   },
 
-  // Unread DIRECT MESSAGES, as notifications. `conversation_message` is a
-  // notification kind, so one incoming DM raises Notifications.unread AND the
-  // Messages unread sum — which is why a single message used to light two
-  // different badges in two different colours for one event.
-  _messageUnread() {
-    return Notifications.items
-      .filter((n) => n && n.kind === 'conversation_message' && !n.readAt).length;
-  },
-
   // The bell's own unread count.
   //
-  // ONE EVENT, ONE BADGE, ON THE SURFACE THAT OWNS IT. Two kinds are split
-  // out of the bell's number rather than added to it, and for the same
-  // reason each time: the count belongs to whichever surface you would
-  // actually go to. Session notifications are subtracted because
-  // #improve-btn carries them; message notifications are subtracted because
-  // the Messages row carries its own unread count and that count is the
-  // better one — it is per-conversation, it survives a notification being
-  // marked read, and it is what you tap to act on the message.
+  // ONE EVENT, ONE BADGE, ON THE SURFACE THAT OWNS IT. Still the rule; what
+  // changed is which surface owns a message.
   //
-  // Math.max(0, …) because both splits read the loaded items page while
-  // `unread` is the server's total: on an account with more unread than one
-  // page holds the subtraction can overshoot, and a negative badge is worse
-  // than an undercount.
+  // #1443 subtracted `conversation_message` here on the grounds that the
+  // Messages row's own count was the better one — per-conversation, and what
+  // you tap to act on. The count it deferred to was a TAG ON A ROW INSIDE A
+  // MENU, two taps down behind the app chip, on a surface you open to choose
+  // where to go rather than to find out that something happened. A message is
+  // a thing that happened to you, which is what the bell is for and what the
+  // notifications list already renders (`conversation_*` rows have had their
+  // own copy since #488). So the tag is gone and the split with it: a DM
+  // raises exactly one badge, the bell's, and the row it used to sit on is a
+  // destination again like every other row in that menu.
+  //
+  // The session split SURVIVES, and the asymmetry is deliberate rather than
+  // an oversight: #improve-btn is where the sessions themselves are, so its
+  // green count sends you somewhere the bell cannot. Nothing carries a
+  // messages count any more, so subtracting one would only lose it.
+  //
+  // Math.max(0, …) because the session split reads the loaded items page
+  // while `unread` is the server's total: on an account with more unread than
+  // one page holds the subtraction can overshoot, and a negative badge is
+  // worse than an undercount.
   _bellUnread() {
-    return Math.max(
-      0,
-      Notifications.unread
-        - Notifications._sessionUnread()
-        - Notifications._messageUnread(),
-    );
+    return Math.max(0, Notifications.unread - Notifications._sessionUnread());
   },
 
   _renderBadge() {
@@ -673,11 +706,11 @@ const Notifications = {
     // reasons to open me". Sessions are not notifications and the drawer is
     // not where you go to look at one, so the green half moved onto
     // #improve-btn — where the sessions themselves are. The red half stays
-    // here on the bell.
-    //
-    // A THIRD kind leaves the bell in #1443 without landing anywhere new:
-    // `conversation_message` is subtracted in _bellUnread because the
-    // Messages row already counts the same event, better. See there.
+    // here on the bell — and message notifications are back inside it, which
+    // is what retired the third badge. #1443 subtracted `conversation_message`
+    // in favour of a count on the Messages ROW of the chip's menu; that row
+    // carries no count now, so the bell's number is the only one an incoming
+    // message raises. See _bellUnread.
     //
     // It PUBLISHES rather than paints: that button is React-owned end to end,
     // and this module cannot import the store (two test files load it as a
@@ -685,12 +718,6 @@ const Notifications = {
     // the same constraint dev-chat.js documents). window.Improve is the seam.
     const aiUnread = Notifications._sessionUnread();
     const notifCount = Notifications._bellUnread() + Notifications.invites.length;
-    // The Messages count, on the Messages ROW of the chip's menu (#1443).
-    // #1431 had it on a header chat bubble; the bubble is gone, the id and
-    // this writer are not, so only the parent changed. The messages store
-    // publishes its sum on a window seam (this module must stay import-free)
-    // and nudges a repaint whenever it changes.
-    const messagesUnread = Number(window.__usernodeMessagesUnread) || 0;
 
     const paint = (id, count) => {
       const el = document.getElementById(id);
@@ -702,10 +729,9 @@ const Notifications = {
         el.classList.add('hidden');
       }
     };
-    // The bell's badge, in the header's right group.
+    // The bell's badge, in the header's right group. The only one this
+    // function paints by id now.
     paint('notifications-badge', notifCount);
-    // The chat bubble's, beside it.
-    paint('drawer-messages-badge', messagesUnread);
 
     // The green session badge (#notifications-badge-ai on the hamburger) is
     // React-owned (<MenuIndicators/> in platform-header.tsx): it PUBLISHES

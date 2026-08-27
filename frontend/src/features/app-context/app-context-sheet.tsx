@@ -295,22 +295,22 @@ export function AppsSwitcherSheet(): ReactNode {
             icon={<SearchIcon />}
             label="Discover"
           />
-          {/* Messages keeps the badge id it wore on the retired header bubble,
-              so Notifications._renderBadge and messages/store.ts are still its
-              only writers — only the parent changed. */}
+          {/* Messages carries NO count. It wore #drawer-messages-badge from
+              #1431's header bubble through #1443's row, and the argument for
+              it was that a per-conversation number beats the bell's. The
+              argument the number lost is about WHERE, not how good it is: an
+              unread count tells you something happened, and this menu is
+              where you say where you are going. A message notification is a
+              notification, so it is counted on the bell and listed in the
+              notifications sheet with the rest of them — leaving this a plain
+              destination like Home, Discover and Profile beside it. The
+              per-conversation counts still exist where they read as counts:
+              on the conversation rows inside Messages. */}
           <MenuRow
             id="switcher-row-messages"
             href="#messages"
             icon={<ChatBubbleTailIcon />}
             label="Messages"
-            trailing={(
-              <span
-                id="drawer-messages-badge"
-                className="hidden min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-violet-600 text-white text-[0.65rem] font-bold flex items-center justify-center shrink-0"
-                aria-label="Unread messages"
-              >
-              </span>
-            )}
           />
           <div className={SECTION}>You</div>
           <MenuRow
