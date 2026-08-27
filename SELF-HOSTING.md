@@ -1597,9 +1597,14 @@ as an "orphan" row until the deploy catches up.
   so this pair may also serve account linking when `/api/me/x/callback` is
   registered and the dedicated `X_LINK_*` pair is unset.
 - `WAITLIST_OAUTH_ORIGIN` — overrides the origin both callback URLs are
-  built from (`connectOrigin()`). Unset it is the production origin in
-  production and `http://localhost:<PORT>` in dev. Change it and you must
-  register the matching callback URL with both providers.
+  built from (`connectOrigin()`). Unset it is this deployment's canonical
+  origin; it is `http://localhost:<PORT>` only when `USERNODE_LOCAL_DEV=1`
+  says a developer is running the server locally. That default is
+  deliberate: a missing variable must not be able to produce a callback
+  that works nowhere but a laptop, because every provider rejects
+  `redirect_uri` on its own page, after the person has left your site.
+  Change it and you must register the matching callback URL with both
+  providers.
 
 **Each provider is judged on its own, and both halves must be set
 together.** An id without a secret counts as unconfigured, so GitHub can

@@ -457,7 +457,7 @@
       "key": "WAITLIST_OAUTH_ORIGIN",
       "group": "Waitlist",
       "required": false,
-      "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it resolves to this deployment's production origin in production and http://localhost:<PORT> in dev. Changing it means registering the matching callback URL with GitHub, X and LinkedIn too — all three validate redirect_uri before any platform code runs."
+      "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it is this deployment's canonical origin; it is http://localhost:<PORT> only when USERNODE_LOCAL_DEV=1 marks a local run, so a missing variable cannot yield a callback that works only on a laptop. Change it and you must register the matching callback with GitHub, X and LinkedIn, which all validate redirect_uri first."
     },
     {
       "key": "USERNODE_OPENROUTER_MANAGEMENT_API_KEY",
