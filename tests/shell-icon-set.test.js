@@ -158,19 +158,30 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   const shipped = new Set(HTML.match(/\sd="[^"]*"/g).map((s) => s.slice(4, -1)));
   const absent = [...modulePaths()].filter((d) => !shipped.has(d));
   const expected = [
-    // ── The Profile screen's account group (drawer removal) ────────
-    // CogIcon, ShieldCheckIcon and the two native rows' glyphs shipped in the
-    // hamburger drawer, which was in the document on every page. The drawer
-    // is retired and they are the Profile screen's account group now
-    // (features/profile/account-panel.tsx), which renders from profile data —
-    // so none of them is in a cold document.
-    // CogIcon — Settings.
-    'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
-    'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
-    // ShieldCheckIcon — Admin & moderation.
-    'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
-    // The drawer's own person glyph, and the wallet row's card.
-    'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
+    // ── The app's three view rows went behind state (#1443) ────────
+    // AppWindowIcon, BoardIcon and NewspaperIcon prerendered while App /
+    // Board / Activity sat in the Improve panel, which ships in every
+    // document. They are rows of the chip's menu now, and that section
+    // renders only while an app is on screen — so a cold document has no app
+    // and draws none of them.
+    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
+    'M4 9.5h16',
+    'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
+    'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
+    // ── The chip's menu brought four back (#1443) ──────────────────
+    // CogIcon, ShieldCheckIcon, UserIcon and ChevronDownIcon were absent
+    // while their rows lived on the Profile screen, which renders from
+    // profile data. They are rows of the chip's menu now — and the menu is in
+    // the document on every page, exactly as the hamburger it replaces was —
+    // so all four prerender again and none of them belongs on this list.
+    //
+    // ChevronDownIcon came back with them, from a different direction: it is
+    // the chip's own caret, and the chip is the header's label on EVERY
+    // screen now rather than only inside an app.
+    //
+    // Only the wallet row's card is still absent: it is a NATIVE row, hidden
+    // until the bridge reports the capability, and it stayed on the Profile
+    // screen because a balance readout is not a destination.
     'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
     // LockIcon — the landing screen's waitlist badge, rendered only once the
     // waitlist form is open.
@@ -211,10 +222,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // bulb today. ChatIcon came BACK when the panel's quick actions became
     // icon-led, so it is no longer on this list.
     'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
-    // ChevronDownIcon — the home panels' expand caret and the header title
-    // tab's own. The Your-apps fold that briefly prerendered it went with the
-    // drawer restructure, so it is behind state again.
-    'M19 9l-7 7-7-7',
     // Bars3Icon — the hamburger. The board's header leads with the app glyph
     // and the title as one switcher cluster, so nothing draws three bars any
     // more; the export stays for the vocabulary.

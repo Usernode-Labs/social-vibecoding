@@ -387,23 +387,34 @@ const App = {
   // and the <img> gets no src until there is one, so a user with no
   // picture never issues a request.
   applyUserAvatar() {
-    // Was the drawer row's pair. The drawer is retired; Home's account row is
-    // the entrance to Profile now (features/home/panels/account.tsx), and it
-    // renders the same two elements under the same contract — a `hidden`
-    // toggle on a constant className, no children.
-    const img = document.getElementById('home-account-avatar');
-    const glyph = document.getElementById('home-account-glyph');
-    if (!img || !glyph) return;
-    const url = App.user && App.user.avatarUrl;
-    if (url) {
-      img.src = url;
-      img.classList.remove('hidden');
-      glyph.classList.add('hidden');
-    } else {
-      img.removeAttribute('src');
-      img.classList.add('hidden');
-      glyph.classList.remove('hidden');
-    }
+    // TWO pairs now, and they are the same contract in two places: Home's
+    // account row (features/home/panels/account.tsx) and the header chip
+    // (features/header/app-switcher-chip.tsx). Each is a `hidden` toggle on a
+    // constant className over an element with no children — the sanctioned
+    // seam — so this stays a plain DOM write rather than a store.
+    //
+    // Both are optional: the chip is absent on a dev session and Home's row
+    // is absent until Home has rendered, and a missing pair is a no-op rather
+    // than a reason to skip the other. The early return this replaced meant a
+    // boot that reached here before Home mounted left the CHIP unpainted for
+    // the rest of the session.
+    const url = (App.user && App.user.avatarUrl) || '';
+    const paint = (imgId, glyphId) => {
+      const img = document.getElementById(imgId);
+      const glyph = document.getElementById(glyphId);
+      if (!img || !glyph) return;
+      if (url) {
+        img.src = url;
+        img.classList.remove('hidden');
+        glyph.classList.add('hidden');
+      } else {
+        img.removeAttribute('src');
+        img.classList.add('hidden');
+        glyph.classList.remove('hidden');
+      }
+    };
+    paint('home-account-avatar', 'home-account-glyph');
+    paint('switcher-avatar', 'switcher-avatar-glyph');
   },
 
   enterAuthed(user) {
@@ -930,7 +941,7 @@ const App = {
     // visibility store is the one sanctioned way to drive a converted
     // region's visibility from outside React, and the component subscribes.
     // The gate is unchanged.
-    App.Visibility.publish('profile-row-admin', !!App.user?.isAdmin);
+    App.Visibility.publish('switcher-row-admin', !!App.user?.isAdmin);
   },
 
   // Navigate to the full-page admin console (#818): the #admin hash route
@@ -2464,14 +2475,15 @@ const App = {
         return;
       }
       if (parts[0] === 'messages') {
-        // Platform-wide conversations — a SHEET now, on the bell's pattern
-        // (Streamlined Concept). A malformed/oversized id degrades to the
+        // Platform-wide conversations — a SCREEN again (#1443): Messages is
+        // a row in the chip's menu, and everything in that menu has its own
+        // page. A malformed/oversized id degrades to the
         // list without ever reaching a fetch URL. Conversations use SERIAL
         // ids, so keep their signed-int32 bound local to this route;
         // _numericSegment also serves BIGSERIAL-backed Topochain routes.
         App.setChromeless(false);
         const conversationId = App._numericSegment(parts[1]);
-        App.openMessagesSheet(
+        App.navigateToMessages(
           conversationId != null && conversationId <= 2147483647
             ? conversationId : null
         );
@@ -2735,7 +2747,7 @@ const App = {
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
     'leaderboard-screen', 'profile-screen', 'admin-screen',
-    'settings-screen'],
+    'settings-screen', 'messages-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and hand the header's back chevron back to its default
@@ -3240,17 +3252,39 @@ const App = {
   //
   // The `navigateToMessages` name is kept below because push handling and
   // notifications.js's conversation rows still say it.
-  openMessagesSheet(conversationId) {
-    App._restoreAddressUnderSheet();
-    // `open` routes the conversation and presents in one call; it no longer
-    // writes the hash to get there (features/messages/store.ts).
-    window.UsernodeReact?.messages?.open?.(conversationId || null);
-  },
-
   navigateToMessages(conversationId) {
-    App.openMessagesSheet(conversationId);
+    const messages = window.UsernodeReact?.messages;
+    if (App._inMessages && messages?.isOpen?.()) {
+      messages.route?.(conversationId || null);
+      return;
+    }
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    const screen = document.getElementById('messages-screen');
+    App._inMessages = true;
+    // Route the still-hidden island first. It renders no remote data until its
+    // effects resolve, and chrome remains suspended until the callback below.
+    messages?.route?.(conversationId || null);
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('messages-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('Messages');
+      messages?.syncChrome?.();
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
+  // State-only teardown; the incoming transition hides the root.
+  _exitMessages() {
+    App._inMessages = false;
+    window.UsernodeReact?.messages?.close?.();
+  },
 
   // The Notifications SHEET's deep-link resolver (Streamlined Concept).
   //
@@ -3267,8 +3301,9 @@ const App = {
   // naming the screen underneath. Two halves:
   //
   //   1. There has to BE a screen. On a cold boot straight to #notifications
-  //      or #messages nothing is up yet, and an overlay over a blank page is
-  //      a blank page.
+  //      nothing is up yet, and an overlay over a blank page is a blank page.
+  //      (#messages used to need this too; it is a SCREEN again as of #1443,
+  //      so it has an address of its own and never borrows one.)
   //   2. The address goes back to what that screen's address is — which is
   //      exactly what `updateHash` computes, and why this does not build one
   //      by hand. A hand-built `#app/<slug>/app` was wrong the moment the
@@ -3774,9 +3809,10 @@ const App = {
     const btn = document.getElementById('back-btn');
     if (btn) {
       // `mode` is really a boolean: 'arrow' shows the anchor, anything else
-      // hides it — and with #back-icon-home retired (#1443) the anchor is the
-      // whole of the state. There is no second glyph to swap to, and no other
-      // occupant of the slot: hidden means the chip sits flush left.
+      // hides it — and since the house glyph retired (#1443) the anchor is
+      // the whole of the state. There is no second icon to swap to, and no
+      // other occupant of the slot: hidden means the chip sits flush left,
+      // because the group collapses with it.
       btn.classList.toggle('hidden', !arrow);
       btn.setAttribute('href', target);
     }
@@ -3808,7 +3844,7 @@ const App = {
   // ahead of the Flutter rebuild.
   setHeaderTitle(text) {
     // Streamlined Concept: #header-title is React-owned now
-    // (frontend/src/features/header/header-title-tab.tsx renders it as the
+    // (frontend/src/features/header/app-switcher-chip.tsx renders it as the
     // tappable app-context tab), so the text goes through the bridge into
     // header-title-store — never a direct textContent write, which React
     // would reconcile away.

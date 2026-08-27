@@ -12,7 +12,7 @@
  * React must never reconcile over those nodes: every class string below is a
  * constant prop, rendered once at hydration and never again. The exceptions
  * are React-owned end to end: <ImproveButton/> (which carries the work-in-
- * flight indicators) and <HeaderTitleTab/> — both of whose
+ * flight indicators) and <AppSwitcherChip/> — both of whose
  * writers publish through improveStore rather than touching the DOM.
  *
  * The bar's OWN visibility is the one piece of state it holds. Chromeless mode
@@ -40,7 +40,7 @@ import { useVisibility } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
-import { HeaderTitleTab } from './header-title-tab';
+import { AppSwitcherChip } from './app-switcher-chip';
 import { ImproveButton } from '../improve/improve-button';
 import { improveStore } from '../improve/improve-store.js';
 import { MergeStatusPill } from '../dev-chat/session-header';
@@ -125,7 +125,7 @@ export function PlatformHeader() {
   // publishes here rather than writing `hidden` into React-owned DOM.
   const { mode: backMode, href: backHref } = useStoreState(backButtonStore);
   // …and ON A DEV SESSION the slot is derived from the ROUTE, not from the
-  // imperative call. <SessionStatusPill/> and <HeaderTitleTab/> already gate
+  // imperative call. <SessionStatusPill/> and <AppSwitcherChip/> already gate
   // on exactly this condition — the pill renders, the centre tab does not —
   // so leaving the third member of that trio to an ordering-dependent
   // setBackIcon() call was the odd one out, and it is the one that kept
@@ -234,7 +234,22 @@ export function PlatformHeader() {
             icon an inch from the chip's own Home row. The chevron is the
             only survivor, and it means one thing — back a level.
         */}
-        <div ref={leftGroupRef} className="h-7 shrink-0 flex items-center gap-1.5 min-w-0">
+        {/*
+            `hidden` when it holds nothing, and that is not cosmetic: the
+            header's own `gap-3` applies to this element as a flex ITEM, so an
+            empty-but-present group still reserved 12px and the chip started at
+            x=28 instead of the header's own 16px padding. `display:none`
+            removes it from the flex layout, gap included. Measured, not
+            assumed — see the browser check in the commit for this change.
+
+            Derived from the same two flags the children use, so there is no
+            third source of truth about whether this group has content.
+        */}
+        <div
+          ref={leftGroupRef}
+          className={'h-7 shrink-0 flex items-center gap-1.5 min-w-0'
+            + (backArrow || onSession ? '' : ' hidden')}
+        >
           {/*
                 #1036: a real anchor, not a button, so cmd/ctrl-click,
                 middle-click and right-click → "Open in new tab" work on it.
@@ -272,11 +287,13 @@ export function PlatformHeader() {
           <SessionStatusPill />
         </div>
         {/*
-            The center tab (Streamlined Concept): the screen's only h1, and —
-            while an app context is on screen — a tappable "name ⌄" control
-            that opens the app-context sheet. See header-title-tab.tsx.
+            The chip: the screen's only h1, and on every screen but a dev
+            session a tappable "(avatar) name ⌄" control that opens the
+            switcher menu. #1431 gated it on being inside an app; #1443
+            made it unconditional, which is what lets every other header
+            slot go. See app-switcher-chip.tsx.
         */}
-        <HeaderTitleTab titleRef={titleRef} />
+        <AppSwitcherChip titleRef={titleRef} />
         <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center">
           {/*
               HEADER SLIM-DOWN: the fork label, the platform + app build pills

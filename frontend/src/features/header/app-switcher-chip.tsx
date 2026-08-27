@@ -1,0 +1,101 @@
+/**
+ * #app-switcher-btn — the one control that names where you are (#1443).
+ *
+ * The header carries four things now, and only one of them opens a list:
+ *
+ *     [ (avatar) Cool App ⌄ ] .................... [ bell ] [ Improve ]
+ *
+ * ── The rule this control exists to keep ───────────────────────────────
+ *
+ * ONE CONTROL NAMES WHERE YOU ARE, AND ITS MENU LISTS EVERYWHERE YOU CAN
+ * GO. A destination with its own page belongs in that menu; nothing else
+ * does. Every other header slot the shell has grown over the years —
+ * a hamburger, a home glyph, a messages bubble, an app-mode switch — was
+ * some version of answering that same question a second time, in a second
+ * place, with a second glyph. They are gone; this is the answer.
+ *
+ * ── What changed from #1431 ────────────────────────────────────────────
+ *
+ * #1431 built almost all of this: the store, the publish seam, the chevron,
+ * the sheet behind it. It gated the control on `target && slug`, so the tab
+ * appeared only inside an app and Home, Discover, Messages and Settings kept
+ * an inert <h1>. That gate is the whole difference. A control that is
+ * sometimes a control is worse than either — you cannot learn "the name at
+ * the top is how you get around" from a thing that is a label four screens
+ * out of five. So the chip is unconditional, and the menu behind it grew the
+ * platform destinations to match.
+ *
+ * ── What is deliberately unchanged ─────────────────────────────────────
+ *
+ * The <h1> and its className are byte-identical to what #1431 shipped, and
+ * the className stays a CONSTANT prop: ./use-header-layout.ts toggles
+ * `.is-centered` on this node via classList, and a re-rendered class
+ * attribute would drop it. `pointer-events-none` stays on the h1 and
+ * `pointer-events-auto` on the chip inside it, so only the content-sized
+ * chip takes taps and never the overlap. The 28px content-row floor
+ * (tests/header-height-parity.test.js) is why the chip is `h-7`.
+ *
+ * ── The avatar is app.js's, by id ──────────────────────────────────────
+ *
+ * `App.applyUserAvatar` swaps which of #switcher-avatar / #switcher-avatar-glyph
+ * carries `hidden`, exactly as it does for Home's account row. Both ship as
+ * this renders them, neither has children, and both classNames are constants,
+ * so the write is the sanctioned `hidden`-toggle seam rather than a second
+ * owner. The <img> ships with NO src, so a viewer with no photo issues no
+ * request.
+ *
+ * ── A session has no chip ──────────────────────────────────────────────
+ *
+ * On a dev session the bar is ← + status on the left and the doing/seeing
+ * pair on the right; the change's own name is in the strip below. The <h1>
+ * still renders — it is what use-header-layout measures — but it stays empty
+ * there, which is #1431's behaviour kept as-is.
+ */
+
+import type { RefObject } from 'react';
+
+import { ChevronDownIcon, UserIcon } from '@/components/ui/icons';
+
+import { useStoreState } from '../../lib/use-store-state';
+import { headerTitleStore } from './header-title-store.js';
+import { improveStore } from '../improve/improve-store.js';
+
+// Hoisted so they are unmistakably constants: app.js toggles `hidden` on both
+// of these nodes, and a className React re-renders from props would undo it.
+const AVATAR_CLASS = 'hidden w-5 h-5 rounded-full object-cover shrink-0';
+const GLYPH_CLASS = 'w-5 h-5 rounded-full text-zinc-400 dark:text-zinc-500 shrink-0';
+
+export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
+  const { text } = useStoreState(headerTitleStore);
+  const { tab, subTab } = useStoreState(improveStore);
+  const onSession = tab === 'dev' && subTab === 'sessions';
+
+  return (
+    <h1
+      ref={titleRef}
+      id="header-title"
+      className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-left"}
+    >
+      {onSession ? null : (
+        <button
+          id="app-switcher-btn"
+          type="button"
+          className={'pointer-events-auto inline-flex items-center gap-1.5 max-w-full h-7 '
+            + 'align-middle un-touch-target'}
+          aria-haspopup="dialog"
+          aria-label={`${text}: open the menu`}
+          onClick={() => (window as unknown as {
+            AppContext?: { toggle?: () => void };
+          }).AppContext?.toggle?.()}
+        >
+          <img id="switcher-avatar" className={AVATAR_CLASS} alt="" />
+          <UserIcon id="switcher-avatar-glyph" className={GLYPH_CLASS} aria-hidden="true" />
+          <span className="truncate">
+            {text}
+          </span>
+          <ChevronDownIcon className="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+        </button>
+      )}
+    </h1>
+  );
+}

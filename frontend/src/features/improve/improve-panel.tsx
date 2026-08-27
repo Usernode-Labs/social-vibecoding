@@ -42,18 +42,15 @@
 import { useCallback, type ReactNode } from 'react';
 
 import {
-  AppWindowIcon,
-  BoardIcon,
   ChatIcon,
-  ChevronRightIcon,
-  HomeIcon,
-  NewspaperIcon,
+  GitHubIcon,
   PencilSparklesIcon,
   ShareIcon,
   TerminalIcon,
   XIcon,
 } from '@/components/ui/icons';
 
+import { NativeAppVersionRow } from '../header/native-app-version-row';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -127,52 +124,55 @@ function QuickAction({ id, label, icon, onClick }: {
  * label truncates at 55% before the detail starts giving ground, so a long
  * app name shortens rather than evicting "View and use the app".
  */
-function ContextRow({
-  id, row, icon, label, detail, onClick, href, selected,
+/**
+ * A reference row in the footer: a glyph, a label, and an optional value.
+ *
+ * Restored with the footer (#1443). The one caller that needs `external` is
+ * the GitHub link, which is the only thing in this panel that leaves the app
+ * — hence target=_blank, and hence NOT a hash route the sheet controller
+ * would want to dismiss for.
+ */
+function ImproveRow({
+  id,
+  icon,
+  label,
+  detail,
+  onClick,
+  href,
+  external,
 }: {
   id?: string;
-  row: string;
   icon: ReactNode;
   label: string;
-  detail: string;
+  detail?: ReactNode;
   onClick?: () => void;
   href?: string;
-  selected?: boolean;
+  external?: boolean;
 }): ReactNode {
-  // The board marks the row you are ON with a tinted surface — this panel is
-  // the app's navigation now, so it says where you are as well as where you
-  // can go.
-  const cls = ROW_BASE + (selected ? ROW_SELECTED : ROW_REST);
   const body = (
     <>
-      {/* The glyph, undressed. It sat in an IconTile square until the quick
-          actions above lost their circles — two decorative container shapes
-          in one column was the clutter, and removing only one of them would
-          have left the other looking arbitrary. */}
       <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5" aria-hidden="true">
         {icon}
       </span>
-      <span className="min-w-0 max-w-[55%] shrink truncate text-sm font-medium">
-        {label}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-right text-xs text-zinc-500 dark:text-zinc-400">
-        {detail}
-      </span>
-      <ChevronRightIcon
-        className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500"
-        aria-hidden="true"
-      />
+      <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+      {detail}
     </>
   );
   if (href) {
     return (
-      <a id={id} data-context-row={row} href={href} className={cls} onClick={dismissForNav}>
+      <a
+        id={id}
+        href={href}
+        {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
+        className={ROW_BASE + ROW_REST}
+        onClick={() => Improve.dismissForNav()}
+      >
         {body}
       </a>
     );
   }
   return (
-    <button id={id} data-context-row={row} type="button" className={cls} onClick={onClick}>
+    <button id={id} type="button" className={ROW_BASE + ROW_REST} onClick={onClick}>
       {body}
     </button>
   );
@@ -186,10 +186,6 @@ export function ImprovePanel() {
 
   const close = useCallback(() => Improve.close(), []);
 
-  const AppRowIcon = selfHosted ? HomeIcon : AppWindowIcon;
-  const onApp = tab !== 'dev';
-  const onActivity = tab === 'dev' && subTab === 'chat';
-  const onBoard = tab === 'dev' && (subTab === 'forum' || subTab === 'topic');
   // "Nothing anywhere", which is a different state from "nothing on this app"
   // — and the only one that has spare vertical space to spend.
   const nothingRunning = state.sessionsLoaded
@@ -319,45 +315,7 @@ export function ImprovePanel() {
           </div>
 
           {/*
-              ── Zone 2: the app's three views ──────────────────────────
-
-              The board's drawer, moved here whole. One line each: the label
-              leads, the detail is muted and right-aligned, and the row you are
-              ON carries a tint — so the block says where you are as well as
-              where you can go.
-          */}
-          <div id="improve-views" className="shrink-0">
-            <ContextRow
-              id="app-context-row-app"
-              row="app"
-              icon={<AppRowIcon />}
-              label={selfHosted ? 'Home' : name || 'App'}
-              detail={selfHosted ? 'The platform itself' : 'View and use the app'}
-              selected={onApp}
-              onClick={() => Improve.openApp()}
-            />
-            <ContextRow
-              id="app-context-row-board"
-              row="board"
-              icon={<BoardIcon />}
-              label="Board"
-              detail="All feedback and changes"
-              selected={onBoard}
-              href={slug ? `#app/${slug}/board` : undefined}
-            />
-            <ContextRow
-              id="app-context-row-activity"
-              row="activity"
-              icon={<NewspaperIcon />}
-              label="Activity"
-              detail="Updates and discussions"
-              selected={onActivity}
-              href={slug ? `#app/${slug}/activity` : undefined}
-            />
-          </div>
-
-          {/*
-              ── Zone 3: the work in flight, and the only scroller ──────
+              ── Zone 2: the work in flight, and the only scroller ──────
 
               THE ONE SCROLLER in this panel, which is what lets the two zones
               above stay on screen at any viewport: they are `shrink-0`, this
@@ -456,6 +414,83 @@ export function ImprovePanel() {
                 </span>
               </button>
             ) : null}
+          </div>
+
+          {/*
+              ── Zone 3: what this app IS ───────────────────────────────
+
+              #1431 dissolved this block and rehomed its contents: the GitHub
+              link to Home's per-app menu, the app's version deleted as a
+              duplicate of the chip on the app's own page, and the two build
+              lines to a new About block in Settings. Each move was defensible
+              on its own and the sum was not — you are INSIDE the app when this
+              panel is open, and every one of those facts had become something
+              you leave the app to read.
+
+              So they are back, as CONSTANT markup with empty slots: the
+              modules that fill them (App.loadVersion,
+              features/header/native-app-version.js) resolve their slot by
+              getElementById and toggle `hidden` on the row, so only the parent
+              changed. `.drawer-ver-row` keeps its name because app.css draws
+              both rows off it and renaming would be a restyle rather than a
+              move.
+
+              Fork lineage did NOT come back. #1431 put it on the app's detail
+              page (#browse-detail-fork) and that is the better home — lineage
+              is a fact about an app, not about the panel you have open.
+
+              DrawerStatus.refreshDeployDot() reads the deploying pill out of
+              whichever of these is painted, which is why #improve-version-dot
+              lights amber while a deploy is in flight. #1431 rescoped that
+              query to #settings-about; it is scoped back here, and
+              tests/improve-panel-versions.test.js pins it rather than trusting
+              the selector.
+          */}
+          <div
+            id="improve-footer"
+            className="shrink-0 pt-2 border-t border-zinc-100 dark:border-zinc-800 platform-safe-scroll"
+          >
+            {state.repoUrl ? (
+              <ImproveRow
+                id="improve-row-github"
+                icon={<GitHubIcon className="w-5 h-5 shrink-0" />}
+                label="View on GitHub"
+                href={state.repoUrl}
+                external={true}
+              />
+            ) : null}
+            {/* Versions as text rather than rows: they are the things here you
+                read instead of act on. `slug` gates the app's own so a
+                target-less panel never renders a dangling label. */}
+            {slug ? (
+              <div
+                id="improve-row-version"
+                className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400"
+              >
+                <span>Version</span>
+                <span
+                  id="improve-version-value"
+                  className="ml-auto font-mono truncate"
+                >
+                  {state.deploying ? 'deploying…' : state.version || 'unknown'}
+                </span>
+              </div>
+            ) : null}
+            <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
+              <span className="drawer-ver-label">
+                Platform version
+              </span>
+              <span
+                id="platform-version-pill-slot"
+                className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
+              >
+              </span>
+            </div>
+            {/* Installed Flutter app release (#1101) — version/build, e.g.
+                0.4.0/1223. Deliberately independent of the platform version
+                above and never the open app's commit. Hidden outside the
+                mobile app. */}
+            <NativeAppVersionRow />
           </div>
         </div>
       </div>

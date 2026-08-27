@@ -177,9 +177,13 @@ test('the header back/home control is a real anchor', () => {
   assert.match(tag, /\binline-flex\b/, 'the anchor keeps the icon block-level');
   assert.match(tag, /\bitems-center\b/, 'and centred in the 28px row');
   assert.match(tag, /\bhidden\b/, 'it still ships hidden — app.js toggles that class');
-  // Both icons still live inside it, and the wrapper is untouched.
+  // ONE icon lives inside it now. #back-icon-home retired in #1443 — Home is
+  // a row of the chip's menu, so a house glyph an inch to the chip's left was
+  // the second control answering one question. With one child the anchor's own
+  // `hidden` is the whole of the visibility state.
   const inner = html.slice(html.indexOf('<a id="back-btn"'), html.indexOf('</a>', html.indexOf('<a id="back-btn"')));
-  assert.match(inner, /id="back-icon-home"/, 'the house icon');
+  assert.ok(!inner.includes('id="back-icon-home"'),
+    'the house icon is retired — the chevron or nothing');
   assert.match(inner, /id="back-icon-arrow"/, 'the chevron');
   // 28x28 now, not 20x28: the slot holds the app glyph as well as the arrow
   // (features/header/header-app-icon.tsx), and they never draw together. What
@@ -210,8 +214,12 @@ test('setBackIcon owns the anchor href, defaulting to home', () => {
   assert.match(fn, /href \|\| \(window\.NavLink \? NavLink\.homeHref\(\) : '\/'\)/,
     'omitting the argument means home — correct for every screen except the '
     + 'three that claim the chevron as "up one level"');
-  assert.match(fn, /aria-label', arrow \? 'Back' : 'Home'/,
-    'the accessible name still tracks the icon');
+  // The accessible name is a CONSTANT now: the control means one thing, so
+  // there is no second name for it to track. It is set on the element rather
+  // than here — see features/header/platform-header.tsx.
+  assert.ok(!/aria-label', arrow \?/.test(fn),
+    'setBackIcon no longer branches the accessible name — the control means '
+    + 'one thing, and React renders that name');
 });
 
 test('every screen entry refreshes the href through the one choke point', () => {

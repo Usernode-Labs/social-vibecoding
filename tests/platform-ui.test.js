@@ -464,17 +464,17 @@ test('the Improve panel leads with three quick actions', () => {
   assert.ok(!/ImproveViewToggle/.test(panel), 'no view-toggle copy survives');
 });
 
-test('the Board owns the view control; the header center is the title tab', () => {
+test("the Board owns the view control; the header's label is the chip", () => {
   const header = read('frontend/src/features/header/platform-header.tsx');
   const frame = read('frontend/src/features/dev-board/board-frame.tsx');
 
-  // Streamlined Concept, final state: navigation between the app's views is
-  // the app-context sheet behind the tappable center title tab; Kanban vs
-  // Feed is the Board's own display mode, drawn by the frame.
+  // #1443: navigation between the app's views is the chip's menu — the chip
+  // is the header's label on EVERY screen, not only inside an app — while
+  // Kanban vs Feed stays the Board's own display mode, drawn by the frame.
   assert.ok(!/ImproveViewToggle/.test(header),
     'the header renders no view-toggle copy');
-  assert.match(header, /<HeaderTitleTab titleRef=\{titleRef\} \/>/,
-    'the center of the bar is the title tab');
+  assert.match(header, /<AppSwitcherChip titleRef=\{titleRef\} \/>/,
+    "the header's label is the chip");
   assert.match(frame, /id="dev-view-toggle"/, 'the Board draws its own control');
   const frameCode = frame
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -484,16 +484,19 @@ test('the Board owns the view control; the header center is the title tab', () =
 
   // A destination names where it GOES, and the "use the app" row's label
   // follows the target: the platform's reads "Home", an app's reads its own
-  // name. That logic lives on the IMPROVE PANEL's view rows now — the app's
-  // navigation and its work are one surface.
-  const sheet = read('frontend/src/features/improve/improve-panel.tsx');
+  // name. That logic lives on the CHIP'S MENU now (#1443) — the rows are
+  // destinations, and destinations are what the menu is.
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /label=\{selfHosted \? 'Home' : name \|\| 'App'\}/,
     "the platform's row is labelled Home, an app's by its name");
   assert.match(sheet, /const AppRowIcon = selfHosted \? HomeIcon : AppWindowIcon;/,
     'and the icon follows the destination with it');
-  // The ATTRIBUTE names the row's role, not its destination — the selector
-  // contract dapp.json's checks are written against.
-  assert.match(sheet, /row="app"/, 'data-context-row stays "app" on both rows');
+  // The ID names the row's role, not its destination — the selector contract
+  // dapp.json's checks are written against. `data-context-row` went with the
+  // move: the menu's rows are addressed by id, as every other row in it is,
+  // rather than by an attribute that existed only inside the old panel.
+  assert.match(sheet, /id="switcher-row-app"/,
+    'the id stays "switcher-row-app" whichever destination it names');
   const controller = read('frontend/src/features/improve/improve-controller.js');
   // #1406 widened where this segment is reachable from. It used to be true
   // that "no app open" meant "already home", because every other screen
@@ -535,11 +538,11 @@ test('the Board owns the view control; the header center is the title tab', () =
     'a session with no preview draws no switch — the gate moved with it');
 });
 
-test('the Improve panel is navigation and work — one scroller, nothing below', () => {
-  // Streamlined Concept: the app's views, its changes and its actions are ONE
-  // surface. The reference footer this panel used to end in is dissolved —
-  // see improve-panel.tsx's header for where each line went — and the drawer
-  // it took the rows from keeps only the account block.
+test('the Improve panel is work and reference — one scroller, the footer below', () => {
+  // #1443: the app's VIEWS left for the chip's menu, because they are
+  // destinations and the menu is where destinations live. What is left is
+  // what the panel is for: the quick actions, the work in flight, and the
+  // reference footer that says what this app IS.
   const panel = read('frontend/src/features/improve/improve-panel.tsx');
   const html = read('public/index.html');
 
@@ -556,26 +559,33 @@ test('the Improve panel is navigation and work — one scroller, nothing below',
   assert.match(scrollTag, /flex-1/, 'and takes the free space');
   assert.match(scrollTag, /min-h-0/, 'and may shrink below its content');
 
-  // Both bands are held at their natural height. #improve-views carries
-  // `shrink-0` itself; the quick-action WELL is wrapped by the band that
-  // carries it, so look just upstream of the id for the class.
-  const viewsAt = html.indexOf('id="improve-views"');
-  assert.match(html.slice(viewsAt, html.indexOf('>', viewsAt)), /\bshrink-0\b/,
-    '#improve-views keeps its height');
+  // The bands above and below are held at their natural height. The
+  // quick-action WELL is wrapped by the band that carries it, so look just
+  // upstream of the id for the class.
   const actionsAt = html.indexOf('id="improve-quick-actions"');
   assert.match(html.slice(Math.max(0, actionsAt - 160), actionsAt), /\bshrink-0\b/,
-    "the quick-action band keeps its height");
-  assert.ok(actionsAt < viewsAt && viewsAt < scrollAt,
-    'actions, then views, then the scroller');
+    'the quick-action band keeps its height');
+  const footerAt = html.indexOf('id="improve-footer"');
+  assert.match(html.slice(footerAt, html.indexOf('>', footerAt)), /\bshrink-0\b/,
+    'the reference footer keeps its height');
+  assert.ok(actionsAt < scrollAt && scrollAt < footerAt,
+    'actions, then the scroller, then the reference footer');
 
-  // The account rows used to bottom-anchor in the drawer they stayed in.
-  // There is no drawer: they are the Profile screen's account group now
-  // (features/profile/account-panel.tsx), and a screen section has nothing to
-  // bottom-anchor against.
+  // The app's three views are NOT here any more — they are menu rows.
+  assert.ok(!panel.includes('id="improve-views"'),
+    'the view rows moved to the chip\'s menu');
 
-  // The footer is gone, not merely hidden.
-  assert.ok(!panel.includes('id="improve-footer"'), 'no reference footer in the panel');
-  assert.ok(!html.includes('id="improve-footer"'), 'and none in the shipped shell');
+  // The footer came back (#1443). #1431 dissolved it and rehomed each fact
+  // separately; every move was defensible alone and the sum meant leaving the
+  // app to read facts about the app you were standing in.
+  assert.match(panel, /id="improve-row-github"/, 'the GitHub link is back');
+  assert.match(panel, /id="improve-row-version"/, "the app's version is back");
+  assert.match(panel, /id="drawer-row-platform-version"/, 'the platform build is back');
+  assert.match(panel, /<NativeAppVersionRow \/>/, 'and the native app version');
+  // Fork lineage did NOT come back: #browse-detail-fork on the app's own page
+  // is the better home, because lineage is a fact about an app.
+  assert.ok(!panel.includes('id="drawer-row-app-fork"'),
+    'fork lineage stays on the app detail page');
   assert.match(panel, /id="improve-row-share"/,
     "Share app survived as the panel's third action");
 });

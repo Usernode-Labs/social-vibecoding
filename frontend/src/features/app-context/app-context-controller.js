@@ -9,21 +9,23 @@
  *
  * The DATA half is deliberately absent — the sheet renders from improveStore.
  *
- * One caller outside React: `header-title-tab.tsx`'s tap goes through
+ * One caller outside React: `app-switcher-chip.tsx`'s tap goes through
  * `window.AppContext.toggle()` (published below, the same seam every
  * classic-script-reachable controller uses).
  */
 
 import { createSheetController } from '../../lib/sheet-controller.js';
-import { improveStore } from '../improve/improve-store.js';
-import { Improve } from '../improve/improve-controller.js';
 import { appContextStore } from './app-context-store.js';
 
+// No `canOpen` gate. #1431 had `!!improveStore.get().slug`, which matched the
+// title tab it opened: both existed only inside an app. #1443 made the chip
+// unconditional and moved the platform's destinations in here, so a menu that
+// refuses to open on Home — the one screen you most need it from — would be
+// the gate outliving its reason. Nothing about the sheet needs a target now:
+// the app-scoped section renders only when there is one.
 export const AppContext = createSheetController({
   elementId: 'apps-switcher-sheet',
   store: appContextStore,
-  canOpen: () => !!improveStore.get().slug,
-  onOpen: () => Improve.loadSessions(),
 });
 
 if (typeof window !== 'undefined') {

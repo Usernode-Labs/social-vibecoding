@@ -1,5 +1,5 @@
 /**
- * The "Mobile app version" row — Settings' About block (#settings-about).
+ * The "Mobile app version" row — the Improve panel's reference footer (#improve-footer), which is where #1443 put the version rows back.
  * See ./native-app-version-store.ts for what the seam carries.
  *
  * It was the hamburger drawer's footer until the Streamlined Concept board
@@ -33,7 +33,7 @@ const ROW = {
 export function NativeAppVersionRow(): ReactNode {
   const { value } = useStoreState(nativeAppVersionStore);
   return (
-    <div id="about-row-native-app-version" className={value ? ROW.shown : ROW.hidden}>
+    <div id="drawer-row-native-app-version" className={value ? ROW.shown : ROW.hidden}>
       <span className="drawer-ver-label">
         Mobile app version
       </span>

@@ -1,17 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { ChevronLeftInsetIcon, PlusIcon, UserGroupIcon, XIcon } from '@/components/ui/icons';
-import { flushSync } from 'react-dom';
-
-import { useStoreState } from '../../lib/use-store-state';
-import { messagesSheetStore } from './sheet-store.js';
-import { MessagesSheet } from './sheet-controller.js';
-
-// The kit measures the sheet's content height ONCE, at present time, and
-// `MessagesSheet.open()` publishes `open: true` immediately before handing it
-// over — so that publish has to be synchronous. Same reason the app-context
-// and notifications stores install it. See lib/sheet-controller.js.
-messagesSheetStore.setFlush(flushSync);
+import { ChevronLeftInsetIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
+import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
@@ -25,9 +15,9 @@ import {
   loadConversations,
   loadOlder,
   messagesController,
-  handleBack,
   respond,
   selectConversation,
+  syncChrome,
   typingUsers,
   useMessagesSnapshot,
 } from './store';
@@ -51,14 +41,10 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
     <a
       href={`#messages/${conversation.id}`}
       onClick={(event) => {
-        // A modified click keeps the anchor's href, which deep-links this
-        // conversation in a new tab. A plain one routes inside the sheet —
-        // there used to be a hash-equality branch here because selecting a
-        // row wrote the address and the router came back round; it does not
-        // any more (see store.ts `selectConversation`).
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-        event.preventDefault();
-        selectConversation(conversation.id);
+        if (window.location.hash === `#messages/${conversation.id}`) {
+          event.preventDefault(); selectConversation(conversation.id);
+        }
       }}
       className={`messages-conversation-row ${active ? 'messages-conversation-active' : ''}`}
       aria-current={active ? 'page' : undefined}
@@ -75,7 +61,11 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
 function ConversationList() {
   const snap = useMessagesSnapshot();
   return (
-    <section className={`messages-list-pane ${snap.route.conversationId ? 'hidden' : 'flex'}`} aria-label="Conversations">
+    <section className={`messages-list-pane ${snap.route.conversationId ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
+      <div className="messages-list-toolbar">
+        <div><h2 className="font-bold text-zinc-900 dark:text-zinc-100">Messages</h2><p className="text-xs text-zinc-500 dark:text-zinc-400">Direct and group conversations</p></div>
+        <button type="button" onClick={() => openDialog('messagesCreate')} className="messages-new-button" aria-label="New conversation" title="New conversation"><PlusIcon aria-hidden="true" /></button>
+      </div>
       {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
       <div className="messages-list-scroll platform-safe-scroll">
         {snap.loadingList && !snap.listLoaded ? <div className="messages-state"><span className="messages-spinner" />Loading conversations…</div> : null}
@@ -146,18 +136,7 @@ function ThreadHeader() {
   }
   return (
     <header className="messages-thread-header">
-      {/* Thread -> list, INSIDE the sheet. It was an <a href="#messages">, from
-          when Messages was a screen and its two levels were two addresses.
-          The sheet is not an address, so this is the button it always was in
-          behaviour. */}
-      <button
-        type="button"
-        className="messages-thread-back"
-        aria-label="Back to conversations"
-        onClick={() => handleBack()}
-      >
-        <ChevronLeftInsetIcon aria-hidden="true" />
-      </button>
+      <a href="#messages" className="md:hidden messages-thread-back" aria-label="Back to conversations"><ChevronLeftInsetIcon aria-hidden="true" /></a>
       <UserAvatar user={active.kind === 'direct' ? peer : null} title={active.title} />
       <button type="button" className="min-w-0 text-left flex-1" onClick={() => active.kind === 'group' && openDialog('messagesMembers')}>
         <div className="font-semibold text-sm truncate">{active.kind === 'direct' && peer ? `@${peer.username}` : active.title}</div>
@@ -202,10 +181,7 @@ function ConversationThread() {
     });
   }
 
-  // The "Choose a conversation" placeholder was the second pane's resting
-  // state, and there is no second pane: a sheet is 24rem at its widest, so
-  // the list IS what shows until a row is picked.
-  if (!conversationId) return null;
+  if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><span aria-hidden="true">✦</span><h2>Choose a conversation</h2><p>Your direct and group messages stay here.</p></section>;
   return (
     <section className="flex messages-thread-pane" aria-label={snap.active?.title || 'Conversation'}>
       <ThreadHeader />
@@ -223,79 +199,20 @@ function ConversationThread() {
   );
 }
 
-/**
- * The Messages SHEET.
- *
- * It was `<main id="messages-screen">`, a screen root revealed by
- * App.navigateToMessages. The chat bubble is in the header on every route,
- * so that screen's back arrow had to answer "back to where?" — and it
- * answered home. It had a second back level of its own on top of that (a
- * thread went up to the list, the list went home), driven by writing the
- * platform header from ./store.ts. As a sheet the outer level is just
- * dismissal and the inner one is a button in the thread header, which is
- * what it always was in behaviour.
- *
- * The three dialogs stay siblings and stay `useDialog`-owned: a dialog over
- * a sheet is the kit's own stacking, not something this file arranges.
- */
-export function MessagesSheetView() {
-  const { open } = useStoreState(messagesSheetStore) as { open: boolean };
+export function MessagesScreen() {
+  const screenRef = useRef<HTMLElement | null>(null);
+  const snap = useMessagesSnapshot();
+  useVisibilityHiddenClass(screenRef, 'messages-screen', false);
   useEffect(() => initializeMessagesStore(), []);
+  useEffect(() => { if (snap.route.open) syncChrome(); }, [snap.active?.title, snap.route.open, snap.route.conversationId]);
   return (
     <>
-      <div
-        id="messages-sheet-overlay"
-        aria-hidden="true"
-        {...(open ? { 'data-open': '' } : {})}
-        className="fixed inset-0 z-40 bg-black/40"
-        onClick={() => MessagesSheet.close()}
-      >
-      </div>
-      <div
-        id="messages-sheet"
-        role="dialog"
-        aria-label="Messages"
-        aria-hidden={open ? undefined : 'true'}
-        {...(open ? { 'data-open': '' } : {})}
-        className={'fixed z-50 flex flex-col bg-white dark:bg-zinc-900 '
-          + 'border-zinc-200 dark:border-zinc-700 shadow-2xl nav-sheet-transition'}
-      >
-        {/* The surface's persistent head. The list used to carry a toolbar of
-            its own with a second "Messages" heading in it — two titles, one
-            above the other, once the sheet grew a head. Its one ACTION lives
-            here instead, where it stays reachable from a thread too. */}
-        <div className="flex items-center gap-3 px-5 pt-4 pb-3 shrink-0 border-b border-zinc-200 dark:border-zinc-800">
-          <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Messages</h2>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">Direct and group conversations</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => openDialog('messagesCreate')}
-            className="messages-new-button shrink-0"
-            aria-label="New conversation"
-            title="New conversation"
-          >
-            <PlusIcon aria-hidden="true" />
-          </button>
-          <button
-            id="messages-sheet-close"
-            type="button"
-            className={'shrink-0 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 '
-              + 'dark:hover:text-zinc-200 un-touch-target'}
-            aria-label="Close"
-            onClick={() => MessagesSheet.close()}
-          >
-            <XIcon className="w-5 h-5" />
-          </button>
+      <main ref={screenRef} id="messages-screen" className="hidden flex-1 min-h-0 overflow-hidden bg-white dark:bg-zinc-950" style={{ position: 'relative' }}>
+        <div className="messages-layout">
+          <ConversationList />
+          <ConversationThread />
         </div>
-        <div className="flex-1 min-h-0 overflow-hidden" style={{ position: 'relative' }}>
-          <div className="messages-layout">
-            <ConversationList />
-            <ConversationThread />
-          </div>
-        </div>
-      </div>
+      </main>
       <CreateConversationDialog />
       <ConversationMembersDialog />
       <ShareItemDialog />
@@ -306,30 +223,6 @@ export function MessagesSheetView() {
 if (typeof window !== 'undefined') {
   const host = (window.UsernodeReact ||= {});
   host.messages = messagesController;
-  host.messagesSheet = MessagesSheet;
 }
 
 export { messagesController };
-
-/**
- * The Messages island: the sheet plus its document-level Escape binding.
- * Mirrors ../app-context/index.tsx and ../notifications/index.tsx.
- */
-export function MessagesIsland() {
-  const { open } = useStoreState(messagesSheetStore) as { open: boolean };
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      // Adopted into a kit sheet the kit's modal stack owns the key; and a
-      // thread open on mobile takes Escape as "back to the list" first, the
-      // same order a nested surface always resolves it in.
-      if (MessagesSheet._sheet) return;
-      if (handleBack()) return;
-      MessagesSheet.close();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open]);
-  return <MessagesSheetView />;
-}

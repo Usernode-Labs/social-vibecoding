@@ -40,6 +40,10 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #1443: one control names where you are ──────────────────────
+  // The chip's menu lists every destination with its own page, so the header
+  // stopped needing a second, third and fourth way to say the same thing.
+  'back-icon-home': 'The house glyph inside #back-btn. Home is a row of the chip\'s menu, immediately reachable from every screen, so a house icon an inch to the chip\'s left was the second control answering one question. #back-btn keeps #back-icon-arrow and means one thing now — back a level — which is why its own `hidden` is the whole of the visibility state.',
   // ── Streamlined Concept: the drawer became the APP's surface ──────
   // The Figma board draws ONE app-scoped drawer (the app, its Board, its
   // Activity, "+ New change", the changes here and elsewhere, over a
@@ -140,7 +144,6 @@ const RETIRED_IDS = {
   // ── Streamlined Concept, second pass: the two alerting screens
   //    became SHEETS. A screen reachable from every route has to answer
   //    "back to where?", and both answered "home".
-  'messages-screen': 'The Messages screen ROOT. It is #messages-sheet now, for the same reason and with an extra one of its own: Messages had TWO back levels (thread -> list -> home), the outer driven by writing the platform header from inside the feature. Dismissal is the outer level now and the thread\'s own button is the inner one.',
   // ── The hamburger, and the drawer it opened, are gone ────────────
   // The Streamlined Concept retired the hamburger button and left the drawer
   // with no trigger — its rows were reachable only through the ?shot=menu
@@ -155,9 +158,9 @@ const RETIRED_IDS = {
   'drawer-row-profile': 'Profile is reached from Home\'s #home-account-row, which is the one entrance the drawer\'s removal would otherwise have taken away.',
   'drawer-avatar': 'The viewer\'s picture on that row — #home-account-avatar, same writer (App.applyUserAvatar), same contract.',
   'drawer-profile-glyph': 'Its fallback glyph — #home-account-glyph.',
-  'drawer-row-settings': 'Settings is #profile-row-settings, in the Profile screen\'s account group.',
-  'drawer-byok-dot': 'The BYOK dot on that row — #profile-byok-dot. settings.js publishes the flag through the visibility store now rather than writing the class by id, because the row renders inside a React-owned subtree.',
-  'drawer-row-admin': 'Admin & moderation is #profile-row-admin, same isAdmin gate, published rather than class-written for the same reason.',
+  'drawer-row-settings': 'Settings is #switcher-row-settings, a row of the chip\'s menu (#1443) — it has its own page, and the menu lists everything that does.',
+  'drawer-byok-dot': 'The BYOK dot on that row — #switcher-byok-dot. settings.js publishes the flag through the visibility store rather than writing the class by id, because the row renders inside a React-owned subtree.',
+  'drawer-row-admin': 'Admin & moderation is #switcher-row-admin, same isAdmin gate, published rather than class-written for the same reason.',
   'drawer-node-dot': 'Its status dot — #account-node-dot. It also stops PRERENDERING: the row renders inside the Profile screen\'s account group, which draws from profile data, where the drawer shipped on every page.',
   'drawer-node-status': 'Its status text — #account-node-status, same note.',
   'drawer-wallet-balance': 'The wallet row\'s balance readout — #account-wallet-balance, same note.',
@@ -168,15 +171,9 @@ const RETIRED_IDS = {
   'header-menu-deploy-dot': 'Renamed #improve-version-dot with that move. A `header-menu-*` id on the Improve button would be a lie that outlives everyone who remembers it.',
   'drawer-app-rows': 'The app rows\' scroller in the drawer. The Improve panel renders them now, and #improve-sessions is the scroller.',
   'app-context-new-change': 'Merged INTO #improve-row-new-session, the panel\'s middle quick action. Two ids calling one Improve.startSession() was the duplication the merge exists to remove.',
-  'improve-footer': 'The reference block itself. Not re-homed anywhere — it was a container for four unrelated facts, and each of them moved separately.',
-  'improve-row-github': 'View on GitHub is a Home.menuItemsFor item now, so it renders on the app\'s own page (#apps/<slug>) and in the home card\'s menu instead of only while the app was open.',
   'improve-row-share': 'Share app is the Improve panel\'s third action (features/improve/improve-panel.tsx) — the one line in that footer that was an action rather than a reference. Same id, same `canShare` gate.',
-  'improve-row-version': 'The open app\'s version. The app\'s own page already renders the same chip from AppView.renderAppVersionPillHTML, so this was a second copy of one fact.',
-  'improve-version-value': 'Value slot of that duplicate row.',
   'drawer-row-app-fork': 'Fork lineage renders on the app\'s page from the detail descriptor (features/apps/browse-detail.tsx, #browse-detail-fork) — lineage is a fact about an app, not about the drawer you have open.',
   'app-fork-badge-slot': 'Slot AppView.renderForkBadge wrote into. Both the function and App.DrawerStatus.setForkVisible are gone with it.',
-  'drawer-row-platform-version': 'Renamed, not retired: #about-row-platform-version in Settings\' About block. The deployed web build describes the PLATFORM, so a `drawer-row-*` name on a settings screen would outlive everyone who remembers the drawer.',
-  'drawer-row-native-app-version': 'Renamed with it: #about-row-native-app-version.',
   // ── THE UI OVERHAUL: the home screen's widgets became four fixed areas ──
   // Discover, Challenges and Create app were draggable blocks on the launcher
   // canvas; they are sections in a fixed order under the grid now, so the
@@ -207,8 +204,26 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #1443: what came back ───────────────────────────────────────
+  'messages-screen': 'The Messages screen root, restored. #1431 made it #messages-sheet because a header chat bubble on every route left a full-screen Messages with no honest answer to "back to where?" — the bubble is gone and Messages is a menu row now, so the screen is both the honest shape and the one every messaging product uses for reading past conversations.',
+  'improve-footer': 'The panel\'s reference block, restored. #1431 dissolved it and rehomed each fact separately; every move was defensible alone and the sum meant leaving the app to read facts about the app you were standing in.',
+  'drawer-row-native-app-version': 'The installed Flutter release, back in that footer. #1431 renamed it #about-row-native-app-version for the Settings About block it built; the block is gone with the rows it existed to hold, so the name goes back too. `.drawer-ver-row` is the shared CSS recipe, not a claim about a drawer.',
+  // ── #1443: the chip and its menu ────────────────────────────────
+  'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go.',
+  'switcher-avatar': 'The viewer\'s picture in the chip. Ships with NO src, so a viewer with no photo issues no request; App.applyUserAvatar swaps which of this and the glyph carries `hidden`, the same contract it uses for Home\'s account row.',
+  'switcher-avatar-glyph': 'The generic person glyph shown until a photo exists.',
+  'switcher-nav': 'The menu\'s destination list, and its ONLY vertical scroller. The app strip above is horizontal and therefore vertically bounded, so no number of apps can push a destination out of reach — the clipping bug that hid Home and Profile on a 39-app account cannot occur in this shape.',
+  'switcher-row-home': 'Home. Was the sheet\'s #apps-switcher-home footer button.',
+  'switcher-row-discover': 'Discover (#apps). Was #apps-switcher-explore.',
+  'switcher-row-messages': 'Messages. Was #messages-btn in the header; it has its own page, so it is a row. Carries #drawer-messages-badge, unchanged writer.',
+  'switcher-row-profile': 'Profile.',
+  // #switcher-row-app / -board / -activity are NOT here on purpose: they
+  // render only while an app is on screen, so they never reach the prerender
+  // this inventory reads. They were #app-context-row-* in the Improve panel.
+  'switcher-row-settings': 'Settings. Was #profile-row-settings on the Profile screen.',
+  'switcher-byok-dot': 'The BYOK dot on that row — was #profile-byok-dot. settings.js publishes the flag; the className stays a constant.',
+  'switcher-row-admin': 'Admin & moderation. Was #profile-row-admin. Ships `hidden`; App.renderAdminButton publishes the isAdmin flag, unchanged.',
   // ── Streamlined Concept: the header's second alerting glyph ──────
-  'messages-btn': 'The chat bubble beside it, opening #messages.',
   'drawer-messages-badge': 'Unread-messages count, on that chat bubble. It keeps the id it wore as the drawer row\'s badge — Notifications._renderBadge is still its only writer, so only the parent changed.',
   // ── …and the Apps sheet behind the title tab ─────────────────────
   'apps-switcher-sheet': 'The board\'s Apps sheet — its "Switching between Apps" connector. Reuses the retired #app-context-sheet\'s controller, store and kit bottom-sheet lifecycle.',
@@ -216,8 +231,6 @@ const ADDED_IDS = {
   'apps-switcher-close': 'Its close control.',
   'apps-switcher-create': 'The sheet\'s "Create New" action.',
   'apps-switcher-list': 'The horizontal strip of the viewer\'s apps.',
-  'apps-switcher-home': 'The sheet\'s Home button, one half of the board\'s footer pair.',
-  'apps-switcher-explore': 'Its Explore button, the other half.',
   // ── Streamlined Concept: the drawer leads with Your apps ─────────
   // ── Andrea's simpler waitlist flow ────────────────────────────────
   // The relocated join question (see RETIRED_IDS above).
@@ -274,9 +287,6 @@ const ADDED_IDS = {
   'dev-flow-pref-section': 'The "Preferred build flow" block in Settings → Connections (#1049) — the escape hatch for the dev-chat picker\'s "remember my option" checkbox.',
   'settings-dev-flow': 'The build-flow dropdown itself. Settings binds its change and gates the two hand-off options on whether the deployment has external flows.',
   'settings-dev-flow-status': 'Save/error line for the build-flow dropdown.',
-  'about-row-native-app-version': 'Installed Flutter app version (#1101) — Settings\' About block since the drawer footer was dissolved.',
-  'about-row-platform-version': 'The deployed web build (a Git SHA), beside it. Both slots keep their ids, so App.renderPlatformVersionPill and native-app-version.js resolve them unchanged.',
-  'settings-about': 'The About block itself, at the foot of #settings-root. Also what DrawerStatus.refreshDeployDot scopes its "is a deploy rolling out" read to.',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
   'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
@@ -295,7 +305,6 @@ const ADDED_IDS = {
   'improve-body': 'The panel\'s scroller.',
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
   'improve-quick-actions': 'The panel\'s three circular actions — Feedback, New change, Share — captioned beneath so three fit across a phone.',
-  'improve-views': 'The app\'s three destinations (App / Board / Activity), one line each, moved from the drawer.',
   'improve-sessions': 'The changes in flight, here and on the viewer\'s other apps — and the panel\'s ONE scroller, which is what keeps the actions and the views on screen at any height.',
   'improve-version-dot': 'The platform deploy/stale dot, renamed from #header-menu-deploy-dot when it followed the badge cluster onto #improve-btn.',
   'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
@@ -407,17 +416,11 @@ const ADDED_IDS = {
   // The surface behind the header's "app name ⌄" tab: the app's three
   // views, its changes in progress/elsewhere, and the reference footer
   // (which moved here from the Improve panel keeping its ids).
-  'app-context-row-app': 'Destination row: view and use the app (Improve.openApp). Rendered by the Improve panel since the drawer\'s rows merged into it; the ids stay because the declared checks select on them.',
-  'app-context-row-activity': 'Destination row: the Activity stream (#app/<slug>/activity).',
-  'app-context-row-board': 'Destination row: the Board (#app/<slug>/board).',
   // ── Streamlined Concept: the full-screen Notifications view ──────
   // A real screen behind the drawer's Notifications row, on the Messages
   // screen's fully-React pattern: All | Unread tabs, Today/Earlier
   // sections, avatar-initial rows. Renders from the same notifications
   // store as the drawer's list.
-  'messages-sheet': 'The Messages SHEET root — see the retired #messages-screen above.',
-  'messages-sheet-overlay': 'Its backdrop.',
-  'messages-sheet-close': 'Its close control, as the other two sheets carry.',
   'home-account-row': 'Home\'s entrance to Profile — the door the retired hamburger took away.',
   'home-account-avatar': 'The viewer\'s picture on it (was #drawer-avatar).',
   'home-account-glyph': 'Its fallback glyph (was #drawer-profile-glyph).',

@@ -422,21 +422,21 @@ test('the header back button consults Settings.handleBack behind _inSettings', (
     'and home is the fallback for one that named none');
 });
 
-test('Settings is reached from the Profile screen, by a real anchor', () => {
-  // It was a hamburger row, and the hamburger is retired — which briefly left
-  // Settings with no entrance at all, its link existing in one file nothing
-  // opened. The row is the Profile screen's account group now
-  // (features/profile/account-panel.tsx), reached from Home's account row.
-  const panel = read('frontend/src/features/profile/account-panel.tsx');
-  assert.match(panel, /id="profile-row-settings"[\s\S]{0,80}href="#settings"/,
+test("Settings is reached from the chip's menu, by a real anchor", () => {
+  // It was a hamburger row; #1431 retired the hamburger and parked it in the
+  // Profile screen's account group; #1443 gave the shell a menu again and
+  // Settings went back into it, because it has its own page and the menu's
+  // rule is that everything in it does. One entrance, one hop, from anywhere.
+  const panel = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(panel, /id="switcher-row-settings"[\s\S]{0,80}href="#settings"/,
     'navigation rides the anchor hash, like Challenges / Profile');
-  assert.match(panel, /id="profile-byok-dot"/, 'the BYOK indicator dot survives');
-  // No click handler: the row does not call Settings.open, because the hash
-  // does the navigating and always did. The drawer version needed one only to
-  // close the drawer it sat in.
-  const row = panel.slice(panel.indexOf('id="profile-row-settings"'));
-  assert.doesNotMatch(row.slice(0, 400), /onClick/,
-    'the anchor navigates on its own — nothing to dismiss first');
+  assert.match(panel, /id="switcher-byok-dot"/, 'the BYOK indicator dot survives');
+  // The row does not call Settings.open — the hash does the navigating and
+  // always did. It DOES dismiss the menu it sits in, which is the one thing
+  // the Profile-screen version of this row had nothing to do: a menu that
+  // stays open over the screen it just sent you to is the bug.
+  assert.match(panel, /AppContext\.dismissForNav\(\)/,
+    'activating a row closes the menu before the hash lands');
 });
 
 // ── Two-level layout ───────────────────────────────────────────────────
