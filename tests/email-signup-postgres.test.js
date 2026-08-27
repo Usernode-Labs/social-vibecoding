@@ -55,6 +55,41 @@ const DDL = `
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  CREATE TABLE seasons (
+    id BIGINT PRIMARY KEY,
+    internal BOOLEAN NOT NULL,
+    is_active BOOLEAN NOT NULL,
+    starts_at TIMESTAMPTZ NOT NULL,
+    ends_at TIMESTAMPTZ NOT NULL
+  );
+  CREATE TABLE onchain_accounts (
+    id BIGINT PRIMARY KEY,
+    address VARCHAR(100) NOT NULL,
+    public_key VARCHAR(64) NOT NULL,
+    secret_key VARCHAR(64) NOT NULL,
+    season_event_id BIGINT,
+    season_id BIGINT NOT NULL REFERENCES seasons(id),
+    user_id INTEGER REFERENCES users(id),
+    updated_at TIMESTAMPTZ
+  );
+  CREATE UNIQUE INDEX onchain_accounts_user_season_unique
+    ON onchain_accounts (user_id, season_id)
+    WHERE user_id IS NOT NULL AND season_event_id IS NULL;
+  CREATE TABLE user_enrollments (
+    id BIGSERIAL PRIMARY KEY,
+    season_event_id BIGINT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    season_id BIGINT NOT NULL REFERENCES seasons(id),
+    registered_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ
+  );
+  CREATE UNIQUE INDEX user_enrollments_user_season_unique
+    ON user_enrollments (user_id, season_id) WHERE season_event_id IS NULL;
+  CREATE TABLE native_session_credentials (
+    credential_reference VARCHAR(47) PRIMARY KEY,
+    account_id BIGINT NOT NULL REFERENCES onchain_accounts(id)
+  );
   CREATE TABLE waitlist_signups (
     email VARCHAR(255) PRIMARY KEY,
     linked_user_id INTEGER,
@@ -109,6 +144,7 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
   await withDatabase(t, async (pool) => {
     const poolPath = require.resolve('../src/db/pool');
     const authPath = require.resolve('../src/routes/auth');
+    const mobilePath = require.resolve('../src/routes/topochain/mobile');
     const mail = require('../src/services/mail');
     const originalPool = require.cache[poolPath];
     const originalSend = mail.sendOtpMail;
@@ -124,11 +160,14 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
     mail.sendOtpMail = async (_config, _email, value) => { code = value; };
     mail.pruneDeliveries = async () => {};
     delete require.cache[authPath];
+    delete require.cache[mobilePath];
 
     const { authRoutes } = require('../src/routes/auth');
+    const { topochainMobileRoutes } = require('../src/routes/topochain/mobile');
     const app = express();
     app.use(express.json());
     app.use(cookieParser());
+    app.use(topochainMobileRoutes({}));
     app.use(authRoutes({}));
     const server = app.listen(0, '127.0.0.1');
     await new Promise((resolve) => server.once('listening', resolve));
@@ -195,6 +234,99 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
       });
       assert.equal(replay.status, 422);
       assert.equal((await replay.json()).code, 'invalid_signup_session');
+
+      const { rows: sourceRows } = await pool.query(
+        `INSERT INTO users
+           (username, password, email, email_confirmed, password_set)
+         VALUES ('legacy@example.com', 'unused', 'legacy@example.com', TRUE, TRUE)
+         RETURNING id`,
+      );
+      const sourceId = sourceRows[0].id;
+      await pool.query(
+        `INSERT INTO seasons (id, internal, is_active, starts_at, ends_at)
+         VALUES (10, FALSE, TRUE, NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day')`,
+      );
+      await pool.query(
+        `INSERT INTO onchain_accounts
+           (id, address, public_key, secret_key, season_id, user_id, updated_at)
+         VALUES (400, 'ut1legacy', 'utpk1legacy', 'utsk1legacy', 10, $1, NOW())`,
+        [sourceId],
+      );
+      await pool.query(
+        `INSERT INTO mobile_auth_tokens
+           (user_id, token_hash, ability, expires_at)
+         VALUES ($1, repeat('a', 64), 'session', NOW() + INTERVAL '1 day')`,
+        [sourceId],
+      );
+
+      code = null;
+      const claimCodeRequest = await fetch(`${base}/api/auth/otp/request`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'legacy@example.com' }),
+      });
+      assert.equal(claimCodeRequest.status, 200);
+      assert.match(code, /^[0-9]{6}$/);
+
+      const claim = await fetch(`${base}/api/v4/mobile/wallet/claim`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `session=${sessionCookie}`,
+        },
+        body: JSON.stringify({ email: 'legacy@example.com', code }),
+      });
+      assert.equal(claim.status, 200);
+      const claimed = await claim.json();
+      assert.equal(claimed.claimed, true);
+      assert.equal(claimed.address, 'ut1legacy');
+      assert.equal('secret_key' in claimed, false);
+      assert.equal((await pool.query(
+        'SELECT user_id FROM onchain_accounts WHERE id = 400',
+      )).rows[0].user_id, body.user.id);
+      assert.equal((await pool.query(
+        'SELECT COUNT(*)::int AS count FROM user_enrollments WHERE user_id = $1 AND season_id = 10',
+        [body.user.id],
+      )).rows[0].count, 1);
+      assert.equal((await pool.query(
+        'SELECT COUNT(*)::int AS count FROM mobile_auth_tokens WHERE user_id = $1',
+        [sourceId],
+      )).rows[0].count, 0);
+
+      // A key already published to a protocol-2 installation cannot be
+      // revoked by deleting a server bearer. Keep ownership unchanged until
+      // the deferred on-chain key-rotation primitive exists.
+      await pool.query(
+        'UPDATE onchain_accounts SET user_id = $1 WHERE id = 400',
+        [sourceId],
+      );
+      await pool.query(
+        'DELETE FROM user_enrollments WHERE user_id = $1 AND season_id = 10',
+        [body.user.id],
+      );
+      await pool.query(
+        `INSERT INTO native_session_credentials (credential_reference, account_id)
+         VALUES ('nsc_bound_legacy_wallet', 400)`,
+      );
+      code = null;
+      await fetch(`${base}/api/auth/otp/request`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'legacy@example.com' }),
+      });
+      const blockedClaim = await fetch(`${base}/api/v4/mobile/wallet/claim`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `session=${sessionCookie}`,
+        },
+        body: JSON.stringify({ email: 'legacy@example.com', code }),
+      });
+      assert.equal(blockedClaim.status, 409);
+      assert.equal((await blockedClaim.json()).code, 'wallet_claim_requires_key_rotation');
+      assert.equal((await pool.query(
+        'SELECT user_id FROM onchain_accounts WHERE id = 400',
+      )).rows[0].user_id, sourceId);
     } finally {
       await new Promise((resolve) => server.close(resolve));
       mail.sendOtpMail = originalSend;
@@ -202,6 +334,7 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
       if (originalPool) require.cache[poolPath] = originalPool;
       else delete require.cache[poolPath];
       delete require.cache[authPath];
+      delete require.cache[mobilePath];
     }
   });
 });
