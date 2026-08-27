@@ -138,22 +138,22 @@ const AppView = {
   // Per-type tinted icon chips — the Dev list's identity system, a mini
   // version of the home tiles' avatar square. [tint classes, SVG path].
   DEV_CARD_ICONS: {
-    chat: ['bg-violet-600/15 text-violet-700 dark:text-violet-400', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
+    chat: ['bg-violet-600/15 text-violet-700 dark:text-violet-400', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z', '💬'],
     // Pencil (Heroicons outline) — sessions are edits-in-progress, not
     // terminals (#219). Distinct from the issue icon's pencil-in-bubble.
-    session: ['bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z'],
+    session: ['bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z', '✏️'],
     // Comment-bubble-with-pencil: the chat bubble outline (dots removed)
     // plus the Heroicons pencil-alt tip scaled to sit inside it — issues
     // are written feedback, not warnings (hence no more exclamation).
-    issue: ['bg-amber-500/15 text-amber-800 dark:text-amber-300', 'M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5zM15.35 6.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H10.2v-1.7l5.15-5.15z'],
-    proposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
-    gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
-    done: ['bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', 'M5 13l4 4L19 7'],
+    issue: ['bg-amber-500/15 text-amber-800 dark:text-amber-300', 'M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5zM15.35 6.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H10.2v-1.7l5.15-5.15z', '📝'],
+    proposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5', '👍'],
+    gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z', '🔑'],
+    done: ['bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', 'M5 13l4 4L19 7', '✅'],
     // Document-text (Heroicons outline) — an issue with an auto-generated
     // proposal attached (#250). Sky keeps "blue = proposal" consistent with
     // the proposal cards, while the page shape stays distinct from their
     // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
-    issueProposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
+    issueProposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', '📄'],
     // "Mine" variants — distinguished from their base by GLYPH ONLY: they keep
     // the same sky tint as the base issue/PR chips but swap in a self-contained
     // pencil/edit mark = "your work-in-progress, jump back in." They mark the
@@ -162,20 +162,24 @@ const AppView = {
     // session). No manual coordinate compositing: issueProposalMine is a true
     // document-with-pencil (page + folded corner + pencil) so it still reads
     // as a document; proposalMine is a plain pencil "edit" mark.
-    issueProposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
-    proposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3'],
+    issueProposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z', '📋'],
+    proposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3', '🖊️'],
   },
 
-  // Returns the icon's SPEC — tint classes + SVG path — which
+  // Returns the icon's SPEC — tint classes + SVG path + the OpenMoji mark — which
   // card/dev-card.tsx renders. `pulse` animates the whole chip for
   // in-progress states (#250); `title` is the tooltip naming the state the
   // tint encodes. The class literals stay in DEV_CARD_ICONS above, which is
   // where Tailwind's extractor already scanned them.
   _devCardIcon(type, opts) {
-    const [tint, d] = AppView.DEV_CARD_ICONS[type] || AppView.DEV_CARD_ICONS.issue;
+    const [tint, d, emoji] = AppView.DEV_CARD_ICONS[type] || AppView.DEV_CARD_ICONS.issue;
     return {
       tint,
       path: d,
+      // The illustrated mark for this card type. The PATH above stays and is
+      // still the fallback — card/dev-card.tsx prefers this when the icon is
+      // vendored, so an unvendored one is the Lucide glyph, not a hole.
+      emoji,
       small: (opts && opts.small) ? true : undefined,
       pulse: (opts && opts.pulse) ? true : undefined,
       title: (opts && opts.title) || undefined,

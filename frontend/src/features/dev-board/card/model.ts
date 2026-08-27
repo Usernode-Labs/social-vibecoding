@@ -39,6 +39,8 @@
 
 /** A resolved type-chip: the tint classes and the SVG path, from DEV_CARD_ICONS. */
 export interface CardIconSpec {
+  /** The OpenMoji mark for this card type; `path` remains the fallback. */
+  emoji?: string;
   tint: string;
   path: string;
   /** #250 — the whole chip animates while an auto-solve run is generating. */

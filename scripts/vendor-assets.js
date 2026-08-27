@@ -149,6 +149,7 @@ const OPENMOJI_DIR = path.join(ROOT, 'public', 'vendor', 'openmoji');
 // tests/openmoji-subset.test.js fails if the two lists diverge.
 const OPENMOJI_STEMS = [
   '1F9EA', '1FA90', '1F3D7', '1F524', '1F319', '1F9FE', '1F4CD',
+  '1F44D', '1F511', '2705', '1F4C4',
   '1F680', '2728', '1F4A1', '1F4CA', '1F4C8', '1F4DD', '1F4C5', '1F4CB',
   '1F3AF', '1F3AE', '1F3B2', '1F3B5', '1F3A8', '1F4F7', '1F4F1', '1F4BB',
   '1F5A5', '2699', '1F527', '1F528', '1F9F0', '1F50D', '1F513',

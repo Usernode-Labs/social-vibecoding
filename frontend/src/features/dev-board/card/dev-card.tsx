@@ -39,6 +39,7 @@
  * a classic script — and tests/dev-status-pill.test.js reads both ends.
  */
 
+import { openmojiUrl } from '../../../lib/openmoji';
 import type { KeyboardEvent, ReactNode } from 'react';
 
 import {
@@ -112,12 +113,23 @@ function Spinner(): ReactNode {
 export function CardIcon({ spec }: { spec: CardIconSpec }): ReactNode {
   const box = spec.small ? 'w-7 h-7' : 'w-9 h-9';
   const glyph = spec.small ? 'w-4 h-4' : 'w-5 h-5';
+  // The illustrated tier: a card-type mark is 28-36px, which is the size the
+  // brand's icons are drawn for. The Lucide path stays as the fallback for an
+  // unvendored mark, and the tinted box stays either way — it is what carries
+  // the STATE (see DEV_CARD_ICONS), which an emoji cannot encode.
+  //
+  // The OpenMoji sits a size up from the glyph it replaces: a line glyph reads
+  // at 20px, an illustration needs the extra couple of pixels to resolve.
+  const src = spec.emoji ? openmojiUrl(spec.emoji) : null;
+  const mark = spec.small ? 'w-5 h-5' : 'w-6 h-6';
   return (
     <span
       className={`${box} rounded-lg ${spec.tint} flex items-center justify-center shrink-0${spec.pulse ? ' animate-pulse' : ''}`}
       title={spec.title}
     >
-      <Glyph className={glyph} d={spec.path} aria-hidden="true" />
+      {src
+        ? <img src={src} alt="" draggable="false" className={`${mark} object-contain`} />
+        : <Glyph className={glyph} d={spec.path} aria-hidden="true" />}
     </span>
   );
 }

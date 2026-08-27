@@ -76,6 +76,8 @@ export function openmojiStem(emoji: string): string | null {
 export const VENDORED: ReadonlySet<string> = new Set([
   // In use by apps on the platform today.
   '1F9EA', '1FA90', '1F3D7', '1F524', '1F319', '1F9FE', '1F4CD',
+  // The dev board's card-type marks (see DEV_CARD_ICONS in public/js/app-view.js).
+  '1F44D', '1F511', '2705', '1F4C4',
   // A small buffer of the picks an app author reaches for first.
   '1F680', '2728', '1F4A1', '1F4CA', '1F4C8', '1F4DD', '1F4C5', '1F4CB',
   '1F3AF', '1F3AE', '1F3B2', '1F3B5', '1F3A8', '1F4F7', '1F4F1', '1F4BB',
