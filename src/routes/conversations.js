@@ -434,6 +434,21 @@ function conversationRoutes(config) {
     const id = conversations.strictId(req.params.id);
     const messageId = conversations.strictId(req.body?.message_id);
     if (!id || !messageId) return sendNotFound(res);
+    // ?demo=1 has no rows behind it, so the real markRead below finds no
+    // conversation 910001 and answers 404 — and opening a thread ALWAYS
+    // marks it read (loadThread's last line), so every demo Messages route
+    // logged a console error on load. The client swallows the failure, which
+    // is why this survived: nothing on screen looked wrong. A console error
+    // on any route fails proposal checks, so the first declared check to load
+    // this screen is the first thing that could have caught it.
+    //
+    // Read state is per viewer and the demo conversations are request-time
+    // fictions, so there is nothing to record: acknowledging it is the whole
+    // correct behaviour, exactly as the other demo branches do.
+    if (isDemo(req)) {
+      if (!demoConversations(req.user).some((row) => row.id === id)) return sendNotFound(res);
+      return res.json({ ok: true, demo: true });
+    }
     try {
       const result = await conversations.markRead(pool, req.user, id, messageId);
       if (!result) return sendNotFound(res);
