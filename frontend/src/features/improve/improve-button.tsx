@@ -98,9 +98,15 @@ import { Improve } from './improve-controller.js';
 // glyphs reads as their caption; the board's answer is the one filled control
 // in the bar.
 //
-// `violet-600` is #0a6ee0 — the shell's accent is a BLUE, not a violet (see
-// tailwind.config.js: the scale name is an identity, not a hue), which is
-// exactly the blue the board draws.
+// BRAND YELLOW, not the accent blue — deliberately, and this is the one place
+// in the authed chrome that carries it. The brand's CTA grammar (see the
+// `cta` variant in @/components/ui/button.tsx) puts yellow on the single
+// action that advances the build-discuss-decide loop, and in the product that
+// action IS this button: Improve is how anyone proposes a change. Scarcity is
+// the mechanism — every other control in the header stays quiet, so the one
+// yellow pill reads as "this is where you act". Black ink at 17.7:1; the
+// hairline matches the ink; the 1px offset shadow is the header-scale cut of
+// the CTA's 2px (a 28px row smears at 2px).
 //
 // h-7 and no vertical padding are the header's 28px content-row ceiling,
 // pinned by tests/header-height-parity.test.js — a filled pill keeps it by
@@ -113,13 +119,23 @@ import { Improve } from './improve-controller.js';
 // the last child's margin (#1443).
 const IMPROVE_BTN_CLASS =
   'relative inline-flex items-center h-7 px-3 rounded-full '
-  + 'bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold '
+  + 'bg-[#ffee6f] hover:bg-[#ffe95c] border border-zinc-950 '
+  + 'shadow-[1px_1px_0_0_#0c0b09] dark:border-black/60 dark:shadow-none '
+  + 'text-zinc-950 text-sm font-semibold '
   + 'un-touch-target';
 
-/** Amber while a deploy runs, violet once the platform has rolled past us. */
+/**
+ * Amber while a deploy runs, the progress violet once the platform has rolled
+ * past us. Both sat fine on the old blue fill; on the yellow one amber-500
+ * vanished into its own family, so `deploying` moved to the semantic
+ * attention ink (#955b03 — the state that MEANS "heads-up", and the hue that
+ * amber left for) and `stale` to the progress violet's light-theme ink.
+ * Complete literals, not var(): the extractor cannot compile a var() into a
+ * utility, and these two are the only consumers.
+ */
 const VERSION_DOT: Record<string, string> = {
-  deploying: 'bg-amber-500',
-  stale: 'bg-violet-400',
+  deploying: 'bg-[#955b03]',
+  stale: 'bg-[#725aae]',
 };
 
 // Byte-identical to the bell's own badge run, which is the point: the two are
@@ -235,11 +251,13 @@ export function ImproveButton() {
       Improve
       {/* Bottom-LEFT, where it landed when #1412's green count took the
           top-right corner. All three indicators are on this control again
-          now, one per corner, so nothing needs to move. */}
+          now, one per corner, so nothing needs to move.
+          Attention ink, not amber-400: half of this dot overlaps the fill,
+          and amber on the yellow pill disappears into its own family. */}
       <span
         ref={dotRef}
         id="feedback-queue-dot"
-        className="hidden absolute -bottom-0.5 -left-0.5 w-2 h-2 rounded-full bg-amber-400"
+        className="hidden absolute -bottom-0.5 -left-0.5 w-2 h-2 rounded-full bg-[#955b03]"
       />
       <ImproveIndicators />
     </button>

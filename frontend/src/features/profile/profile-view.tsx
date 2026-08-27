@@ -27,9 +27,12 @@ import { AccountPanel } from './account-panel';
 import { ProfileEditSheet } from './profile-edit-sheet';
 import { PublicProfileCard } from './public-profile-card';
 
-/** The round picture, or the initial-in-a-circle fallback — the idiom the rest
- *  of the app already uses for people. */
-function IdentityAvatar({ url, initial }: { url: string | null; initial: string }): ReactNode {
+/** The round picture, or the identity-gradient fallback. A PHOTO stays a
+ *  circle; the fallback is a rounded SQUARE carrying the brand's identity
+ *  gradient (lib/identity-gradient.ts) — the kit's split between the two:
+ *  circles are photographs, squares are marks. Hashed on the name, not the
+ *  initial, so "Lena" and "Luka" don't share a gradient. */
+function IdentityAvatar({ url, name, initial }: { url: string | null; name: string; initial: string }): ReactNode {
   if (url) {
     return (
       <img
@@ -42,9 +45,10 @@ function IdentityAvatar({ url, initial }: { url: string | null; initial: string 
   return (
     <div
       className={
-        'w-20 h-20 text-2xl rounded-full shrink-0 flex items-center justify-center '
-        + 'font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
+        'w-20 h-20 text-2xl rounded-2xl shrink-0 flex items-center justify-center '
+        + 'font-bold ring-1 ring-black/10'
       }
+      style={identityStyle(name || initial)}
       aria-hidden="true"
     >
       {initial}
@@ -62,7 +66,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
       className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-5"
     >
       <div className="flex items-center gap-4">
-        <IdentityAvatar url={identity.avatarUrl} initial={identity.initial} />
+        <IdentityAvatar url={identity.avatarUrl} name={identity.name || ''} initial={identity.initial} />
         <div className="flex-1 min-w-0">
           <div className="text-xl font-bold truncate">{identity.name}</div>
           {identity.handle ? (

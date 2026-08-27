@@ -3513,7 +3513,7 @@
             text: qrPayload,
             width: 180,
             height: 180,
-            colorDark: '#1a1a30',
+            colorDark: '#0c0b09',
             colorLight: '#ffffff',
             correctLevel: QRCode.CorrectLevel.L,
           });

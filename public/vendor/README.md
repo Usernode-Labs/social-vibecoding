@@ -36,7 +36,35 @@ integrity attribute at all.
 
 - **marked-15.0.12.min.js** — Markdown → HTML for renderMarkdown() in public/js/dev-chat.js (also used by group-chat.js and app-view.js).
 - **purify-3.4.4.min.js** — Sanitizes that rendered markdown before it reaches innerHTML. Never bypass it.
-- **qrcode-1.0.0.min.js** — Wallet address QR codes (frontend/src/features/header/wallet-sheet.js, frontend/src/features/settings/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.
+- **qrcode-1.0.0.min.js** — Wallet address QR codes (frontend/src/features/header/wallet-sheet.js, public/js/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.
+
+## The UI face (Geist)
+
+Fetched from a version-pinned URL rather than copied out of `node_modules`,
+even though `geist` **is** on npm. That package is built for Next.js and
+peer-depends on `next` and `react`, so adding it as a devDependency pulls
+51 packages — `next`, `react-dom`, `sharp` and every `@next/swc-*`
+platform binary — into the lockfile to obtain one 68 KB font file. jsdelivr
+serves the package's own contents at a pinned version, and the digests below
+were verified byte-for-byte against the npm tarball (`geist-1.7.2.tgz`,
+itself checked against its registry `integrity`), so these are the same
+bytes npm would have handed us.
+
+The **variable** cut is deliberate: one file covers the whole 100–900 axis,
+where the four static weights the shell actually uses would be ~184 KB across
+four requests.
+
+| Served at | Source URL | Version | sha384 (base64) | Size |
+|---|---|---|---|---|
+| `/vendor/geist-sans-1.7.2-variable.woff2` | `https://cdn.jsdelivr.net/npm/geist@1.7.2/dist/fonts/geist-sans/Geist-Variable.woff2` | 1.7.2 | `A5ySEfg9NyEbLKjQhPQfEHVPKSFpeOQZ+rQiDggpNR4NUm2QTPnqukMat4Sh5JvE` | 68.0 KB |
+| _(not served)_ | `https://cdn.jsdelivr.net/npm/geist@1.7.2/LICENSE.txt` | 1.7.2 | `jbtnSfDUTF5u+Kb3hsY4G3xZ++q0k162obR2ANXqKmAdeV4wqE4Nwi1uk90LnN8u` | 4.3 KB |
+
+- **public/vendor/geist-sans-1.7.2-variable.woff2** — The shell UI face, loaded by the @font-face at the top of public/css/app.css and set as fontFamily.sans in tailwind.config.js. The VARIABLE cut: 68 KB covers the whole 100-900 axis, against ~184 KB across four requests for the static weights the shell uses.
+- **public/vendor/geist-1.7.2-LICENSE.txt** — SIL Open Font License 1.1 for the Geist font above. Shipped beside it because the OFL requires it to be distributed with the font; never requested by the browser.
+
+The licence file is the one thing in this directory the browser never
+requests. It ships because the SIL OFL requires the licence to be
+distributed with the font — do not delete it as unused.
 
 ## Centrally-hosted Tailwind runtime (served to child apps)
 

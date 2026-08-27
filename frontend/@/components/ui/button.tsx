@@ -123,6 +123,24 @@ const buttonVariants = cva('', {
     variant: {
       // The primary action, everywhere.
       default: 'rounded-lg bg-violet-600 hover:bg-violet-500',
+      // ── The WeOS CTA ─────────────────────────────────────────────────
+      // Brand yellow, black ink (pair with ink="cta"), black hairline, hard
+      // 2px offset shadow; pressing collapses the offset. This is the
+      // landing page's primary-action grammar brought inside the product.
+      //
+      // THE RULE THAT MAKES IT WORK: yellow appears ONCE per screen, on the
+      // single action that advances the build-discuss-decide loop (Join the
+      // waitlist, Improve). It is deliberately NOT a restyle of `default` —
+      // the ordinary primary stays the accent blue precisely so the yellow
+      // stays scarce. If two of these ever render on one screen, one of
+      // them is wrong.
+      //
+      // This entry knowingly breaks this file's "transcribed, never
+      // invented" contract above: it is the first button the brand
+      // introduced in Figma before the shell had it. Black-on-#ffee6f is
+      // 17.7:1; the hover fill is one step deeper at 15.9:1.
+      cta: 'rounded-full bg-[#ffee6f] hover:bg-[#ffe95c] border border-zinc-950 '
+        + 'shadow-[2px_2px_0_0_#0c0b09] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none',
       // The profile screen's spelling of the same box, one step darker on
       // hover. #profile-edit-save and the publish/unpublish button both write
       // it; normalising them to `default` would be a visual change, and this
@@ -250,6 +268,11 @@ const buttonVariants = cva('', {
       // #settings-remove.
       danger:
         'text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors',
+      // The ink for `variant: 'cta'` — BLACK, never white. Every brand fill
+      // is a black-ink surface (white on the brand yellow is 1.19:1), and
+      // near-black rather than pure black so the ink matches the hairline
+      // and shadow the variant draws with the same value.
+      cta: 'text-zinc-950 transition-colors',
     },
   },
   defaultVariants: {

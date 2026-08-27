@@ -47,6 +47,7 @@
  * store's initial value is what makes it do so.
  */
 
+import { identityStyle } from '../../lib/identity-gradient';
 import { Fragment, type ReactNode } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
@@ -245,7 +246,13 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
         ← Top users
       </a>
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
+        {/* The brand identity gradient (lib/identity-gradient.ts): a rounded
+            SQUARE, which is the kit's shape for an identity mark — circles
+            are for photos. Initial rides in the recipes' shared black ink. */}
+        <div
+          className="w-12 h-12 rounded-xl ring-1 ring-black/10 flex items-center justify-center font-semibold text-lg"
+          style={identityStyle(view.who)}
+        >
           {view.initial}
         </div>
         <div className="min-w-0">
@@ -355,7 +362,10 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           onClick={() => controller()?._openUser(row.who)}
         >
           <div className="w-7 text-center text-sm font-mono text-zinc-500 dark:text-zinc-400">{row.rank}</div>
-          <div className="w-9 h-9 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-sm">
+          <div
+            className="w-9 h-9 rounded-lg ring-1 ring-black/10 flex items-center justify-center font-semibold text-sm"
+            style={identityStyle(row.who)}
+          >
             {row.initial}
           </div>
           <div className="flex-1 min-w-0">

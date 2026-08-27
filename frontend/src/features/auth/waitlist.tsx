@@ -285,7 +285,14 @@ export function WaitlistScreen() {
     <main
       ref={rootRef}
       id="auth-waitlist-screen"
-      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      /*
+          Cream, like #auth-landing-screen: the waitlist is the second page of
+          the same front door, and the two must not flicker between grounds on
+          the #landing ↔ #waitlist hop. Same rule applies — the cream ground
+          is earned by hairline-bordered surfaces (the form card below), never
+          by borderless white cards.
+      */
+      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-[#fffeea] dark:bg-zinc-950"
     >
       <a
         href="#landing"
@@ -366,7 +373,7 @@ export function WaitlistScreen() {
               maxLength={255}
               placeholder="you@example.com"
               autoComplete="email"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-950 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
           </div>
           <div>
@@ -383,7 +390,7 @@ export function WaitlistScreen() {
               <select
                 ref={country}
                 id="waitlist-country"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-950 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               >
                 <option value="">
                   Select a country&hellip;
@@ -404,7 +411,7 @@ export function WaitlistScreen() {
                 type="text"
                 maxLength={120}
                 placeholder="City"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-950 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
             </div>
           </div>
@@ -430,7 +437,7 @@ export function WaitlistScreen() {
               type="text"
               maxLength={255}
               placeholder={detailLabel + ' (optional)'}
-              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-950 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
             <input
               ref={referrer}
@@ -438,15 +445,22 @@ export function WaitlistScreen() {
               type="text"
               maxLength={255}
               placeholder="Did someone refer you? Their handle (optional)"
-              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-950 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
           </div>
+          {/*
+              variant="cta": the screen's one yellow — this submit IS the
+              conversion the whole front door exists for. See the variant's
+              note in @/components/ui/button.tsx for the scarcity rule.
+          */}
           <Button
             type="submit"
             id="waitlist-submit"
             disabled={submitting}
             disabledStyle="dim"
             size="lg"
+            variant="cta"
+            ink="cta"
           >
             Join the waitlist
           </Button>
@@ -495,7 +509,7 @@ export function WaitlistScreen() {
                 maxLength={32}
                 placeholder="000000"
                 onChange={onCodeInput}
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-950 dark:border-zinc-700 px-3 py-2 text-sm font-mono placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
               <Button
                 id="waitlist-code-submit"
@@ -551,7 +565,7 @@ export function WaitlistScreen() {
               <a
                 id="waitlist-more-link"
                 href={moreToken ? '#more/' + moreToken : '#landing'}
-                className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
+                className="rounded-full bg-[#ffee6f] hover:bg-[#ffe95c] border border-zinc-950 shadow-[2px_2px_0_0_#0c0b09] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none dark:border-zinc-600 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors"
               >
                 Answer them now
               </a>

@@ -3497,9 +3497,13 @@
     var style = document.createElement("style");
     style.id = "__usernode-qr-styles";
     style.textContent = [
+      // Neutrals are the platform's warm ramp (zinc-900 card, zinc-100 ink,
+      // zinc-950 ink in light). This overlay is injected OVER a hosted app's
+      // own page, so a blue-slate card — which is what these were — read as a
+      // second, colder brand sitting on top of the first.
       ".__un-qr-overlay{position:fixed;inset:0;z-index:999999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);font-family:-apple-system,system-ui,sans-serif}",
-      ".__un-qr-card{background:#1a1f2e;color:#e7edf7;border-radius:16px;padding:28px 24px;max-width:340px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4)}",
-      "@media(prefers-color-scheme:light){.__un-qr-card{background:#fff;color:#0b1220;box-shadow:0 8px 32px rgba(0,0,0,0.15)}}",
+      ".__un-qr-card{background:#1d1c19;color:#ebebde;border-radius:16px;padding:28px 24px;max-width:340px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4)}",
+      "@media(prefers-color-scheme:light){.__un-qr-card{background:#fff;color:#0c0b09;box-shadow:0 8px 32px rgba(0,0,0,0.15)}}",
       ".__un-qr-title{font-size:17px;font-weight:600;margin:0 0 4px}",
       ".__un-qr-subtitle{font-size:13px;opacity:0.7;margin:0 0 20px}",
       ".__un-qr-canvas{border-radius:12px;margin:0 auto 16px}",
@@ -5792,12 +5796,15 @@
           // z-index one below the QR overlay (999999) so a transaction
           // prompt still covers the pill. safe-area insets keep it clear
           // of iPhone home indicators.
-          ".__un-platform-link{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999998;display:flex;align-items:center;background:rgba(15,20,32,0.82);color:#e7edf7;border-radius:999px;padding:6px 6px 6px 12px;font:12px/1.2 -apple-system,system-ui,sans-serif;text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.85}",
+          // Same warm neutrals as the QR card above; the pill's translucent
+          // ground was re-hued at constant luminance so its 0.82 alpha still
+          // veils the app underneath exactly as much as before.
+          ".__un-platform-link{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999998;display:flex;align-items:center;background:rgba(21,20,18,0.82);color:#ebebde;border-radius:999px;padding:6px 6px 6px 12px;font:12px/1.2 -apple-system,system-ui,sans-serif;text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.85}",
           ".__un-platform-link:hover{opacity:1}",
           ".__un-platform-link-glyph{font-size:11px;opacity:0.75;margin-left:4px}",
           ".__un-platform-link-close{background:none;border:none;color:inherit;font:14px/1 -apple-system,system-ui,sans-serif;padding:2px 6px;margin-left:2px;cursor:pointer;opacity:0.6;border-radius:999px}",
           ".__un-platform-link-close:hover{opacity:1}",
-          "@media(prefers-color-scheme:light){.__un-platform-link{background:rgba(255,255,255,0.9);color:#0b1220;box-shadow:0 2px 10px rgba(0,0,0,0.18)}}",
+          "@media(prefers-color-scheme:light){.__un-platform-link{background:rgba(255,255,255,0.9);color:#0c0b09;box-shadow:0 2px 10px rgba(0,0,0,0.18)}}",
         ].join("\n");
         document.head.appendChild(style);
       }

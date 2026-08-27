@@ -614,7 +614,16 @@ export function LandingScreen() {
     <main
       ref={rootRef}
       id="auth-landing-screen"
-      className="hidden fixed inset-0 z-40 bg-white dark:bg-zinc-950 flex flex-col"
+      /*
+          bg-[#fffeea] — LITERAL brand cream, not zinc-50. The logged-out
+          landing is the product's front door and speaks the marketing site's
+          full grammar: cream ground, white cards separated by BLACK HAIRLINES
+          (not by figure/ground), yellow CTA. The interior app deliberately
+          does NOT follow: its 100+ cards draw no borders, and a white card on
+          cream separates at 1.02:1 — hairlines are what EARN the cream ground,
+          so only bordered surfaces get it.
+      */
+      className="hidden fixed inset-0 z-40 bg-[#fffeea] dark:bg-zinc-950 flex flex-col"
     >
       {/*
           Mirrors #platform-header's shape (height, padding, safe-area) so
@@ -669,11 +678,21 @@ export function LandingScreen() {
               explicit height is immune to both. `sm:px-5` still gives them
               desktop presence horizontally, which costs no height.
           */}
+          {/*
+              Brand grammar for the pair: the PRIMARY is the yellow sticker
+              pill (Join waitlist — it advances the loop), the SECONDARY is
+              the white pill with the same black hairline (Sign in). Note the
+              inversion from the old pair, where Sign in carried the fill: on
+              the marketing surface the conversion action is the loud one.
+              Shadow offset is 1px here, not the CTA's 2px — at a 28px row
+              the full offset reads as a smear. Both stay h-7 (the invariant
+              above); borders live INSIDE the box via the explicit height.
+          */}
           <div id="landing-header-ctas" className={hiddenLast(session, 'flex items-center gap-2')}>
             <a
               href="#login"
               id="landing-signin-cta"
-              className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
+              className="h-7 inline-flex items-center rounded-full bg-white hover:bg-zinc-50 border border-zinc-950 shadow-[1px_1px_0_0_#0c0b09] dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:border-zinc-600 dark:shadow-none px-3 text-xs sm:px-5 font-medium text-zinc-950 dark:text-zinc-100 transition-colors"
               onClick={onLeaveCta}
             >
               Sign in
@@ -682,7 +701,7 @@ export function LandingScreen() {
               href="#waitlist"
               id="landing-waitlist-cta"
               data-offline-disabled=""
-              className="h-7 inline-flex items-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+              className="h-7 inline-flex items-center rounded-full bg-[#ffee6f] hover:bg-[#ffe95c] border border-zinc-950 shadow-[1px_1px_0_0_#0c0b09] dark:border-zinc-600 dark:shadow-none px-3 text-xs sm:px-5 font-medium text-zinc-950 transition-colors"
               onClick={onLeaveCta}
             >
               Join waitlist
@@ -692,7 +711,7 @@ export function LandingScreen() {
           <div id="landing-back-to-waiting" className={session ? '' : 'hidden'}>
             <a
               href="#waiting"
-              className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
+              className="h-7 inline-flex items-center rounded-full bg-[#ffee6f] hover:bg-[#ffe95c] border border-zinc-950 shadow-[1px_1px_0_0_#0c0b09] dark:border-zinc-600 dark:shadow-none px-3 text-xs sm:px-5 font-medium text-zinc-950 transition-colors"
             >
               Your queue status
             </a>
@@ -750,11 +769,16 @@ export function LandingScreen() {
           */}
           <section
             id="landing-waitlist"
-            // No border: this page's ground is WHITE, so the card is a step DOWN
-            // (zinc-50) rather than the step up a card takes on the authed
-            // shell's grey ground. Either way the language separates by
-            // figure/ground, and the outline was doing the separating here.
-            className="rounded-2xl bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10"
+            // The previous note here said "no border — this ground is white,
+            // the card separates by figure/ground". Both halves flipped with
+            // the brand: the ground is CREAM now, and on cream a white card
+            // separates at 1.02:1 — figure/ground cannot do the job at all.
+            // The black hairline is what carries the edge, exactly as on the
+            // marketing site, and the near-square corner (rounded-md, not
+            // 2xl) is the landing grammar's card shape: hard cards, round
+            // buttons — that tension is deliberate. Dark mode is not the
+            // brand's stage; it keeps a quiet zinc hairline.
+            className="rounded-md bg-white border border-zinc-950 dark:bg-zinc-900/60 dark:border-zinc-700 p-5 mb-10"
           >
             <h2 className="text-lg font-semibold mb-1">
               Build apps together, own them together
@@ -770,13 +794,19 @@ export function LandingScreen() {
               Platform access opens in batches. The apps below are open to
           everyone right now.
             </p>
+            {/*
+                The screen's ONE yellow: the brand CTA (see the `cta` variant
+                in @/components/ui/button.tsx for the grammar and the scarcity
+                rule). A literal rather than <Button>, because the dapp checks
+                select on this element's id and href.
+            */}
             <a
               id="landing-waitlist-link"
               href="#waitlist"
               data-offline-disabled=""
               className={hiddenLast(
                 session,
-                'inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 text-sm font-medium text-white transition-colors',
+                'inline-block rounded-full bg-[#ffee6f] hover:bg-[#ffe95c] border border-zinc-950 shadow-[2px_2px_0_0_#0c0b09] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none dark:border-zinc-600 px-5 py-2 text-sm font-medium text-zinc-950 transition-colors',
               )}
               onClick={onLeaveCta}
             >

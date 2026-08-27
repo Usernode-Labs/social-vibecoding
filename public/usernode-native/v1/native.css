@@ -23,28 +23,49 @@
  */
 
 :root {
-  /* Accent (defaults: the platform violet, per public/css/app.css) */
-  --un-accent: #7c3aed;
+  /* Accent (defaults: the platform accent, per public/css/app.css)
+
+     THESE DEFAULTS ARE NOT COSMETIC. A Usernode app loads this stylesheet
+     from the hosted /v1/ URL inside a cross-origin iframe and never loads
+     app.css, so nothing re-themes it — whatever stands here IS the brand a
+     hosted app renders in. The platform shell overrides --un-accent with
+     var(--accent) for its own chrome; hosted apps inherit the literal below.
+     It must therefore TRACK the platform brand, not lag it: these two tokens
+     were still the pre-reskin violet (#7c3aed / #a78bfa) long after the shell
+     had moved off it, which is exactly the drift this note exists to stop.
+
+     #086bb3 is brand blue #3090E1's own darker sibling at its exact hue —
+     the brand colour itself is a FILL under a black label and is 2.81:1 as
+     ink, so it cannot be the accent. White on #086bb3 is 5.58:1. */
+  --un-accent: #086bb3;
   --un-accent-contrast: #ffffff;
 
   /* Switches */
-  --un-switch-track-off: #d4d4e4;
+  --un-switch-track-off: #d5d5cb;
   --un-switch-thumb: #ffffff;
 
-  /* Swipe-action buttons */
+  /* Swipe-action buttons. The danger red is deliberately NOT re-hued onto
+     the brand: destructive-swipe is a platform-native signal, and it is the
+     one colour in the kit an app's user reads before they read the label.
+     White on it is 4.83:1. */
   --un-action-danger: #dc2626;
-  --un-action-neutral: #6e6e8a;
+  --un-action-neutral: #717069;
   --un-action-text: #ffffff;
 
   /* Kit-drawn chrome (PTR spinner puck) */
-  --un-surface: #f4f4f5;
+  --un-surface: #f7f6e9;
 
-  /* Hairlines, muted text, grouped-list / sheet / nav-bar surfaces */
-  --un-hairline: rgba(60, 60, 67, 0.29);
-  --un-muted: rgba(60, 60, 67, 0.6);
+  /* Hairlines, muted text, grouped-list / sheet / nav-bar surfaces.
+
+     Every neutral here was re-hued onto the platform's warm ramp AT CONSTANT
+     LUMINANCE — the same method tailwind.config.js used to rebuild `zinc` —
+     so the cool/violet cast goes and not one contrast ratio in the kit moves.
+     The alpha-composited materials keep their alpha for the same reason. */
+  --un-hairline: rgba(59, 59, 53, 0.29);
+  --un-muted: rgba(59, 59, 53, 0.6);
   --un-group-bg: #ffffff;
-  --un-sheet-bg: #f4f4f7;
-  --un-navbar-bg: rgba(249, 249, 251, 0.82);
+  --un-sheet-bg: #f7f6e9;
+  --un-navbar-bg: rgba(251, 250, 234, 0.82);
   --un-backdrop: rgba(0, 0, 0, 0.4);
 
   /* Anchored-popover surface. Deliberately its OWN token rather than
@@ -73,10 +94,11 @@
   --un-zoom-bg: var(--un-sheet-bg);
 
   /* Toast (surface is dark in BOTH modes — the iOS HUD idiom — so the
-     action color defaults to the light accent rather than --un-accent) */
-  --un-toast-bg: rgba(28, 28, 42, 0.92);
+     action color defaults to the LIGHTER accent, the one the dark theme
+     uses, rather than to --un-accent) */
+  --un-toast-bg: rgba(29, 28, 25, 0.92);
   --un-toast-text: #ffffff;
-  --un-toast-action: #a78bfa;
+  --un-toast-action: #6fb7fb;
 
   /* Radii */
   --un-radius: 0.5rem;
@@ -104,23 +126,31 @@
 }
 
 .dark {
-  --un-accent: #a78bfa;
-  --un-accent-contrast: #1a1a30;
-  --un-switch-track-off: #2e2e50;
-  --un-switch-thumb: #eeeef6;
+  /* Same contract as :root above — a hosted app in dark mode inherits these
+     literals, so they track the platform brand too. #6fb7fb is the lighter
+     accent a near-black page needs (9.22:1 on the ground); the contrast token
+     under it is the ramp's near-black rather than white, because in this mode
+     the accent is a light FILL carrying dark ink. */
+  --un-accent: #6fb7fb;
+  --un-accent-contrast: #0c0b09;
+  --un-switch-track-off: #32312d;
+  --un-switch-thumb: #ebebde;
   --un-action-danger: #ef4444;
-  --un-action-neutral: #4e4e6a;
+  --un-action-neutral: #515049;
   --un-action-text: #ffffff;
-  --un-surface: #1a1a30;
-  --un-hairline: rgba(120, 120, 150, 0.4);
-  --un-muted: rgba(235, 235, 245, 0.6);
-  --un-group-bg: #222240;
-  --un-sheet-bg: #1e1e38;
-  --un-navbar-bg: rgba(18, 18, 32, 0.78);
+  --un-surface: #1d1c19;
+  --un-hairline: rgba(123, 122, 115, 0.4);
+  --un-muted: rgba(237, 236, 223, 0.6);
+  /* The card sits one step above the grouped ground, as before: both were
+     re-hued at constant luminance so the 1.06:1 separation between them is
+     the same figure/ground the violet-tinted pair drew. */
+  --un-group-bg: #262522;
+  --un-sheet-bg: #21201d;
+  --un-navbar-bg: rgba(20, 19, 17, 0.78);
   --un-backdrop: rgba(0, 0, 0, 0.55);
-  --un-toast-bg: rgba(58, 58, 82, 0.94);
-  --un-toast-text: #f4f4f8;
-  --un-toast-action: #c4b5fd;
+  --un-toast-bg: rgba(59, 59, 53, 0.94);
+  --un-toast-text: #f7f6e9;
+  --un-toast-action: #92c9ff;
 }
 
 /* ── Touch polish ──────────────────────────────────────────────────────
@@ -910,7 +940,7 @@ html.un-kb .un-action-sheet {
   font-size: 0.8125rem;
   border: 1px solid var(--un-hairline);
   border-radius: 6px;
-  background: rgba(127, 127, 138, 0.08);
+  background: rgba(130, 129, 121, 0.08);
   color: inherit;
 }
 .un-alert-buttons {
@@ -1296,8 +1326,8 @@ html.un-desktop[data-un-vt="pop"]::view-transition-new(root) {
   width: 240px;
   padding: 10px 12px;
   border-radius: var(--un-radius);
-  background: rgba(10, 10, 20, 0.88);
-  color: #e7edf7;
+  background: rgba(12, 11, 9, 0.88);
+  color: #ebebde;
   font: 11px/1.6 ui-monospace, monospace;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }

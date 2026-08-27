@@ -2057,7 +2057,7 @@
       "expectSelector": ".app-card [data-icon='emoji']"
     },
     {
-      "name": "Icon tiles use the white/hairline .app-icon-tile treatment (not the violet tint)",
+      "name": "Icon tiles use the shared brand-pale/hairline .app-icon-tile treatment (not a per-app tint)",
       "path": "/?demo=1",
       "expectSelector": ".app-card .app-icon-tile[data-icon='letter']"
     },

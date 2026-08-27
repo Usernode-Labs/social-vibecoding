@@ -74,13 +74,13 @@ function esc(s: any): string {
 
 // Admin accent colour (#341). A single amber, layered as the "admin" marker
 // on every colour-differentiated chart — verified unused in the existing
-// palette (indigo #6366f1, periwinkle #818cf8, green #34d399, blue #60a5fa, and
+// palette (brand blue #3090e1, periwinkle #6fb7fb, green #34d399, blue #60a5fa, and
 // the kudos ramp). It only appears while the "Include admin users" box is
 // ticked; with the box off every chart looks exactly as it did before.
 const ADMIN_COLOR = '#f59e0b';
 
 // #361: system-token spend colour for the Daily-spend chart. A distinct
-// sky/cyan, clearly separate from platform indigo (#6366f1), user-key
+// sky/cyan, clearly separate from platform accent blue (#3090e1), user-key
 // green (#34d399), and admin amber (#f59e0b).
 //
 // These constants are for the chart MARKS — bars, lines, legend swatches —
@@ -91,7 +91,7 @@ const ADMIN_COLOR = '#f59e0b';
 // instead — same hue family, readable on both grounds, and a class rather
 // than an inline style so it can vary by theme at all.
 const SYSTEM_COLOR = '#06b6d4';
-const SPEND_PLATFORM = '#6366f1';
+const SPEND_PLATFORM = '#3090e1';
 const SPEND_USERKEY = '#34d399';
 
 const dollars = (c: any) => `$${(Number(c || 0) / 100).toFixed(2)}`;
@@ -293,7 +293,7 @@ function Swatch({ color, outline, children }: { color: string; outline?: boolean
  * included; the non-admin swatch defaults to indigo but can be set to a
  * chart's own base colour.
  */
-function AdminLegend({ includeAdmins, nonAdminColor = '#6366f1' }: { includeAdmins: boolean; nonAdminColor?: string }) {
+function AdminLegend({ includeAdmins, nonAdminColor = '#3090e1' }: { includeAdmins: boolean; nonAdminColor?: string }) {
   if (!includeAdmins) return null;
   return (
     <div className="flex items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-400 mb-2">
@@ -398,7 +398,7 @@ function Funnel({ stages, includeAdmins }: { stages: any[]; includeAdmins: boole
   const anyAdmin = includeAdmins && stages.some((s) => (Number(s.admin) || 0) > 0);
   return (
     <>
-      <AdminLegend includeAdmins={includeAdmins} nonAdminColor="#4f46e5" />
+      <AdminLegend includeAdmins={includeAdmins} nonAdminColor="#086bb3" />
       {stages.map((s, i) => {
         const value = Number(s.value) || 0;
         const admin = Number(s.admin) || 0;
@@ -570,8 +570,8 @@ function Growth({ g, includeAdmins }: { g: any; includeAdmins: boolean }) {
   const weeks = g.weeks || [];
   const labels = weeks.map((w: any) => weekLabel(w.wk));
   const series = [
-    { key: 'new_users', label: 'New users', color: '#6366f1' },
-    { key: 'new_apps', label: 'New apps', color: '#818cf8' },
+    { key: 'new_users', label: 'New users', color: '#3090e1' },
+    { key: 'new_apps', label: 'New apps', color: '#6fb7fb' },
     { key: 'promoted_prs', label: 'Promoted PRs', color: '#34d399' },
     { key: 'merged_prs', label: 'Merged PRs', color: '#60a5fa' },
   ];
@@ -742,8 +742,13 @@ function latestLabel(daily: any[], dataKey: string): string {
 }
 
 // ── Power users (rolling WAU + L4 consistency) ────────────────
-// Four indigo shades for the L4 buckets: light (1/4) → dark (4/4).
-const L4_COLORS = ['#c7d2fe', '#818cf8', '#4f46e5', '#3730a3'];
+// Four accent shades for the L4 buckets: light (1/4) → dark (4/4). This is a
+// SEQUENTIAL scale — one hue, ordered by lightness, encoding an ordered
+// quantity — so it follows the brand accent ramp (violet-200/400/600/800) and
+// was moved off stock Tailwind indigo, a hue the product no longer uses
+// anywhere. The categorical series lower in this file deliberately do NOT
+// follow it; see the note on KUDOS_SEGS.
+const L4_COLORS = ['#bedefe', '#6fb7fb', '#086bb3', '#04487a'];
 
 function PowerUserWau({ wau }: { wau: any[] }) {
   const labels = wau.map((r) => dayLabel(r.day));
@@ -753,7 +758,7 @@ function PowerUserWau({ wau }: { wau: any[] }) {
           <div class="text-zinc-500 dark:text-zinc-400 mt-1 text-[11px]">Trailing 7-day window.</div>`);
   return (
     <>
-      <LineChart values={vals} color="#6366f1" grid tipPrefix="pu-wau" tips={tips} />
+      <LineChart values={vals} color="#3090e1" grid tipPrefix="pu-wau" tips={tips} />
       <Axis labels={labels} />
     </>
   );
@@ -819,7 +824,7 @@ function TopUsers({ users, includeAdmins }: { users: any[]; includeAdmins: boole
             const short = u.name.length > 10 ? `${u.name.slice(0, 9)}…` : u.name;
             // Each bar is a single user, so an admin builder gets the whole bar
             // in amber (#341) instead of the usual indigo.
-            const barColor = includeAdmins && u.is_admin ? ADMIN_COLOR : '#6366f1';
+            const barColor = includeAdmins && u.is_admin ? ADMIN_COLOR : '#3090e1';
             return (
               // eslint-disable-next-line react/no-array-index-key
               <g key={i}>
@@ -828,7 +833,7 @@ function TopUsers({ users, includeAdmins }: { users: any[]; includeAdmins: boole
                 <text x={cx} y={H - botPad + 12} textAnchor="end" fontSize="9" fill="currentColor"
                   className="text-zinc-500 dark:text-zinc-400" transform={`rotate(-55 ${cx} ${H - botPad + 12})`}>{short}</text>
                 <rect className="dc-hover" x={x.toFixed(1)} y={topPad} width={bw.toFixed(1)} height={plot}
-                  fill="#6366f1" fillOpacity="0" pointerEvents="all" data-tip-id={`top-${i}`} />
+                  fill="#3090e1" fillOpacity="0" pointerEvents="all" data-tip-id={`top-${i}`} />
               </g>
             );
           })}
@@ -843,12 +848,17 @@ function TopUsers({ users, includeAdmins }: { users: any[]; includeAdmins: boole
 // week fell in each band: 0, 1, 2, 3, 4–5, 6–10, 11+ (0 = registered users who
 // gave none). Bands, not exact counts, since #964 raised the weekly allowance
 // to 20 — see the endpoint's comment in routes/dashboard.js.
+//
+// EXEMPT FROM THE BRAND RETHEME, as is SPEND_DIST_SEGS below: these are
+// CATEGORICAL series that have to stay mutually distinguishable inside one
+// stacked column, and harmonising them onto a single brand hue is precisely
+// what would make the segments indistinguishable from one another.
 const KUDOS_SEGS = [
   { key: 'g0', label: '0', color: '#3f3f5a' },
-  { key: 'g1', label: '1', color: '#c4b5fd' },
-  { key: 'g2', label: '2', color: '#818cf8' },
-  { key: 'g3', label: '3', color: '#6366f1' },
-  { key: 'g4_5', label: '4–5', color: '#4f46e5' },
+  { key: 'g1', label: '1', color: '#92c9ff' },
+  { key: 'g2', label: '2', color: '#6fb7fb' },
+  { key: 'g3', label: '3', color: '#3090e1' },
+  { key: 'g4_5', label: '4–5', color: '#086bb3' },
   { key: 'g6_10', label: '6–10', color: '#3730a3' },
   { key: 'g11p', label: '11+', color: '#4c1d95' },
 ];
@@ -888,7 +898,7 @@ function StackedColumns({
               );
             })}
             <rect className="dc-hover" x={x.toFixed(1)} y={topPad} width={bw.toFixed(1)} height={plot}
-              fill="#6366f1" fillOpacity="0" pointerEvents="all" data-tip-id={`${tipPrefix}-${i}`} />
+              fill="#3090e1" fillOpacity="0" pointerEvents="all" data-tip-id={`${tipPrefix}-${i}`} />
           </g>
         );
       })}
@@ -1086,7 +1096,7 @@ function Spend({
             <g key={i}>
               {rects}
               <rect className="dc-hover" x={barX.toFixed(1)} y={topPad} width={bw.toFixed(1)} height={plot}
-                fill="#6366f1" fillOpacity="0" pointerEvents="all" data-tip-id={`spend-${i}`} />
+                fill="#3090e1" fillOpacity="0" pointerEvents="all" data-tip-id={`spend-${i}`} />
             </g>
           );
         })}
@@ -1177,7 +1187,7 @@ function SpendByBuilder({
                 <text x={cx} y={H - botPad + 12} textAnchor="end" fontSize="9" fill="currentColor"
                   className="text-zinc-500 dark:text-zinc-400" transform={`rotate(-55 ${cx} ${H - botPad + 12})`}>{short}</text>
                 <rect className="dc-hover" x={x.toFixed(1)} y={topPad} width={bw.toFixed(1)} height={plot}
-                  fill="#6366f1" fillOpacity="0" pointerEvents="all" data-tip-id={`builder-${i}`} />
+                  fill="#3090e1" fillOpacity="0" pointerEvents="all" data-tip-id={`builder-${i}`} />
               </g>
             );
           })}
@@ -1440,7 +1450,7 @@ function AnalyticsSection() {
                 </div>
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">Distinct users active that day.</p>
                 <div id="gu-dau">
-                  {d ? <DailySeries daily={daily} dataKey="dau" color="#6366f1"
+                  {d ? <DailySeries daily={daily} dataKey="dau" color="#3090e1"
                     def="Distinct users active that day." /> : null}
                 </div>
               </div>

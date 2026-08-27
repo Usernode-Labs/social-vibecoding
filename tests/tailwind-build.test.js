@@ -121,16 +121,32 @@ test('the platform palette reached the output', () => {
   // tailwind.config.js on why they keep their names while their hues moved),
   // so nothing about a call site would reveal an accidental revert to the old
   // violet-tinted ramp. Pinning the hex is the only thing that would.
+  // WeOS retheme — all four values below moved, and each is pinned to its new
+  // hex for the same reason the previous four were: the scale KEYS are
+  // unchanged, so no call site would reveal a revert.
   const triplets = {
-    'zinc-950 (#0b0b0c) — the dark page ground': '11 11 12',
-    'zinc-100 (#eaeaea) — the light page ground cards float on': '234 234 234',
-    // Corrected from the eyedropped #0a7cff: white on that is 3.93:1, so every
-    // primary button in the product was a control you could see and a label
-    // you could not quite read — and the same hex as INK on white failed
-    // identically. #0a6ee0 clears both at 4.86. See the note beside --accent
-    // in public/css/app.css.
-    'violet-600 (#0a6ee0) — the accent': '10 110 224',
-    'violet-400 (#5aa9ff) — the dark-mode accent': '90 169 255',
+    // The neutral ramp is rebuilt at brand cream's hue (OKLCH 104.5°) holding
+    // each stop's PREVIOUS luminance, so the product warms up without any
+    // contrast ratio moving. #0b0b0c → #0c0b09 and #eaeaea → #ebebde are the
+    // same lightness, a few degrees of hue apart.
+    'zinc-950 (#0c0b09) — the dark page ground': '12 11 9',
+    'zinc-100 (#ebebde) — the light page ground cards float on': '235 235 222',
+    // The accent is now brand blue #3090E1's own darker sibling, at its exact
+    // hue. The brand colour itself is violet-500 and is a FILL (black label,
+    // 6.20:1); it cannot be this token, because --accent is also ink and
+    // #3090E1 as ink on the page ground is 2.81:1.
+    //
+    // This repeats the correction the previous note recorded, for the reason
+    // that note MISSED. #0a6ee0 replaced #0a7cff because white on it was
+    // 3.93:1 — but it was only measured against pure WHITE, and `body` is
+    // `bg-zinc-100`. Against that real ground it shipped at 4.46:1 and still
+    // failed AA. #086bb3 is solved against the ground: 4.64:1 there, 5.58:1
+    // on white, 5.58:1 under a white label.
+    'violet-600 (#086bb3) — the accent': '8 107 179',
+    'violet-400 (#6fb7fb) — the dark-mode accent': '111 183 251',
+    // Brand blue itself, pinned so a future ramp regeneration cannot quietly
+    // round the one value that is supposed to be the brand's own.
+    'violet-500 (#3090E1) — brand blue, verbatim': '48 144 225',
   };
   for (const [name, rgb] of Object.entries(triplets)) {
     assert.ok(css.includes(rgb), `expected platform palette colour ${name} → rgb(${rgb}) in ${OUTPUT_FILE}`);
@@ -145,6 +161,16 @@ test('the platform palette reached the output', () => {
   // -800/-900/-950; while they were unpinned they rendered STOCK Tailwind
   // violet, which against a blue accent reads as stray purple.
   assert.ok(!css.includes('245 243 255'), 'stock Tailwind violet-50 (#f5f3ff) leaked in — is the accent ramp closed across every shade?');
+  // The SUPERSEDED accents are gone too, not just the pre-reskin one. Both of
+  // these shipped as "the accent" at some point and both failed AA against the
+  // ground they actually rendered on, so either reappearing is a regression
+  // with a measurable cost rather than a cosmetic slip.
+  assert.ok(!css.includes('10 110 224'), 'the previous accent #0a6ee0 is still compiled in — it measures 4.46:1 as ink on the page ground');
+  assert.ok(!css.includes('10 124 255'), 'the pre-correction accent #0a7cff is still compiled in — white on it is 3.93:1');
+  // Stock Tailwind gray, which the neutral override exists to keep out. It has
+  // never been a class name here (tests/admin-ui-registry.test.js bans that),
+  // but it HAS been present as a raw hex, so pin the compiled form too.
+  assert.ok(!css.includes('107 114 128'), 'stock Tailwind gray-500 (#6b7280) leaked in — the neutral ramp is the only grey');
 });
 
 test('future.hoverOnlyWhenSupported is compiled in', () => {

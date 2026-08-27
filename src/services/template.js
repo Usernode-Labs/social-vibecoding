@@ -597,12 +597,17 @@ app.get('*', (req, res) => {
     if (req.get('sec-fetch-dest') === 'document') {
       return res.redirect(302, '${PLATFORM_BASE_URL}/#app/${slug}/full' + deepPath);
     }
+    // Platform-brand colours. This landing page is DARK-ONLY, so the
+    // button takes the platform's dark-mode accent (#6fb7fb) under
+    // near-black ink rather than the light-mode accent #086bb3 — a
+    // mid-dark blue fill on a near-black ground is 2.4:1 against it and
+    // stops reading as a button at all.
     return res.status(401).send(\`<!doctype html><meta charset=utf-8><title>Open in Usernode</title>
-<body style="font-family:system-ui;background:#09090b;color:#e4e4e7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
+<body style="font-family:system-ui;background:#0c0b09;color:#e4e4d9;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
   <div style="max-width:24rem;padding:2rem;text-align:center">
     <h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Usernode</h1>
-    <p style="color:#a1a1aa;font-size:0.9rem;margin:0 0 1.25rem">This page is served via the platform; direct visits aren't authenticated.</p>
-    <a href="${PLATFORM_BASE_URL}/#app/${slug}/full\${deepPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Usernode</a>
+    <p style="color:#8f8e86;font-size:0.9rem;margin:0 0 1.25rem">This page is served via the platform; direct visits aren't authenticated.</p>
+    <a href="${PLATFORM_BASE_URL}/#app/${slug}/full\${deepPath}" style="display:inline-block;padding:0.5rem 1rem;background:#6fb7fb;color:#0c0b09;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Usernode</a>
   </div>
 </body>\`);
   }
@@ -633,7 +638,10 @@ start().catch(err => { console.error(err); process.exit(1); });
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   ${DEV_CONSOLE_FORWARDER}
   <title>${escapeHtml(appName)}</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <!-- Favicon: the accent #086bb3 rather than brand blue #3090E1, because the
+       white inner disc has to stay legible at 16px — it is 5.58:1 on the
+       accent and only 3.39:1 on the brand fill. -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%23086bb3'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
   <!-- Tailwind, PRECOMPILED for this app (was cdn.tailwindcss.com's
        in-browser engine plus an inline tailwind.config here). The config
        moved to tailwind.config.js in the repo root; the Dockerfile's builder

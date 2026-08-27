@@ -1080,9 +1080,9 @@ test('widget tile PNG paints the light palette in light appearance', () => {
   const face = paints.find((p) => p.op === 'fill');
   const hairline = paints.find((p) => p.op === 'stroke');
   const glyph = paints.filter((p) => p.op === 'fill').pop();
-  assert.equal(face.color, '#ffffff', 'white face');
-  assert.equal(hairline.color, '#e4e4e7', 'faint light-grey hairline');
-  assert.equal(glyph.color, '#a1a1aa', 'faint grey letter (--text-faint)');
+  assert.equal(face.color, '#fcfab3', 'brand-pale face (matches .app-icon-tile)');
+  assert.equal(hairline.color, 'rgba(12, 11, 9, 0.28)', 'visible ink-alpha hairline (matches .app-icon-tile)');
+  assert.equal(glyph.color, '#8f8e86', 'faint letter (--text-faint)');
 });
 
 test('widget tile PNG paints the dark palette in dark appearance', () => {
@@ -1097,9 +1097,9 @@ test('widget tile PNG paints the dark palette in dark appearance', () => {
   const face = paints.find((p) => p.op === 'fill');
   const hairline = paints.find((p) => p.op === 'stroke');
   const glyph = paints.filter((p) => p.op === 'fill').pop();
-  assert.equal(face.color, '#1a1a30', 'dark face (--bg-secondary)');
-  assert.equal(hairline.color, '#2e2e50', 'hairline kept, stepped to --border');
-  assert.equal(glyph.color, '#9898b0', 'faint letter (--text-faint, dark)');
+  assert.equal(face.color, '#1d1c19', 'dark face (--bg-secondary)');
+  assert.equal(hairline.color, '#2d2c28', 'hairline kept, stepped to --border');
+  assert.equal(glyph.color, '#8f8e86', 'faint letter (--text-faint, dark)');
   // The hairline is what keeps the tile legible against iOS's own dark
   // widget material — a dark face with no ring would vanish.
   assert.notEqual(hairline.color, face.color);
@@ -1315,9 +1315,9 @@ test('payload: capable shell gets both faces, light first', async () => {
   assert.notEqual(payload.icon_url, payload.icon_url_dark, 'two distinct images');
   // Face fills, in render order: light tile first, then the dark one.
   const faces = paints.filter((p) => p.op === 'fill').map((p) => p.color);
-  assert.ok(faces.includes('#ffffff'), 'light face painted');
-  assert.ok(faces.includes('#1a1a30'), 'dark face painted');
-  assert.ok(faces.indexOf('#ffffff') < faces.indexOf('#1a1a30'),
+  assert.ok(faces.includes('#fcfab3'), 'light face painted');
+  assert.ok(faces.includes('#1d1c19'), 'dark face painted');
+  assert.ok(faces.indexOf('#fcfab3') < faces.indexOf('#1d1c19'),
     'icon_url is the LIGHT asset — a shell that renders only it stays sane');
 });
 
@@ -1339,7 +1339,7 @@ test('payload: the pair does not move with the system appearance', async () => {
 });
 
 test('payload: non-capable shell keeps the single per-appearance face', async () => {
-  for (const [dark, face] of [[false, '#ffffff'], [true, '#1a1a30']]) {
+  for (const [dark, face] of [[false, '#fcfab3'], [true, '#1d1c19']]) {
     const { Home, sandbox } = makeHomeEnv({ id: ME });
     stubCapability(sandbox, false);
     stubScheme(sandbox, dark);

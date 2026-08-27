@@ -340,9 +340,9 @@ function DailyChart({ daily, errBar }: { daily: any[]; errBar: number }) {
             // eslint-disable-next-line react/no-array-index-key
             <g key={i}>
               <rect x={(x + 1).toFixed(1)} y={y.toFixed(1)} width={Math.max(1, bw - 2).toFixed(1)}
-                height={Math.max(0, h).toFixed(1)} fill={v > errBar ? '#f59e0b' : '#6366f1'} />
+                height={Math.max(0, h).toFixed(1)} fill={v > errBar ? '#f59e0b' : '#3090e1'} />
               <rect className="dc-hover" x={x.toFixed(1)} y={topPad} width={bw.toFixed(1)} height={plot}
-                fill="#6366f1" fillOpacity="0" pointerEvents="all" data-tip-id={`est-day-${i}`} />
+                fill="#3090e1" fillOpacity="0" pointerEvents="all" data-tip-id={`est-day-${i}`} />
             </g>
           );
         })}

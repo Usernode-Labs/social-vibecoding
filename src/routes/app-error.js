@@ -68,17 +68,28 @@ function renderPage(displayName) {
     margin: 0; min-height: 100vh; display: flex; align-items: center;
     justify-content: center; text-align: center;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #f8f7fc; color: #1f2937;
+    background: #f9f8e9; color: #2d2c28;
   }
   @media (prefers-color-scheme: dark) {
-    body { background: #17151f; color: #e5e7eb; }
+    body { background: #171614; color: #e4e4d9; }
   }
   .wrap { padding: 32px; max-width: 26rem; }
   .spinner {
     width: 40px; height: 40px; margin: 0 auto 20px;
-    border: 3px solid rgba(124, 58, 237, 0.25);
-    border-top-color: #7c3aed; border-radius: 50%;
+    border: 3px solid rgba(8, 107, 179, 0.25);
+    border-top-color: #086bb3; border-radius: 50%;
     animation: spin 0.9s linear infinite;
+  }
+  /* The accent has to FLIP with the scheme, unlike the neutrals above, which
+     only change places: #086bb3 is 2.6:1 on the dark ground and the spinner
+     is the only motion on the page, so it would all but vanish. The platform's
+     dark accent reads at 8.9:1. This block sits AFTER the rule it overrides
+     because both selectors are the same class — equal specificity, so source
+     order decides.
+     (Nothing in this page may contain a backtick: the whole document is one
+     JS template literal in this file.) */
+  @media (prefers-color-scheme: dark) {
+    .spinner { border-color: rgba(111, 183, 251, 0.25); border-top-color: #6fb7fb; }
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   h1 { font-size: 1.15rem; margin: 0 0 8px; font-weight: 600; }

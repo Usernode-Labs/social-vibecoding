@@ -1,39 +1,127 @@
-:root {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f5f5f7;
-  --bg-tertiary: #e3e3e6;
-  --bg-code: #f5f5f7;
-  --bg-code-header: #e3e3e6;
-  --bg-card: rgba(10, 124, 255, 0.06);
-  --bg-card-alt: rgba(16, 185, 129, 0.04);
-  --bg-input: #f5f5f7;
-  --border: #d1d1d6;
-  --border-light: #e3e3e6;
-  --text-primary: #0a0a0a;
-  --text-secondary: #3a3a3c;
-  --text-muted: #6c6c70;
-  --text-faint: #8e8e93;
-  --text-code: #3a3a3c;
-  /* #0a6ee0, not the #0a7cff eyedropped from the design screenshots.
-     White on that blue is 3.93:1 — below AA for normal text, which made EVERY
-     primary button in the product (Send, Open, Publish profile, Improve, New
-     conversation) a control you could see and a label you could not quite
-     read. It failed the same way as ink: `text-violet-600` on white was the
-     identical 3.93. One step darker clears both at 4.86, and the hue is
-     unchanged to two decimal places of what the deck shows.
+/* ── The UI face ───────────────────────────────────────────
+   Geist, the brand's SUPPORTING typeface — the one BRAND KIT 2026 specifies
+   for the "communication layer", which is what a product shell is. (STK
+   Bureau Serif is the brand's display face; it is not needed for UI chrome and
+   is not openly licensed, so it is deliberately not adopted here.)
 
-     The DARK accent below is untouched: it is a lighter blue on purpose,
-     because against a near-black page it has to be, and it is used mostly as
-     ink rather than as a fill. Where it IS a fill, --accent-ink supplies the
-     near-black text that goes on it. */
-  --accent: #0a6ee0;
-  --accent-light: #1f86ff;
-  --accent-tint: rgba(10, 110, 224, 0.08);
+   SELF-HOSTED, NOT LINKED. The shell loads no cross-origin assets and three
+   tests enforce that, so this is vendored into public/vendor/ by
+   `npm run vendor:assets` with its provenance and digest recorded in
+   public/vendor/README.md — the same treatment marked, DOMPurify and qrcodejs
+   get. A Google Fonts <link> would be the obvious way to do this and is the
+   one way that is not allowed.
+
+   ONE VARIABLE FILE, not four static weights: 68 KB covers the whole 100–900
+   axis, against ~184 KB for just Regular/Medium/SemiBold/Bold. The shell uses
+   at least four weights, so the static route costs more bytes AND more
+   requests.
+
+   `font-display: swap` so first paint is never blocked; the fallback stack in
+   tailwind.config.js is the system UI face, whose metrics are close enough
+   that the swap does not reflow. */
+@font-face {
+  font-family: 'Geist';
+  src: url('/vendor/geist-sans-1.7.2-variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* ── WeOS surfaces ───────────────────────────────────────
+     BRAND CREAM IS THE HUE THE WHOLE NEUTRAL SYSTEM IS BUILT ON, not a single
+     surface that gets painted with it. That is the one non-obvious thing here
+     and it is worth stating, because both of the obvious alternatives are
+     wrong:
+
+     Cream cannot be the PAGE. The brand board reads "cream page, white cards",
+     but this product draws every card edge with figure/ground alone — no
+     border, no shadow. Cream is 0.98 luminance, so a white card on a cream
+     page separates at 1.02:1 and the card edge disappears. Harmony producing
+     literal invisibility.
+
+     Cream cannot be THE CARD either, and this is the subtler trap: the
+     product has TWO elevated tiers. 38 sheet/popover/dialog surfaces read
+     var(--bg-primary), and 115 Tailwind-classed cards spell `bg-white`
+     directly. Setting this token to cream paints only the first, so a sheet
+     and the card beside it would stop matching — a NEW disharmony, introduced
+     by the retheme. Converting the other 115 is not available either: they
+     are class strings, and dapp.json's declared checks select on deep chains
+     of them.
+
+     So the two elevated tiers stay agreed at #ffffff, and the brand colour is
+     expressed where it reaches everything at once — `zinc` is rebuilt at
+     cream's own hue (OKLCH 104.5°), so the page, the borders, the inks and
+     the dark theme are all cream at different lightnesses. The exact swatch
+     stays available as --brand-cream below. */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f7f6e9;
+  --bg-tertiary: #e4e4d9;
+  --bg-code: #f7f6e9;
+  --bg-code-header: #e4e4d9;
+  /* Rebuilt on the CURRENT accent. This carried rgba(10,124,255,…) — #0a7cff,
+     the accent that was superseded for failing contrast — so the card tint and
+     the accent had been quietly drifting apart ever since that correction. */
+  --bg-card: rgba(8, 107, 179, 0.06);
+  --bg-card-alt: rgba(70, 116, 44, 0.05);
+  --bg-input: #f7f6e9;
+  --border: #c8c8be;
+  --border-light: #e4e4d9;
+  /* The ink scale is drawn FROM the neutral ramp rather than kept as its own
+     set of near-neutrals, so ink and surfaces cannot drift apart again. Each
+     maps to the ramp stop at its previous luminance, which is why none of
+     these ratios move. */
+  --text-primary: #0c0b09;   /* zinc-950 */
+  --text-secondary: #3b3b35; /* zinc-700 */
+  --text-muted: #696861;     /* zinc-500 — the 4.6:1 secondary ink */
+  --text-faint: #8f8e86;     /* zinc-400 */
+  --text-code: #3b3b35;
+  /* #086bb3 — brand blue #3090E1's own darker sibling, at its exact hue
+     (OKLCH 248.5°). The brand colour itself lives at `violet-500` and is used
+     where the brand uses it: as a FILL under a black label (6.20:1). It
+     cannot be this token, because --accent is also ink, and #3090E1 as ink on
+     the page ground is 2.81:1.
+
+     This repeats a correction the file has already made once, for the same
+     reason. #0a6ee0 replaced #0a7cff because white on it was 3.93:1 — but it
+     was only ever measured against pure WHITE, and `body` is `bg-zinc-100`.
+     Against that real ground it shipped at 4.46:1 and still failed AA.
+     #086bb3 is solved against the ground: 4.64:1 as ink on #ebebde, 5.58:1 on
+     white, and 5.58:1 under a white label as a fill.
+
+     --accent-light IS NOW DARKER THAN --accent in this theme, which reads
+     wrong and is right. Every light-mode consumer of it wants MORE weight,
+     not less: it is the hover fill for fourteen primary buttons (white label —
+     it was dropping them to 3.55:1, below AA, on hover), the link-hover ink,
+     and the focus border. Lightening a fill under a white label is a contrast
+     loss dressed up as an affordance. In .dark below it stays lighter, because
+     there the fill carries near-black ink and lightening ADDS contrast. */
+  --accent: #086bb3;
+  --accent-light: #085a97;
+  --accent-tint: rgba(8, 107, 179, 0.08);
   /* Text ON the accent — the outgoing message bubble is the only place the
      shell puts type on a saturated fill, and it must not follow the page. */
   --accent-ink: #ffffff;
   /* The agent bubble's surface — see the .dark counterpart. */
   --bubble-bg: #ffffff;
+
+  /* ── WeOS brand fills ────────────────────────────────────
+     The three brand colours that are FILLS, byte-for-byte from the kit. They
+     are declared here rather than reached for as literals so a call site can
+     never half-adopt one.
+
+     Every one of them takes a BLACK label, which is the brand's own logic —
+     measured as ink on a light ground they are 1.16:1 (yellow), 1.71:1 (sage)
+     and 3.32:1 (blue), so none of them can ever be text. As fills under
+     --brand-ink they are 17.71:1, 12.06:1 and 6.20:1.
+
+     --brand-ink is #000000 rather than the ramp's near-black on purpose:
+     these are the brand's own surfaces, and its ink is pure black. */
+  --brand-yellow: #ffee6f;
+  --brand-sage: #a9cf97;
+  --brand-blue: #3090e1;
+  --brand-cream: #fffeea;
+  --brand-ink: #000000;
 
 
   /* ── Safe-area tokens ────────────────────────────────────
@@ -73,8 +161,8 @@
                     running, in vote. Violet, NOT amber: amber used to
                     do this job as well as three others.
        attention  — non-blocking heads-up: behind main, console
-                    errors, advisory votes, explicit approval. Amber
-                    now means ONLY this.
+                    errors, advisory votes, explicit approval. ORANGE
+                    now, not amber — see the WeOS note below.
        blocked    — blocks the merge: checks failing, checks couldn't
                     run, preview won't boot, conflict. Red. ("Checks
                     failing" used to be amber, reading like a warning
@@ -88,20 +176,38 @@
 
      `-bg` companions are the faint fills; `-fill` the stronger
      proportional-fill wash used inside the tally pill. */
-  --state-neutral: #6b7280;
-  --state-neutral-bg: rgba(107, 114, 128, 0.12);
-  --state-progress: #7c3aed;
-  --state-progress-bg: rgba(124, 58, 237, 0.12);
-  --state-attention: #b45309;
-  --state-attention-bg: rgba(245, 158, 11, 0.14);
-  --state-blocked: #dc2626;
-  --state-blocked-bg: rgba(239, 68, 68, 0.12);
-  --state-blocked-fill: rgba(239, 68, 68, 0.32);
-  --state-ok: #15803d;
-  --state-ok-bg: rgba(34, 197, 94, 0.12);
-  --state-ok-fill: rgba(34, 197, 94, 0.32);
-  --state-admin: #b45309;
-  --state-admin-bg: rgba(245, 158, 11, 0.10);
+     WeOS: the ROLES above are unchanged — one meaning per hue is the whole
+     point of these tokens — but every value is now solved against the grounds
+     they actually paint on (4.6:1 on both the page and the cream card) instead
+     of being a stock Tailwind literal. Two moved for reasons beyond tuning:
+
+       neutral    was #6b7280 — stock Tailwind gray-500. The config overrides
+                  `zinc` precisely so no untuned grey renders beside the
+                  platform's, and this token was quietly doing it anyway.
+       attention  was #b45309 amber. The brand's own #FFEE6F now owns that
+                  corner of the wheel, and an amber warning sat 57 RGB units
+                  from it. At orange it sits 211 away. It is at 68° rather
+                  than the 52° a rust would want because at 52° it collided
+                  with `blocked` instead — 58 units apart, two states that
+                  read alike being worth less than either of them.
+       progress   keeps violet, but no longer the literal #7c3aed the product
+                  used as its accent before the reskin. */
+  --state-neutral: #696961;
+  --state-neutral-bg: rgba(105, 105, 97, 0.12);
+  --state-progress: #725aae;
+  --state-progress-bg: rgba(114, 90, 174, 0.12);
+  --state-attention: #955b03;
+  --state-attention-bg: rgba(149, 91, 3, 0.14);
+  --state-blocked: #b73f3d;
+  --state-blocked-bg: rgba(183, 63, 61, 0.12);
+  --state-blocked-fill: rgba(183, 63, 61, 0.32);
+  /* The OK tone is the brand sage family: #A9CF97 itself is the fill, and
+     this is the ink sibling it cannot be (sage as ink is 1.71:1). */
+  --state-ok: #46742c;
+  --state-ok-bg: rgba(169, 207, 151, 0.28);
+  --state-ok-fill: rgba(169, 207, 151, 0.55);
+  --state-admin: #955b03;
+  --state-admin-bg: rgba(149, 91, 3, 0.10);
 }
 
 /* ── Safe-area utilities ─────────────────────────────────
@@ -214,7 +320,7 @@ html.un-kb .platform-safe-sheet {
   color: var(--text-secondary);
 }
 
-.messages-new-button { color: white; background: var(--accent); }
+.messages-new-button { color: var(--accent-ink); background: var(--accent); }
 .messages-new-button:hover { background: var(--accent-light); }
 .messages-new-button svg,
 .messages-thread-action svg,
@@ -283,7 +389,7 @@ html.un-kb .platform-safe-sheet {
   padding: 0 5px;
   border-radius: 9999px;
   background: var(--accent);
-  color: white;
+  color: var(--accent-ink);
   font-size: 10px;
   font-weight: 700;
   line-height: 18px;
@@ -399,7 +505,7 @@ html.un-kb .platform-safe-sheet {
 }
 .messages-invite-decline { border: 1px solid var(--border); color: var(--text-secondary); }
 .messages-invite-block { border: 1px solid rgba(220, 38, 38, .35); color: #dc2626; }
-.messages-invite-accept { background: var(--accent); color: white; }
+.messages-invite-accept { background: var(--accent); color: var(--accent-ink); }
 
 .messages-thread-scroll { padding: 7px 0 4px; }
 .messages-load-older {
@@ -640,7 +746,7 @@ html.un-kb .platform-safe-sheet {
 .messages-composer-input:focus { border-color: var(--accent-light); }
 .messages-composer-action { color: var(--text-muted); }
 .messages-composer-action:disabled { opacity: .35; }
-.messages-send { color: white; background: var(--accent); }
+.messages-send { color: var(--accent-ink); background: var(--accent); }
 .messages-send:disabled { opacity: .35; }
 .messages-reply-draft,
 .messages-pending-object { margin-bottom: 6px; }
@@ -704,18 +810,22 @@ html.un-kb .platform-safe-sheet {
 .messages-attachment img { width: 88px; }
 
 .dark {
-  --bg-primary: #0b0b0c;
-  --bg-secondary: #1c1c1e;
-  --bg-tertiary: #2c2c2e;
-  --bg-code: #141416;
-  --bg-code-header: #1c1c1e;
-  --bg-card: rgba(90, 169, 255, 0.10);
-  --bg-card-alt: rgba(16, 185, 129, 0.05);
-  --bg-input: #1c1c1e;
-  --border: #2c2c2e;
-  --border-light: #3a3a3c;
-  --text-primary: #f5f5f7;
-  --text-secondary: #e3e3e6;
+  /* The same warm ramp, whose chroma fades as it darkens (0.017 → 0.005), so
+     these near-blacks read as neutral rather than brown. The warmth is a
+     light-surface property; carrying it down here at constant chroma is what
+     turns a warm theme muddy. */
+  --bg-primary: #0c0b09;
+  --bg-secondary: #1d1c19;
+  --bg-tertiary: #2d2c28;
+  --bg-code: #141310;
+  --bg-code-header: #1d1c19;
+  --bg-card: rgba(111, 183, 251, 0.10);
+  --bg-card-alt: rgba(169, 207, 151, 0.07);
+  --bg-input: #1d1c19;
+  --border: #2d2c28;
+  --border-light: #3b3b35;
+  --text-primary: #f7f6e9;
+  --text-secondary: #e4e4d9;
   /* #8e8e93, not the #6c6c70 this carried. --text-muted was the ONE token in
      this block with no dark counterpart — it kept its light value, so on a
      near-black page it was as dark as it is on a near-white one. Every muted
@@ -723,35 +833,40 @@ html.un-kb .platform-safe-sheet {
      and the create modal's unselected segment pills 2.7:1 against their track.
      One step up the neutral ramp reads at 6.0 on the ground and 5.3 on a card,
      and is still plainly quieter than --text-secondary above. */
-  --text-muted: #8e8e93;
-  --text-faint: #8e8e93;
-  --text-code: #e3e3e6;
-  --accent: #5aa9ff;
-  --accent-light: #8cc4ff;
-  --accent-tint: rgba(90, 169, 255, 0.14);
-  --accent-ink: #0b0b0c;
+  --text-muted: #8f8e86;
+  --text-faint: #8f8e86;
+  --text-code: #e4e4d9;
+  /* violet-400. Lighter than the light-mode accent because it has to be
+     against a near-black page: 9.22:1 on the page, 7.97:1 on a card.
+     --accent-light goes LIGHTER here, the opposite direction from the light
+     theme, and for the same underlying reason — a fill in this theme carries
+     --accent-ink (near-black), so lightening it ADDS contrast. */
+  --accent: #6fb7fb;
+  --accent-light: #92c9ff;
+  --accent-tint: rgba(111, 183, 251, 0.14);
+  --accent-ink: #0c0b09;
   /* One step UP from the page here, not white: the page is near-black, so a
      bubble has to be lighter than it or it stops being a bubble. */
-  --bubble-bg: #1c1c1e;
+  --bubble-bg: #1d1c19;
 
   /* Dark counterparts of the semantic state tokens. Every --state-*
      declared on :root has one here — tests/dev-color-tokens.test.js
      asserts the two lists match, so a token added above without a dark
      value fails the suite rather than rendering an unreadable badge. */
-  --state-neutral: #9ca3af;
-  --state-neutral-bg: rgba(156, 163, 175, 0.16);
-  --state-progress: #a78bfa;
-  --state-progress-bg: rgba(167, 139, 250, 0.18);
-  --state-attention: #fbbf24;
-  --state-attention-bg: rgba(245, 158, 11, 0.18);
-  --state-blocked: #f87171;
-  --state-blocked-bg: rgba(239, 68, 68, 0.18);
-  --state-blocked-fill: rgba(239, 68, 68, 0.38);
-  --state-ok: #34d399;
-  --state-ok-bg: rgba(34, 197, 94, 0.18);
-  --state-ok-fill: rgba(34, 197, 94, 0.38);
-  --state-admin: #fbbf24;
-  --state-admin-bg: rgba(245, 158, 11, 0.14);
+  --state-neutral: #9a9a92;
+  --state-neutral-bg: rgba(154, 154, 146, 0.16);
+  --state-progress: #a18eda;
+  --state-progress-bg: rgba(161, 142, 218, 0.18);
+  --state-attention: #cc8c41;
+  --state-attention-bg: rgba(204, 140, 65, 0.18);
+  --state-blocked: #e57b74;
+  --state-blocked-bg: rgba(229, 123, 116, 0.18);
+  --state-blocked-fill: rgba(229, 123, 116, 0.38);
+  --state-ok: #7ba567;
+  --state-ok-bg: rgba(123, 165, 103, 0.20);
+  --state-ok-fill: rgba(123, 165, 103, 0.42);
+  --state-admin: #cc8c41;
+  --state-admin-bg: rgba(204, 140, 65, 0.14);
 }
 
 /* ── usernode-native kit theming ─────────────────────────
@@ -786,11 +901,11 @@ html.un-kb .platform-safe-sheet {
   --un-surface: var(--bg-secondary);
   --un-hairline: var(--border);
   --un-muted: var(--text-faint);
-  --un-group-bg: #1c1c1e;
-  --un-sheet-bg: #1c1c1e;
+  --un-group-bg: #1d1c19;
+  --un-sheet-bg: #1d1c19;
   /* One step lighter than --bg-primary (#0b0b0c) so the floating menu
      reads as elevated above the page rather than merging into it. */
-  --un-popover-bg: #1c1c1e;
+  --un-popover-bg: #1d1c19;
   --un-navbar-bg: rgba(11, 11, 12, 0.78);
   --un-zoom-bg: var(--bg-primary);
 }
@@ -956,7 +1071,7 @@ html.un-kb .platform-safe-sheet {
    design, therefore pin them to the platform surface in this scope. */
 html.un-ios.in-native-webview {
   --un-navbar-bg: var(--bg-primary);
-  --un-toast-bg: #1c1c2a;
+  --un-toast-bg: #1d1c19;
 }
 
 html.un-ios.in-native-webview .platform-chat-header.un-scrolled,
@@ -1129,8 +1244,15 @@ html, body {
    Tile call sites must NOT set their own background / text colour
    utilities — routing every tile through this one class is the point. */
 .app-icon-tile {
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-light);
+  /* BRAND PALE #FCFAB3 — the kit's secondary pale, and the face the landing
+     page's product mock draws every app tile with. This is the ONE surface
+     that carries the pale: it is an icon's stage, not a content card, so a
+     tinted face reads as designed rather than as a stray wash. The hairline
+     steps up from --border-light to a real line (rgba of the ink) because a
+     tinted face on the warm ground has less figure/ground than white had —
+     the mock draws the line for the same reason. */
+  background-color: #fcfab3;
+  border: 1px solid rgba(12, 11, 9, 0.28);
   color: var(--text-secondary);
 }
 /* THE PER-APP IDENTITY TINT IS GONE. The reskin hashed each app's slug into
@@ -1180,17 +1302,17 @@ html, body {
    don't inherit `currentColor` so we can't collapse to a single
    variable-driven version cleanly. */
 .home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%230a7cff' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23086bb3' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
 }
 .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%230a7cff' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23086bb3' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .dark .home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%235aa9ff' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%236fb7fb' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .dark .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%235aa9ff' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%236fb7fb' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 
 /* Drag-reorderable starred cards (issue #191): a long-press must
@@ -2609,7 +2731,7 @@ html, body {
    the primary route so every button reads equally actionable. */
 .dc-credits-go {
   background: var(--accent);
-  color: white;
+  color: var(--accent-ink);
   flex: 0 0 auto;
 }
 .dc-credits-go:hover { background: var(--accent-light); }
@@ -2883,7 +3005,7 @@ html, body {
 .dc-flow-vendor-on,
 .dc-flow-vendor-on:disabled {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   cursor: default;
   opacity: 1;
 }
@@ -2945,7 +3067,7 @@ html, body {
 
 .dc-flow-go {
   background: var(--accent);
-  color: white;
+  color: var(--accent-ink);
   flex: 0 0 auto;
 }
 .dc-flow-go:hover { background: var(--accent-light); }
@@ -3023,7 +3145,7 @@ html, body {
 .dc-flow-step-current .dc-flow-step-mark {
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
+  color: var(--accent-ink);
 }
 
 .dc-flow-step-todo { opacity: 0.65; }
@@ -3056,7 +3178,7 @@ a.dc-flow-action {
 .dc-flow-action-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
+  color: var(--accent-ink);
 }
 .dc-flow-action-primary:hover { background: var(--accent-light); }
 
@@ -3122,7 +3244,7 @@ a.dc-flow-action {
 }
 .dc-pr-btn-preview:disabled:hover { background: var(--bg-secondary); }
 
-.dc-pr-btn-promote { background: var(--accent); color: white; }
+.dc-pr-btn-promote { background: var(--accent); color: var(--accent-ink); }
 .dc-pr-btn-promote:hover { background: var(--accent-light); }
 .dc-pr-btn-promote:disabled { background: #3f3f46; cursor: not-allowed; }
 /* #558: the shared arc spinner borders in var(--accent) (violet), which is
@@ -3157,7 +3279,7 @@ a.dc-flow-action {
 }
 .dc-qa-chip:hover { background: var(--bg-tertiary); }
 .dc-qa-chip-default { border-color: var(--accent); }
-.dc-qa-chip-selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+.dc-qa-chip-selected { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .dc-qa-chip-selected:hover { background: var(--accent-light); }
 
 .dc-qa-chip-hint {
@@ -3178,7 +3300,7 @@ a.dc-flow-action {
   cursor: pointer;
   border: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   transition: background 150ms;
 }
 .dc-qa-send:hover { background: var(--accent-light); }
@@ -4764,7 +4886,7 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 .gc-edit-save {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
 }
 .gc-edit-cancel {
   background: var(--bg-tertiary);
@@ -7295,7 +7417,7 @@ button.attr-chip { cursor: pointer; }
   border: 0;
   border-radius: 8px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   cursor: pointer;
 }
 .attr-pop-addbtn:hover { background: var(--accent-light); }
@@ -7588,8 +7710,8 @@ button.attr-chip { cursor: pointer; }
 #admin-status-root .pill-stopped .dot { background: #f59e0b; }
 #admin-status-root .pill-missing { background: rgba(239, 68, 68, 0.1); color: #f87171; }
 #admin-status-root .pill-missing .dot { background: #ef4444; }
-#admin-status-root .pill-creating { background: rgba(99, 102, 241, 0.1); color: #818cf8; }
-#admin-status-root .pill-creating .dot { background: #6366f1; }
+#admin-status-root .pill-creating { background: rgba(8, 107, 179, 0.1); color: #6fb7fb; }
+#admin-status-root .pill-creating .dot { background: #086bb3; }
 
 /* Light-mode pill overrides — topochain's badge tints (50-shade bg,
    700-shade text). The shell toggles `.dark` on <html>, so target the

@@ -266,6 +266,24 @@ test('the light and dark palettes declare the same variables', () => {
     // height read, so that the space held open and the space drawn cannot
     // drift apart. A height does not invert with the page.
     '--install-strip-h',
+    // The five WeOS brand fills. This is the third exception, and it is the
+    // same argument the retired `--tile-*` tints made: a brand colour does not
+    // invert with the page. #FFEE6F is the brand's yellow on a white page and
+    // on a near-black one; giving it a dark counterpart would mean shipping a
+    // second, wrong yellow.
+    //
+    // What makes that SAFE here — and it is the only reason it is safe — is
+    // that none of them is ever ink. Each is a fill carrying --brand-ink, and
+    // measured as ink on a light ground they are 1.16:1 (yellow), 1.71:1
+    // (sage) and 3.32:1 (blue), so there is no legible-on-white/illegible-on-
+    // black failure mode for this exemption to hide. The pairing that matters
+    // is black-on-fill, which is 17.71:1, 12.06:1 and 6.20:1 in BOTH themes
+    // because both halves of it are theme-invariant.
+    //
+    // If a future change ever uses one of these as a text colour, this
+    // exemption stops being true and the token needs a dark counterpart.
+    '--brand-yellow', '--brand-sage', '--brand-blue', '--brand-cream',
+    '--brand-ink',
   ]);
   const missing = [...light].filter((n) => !dark.has(n) && !THEME_INVARIANT.has(n)).sort();
   assert.deepEqual(missing, [],

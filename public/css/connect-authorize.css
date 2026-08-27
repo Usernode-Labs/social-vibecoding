@@ -3,7 +3,11 @@
  * Deliberately a standalone stylesheet rather than the app shell's Tailwind
  * build, matching /css/cli-authorize.css: this page is served under a hard
  * CSP with no inline styles and no shell JavaScript, so it stays legible
- * even if the SPA is broken. */
+ * even if the SPA is broken.
+ *
+ * Colours are the platform's own tokens (public/css/app.css), transcribed as
+ * literals for that reason. The page is dark-only, so they are the DARK-theme
+ * values throughout. */
 
 :root {
   color-scheme: light dark;
@@ -15,16 +19,16 @@ body {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  background: #08080f;
-  color: #f4f4f5;
+  background: #0c0b09;
+  color: #f7f6e9;
 }
 
 main {
   width: min(32rem, calc(100% - 3rem));
   padding: 2rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid #3b3b35;
   border-radius: 1rem;
-  background: #18181b;
+  background: #1d1c19;
 }
 
 h1 {
@@ -37,7 +41,7 @@ h2 {
   font-size: .8rem;
   text-transform: uppercase;
   letter-spacing: .06em;
-  color: #a1a1aa;
+  color: #8f8e86;
 }
 
 dl {
@@ -47,7 +51,7 @@ dl {
   margin: 1.25rem 0 0;
 }
 
-dt { color: #a1a1aa; }
+dt { color: #8f8e86; }
 
 dd {
   margin: 0;
@@ -55,11 +59,14 @@ dd {
 }
 
 /* The address the approval sends the user back to. Emphasised because it
-   is the one identity on this page an attacker cannot choose freely. */
+   is the one identity on this page an attacker cannot choose freely.
+   The emphasis is the platform's dark accent — it used to be stock Tailwind
+   indigo-300, a hue that appears nowhere else in the product and read as a
+   stray purple beside a blue accent. */
 .origin {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 600;
-  color: #a5b4fc;
+  color: #6fb7fb;
 }
 
 ul {
@@ -71,9 +78,9 @@ ul {
 li {
   padding: .65rem .85rem;
   margin-bottom: .5rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid #3b3b35;
   border-radius: .6rem;
-  background: #101014;
+  background: #0c0b09;
 }
 
 li strong { display: block; }
@@ -82,14 +89,17 @@ li span {
   display: block;
   margin-top: .2rem;
   font-size: .85rem;
-  color: #a1a1aa;
+  color: #8f8e86;
 }
 
+/* The amber is semantic, not brand, and stays. Its ground moves to the card
+   surface: it was stock Tailwind stone-900, a second untuned warm neutral
+   sitting one shade off the platform's own. */
 .warning {
   margin: 1.5rem 0;
   padding: 1rem;
   border-left: .25rem solid #f59e0b;
-  background: #1c1917;
+  background: #1d1c19;
   font-size: .9rem;
 }
 
@@ -98,17 +108,22 @@ li span {
   gap: .75rem;
 }
 
+/* The dark accent under NEAR-BLACK ink, which is how the platform paints a
+   primary button in this theme (9.2:1) — the light accent #086bb3 is a dark
+   fill and would sink into the card behind it. */
 button {
   padding: .75rem 1rem;
   border: 0;
   border-radius: .5rem;
-  background: #0a7cff;
-  color: white;
+  background: #6fb7fb;
+  color: #0c0b09;
   font: inherit;
   cursor: pointer;
 }
 
-button.secondary { background: #3f3f46; }
+/* Restates its label colour: the primary's ink went near-black above, and
+   near-black on this grey is 1.5:1. */
+button.secondary { background: #3b3b35; color: #f7f6e9; }
 
 button:disabled {
   opacity: .55;

@@ -57,6 +57,7 @@ import { ChatMessageRow } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
 import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
+import { identityStyle } from '../../lib/identity-gradient';
 import { useStoreState } from '../../lib/use-store-state';
 import { transcriptStore, type Attachment, type Quote, type TranscriptMessage } from './transcript-store';
 
@@ -64,17 +65,10 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).GroupChat : null) || null;
 }
 
-/**
- * A stable colour per author, so the same person is the same swatch in every
- * row without the server having to store one. Same idea as `tintFor` for app
- * tiles, and deliberately not the accent ramp: an identity is not a state.
- */
-const SWATCHES = ['#5b7553', '#c0532f', '#6fb3a8', '#4a6fa5', '#8a5a83', '#b08344'];
-function swatchFor(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i += 1) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return SWATCHES[h % SWATCHES.length];
-}
+// A stable identity per author — the brand's gradient recipes now (see
+// lib/identity-gradient.ts), hashed the same way the six flat swatches this
+// replaces were. The principle survives the reskin: identity is not the
+// accent and not a state.
 
 /**
  * The sanitized markdown the module produced.
@@ -478,7 +472,7 @@ export function MessageRow({ msg }: { msg: TranscriptMessage }) {
       data-msg-id={msg.id ?? ''}
       data-username={msg.username}
       avatar={(
-        <Avatar shape="square" size="md" color={swatchFor(msg.username)} aria-hidden="true">
+        <Avatar shape="square" size="md" style={identityStyle(msg.username)} aria-hidden="true">
           {msg.username.charAt(0).toUpperCase()}
         </Avatar>
       )}

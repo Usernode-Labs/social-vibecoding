@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 // Generates the platform's PWA icons (public/icons/*.png) — a white "U"
-// lettermark on the shell's violet accent (#7c3aed, tailwind violet-600).
+// lettermark on WeOS brand blue (#3090E1, pinned at `violet-500` in
+// tailwind.config.js). Brand blue is a FILL colour, which is exactly the job
+// here; the accent ink sibling #086bb3 is for type and strokes, not for a
+// homescreen tile.
 // The repo has no logo artwork, so the icons are generated rather than
-// designed; re-run this script to regenerate after tweaking.
+// designed. THE PNGS ARE COMMITTED AND NO BUILD REGENERATES THEM, so a change
+// to the colour below only reaches a homescreen after you re-run this script
+// and commit the output.
 //
 //   node scripts/generate-pwa-icons.js
 //
@@ -12,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
-const VIOLET = [0x7c, 0x3a, 0xed];
+const BRAND = [0x30, 0x90, 0xe1];
 const WHITE = [255, 255, 255];
 
 // CRC32 (PNG variant).
@@ -120,9 +125,9 @@ function renderIcon(size, { maskable }) {
       const alpha = Math.round((bg / n) * 255);
       const fgFrac = bg ? fg / bg : 0;
       const i = (py * size + px) * 4;
-      rgba[i] = Math.round(VIOLET[0] + (WHITE[0] - VIOLET[0]) * fgFrac);
-      rgba[i + 1] = Math.round(VIOLET[1] + (WHITE[1] - VIOLET[1]) * fgFrac);
-      rgba[i + 2] = Math.round(VIOLET[2] + (WHITE[2] - VIOLET[2]) * fgFrac);
+      rgba[i] = Math.round(BRAND[0] + (WHITE[0] - BRAND[0]) * fgFrac);
+      rgba[i + 1] = Math.round(BRAND[1] + (WHITE[1] - BRAND[1]) * fgFrac);
+      rgba[i + 2] = Math.round(BRAND[2] + (WHITE[2] - BRAND[2]) * fgFrac);
       rgba[i + 3] = alpha;
     }
   }

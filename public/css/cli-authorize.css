@@ -3,39 +3,49 @@
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
 
+/* Colours are the platform's own tokens (public/css/app.css), transcribed as
+   literals because this page deliberately loads no shell CSS. The page is
+   dark-only, so they are the DARK-theme values throughout. */
+
 body {
   margin: 0;
   min-height: 100vh;
   display: grid;
   place-items: center;
-  background: #08080f;
-  color: #f4f4f5;
+  background: #0c0b09;
+  color: #f7f6e9;
 }
 
 main {
   width: min(30rem, calc(100% - 3rem));
   padding: 2rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid #3b3b35;
   border-radius: 1rem;
-  background: #18181b;
+  background: #1d1c19;
 }
 
 dt {
-  color: #a1a1aa;
+  color: #8f8e86;
 }
 
+/* The dark accent under NEAR-BLACK ink, which is how the platform paints a
+   primary button in this theme (9.2:1) — the light accent #086bb3 is a dark
+   fill and would sink into the card behind it. */
 button {
   padding: .75rem 1rem;
   border: 0;
   border-radius: .5rem;
-  background: #0a7cff;
-  color: white;
+  background: #6fb7fb;
+  color: #0c0b09;
   font: inherit;
   cursor: pointer;
 }
 
+/* The secondary variant must restate its label colour: the primary's ink went
+   near-black above, and near-black on this grey is 1.5:1. */
 button.secondary {
-  background: #3f3f46;
+  background: #3b3b35;
+  color: #f7f6e9;
 }
 
 button:disabled {

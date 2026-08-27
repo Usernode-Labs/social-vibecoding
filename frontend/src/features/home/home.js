@@ -1882,6 +1882,14 @@ const Home = {
   //          which read as a bright white tile on a dark homescreen.
   //          The scheme is also part of the source marker below, so a
   //          light↔dark flip re-sends on top of this one-time bump.
+  //   gen 6: the WeOS palette — both faces, both hairlines and the
+  //          letter move off the abandoned brand (see
+  //          WIDGET_TILE_PALETTE below). This one HAS to be bumped:
+  //          the tile is a baked PNG living on someone's homescreen,
+  //          the marker is the only thing that re-sends it, and without
+  //          a bump every existing widget keeps painting the old brand
+  //          forever. That is the case the rule below is contrasted
+  //          with, not an exception to it.
   //
   // Deliberately NOT bumped for the dual-icon work (#948). The shell
   // that can't take a pair still gets byte-identical gen-5 pixels under
@@ -1890,18 +1898,29 @@ const Home = {
   // not change. The only entries whose artwork DOES change are the ones
   // on a capable shell, and those are already distinguished by the new
   // `dual` value in the marker's variant segment — which is what
-  // actually drives re-sends. (Gen 6 was briefly claimed by an
-  // appearance-neutral tile that was reverted before merging, so the
-  // number is free; use 7 if that ever reaches main independently.)
-  WIDGET_ICON_GEN: 5,
+  // actually drives re-sends. (Gen 6 had been briefly claimed by an
+  // appearance-neutral tile that was reverted before merging, leaving
+  // the number free; the WeOS palette takes it. Use 7 if that reverted
+  // work ever reaches main independently.)
+  WIDGET_ICON_GEN: 6,
   // The two faces the canvas tile can wear, mirroring `.app-icon-tile`
-  // in app.css. Light is the pre-existing treatment, unchanged; dark
-  // uses the same tokens the CSS tile resolves to under `.dark`
-  // (--bg-secondary / --border / --text-faint). Emoji glyphs are never
-  // recoloured — they carry their own colours in both schemes.
+  // in app.css. Both rows are the literal values the CSS tile resolves
+  // to: light is --bg-primary / --border-light / --text-faint, dark is
+  // --bg-secondary / --border / --text-faint under `.dark`. Emoji
+  // glyphs are never recoloured — they carry their own colours in both
+  // schemes.
+  //
+  // These are LITERALS of tokens, which is the one hazard here: canvas
+  // cannot read a custom property, so every WeOS palette move has to be
+  // transcribed by hand or the widget quietly keeps painting the old
+  // brand. The light row carried stock Tailwind zinc (#e4e4e7/#a1a1aa)
+  // and the dark row a violet-tinted near-black — neither hue exists in
+  // the product any more. The light face is brand cream because the CSS
+  // tile's --bg-primary is: this is the tile's own card surface, drawn
+  // over the page ground rather than being the page.
   WIDGET_TILE_PALETTE: {
-    light: { face: '#ffffff', hairline: '#e4e4e7', letter: '#a1a1aa' },
-    dark: { face: '#1a1a30', hairline: '#2e2e50', letter: '#9898b0' },
+    light: { face: '#fcfab3', hairline: 'rgba(12, 11, 9, 0.28)', letter: '#8f8e86' },
+    dark: { face: '#1d1c19', hairline: '#2d2c28', letter: '#8f8e86' },
   },
   // The colour scheme the widget PNG should be painted for.
   //
@@ -2850,8 +2869,9 @@ const Home = {
         ctx.arcTo(inset, inset, inset + box, inset, radius);
         ctx.closePath();
       }
-      // Light: #ffffff face / #e4e4e7 hairline (unchanged).
-      // Dark: #1a1a30 face / #2e2e50 hairline — the tokens `.dark
+      // Light: #fcfab3 brand-pale face / ink-alpha hairline — the same pair
+      // `.app-icon-tile` resolves to (--bg-primary / --border-light).
+      // Dark: #1d1c19 face / #2d2c28 hairline — the tokens `.dark
       // .app-icon-tile` resolves to. The hairline is what keeps the
       // tile shape legible against iOS's own dark widget material, so
       // it must not be dropped in the dark palette.

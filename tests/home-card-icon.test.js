@@ -226,10 +226,15 @@ test('the tile hairline steps down to --border in dark mode', () => {
     path.join(__dirname, '..', 'public', 'css', 'app.css'),
     'utf8'
   );
+  // The WeOS pass moved the light hairline off --border-light to a REAL
+  // line: the tile face is the brand pale now, and a tinted face on the warm
+  // ground has less figure/ground separation than white had — the faint
+  // token stopped being visible at all. Pin the new value so it cannot
+  // silently drift back to a token that no longer reads.
   assert.match(
     css,
-    /\.app-icon-tile \{[^}]*border: 1px solid var\(--border-light\);/,
-    'light mode keeps the faint --border-light hairline'
+    /\.app-icon-tile \{[^}]*border: 1px solid rgba\(12, 11, 9, 0\.28\);/,
+    'light mode draws the visible ink-alpha hairline'
   );
   // The widget strip mirrors the pinned homescreen grid, and on a
   // dual-icon shell the widget wears exactly these per-theme faces — so
@@ -255,21 +260,24 @@ test('the tile hairline steps down to --border in dark mode', () => {
 // a rendering change without a bump never reaches a homescreen.
 test('the widget PNG carries a light AND a dark palette', () => {
   const src = SRC;
-  // Light: unchanged from the original single-palette treatment.
+  // Light: --bg-primary / --border-light / --text-faint.
   assert.match(
     src,
-    /light: \{ face: '#ffffff', hairline: '#e4e4e7', letter: '#a1a1aa' \}/,
+    /light: \{ face: '#fcfab3', hairline: 'rgba\(12, 11, 9, 0\.28\)', letter: '#8f8e86' \}/,
     'light palette matches the in-app light tile'
   );
   // Dark: --bg-secondary / --border / --text-faint under `.dark`.
   assert.match(
     src,
-    /dark: \{ face: '#1a1a30', hairline: '#2e2e50', letter: '#9898b0' \}/,
+    /dark: \{ face: '#1d1c19', hairline: '#2d2c28', letter: '#8f8e86' \}/,
     'dark palette matches the in-app dark tile'
   );
   // Emoji keep their own colour glyphs in BOTH palettes.
   assert.match(src, /app\.icon_emoji \? null : palette\.letter/);
-  assert.match(src, /WIDGET_ICON_GEN: 5,/);
+  // Gen 6 = the WeOS palette. Both halves are pinned together on
+  // purpose: recolouring the tile without bumping the marker leaves
+  // every already-pinned widget painting the previous brand.
+  assert.match(src, /WIDGET_ICON_GEN: 6,/);
 });
 
 // The PNG lands on the iOS homescreen, which renders under the SYSTEM
@@ -317,12 +325,12 @@ test('an explicit variant beats the system appearance in the renderer', () => {
   // System says dark…
   Home.__sandbox.matchMedia = () => ({ matches: true, addEventListener: () => {} });
   Home._widgetIconDataUrl(baseApp(), 'light');
-  assert.equal(paints[0], '#ffffff', '…but an explicit light variant paints white');
+  assert.equal(paints[0], '#fcfab3', '…but an explicit light variant paints the light face');
   paints.length = 0;
   // …and the other way round.
   Home.__sandbox.matchMedia = () => ({ matches: false, addEventListener: () => {} });
   Home._widgetIconDataUrl(baseApp(), 'dark');
-  assert.equal(paints[0], '#1a1a30', 'an explicit dark variant paints the dark face');
+  assert.equal(paints[0], '#1d1c19', 'an explicit dark variant paints the dark face');
 });
 
 // The marker records WHICH artwork was baked. On the capable path that

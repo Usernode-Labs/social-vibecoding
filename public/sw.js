@@ -180,6 +180,11 @@ const SHELL_ASSETS = [
   '/vendor/qrcode-1.0.0.min.js',
   '/vendor/marked-15.0.12.min.js',
   '/vendor/purify-3.4.4.min.js',
+  // The UI face. Precached rather than left to the network because the
+  // @font-face that loads it is `font-display: swap` — without it in the
+  // shell cache an offline launch renders the whole product in the fallback
+  // system stack, which is legible but is not the product.
+  '/vendor/geist-sans-1.7.2-variable.woff2',
   '/usernode-native/v1/native.css',
   '/usernode-native/v1/native.js',
   '/usernode-bridge.js',

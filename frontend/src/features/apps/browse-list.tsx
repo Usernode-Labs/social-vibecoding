@@ -48,14 +48,16 @@ function controller(): any {
 
 const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded-full '
   + 'border px-3 py-1.5 text-xs font-medium transition-colors ';
-// emerald-700, not -500: white on #10b981 is 2.5:1 — a green you can see and a
-// label you cannot read. -700 takes the same pill to 5.5:1 with the state
-// unchanged.
-const ADD_ON = 'bg-emerald-700 border-emerald-700 text-white';
+// BRAND SAGE with BLACK ink — the landing page's own "✓ Added" chip, and the
+// state the sage family owns in app.css (--state-ok's fill is this exact
+// swatch). The previous emerald needed white ink and a two-step darkening to
+// stay legible; sage carries near-black at 11.4:1 with no correction, which
+// is the brand's black-ink logic doing the work. "Added" stays a STATE, not
+// an action — which is also why it is sage and never the CTA yellow.
+const ADD_ON = 'bg-[#a9cf97] border-[#46742c]/60 text-zinc-950 dark:border-[#46742c]';
 // Filled neutral, not an accent outline: the row sits on a white card now, and
 // an outlined control on a floating surface is the shape the language never
-// draws (see the `neutral` variant in @/components/ui/button.tsx). ADD_ON stays
-// a filled emerald because "Added" is a STATE, not an action.
+// draws (see the `neutral` variant in @/components/ui/button.tsx).
 const ADD_OFF = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
   + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
 
