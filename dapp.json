@@ -458,6 +458,12 @@
       "group": "Waitlist",
       "required": false,
       "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it resolves to this deployment's production origin in production and http://localhost:<PORT> in dev. Changing it means registering the matching callback URL with GitHub, X and LinkedIn too — all three validate redirect_uri before any platform code runs."
+    },
+    {
+      "key": "USERNODE_OPENROUTER_MANAGEMENT_API_KEY",
+      "group": "General",
+      "description": "OpenRouter Corp API Key",
+      "private": true
     }
   ],
   "tests": [
