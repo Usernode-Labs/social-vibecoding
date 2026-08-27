@@ -17,6 +17,22 @@
  * the joined / offer / queued blocks keep the `hidden` in the exact position
  * their class attribute had it. The options fetch runs in an effect.
  *
+ * ── One step at a time ───────────────────────────────────────────────
+ *
+ * The screen carries three states in one column, and until the two-step
+ * waitlist only the
+ * middle one ended visibly. The title and the two intro paragraphs stayed up
+ * after a join — still selling the thing you had just said yes to, with the
+ * one instruction that now mattered four blocks down — and confirming the code
+ * merely HID `#waitlist-confirm`, so the control you were typing into vanished
+ * with nothing in its place. A control that disappears without a word reads as
+ * a failure.
+ *
+ * So: the pitch hides on `joined`, `#waitlist-confirmed` takes the confirm
+ * block's place on `confirmed`, and `#waitlist-step` names which of the two
+ * steps you are on. Two steps, not three — the stage-2 survey is offered after
+ * both and counting it would make an optional thing look required.
+ *
  * ── Screenshot state ─────────────────────────────────────────────────
  *
  * `?shot=waitlist-joined` paints the post-submit success state with the stage-2
@@ -61,6 +77,20 @@ export function WaitlistScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [discovery, setDiscovery] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  /**
+   * The address the code went to, echoed back in the confirm step. Empty at
+   * first render, and the copy below resolves to its one-address-less sentence
+   * when
+   * it is — the prerendered document has no address to name.
+   */
+  const [sentTo, setSentTo] = useState('');
+  /**
+   * Re-entrancy guard for the confirm POST. `submitting` is state and
+   * `onConfirmCode` closes over the mount's value of it, so on a slow network
+   * the auto-submit below would fire a second request while the first was
+   * still open. A ref reads live.
+   */
+  const busy = useRef(false);
 
   const email = useRef<HTMLInputElement>(null);
   const code = useRef<HTMLInputElement>(null);
@@ -154,6 +184,11 @@ export function WaitlistScreen() {
           // link for anyone who stops here).
           setMsg(null);
           setJoined(true);
+          setSentTo(emailVal);
+          // Six digits is the whole of what is left to do, so put the caret
+          // there. On a REAL join only: `?shot=waitlist-joined` has to paint a
+          // settled state for the declared check, and a focus ring is not one.
+          window.setTimeout(() => code.current?.focus({ preventScroll: true }), 0);
           const token = (data && data.more_token) || null;
           if (token) {
             setMoreToken(token);
@@ -181,10 +216,12 @@ export function WaitlistScreen() {
    * cleared — so `email.current` is still the address the code went to.
    */
   const onConfirmCode = useCallback(async () => {
+    if (busy.current) return;
     const codeVal = code.current?.value.trim() || '';
     if (!/^[0-9]{6}$/.test(codeVal)) {
       return setMsg({ text: 'Enter the six-digit code from your email.', tone: 'error' });
     }
+    busy.current = true;
     setSubmitting(true);
     try {
       const res = await fetch('/api/public/waitlist/confirm', {
@@ -207,8 +244,33 @@ export function WaitlistScreen() {
     } catch {
       setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
     }
+    busy.current = false;
     setSubmitting(false);
   }, []);
+
+  /**
+   * Keep the field to six digits, and confirm as soon as it has them.
+   *
+   * The address bar is not where this code comes from: people paste it out of
+   * a mail app, which brings "123 456" or "Code: 123456" with it. Strip rather
+   * than reject — and because the strip is what enforces the length, the
+   * field's own `maxLength` is loose enough that a pasted string reaches it
+   * intact instead of being truncated mid-number.
+   *
+   * The Confirm button stays. Auto-submit is the fast path, not the only one:
+   * a wrong code has to be correctable, and correcting one digit of six is an
+   * edit, not a sixth keystroke.
+   */
+  const onCodeInput = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const el = e.currentTarget;
+      const digits = el.value.replace(/[^0-9]/g, '').slice(0, 6);
+      if (digits !== el.value) el.value = digits;
+      setMsg(null);
+      if (digits.length === 6) void onConfirmCode();
+    },
+    [onConfirmCode],
+  );
 
   const live = useRef({ waitlistOnShow });
   live.current = { waitlistOnShow };
@@ -234,17 +296,39 @@ export function WaitlistScreen() {
         &larr; Back
       </a>
       <div className="max-w-2xl mx-auto px-6 py-16">
-        <h1 className="text-2xl font-bold">
+        {/*
+            Where you are. Hidden for a waiting-room session, which is shown
+            `#waitlist-queued` rather than a flow it is already past.
+        */}
+        <p
+          id="waitlist-step"
+          className={hiddenLast(
+            hasSession,
+            'text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400',
+          )}
+        >
+          {confirmed
+            ? 'All done'
+            : joined
+              ? 'Step 2 of 2 · Confirm your email'
+              : 'Step 1 of 2 · Your email'}
+        </p>
+        {/*
+            The pitch. It answers "why would I join", so it belongs to step 1
+            only — after the join it is four blocks of answered question sitting
+            on top of the one instruction that still matters.
+        */}
+        <h1 className={hiddenLast(joined, 'mt-1 text-2xl font-bold')}>
           Join the waitlist
         </h1>
-        <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
+        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
           Usernode Social Vibecoding is a place where users describe the app
         they want in chat, an AI builds it, and the community votes the
         changes in. Every app in the directory was built here by the people
         who use it. They run on the Usernode chain, and contributors own a
         share of what they build.
         </p>
-        <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
+        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
           Platform access opens in batches. Join the waitlist and we'll email
         you when your spot opens. The public apps are open to everyone right
         now.
@@ -397,7 +481,9 @@ export function WaitlistScreen() {
               Confirm your email
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
-              We sent a six-digit code. You can also just click the link in that email.
+              {sentTo
+                ? `We sent a six-digit code to ${sentTo}. You can also just click the link in that email.`
+                : 'We sent a six-digit code. You can also just click the link in that email.'}
             </p>
             <div className="flex gap-2">
               <input
@@ -406,8 +492,9 @@ export function WaitlistScreen() {
                 type="text"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                maxLength={6}
+                maxLength={32}
                 placeholder="000000"
+                onChange={onCodeInput}
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
               <Button
@@ -422,6 +509,25 @@ export function WaitlistScreen() {
                 Confirm
               </Button>
             </div>
+          </div>
+          {/*
+              What replaces the block above. `confirmed` used to only hide it,
+              so a correct code deleted the control and said nothing — the
+              reading of which is that something went wrong.
+          */}
+          <div
+            id="waitlist-confirmed"
+            className={hiddenFirst(
+              !confirmed,
+              'mt-4 rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 p-4',
+            )}
+          >
+            <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+              Thanks. Your email is confirmed &#9989;
+            </p>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+              That&rsquo;s everything we need from you. We&rsquo;ll email you when your spot opens.
+            </p>
           </div>
           <div
             id="waitlist-more-offer"
