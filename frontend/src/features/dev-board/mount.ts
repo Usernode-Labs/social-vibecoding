@@ -77,24 +77,11 @@ import type {
 export interface MountBoardOptions extends DevBoardFrameProps {
   /** `AppView._getViewMode()`, used to seed the store before the first render. */
   viewMode: string;
-  /**
-   * Kept in the options shape, and deliberately UNUSED by the frame.
-   *
-   * The Dev screen drew its own Feed/Kanban tabs and this was their handler.
-   * The tabs are the platform header's App/Feed/Kanban toggle now, so nothing
-   * in the frame calls it — but app-view.js still passes it, and the store
-   * seeding above is still what a cold `?view=kanban` deep link needs, so the
-   * option is accepted and dropped here rather than removed from every caller.
-   */
-  onSelectViewMode?: (mode: string) => void;
 }
 
 export interface DevBoardBridge {
   mountBoard(host: Element | null, options: MountBoardOptions): void;
-  mountChatSubView(
-    host: Element | null,
-    options: { backHref: string; onBackClick: (event: MouseEvent) => void },
-  ): void;
+  mountChatSubView(host: Element | null): void;
   mountTopicSubView(
     host: Element | null,
     options: { backHref: string; onBackClick: (event: MouseEvent) => void },
@@ -148,9 +135,9 @@ cardMenuStore.setFlush(flushSync);
 
 /**
  * The filter bar's too: `_renderKanbanFilterBar` mounts and publishes, and the
- * kanban entry path reads the bar back — and `_clearKanbanFilters` publishes a
- * new `seq` and then repaints the board, which must not see a half-applied
- * bar.
+ * kanban entry path reads the bar back — and dismissing the Search chip
+ * publishes a new `seq` and then repaints the board, which must not see a
+ * half-applied bar.
  */
 kanbanFiltersStore.setFlush(flushSync);
 
@@ -188,30 +175,19 @@ export const devBoardBridge: DevBoardBridge = {
     // Seed before the first render so a cold `?view=kanban` deep link paints
     // kanban immediately rather than list-then-kanban.
     publishViewMode(options.viewMode);
-    const {
-      viewMode: _viewMode,
-      onSelectViewMode: _onSelectViewMode,
-      ...rest
-    } = options;
+    // `viewMode` seeds the store and is not a frame prop — the frame draws no
+    // Kanban|Feed control any more (the choice lives under the Improve panel's
+    // Board row), so it is dropped here rather than forwarded.
+    const { viewMode: _viewMode, ...rest } = options;
     mountLegacyPortal(host, createElement(DevBoardFrame, rest));
   },
 
-  mountChatSubView(host, options) {
-    mountLegacyPortal(
-      host,
-      createElement(DevChatSubView, {
-        backHref: options.backHref,
-        // React's synthetic event carries `nativeEvent`; NavLink.isNativeClick
-        // reads modifier keys and `button`, both of which the synthetic event
-        // exposes directly, so either would do. Passing the synthetic one keeps
-        // `preventDefault()` on the React side, which is where it belongs.
-        onBackClick: (event) => options.onBackClick(event as unknown as MouseEvent),
-      }),
-    );
+  // Activity is a first-class destination with no in-frame back control
+  // (Streamlined Concept), so the mount takes no back-bar props.
+  mountChatSubView(host) {
+    mountLegacyPortal(host, createElement(DevChatSubView));
   },
 
-  // The same shape as mountChatSubView, and the same note about the synthetic
-  // event applies.
   mountTopicSubView(host, options) {
     mountLegacyPortal(
       host,
@@ -268,8 +244,6 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(KanbanFilters));
   },
 
-  // A patch, so `_updateKanbanFilterBarUI` can leave one select's options
-  // alone while its dropdown is open.
   publishKanbanFilters(patch) {
     kanbanFiltersStore.set((s) => ({ ...s, ...patch }));
   },

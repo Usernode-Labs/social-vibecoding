@@ -2180,7 +2180,7 @@ async function runMcp(args, launcherPath) {
   });
 
   server.registerTool('social_vibecoding.proposal_submit_build', {
-    description: 'Submit an implemented local build to the native proposal. First run proposal_push_commit and use its returned bot-owned head SHA. Usernode verifies the pinned head, deploys staging, and runs its normal proposal checks. Poll proposal_status afterward.',
+    description: 'Submit an implemented local build to the native proposal. First run proposal_push_commit and use its returned bot-owned head SHA. Usernode verifies the pinned head, deploys staging, and runs its normal proposal checks. Poll proposal_status afterward; for an already-promoted revision, poll revisionState instead of the lifecycle state.',
     inputSchema: {
       session_id: sessionIdSchema,
       head_sha: z.string().regex(/^[0-9a-fA-F]{40}$/),
@@ -2204,7 +2204,7 @@ async function runMcp(args, launcherPath) {
   }));
 
   server.registerTool('social_vibecoding.proposal_status', {
-    description: 'Read staging/check/promotion state for a native CLI proposal. Poll after proposal_submit_build until state is ready or failed. webPath is optional: local agents can complete the whole workflow without opening it.',
+    description: 'Read staging/check/promotion state for a native CLI proposal. Poll after proposal_submit_build until revisionState (when present) or state is ready or failed. webPath is optional: local agents can complete the whole workflow without opening it.',
     inputSchema: {
       session_id: sessionIdSchema,
       profile: apiProfileSchema,

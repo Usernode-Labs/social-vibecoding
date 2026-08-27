@@ -25,10 +25,16 @@ import { flushSync } from 'react-dom';
 
 import './notifications.js';
 import { notificationsStore } from './notifications-store.js';
+import { notificationsSheetStore } from './notifications-sheet-store.js';
+import { NotificationsSheet } from './notifications-sheet-controller.js';
 
 notificationsStore.setFlush(flushSync);
+// The sheet's own flag needs the flush for the reason every sheet's does:
+// `open()` publishes and then hands the element to the kit, which measures
+// the content height once, at present time. See lib/sheet-controller.js.
+notificationsSheetStore.setFlush(flushSync);
 
-export { notificationsStore };
+export { notificationsStore, notificationsSheetStore, NotificationsSheet };
 
 if (typeof window !== 'undefined') {
   const host = window as unknown as {
@@ -38,4 +44,5 @@ if (typeof window !== 'undefined') {
   if (host.Notifications) host.Notifications._store = notificationsStore;
   const bridge = (host.UsernodeReact ||= {});
   bridge.notifications = host.Notifications;
+  bridge.notificationsSheet = NotificationsSheet;
 }

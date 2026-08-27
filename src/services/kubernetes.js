@@ -1,4 +1,6 @@
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const stream = require('stream');
 const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
@@ -100,7 +102,30 @@ function requireBuildConfig(config) {
   return cfg;
 }
 
-async function createBuild(config, { app, revision, environment, sessionId }) {
+function packageRunsScript(sourceDir, scriptName) {
+  if (!sourceDir) return false;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(sourceDir, 'package.json'), 'utf8'));
+    return typeof pkg.scripts?.[scriptName] === 'string';
+  } catch {
+    return false;
+  }
+}
+
+async function deleteBuild(config, name) {
+  await deleteIfPresent(
+    getClients().custom,
+    'deleteNamespacedCustomObject',
+    name,
+    config.kubernetes.buildNamespace,
+    {
+      group: 'kpack.io', version: 'v1alpha2', plural: 'builds',
+      propagationPolicy: 'Background',
+    }
+  );
+}
+
+async function createBuild(config, { app, revision, environment, sessionId, sourceDir }) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
@@ -113,6 +138,15 @@ async function createBuild(config, { app, revision, environment, sessionId }) {
   const repository = `${cfg.repositoryPrefix}/${dnsName(app.slug)}`;
   const cacheTag = `${cfg.cacheRepositoryPrefix}/${dnsName(app.slug)}:cache`;
   const tag = `${repository}:git-${revision}`;
+  const buildEnv = [{ name: 'BP_NODE_VERSION', value: cfg.nodeVersion }];
+  // The platform self-app generates ignored React/Tailwind artifacts. Paketo
+  // must materialize them while /workspace is writable; the launch container
+  // deliberately runs as non-root and treats the image filesystem as built.
+  // Detect the script from the exact checked-out source instead of coupling
+  // this runtime adapter to one app id or slug.
+  if (packageRunsScript(sourceDir, 'ensure:shell')) {
+    buildEnv.push({ name: 'BP_NODE_RUN_SCRIPTS', value: 'ensure:shell' });
+  }
   const body = {
     apiVersion: 'kpack.io/v1alpha2',
     kind: 'Build',
@@ -124,7 +158,7 @@ async function createBuild(config, { app, revision, environment, sessionId }) {
       cache: { registry: { tag: cacheTag } },
       source: { git: { url: app.repo_url.replace(/\.git$/, ''), revision } },
       activeDeadlineSeconds: cfg.activeDeadlineSeconds,
-      env: [{ name: 'BP_NODE_VERSION', value: cfg.nodeVersion }],
+      env: buildEnv,
       resources: {
         requests: { cpu: process.env.BUILD_REQUESTS_CPU || '500m', memory: process.env.BUILD_REQUESTS_MEMORY || '1Gi', 'ephemeral-storage': process.env.BUILD_REQUESTS_EPHEMERAL_STORAGE || '2Gi' },
         limits: { cpu: process.env.BUILD_LIMITS_CPU || '2', memory: process.env.BUILD_LIMITS_MEMORY || '2Gi', 'ephemeral-storage': process.env.BUILD_LIMITS_EPHEMERAL_STORAGE || '8Gi' },
@@ -137,8 +171,17 @@ async function createBuild(config, { app, revision, environment, sessionId }) {
   } catch (err) {
     if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err;
   }
-  const result = await waitForBuild(config, buildName);
-  return { buildRef: `${cfg.buildNamespace}/${buildName}`, imageRef: result.status.latestImage, requestedTag: tag };
+  try {
+    const result = await waitForBuild(config, buildName);
+    return { buildRef: `${cfg.buildNamespace}/${buildName}`, imageRef: result.status.latestImage, requestedTag: tag };
+  } catch (err) {
+    await deleteBuild(config, buildName).catch((cleanupErr) => {
+      log.warn('kubernetes', 'Failed kpack Build cleanup failed', {
+        buildName, err: cleanupErr.message,
+      });
+    });
+    throw err;
+  }
 }
 
 async function waitForBuild(config, name) {
@@ -218,6 +261,9 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
           containers: [{
             name: 'app', image: imageRef, imagePullPolicy: 'IfNotPresent',
             ports: [{ name: 'http', containerPort: 3000 }],
+            env: app.slug === config.selfAppSlug
+              ? [{ name: 'USERNODE_SHELL_ASSETS_PREBUILT', value: '1' }]
+              : [],
             envFrom: [{ secretRef: { name: secretName } }],
             startupProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 3, failureThreshold: 40 },
             readinessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 5, failureThreshold: 3 },
@@ -240,7 +286,21 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
       tls: [{ hosts: [hostname], secretName: withSuffix(name, 'tls') }],
     },
   });
-  await waitForDeployment(namespace, name);
+  try {
+    await waitForDeployment(namespace, name);
+  } catch (err) {
+    // A failed preview has no serving value but its declared CPU limit still
+    // consumes ResourceQuota. Production keeps its prior ReplicaSet for a
+    // recoverable rollout; previews are disposable and are rebuilt on retry.
+    if (environment !== 'production') {
+      await deleteApplication(config, name).catch((cleanupErr) => {
+        log.warn('kubernetes', 'Failed preview cleanup failed', {
+          namespace, name, err: cleanupErr.message,
+        });
+      });
+    }
+    throw err;
+  }
   return { runtimeKind: 'kubernetes', runtimeName: name, imageRef, hostname, url: `https://${hostname}` };
 }
 
@@ -303,6 +363,23 @@ async function deleteBuilds(config, appId) {
     plural: 'builds', labelSelector: `social.usernode.io/app-id=${appId}`,
     propagationPolicy: 'Background',
   });
+}
+
+async function deleteFailedBuilds(config) {
+  const namespace = config.kubernetes.buildNamespace;
+  const { custom } = getClients();
+  const response = await custom.listNamespacedCustomObject({
+    group: 'kpack.io', version: 'v1alpha2', namespace, plural: 'builds',
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`,
+  });
+  const items = response.items || [];
+  const failed = items.filter((build) => build.status?.conditions?.some(
+    (condition) => condition.type === 'Succeeded' && condition.status === 'False'
+  ));
+  for (const build of failed) {
+    await deleteBuild(config, build.metadata.name);
+  }
+  return { examined: items.length, deleted: failed.length };
 }
 
 async function ensureWorker(config, { sessionId, env }) {
@@ -685,7 +762,7 @@ async function execInWorker(config, runtimeName, command, stdinText = null) {
 
 module.exports = {
   dnsName, withSuffix, labels, createBuild, deployApplication, getApplicationStatus,
-  getApplicationLogs, restartApplication, deleteApplication, deleteBuilds, ensureWorker,
+  getApplicationLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   runCaptureJob, execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity,

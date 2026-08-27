@@ -1,5 +1,5 @@
 /**
- * `#drawer-row-node` — the node status row at the top of the drawer.
+ * `#account-row-node` — the node status row in the Profile screen's account group.
  * See ./node-pill-store.ts for what the seam carries.
  *
  * ── Every class here is a complete literal, and that is load-bearing ──
@@ -72,12 +72,12 @@ export function NodePillRow(): ReactNode {
   const style = styleFor(s.status);
   return (
     <button
-      id="drawer-row-node"
+      id="account-row-node"
       className={s.visible ? ROW : `hidden ${ROW}`}
       onClick={() => controller()?.openFromRow?.()}
     >
       <span
-        id="drawer-node-dot"
+        id="account-node-dot"
         className={`w-2.5 h-2.5 rounded-full shrink-0 ${style.dot}`}
         aria-hidden="true"
       >
@@ -88,7 +88,7 @@ export function NodePillRow(): ReactNode {
       {/* Empty until the module has something to say — the hand-written row
           shipped this span blank, and the prerender has to agree. */}
       <span
-        id="drawer-node-status"
+        id="account-node-status"
         className={s.visible ? `ml-auto text-xs font-medium ${style.ink}` : 'ml-auto text-xs font-medium text-zinc-500 dark:text-zinc-400'}
       >{s.visible ? style.label : ''}</span>
     </button>

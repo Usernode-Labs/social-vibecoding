@@ -9,6 +9,7 @@ const staging = require('../services/staging');
 const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
+const prImportSync = require('../services/pr-import-sync');
 const branchNames = require('../services/branch-names');
 const externalAgentHead = require('../services/external-agent-head');
 // The connector-error → HTTP status map. It lives in routes/dev-flow.js
@@ -491,25 +492,41 @@ function currentProposalBranchHead(session) {
     || null;
 }
 
-function publicSessionStatus(session) {
-  let state;
+// Managed local revisions follow the shared proposal lifecycle: active work
+// is mutable, promoted proposals are mutable with a vote reset, and states the
+// general rule freezes (notably merging/merged) remain frozen. Paused sessions
+// retain their existing resume-first behavior.
+function managedRevisionKind(session) {
+  const kind = proposalUpdate.isContinuableStatus(session?.status);
+  if (kind === 'proposal') return kind;
+  if (kind === 'session' && session?.status === 'active') return kind;
+  return null;
+}
+
+function revisionBuildState(session) {
   const headSha = currentCheckedHead(session);
-  if (session.status !== 'active') state = session.status;
-  else if (hasUnsubmittedUpload(session)) state = 'uploaded';
-  else if (!headSha) state = 'draft';
-  else if (['failing', 'error'].includes(session.check_state)) state = 'failed';
-  else if (staging.hasInFlightBuild(Number(session.id)) || !session.staging_url) state = 'deploying';
-  else if (isSessionBusy(Number(session.id))
+  if (hasUnsubmittedUpload(session)) return 'uploaded';
+  if (!headSha) return 'draft';
+  if (['failing', 'error'].includes(session.check_state)) return 'failed';
+  if (staging.hasInFlightBuild(Number(session.id)) || !session.staging_url) return 'deploying';
+  if (isSessionBusy(Number(session.id))
       || hasInFlightHandoffPipeline(session.id)
       || visuals.hasInFlightCapture(session.id)
-      || !session.check_state || session.check_state === 'pending') state = 'checking';
-  else if (session.check_state === 'passing' || session.check_state === 'skipped') state = 'ready';
-  else state = 'failed';
+      || !session.check_state || session.check_state === 'pending') return 'checking';
+  if (session.check_state === 'passing' || session.check_state === 'skipped') return 'ready';
+  return 'failed';
+}
+
+function publicSessionStatus(session) {
+  const headSha = currentCheckedHead(session);
+  const revisionState = revisionBuildState(session);
+  const state = session.status === 'active' ? revisionState : session.status;
   return {
     sessionId: Number(session.id),
     source: session.source,
     state,
     status: session.status,
+    ...(session.status === 'promoted' ? { revisionState } : {}),
     branch: session.branch_name,
     baseSha: session.handoff_base_sha,
     headSha,
@@ -1082,8 +1099,13 @@ function proposalHandoffRoutes(config) {
       try {
         return await serializeHandoffSubmission(sessionId, async () => {
         const session = await loadOwnedHandoff(pool, sessionId, req.user.id);
-        if (!session || session.status !== 'active') {
-          return res.status(404).json({ error: 'Active handoff session not found' });
+        if (!session) return res.status(404).json({ error: 'Handoff session not found' });
+        const revisionKind = managedRevisionKind(session);
+        if (!revisionKind) {
+          return res.status(409).json({
+            error: 'proposal_closed',
+            message: `This proposal is ${session.status || 'no longer open'}, so it cannot take a managed revision.`,
+          });
         }
         if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
           return res.status(404).json({ error: 'Active handoff session not found' });
@@ -1152,21 +1174,13 @@ function proposalHandoffRoutes(config) {
           // retry before submission or long after its staging checks passed.
           // Rewriting the row would wrongly erase a valid verdict and preview
           // even though createProposalCommit just proved the branch unchanged.
-          if (session.handoff_uploaded_sha === uploaded.sha
-              && session.handoff_local_commit_sha === input.localCommitSha) {
-            return res.status(200).json({
-              ok: true,
-              sessionId: Number(session.id),
-              localCommitSha: input.localCommitSha,
-              headSha: uploaded.sha,
-              treeSha: uploaded.treeSha,
-              branch: session.branch_name,
-              uploaded: false,
-              webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
-            });
-          }
-          const advanced = await pool.query(
-            `UPDATE chat_sessions
+          // A promoted retry still reconciles below: its first response may
+          // have been lost after GitHub moved but before votes were reset.
+          const alreadyRecorded = session.handoff_uploaded_sha === uploaded.sha
+            && session.handoff_local_commit_sha === input.localCommitSha;
+          if (!alreadyRecorded) {
+            const advanced = await pool.query(
+              `UPDATE chat_sessions
                 SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5,
                     handoff_upload_checked_sha = checks_commit_sha,
                     check_state = NULL, check_phase = NULL,
@@ -1176,7 +1190,7 @@ function proposalHandoffRoutes(config) {
                     check_next_retry_at = NULL, check_error_notified_at = NULL,
                     capture_state = NULL, capture_detail = NULL, captured_at = NULL,
                     last_activity_at = NOW()
-              WHERE id = $2 AND status = 'active' AND source = $3
+              WHERE id = $2 AND status = $6 AND source = $3
                 AND (CASE
                        WHEN handoff_uploaded_sha IS NOT NULL
                         AND handoff_uploaded_sha IS DISTINCT FROM handoff_head_sha
@@ -1185,19 +1199,42 @@ function proposalHandoffRoutes(config) {
                        ELSE COALESCE(checks_commit_sha, handoff_uploaded_sha,
                                      handoff_head_sha, handoff_base_sha)
                      END) IS NOT DISTINCT FROM $4`,
-            [uploaded.sha, session.id, SOURCE, expectedParent, input.localCommitSha]
-          );
-          if (!advanced.rowCount) {
-            return res.status(409).json({ error: 'session_state_changed' });
+              [uploaded.sha, session.id, SOURCE, expectedParent, input.localCommitSha,
+                session.status]
+            );
+            if (!advanced.rowCount) {
+              return res.status(409).json({ error: 'session_state_changed' });
+            }
           }
-          return res.status(uploaded.created ? 201 : 200).json({
+          if (revisionKind === 'proposal') {
+            const reconciled = await proposalUpdate.reconcileManagedCommitUpload(
+              { config, pool },
+              {
+                session: {
+                  ...session,
+                  handoff_uploaded_sha: uploaded.sha,
+                  handoff_local_commit_sha: input.localCommitSha,
+                },
+                expectedHeadSha: uploaded.sha,
+              }
+            );
+            if (!reconciled.ok) {
+              return res.status(UPDATE_STATUS_BY_CODE[reconciled.code]
+                || (reconciled.retryable ? 503 : 409)).json({
+                error: reconciled.code,
+                message: reconciled.message,
+                ...(reconciled.headSha ? { headSha: reconciled.headSha } : {}),
+              });
+            }
+          }
+          return res.status(!alreadyRecorded && uploaded.created ? 201 : 200).json({
             ok: true,
             sessionId: Number(session.id),
             localCommitSha: input.localCommitSha,
             headSha: uploaded.sha,
             treeSha: uploaded.treeSha,
             branch: session.branch_name,
-            uploaded: uploaded.created,
+            uploaded: alreadyRecorded ? false : uploaded.created,
             webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
           });
         } finally {
@@ -1226,9 +1263,22 @@ function proposalHandoffRoutes(config) {
     try {
       return await serializeHandoffSubmission(sessionId, async () => {
         const session = await loadOwnedHandoff(pool, sessionId, req.user.id);
-        if (!session || session.status !== 'active') return res.status(404).json({ error: 'Active handoff session not found' });
+        if (!session) return res.status(404).json({ error: 'Handoff session not found' });
+        const revisionKind = managedRevisionKind(session);
+        if (!revisionKind) {
+          return res.status(409).json({
+            error: 'proposal_closed',
+            message: `This proposal is ${session.status || 'no longer open'}, so it cannot take a managed revision.`,
+          });
+        }
         if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
           return res.status(404).json({ error: 'Active handoff session not found' });
+        }
+        if (revisionKind === 'proposal'
+            && session.handoff_head_sha === input.headSha
+            && session.reviewed_head_sha === input.headSha) {
+          const status = publicSessionStatus(session);
+          return res.status(status.revisionState === 'ready' ? 200 : 202).json(status);
         }
         const localPipelineBusy = hasInFlightHandoffPipeline(session.id);
         const stagingBusy = staging.hasInFlightBuild(Number(session.id));
@@ -1270,6 +1320,100 @@ function proposalHandoffRoutes(config) {
             error: 'head_not_uploaded',
             message: 'Upload this exact local commit with proposal_push_commit before submitting it for staging.',
           });
+        }
+        if (revisionKind === 'proposal') {
+          // The upload already moved the PR, reset old votes and stamped this
+          // SHA pending. Build submission attaches the durable transcript/spec
+          // and launches one proposal check run for the final uploaded commit.
+          // It must not use the active-session pipeline, whose persistence is
+          // intentionally scoped to status='active'.
+          const releaseOperation = beginSessionOperation(session.id);
+          try {
+            const repo = repoCoordinates(session);
+            if (!github.isEnabled() || !repo) {
+              return res.status(400).json({ error: 'No GitHub repo configured for this app' });
+            }
+            let remoteHead;
+            try {
+              remoteHead = await github.getBranchSha(repo.owner, repo.repo, session.branch_name);
+            } catch (err) {
+              log.warn('proposal-handoff', 'Promoted managed revision head read failed', {
+                sessionId: session.id, ...github.describeGithubError(err),
+              });
+              return res.status(503).json({ error: 'github_unavailable' });
+            }
+            if (String(remoteHead).toLowerCase() !== input.headSha) {
+              return res.status(409).json({
+                error: 'branch_moved',
+                message: 'The proposal branch changed after this managed commit was uploaded.',
+              });
+            }
+
+            await insertHistory(pool, session.id, input.history);
+            const summary = testsSummary(input.tests);
+            if (summary) {
+              const summaryId = crypto.createHash('sha256').update(summary).digest('hex').slice(0, 16);
+              await insertHistory(pool, session.id, [{
+                id: `tests:${input.headSha}:${summaryId}`,
+                kind: 'summary',
+                phase: 'test',
+                content: summary,
+              }]);
+            }
+            const spec = input.spec || session.spec_md;
+            if (input.spec) {
+              await pool.query(`UPDATE chat_sessions SET spec_md = $1 WHERE id = $2`, [input.spec, session.id]);
+            }
+            await snapshotSpec(pool, session.id, spec, input.headSha);
+            const adopted = await pool.query(
+              `UPDATE chat_sessions
+                  SET handoff_head_sha = $1,
+                      handoff_local_commit_sha = CASE
+                        WHEN handoff_uploaded_sha = $1 THEN handoff_local_commit_sha
+                        ELSE NULL
+                      END,
+                      handoff_upload_checked_sha = NULL,
+                      last_activity_at = NOW()
+                WHERE id = $2 AND status = $3 AND source = $4
+                  AND handoff_uploaded_sha = $1
+                  AND reviewed_head_sha IS NOT DISTINCT FROM $1
+                  AND checks_commit_sha IS NOT DISTINCT FROM $1
+                  AND handoff_head_sha IS NOT DISTINCT FROM $5
+                  AND handoff_upload_checked_sha IS NOT DISTINCT FROM $6`,
+              [input.headSha, session.id, session.status, SOURCE,
+                session.handoff_head_sha || null, session.handoff_upload_checked_sha || null]
+            );
+            if (!adopted.rowCount) {
+              return res.status(409).json({ error: 'session_state_changed' });
+            }
+
+            const freshSession = {
+              ...session,
+              handoff_head_sha: input.headSha,
+              handoff_upload_checked_sha: null,
+              spec_md: spec,
+            };
+            // Keep the shared session busy across the detached proposal build,
+            // including the small async gap before staging registers itself.
+            // The outer operation below releases only its own reference.
+            const releaseChecks = beginSessionOperation(session.id);
+            prImportSync.rerunChecksForNewHead({
+              config, pool, session: freshSession, newHead: input.headSha,
+            }).catch((err) => log.warn('proposal-handoff', 'Promoted managed revision checks failed', {
+              sessionId: session.id, headSha: input.headSha, err: err.message,
+            })).finally(releaseChecks);
+            return res.status(202).json({
+              ok: true,
+              state: 'promoted',
+              status: 'promoted',
+              revisionState: 'deploying',
+              sessionId: Number(session.id),
+              headSha: input.headSha,
+              webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+            });
+          } finally {
+            releaseOperation();
+          }
         }
         // Claim the shared session synchronously after the final busy check
         // and before the first GitHub await. Web dispatch/sync gates consult

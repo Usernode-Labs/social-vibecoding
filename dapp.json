@@ -502,11 +502,6 @@
       "expectText": "Change photo"
     },
     {
-      "name": "A sidebar tap lands on the destination with no competing screen animation (#977)",
-      "path": "/?shot=menu-nav&un-platform=ios",
-      "expectSelector": "#profile-screen:not(.hidden)[data-entered=\"none\"]"
-    },
-    {
       "name": "Challenges tab summarises the completed set (#981)",
       "path": "/#leaderboard/challenges",
       "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid #tc-se-challenge-summary"
@@ -518,15 +513,15 @@
       "expectText": "Whole-season standings"
     },
     {
-      "name": "Improve panel shows a session's title, not its dev name (#971)",
+      "name": "The Improve panel shows a change's title, not its dev name (#971, Streamlined Concept)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel[data-open] #improve-body a[href$=\"/sessions/990101\"]",
+      "expectSelector": "#improve-panel #improve-sessions a[href$=\"/sessions/990101\"]",
       "expectText": "[Mock] Your in-progress session"
     },
     {
-      "name": "Improve panel: a busy session row pulses from live state (#1038)",
+      "name": "The Improve panel: a busy change row pulses from live state (#1038)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel[data-open] a[href$=\"/sessions/990102\"] .animate-pulse"
+      "expectSelector": "#improve-panel a[href$=\"/sessions/990102\"] .animate-pulse"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
@@ -806,16 +801,6 @@
       "path": "/?demo=1&challenges=none",
       "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
       "expectText": "staging-demo-validator"
-    },
-    {
-      "name": "The sidebar is fully gone and restored to <body> after a sidebar tap (#977)",
-      "path": "/?shot=menu-nav&un-platform=ios",
-      "expectSelector": "body:not(:has(.un-panel)) > #header-menu-panel:not(.platform-panel-adopted)"
-    },
-    {
-      "name": "The desktop slide-over suppresses the screen fade too (#977)",
-      "path": "/?shot=menu-nav",
-      "expectSelector": "#profile-screen:not(.hidden)[data-entered=\"none\"]"
     },
     {
       "name": "Challenges widget: with no standings at all the fill falls back to the Kudos board (#962)",
@@ -1346,49 +1331,55 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Improve button is present on an app Dev view",
+      "name": "The Dev view carries the standing Improve action in the header",
       "path": "/app/staging-demo-admins/dev",
-      "expectSelector": "#improve-btn:not(.hidden)"
+      "expectSelector": "#platform-header #improve-btn:not(.hidden)"
     },
     {
-      "name": "The App/Feed/Kanban toggle rides the header on a wide screen",
-      "path": "/app/staging-demo-admins/dev",
-      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"]"
-    },
-    {
-      "name": "The header toggle marks the Dev view actually on screen",
-      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
-    },
-    {
-      "name": "The self-hosted platform row gets an App segment too (#1386)",
+      "name": "The Improve panel offers the three views in order (#1443)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"] + [data-view-segment=\"feed\"] + [data-view-segment=\"kanban\"]"
+      "expectSelector": "#improve-views [data-context-row=\"app\"] ~ [data-context-row=\"board\"] ~ [data-context-row=\"activity\"]"
     },
     {
-      "name": "Home is the platform's App segment, and it reads as selected (#1386)",
+      "name": "The app-context sheet carries the + New change action (Streamlined Concept)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-quick-actions #improve-row-new-session"
+    },
+    {
+      "name": "The chip is the header's label on an app screen (#1443)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#header-title #app-switcher-btn"
+    },
+    {
+      "name": "Improve is on the header right on the Dev screens too, not a contextual eye",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#platform-header #improve-btn:not(.hidden)"
+    },
+    {
+      "name": "The Board opens straight onto its cards, with no view tab strip above them",
+      "path": "/app/staging-demo-admins/dev",
+      "expectSelector": "#dev-forum-scroll #dev-body"
+    },
+    {
+      "name": "A ?view=kanban deep link resolves onto the kanban board",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body #dev-kanban-board"
+    },
+    {
+      "name": "The self-hosted platform row gets a use-the-app row too (#1386, #1443)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-views [data-context-row=\"app\"]",
+      "expectText": "The platform itself"
+    },
+    {
+      "name": "The chip is the header's label on Home too, not only inside an app (#1443)",
       "path": "/",
-      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"][aria-selected=\"true\"]"
+      "expectSelector": "#header-title #app-switcher-btn"
     },
     {
       "name": "Home shows the platform Improve button (improve Social Vibecoding itself)",
       "path": "/",
       "expectSelector": "#improve-btn:not(.hidden)"
-    },
-    {
-      "name": "The Improve button survives onto Settings (#1406)",
-      "path": "/#settings",
-      "expectSelector": "#improve-btn:not(.hidden)"
-    },
-    {
-      "name": "The view selector survives onto Settings too (#1406)",
-      "path": "/#settings",
-      "expectSelector": "#improve-view-toggle [data-view-segment=\"app\"]"
-    },
-    {
-      "name": "On Settings the selector claims no segment — you are on none of them (#1406)",
-      "path": "/#settings",
-      "expectSelector": "#improve-view-toggle:not(:has([aria-selected=\"true\"]))"
     },
     {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
@@ -1401,10 +1392,9 @@
       "expectSelector": "#dev-kanban-search"
     },
     {
-      "name": "The board person filter says it matches assignees or authors",
+      "name": "The board person filter lives in the Filters dialog (matches assignees or authors, #1404)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-assignee[aria-label=\"Filter by assignee or author\"]",
-      "expectText": "Assignee or author"
+      "expectSelector": "#board-filters-modal #board-filters-assignee"
     },
     {
       "name": "Mobile kanban tab strip ships one tab per column (#814)",
@@ -1432,30 +1422,30 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "The Dev screen draws no view tabs of its own — the header toggle owns them",
+      "name": "The + button shares the actions row with the filter host",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-actions #dev-plus-btn"
     },
     {
-      "name": "The header toggle offers three segments, Kanban last",
+      "name": "The Board names itself in the chip, under the app it belongs to",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle [data-view-segment=\"feed\"] + [data-view-segment=\"kanban\"]",
-      "expectText": "Kanban"
+      "expectSelector": "#app-switcher-btn #app-switcher-subtitle",
+      "expectText": "Board"
     },
     {
-      "name": "Feed is the selected segment on a ?view=feed deep link",
+      "name": "A ?view=feed deep link resolves onto the feed",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle [data-view-segment=\"feed\"][aria-selected=\"true\"]"
+      "expectSelector": "#dev-body #dev-feed"
     },
     {
       "name": "A retired ?view=list link still resolves onto the Feed",
       "path": "/?demo=1&view=list#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle [data-view-segment=\"feed\"][aria-selected=\"true\"] ~ [data-view-segment=\"kanban\"][aria-selected=\"false\"]"
+      "expectSelector": "#dev-body #dev-feed"
     },
     {
-      "name": "Kanban is the selected segment on a ?view=kanban deep link",
+      "name": "Kanban survives as the resolved mode on a ?view=kanban deep link",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
+      "expectSelector": "#dev-body #dev-kanban-board"
     },
     {
       "name": "The Feed renders activity rows into #dev-feed",
@@ -1468,9 +1458,9 @@
       "expectSelector": ".attr-avatar"
     },
     {
-      "name": "Kanban filter bar shows the category filter",
+      "name": "The Filters dialog offers the category select (Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-category"
+      "expectSelector": "#board-filters-modal #board-filters-category"
     },
     {
       "name": "Shared demo session renders in the In progress area",
@@ -1602,12 +1592,7 @@
       "expectText": "Close issue #900001"
     },
     {
-      "name": "Issues + In review cards carry a drag-to-reorder handle",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": ".dev-drag-handle"
-    },
-    {
-      "name": "Issue filed after the last drag surfaces on the board (#617)",
+      "name": "Issue filed after a saved order surfaces on the board (#617)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "[Mock] Newly filed issue — should render on top"
     },
@@ -1669,21 +1654,31 @@
       "expectSelector": "#home-search-input"
     },
     {
-      "name": "Notifications drawer renders its Mark-all-read control",
+      "name": "The Notifications sheet renders its Mark-all-read control (Streamlined Concept)",
       "path": "/",
-      "expectSelector": "#notifications-mark-all"
+      "expectSelector": "#notifications-screen-mark-all"
     },
     {
-      "name": "Saved messages pin to the top of the notifications drawer (#1280)",
+      "name": "Saved messages pin to the top of the notifications sheet (#1280)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#header-menu-panel #notifications-saved [data-saved-message]",
+      "expectSelector": "#notifications-sheet #notifications-saved [data-saved-message]",
       "expectText": "The deploy runbook lives in docs/deploy.md"
     },
     {
-      "name": "A saved message can be unsaved from the drawer (#1280)",
+      "name": "A saved message can be unsaved from the sheet (#1280)",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-saved [data-saved-unsave]",
       "expectText": "Unsave"
+    },
+    {
+      "name": "The Notifications sheet renders its All | Unread tabs (Streamlined Concept)",
+      "path": "/?demo=1#notifications",
+      "expectSelector": "#notifications-sheet[data-open] #notifications-screen-tabs"
+    },
+    {
+      "name": "The Notifications sheet renders notification rows (Streamlined Concept)",
+      "path": "/?demo=1#notifications",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id]"
     },
     {
       "name": "Improve panel carries the feedback row",
@@ -1691,17 +1686,17 @@
       "expectSelector": "#improve-panel #improve-row-feedback"
     },
     {
-      "name": "The hamburger carries the notifications list, first in the panel",
+      "name": "The Improve panel: quick actions, the app's views, the work in flight, then what the app is (#1443)",
       "path": "/?demo=1",
-      "expectSelector": "#header-menu-rows > #drawer-notifications #notifications-list"
+      "expectSelector": "#improve-body > *:has(#improve-quick-actions) + #improve-views + #improve-sessions + #improve-footer"
     },
     {
-      "name": "The hamburger ships the native Node status row",
-      "path": "/",
-      "expectSelector": "#drawer-row-node"
+      "name": "The Profile account group ships the native Node status row",
+      "path": "/#profile",
+      "expectSelector": "#account-row-node"
     },
     {
-      "name": "Work-in-flight badge sits on the Improve button, beside the sessions it counts",
+      "name": "Work-in-flight badge sits on the Improve button (Streamlined Concept)",
       "path": "/",
       "expectSelector": "#improve-btn #notifications-badge-ai"
     },
@@ -1711,13 +1706,13 @@
       "expectSelector": "#improve-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
     },
     {
-      "name": "Admin/moderation row renders in the drawer for admins (#588)",
-      "path": "/",
-      "expectSelector": "#drawer-row-admin:not(.hidden)"
+      "name": "Admin & moderation renders in the chip's menu for admins (#588, #1443)",
+      "path": "/?shot=app-context&demo=1",
+      "expectSelector": "#switcher-nav #switcher-row-admin:not(.hidden)"
     },
     {
-      "name": "Improve footer renders the platform build as plain text, not a pill",
-      "path": "/?shot=improve",
+      "name": "The Improve panel renders the platform build as plain text, not a pill (#1443)",
+      "path": "/?demo=1",
       "expectSelector": "#improve-footer #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
     },
     {
@@ -1737,19 +1732,72 @@
       "expectText": "Theme"
     },
     {
-      "name": "Drawer footer distinguishes the mobile app version from the platform version",
-      "path": "/?shot=menu",
+      "name": "Settings' About block distinguishes the mobile app version from the platform version",
+      "path": "/#settings",
       "expectText": "Platform version"
     },
     {
-      "name": "Improve footer holds GitHub + Share above the version rows",
-      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-body > #improve-footer > #improve-row-github"
+      "name": "View on GitHub is an action on the app's own page, not a drawer row",
+      "path": "/#apps/staging-demo-dormant-approvers",
+      "expectSelector": "#browse-detail .browse-detail-action",
+      "expectText": "View on GitHub"
     },
     {
-      "name": "Main nav order is Profile, Messages, Settings, Admin & moderation",
-      "path": "/?shot=menu",
-      "expectSelector": "#drawer-row-profile + #drawer-row-messages + #drawer-row-settings + #drawer-row-admin"
+      "name": "The header carries the chip and the bell, and no second alerting glyph (#1443)",
+      "path": "/",
+      "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#app-switcher-btn) #notifications-btn"
+    },
+    {
+      "name": "The menu's destination order: platform, then you (#1443)",
+      "path": "/?shot=app-context&demo=1",
+      "expectSelector": "#switcher-nav #switcher-row-home ~ #switcher-row-discover ~ #switcher-row-messages ~ #switcher-row-profile ~ #switcher-row-settings ~ #switcher-row-admin"
+    },
+    {
+      "name": "Messages is a destination in the chip's menu, carrying no unread tag",
+      "path": "/?shot=app-context&demo=1",
+      "expectSelector": "#switcher-nav #switcher-row-messages:not(:has([aria-label=\"Unread messages\"]))"
+    },
+    {
+      "name": "A message notification is listed in the notifications sheet",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"]",
+      "expectText": "sent a message in"
+    },
+    {
+      "name": "The notifications sheet offers a Messages tab",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] #notifications-screen-tabs #notifications-tab-messages"
+    },
+    {
+      "name": "The messages deep link lands on the Messages tab",
+      "path": "/?shot=notifications-messages&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] #notifications-tab-messages[aria-selected=\"true\"]"
+    },
+    {
+      "name": "The Messages tab leads to the full Messages screen",
+      "path": "/?shot=notifications-messages&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] #notifications-all-messages",
+      "expectText": "All messages"
+    },
+    {
+      "name": "Consecutive messages from one conversation collapse to a counted row",
+      "path": "/?shot=notifications-messages&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"] [aria-label=\"2 notifications\"]"
+    },
+    {
+      "name": "A message in Messages offers a save button",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-message-9100102 .messages-message-actions button[aria-label=\"Save message\"]"
+    },
+    {
+      "name": "An already-saved message offers to unsave instead, and says so to a screen reader",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-message-9100101 .messages-message-actions button[aria-label=\"Unsave message\"][aria-pressed=\"true\"]"
+    },
+    {
+      "name": "The chip opens the menu, and it lists Home and Discover (#1443)",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-home + #switcher-row-discover"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -2001,16 +2049,14 @@
       "expectSelector": ".fork-tag"
     },
     {
-      "name": "Menu status pane shows the Forked-from label",
-      "path": "/app/staging-demo-fork",
-      "expectText": "Forked from",
-      "allowConsoleErrors": true
+      "name": "The app's own page shows the Forked-from label",
+      "path": "/#apps/staging-demo-fork",
+      "expectText": "Forked from"
     },
     {
-      "name": "Menu status pane reveals the fork row for a forked app",
-      "path": "/app/staging-demo-fork",
-      "expectSelector": "#drawer-row-app-fork:not(.hidden) #app-fork-badge-slot",
-      "allowConsoleErrors": true
+      "name": "Fork lineage renders under the version it qualifies",
+      "path": "/#apps/staging-demo-fork",
+      "expectSelector": "#browse-detail #browse-detail-fork a[href=\"#app/staging-demo-forkable\"]"
     },
     {
       "name": "Home feed renders the seeded errored app tile",
@@ -2150,9 +2196,9 @@
       "expectSelector": "#profile-screen:not(.hidden) #profile-root"
     },
     {
-      "name": "Profile drawer row is visible without the native bridge",
+      "name": "Home carries the entrance to Profile, without the native bridge",
       "path": "/",
-      "expectSelector": "#drawer-row-profile:not(.hidden)"
+      "expectSelector": "#home-account-row"
     },
     {
       "name": "Topochain leaderboard shows standings, not a red error, between events",
@@ -2282,28 +2328,13 @@
       "expectSelector": ".un-action-sheet .un-action-btn.un-destructive"
     },
     {
-      "name": "Hamburger menu opens as a right-side panel on touch, not a bottom sheet",
-      "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel[data-un-side=\"right\"] #header-menu-panel.platform-panel-adopted #header-menu-rows"
-    },
-    {
-      "name": "The hamburger opens as a kit panel with notifications at its top",
-      "path": "/?shot=menu&un-platform=ios",
-      "expectSelector": ".un-panel #header-menu-panel.platform-panel-adopted #header-menu-rows > #drawer-notifications"
-    },
-    {
-      "name": "Hamburger status area shows the viewer's own AI credit (#555)",
-      "path": "/?shot=menu&demo=1",
-      "expectSelector": "#drawer-row-ai-budget .ai-budget-meter"
-    },
-    {
       "name": "AI credit reads like the dev chat: limit $spent/$limit, no pill",
       "path": "/?demo=1#settings/api-key",
       "expectText": "limit $"
     },
     {
-      "name": "AI credit value is right-aligned to the panel edge, wrapped or not",
-      "path": "/?shot=menu&demo=1",
+      "name": "AI credit value is right-aligned to the row edge, wrapped or not",
+      "path": "/?demo=1#settings/api-key",
       "expectSelector": "#drawer-row-ai-budget #ai-budget-slot.grow.text-right"
     },
     {
@@ -2471,14 +2502,19 @@
       "expectText": "a reset link is on its way"
     },
     {
-      "name": "Back from a dev session is a real link you can open in a new tab (#1036)",
+      "name": "Back from a dev session is the header's own arrow, a real link at the Board (#1036, Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
-      "expectSelector": "a#dc-back[href=\"#app/usernode-2d5619/dev\"]"
+      "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/board\"]"
     },
     {
-      "name": "The header home button is a real link, not a button (#1036)",
-      "path": "/#leaderboard",
-      "expectSelector": "header#platform-header a#back-btn:not(.hidden)[href]"
+      "name": "The session bar carries the lifecycle pill's seat beside the back arrow (Streamlined Concept)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#platform-header #header-status-pill"
+    },
+    {
+      "name": "A session bar carries no chip — the change's name is the strip's (#1443)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#platform-header:not(:has(#app-switcher-btn)) #back-btn:not(.hidden)"
     },
     {
       "name": "Inside an app's detail page the header arrow links back to the list (#1036)",
@@ -2492,9 +2528,9 @@
       "expectText": "Usernode · Claude"
     },
     {
-      "name": "The venue dropdown sits in the session header, top right (#1348)",
+      "name": "The venue dropdown sits in the session header, before the mode switch (#1348)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
-      "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]:last-child",
+      "expectSelector": "#dc-session-header > button#dc-venue-select[data-venue-change][aria-haspopup=\"menu\"]",
       "expectText": "Usernode · Claude"
     },
     {
@@ -2640,9 +2676,9 @@
       "expectText": "staging fixture"
     },
     {
-      "name": "The Dev filter controls are chips sharing a row with the + button",
+      "name": "The Filters button is a chip sharing a row with the + button (Streamlined Concept)",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > #dev-kanban-filterbar #dev-kanban-needsvote.rounded-full"
+      "expectSelector": "#dev-actions > #dev-kanban-filterbar #dev-kanban-filters-btn.rounded-full"
     },
     {
       "name": "The filter chips and the + button are siblings in one row",
@@ -2650,14 +2686,14 @@
       "expectSelector": "#dev-actions > #dev-kanban-filterbar + div > #dev-plus-btn"
     },
     {
+      "name": "The Filters dialog offers the priority select (Streamlined Concept)",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#board-filters-modal #board-filters-priority"
+    },
+    {
       "name": "On the Feed the + button stays right-aligned with its menu anchored on-screen",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
       "expectSelector": "#dev-actions > div.ml-auto > #dev-plus-btn"
-    },
-    {
-      "name": "A filter select wears the chip pill",
-      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-priority.dev-chip-select.rounded-full"
     },
     {
       "name": "The feed shows the + button with no filter chips beside it",
@@ -2665,20 +2701,14 @@
       "expectSelector": "#dev-actions > #dev-kanban-filterbar:empty + div > #dev-plus-btn"
     },
     {
-      "name": "The notifications drawer offers the rest of its notifications",
+      "name": "The Notifications sheet shows read rows on the All tab (Streamlined Concept)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-older-toggle",
-      "expectText": "See more notifications"
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id]"
     },
     {
-      "name": "The notifications drawer is a flat list of rows (#1385)",
+      "name": "The Notifications sheet is a flat list of rows (#1385)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-list > [data-notif-id]"
-    },
-    {
-      "name": "No app-group headers survive in the notifications drawer (#1385)",
-      "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-list:not(:has([data-group-toggle]))"
+      "expectSelector": "#notifications-sheet:not(:has([data-group-toggle]))"
     },
     {
       "name": "The Dev feed renders as a de-carded stream",
@@ -2696,19 +2726,19 @@
       "expectSelector": "body.bg-zinc-100"
     },
     {
-      "name": "A connector work order shows in the Improve panel (#1417)",
+      "name": "A connector work order shows in the Improve panel (#1417, Streamlined Concept)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel[data-open] #improve-body [data-improve-row=\"task\"]"
+      "expectSelector": "#improve-panel #improve-sessions [data-improve-row=\"task\"]"
     },
     {
       "name": "The work-order row points at its request, not a session page (#1417)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel[data-open] [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
+      "expectSelector": "#improve-panel [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
     },
     {
       "name": "Real sessions still render beside it, each on its own destination (#1417)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel[data-open] [data-improve-row=\"session\"][href*=\"/dev/sessions/\"]"
+      "expectSelector": "#improve-panel [data-improve-row=\"session\"][href*=\"/dev/sessions/\"]"
     },
     {
       "name": "The all-apps directory offers a Sort control, defaulting to Recommended (#1383)",

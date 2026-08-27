@@ -8,13 +8,15 @@
 // Notifications._dismissSheetForNav() first, and it is a strict no-op when
 // nothing is presented.
 //
-// THE UI OVERHAUL changed two things about it. The list lives in the hamburger
-// now, so what gets dismissed is that drawer (HeaderMenu.close) rather than a
-// panel this module presented itself. And the rule applies at EVERY width: the
-// desktop "keep-open" behaviour below existed because the anchored dropdown sat
-// in a corner and covered nothing, while a side drawer covers the screen you
-// just navigated to. The touch/desktop split in these tests is therefore about
-// which PRESENTATION the drawer uses, not about whether it closes.
+// THE UI OVERHAUL moved the list into the hamburger, so what got dismissed was
+// that drawer. The Streamlined Concept's second pass gave it a surface of its
+// own again — the Notifications SHEET — so what gets dismissed is
+// `NotificationsSheet.close()`. The rule is unchanged and still applies at
+// EVERY width: the old desktop "keep-open" behaviour existed because an
+// anchored dropdown sat in a corner and covered nothing, while a sheet covers
+// the screen you just navigated to. The touch/desktop split in these tests is
+// therefore about which PRESENTATION the sheet uses, not about whether it
+// closes.
 //
 // The REAL shipped notifications.js is evaluated in a vm sandbox (so the
 // assertions can't drift from what runs); only display plumbing the harness
@@ -59,14 +61,14 @@ function load({ touch = true, fetchImpl } = {}) {
   // the real controller behaves: a kit sheet/panel on touch, a CSS slide-over
   // on desktop, and `isPresenting()` as the single source of "is it up".
   let presenting = false;
-  const headerMenu = {
-    isPresenting: () => presenting,
+  const notificationsSheet = {
+    isOpen: () => presenting,
     open() {
       if (presenting) return;
       presenting = true;
       panel.classList.remove('hidden');
       if (touch) {
-        panel.classList.add('platform-panel-adopted');
+        panel.classList.add('platform-sheet-adopted');
         calls.push(['present']);
       }
     },
@@ -74,10 +76,18 @@ function load({ touch = true, fetchImpl } = {}) {
       if (!presenting) return Promise.resolve();
       presenting = false;
       panel.classList.add('hidden');
-      panel.classList.remove('platform-panel-adopted');
+      panel.classList.remove('platform-sheet-adopted');
       calls.push(['dismiss']);
       return Promise.resolve();
     },
+  };
+  // The drawer is still stubbed because `hide()` closes it too — a drawer
+  // somebody opened is covering the same screen. It is never the presenter of
+  // this list any more, so it reports itself shut.
+  const headerMenu = {
+    isPresenting: () => false,
+    open() {},
+    close() { return Promise.resolve(); },
   };
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
@@ -89,7 +99,7 @@ function load({ touch = true, fetchImpl } = {}) {
     URLSearchParams,
     document: {
       title: '',
-      getElementById: (id) => (id === 'header-menu-panel' ? panel : null),
+      getElementById: (id) => (id === 'notifications-sheet' ? panel : null),
       addEventListener: () => {},
       querySelectorAll: () => ({ forEach: () => {} }),
       body: { appendChild: () => {} },
@@ -100,6 +110,7 @@ function load({ touch = true, fetchImpl } = {}) {
       return { ok: false, json: async () => ({}) };
     },
     HeaderMenu: headerMenu,
+    NotificationsSheet: notificationsSheet,
     PlatformUI: {
       isTouch: () => touch,
       toast: (msg) => calls.push(['toast', String(msg)]),

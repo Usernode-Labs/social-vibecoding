@@ -38,9 +38,9 @@ function rowParts() {
   const has = (id, name) => cls(id).split(/\s+/).includes(name);
   return {
     html,
-    row: { className: cls('drawer-row-node'), classList: { contains: (n) => has('drawer-row-node', n) } },
-    dot: { className: cls('drawer-node-dot'), classList: { contains: (n) => has('drawer-node-dot', n) } },
-    status: { className: cls('drawer-node-status'), textContent: text('drawer-node-status') },
+    row: { className: cls('account-row-node'), classList: { contains: (n) => has('account-row-node', n) } },
+    dot: { className: cls('account-node-dot'), classList: { contains: (n) => has('account-node-dot', n) } },
+    status: { className: cls('account-node-status'), textContent: text('account-node-status') },
   };
 }
 
@@ -81,7 +81,7 @@ function loadNodePill({ hasNodeStatus, snapshot = null, isNative = true }) {
   vm.createContext(sandbox);
   vm.runInContext(source.replace(/^import[^\n]*\n/gm, ''), sandbox);
   // The module used to end with `NodePill.init()`. It is initialised from the
-  // island's layout effect now (so the `hidden` it lifts off #drawer-row-node
+  // island's layout effect now (so the `hidden` it lifts off #account-row-node
   // lands after hydration), which makes the call this harness's job.
   sandbox.window.NodePill.init();
   return {

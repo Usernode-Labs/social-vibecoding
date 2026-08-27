@@ -428,8 +428,25 @@ const keys = (items) => Array.from(items, (i) => i.key);
 test('menu: plain user on a non-member app gets App details + the favorite toggle', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['app-details', 'favorite'], 'nothing admin-gated leaks');
-  assert.equal(items[1].label, 'Add to Your apps');
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite'],
+    'nothing admin-gated leaks');
+  assert.equal(items[2].label, 'Add to Your apps');
+});
+
+// "View on GitHub" was a row in the hamburger drawer's reference footer,
+// revealed by hand while an app was OPEN. As a menu item it reaches both
+// surfaces that render this list — the card's "…" menu and the app's own page
+// — and gates on the one fact that decides whether it can work at all.
+test('menu: View on GitHub appears only for an app with a repository', () => {
+  const Home = makeHome({ id: ME });
+  const withRepo = Home.menuItemsFor(baseApp());
+  const gh = withRepo.find((i) => i.key === 'github');
+  assert.ok(gh, 'an app with a repo_url offers it');
+  assert.equal(gh.label, 'View on GitHub');
+
+  const without = Home.menuItemsFor(baseApp({ repo_url: null }));
+  assert.ok(!keys(without).includes('github'),
+    'an app with no repository does not');
 });
 
 test('menu: favorited app flips the label to Remove', () => {
@@ -557,7 +574,8 @@ test('menu: every app carries a favorite entry — no card menu omits it', () =>
 test('menu: full admin on a running repo app gets check-updates, lock and delete', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['app-details', 'favorite', 'check-updates', 'lock', 'delete']);
+  assert.deepEqual(keys(items),
+    ['app-details', 'github', 'favorite', 'check-updates', 'lock', 'delete']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
   assert.equal(items.find((i) => i.key === 'delete').danger, true);
 });
@@ -582,14 +600,15 @@ test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', (
   const Home = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
   const items = Home.menuItemsFor(baseApp({ status: 'error' }));
   // App details is navigation, not a mutation, so it survives the gate.
-  assert.deepEqual(keys(items), ['app-details', 'favorite'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite'],
     'no retry/check/lock/delete');
 });
 
 test('menu: errored app adds Retry + View build log for the creator (#416)', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({ status: 'error', created_by: ME }));
-  assert.deepEqual(keys(items), ['app-details', 'favorite', 'retry', 'build-log']);
+  assert.deepEqual(keys(items),
+    ['app-details', 'github', 'favorite', 'retry', 'build-log']);
 });
 
 // ── "View build log" gating (#416) ────────────────────────────────
@@ -655,7 +674,8 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
   // "Your apps" only — favorited (or collaborator) apps get the item.
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
-  assert.deepEqual(keys(items), ['app-details', 'favorite', 'add-to-homescreen']);
+  assert.deepEqual(keys(items),
+    ['app-details', 'github', 'favorite', 'add-to-homescreen']);
   assert.equal(
     items.find((i) => i.key === 'add-to-homescreen').label,
     'Add to phone home screen'

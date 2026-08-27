@@ -202,16 +202,23 @@ function validId(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) > 0 && Number(value) <= MAX_ID;
 }
 
-function syncDrawerBadge(): void {
-  if (typeof document === 'undefined') return;
-  const count = state.conversations.reduce((sum, item) => sum + Math.max(0, item.unreadCount || 0), 0);
-  const badge = document.getElementById('drawer-messages-badge');
-  if (!badge) return;
-  badge.textContent = count > 99 ? '99+' : String(count);
-  badge.classList.toggle('hidden', count === 0);
+/**
+ * Tell the bell that a conversation has been read.
+ *
+ * `POST /api/conversations/:id/read` clears that conversation's notification
+ * rows server-side; this is the same clearing applied to the copy the open
+ * document is holding, so the badge falls when you read rather than at the
+ * next refresh. See Notifications.markConversationRead for why it is a window
+ * seam rather than an import (that module loads as a classic script in two
+ * test harnesses and cannot carry one).
+ *
+ * A no-op wherever the shell has not booted — the notifications module
+ * publishes itself on load, and the first refresh reconciles anything missed.
+ */
+function notifyConversationRead(conversationId: number): void {
+  if (typeof window === 'undefined') return;
+  window.Notifications?.markConversationRead?.(conversationId);
 }
-
-listeners.add(syncDrawerBadge);
 
 export function route(conversationId?: number | null): void {
   const nextId = validId(conversationId) ? conversationId : null;
@@ -461,11 +468,45 @@ export async function react(messageId: number, emoji: string): Promise<void> {
   publish({ messages: state.messages.map((item) => item.id === messageId ? { ...item, reactions } : item) });
 }
 
+/**
+ * Toggle the viewer's save on one message.
+ *
+ * OPTIMISTIC, and for the reason app group chat's toggle is (see
+ * GroupChat.toggleBookmark): a save is a personal, instantly reversible act,
+ * and a spinner on a bookmark reads as breakage. The flip is published first
+ * and reverted if the server refuses, so the button never sits in a state the
+ * server disagrees with — and the error is rethrown so the row can say so.
+ *
+ * The drawer's pinned "Saved" section is fed by the notifications payload, so
+ * it only learns about this through a refresh. Notifications is published on
+ * `window` by the React bundle; guard for the harnesses where it is absent.
+ */
+export async function toggleSaved(messageId: number): Promise<void> {
+  const conversationId = state.route.conversationId;
+  if (!conversationId) return;
+  const current = state.messages.find((item) => item.id === messageId);
+  if (!current) return;
+  const next = !current.saved;
+  const paint = (saved: boolean) => publish({
+    messages: state.messages.map((item) => item.id === messageId ? { ...item, saved } : item),
+  });
+  paint(next);
+  try {
+    await api.setMessageSaved(conversationId, messageId, next);
+    const host = window as unknown as { Notifications?: { refresh?: () => void } };
+    host.Notifications?.refresh?.();
+  } catch (err) {
+    paint(!next);
+    throw err;
+  }
+}
+
 export async function markRead(messageId: number): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
   const items = state.conversations.map((item) => item.id === conversationId ? { ...item, unreadCount: 0 } : item);
   publish({ conversations: items });
+  notifyConversationRead(conversationId);
   try { await api.markRead(conversationId, messageId); } catch { /* next open reconciles */ }
 }
 
@@ -506,6 +547,12 @@ export function handleEvent(raw: ConversationEvent): void {
     }
     case 'conversation_read':
       void loadConversations(true);
+      // The reader's OWN other tabs, and only those: the event goes to every
+      // member, and someone else reaching the end of the thread has cleared
+      // nothing of this viewer's.
+      if (api.strictId(event.userId ?? event.user_id) === currentUser().id) {
+        notifyConversationRead(conversationId);
+      }
       break;
     case 'conversation_membership_changed':
       void loadConversations(true);
@@ -576,6 +623,27 @@ export function takePendingShare(): SharedObjectReference | null | undefined {
   return value;
 }
 
+/**
+ * Repaint one message's save state from OUTSIDE this feature.
+ *
+ * The notifications drawer can unsave a message from its pinned section, and
+ * when that conversation happens to be open the star behind it must stop being
+ * filled. This is the Messages twin of GroupChat._paintBookmark, and it works
+ * the same way: it writes the MODEL and lets the component re-render, rather
+ * than reaching for the button — the row is React's, and a direct DOM write
+ * would be a second author that the next publish silently reverted.
+ *
+ * A no-op when that message is not on screen, which is the common case.
+ */
+function paintSaved(messageId: number, saved: boolean): void {
+  if (!state.messages.some((item) => item.id === messageId)) return;
+  publish({
+    messages: state.messages.map((item) => (
+      item.id === messageId ? { ...item, saved } : item
+    )),
+  });
+}
+
 export const messagesController = {
   open,
   route,
@@ -585,6 +653,7 @@ export const messagesController = {
   syncChrome,
   handleEvent,
   share,
+  paintSaved,
   refresh: () => loadConversations(true),
 };
 
@@ -595,8 +664,12 @@ export function initializeMessagesStore(): () => void {
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
   // The store is always mounted, but the endpoint is session-gated. Seed the
-  // drawer badge as soon as an already-resolved user exists, or wait for the
-  // shell's one-shot authenticated boot event on an anonymous document.
+  // conversation list as soon as an already-resolved user exists, or wait for
+  // the shell's one-shot authenticated boot event on an anonymous document.
+  //
+  // This ran for the Messages unread badge, which is retired — it stays
+  // because the list is what the SCREEN renders, and a warm one is the
+  // difference between Messages opening populated and opening on a spinner.
   if (window.App?.user) void loadConversations();
   else document.addEventListener('sv:authed', onAuthed, { once: true });
   publish({ online: navigator.onLine, demo: browserDemo() });

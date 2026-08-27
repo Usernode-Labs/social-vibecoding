@@ -135,6 +135,20 @@
   padding-bottom: calc(0.5rem + var(--platform-safe-bottom)) !important;
 }
 
+/* .platform-safe-sheet — a sheet's own FOOTER row (the Apps sheet's
+   Home | Explore pair). Same additive rule as .platform-safe-bar, with the
+   sheet's larger base gap: a sheet has rounded top corners and sits on the
+   ground rather than against the screen edge, so its last row needs real
+   padding under it whether or not the device reports an inset. This exists
+   because .platform-safe-scroll REPLACES the element's bottom padding with
+   the bare inset — correct for a scroller whose content runs to the bottom
+   of the screen, wrong for a button row, which on every 0-inset device
+   (desktop, most Android, the in-app preview) then sat flush on the sheet's
+   rounded edge. */
+.platform-safe-sheet {
+  padding-bottom: calc(1.25rem + var(--platform-safe-bottom)) !important;
+}
+
 /* Keyboard up: the home-indicator strip sits BEHIND the on-screen
    keyboard, so reserving it there is pure dead space above the
    keyboard. Same suppression the kit applies to its own surfaces
@@ -148,6 +162,10 @@ html.un-kb .platform-safe-scroll {
 
 html.un-kb .platform-safe-bar {
   padding-bottom: 0.5rem !important;
+}
+
+html.un-kb .platform-safe-sheet {
+  padding-bottom: 1.25rem !important;
 }
 
 /* ── Platform Messages screen ─────────────────────────────
@@ -170,7 +188,6 @@ html.un-kb .platform-safe-bar {
   background: var(--bg-primary);
 }
 
-.messages-list-toolbar,
 .messages-thread-header {
   display: flex;
   align-items: center;
@@ -181,7 +198,6 @@ html.un-kb .platform-safe-bar {
   background: var(--bg-primary);
 }
 
-.messages-list-toolbar { justify-content: space-between; }
 
 .messages-new-button,
 .messages-thread-action,
@@ -286,7 +302,6 @@ html.un-kb .platform-safe-bar {
 
 .messages-state,
 .messages-empty,
-.messages-no-selection,
 .messages-thread-empty {
   align-items: center;
   justify-content: center;
@@ -300,10 +315,8 @@ html.un-kb .platform-safe-bar {
 }
 .messages-state { display: flex; }
 .messages-empty { display: flex; min-height: 260px; }
-.messages-empty > span,
-.messages-no-selection > span { color: var(--accent); font-size: 32px; }
-.messages-empty h3,
-.messages-no-selection h2 { color: var(--text-primary); font-size: 15px; font-weight: 700; }
+.messages-empty > span { color: var(--accent); font-size: 32px; }
+.messages-empty h3 { color: var(--text-primary); font-size: 15px; font-weight: 700; }
 .messages-empty button,
 .messages-state button {
   margin-top: 5px;
@@ -335,7 +348,6 @@ html.un-kb .platform-safe-bar {
   min-height: 0;
   background: var(--bg-primary);
 }
-.messages-no-selection { flex: 1 1 auto; }
 .messages-thread-header { gap: 8px; }
 .messages-thread-back { margin-left: -7px; }
 .messages-thread-action:hover,
@@ -445,6 +457,13 @@ html.un-kb .platform-safe-bar {
   font-size: 13px;
 }
 .messages-message-actions button:hover { background: var(--bg-secondary); color: var(--text-primary); }
+/* A saved message's star, filled and in the accent — the state lives in the
+   glyph's FILL, the same way the app-chat bookmark's does, so the two
+   surfaces read as one feature. It keeps the accent on hover rather than
+   stepping to --text-primary with its neighbours: the others are actions you
+   might take, this one is a state that is currently true. */
+.messages-message-actions button.messages-action-saved,
+.messages-message-actions button.messages-action-saved:hover { color: var(--accent); }
 
 .messages-quote,
 .messages-reply-draft {
@@ -665,20 +684,24 @@ html.un-kb .platform-safe-bar {
   .messages-message-actions { display: flex; position: static; float: right; margin: 2px 0 0 6px; box-shadow: none; }
 }
 
-@media (min-width: 768px) {
-  .messages-layout { border-right: 1px solid var(--border-light); border-left: 1px solid var(--border-light); }
-  .messages-list-pane { display: flex; flex: 0 0 19rem; width: 19rem; border-right: 1px solid var(--border-light); }
-  .messages-thread-pane { display: flex; flex: 1 1 auto; width: auto; }
-}
+/* The two-pane rule that lived here (a 19rem list beside the thread at
+   `min-width: 768px`) is gone with the SCREEN. Messages is a sheet now — at
+   most 24rem on a desktop slide-over, full width on a phone — so the panes
+   were being sized against a viewport the surface does not span, and the
+   thread pane got a few squeezed characters of its own. One pane at every
+   width: the list until a row is picked, the thread after, and the thread's
+   own back button between them. */
 
-@media (max-width: 767px) {
-  .messages-invitation { align-items: flex-start; flex-direction: column; }
-  .messages-invitation > div:last-child { align-self: stretch; }
-  .messages-invite-actions { justify-content: stretch; }
-  .messages-invite-decline, .messages-invite-block, .messages-invite-accept { flex: 1 1 auto; }
-  .messages-message { padding-right: 8px; padding-left: 8px; }
-  .messages-attachment img { width: 88px; }
-}
+/* Unconditional, where these were `max-width: 767px`. Messages renders only
+   inside a sheet that is 24rem at its widest, so a VIEWPORT query is the
+   wrong instrument — on a desktop it simply never fired, and the invitation
+   row laid itself out for a width the surface does not have. */
+.messages-invitation { align-items: flex-start; flex-direction: column; }
+.messages-invitation > div:last-child { align-self: stretch; }
+.messages-invite-actions { justify-content: stretch; }
+.messages-invite-decline, .messages-invite-block, .messages-invite-accept { flex: 1 1 auto; }
+.messages-message { padding-right: 8px; padding-left: 8px; }
+.messages-attachment img { width: 88px; }
 
 .dark {
   --bg-primary: #0b0b0c;
@@ -838,6 +861,55 @@ html.un-kb .platform-safe-bar {
   box-shadow: none !important;
   background: transparent !important;
   display: flex !important;
+}
+
+/* ── The nav surfaces grow further, and keep their scroller ────────────
+   The 70vh above is right for a kit sheet that is a DIALOG — a form, a
+   confirm, a short list. The four navigation surfaces are not: the Improve
+   panel carries every change in flight, and the messages/notifications
+   sheets carry as many rows as there are. They get the same near-full cap
+   their no-kit CSS uses, so the behaviour is one rule at every width and on
+   both paths. */
+/* The 3rem gap is measured from BELOW the status bar, not from the top of the
+   viewport. A flat `100dvh - 3rem` is 48px, and the status-bar inset on a
+   notched phone is 54pt — so at the cap the sheet's head slid UNDER the clock
+   and the signal bars, which is the one place the gap exists to prevent. The
+   fallback keeps desktop and any browser without the env() unchanged. */
+.platform-sheet-adopted#improve-panel,
+.platform-sheet-adopted#apps-switcher-sheet,
+.platform-sheet-adopted#notifications-sheet,
+.platform-sheet-adopted#messages-sheet {
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem) !important;
+}
+
+/* THE KIT'S DRAG WOULD OTHERWISE EAT THE SCROLL.
+   `.un-sheet` sets `touch-action: none` and claims any vertical drag for
+   drag-to-dismiss, with no scroller detection — which is why the header
+   drawer became a kit PANEL rather than a sheet (#915), and why an inner
+   `overflow-y: auto` inside an adopted sheet has been decorative up to now.
+   `touch-action` is intersected down the ancestor chain, so the scroller
+   cannot opt back in on its own; the SHEET has to allow vertical panning.
+
+   Scoped to the sheets that actually contain a scroller, so every other
+   adopted sheet keeps the kit's dismiss gesture exactly as it was. Inside
+   these, a vertical pan goes to the scroller and the kit's pointer handler
+   takes a `pointercancel` (native.js handles it with v=0 and springs back);
+   a drag starting anywhere else in the sheet still dismisses it, and so
+   does the grabber. */
+.un-sheet:has(#improve-panel),
+.un-sheet:has(#notifications-sheet),
+.un-sheet:has(#messages-sheet) {
+  touch-action: pan-y;
+}
+
+/* THE SWITCHER'S ONLY SCROLLER RUNS THE OTHER WAY. Its app rail is a
+   horizontal strip, and `pan-y` here made that strip unreachable by touch —
+   the overflow existed and no gesture could get at it. `pan-x` inverts the
+   trade in this sheet's favour, and it costs less than the panel's does: a
+   VERTICAL drag anywhere still reaches the kit's pointer handler, so
+   drag-to-dismiss survives intact here. */
+.un-sheet:has(#apps-switcher-sheet) {
+  touch-action: pan-x;
 }
 
 /* THE HOME-INDICATOR INSET IS THE KIT'S JOB INSIDE AN ADOPTED SURFACE.
@@ -5624,9 +5696,48 @@ span.gc-vote-btn-icon { cursor: default; }
 /* Fullscreen, the overlay is `inset: 0` — it covers the status bar, so
    its own chrome bar has to clear the notch. Docked, it is pinned over
    the in-page slot by the geometry sync and needs no inset at all,
-   hence the :not(). */
-#staging-overlay:not(.staging-overlay-docked) .staging-chrome-bar {
+   hence the :not(). Under-chrome is excluded for the same reason docked
+   is: the platform header is above it and already holds the notch. */
+#staging-overlay:not(.staging-overlay-docked):not(.staging-overlay-under-chrome) .staging-chrome-bar {
   padding-top: calc(0.5rem + var(--platform-safe-top));
+}
+
+/* ── A session's preview sits UNDER that session's own bars ───────────
+   The Streamlined Concept board's APP PREVIEW frame keeps the header and
+   the session strip on screen and puts the preview below them, which is
+   also what makes the strip's doing<->seeing switch a real toggle rather
+   than a one-way door: the pencil segment has to be reachable from here.
+
+   `top` is set by the component, which measures the strip's bottom edge;
+   this rule owns everything that does not need a number. The z-index pair
+   is deliberate and deliberately LOW: the chrome goes to 30 rather than the
+   overlay to something below 0, and 30 is under the sheets' 40/50 so a
+   Notifications or Messages backdrop still dims the header the way it dims
+   everything else. */
+#staging-overlay.staging-overlay-under-chrome {
+  z-index: 20;
+}
+body:has(#staging-overlay.staging-overlay-under-chrome) #platform-header,
+body:has(#staging-overlay.staging-overlay-under-chrome) #dc-session-header {
+  position: relative;
+  z-index: 30;
+}
+
+/* Same call the docked mode makes, for the same reason: "Back to session"
+   is meaningless beside a session that never left the screen. The strip's
+   pencil segment is the way back.
+
+   THE `:has()` IS A SAFETY NET, NOT A REFINEMENT. Under-chrome hides this
+   button AND leaves .staging-dock-only hidden, so the ONLY way out of the
+   preview is the pencil in #dc-session-header. If that strip is not on
+   screen there is no way out at all — which is exactly what happened while
+   the under-chrome class was gated on `previewActive` alone, a flag
+   ensureStaging publishes for every preview and not only a session's
+   (features/staging/staging-overlay.tsx now gates on the route too).
+   Hiding the last exit is worth making structurally impossible rather than
+   conditional on two owners agreeing: no strip, no hide. */
+body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #staging-back {
+  display: none;
 }
 
 /* Docked chrome: "Back to session" makes no sense beside the still-
@@ -6653,7 +6764,9 @@ a.drawer-ver--fork:hover {
    the right; adding `data-open` slides it into view. The overlay
    fades in on the same timer via the sibling rule below. */
 #header-menu-panel {
-  transform: translateX(100%);
+  /* Slides from the LEFT (Streamlined Concept) — it mirrors the hamburger,
+     which leads the header's left group. */
+  transform: translateX(-100%);
 }
 #header-menu-panel[data-open] {
   transform: translateX(0);
@@ -6722,7 +6835,13 @@ a.drawer-ver--fork:hover {
     bottom: 0;
     width: auto;
     max-width: none;
-    max-height: 70vh;
+    /* GROWS WITH ITS CONTENT, up to nearly the whole screen. A short sheet is
+       short; a long one climbs to this cap and then its own scroller takes
+       over (see .nav-sheet-scroll below). 3rem of ground stays visible so the
+       thing still reads as an overlay rather than a screen. `dvh`, not `vh`:
+       a mobile browser's collapsing toolbar must not push the foot of the
+       sheet under itself. */
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
     border-left-width: 0;
     border-top-width: 1px;
     border-top-left-radius: 1rem;
@@ -6733,6 +6852,127 @@ a.drawer-ver--fork:hover {
     transform: translateY(0);
   }
 }
+/* ── App-context sheet (Streamlined Concept) ──────────────────────
+   The surface behind the header's "app name ⌄" tab. Same dual idiom as
+   #improve-panel above — right-edge slide-over at `sm`+ for a mouse, a
+   bottom sheet below it, a real kit sheet on touch — and the same
+   always-mounted / data-open mechanics; read that block's comment for
+   the reasoning, which transfers wholesale. */
+#apps-switcher-sheet {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 20rem;
+  max-width: 85vw;
+  border-left-width: 1px;
+  transform: translateX(100%);
+}
+#apps-switcher-sheet[data-open] {
+  transform: translateX(0);
+}
+.app-context-transition {
+  transition: transform 200ms ease-out;
+}
+#apps-switcher-overlay {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+#apps-switcher-overlay[data-open] {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (max-width: 639px) {
+  #apps-switcher-sheet {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-width: none;
+    /* GROWS WITH ITS CONTENT, up to nearly the whole screen. A short sheet is
+       short; a long one climbs to this cap and then its own scroller takes
+       over (see .nav-sheet-scroll below). 3rem of ground stays visible so the
+       thing still reads as an overlay rather than a screen. `dvh`, not `vh`:
+       a mobile browser's collapsing toolbar must not push the foot of the
+       sheet under itself. */
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
+    border-left-width: 0;
+    border-top-width: 1px;
+    border-top-left-radius: 1rem;
+    border-top-right-radius: 1rem;
+    transform: translateY(100%);
+  }
+  #apps-switcher-sheet[data-open] {
+    transform: translateY(0);
+  }
+}
+
+/* ── Notifications and Messages sheets ────────────────────────────────
+   The bell and the speech bubble present the same way the title tab's
+   app-context sheet does — right-edge slide-over at `sm`+ for a mouse, a
+   bottom sheet below it, a real kit sheet on touch — because they stopped
+   being screens. A screen reachable from every route has to answer "back to
+   where?", and both of these answered "home", which was wrong every time
+   they were opened from somewhere else.
+
+   Taller than the app-context sheet on purpose: that one holds one row of
+   app tiles and a pair of buttons, these hold as many rows as there are, so
+   they take the same near-full-height cap the Improve panel does and let
+   their own scroller take over. */
+#notifications-sheet,
+#messages-sheet {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 24rem;
+  max-width: 90vw;
+  border-left-width: 1px;
+  transform: translateX(100%);
+}
+#notifications-sheet[data-open],
+#messages-sheet[data-open] {
+  transform: translateX(0);
+}
+.nav-sheet-transition {
+  transition: transform 200ms ease-out;
+}
+#notifications-sheet-overlay,
+#messages-sheet-overlay {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+#notifications-sheet-overlay[data-open],
+#messages-sheet-overlay[data-open] {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (max-width: 639px) {
+  #notifications-sheet,
+  #messages-sheet {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-width: none;
+    /* `dvh`, not `vh`: a mobile browser's collapsing toolbar must not push
+       the foot of the sheet under itself. 3rem of ground stays visible so
+       the thing still reads as an overlay rather than a screen. */
+    height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
+    border-left-width: 0;
+    border-top-width: 1px;
+    border-top-left-radius: 1rem;
+    border-top-right-radius: 1rem;
+    transform: translateY(100%);
+  }
+  #notifications-sheet[data-open],
+  #messages-sheet[data-open] {
+    transform: translateY(0);
+  }
+}
+
 #header-menu-overlay {
   opacity: 0;
   transition: opacity 200ms ease-out;
@@ -7880,36 +8120,6 @@ body.is-offline [data-offline-disabled] {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* ── Dev filter chips (#1367 follow-up) ────────────────────────
-   The Dev screen's filter controls are Material-shaped filter chips now:
-   a 32px fully-rounded pill, hairline outline when idle, filled violet when
-   the filter is actually narrowing something. The classes themselves live in
-   AppView.KANBAN_CHIP_* (public/js/app-view.js) because the bar is rendered
-   as a template literal; only the two things Tailwind cannot express are
-   here.
-
-   A <select> needs `appearance: none` to keep the pill shape — the native
-   control paints its own square background and arrow on most platforms and
-   would square off the corners. Removing the arrow means drawing one, which
-   is the inline SVG below: a chevron as a background image, positioned in the
-   `pr-7` the class run reserves for it.
-
-   currentColor is deliberately NOT used — a background-image cannot read it —
-   so the caret is drawn twice, once per state, keyed off the same violet the
-   filled chip uses. */
-.dev-chip-select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.5rem center;
-  background-size: 1rem 1rem;
-}
-/* The filled state: a zinc caret on violet is close to invisible. */
-.dev-chip-select.bg-violet-600 {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
 }
 
 /* ── The Dev FEED reads as a feed (#1367 follow-up) ─────────────

@@ -73,10 +73,11 @@ import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
 import { HomeScreen } from './features/home';
 import { ImproveIsland } from './features/improve';
+import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
-import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
+import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
 import { Dialogs } from './features/dialogs';
@@ -116,15 +117,6 @@ export function Shell() {
           listing this is inert markup nobody sees.
       */}
       <Island name="MobileInstallBanner"><MobileInstallBanner /></Island>
-      {/*
-          Slide-out navigation drawer (all viewport widths — #122) — a React
-          island since #1079 chunk B. Overlay dims the page; panel slides in
-          from the right. Both nodes, the three native/credit modules that
-          write into the panel, and the theme row live in
-          features/header/header-menu.tsx; opening and closing is still
-          App.HeaderMenu in app.js.
-      */}
-      <Island name="HeaderMenu"><HeaderMenu /></Island>
       {/*
           Persistent banner shown only while an admin has flipped the
           "View as non-admin" toggle in Settings — a React island since
@@ -242,6 +234,15 @@ export function Shell() {
           module writes inside it. It ships hidden and empty for prerender and
           hydration parity; the hash router publishes visibility and the
           feature loads authenticated data only after #messages opens.
+
+          A SCREEN, and #1443 put it back to one. #1431 made it a sheet on the
+          grounds that the header's chat bubble is on every route, so a
+          full-screen Messages had to answer "back to where?". That reasoning
+          died with the bubble: Messages is a row in the chip's menu now, and
+          the menu's rule is that everything in it has its own page. It is
+          also what the surface is FOR — reading past conversations and
+          sending from them is a place you go, not an overlay you dismiss,
+          which is how every messaging product on earth models it.
       */}
       <Island name="MessagesScreen"><MessagesScreen /></Island>
       {/*
@@ -389,6 +390,22 @@ export function Shell() {
           sheet on touch where the kit is loaded.
       */}
       <Island name="ImproveIsland"><ImproveIsland /></Island>
+      {/*
+          The app-context sheet (Streamlined Concept) — the surface behind
+          the header's "app name ⌄" tab: the app's three views, its changes
+          in progress and elsewhere, and the reference footer that moved
+          here from the Improve panel. Fully React-owned, always mounted,
+          same dual-idiom presentation as the Improve panel above.
+      */}
+      <Island name="AppContextIsland"><AppContextIsland /></Island>
+      {/*
+          Notifications (Streamlined Concept). A SHEET, not a screen: the bell
+          is in the header on every route, so a full-screen view had to answer
+          "back to where?" and answered "home" — wrong every time it was
+          opened from somewhere else. Presented over the current screen and
+          dismissed back to it, on the same chassis as the sheet above.
+      */}
+      <Island name="NotificationsIsland"><NotificationsIsland /></Island>
       {/* Developer console (slide-up panel, anchored to bottom) — an ISLAND
           since #1079 chunk B: features/dev-console owns the whole subtree and
           public/js/dev-console.js is retired. */}

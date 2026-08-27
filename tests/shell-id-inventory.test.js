@@ -40,6 +40,37 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── #1443: one control names where you are ──────────────────────
+  // The chip's menu lists every destination with its own page, so the header
+  // stopped needing a second, third and fourth way to say the same thing.
+  'back-icon-home': 'The house glyph inside #back-btn. Home is a row of the chip\'s menu, immediately reachable from every screen, so a house icon an inch to the chip\'s left was the second control answering one question. #back-btn keeps #back-icon-arrow and means one thing now — back a level — which is why its own `hidden` is the whole of the visibility state.',
+  // ── Streamlined Concept: the drawer became the APP's surface ──────
+  // The Figma board draws ONE app-scoped drawer (the app, its Board, its
+  // Activity, "+ New change", the changes here and elsewhere, over a
+  // Profile/Settings foot). The short-lived split — a platform drawer plus an
+  // #app-context-sheet behind the title tab — collapsed into it. What the
+  // drawer gave up in exchange: alerting, which is the two header glyphs
+  // (#notifications-btn, #messages-btn), and the app list, which is the Apps
+  // sheet behind the title tab.
+  'app-context-sheet': 'The second surface is gone: its rows ARE the drawer now (features/app-context/app-context-rows.tsx). The element id lives on as #apps-switcher-sheet, which reuses its controller and kit bottom-sheet lifecycle.',
+  'app-context-overlay': 'Backdrop of that surface — #apps-switcher-overlay now.',
+  'app-context-body': 'Scroller of that surface; the drawer\'s own #header-menu-rows is the scroller now.',
+  'app-context-close': 'Close control of that surface — #apps-switcher-close now.',
+  'drawer-top-rows': 'The drawer\'s Notifications + Messages block. Both are header glyphs now, because platform-wide alerting has no business inside the app\'s own surface.',
+  'drawer-row-notifications': 'Became #notifications-btn, the bell in the header\'s right group. Same #notifications route, same badge id.',
+  'drawer-row-messages': 'Became #messages-btn, the chat bubble beside it. Same #messages route; its badge keeps the id its row used.',
+  'drawer-notifications-badge': 'The notifications count rides #notifications-badge on the bell again — one badge, not two.',
+  'drawer-your-apps': 'The Your-apps section. Switching apps is the Apps sheet behind the title tab (#apps-switcher-sheet), which is what the board draws.',
+  'drawer-row-your-apps': 'Nav row of that section; the sheet\'s Home button is the way to the grid now.',
+  'drawer-your-apps-toggle': 'Its fold, retired with the section.',
+  // ── Streamlined Concept: the notification list left the drawer ───
+  // The rows render on the full-screen #notifications view now
+  // (notifications-sheet.tsx, its own ids in ADDED_IDS below); the saved +
+  // invites sections moved WITH the surface keeping their ids, so only the
+  // drawer-specific chrome is gone.
+  'notifications-mark-all': 'The drawer block\'s mark-all control; the screen renders its own (#notifications-screen-mark-all), React-wired.',
+  'notifications-list': 'The drawer\'s list scroller; the screen renders rows directly.',
+  'notifications-empty': 'Drawer-only never-had-one hint; the screen\'s All tab empty state says it now.',
   'drawer-row-app-version': 'Per-dApp SHA removed from platform information; app versions remain on app cards.',
   'app-version-pill-slot': 'Drawer-only per-dApp SHA renderer removed with its row.',
   // ── THE UI OVERHAUL: four header controls became one ──────────────
@@ -54,16 +85,17 @@ const RETIRED_IDS = {
   'work-drawer-icon': 'The cog glyph, retired with its button. The spinning-while-busy cue is the per-row busy dot in the Improve panel now.',
   'dev-console-btn': 'Header terminal icon retired — the Improve panel\'s "Developer terminal" row is shown on the same DevConsole signal. #staging-dev-console-btn survives; the staging overlay has its own chrome.',
   'dev-console-badge': 'Unseen-error count on the retired header terminal icon. #staging-dev-console-badge survives.',
-  // ── The Improve button becomes the one that says what is happening ──
-  // The dot lit when the platform version row said "deploying", and that row
-  // moved into the Improve panel's footer with THE UI OVERHAUL — so the dot
-  // was pointing at something behind a different control. It is
-  // #improve-version-dot on #improve-btn now (see ADDED_IDS), and it gained
-  // the violet "the platform rolled past the SHA this tab loaded against"
-  // state its single amber colour could never show. Same reader
-  // (DrawerStatus.refreshDeployDot), which publishes a state instead of
-  // toggling a class.
-  'header-menu-deploy-dot': 'Renamed to #improve-version-dot and moved onto #improve-btn, following the version rows it reads.',
+  // ── The version dot's round trip ──────────────────────────────────
+  // #1412 renamed #header-menu-deploy-dot to #improve-version-dot and moved
+  // it onto #improve-btn; the Streamlined Concept moved it straight back to
+  // the hamburger under its ORIGINAL id — the board keeps the hamburger as
+  // the badge cluster, and the Improve slot slims to a text action. So the
+  // id matches the baseline again and neither map lists it. What #1412
+  // actually added is kept: the violet "the platform rolled past the SHA
+  // this tab loaded against" state, and a reader
+  // (DrawerStatus.refreshDeployDot) that publishes a state through
+  // improveStore instead of toggling a class — the dot renders from
+  // <MenuIndicators/> in platform-header.tsx now.
   // ── #1367: two Improve rows became a segmented toggle ────────────
   // "Development kanban" and "Latest development activity" were list rows
   // with a chevron. They are two segments of the App/Feed/Kanban control now
@@ -76,7 +108,11 @@ const RETIRED_IDS = {
   // ── THE UI OVERHAUL: three top-right drawers became one ──────────
   // The bell and the cog merged INTO the hamburger. Nothing they carried was
   // dropped without a new home; each entry below names it.
-  'notifications-btn': 'The bell. Its list is the first thing in the hamburger now, and both its badges ride that button.',
+  // (#notifications-btn's own round trip: THE UI OVERHAUL folded the bell into
+  // the hamburger, and the Streamlined Concept gives it back its control in the
+  // header's right group — the drawer is the APP's surface now, so platform
+  // alerting needs a seat of its own. The id matches the baseline again, so it
+  // is listed in neither map; what changed is only which panel it opens.)
   'notifications-panel': 'The bell dropdown. features/notifications keeps its store, list components and module — only the panel around them is gone.',
   'work-drawer-panel': 'The cog drawer. Its session list is the Improve panel\'s (this app, plus an overflow for every other); its pinned rows are ordinary notifications in the merged hamburger.',
   'work-drawer-close': 'Close button of the retired cog drawer.',
@@ -92,6 +128,52 @@ const RETIRED_IDS = {
   'drawer-footer': 'The bottom-anchored reference block moved wholesale into the Improve panel: every line in it was about an app, and that panel is the surface scoped to one.',
   'drawer-row-github': 'View on GitHub — an Improve panel row now.',
   'drawer-row-share': 'Share App — an Improve panel row now.',
+  // ── Streamlined Concept: the reference footer has no successor ───
+  // The block THE UI OVERHAUL carried from the drawer into the Improve panel
+  // (and the Streamlined Concept then carried into the drawer again, as
+  // #improve-footer) is dissolved. The board draws a drawer of navigation and
+  // work only, and every line of that footer was a different KIND of thing
+  // wearing the same row: two of them described the platform, two described
+  // the app, and exactly one was an action. Each went where it belongs.
+  // ── Streamlined Concept: the hamburger, and the rows it held ─────
+  // The drawer's app rows merged into the Improve panel — one surface for
+  // the app's navigation AND its work, rather than two that half-overlapped —
+  // and the button that opened it went with them. The header's left slot is
+  // the board's own cluster now: the app glyph (or a back arrow) beside the
+  // title tab, both opening the Apps sheet.
+  // ── Streamlined Concept, second pass: the two alerting screens
+  //    became SHEETS. A screen reachable from every route has to answer
+  //    "back to where?", and both answered "home".
+  // ── The hamburger, and the drawer it opened, are gone ────────────
+  // The Streamlined Concept retired the hamburger button and left the drawer
+  // with no trigger — its rows were reachable only through the ?shot=menu
+  // capture links, which is why ten declared checks kept passing over a
+  // surface no user could open. The whole panel goes; every row it held has
+  // a home on a SCREEN now, with an address and a back arrow of its own.
+  'header-menu-panel': 'The drawer itself. Its account rows are the Profile screen\'s account group (features/profile/account-panel.tsx), reached from Home\'s account row.',
+  'header-menu-overlay': 'Its backdrop.',
+  'header-menu-rows': 'Its scroller.',
+  'header-menu-close': 'Its close control.',
+  'drawer-main-rows': 'The account group inside it — #profile-account now.',
+  'drawer-row-profile': 'Profile is reached from Home\'s #home-account-row, which is the one entrance the drawer\'s removal would otherwise have taken away.',
+  'drawer-avatar': 'The viewer\'s picture on that row — #home-account-avatar, same writer (App.applyUserAvatar), same contract.',
+  'drawer-profile-glyph': 'Its fallback glyph — #home-account-glyph.',
+  'drawer-row-settings': 'Settings is #switcher-row-settings, a row of the chip\'s menu (#1443) — it has its own page, and the menu lists everything that does.',
+  'drawer-byok-dot': 'The BYOK dot on that row — #switcher-byok-dot. settings.js publishes the flag through the visibility store rather than writing the class by id, because the row renders inside a React-owned subtree.',
+  'drawer-row-admin': 'Admin & moderation is #switcher-row-admin, same isAdmin gate, published rather than class-written for the same reason.',
+  'drawer-node-dot': 'Its status dot — #account-node-dot. It also stops PRERENDERING: the row renders inside the Profile screen\'s account group, which draws from profile data, where the drawer shipped on every page.',
+  'drawer-node-status': 'Its status text — #account-node-status, same note.',
+  'drawer-wallet-balance': 'The wallet row\'s balance readout — #account-wallet-balance, same note.',
+  'drawer-row-node': 'The native node row — #account-row-node, same component, same module.',
+  'drawer-row-wallet': 'The native wallet row — #account-row-wallet, ditto.',
+  'notifications-screen': 'The Notifications screen ROOT. It is #notifications-sheet now — an overlay over the current screen, out of App.SCREEN_IDS entirely, so there is no back arrow to point anywhere. Its children kept their ids.',
+  'header-menu-btn': 'The hamburger. Its slot is the app-glyph/back-arrow pair (features/header/header-app-icon.tsx + #back-btn), and its badge cluster moved to #improve-btn — the control whose panel actually holds the work those badges report.',
+  'header-menu-deploy-dot': 'Renamed #improve-version-dot with that move. A `header-menu-*` id on the Improve button would be a lie that outlives everyone who remembers it.',
+  'drawer-app-rows': 'The app rows\' scroller in the drawer. The Improve panel renders them now, and #improve-sessions is the scroller.',
+  'app-context-new-change': 'Merged INTO #improve-row-new-session, the panel\'s middle quick action. Two ids calling one Improve.startSession() was the duplication the merge exists to remove.',
+  'improve-row-share': 'Share app is the Improve panel\'s third action (features/improve/improve-panel.tsx) — the one line in that footer that was an action rather than a reference. Same id, same `canShare` gate.',
+  'drawer-row-app-fork': 'Fork lineage renders on the app\'s page from the detail descriptor (features/apps/browse-detail.tsx, #browse-detail-fork) — lineage is a fact about an app, not about the drawer you have open.',
+  'app-fork-badge-slot': 'Slot AppView.renderForkBadge wrote into. Both the function and App.DrawerStatus.setForkVisible are gone with it.',
   // ── THE UI OVERHAUL: the home screen's widgets became four fixed areas ──
   // Discover, Challenges and Create app were draggable blocks on the launcher
   // canvas; they are sections in a fixed order under the grid now, so the
@@ -122,6 +204,37 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #1443: what came back ───────────────────────────────────────
+  'messages-screen': 'The Messages screen root, restored. #1431 made it #messages-sheet because a header chat bubble on every route left a full-screen Messages with no honest answer to "back to where?" — the bubble is gone and Messages is a menu row now, so the screen is both the honest shape and the one every messaging product uses for reading past conversations.',
+  'improve-footer': 'The panel\'s reference block, restored. #1431 dissolved it and rehomed each fact separately; every move was defensible alone and the sum meant leaving the app to read facts about the app you were standing in.',
+  'drawer-row-native-app-version': 'The installed Flutter release, back in that footer. #1431 renamed it #about-row-native-app-version for the Settings About block it built; the block is gone with the rows it existed to hold, so the name goes back too. `.drawer-ver-row` is the shared CSS recipe, not a claim about a drawer.',
+  // ── #1443: the app's own views stayed in the Improve panel ──────
+  // They spent one round of #1443 as menu rows, on the argument that they are
+  // destinations. They came back: the menu answers WHICH APP, and these three
+  // answer WHICH PART OF IT, which is the question the panel you open from
+  // inside an app is already about.
+  'improve-views': 'The block holding the three. #1431 built it; #1443 kept it.',
+  'app-context-row-app': 'View and use the app — Improve.openApp(). Labelled Home on the self-hosted platform row.',
+  'app-context-row-board': 'The app\'s Board.',
+  'app-context-row-activity': 'The app\'s Activity stream.',
+  // ── #1443: the chip and its menu ────────────────────────────────
+  'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go. It carries the same tinted 28px surface as #back-btn and the bell, because on the bare page ground it read as the heading it replaced.',
+  'app-switcher-name': 'The label inside the chip — the same text #header-title carried as a bare heading, now a named slot so a declared check can assert WHAT the chip says and not merely that it exists.',
+  'switcher-nav': 'The menu\'s destination list, and its ONLY vertical scroller. The app strip above is horizontal and therefore vertically bounded, so no number of apps can push a destination out of reach — the clipping bug that hid Home and Profile on a 39-app account cannot occur in this shape.',
+  'switcher-row-home': 'Home. Was the sheet\'s #apps-switcher-home footer button.',
+  'switcher-row-discover': 'Discover (#apps). Was #apps-switcher-explore.',
+  'switcher-row-messages': 'Messages. Was #messages-btn in the header; it has its own page, so it is a row. Carries NO count: a message notification is counted on the bell and listed in the notifications sheet with every other notification, which leaves this a plain destination like Home and Discover beside it.',
+  'switcher-row-profile': 'Profile.',
+  'switcher-row-settings': 'Settings. Was #profile-row-settings on the Profile screen.',
+  'switcher-byok-dot': 'The BYOK dot on that row — was #profile-byok-dot. settings.js publishes the flag; the className stays a constant.',
+  'switcher-row-admin': 'Admin & moderation. Was #profile-row-admin. Ships `hidden`; App.renderAdminButton publishes the isAdmin flag, unchanged.',
+  // ── …and the Apps sheet behind the title tab ─────────────────────
+  'apps-switcher-sheet': 'The board\'s Apps sheet — its "Switching between Apps" connector. Reuses the retired #app-context-sheet\'s controller, store and kit bottom-sheet lifecycle.',
+  'apps-switcher-overlay': 'Its backdrop.',
+  'apps-switcher-close': 'Its close control.',
+  'apps-switcher-create': 'The sheet\'s "Create New" action.',
+  'apps-switcher-list': 'The horizontal strip of the viewer\'s apps.',
+  // ── Streamlined Concept: the drawer leads with Your apps ─────────
   // ── Andrea's simpler waitlist flow ────────────────────────────────
   // The relocated join question (see RETIRED_IDS above).
   'more-made-url': "The \"link something you've made\" field, relocated from the join form (was #waitlist-made-url).",
@@ -163,11 +276,9 @@ const ADDED_IDS = {
   'cu-save': 'Submit for the username change.',
   'cu-status': 'Status line for the username change.',
   'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
-  // The renamed deploy dot's new home and name. Two states, not one: amber
-  // while a deploy is in flight, violet once the platform has rolled past
-  // this tab. Top-LEFT corner, because the green session count took the
-  // top-right and #feedback-queue-dot moved to the bottom-left to make room.
-  'improve-version-dot': 'Platform version cue on #improve-btn — was #header-menu-deploy-dot on the hamburger.',
+  // (#1412's #improve-version-dot came and went: the Streamlined Concept
+  // returned the version cue to the hamburger under its original
+  // #header-menu-deploy-dot id — see the note in RETIRED_IDS.)
   // ── #1191: the build-flow preference stops being injected ────────
   // These three were BUILT AT RUNTIME by Settings._renderDevFlowSection,
   // which created the block and inserted it into the Connections pane on
@@ -179,7 +290,6 @@ const ADDED_IDS = {
   'dev-flow-pref-section': 'The "Preferred build flow" block in Settings → Connections (#1049) — the escape hatch for the dev-chat picker\'s "remember my option" checkbox.',
   'settings-dev-flow': 'The build-flow dropdown itself. Settings binds its change and gates the two hand-off options on whether the deployment has external flows.',
   'settings-dev-flow-status': 'Save/error line for the build-flow dropdown.',
-  'drawer-row-native-app-version': 'Installed Flutter app version in the drawer footer (#1101).',
   'native-app-version-slot': 'Mobile app version/build rendered through the native bridge (#1101).',
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
   'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
@@ -187,7 +297,7 @@ const ADDED_IDS = {
   // ── THE UI OVERHAUL: the Improve panel ───────────────────────────
   // One surface for everything you do *to* the app on screen rather than
   // *with* it. It absorbed four header controls (see RETIRED_IDS above)
-  // plus the drawer's GitHub / Share / version footer. Fully React-owned,
+  // plus the drawer's Share action. Fully React-owned,
   // so unlike most of the shell it holds real state — nothing in
   // public/js/** writes a node inside it.
   'improve-btn': 'Header control that opens the Improve panel; inherits the retired App/Dev switch\'s show/hide lifecycle (App.DrawerStatus.setAppOpen).',
@@ -197,10 +307,10 @@ const ADDED_IDS = {
   'improve-close': 'Close button in the Improve panel header.',
   'improve-body': 'The panel\'s scroller.',
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
-  'notifications-caught-up': 'The drawer\'s "you\'re all caught up" state — nothing unread, but there IS history behind "See more notifications". Deliberately a different node and sentence from #notifications-empty, which still means "you have never had a notification".',
+  'improve-quick-actions': 'The panel\'s three circular actions — Feedback, New change, Share — captioned beneath so three fit across a phone.',
+  'improve-sessions': 'The changes in flight, here and on the viewer\'s other apps — and the panel\'s ONE scroller, which is what keeps the actions and the views on screen at any height.',
+  'improve-version-dot': 'The platform deploy/stale dot, renamed from #header-menu-deploy-dot when it followed the badge cluster onto #improve-btn.',
   'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
-  'improve-footer': 'Reference block: View on GitHub, Share app, version — all three moved out of the hamburger drawer.',
-  'drawer-notifications': 'The notifications region at the top of the hamburger, where the bell dropdown\'s body now renders.',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────
   // Your apps, Discover, Challenges, Create app — stacked, in that order.
@@ -271,12 +381,9 @@ const ADDED_IDS = {
   // BOTH blocks above in place, so the copy buttons already there pick up the
   // corrected rules — hence a field and no button of its own.
   'connector-name-spelling': 'Settings → Connectors input that rewrites both allow-rule blocks for a connector registered under a different server name (#1222 follow-up).',
-  'messages-screen': 'Fully React-owned platform direct/group Messages screen (#488).',
   'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
   'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
   'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
-  'drawer-row-messages': 'Platform Messages destination in the global navigation drawer (#488).',
-  'drawer-messages-badge': 'Aggregate unread conversation count in the global navigation drawer (#488).',
   'notifications-saved': 'Pinned "Saved" section at the top of the bell drawer, holding the messages this user bookmarked (#1280).',
   // #1344 — verified users may claim one company-funded OpenRouter key.
   // These are static settings controls; settings.js owns their state and the
@@ -296,6 +403,37 @@ const ADDED_IDS = {
   // choice, a ?sort= deep link and a hand change all show the same value.
   'browse-sort-bar': 'Sort row inside the browse search bar (#1383).',
   'browse-sort-select': 'The five-order Sort control for the all-apps directory (#1383).',
+  // ── Streamlined Concept: the Board Filters dialog ────────────────
+  // The Figma board (Streamlined Concept / Dev Sessions and Navigation)
+  // moves the Board's filter selects and the needs-vote toggle off the
+  // filter bar into a dialog; the bar keeps search and gains a
+  // `Filters (n)` chip plus dismissable active-filter chips (those are
+  // runtime-injected, so only the dialog's ids land in the shell).
+  'board-filters-modal': 'The Filters dialog root — tenth shell dialog, same useDialog/static-modal contract as the nine.',
+  'board-filters-priority': 'Priority select inside the Filters dialog (was #dev-kanban-priority on the bar).',
+  'board-filters-category': 'Category select inside the Filters dialog (was #dev-kanban-category on the bar).',
+  'board-filters-assignee': 'Assignee select inside the Filters dialog (was #dev-kanban-assignee on the bar).',
+  'board-filters-needsvote': 'The "Needs my vote" switch inside the Filters dialog (was the bar chip #dev-kanban-needsvote).',
+  'board-filters-done': 'The dialog\'s Done button — applies the staged filters via AppView.applyKanbanFilters.',
+  // ── Streamlined Concept: the app-context sheet ───────────────────
+  // The surface behind the header's "app name ⌄" tab: the app's three
+  // views, its changes in progress/elsewhere, and the reference footer
+  // (which moved here from the Improve panel keeping its ids).
+  // ── Streamlined Concept: the full-screen Notifications view ──────
+  // A real screen behind the drawer's Notifications row, on the Messages
+  // screen's fully-React pattern: All | Unread tabs, Today/Earlier
+  // sections, avatar-initial rows. Renders from the same notifications
+  // store as the drawer's list.
+  'home-account-row': 'Home\'s entrance to Profile — the door the retired hamburger took away.',
+  'home-account-avatar': 'The viewer\'s picture on it (was #drawer-avatar).',
+  'home-account-glyph': 'Its fallback glyph (was #drawer-profile-glyph).',
+  'home-account-section': 'The section that holds it, last in Home\'s reading order.',
+  'notifications-sheet': 'The Notifications SHEET root. It was #notifications-screen, a screen root in App.SCREEN_IDS — but the bell is in the header on every route, so a full-screen view had to answer "back to where?" and answered "home", wrong every time it was opened from anywhere else. A sheet presents over the current screen and dismisses back to it.',
+  'notifications-sheet-overlay': 'Its backdrop.',
+  'notifications-sheet-close': 'Its close control — the desktop slide-over needs a visible dismiss, as the Apps sheet has.',
+  'notifications-screen-tabs': 'The sheet\'s sticky All | Unread tab row, with its own Mark-all-read control. Keeps the `-screen-` id it was born with: the declared checks select on it, and renaming a node that did not move would be churn.',
+  'notifications-tab-messages': 'The sheet\'s third tab, beside All and Unread. A message notification is one row in a flat chronological feed that also carries every session, proposal and kudos row, so it sinks fast on a busy account; this is the one place to catch up on conversations regardless. Its own \'All messages\' entry (#notifications-all-messages, rendered only while the tab is active and so not in the static markup) leads to the #messages screen the app chip\'s Messages row also opens.',
+  'notifications-screen-mark-all': 'Mark-all-read on the sheet — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound. Same naming note as the tab row above.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

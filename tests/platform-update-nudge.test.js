@@ -199,7 +199,7 @@ test('the drawer row still offers a reload when this tab is behind', () => {
   // too — a deploy in flight is still worth showing, it just no longer
   // means the platform is going away.
   assert.match(fn, /drawer-ver--deploying/);
-  assert.match(fn, /App\.DrawerStatus\.refreshDeployDot\(\)/);
+  assert.match(fn, /App\.ImproveStatus\.refreshDeployDot\(\)/);
 });
 
 test('pull-to-refresh still upgrades to a reload on a moved-on platform', () => {

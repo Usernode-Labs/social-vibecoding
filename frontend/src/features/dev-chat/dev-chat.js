@@ -1233,6 +1233,7 @@ const DevChat = {
     }
     DevChat.sessions = [];
     DevChat.currentSession = null;
+    DevChat._publishPreview();
     DevChat.messages = [];
     DevChat.isStreaming = false;
     DevChat.setTitleStatus(null);
@@ -1248,6 +1249,24 @@ const DevChat = {
       try { DevChat._eventSource.close(); } catch {}
       DevChat._eventSource = null;
     }
+  },
+
+  /**
+   * Publish whether the OPEN session has a staging preview (Streamlined
+   * Concept).
+   *
+   * The header's eye is the preview affordance on a session screen — the
+   * same eye glyph the cards draw through AppView.cardPreviewHtml, gated on
+   * the same `staging_url` — so it must only render when there is something
+   * to preview. Called wherever `currentSession` or its `staging_url`
+   * changes; `window.Improve` is the bundle's own controller, optional-called
+   * because the vm harnesses that evaluate this file have no bundle.
+   */
+  _publishPreview() {
+    const s = DevChat.currentSession;
+    window.Improve?.setSessionPreview?.(
+      s && s.staging_url ? { sessionId: s.id, url: s.staging_url } : null,
+    );
   },
 
   // #771: drop the staging side-panel slot and, if the preview overlay is
@@ -3042,6 +3061,7 @@ const DevChat = {
       }
 
       DevChat.currentSession = session;
+      DevChat._publishPreview();
       // #940: reconcile this session's saved drafts against the server copy
       // — the cross-device sync AND the migration of drafts that only ever
       // existed in this browser. Deliberately NOT awaited: the list paints
@@ -3662,6 +3682,7 @@ const DevChat = {
                 DevChat.scrollToBottom();
                 if (data.url) {
                   DevChat.currentSession.staging_url = data.url;
+                  DevChat._publishPreview();
                   // #127: testing guidance rides along so the PR card's
                   // "Test this change" button works without a refetch.
                   if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
@@ -4173,6 +4194,7 @@ const DevChat = {
         DevChat.scrollToBottom();
         if (data.url && DevChat.currentSession) {
           DevChat.currentSession.staging_url = data.url;
+          DevChat._publishPreview();
           // #127: keep the replayed session's testing guidance in sync too.
           if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
           if ('testingPath' in data) DevChat.currentSession.testing_path = data.testingPath;
@@ -7149,7 +7171,10 @@ const DevChat = {
     const session = DevChat.currentSession;
     const s = session || {};
     return {
-      backHref: App.currentApp ? `#app/${App.currentApp}/dev` : '',
+      // Streamlined Concept: the strip's Building chip. `_composerBusy` is
+      // set synchronously by _setStreamingUI — which also repaints this
+      // strip — so the chip tracks every turn transition without a new hook.
+      busy: !!DevChat._composerBusy,
       title: s.session_title || s.pr_title || s.branch_name || 'Session',
       branch: s.branch_name || '',
       pr: s.pr_number || null,
@@ -7194,14 +7219,29 @@ const DevChat = {
     setTimeout(() => card.classList.remove('dc-pr-card-highlight'), 1500);
   },
 
+  /**
+   * The platform header's ← on a session screen (Streamlined Concept) — the
+   * in-content #dc-back retired in its favour. Same decline contract as
+   * Settings/Admin/Browse's handleBack: true means "handled, stay put",
+   * false means the caller keeps walking its chain.
+   */
+  handleBack() {
+    if (!DevChat.currentSession) return false;
+    DevChat.leaveSession();
+    return true;
+  },
+
   /** The back control's plain-click path — the modified-click guard is the
-   *  component's, because only it has the event. */
+   *  header's own listener in app.js, which owns the event. */
   leaveSession() {
     // #771: leaving the session unmounts the staging panel slot — close
     // a docked preview with it (fullscreen previews float independently
     // and are unaffected).
     DevChat._resetStagingPanel();
     DevChat.currentSession = null;
+    // The header's eye gates on the open session's preview — leaving the
+    // session clears it (Streamlined Concept).
+    DevChat._publishPreview();
     DevChat.messages = [];
     // The title marker describes the session we just left — drop it
     // so the forum doesn't claim to be thinking / done.

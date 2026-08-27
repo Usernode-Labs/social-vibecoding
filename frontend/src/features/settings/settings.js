@@ -481,8 +481,10 @@
     },
 
     _renderIndicator() {
-      const dot = document.getElementById('drawer-byok-dot');
-      if (dot) dot.classList.toggle('hidden', !this.state.hasApiKey);
+      // Published rather than written by id: the dot rides the Profile
+      // screen's account group, which React renders only once profile data
+      // lands. See App.renderAdminButton for the same move and why.
+      window.App?.Visibility?.publish?.('switcher-byok-dot', !!this.state.hasApiKey);
       // Let dev-chat swap its budget indicator for the BYOK badge
       // without having to observe us directly.
       if (window.DevChat && typeof DevChat.renderBudget === 'function') {
@@ -953,7 +955,16 @@
       const inSection = Settings._isMobile() && Settings._level === 2;
       // #1036: the header control is a real anchor — inside a section
       // the chevron pops to the settings menu, so that is its href.
-      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? '#settings' : undefined);
+      // ALWAYS an arrow — level 2 goes up to the section list, level 1 goes to
+      // PROFILE. `'home'` means "hidden" to setBackIcon, and a hidden back
+      // slot on level 1 was survivable only while the hamburger carried the
+      // nav. Profile rather than home because Profile is this screen's parent
+      // now: the drawer that used to link Settings from anywhere is retired,
+      // and the one way in is Home → Profile → Settings. A back arrow that
+      // skipped the middle step would drop you a level below where you came
+      // from, which is the "back went somewhere I wasn't" problem the sheets
+      // exist to avoid.
+      if (App.setBackIcon) App.setBackIcon('arrow', inSection ? '#settings' : '#profile');
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const s = Settings._visibleSections().find((x) => x.key === Settings._section);

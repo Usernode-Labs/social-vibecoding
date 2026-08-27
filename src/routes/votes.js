@@ -1071,7 +1071,9 @@ async function classifyNativeHeadMove({ pool, session, liveHead }) {
 // #955: that reset is for AUTHOR pushes. The platform's own "sync with main"
 // commit changes the branch without changing the patch under review, so it
 // advances the pin and carries the votes with it instead.
-async function reconcileNativeReviewedHead({ config, pool, session, fresh = false, notify = true }) {
+async function reconcileNativeReviewedHead({
+  config, pool, session, fresh = false, notify = true, deferChecks = false,
+}) {
   if (!session || session.source === 'imported') {
     return { enforced: false, headSha: reviewedHeadForSession(session) };
   }
@@ -1260,7 +1262,20 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
   const checksCarry = platformAdvance && !move.resolvedTree;
   const needsChecks = !sameSha(session.checks_commit_sha, liveHead) && !checksCarry;
   if (needsChecks) {
-    await kickNativeRevisionChecks({ config, pool, session, headSha: liveHead });
+    if (deferChecks) {
+      // A managed local upload may contain more than one commit. Clear the old
+      // verdict immediately, but let proposal_submit_build launch the single
+      // preview/check run after every exact-tree commit has been uploaded.
+      // The atomic reviewed-head/vote reset above is never deferred.
+      const visuals = require('../services/visuals');
+      await visuals.setChecksPending(pool, session.id, liveHead, 'building', 'commit-push')
+        .catch((err) => log.warn('votes', 'Deferred native revision setChecksPending failed (non-fatal)', {
+          sessionId: session.id, headSha: liveHead, err: err.message,
+        }));
+      try { visuals.notifyChecksPending(session.id, liveHead, 'building', 'commit-push'); } catch (_) {}
+    } else {
+      await kickNativeRevisionChecks({ config, pool, session, headSha: liveHead });
+    }
   } else if (checksCarry && !sameSha(session.checks_commit_sha, liveHead)) {
     await pool.query(
       `UPDATE chat_sessions SET checks_commit_sha = $1 WHERE id = $2`,
@@ -1325,6 +1340,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     votesDropped: votesDeleted,
     votesCarried: votesMoved,
     checksReset: needsChecks,
+    checksDeferred: needsChecks && deferChecks,
   });
   return {
     enforced: true,
@@ -1334,6 +1350,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     changed: oldHead != null,
     votesDropped: votesDeleted,
     votesCarried: votesMoved,
+    checksDeferred: needsChecks && deferChecks,
     platformAdvance,
     votesKept: platformAdvance,
   };

@@ -1,11 +1,17 @@
 /**
- * The drawer footer's "Mobile app version" row.
+ * The "Mobile app version" row — the Improve panel's reference footer (#improve-footer), which is where #1443 put the version rows back.
  * See ./native-app-version-store.ts for what the seam carries.
  *
- * The row lives in the improve drawer's markup but belongs to the header
- * feature, which is why it renders from here rather than inline: the panel
- * should not grow a native-bridge concern, and a version landing should not
- * re-render the whole drawer.
+ * It was the hamburger drawer's footer until the Streamlined Concept board
+ * took that footer away; the installed Flutter build is a fact about the
+ * PLATFORM, not about whichever app the drawer is scoped to, which is why
+ * Settings is where it landed rather than the app's own page. Renamed with
+ * the move (`drawer-row-native-app-version` → `about-row-native-app-version`)
+ * — see tests/shell-id-inventory.test.js.
+ *
+ * It still renders from the header feature rather than inline in
+ * ../settings/index.tsx: the screen should not grow a native-bridge concern,
+ * and a version landing should not re-render the whole of Settings.
  *
  * Named `-row` rather than matching its module: `./native-app-version.js` sits
  * beside it, and an extensionless import of the shared stem resolves to the
@@ -20,8 +26,8 @@ import { nativeAppVersionStore } from './native-app-version-store';
 
 /** The two class runs, as complete literals — Tailwind's extractor is a regex. */
 const ROW = {
-  hidden: 'hidden drawer-ver-row flex items-center gap-2 px-4',
-  shown: 'drawer-ver-row flex items-center gap-2 px-4',
+  hidden: 'hidden drawer-ver-row flex items-center gap-2',
+  shown: 'drawer-ver-row flex items-center gap-2',
 } as const;
 
 export function NativeAppVersionRow(): ReactNode {

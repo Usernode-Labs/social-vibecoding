@@ -32,7 +32,7 @@ const indexHtml = read('public/index.html');
 const shellSource = read('frontend/src/Shell.tsx');
 // #1079 chunk B moved the drawer (#header-menu-panel) out of Shell.tsx into its
 // own island — same markup, same comments, new file.
-const menuSource = read('frontend/src/features/header/header-menu.tsx');
+const homeAccount = read('frontend/src/features/home/panels/account.tsx');
 const nativeChrome = read('public/js/native-chrome.js');
 const profileJs = read('frontend/src/features/profile/profile.js');
 // #1083 chunk F did the same for the screen itself: <main id="profile-screen">
@@ -52,39 +52,33 @@ const profileViewTsx = read('frontend/src/features/profile/profile-view.tsx');
 const profileSheetTsx = read('frontend/src/features/profile/profile-edit-sheet.tsx');
 const profilePublicTsx = read('frontend/src/features/profile/public-profile-card.tsx');
 
-// ─── The drawer row ships visible ───────────────────────────────────────
+// ─── The entrance ships visible, on Home ────────────────────────────────
+//
+// The row was in the hamburger drawer until the Streamlined Concept retired
+// it. Home carries the entrance now — which is what keeps Profile reachable
+// at all, and with it Settings and Admin.
 
-test('drawer-row-profile carries no `hidden` class', () => {
+test('Home ships the profile entrance, with no `hidden` class', () => {
   const anchor = indexHtml.slice(
-    indexHtml.indexOf('<a id="drawer-row-profile"'),
-    indexHtml.indexOf('</a>', indexHtml.indexOf('<a id="drawer-row-profile"'))
+    indexHtml.indexOf('<a id="home-account-row"'),
+    indexHtml.indexOf('</a>', indexHtml.indexOf('<a id="home-account-row"'))
   );
-  assert.ok(anchor, 'the profile anchor must exist');
+  assert.ok(anchor, 'the account anchor must exist in the shipped shell');
   const classAttr = (anchor.match(/class="([^"]*)"/) || [])[1] || '';
   assert.ok(!/\bhidden\b/.test(classAttr),
     'the row must ship visible — a `hidden` class puts it back behind the bridge');
+  assert.match(homeAccount, /href="#profile"/, 'and hash navigation drives the screen');
 });
 
-test('native-chrome no longer gates the profile row on getProfileInfo', () => {
-  const fn = nativeChrome.slice(
-    nativeChrome.indexOf('_initDrawerRows()'),
-    nativeChrome.indexOf('// ── Platform login handoff')
-  );
-  assert.ok(fn.length, '_initDrawerRows must still exist');
-  assert.doesNotMatch(fn, /has\(['"]getProfileInfo['"]\)/,
-    'the capability probe was the only thing keeping #profile off the web');
-  // The drawer-close wiring is the reason the function still exists.
-  assert.match(fn, /drawer-row-profile/);
-  assert.match(fn, /HeaderMenu\.close\(\)/);
-});
-
-test('the stale "hidden unless the bridge reports getProfileInfo" comments are gone', () => {
-  // Comments that describe behaviour the code no longer has are worse than
-  // no comment: the next reader trusts them.
-  const profileAt = menuSource.indexOf('id="drawer-row-profile"');
-  assert.ok(profileAt > 0, 'the drawer row must still live in the menu island');
-  const anchorComment = menuSource.slice(Math.max(0, profileAt - 900), profileAt);
-  assert.doesNotMatch(anchorComment, /Hidden unless/i);
+test('nothing gates the profile entrance on getProfileInfo any more', () => {
+  // The capability probe was the only thing keeping #profile off the web.
+  // /challenges-api/me/* scopes to the platform session server-side since the
+  // topochain merge, so the screen works in any browser.
+  assert.doesNotMatch(homeAccount, /getProfileInfo/);
+  const chromeCode = nativeChrome
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/_initDrawerRows/.test(chromeCode),
+    'the drawer-row wiring went with the drawer (the note explaining that stays)');
   assert.doesNotMatch(
     nativeChrome.slice(0, nativeChrome.indexOf('const NativeChrome')),
     /shown\s*\n?\/\/\s*when the bridge reports getProfileInfo/,
@@ -447,16 +441,22 @@ test('the stale "organiser flag" comments are gone', () => {
     'the old header described the /challenges-api grid read that is gone');
 });
 
-test('the drawer row can show the viewer’s picture', () => {
+test('the account row can show the viewer’s picture', () => {
   const app = read('public/js/app.js');
-  assert.match(indexHtml, /id="drawer-avatar"/);
-  assert.match(indexHtml, /id="drawer-profile-glyph"/);
+  assert.match(indexHtml, /id="home-account-avatar"/);
+  assert.match(indexHtml, /id="home-account-glyph"/);
   // Ships hidden with NO src, so a signed-out shell requests nothing.
-  const img = indexHtml.slice(indexHtml.indexOf('<img id="drawer-avatar"'));
+  const img = indexHtml.slice(indexHtml.indexOf('<img id="home-account-avatar"'));
   assert.match(img.slice(0, 200), /class="hidden/);
   assert.doesNotMatch(img.slice(0, 200), /\ssrc=/);
   assert.match(app, /applyUserAvatar\(\) \{/);
   assert.match(app, /App\.applyUserAvatar\(\);/, 'called on sign-in');
+  // The writer follows the row: same pair, same contract, new ids.
+  const at = app.indexOf('  applyUserAvatar() {');
+  const fn = app.slice(at, app.indexOf('\n  },', at));
+  assert.match(fn, /getElementById\('home-account-avatar'\)/);
+  assert.ok(!fn.includes('switcher-avatar'),
+    'the chip names the app, not the viewer — it carries no avatar');
 });
 
 test('?shot=profile-edit opens the sheet for the screenshot capture', () => {

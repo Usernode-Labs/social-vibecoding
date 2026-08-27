@@ -158,6 +158,26 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   const shipped = new Set(HTML.match(/\sd="[^"]*"/g).map((s) => s.slice(4, -1)));
   const absent = [...modulePaths()].filter((d) => !shipped.has(d));
   const expected = [
+    // AppWindowIcon, BoardIcon and NewspaperIcon are NOT on this list: App /
+    // Board / Activity spent one round of #1443 as menu rows — which renders
+    // only inside an app, so they left the cold document — and came back to
+    // the Improve panel, which ships in every document. They prerender.
+    //
+    // ── The chip's menu brought four back (#1443) ──────────────────
+    // CogIcon, ShieldCheckIcon, UserIcon and ChevronDownIcon were absent
+    // while their rows lived on the Profile screen, which renders from
+    // profile data. They are rows of the chip's menu now — and the menu is in
+    // the document on every page, exactly as the hamburger it replaces was —
+    // so all four prerender again and none of them belongs on this list.
+    //
+    // ChevronDownIcon came back with them, from a different direction: it is
+    // the chip's own caret, and the chip is the header's label on EVERY
+    // screen now rather than only inside an app.
+    //
+    // Only the wallet row's card is still absent: it is a NATIVE row, hidden
+    // until the bridge reports the capability, and it stayed on the Profile
+    // screen because a balance readout is not a destination.
+    'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
     // LockIcon — the landing screen's waitlist badge, rendered only once the
     // waitlist form is open.
     'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
@@ -165,15 +185,13 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // lib/interim-root.ts on the Dev route rather than by <Shell/>, so it is
     // not part of the prerender at all.
     //
-    // ChevronRightIcon has moved on and off this list twice, which is worth
-    // recording rather than re-deciding. It prerendered while the Improve
-    // panel drew it on its two navigating rows; #1367 turned those rows into
-    // the App/Feed/Kanban toggle and briefly kept it as the notifications
-    // disclosure caret; the follow-up removed that disclosure. Every call site
-    // left is behind route state — the Dev board frame's General-chat card and
-    // its group rows, none of which are in <Shell/>.
-    'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
-    'M9 5l7 7-7 7',
+    // (ChevronRightIcon has moved on and off this list three times now, which
+    // is worth recording rather than re-deciding each time. It prerendered
+    // while the Improve panel drew it on its two navigating rows; #1367 turned
+    // those rows into the App/Feed/Kanban toggle and briefly kept it as the
+    // notifications disclosure caret; the follow-up removed that disclosure.
+    // It is BACK in the prerender now — the merged Improve panel's three view
+    // rows each end in one — so it is no longer on this list.)
     // CheckIcon and ArrowRightShortIcon — the browse screen's Add button and
     // its detail page's Open pill (#1191 slice 6). Both render from row/detail
     // descriptors that are null until the first fetch lands, so the prerendered
@@ -182,6 +200,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // which is behind the same iOS-only gate as InfoCircleIcon below.
     'M5 13l4 4L19 7',
     'M13 7l5 5m0 0l-5 5m5-5H6',
+    // DiscussionIcon / BoardIcon / AppWindowIcon left this list with the
+    // Streamlined Concept: the always-mounted app-context sheet draws all
+    // three, so they prerender now.
+    //
     // The home panels' three glyphs, all behind the same gate: Discover,
     // Challenges and Create app render from the /api/home-panels cache, which
     // is FETCHED, so the prerendered sections are empty by contract (see
@@ -190,12 +212,32 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // TrophyOutlineIcon — the Challenges bar's leaderboard link and its
     // standings footer.
     'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
-    // ChevronDownIcon — the Challenges footer's expand caret.
-    'M19 9l-7 7-7-7',
-    // PlusWideIcon — Discover's add badge and the Create app tile. Its other
-    // call site is an HTML string in features/home/home.js's card menu, which
-    // is not rendered by <Shell/> either.
-    'M12 4v16m8-8H4',
+    // LightBulbIcon — it left the prerender when the Improve pill dropped its
+    // glyph (owner review: the Figma bar is text-only) and nothing draws the
+    // bulb today.
+    'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
+    // ChatIcon — and it is BACK on this list, one round after leaving it. It
+    // prerendered while the Improve panel's quick actions were icon-led; the
+    // labels did not fit beside a glyph in the 320px DESKTOP panel ("New
+    // change" truncated), so the three segments are text-only and even
+    // thirds now, and nothing else in the cold document draws a chat bubble.
+    'M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
+    // PencilSparklesIcon, both of its paths — the pencil and the sparkle. It
+    // left the prerender with ChatIcon above, for the same reason: it was the
+    // "New change" segment's glyph. Its one remaining call site is the dev
+    // session header (features/dev-chat/session-header.tsx), which mounts on
+    // the session route rather than shipping in the static document.
+    'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
+    'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
+    // Bars3Icon — the hamburger. The board's header leads with the app glyph
+    // and the title as one switcher cluster, so nothing draws three bars any
+    // more; the export stays for the vocabulary.
+    'M4 6h16M4 12h16M4 18h16',
+    // Squares2X2Icon — the retired Your-apps nav row's glyph. Nothing in the
+    // shell draws it now; it stays exported for the settings/rows vocabulary.
+    'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
+    // (PlusWideIcon left this list: the Apps sheet's "Create New" ships it in
+    // the prerendered document now.)
     // InfoCircleIcon — the widget strip's ⓘ help toggle. The strip is iOS
     // in-app only: `Home.widgetSectionView()` reports `active: false` unless
     // the bridge answered `mechanism: 'widget'` AND the viewer opened the
@@ -213,9 +255,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // ── The Dev card's glyphs (#1367's card chunk) ──────────────────
     // The card family renders inside #dev-feed / #dev-kanban-board /
     // #gc-thread-head, all of which app-view.js mounts at runtime on the Dev
-    // route — none is in <Shell/>, so none of the four prerenders. The eye,
-    // the ⋯ dots and the drag grip are circles rather than paths, so they
-    // never appear in this list at all.
+    // route — none is in <Shell/>, so none prerenders. The eye and the ⋯ dots
+    // are circles rather than paths, so they never appear in this list at
+    // all (the drag grip was a third such glyph until the board's
+    // drag-to-reorder was retired).
     // PencilSquareIcon — the author-only inline title edit on a topic head.
     'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
     // ── The dev chat's banner glyphs ────────────────────────────────
@@ -234,7 +277,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // CheckLongIcon — the sync banner's settled success.
     'M4.5 12.75l6 6 9-13.5',
     // UserCircleIcon — the credits banner's connect-an-account variant.
-    'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z',
+    // (UserCircleIcon left this list: Home's account row draws it on every
+    // page now, so it is in the cold document.)
     // ── Retired by THE UI OVERHAUL, with their surfaces ─────────────
     // GitHubIcon and ShareIcon left the hamburger drawer's footer for the
     // Improve panel — which IS in <Shell/>, so they would still be here…
@@ -243,9 +287,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // none. They render the moment one is published.
     'M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z',
     'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z',
-    // BellIcon — the bell BUTTON itself, retired when the notifications list
-    // merged into the hamburger. The badges it carried moved to that button.
-    'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9',
     // SunIcon — the theme control's row icon. Theme is a Settings section now,
     // and its pane renders the segmented track without a row glyph.
     'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
@@ -273,13 +314,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     //
     // ListLinesIcon is NOT here: the Dev board frame's own Feed tab renders
     // it from <Shell/>, so it still lands in the static document.
-    'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
     // AppWindowIcon — both subpaths of the toggle's "App" segment, which is
     // the most conditional glyph in the shell: it needs a target AND a target
     // that is not the platform's own self-hosted row (which has no reachable
     // App tab). New with the toggle, so it has never prerendered.
-    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
-    'M4 9.5h16',
     // ── The dev chat composer's five glyphs ─────────────────────────
     // None of them can prerender: the composer is written into #dc-view at
     // runtime by `renderChatView`, and the prerendered document ships that

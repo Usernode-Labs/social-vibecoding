@@ -6,3 +6,7 @@
 
 export { SessionHeader, MergeStatusPill } from '../../frontend/src/features/dev-chat/session-header';
 export { sessionHeaderStore } from '../../frontend/src/features/dev-chat/session-header-store';
+// The strip's mode switch reads the preview facts off the improve store, so a
+// test that drives the switch needs the SAME store object the component
+// imports — the same reason the two above come from one entry.
+export { improveStore } from '../../frontend/src/features/improve/improve-store.js';

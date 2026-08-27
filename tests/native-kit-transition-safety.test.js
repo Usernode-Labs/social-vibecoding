@@ -194,18 +194,20 @@ test('the shell still asks for real animations, so the guard is load-bearing', (
 });
 
 test('the first-paint guard cannot change what dapp.json asserts about entry type', () => {
-  // Two declared checks assert `[data-entered="none"]`. That attribute is
-  // stamped by App._entryTransition in app.js BEFORE the kit is called, so a
-  // kit-side decision to skip the animation cannot move it. Pin the ordering
-  // — if the stamp ever moved into the kit, those checks would start
-  // reporting the kit's decision instead of the shell's and this fix would
-  // silently change their meaning.
+  // `data-entered` is stamped by App._entryTransition in app.js BEFORE the
+  // kit is called, so a kit-side decision to skip the animation cannot move
+  // it. Pin the ordering — if the stamp ever moved into the kit, a check
+  // reading it would start reporting the kit's decision instead of the
+  // shell's.
+  //
+  // The two #977 checks that read it were the drawer's, and went with the
+  // drawer; the stamp did not, because it is how a mid-animation state is
+  // testable at all and the next check to need one will read it.
   const appJs = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
   const entry = appJs.slice(appJs.indexOf('_entryTransition(preferred, screenEl)'));
   assert.match(
-    entry.slice(0, 700), /setAttribute\('data-entered', type\)/,
-    'app.js must keep stamping data-entered itself — the dapp.json #977 checks read it, and the '
-    + 'kit never sees the drawer-suppression rule that decides its value.',
+    entry.slice(0, 700), /setAttribute\('data-entered', preferred\)/,
+    'app.js must keep stamping data-entered itself — it belongs to the shell.',
   );
   assert.doesNotMatch(
     SRC, /data-entered/,

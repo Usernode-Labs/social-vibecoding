@@ -25,6 +25,7 @@ const {
 
 const htmlOnly = process.argv.includes('--html-only');
 const runtime = process.argv.includes('--runtime');
+const prebuilt = process.env.USERNODE_SHELL_ASSETS_PREBUILT === '1';
 
 function read(pathname) {
   try {
@@ -76,6 +77,17 @@ const jsPath = path.join(ROOT, JS_OUTPUT);
 const htmlFresh = readHtmlStamp(read(htmlPath) || '') === stamp;
 const jsFresh = readJsStamp(read(jsPath) || '') === stamp;
 const needsShell = !htmlFresh || (!htmlOnly && !jsFresh);
+
+if (prebuilt) {
+  const cssPath = path.join(ROOT, 'public', 'css', 'tailwind.css');
+  if (needsShell || read(cssPath) === null) {
+    throw new Error(
+      '[ensure-shell] immutable image is missing build-time shell assets; rebuild the image'
+    );
+  }
+  console.log('[ensure-shell] using immutable build-time shell assets');
+  process.exit(0);
+}
 
 if (needsShell) {
   installFrontendDependencies();

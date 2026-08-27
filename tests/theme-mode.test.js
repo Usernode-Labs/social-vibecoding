@@ -120,13 +120,12 @@ test('the theme control lives in its own Settings section', () => {
   assert.ok(pane !== -1, 'the theme settings pane is missing');
   assert.ok(track !== -1, 'drawer-theme-track missing');
   assert.ok(track > pane, 'the track lives inside the theme settings pane');
-  // …and NOT in the drawer any more. Two copies would be two owners of one
-  // `--theme-caret-index`, and of the highlight the caret follows.
-  const panel = src.indexOf('id="header-menu-panel"');
-  const panelEnd = src.indexOf('id="drawer-row-profile"');
-  assert.ok(panel !== -1 && panelEnd > panel, 'the drawer is still in the document');
-  assert.ok(!(track > panel && track < panelEnd),
-    'the theme control must not still be in the hamburger drawer');
+  // …and there is only ONE of it. Two copies would be two owners of one
+  // `--theme-caret-index`, and of the highlight the caret follows. It used to
+  // be worth checking the hamburger drawer specifically; the drawer is
+  // retired, so the honest check is that the track appears once anywhere.
+  assert.equal(src.indexOf('id="drawer-theme-track"', track + 1), -1,
+    'exactly one theme track in the document');
   assert.equal(src.indexOf('id="drawer-row-theme"'), -1,
     'the drawer row that wrapped it is retired');
 });

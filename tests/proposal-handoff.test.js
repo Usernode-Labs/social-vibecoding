@@ -46,6 +46,8 @@ function makeHarness() {
     activeWorkers: require.resolve('../src/services/active-workers'),
     appAccess: require.resolve('../src/services/app-access'),
     events: require.resolve('../src/services/events'),
+    proposalUpdate: require.resolve('../src/services/proposal-update'),
+    prImportSync: require.resolve('../src/services/pr-import-sync'),
     // #907: the staging/checks half of a handoff build now lives in a shared
     // module so a locally-run coding turn goes through the very same pipeline.
     // It has to be evicted alongside the route, or it keeps a closure over the
@@ -80,6 +82,10 @@ function makeHarness() {
     rejectPending: false,
     persistStagingError: false,
     uploadHead: '3'.repeat(40),
+    reconciliations: [],
+    promotedChecks: [],
+    votes: 0,
+    reconcileFailure: null,
   };
   let transactionState = null;
   const pool = {
@@ -178,20 +184,30 @@ function makeHarness() {
       }
       if (/SET handoff_head_sha = \$1/.test(text)) {
         const row = state.sessions.find((s) => s.id === Number(params[1]));
-        const matched = row && row.status === 'active' && row.source === params[2]
-          && row.handoff_uploaded_sha === params[0]
-          && (row.checks_commit_sha || null) === (params[3] || null)
-          && (row.handoff_head_sha || null) === (params[4] || null)
-          && (row.handoff_upload_checked_sha || null) === (params[5] || null);
+        const promotedRevision = /reviewed_head_sha IS NOT DISTINCT FROM \$1/.test(text);
+        const matched = promotedRevision
+          ? row && row.status === params[2] && row.source === params[3]
+            && row.handoff_uploaded_sha === params[0]
+            && row.reviewed_head_sha === params[0]
+            && row.checks_commit_sha === params[0]
+            && (row.handoff_head_sha || null) === (params[4] || null)
+            && (row.handoff_upload_checked_sha || null) === (params[5] || null)
+          : row && row.status === 'active' && row.source === params[2]
+            && row.handoff_uploaded_sha === params[0]
+            && (row.checks_commit_sha || null) === (params[3] || null)
+            && (row.handoff_head_sha || null) === (params[4] || null)
+            && (row.handoff_upload_checked_sha || null) === (params[5] || null);
         if (matched) {
           Object.assign(row, {
             handoff_head_sha: params[0],
             handoff_uploaded_sha: params[0],
             handoff_upload_checked_sha: null,
-            check_state: 'pending',
-            checks_commit_sha: params[0],
-            staging_container_id: null,
-            staging_url: null,
+            ...(promotedRevision ? {} : {
+              check_state: 'pending',
+              checks_commit_sha: params[0],
+              staging_container_id: null,
+              staging_url: null,
+            }),
           });
         }
         return { rows: [], rowCount: matched ? 1 : 0 };
@@ -204,7 +220,7 @@ function makeHarness() {
           ? row.handoff_uploaded_sha
           : (row && (row.checks_commit_sha || row.handoff_uploaded_sha
             || row.handoff_head_sha || row.handoff_base_sha));
-        const matched = row && row.status === 'active' && row.source === params[2]
+        const matched = row && row.status === params[5] && row.source === params[2]
           && current === params[3];
         if (matched) {
           row.handoff_upload_checked_sha = row.checks_commit_sha;
@@ -341,6 +357,31 @@ function makeHarness() {
     EVENT_TYPES: { DEV_SESSION_STARTED: 'dev_session_started' },
     record: () => {},
   });
+  stubModule(ids.proposalUpdate, {
+    isContinuableStatus(status) {
+      if (status === 'promoted') return 'proposal';
+      if (status === 'active' || status === 'paused') return 'session';
+      return null;
+    },
+    async updateProposalFromForkBranch() {
+      throw new Error('update-from-fork is outside this harness');
+    },
+    async reconcileManagedCommitUpload(_deps, params) {
+      state.reconciliations.push(params);
+      if (state.reconcileFailure) return state.reconcileFailure;
+      const row = state.sessions.find((candidate) => candidate.id === Number(params.session.id));
+      if (row) {
+        row.reviewed_head_sha = params.expectedHeadSha;
+        row.checks_commit_sha = params.expectedHeadSha;
+        row.check_state = 'pending';
+      }
+      state.votes = 0;
+      return { ok: true, headSha: params.expectedHeadSha, checksDeferred: true };
+    },
+  });
+  stubModule(ids.prImportSync, {
+    async rerunChecksForNewHead(args) { state.promotedChecks.push(args); },
+  });
   delete require.cache[ids.pipeline];
   delete require.cache[ids.subject];
   const subject = require('../src/routes/proposal-handoff');
@@ -374,6 +415,26 @@ const START_BODY = {
   ],
   linkedIssues: [12],
 };
+
+function uploadBody({
+  localCommitSha = HEAD,
+  parentSha = BASE,
+  parentTreeSha = '5'.repeat(40),
+  treeSha = TREE,
+  message = 'Implement locally',
+} = {}) {
+  return {
+    schemaVersion: 1,
+    localCommitSha,
+    parentSha,
+    parentTreeSha,
+    treeSha,
+    message,
+    authoredAt: '2026-08-04T01:02:03+04:00',
+    committedAt: '2026-08-04T01:03:04+04:00',
+    files: [{ path: 'src/a.js', mode: '100644', contentBase64: 'YQ==' }],
+  };
+}
 
 function markUploaded(state, headSha = HEAD, localCommitSha = headSha) {
   Object.assign(state.sessions[0], {
@@ -936,6 +997,158 @@ test('a checked web continuation supersedes an unsubmitted local upload as branc
       .expectedRemoteParentSha, '7'.repeat(40),
       'a following local commit continues from the pending bot-owned upload');
   } finally { restore(); }
+});
+
+test('promoted managed uploads reset votes immediately and build only the final uploaded commit', async () => {
+  const { router, state, restore } = makeHarness();
+  const OLD_REVIEWED = '6'.repeat(40);
+  const FIRST_REVISION = '7'.repeat(40);
+  const FINAL_REVISION = '8'.repeat(40);
+  try {
+    const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
+    await start({
+      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, mockRes());
+    Object.assign(state.sessions[0], {
+      status: 'promoted',
+      handoff_head_sha: OLD_REVIEWED,
+      handoff_uploaded_sha: OLD_REVIEWED,
+      handoff_local_commit_sha: '9'.repeat(40),
+      handoff_upload_checked_sha: null,
+      reviewed_head_sha: OLD_REVIEWED,
+      checks_commit_sha: OLD_REVIEWED,
+      check_state: 'passing',
+      staging_url: 'https://old-preview.example',
+      pr_number: 42,
+      pr_url: 'https://github.com/acme/demo/pull/42',
+    });
+    state.votes = 2;
+
+    const upload = routeHandler(router, '/api/sessions/:id/proposal-handoff/commits', 'post');
+    state.uploadHead = FIRST_REVISION;
+    const first = mockRes();
+    await upload({
+      params: { id: '101' }, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+      body: uploadBody({ localCommitSha: 'a'.repeat(40), message: 'First local commit' }),
+    }, first);
+    assert.equal(first.statusCode, 201);
+    assert.equal(state.sessions[0].status, 'promoted');
+    assert.equal(state.sessions[0].reviewed_head_sha, FIRST_REVISION);
+    assert.equal(state.sessions[0].checks_commit_sha, FIRST_REVISION);
+    assert.equal(state.sessions[0].check_state, 'pending');
+    assert.equal(state.votes, 0, 'the prior revision tally is reset before upload returns');
+    assert.equal(state.promotedChecks.length, 0,
+      'upload defers the expensive pipeline so another local commit can follow');
+    assert.equal(state.reconciliations[0].expectedHeadSha, FIRST_REVISION);
+
+    // A stacked local change still uploads oldest-first. The first upload's
+    // deferred pending verdict is not treated as an in-flight pipeline.
+    state.uploadHead = FINAL_REVISION;
+    const second = mockRes();
+    await upload({
+      params: { id: '101' }, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+      body: uploadBody({
+        localCommitSha: 'b'.repeat(40), parentSha: 'a'.repeat(40),
+        parentTreeSha: TREE, treeSha: 'c'.repeat(40), message: 'Final local commit',
+      }),
+    }, second);
+    assert.equal(second.statusCode, 201);
+    const uploadCalls = state.github.filter((call) => call[0] === 'upload');
+    assert.equal(uploadCalls[1][3].expectedRemoteParentSha, FIRST_REVISION);
+    assert.equal(state.sessions[0].reviewed_head_sha, FINAL_REVISION);
+    assert.equal(state.reconciliations.length, 2);
+
+    const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
+    const buildBody = {
+      schemaVersion: 1,
+      headSha: FINAL_REVISION,
+      history: [{
+        id: 'promoted-managed-build', kind: 'summary', phase: 'build',
+        content: 'Attached the final promoted revision.',
+      }],
+      tests: [{ command: 'node --test', status: 'passed', summary: 'Focused tests passed.' }],
+    };
+    const accepted = mockRes();
+    await build({
+      params: { id: '101' }, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' }, body: buildBody,
+    }, accepted);
+    assert.equal(accepted.statusCode, 202);
+    assert.equal(accepted.body.state, 'promoted');
+    assert.equal(accepted.body.revisionState, 'deploying');
+    assert.equal(state.sessions[0].status, 'promoted');
+    assert.equal(state.sessions[0].handoff_head_sha, FINAL_REVISION);
+    assert.equal(state.promotedChecks.length, 1);
+    assert.equal(state.promotedChecks[0].newHead, FINAL_REVISION);
+    assert.equal(state.staging.length, 0,
+      'the active-only handoff pipeline is never used for a promoted proposal');
+
+    const retry = mockRes();
+    await build({
+      params: { id: '101' }, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' }, body: buildBody,
+    }, retry);
+    assert.equal(retry.statusCode, 202);
+    assert.equal(state.promotedChecks.length, 1, 'a lost-response retry does not duplicate checks');
+
+    Object.assign(state.sessions[0], {
+      check_state: 'passing',
+      staging_url: 'https://new-preview.example',
+    });
+    const status = routeHandler(router, '/api/sessions/:id/proposal-handoff', 'get');
+    const statusRes = mockRes();
+    await status({
+      params: { id: '101' }, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, statusRes);
+    assert.equal(statusRes.body.state, 'promoted', 'the voting lifecycle state is retained');
+    assert.equal(statusRes.body.revisionState, 'ready',
+      'the managed revision exposes its independently pollable check state');
+  } finally { restore(); }
+});
+
+test('managed upload and build keep every generally frozen proposal state closed', async () => {
+  for (const frozenStatus of ['merging', 'merged', 'archived']) {
+    const { router, state, restore } = makeHarness();
+    try {
+      const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
+      await start({
+        params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+        user: { id: 7, username: 'maker' },
+      }, mockRes());
+      Object.assign(state.sessions[0], {
+        status: frozenStatus,
+        handoff_uploaded_sha: HEAD,
+        handoff_head_sha: HEAD,
+        checks_commit_sha: HEAD,
+      });
+      const githubCalls = state.github.length;
+
+      const upload = routeHandler(router, '/api/sessions/:id/proposal-handoff/commits', 'post');
+      const uploadRes = mockRes();
+      await upload({
+        params: { id: '101' }, cliAuthenticated: true,
+        user: { id: 7, username: 'maker' }, body: uploadBody(),
+      }, uploadRes);
+      assert.equal(uploadRes.statusCode, 409, frozenStatus);
+      assert.equal(uploadRes.body.error, 'proposal_closed', frozenStatus);
+
+      const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
+      const buildRes = mockRes();
+      await build({
+        params: { id: '101' }, cliAuthenticated: true,
+        user: { id: 7, username: 'maker' },
+        body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
+      }, buildRes);
+      assert.equal(buildRes.statusCode, 409, frozenStatus);
+      assert.equal(buildRes.body.error, 'proposal_closed', frozenStatus);
+      assert.equal(state.github.length, githubCalls,
+        `${frozenStatus} is rejected before any GitHub mutation`);
+    } finally { restore(); }
+  }
 });
 
 test('native CLI handoff persists context, adopts an exact commit, and reaches ready staging', async () => {

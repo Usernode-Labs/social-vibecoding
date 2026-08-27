@@ -207,3 +207,10 @@ test('test and native-local entrypoints materialize ignored shell artifacts', ()
   assert.match(compose, /node scripts\/restore-image-assets\.js/,
     'dev Compose must restore image-built artifacts hidden by its public bind mount');
 });
+
+test('kpack excludes dependency trees from the platform source', () => {
+  const project = fs.readFileSync(path.join(ROOT, 'project.toml'), 'utf8');
+  assert.match(project, /schema-version = "0\.2"/);
+  assert.match(project, /exclude = \[[\s\S]*"node_modules\/"[\s\S]*\]/,
+    'a committed dependency tree must not switch Paketo from npm ci to npm rebuild');
+});

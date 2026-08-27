@@ -61,11 +61,11 @@ export interface VenueButton {
 
 export interface SessionHeaderState {
   /**
-   * `#app/<slug>/dev`, or '' when there is no app in scope. Empty renders an
-   * anchor with an empty href, exactly as the template did — the control is
-   * still there, it just has nowhere to go.
+   * An AI turn is in flight right now — the strip's "Building" chip
+   * (Streamlined Concept). The in-strip ← and its backHref retired when the
+   * platform header's own back arrow took over the session screen.
    */
-  backHref: string;
+  busy: boolean;
   /** The session's name, already resolved through its three fallbacks. */
   title: string;
   /** The branch name, which is what the title's tooltip shows. */
@@ -81,7 +81,7 @@ export interface SessionHeaderState {
 }
 
 export const EMPTY_SESSION_HEADER: SessionHeaderState = {
-  backHref: '',
+  busy: false,
   title: '',
   branch: '',
   pr: null,

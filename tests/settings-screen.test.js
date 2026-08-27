@@ -411,25 +411,32 @@ test('every sibling-exit site tears the settings screen down too', () => {
 test('the header back button consults Settings.handleBack behind _inSettings', () => {
   const idx = appJs.indexOf("document.getElementById('back-btn').addEventListener");
   // Wide enough for every screen hook the handler chains (admin, settings,
-  // browse) plus the navigateHome fallthrough below them.
-  const fn = appJs.slice(idx, idx + 800);
+  // browse, the dev session), the follow-the-href step and the navigateHome
+  // fallthrough below them.
+  const fn = appJs.slice(idx, idx + 1800);
   assert.match(fn, /if \(App\._inSettings && window\.Settings\?\.handleBack\?\.\(\)\) return;/,
     'the mobile section arrow is consumed by the module');
-  assert.match(fn, /App\.navigateHome\(\);/, 'and everything else still goes home');
+  assert.match(fn, /window\.location\.hash = href/,
+    'a screen that named a parent goes THERE');
+  assert.match(fn, /App\.navigateHome\(\);/,
+    'and home is the fallback for one that named none');
 });
 
-test('the drawer row is a real anchor to #settings', () => {
-  assert.match(html, /<a id="drawer-row-settings" href="#settings"/,
+test("Settings is reached from the chip's menu, by a real anchor", () => {
+  // It was a hamburger row; #1431 retired the hamburger and parked it in the
+  // Profile screen's account group; #1443 gave the shell a menu again and
+  // Settings went back into it, because it has its own page and the menu's
+  // rule is that everything in it does. One entrance, one hop, from anywhere.
+  const panel = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(panel, /id="switcher-row-settings"[\s\S]{0,80}href="#settings"/,
     'navigation rides the anchor hash, like Challenges / Profile');
-  assert.match(html, /id="drawer-byok-dot"/, 'the BYOK indicator dot survives');
-  // #1079 chunk B: the drawer's row handlers moved into the React bundle with
-  // its markup (frontend/src/features/header/header-menu-controller.js).
-  const headerMenuJs = read('frontend/src/features/header/header-menu-controller.js');
-  const init = headerMenuJs.slice(headerMenuJs.indexOf("getElementById('drawer-row-settings')"));
-  assert.match(init.slice(0, 250), /HeaderMenu\.close\(\)/,
-    'the click handler just closes the drawer');
-  assert.doesNotMatch(init.slice(0, 250), /Settings\.open\(/,
-    'it does NOT call Settings.open — the hash does the navigating');
+  assert.match(panel, /id="switcher-byok-dot"/, 'the BYOK indicator dot survives');
+  // The row does not call Settings.open — the hash does the navigating and
+  // always did. It DOES dismiss the menu it sits in, which is the one thing
+  // the Profile-screen version of this row had nothing to do: a menu that
+  // stays open over the screen it just sent you to is the bug.
+  assert.match(panel, /AppContext\.dismissForNav\(\)/,
+    'activating a row closes the menu before the hash lands');
 });
 
 // ── Two-level layout ───────────────────────────────────────────────────
@@ -550,10 +557,13 @@ test('the nav hosts still ship EMPTY, so the prerender is unchanged', () => {
 
 test('_syncChrome drives the header through App, not the DOM', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    _syncChrome() {'));
-  const head = fn.slice(0, 800);
-  // #1036: the second argument is the anchor's href — inside a section
-  // the chevron pops to the settings menu, so that is where it points.
-  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#settings' : undefined\)/);
+  const head = fn.slice(0, 1400);
+  // #1036: the second argument is the anchor's href — inside a section the
+  // chevron pops to the settings menu, so that is where it points; at level 1
+  // it points at PROFILE, which is this screen's parent since the drawer that
+  // linked Settings from anywhere was retired. ALWAYS an arrow: with the
+  // hamburger gone, a hidden back slot would strand level 1.
+  assert.match(head, /App\.setBackIcon\('arrow', inSection \? '#settings' : '#profile'\)/);
   assert.match(head, /App\.setHeaderTitle\(/,
     'setHeaderTitle mirrors document.title for the native AppBar');
   assert.doesNotMatch(head, /getElementById\('header-title'\)/,

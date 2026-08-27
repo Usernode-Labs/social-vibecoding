@@ -632,7 +632,7 @@ export function LandingScreen() {
         id="landing-header"
         className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 shrink-0"
       >
-        <div className="w-5 h-7 shrink-0 flex items-center">
+        <div className="w-7 h-7 shrink-0 flex items-center justify-center">
           <button
             id="landing-back-btn"
             type="button"

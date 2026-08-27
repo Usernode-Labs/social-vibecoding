@@ -162,7 +162,10 @@ test('sentinel classes used by the shell are present', () => {
     'text-\\[11px\\]',
     'min-h-\\[44px\\]',
     'max-h-\\[70vh\\]',
-    'max-w-\\[85vw\\]',
+    // `max-w-[85vw]` was here and is gone with its only caller — the
+    // hamburger drawer's panel. A sentinel for a utility nothing uses stops
+    // proving the extractor works and starts proving it compiles dead CSS.
+    'min-w-\\[1\\.1rem\\]',
     // Opacity-modifier colours (status chips, focus rings).
     'bg-emerald-500\\/15',
     'ring-violet-500\\/40',

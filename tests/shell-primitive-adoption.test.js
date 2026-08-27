@@ -94,6 +94,31 @@ const ALLOWED_BUTTON_FILES = new Set([
   // `scope` — so the exception has nothing left to protect and the button
   // routes through <Button>: `size` spells both paddings and the trailing
   // `shrink-0` arrives through className, which cva emits last.
+  //
+  // The dev session strip's doing<->seeing switch. Its ACTIVE segment is the
+  // accent fill, which is the same decision already taken twice above for
+  // board-frame's view toggle and the Kudos pane's window pills: a segment's
+  // fill is not a primary button's fill. The two segments also swap SHAPE as
+  // well as colour — the current one grows a label and the other collapses to
+  // a 24px glyph — which is a cva table of its own, for one control.
+  'dev-chat/session-header.tsx',
+  // #improve-btn, the header's standing action. It genuinely IS a primary
+  // filled button now (the Streamlined Concept board draws it that way — and
+  // that board is NEWER than the review that once made this plain text; see
+  // the note above IMPROVE_BTN_CLASS before touching it), and
+  // it is listed rather than routed for two reasons the primitive cannot
+  // meet. Its height is pinned to the header's 28px content row with NO
+  // vertical padding — the invariant #909 exists to protect and
+  // tests/header-height-parity.test.js re-asserts — while every Button size
+  // spells its height through `py-*`. And it ships in the SSG prerender, so
+  // its class attribute has to stay byte-identical across a hydration it
+  // shares with three absolutely-positioned indicators.
+  //
+  // Note it does not currently TRIP this scan: the run lives in a
+  // module-scope `IMPROVE_BTN_CLASS`, not inside the tag, and the scanner
+  // reads opening tags only. The entry is here so the record is the decision
+  // rather than that blind spot.
+  'improve/improve-button.tsx',
 ]);
 
 // Empty, and worth keeping empty: every field box in the tree now comes from

@@ -23,6 +23,7 @@ import {
   profileStore,
 } from './profile-store.js';
 import { Profile } from './profile.js';
+import { AccountPanel } from './account-panel';
 import { ProfileEditSheet } from './profile-edit-sheet';
 import { PublicProfileCard } from './public-profile-card';
 
@@ -414,6 +415,13 @@ export function ProfileRoot(): ReactNode {
       ) : null}
 
       <Completed completed={view.completed} />
+      {/*
+          Settings, Admin and the two native rows — the account group the
+          retired hamburger drawer used to close with. LAST, because this
+          screen leads with who you are and what you have done; where you
+          configure it is the footer of that, not the headline.
+      */}
+      <AccountPanel />
     </>
   );
 }

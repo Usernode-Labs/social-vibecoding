@@ -38,7 +38,27 @@ declare global {
     Notifications?: {
       init(): void;
       refresh(): Promise<void>;
+      /**
+       * Clear this document's copy of one conversation's notifications, after
+       * the server has already cleared them (features/messages/store.ts calls
+       * it on the local read and on a `conversation_read` for this viewer).
+       * Declared rather than left to the index signature below, which types a
+       * lookup as `unknown` and so makes the call itself an error.
+       */
+      markConversationRead(conversationId: number): void;
       open: boolean;
+      [key: string]: unknown;
+    };
+    /**
+     * The three platform SHEETS, each built by lib/sheet-controller.js and
+     * published at its controller's module scope. Classic scripts and the
+     * header glyphs reach them here.
+     */
+    NotificationsSheet?: {
+      open(): void;
+      close(): Promise<void> | void;
+      toggle(): void;
+      isOpen(): boolean;
       [key: string]: unknown;
     };
     /** features/settings/settings.js */
@@ -103,9 +123,8 @@ declare global {
     };
     /**
      * features/header/header-menu-controller.js — the hamburger drawer's
-     * open/close, and the app-scoped drawer rows' visibility. Both were
-     * App.HeaderMenu / App.DrawerStatus in app.js, which now forwards onto
-     * these so its own call sites (plus app-view.js, native-chrome.js,
+     * open/close. It was App.HeaderMenu in app.js, which now forwards onto
+     * this so its own call sites (plus app-view.js, native-chrome.js,
      * node-pill.js, wallet-sheet.js) are untouched.
      */
     HeaderMenu?: {
@@ -116,10 +135,9 @@ declare global {
       consumeNavPending(): boolean;
       [key: string]: unknown;
     };
-    /** features/header/header-menu-controller.js */
-    DrawerStatus?: {
+    /** features/improve/improve-status.js */
+    ImproveStatus?: {
       setAppOpen(open: boolean): void;
-      setForkVisible(visible: boolean): void;
       refreshDeployDot(): void;
       [key: string]: unknown;
     };
@@ -184,6 +202,8 @@ declare global {
         syncChrome(): void;
         handleEvent(event: Record<string, unknown>): void;
         share(reference?: unknown): Promise<void> | void;
+        /** Repaint one row's save state — the notifications drawer's unsave. */
+        paintSaved(messageId: number, saved: boolean): void;
         refresh(): Promise<void> | void;
       };
       [key: string]: unknown;

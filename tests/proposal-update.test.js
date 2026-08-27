@@ -1084,6 +1084,43 @@ test('active and paused are continuable; archived and merged are not', () => {
   assert.match(CODE, /if \(!isContinuableStatus\(session\.status\)\)/);
 });
 
+test('managed promoted upload reconciliation resets the exact head and defers its pipeline', async () => {
+  const calls = [];
+  const session = nativeSession({ source: 'cli_handoff' });
+  const result = await svc.reconcileManagedCommitUpload({
+    config: { marker: 'config' },
+    pool: { marker: 'pool' },
+    votes: {
+      async reconcileNativeReviewedHead(args) {
+        calls.push(args);
+        return { headSha: FORK_HEAD, updated: true, votesDropped: 2, checksDeferred: true };
+      },
+    },
+  }, { session, expectedHeadSha: FORK_HEAD });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.votesDropped, 2);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].session, session);
+  assert.equal(calls[0].fresh, true);
+  assert.equal(calls[0].notify, true);
+  assert.equal(calls[0].deferChecks, true);
+});
+
+test('managed promoted upload reconciliation fails closed when GitHub moved again', async () => {
+  const result = await svc.reconcileManagedCommitUpload({
+    config: {}, pool: {},
+    votes: {
+      async reconcileNativeReviewedHead() {
+        return { headSha: OTHER_HEAD, updated: true };
+      },
+    },
+  }, { session: nativeSession({ source: 'cli_handoff' }), expectedHeadSha: FORK_HEAD });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'branch_moved');
+  assert.equal(result.headSha, OTHER_HEAD);
+});
+
 test('an archived session is refused before anything is pushed', async () => {
   const log = {};
   const result = await runSession('archived', {}, log);

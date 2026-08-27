@@ -67,6 +67,13 @@ export interface ConversationMessage {
   reactions: MessageReaction[];
   attachments: MessageAttachment[];
   objects: SharedObjectCard[];
+  /**
+   * Whether the VIEWER has saved this message — their own private bookmark,
+   * never an aggregate. Hydrated with the page (services/conversations.js), so
+   * the row's button renders already filled rather than flashing empty.
+   * Optional because an optimistic local echo has no server answer yet.
+   */
+  saved?: boolean;
   pending?: boolean;
   failed?: boolean;
   clientKey?: string;

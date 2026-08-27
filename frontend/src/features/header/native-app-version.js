@@ -1,4 +1,4 @@
-// Installed Flutter mobile-app version in the hamburger drawer footer (#1101).
+// Installed Flutter mobile-app version, in Settings' About block (#1101).
 //
 // A Git SHA identifies the deployed platform version, while this value identifies
 // the independently released binary hosting the WebView. New app builds put
@@ -7,11 +7,13 @@
 // the same fields in their privileged getSettingsState snapshot. Neither path
 // ever substitutes the currently-open dApp's commit hash.
 //
-// Like node-pill.js and wallet-sheet.js, this module owns a static, initially
-// hidden row inside the React drawer island. It evaluates as part of the bundle
-// but init() runs from the island's layout effect, after hydration has adopted
-// that markup. Data is then written imperatively because other legacy modules
-// still own sibling slots in the same subtree.
+// It used to own a hidden row in the hamburger drawer's footer, like
+// node-pill.js and wallet-sheet.js do for their rows; the Streamlined Concept
+// board dissolved that footer and the row moved to Settings, where the two
+// platform versions sit together. What did NOT change is the seam: this module
+// publishes to ./native-app-version-store and the row renders from React
+// (./native-app-version-row.tsx). init() still runs from an island's layout
+// effect, after hydration has adopted the markup.
 import { nativeAppVersionStore } from './native-app-version-store';
 
 (function () {
@@ -34,7 +36,12 @@ import { nativeAppVersionStore } from './native-app-version-store';
         // A cold native start can make the first bridge read inconclusive.
         // Retry when the user next opens the only surface that displays the
         // value, without repeating a successful device-local read.
-        window.addEventListener('usernode:header-menu-open', () => {
+        //
+        // That surface is SETTINGS now, not the drawer, so the retry follows
+        // the row: `usernode:settings-section` fires on every entry into a
+        // settings section, which is exactly the substitution theme.tsx made
+        // when its control moved the same way.
+        window.addEventListener('usernode:settings-section', () => {
           if (!NativeAppVersion._value) NativeAppVersion.refresh();
         });
 
@@ -49,8 +56,8 @@ import { nativeAppVersionStore } from './native-app-version-store';
         });
       }
 
-      // Warm the footer in the background so the value is normally present
-      // before the drawer is opened for the first time.
+      // Warm the row in the background so the value is normally present
+      // before Settings is opened for the first time.
       NativeAppVersion.refresh();
     },
 

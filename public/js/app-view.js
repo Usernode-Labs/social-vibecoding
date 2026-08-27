@@ -474,7 +474,7 @@ const AppView = {
     // non-collaborators via AppView.readOnly) used to be two per-button
     // `hidden` toggles on the bottom tab bar's cells. The bar is now the
     // header's #app-mode-switch, whose whole-control visibility is owned
-    // by App.DrawerStatus.setAppOpen() — called from navigateToApp right
+    // by App.ImproveStatus.setAppOpen() — called from navigateToApp right
     // after this fetch resolves, on the same lifecycle as the drawer's
     // app-scoped rows. Nothing to toggle here any more.
 
@@ -482,9 +482,6 @@ const AppView = {
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
     if (window.DevConsole) DevConsole.setCurrentApp(slug);
-    // Amber "⑂ Forked from <name>" lineage label in the shared header
-    // (cleared by close()). No-op for non-forks.
-    AppView.renderForkBadge();
     // Missing-secrets badge lives inside the dev-chat tab now and is
     // re-applied by renderDevChatTab() on every mount, so the call here
     // is just a primer for the case where the tab is already rendered.
@@ -738,11 +735,7 @@ const AppView = {
     }
     if (window.Secrets) Secrets.hide();
     AppView.pendingInnerPath = null;
-    // Fork lineage lives in the drawer's bottom-anchored footer. Blank it and
-    // hide its row, or the previous app's lineage lingers on the home feed.
-    const forkSlot = document.getElementById('app-fork-badge-slot');
-    if (forkSlot) forkSlot.innerHTML = '';
-    if (window.App?.DrawerStatus) App.DrawerStatus.setAppOpen(false);
+    if (window.App?.ImproveStatus) App.ImproveStatus.setAppOpen(false);
   },
 
   // Iframe tokens are APP-SCOPED since the RSA cutover: each one carries
@@ -1597,7 +1590,11 @@ const AppView = {
     // away on the next render.
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
-    document.getElementById('back-btn')?.classList.remove('hidden');
+    // The back slot is setBackIcon's alone now (see App.setBackIcon and
+    // features/header/back-button-store.js): it shows the ARROW or nothing,
+    // and the app glyph takes the slot the rest of the time. A raw unhide
+    // here used to leave a home icon on these fixtures; React reconciles it
+    // away on its next render anyway, so it was a write with no reader.
   },
 
   // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
@@ -1635,7 +1632,11 @@ const AppView = {
     AppView.renderAppTab();
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
-    document.getElementById('back-btn')?.classList.remove('hidden');
+    // The back slot is setBackIcon's alone now (see App.setBackIcon and
+    // features/header/back-button-store.js): it shows the ARROW or nothing,
+    // and the app glyph takes the slot the rest of the time. A raw unhide
+    // here used to leave a home icon on these fixtures; React reconciles it
+    // away on its next render anyway, so it was a write with no reader.
   },
 
   // ── The App tab's placeholder states ────────────────────────────────
@@ -1705,6 +1706,12 @@ const AppView = {
   renderAppTab() {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
+
+    // Streamlined Concept: coming back from Activity / Board (which title
+    // themselves) the header returns to the app's name — the use state the
+    // Figma board draws. (Optional-called: the app-frame vm harnesses stub
+    // App without it.)
+    if (appData?.name) App.setHeaderTitle?.(appData.name);
 
     // #685: an issue-state announcement is invalidated by the frame that made
     // it going away, and a WindowProxy keeps its identity across same-iframe
@@ -2073,9 +2080,21 @@ const AppView = {
     // other three branches, so the teardown — and the one Dev navigation that
     // threw the board frame's state away — is gone with the template.
 
+    // The Dev sub-views own the header's back slot: a SESSION leads with a
+    // real ← to the Board (the Figma session bar's left zone), every other
+    // sub-view hides it. Down here rather than per-branch because sub-view
+    // hops never pass App._showOnlyScreen, the usual single owner of that
+    // reset — without this, the session's arrow would linger on the Board.
+    App.setBackIcon?.('home');
+
     // Session view — a single DevChat session, full-screen, reached
     // from the Your-sessions strip, proposal cards, or the "+" flow.
     if (subTab === 'sessions' && ref) {
+      // Streamlined Concept: a cold deep link must not inherit the previous
+      // screen's title — the center tab names the app here, same as the app's
+      // other screens (the session's own name lives in #dc-session-header).
+      if (AppView.appData?.name) App.setHeaderTitle?.(AppView.appData.name);
+      App.setBackIcon?.('arrow', `#app/${App.currentApp}/board`);
       // <DevSessionShell/> — #dev-section stays the host renderDevChatTab
       // writes into, exactly as when this was a template.
       AppView._reactDevBoard()?.mountSessionShell(content);
@@ -2083,9 +2102,13 @@ const AppView = {
       return;
     }
 
-    // Full-screen general chat (card-list revision: chat is a card you
-    // tap into, not a pinned pane).
+    // Full-screen general chat — the ACTIVITY screen (Streamlined Concept):
+    // a first-class destination (#app/<slug>/activity) reached from the
+    // app-context sheet, so the header names it.
     if (subTab === 'chat') {
+      // The app's name stays the chip's label and "Activity" qualifies it —
+      // replacing the name here was the chip forgetting which app it was in.
+      App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Activity');
       AppView._renderChatSubView(content);
       return;
     }
@@ -2121,9 +2144,12 @@ const AppView = {
       cardCls: AppView.DEV_CARD_CLS,
       cardHoverCls: AppView.DEV_CARD_HOVER_CLS,
       viewMode: AppView._getViewMode(),
-      onSelectViewMode: (mode) => AppView._selectViewMode(mode),
     });
 
+    // The card area is the BOARD (Streamlined Concept) — kanban and feed are
+    // its two display modes — and the header names it AS A SUBTITLE under the
+    // app's own name, so the chip never stops saying which app you are in.
+    App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Board');
     AppView._wirePlusMenu(content);
     // Pull down on the dev feed to re-pull it (touch only; the scroller
     // is re-created on every render so this re-attaches each time).
@@ -2131,12 +2157,10 @@ const AppView = {
     if (devScroll) {
       PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed());
     }
-    // _wireViewToggle is gone: <DevBoardFrame/> binds the toggle's onClick and
-    // routes it to _selectViewMode below (#1084 chunk G).
-    document.getElementById('dev-chat-card').addEventListener('click', () => {
-      App.switchTab('dev', null, 'chat');
-    });
-    AppView._loadChatCardPreview();
+    // The General-chat CARD is retired (Streamlined Concept): Activity is an
+    // app-context sheet row and a first-class hash now, so the board no
+    // longer offers a second door to it. <DevBoardFrame/> binds its own
+    // Kanban|Feed control to _selectViewMode.
 
     // Delegated card-open handler: tapping a topic card anywhere except
     // its links/pills opens that topic full-screen. Bound on the stable
@@ -3440,24 +3464,14 @@ const AppView = {
   },
 
   // ── Full-screen general chat sub-view ───────────────────────────────
-  // A slim back-button header above the existing chat pane.
-  // renderGroupChatTab mounts into #dev-chat-body exactly as it used to
-  // mount into the pinned pane — spec side-panel, autocomplete, drafts,
-  // and scroll restore all unchanged.
+  // The ACTIVITY screen (Streamlined Concept): renderGroupChatTab mounts
+  // into #dev-chat-body exactly as it used to mount into the pinned pane —
+  // spec side-panel, autocomplete, drafts, and scroll restore all unchanged.
+  // No in-frame back bar: the ways out are the header's eye and title tab.
   _renderChatSubView(content) {
     // <DevChatSubView/> — #dev-chat-body stays the host renderGroupChatTab
-    // writes into. The back link's click handler moved into the component's
-    // onClick prop (below) rather than being bound after the fact, because
-    // React owns the anchor now; the guard and the target are unchanged.
-    AppView._reactDevBoard()?.mountChatSubView(content, {
-      backHref: AppView._devPageHref(),
-      onBackClick: (e) => {
-        // #1036: real anchor — leave a modified click to the browser.
-        if (window.NavLink && NavLink.isNativeClick(e)) return;
-        e.preventDefault();
-        App.switchTab('dev');
-      },
-    });
+    // writes into.
+    AppView._reactDevBoard()?.mountChatSubView(content);
 
     AppView.renderGroupChatTab();
     // Vote snapshot for the inline buttons on activity rows — needed
@@ -3659,23 +3673,6 @@ const AppView = {
     }
   },
 
-  // Best-effort one-line preview of the latest general-chat message for
-  // the chat card. A failed fetch leaves the static fallback line.
-  async _loadChatCardPreview() {
-    const el = document.getElementById('dev-chat-card-preview');
-    if (!el || !AppView.appData) return;
-    try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/messages?limit=1`);
-      if (!res.ok) return;
-      const { messages } = await res.json();
-      const m = messages && messages[messages.length - 1];
-      if (!m || !m.content) return;
-      const live = document.getElementById('dev-chat-card-preview');
-      if (!live) return;
-      const who = m.username || 'System';
-      live.textContent = `${who}: ${String(m.content).slice(0, 140)}`;
-    } catch { /* keep the fallback line */ }
-  },
 
   // Re-pull live data for the dev card list. Called from the WS event
   // handlers in app.js (vote_update / issue_update / session_update /
@@ -4824,8 +4821,8 @@ const AppView = {
   },
 
   // Identity string for a bucketed card, matching the (card_type, card_ref)
-  // pairs the server stores and the data-*-row attributes the drag handler
-  // reads. `column` picks how to read the ref: Issues holds bare issue rows,
+  // pairs the server stores, so a saved order can be laid over the derived
+  // one. `column` picks how to read the ref: Issues holds bare issue rows,
   // In review holds { kind, item } entries (proposal | gov).
   _cardOrderKey(column, entry) {
     if (entry == null) return null;
@@ -4977,47 +4974,25 @@ const AppView = {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   },
 
-  // #780: the category filter's options — built-ins then this app's custom
-  // categories, mirroring the dropdown's order. Like the assignee select, the
-  // current selection is always kept in the list even if it vanishes from the
-  // vocabulary, so an active filter never silently self-clears.
-  _kanbanCategoryOptionList() {
-    const f = AppView._kanbanFilters || {};
-    const seen = new Set();
-    const out = [{ value: '', label: 'Any category' }];
-    const push = (v) => { seen.add(v); out.push({ value: v, label: AppView._categoryMeta(v).label }); };
-    for (const v of AppView.ATTR_CATEGORY_VALUES) push(v);
-    for (const c of AppView._customCategories()) if (!seen.has(c.value)) push(c.value);
-    // The current selection is always kept in the list even if it vanished
-    // from the vocabulary, so an active filter never silently self-clears.
-    if (f.category && !seen.has(f.category)) push(f.category);
-    return out;
-  },
-
   // ── The filter bar's chips moved to React ────────────────────────
   //
   // `KANBAN_CHIP_BASE`/`_IDLE`/`_ON` and the two builders that read them
   // (`_kanbanNeedsVoteChipCls`, `_kanbanChipSelectCls`) are retired: the bar
   // is `frontend/src/features/dev-board/kanban-filters.tsx` now, and it is the
   // only writer below `#dev-kanban-filterbar`. The class runs live there, as
-  // `CHIP_BASE`/`CHIP_IDLE`/`CHIP_ON`.
+  // `CHIP_BASE`/`CHIP_IDLE`/`CHIP_ON`. Streamlined Concept: the bar's selects
+  // and the needs-vote toggle moved on into the Filters DIALOG
+  // (frontend/src/features/dialogs/board-filters.tsx), so the bar is just
+  // search + a `Filters (n)` chip + one dismissable chip per active filter,
+  // and the option vocabularies feed the dialog's open() payload instead of
+  // a select's list (`_kanbanCategoryChoices` below replaced
+  // `_kanbanCategoryOptionList`).
   //
   // They are transcribed there rather than imported from here, and that is not
   // an oversight worth undoing: this file is a classic script the bundle
   // cannot import, and Tailwind's extractor is a regex over source text
   // (AGENTS.md), so a class name whose only occurrence is in this file would
   // compile to nothing for the component that actually renders it.
-
-  _kanbanAssigneeOptionList() {
-    return [
-      // "Assignee or author" rather than "Anyone" since #1404: the filter
-      // matches a person against BOTH the top-voted assignee and the card's
-      // author, so the empty option is naming what it clears, not who.
-      { value: '', label: 'Assignee or author' },
-      { value: AppView.KANBAN_ASSIGNEE_UNASSIGNED, label: 'Unassigned' },
-      ...AppView._kanbanAssigneeOptions().map((name) => ({ value: name, label: name })),
-    ];
-  },
 
   // #625 made the filter bar shared between the kanban and PM views, so every
   // bar control routed its change through this dispatcher rather than calling
@@ -5050,23 +5025,19 @@ const AppView = {
     AppView._reactDevBoard()?.publishKanbanFilters(patch);
   },
 
-  // The whole bar's state, from the module's filters plus the two data-driven
-  // option lists. `except` skips a select whose dropdown is open — rebuilding
-  // its options would close it, and the next repaint catches it up.
-  _kanbanFilterView(except) {
+  // The whole bar's state. The selects' option lists are no longer part of
+  // it — the vocabularies feed the Filters dialog's open() payload instead —
+  // so the view is just the search text, the `Filters (n)` count and one
+  // entry per active filter for the dismissable chip row.
+  _kanbanFilterView() {
     const f = AppView._kanbanFilters || {};
-    const view = {
+    return {
       mounted: true,
       q: f.q || '',
-      priority: f.priority || '',
-      category: f.category || '',
-      assignee: f.assignee || '',
-      needsVote: !!f.needsVote,
-      active: AppView._kanbanFiltersActive(),
+      seq: AppView._kanbanFilterSeq,
+      count: AppView._kanbanFilterCount(),
+      chips: AppView._kanbanActiveChips(),
     };
-    if (except !== 'category') view.categories = AppView._kanbanCategoryOptionList();
-    if (except !== 'assignee') view.assignees = AppView._kanbanAssigneeOptionList();
-    return view;
   },
 
   _renderKanbanFilterBar() {
@@ -5093,64 +5064,126 @@ const AppView = {
     }, 150);
   },
 
-  _setKanbanFilter(field, value) {
-    AppView._kanbanFilters[field] = value || null;
-    AppView._publishKanbanFilters(AppView._kanbanFilterView());
-    AppView._repaintBoardSurface();
-  },
-
-  _toggleKanbanNeedsVote() {
-    AppView._kanbanFilters.needsVote = !AppView._kanbanFilters.needsVote;
-    AppView._publishKanbanFilters(AppView._kanbanFilterView());
-    AppView._repaintBoardSurface();
-  },
-
   _kanbanFilterSeq: 0,
 
-  _clearKanbanFilters() {
-    AppView._kanbanFilters = AppView._defaultKanbanFilters();
-    // A new `seq` is a new key on the search field, which is what puts an
-    // uncontrolled box back to empty. Every other control reads its value from
-    // the model and follows on its own.
-    AppView._kanbanFilterSeq += 1;
-    AppView._publishKanbanFilters({
-      ...AppView._kanbanFilterView(),
-      seq: AppView._kanbanFilterSeq,
-    });
+  // A chip's × — remove exactly one filter. The dialog-owned keys just null
+  // out; dismissing the Search chip also has to empty the uncontrolled box,
+  // and a new `seq` is a new key on the field, which is what does that.
+  _dismissKanbanFilter(key) {
+    if (key === 'q') {
+      AppView._kanbanFilters.q = '';
+      AppView._kanbanFilterSeq += 1;
+    } else if (key === 'needsVote') {
+      AppView._kanbanFilters.needsVote = false;
+    } else {
+      AppView._kanbanFilters[key] = null;
+    }
     AppView._repaintBoardSurface();
   },
 
-  // Keep the stable filter bar in sync after each board repaint: Clear-link
-  // visibility, and the assignee option list (which follows the data).
+  // How many of the dialog-owned filters are active — the count on the
+  // `Filters (n)` chip. Search is excluded: it has its own field and chip.
+  _kanbanFilterCount() {
+    const f = AppView._kanbanFilters || {};
+    return (f.priority ? 1 : 0) + (f.category ? 1 : 0)
+      + (f.assignee ? 1 : 0) + (f.needsVote ? 1 : 0);
+  },
+  // One entry per active filter, in a fixed order — the dismissable chip
+  // row's data. The chips themselves (Material selected filter-chip with a
+  // trailing ×) render in kanban-filters.tsx; clicking one calls
+  // `_dismissKanbanFilter` with its key.
+  _kanbanActiveChips() {
+    const f = AppView._kanbanFilters || {};
+    const chips = [];
+    if (f.q && f.q.trim()) chips.push({ key: 'q', label: `Search: ${f.q.trim()}` });
+    if (f.priority) {
+      const label = f.priority.charAt(0).toUpperCase() + f.priority.slice(1);
+      chips.push({ key: 'priority', label: `${label} priority` });
+    }
+    if (f.category) {
+      chips.push({ key: 'category', label: AppView._categoryMeta(f.category).label });
+    }
+    if (f.assignee) {
+      chips.push({
+        key: 'assignee',
+        label: f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED ? 'Unassigned' : f.assignee,
+      });
+    }
+    if (f.needsVote) chips.push({ key: 'needsVote', label: 'Needs my vote' });
+    return chips;
+  },
+  // The category vocabulary as DATA — built-ins then this app's customs,
+  // mirroring the retired select's order (#780), with the active selection
+  // kept in the list even if it vanishes from the vocabulary so an active
+  // filter never silently self-clears. Feeds the Filters dialog's payload.
+  _kanbanCategoryChoices() {
+    const f = AppView._kanbanFilters || {};
+    const seen = new Set();
+    const out = [];
+    const add = (v) => {
+      if (!v || seen.has(v)) return;
+      seen.add(v);
+      out.push({ value: v, label: AppView._categoryMeta(v).label });
+    };
+    AppView.ATTR_CATEGORY_VALUES.forEach(add);
+    AppView._customCategories().forEach((c) => add(c.value));
+    add(f.category);
+    return out;
+  },
+  // Open the Filters dialog with a snapshot of the current filters and the
+  // option vocabularies. The dialog is a staging area: nothing changes until
+  // its Done calls applyKanbanFilters below.
+  _openKanbanFiltersDialog() {
+    const f = AppView._kanbanFilters || AppView._defaultKanbanFilters();
+    window.UsernodeReact?.dialogs?.boardFilters?.open({
+      filters: {
+        priority: f.priority || null,
+        category: f.category || null,
+        assignee: f.assignee || null,
+        needsVote: !!f.needsVote,
+      },
+      categories: AppView._kanbanCategoryChoices(),
+      assignees: AppView._kanbanAssigneeOptions(),
+      unassigned: AppView.KANBAN_ASSIGNEE_UNASSIGNED,
+    });
+  },
+  // The Filters dialog's write-back. Merges the dialog-owned keys over the
+  // current set (search stays the bar's own) and repaints; persistence rides
+  // the repaint like every other filter change (_repaintKanbanBoard saves).
+  applyKanbanFilters(next) {
+    const n = next || {};
+    AppView._kanbanFilters = {
+      ...AppView._kanbanFilters,
+      priority: n.priority || null,
+      category: n.category || null,
+      assignee: n.assignee || null,
+      needsVote: !!n.needsVote,
+    };
+    AppView._repaintBoardSurface();
+  },
+
+  // Keep the stable filter bar in sync after each board repaint: the
+  // `Filters (n)` chip's count + fill, and the active-chip row (which
+  // follows the filter state the repaint just applied).
   _updateKanbanFilterBarUI() {
     const bar = document.getElementById('dev-kanban-filterbar');
     if (!bar) return;
-    // Rebuilding a select's options closes an open dropdown, so a select the
-    // reader is currently in keeps the list it was opened with; the next
-    // repaint catches it up. #780: the category list gets the same treatment,
-    // so an option created during this session — or a vocabulary that
-    // finished loading after the bar was built — shows up without a reload.
-    const active = document.activeElement;
-    const id = active && active.id;
-    const except = id === 'dev-kanban-assignee' ? 'assignee'
-      : (id === 'dev-kanban-category' ? 'category' : null);
-    AppView._publishKanbanFilters(AppView._kanbanFilterView(except));
+    // The dropdown-preserving `except` dance died with the bar's selects —
+    // everything left in the strip (Filters chip count, active chips, the
+    // uncontrolled search box React never re-keys) republishes safely.
+    AppView._publishKanbanFilters(AppView._kanbanFilterView());
   },
 
   // Repaint only the board region (#dev-kanban-board) from cached data,
   // leaving the filter bar node untouched. Every filter-control event and
   // WS-driven kanban refresh routes through here.
-  // `remount` forces a fresh portal mount instead of a publish. The drag
-  // recognizer physically rearranges the column's nodes, and React
-  // reconciling keyed children over DOM that already moved leaves cards
-  // wherever the gesture put them — so the commit that ends a drag rebuilds
-  // the subtree exactly as the old innerHTML did. See card/dev-kanban.tsx.
-  _repaintKanbanBoard(remount) {
-    // #613: never rebuild the board out from under an in-progress drag — a
-    // mid-drag rebuild (e.g. a WS board_order_update from another user)
-    // would drop the pointer capture and strand the card. The commit that
-    // ends the drag repaints once it lands.
-    if (AppView._dragState) return;
+  //
+  // This used to take a `remount` flag, because the retired drag recognizer
+  // physically rearranged a column's nodes and React reconciling keyed
+  // children over DOM that already moved left cards where the gesture put
+  // them. Nothing moves nodes behind React any more, so every repaint is a
+  // plain publish. See card/dev-kanban.tsx.
+  _repaintKanbanBoard() {
     const board = document.getElementById('dev-kanban-board');
     if (!board) return;
     // Every filter-control change (and Clear) funnels through here, so this
@@ -5160,7 +5193,6 @@ const AppView = {
     const react = AppView._reactDevBoard();
     AppView._lastKanbanView = AppView._kanbanView();
     if (react) {
-      if (remount) react.unmount(board);
       react.mountKanban(board);
       react.publishKanban(AppView._lastKanbanView);
     }
@@ -5170,143 +5202,8 @@ const AppView = {
     AppView._fillKudosHosts(board);
     AppView._refreshAiAvailability();
     AppView._updateKanbanFilterBarUI();
-    AppView._initKanbanDrag(board);
     AppView._reanchorCardMenu();
   },
-
-  // ── Drag-to-reorder within a column (#613) ───────────────────────────
-  //
-  // Pointer-events based (not native HTML5 DnD) so it works with touch and
-  // doesn't hijack the card's own click/vote/kudos handlers: a drag only
-  // starts from the grip handle in the card's left gutter. On drop the new
-  // order is optimistically applied to _boardOrder + repainted, then POSTed;
-  // a failed save reverts to server truth. _dragState is non-null for the
-  // life of one drag and blocks board repaints (see _repaintKanbanBoard).
-  _dragState: null,
-
-  _initKanbanDrag(board) {
-    if (!board || board._dragBound) return;
-    if (AppView.readOnly) return; // #621: no reordering for read-only viewers
-    board._dragBound = true;
-    board.addEventListener('pointerdown', AppView._onDragPointerDown);
-  },
-
-  _onDragPointerDown(e) {
-    // Left mouse button only (touch/pen report button 0 / -1); ignore others.
-    if (typeof e.button === 'number' && e.button > 0) return;
-    const handle = e.target.closest && e.target.closest('.dev-drag-handle');
-    if (!handle) return;
-    const item = handle.closest('.dev-drag-item');
-    const list = item && item.closest('.dev-drag-list');
-    if (!item || !list || !item.dataset.orderKey) return;
-    e.preventDefault();
-    // Every drag stays inside ONE list now. The retired PM view was the only
-    // surface whose drags spanned several (reorder within a person's stack,
-    // reassign across two, unassign by dropping outside), which is what the
-    // `pm` branch and its cross-list hit-testing existed for.
-    AppView._dragState = {
-      item, list, handle,
-      column: list.dataset.orderCol,
-      pointerId: e.pointerId,
-      moved: false,
-    };
-    try { handle.setPointerCapture(e.pointerId); } catch {}
-    item.classList.add('opacity-50');
-    handle.classList.add('cursor-grabbing');
-    document.addEventListener('pointermove', AppView._onDragPointerMove);
-    document.addEventListener('pointerup', AppView._onDragPointerUp);
-    document.addEventListener('pointercancel', AppView._onDragPointerUp);
-  },
-
-  _onDragPointerMove(e) {
-    const st = AppView._dragState;
-    if (!st) return;
-    st.moved = true;
-    // Insert the dragged item before the first sibling whose vertical
-    // midpoint is below the pointer; append when the pointer is past them
-    // all. Direct children only, so nested cards never confuse the scan.
-    const items = Array.from(st.list.children).filter((el) => el.classList.contains('dev-drag-item'));
-    const y = e.clientY;
-    let before = null;
-    for (const other of items) {
-      if (other === st.item) continue;
-      const rect = other.getBoundingClientRect();
-      if (y < rect.top + rect.height / 2) { before = other; break; }
-    }
-    if (before) {
-      if (st.item.nextElementSibling !== before) st.list.insertBefore(st.item, before);
-    } else if (st.list.lastElementChild !== st.item) {
-      st.list.appendChild(st.item);
-    }
-  },
-
-
-  _onDragPointerUp() {
-    const st = AppView._dragState;
-    if (!st) return;
-    document.removeEventListener('pointermove', AppView._onDragPointerMove);
-    document.removeEventListener('pointerup', AppView._onDragPointerUp);
-    document.removeEventListener('pointercancel', AppView._onDragPointerUp);
-    try { st.handle.releasePointerCapture(st.pointerId); } catch {}
-    st.item.classList.remove('opacity-50');
-    st.handle.classList.remove('cursor-grabbing');
-    const { list, column, moved } = st;
-    AppView._dragState = null;
-    if (!moved) return;
-    const keys = Array.from(list.children)
-      .filter((el) => el.classList.contains('dev-drag-item'))
-      .map((el) => el.dataset.orderKey)
-      .filter(Boolean);
-    AppView._commitBoardOrder(column, keys);
-  },
-
-  // Parse an identity string ('issue:123' / 'proposal:45') back into the
-  // { type, ref } the server stores. Returns null on a malformed key.
-  _orderKeyToRef(key) {
-    const idx = String(key || '').indexOf(':');
-    if (idx < 0) return null;
-    const type = key.slice(0, idx);
-    const ref = parseInt(key.slice(idx + 1), 10);
-    if (!Number.isFinite(ref)) return null;
-    return { type, ref };
-  },
-
-  // Persist a column's new order. Optimistically updates _boardOrder +
-  // repaints (so the order sticks and the handles re-bind), then POSTs. On
-  // failure, reverts to the pre-drag order and repaints.
-  async _commitBoardOrder(column, keys) {
-    if (column !== 'issues' && column !== 'review') return;
-    const order = (keys || []).map(AppView._orderKeyToRef).filter(Boolean);
-    const prev = AppView._boardOrder || { issues: [], review: [] };
-    AppView._boardOrder = { ...prev, [column]: order };
-    // remount: the recognizer moved these nodes, so reconciling over them
-    // would leave cards where the gesture put them (card/dev-kanban.tsx).
-    AppView._repaintKanbanBoard(true);
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    try {
-      const res = await fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ column, order }),
-      });
-      if (!res.ok) throw new Error('save failed');
-      const data = await res.json().catch(() => null);
-      if (data && Array.isArray(data.issues) && Array.isArray(data.review)) {
-        AppView._boardOrder = { issues: data.issues, review: data.review };
-        AppView._repaintKanbanBoard(true);
-      }
-    } catch {
-      AppView._boardOrder = prev;
-      AppView._repaintKanbanBoard(true);
-      PlatformUI.toast('Couldn’t save the new order. Reverted.');
-    }
-  },
-
-
-
-
-
 
   // The kanban board's VIEW MODEL (card/model.ts DevKanbanView). Reuses the
   // exact per-card builders the feed uses, so every card keeps its buttons,
@@ -5394,26 +5291,17 @@ const AppView = {
         : { kind: 'moreCompleted', n: moreCount };
     }
 
-    const cardRows = (items, build, orderCol) => items.map((it) => {
+    const cardRows = (items, build) => items.map((it) => {
       const card = build(it);
-      return {
-        t: 'card', key: card.key, card,
-        // #613: `orderKey` is the card identity the saved overlay and the
-        // drag handler share. Filtering disables dragging (the saved order
-        // applies to the full column, not a filtered subset), and read-only
-        // viewers can't reorder — both render the item with no handle.
-        orderKey: (orderCol && !filtering && !AppView.readOnly)
-          ? AppView._cardOrderKey(orderCol, it) : null,
-      };
+      return { t: 'card', key: card.key, card };
     });
     const emptyNote = filtering ? 'No matching cards' : 'Nothing here yet';
 
     const cols = [
       {
         key: 'issues', title: 'Issues', count: kIssues.length,
-        rows: cardRows(kIssues, (i) => AppView._issueCardModel(i), 'issues'),
+        rows: cardRows(kIssues, (i) => AppView._issueCardModel(i)),
         empty: kIssues.length ? null : emptyNote,
-        orderCol: (!filtering && !AppView.readOnly) ? 'issues' : null,
         footer: issuesFooter,
       },
       // In progress renders through a dedicated builder: pinned own
@@ -5427,23 +5315,20 @@ const AppView = {
         key: 'inprogress', title: 'Underway', count: kInProgress.length,
         rows: AppView._inProgressRows(kInProgress),
         empty: null,
-        orderCol: null,
         footer: null,
         hint: 'Somebody or something is on these: being worked on, auto-solving, paused, waiting on an answer, or just claimed. The chip on each card says which.',
       },
       {
         key: 'inreview', title: 'In review', count: kInReview.length,
         rows: cardRows(kInReview, (x) => (x.kind === 'proposal'
-          ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)), 'review'),
+          ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item))),
         empty: kInReview.length ? null : emptyNote,
-        orderCol: (!filtering && !AppView.readOnly) ? 'review' : null,
         footer: null,
       },
       {
         key: 'done', title: 'Done', count: filtering ? kDone.length : doneTotal,
-        rows: cardRows(kDone, (m) => AppView._mergedRowModel(m), null),
+        rows: cardRows(kDone, (m) => AppView._mergedRowModel(m)),
         empty: kDone.length ? null : emptyNote,
-        orderCol: null,
         footer: doneFooter,
       },
     ];
@@ -5460,8 +5345,8 @@ const AppView = {
   // publishing `activeTab` does both.
   //
   // Switching tabs deliberately does NOT rebuild the columns: all four are
-  // already rendered, so moving the marker is enough — no scroll jump, no
-  // re-binding, and no interaction with the mid-drag repaint guard.
+  // already rendered, so moving the marker is enough — no scroll jump and
+  // no re-binding.
   _onKanbanTabSelect(key) {
     if (!AppView.KANBAN_TABS.includes(key)) return;
     // An explicit tap retires the ?col= override, mirroring _setViewMode.
@@ -6109,10 +5994,6 @@ const AppView = {
   // load (below), not per mount, so it survives every repaint; the repaint
   // itself no-ops when no card surface is mounted.
   _onSessionStateChanged() {
-    // Never rebuild the board out from under an in-progress drag — same
-    // guard _repaintDevBody / _repaintKanbanBoard apply to WS-driven
-    // repaints. The next settled event repaints.
-    if (AppView._dragState) return;
     if (!AppView.appData) return;
     if (typeof App !== 'undefined' && App.currentTab !== 'dev') return;
     // _repaintCards, not _repaintDevBody: an auto-run can be watched from
@@ -11995,39 +11876,13 @@ const AppView = {
     dialogIsland('rename')?.open();
   },
 
-  // Amber "⑂ Forked from <name>" lineage label. Lived in the header's
-  // right-hand action group until the header slim-down moved it under
-  // the "App" build line, now in the drawer's footer
-  // (#drawer-row-app-fork, whose visibility this function drives — the
-  // slot id is unchanged). `forked_from` is resolved server-side to
-  // { appId, slug, name, linkable }; when linkable the label links to the
-  // source app, otherwise (source deleted → name "<deleted>") it renders
-  // as inert text. No-op for non-forks.
-  renderForkBadge() {
-    const slot = document.getElementById('app-fork-badge-slot');
-    if (!slot) return;
-    const setRow = (visible) => {
-      if (window.App?.DrawerStatus) App.DrawerStatus.setForkVisible(visible);
-    };
-    const ref = AppView.appData && AppView.appData.forked_from;
-    if (!ref || typeof ref !== 'object') { slot.innerHTML = ''; setRow(false); return; }
-    const name = ref.name || '<deleted>';
-    // Text form, not a pill: this line sits in the drawer footer directly
-    // under the "App" version line, and a filled amber pill between two
-    // quiet mono version lines shouted louder than a lineage note needs
-    // to. Amber is retained as the lineage colour.
-    const cls = 'drawer-ver drawer-ver--fork max-w-full truncate';
-    const label = `⑂ Forked from ${escapeHtml(name)}`;
-    if (ref.linkable && ref.slug) {
-      slot.innerHTML = `<a href="#app/${encodeURIComponent(ref.slug)}" `
-        + `class="${cls}" `
-        + `title="Forked from ${escapeAttr(name)}: open the original">${label}</a>`;
-    } else {
-      slot.innerHTML = `<span class="${cls} opacity-90" `
-        + `title="The original app no longer exists">${label}</span>`;
-    }
-    setRow(true);
-  },
+  // The "⑂ Forked from <name>" lineage label used to be rendered here, into
+  // a slot in the drawer's reference footer. The Streamlined Concept board
+  // draws no such footer, and lineage is a fact about an app rather than
+  // about the drawer you have open, so it renders on the app's own page now
+  // — frontend/src/features/apps/browse-detail.tsx, off the same server-
+  // resolved `forked_from` this function read. No slot, no writer, no
+  // ImproveStatus.setForkVisible.
 
   // ── Fork dialog ───────────────────────────────────────────────────
   // #1078 chunk I moved `_forkSource`, the reveal, the field reset and the
@@ -12363,12 +12218,19 @@ const AppView = {
     const staging = AppView._staging();
     const jump = !!(opts && opts.jump);
     const dock = !!(opts && opts.dock);
+    // Streamlined Concept: every preview open funnels through here (#439),
+    // so this is where "the viewer is SEEING" gets published — it flips the
+    // header's eye/pencil pair and the session strip's Preview chip. The
+    // matching false is closeStagingOverlay's.
+    window.Improve?.setPreviewActive?.(true);
 
     // #621: read-only viewers can't trigger a rebuild (the ensure POST is
     // collab-gated) — open the last-known staging URL directly. If it was
     // GC'd they see the dead-preview page rather than a rebuild spinner.
     if (AppView.readOnly) {
       if (fallbackUrl) AppView.swapToStaging(fallbackUrl, testing, { jump, dock });
+      // Nothing opened — take the optimistic publish above back.
+      else window.Improve?.setPreviewActive?.(false);
       return;
     }
 
@@ -13209,6 +13071,9 @@ const AppView = {
   closeStagingOverlay() {
     const staging = AppView._staging();
     const iframe = staging.frame();
+    // The "seeing" half of the doing↔seeing loop ends here — see the
+    // matching publish in ensureStaging.
+    window.Improve?.setPreviewActive?.(false);
     // #771: leave docked mode first (strips the docked class + pinned
     // geometry, disconnects the slot observer) and collapse the dev-chat
     // placeholder slot. The open check on stagingPanel makes this safe to

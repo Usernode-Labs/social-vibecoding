@@ -11,8 +11,11 @@ const vm = require('node:vm');
 const root = path.join(__dirname, '..');
 const source = fs.readFileSync(
   path.join(root, 'frontend/src/features/header/native-app-version.js'), 'utf8');
+// The bundle's boot seam. It rode on the hamburger island for as long as
+// there was one; ./platform-header.tsx is earlier and never unmounts, so the
+// imports and inits live there.
 const menuSource = fs.readFileSync(
-  path.join(root, 'frontend/src/features/header/header-menu.tsx'), 'utf8');
+  path.join(root, 'frontend/src/features/header/platform-header.tsx'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
@@ -92,7 +95,7 @@ function loadRenderer({
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  // The module is an ordinary bundle module now (./header-menu.tsx imports it)
+  // The module is an ordinary bundle module now (./platform-header.tsx imports it)
   // and pulls its store in by name. Bind the REAL store into the sandbox and
   // drop the import line, so the module body evaluates as a script exactly as
   // it did — same technique as tests/challenge-template-prefill.test.js.
@@ -122,30 +125,30 @@ async function settle() {
 
 test('the drawer island imports and initializes the native version renderer after hydration', () => {
   // THE UI OVERHAUL moved the ROW into the Improve panel's footer — it is
-  // reference information about the platform, which is what that footer is —
-  // but the import and the init stay HERE. This island loads before anything
-  // else in the bundle, and the renderer is a side-effect module that has to
+  // reference information about the platform — but the import and the init
+  // stay on the HEADER BAR's island. It is the first island in the shell and
+  // it never unmounts, and the renderer is a side-effect module that has to
   // install window.NativeAppVersion before app.js's own init looks for it;
-  // hanging it off a panel that may never be opened would be a boot-order
+  // hanging it off a surface that may never be opened would be a boot-order
   // regression dressed up as tidiness.
   assert.match(menuSource, /import '\.\/native-app-version\.js'/);
   assert.match(menuSource, /window\.NativeAppVersion\?\.init\(\)/,
     'layout-effect init prevents a pre-hydration class/text mutation');
 });
 
-test('the footer separates the mobile app version from the platform version', () => {
-  // The footer is the Improve panel's now, not the drawer's — same three rows,
-  // same order, same ids.
-  const footerAt = html.indexOf('id="improve-footer"');
-  assert.ok(footerAt > -1, 'the Improve panel has a footer');
+test("the Improve panel's footer separates the mobile app version from the platform version", () => {
+  // Settings' About block, not a drawer footer: the two rows that describe the
+  // PLATFORM outlived the app-scoped block they were passing through, and the
+  // fork line that used to follow them went to the app's own page instead.
+  const aboutAt = html.indexOf('id="improve-footer"');
+  assert.ok(aboutAt > -1, 'the Improve panel has its reference footer');
   const revisionAt = html.indexOf('id="drawer-row-platform-version"');
-  assert.ok(revisionAt > footerAt, 'the version rows live inside it');
+  assert.ok(revisionAt > aboutAt, 'the version rows live inside it');
   const versionAt = html.indexOf('id="drawer-row-native-app-version"');
-  const forkAt = html.indexOf('id="drawer-row-app-fork"');
-  assert.ok(revisionAt > -1 && versionAt > revisionAt && forkAt > versionAt,
-    'footer order is platform version → mobile app version → optional fork lineage');
+  assert.ok(versionAt > revisionAt,
+    'About order is platform version → mobile app version');
   assert.match(html.slice(revisionAt, versionAt), /Platform version/);
-  assert.match(html.slice(versionAt, forkAt), /Mobile app version/);
+  assert.match(html.slice(versionAt), /Mobile app version/);
   assert.doesNotMatch(html, /drawer-row-app-version|app-version-pill-slot|dApp version/,
     'no particular dApp SHA appears in platform information');
 });
@@ -221,14 +224,14 @@ test('an inconclusive bridge probe retries on drawer open and caches success', a
   await settle();
   assert.equal(loaded.row.classList.contains('hidden'), true);
 
-  loaded.dispatch('usernode:header-menu-open');
+  loaded.dispatch('usernode:settings-section');
   await settle();
   assert.equal(loaded.slot.textContent, '0.4.0/1223');
   assert.equal(loaded.row.classList.contains('hidden'), false);
   assert.equal(loaded.infoReads, 2);
   assert.equal(loaded.settingsReads, 0);
 
-  loaded.dispatch('usernode:header-menu-open');
+  loaded.dispatch('usernode:settings-section');
   await settle();
   assert.equal(loaded.infoReads, 2, 'a successful device-local read is reused');
 });

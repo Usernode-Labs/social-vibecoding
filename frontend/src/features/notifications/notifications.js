@@ -334,11 +334,16 @@ const Notifications = {
   // every existing caller — a notification click, a screenshot deep link, the
   // native Social coordinator — keeps working unchanged.
   //
-  // `open` is derived rather than stored for the same reason: the drawer's
-  // exit is deferred behind a spring (see HeaderMenu.isPresenting), so a flag
-  // set here would disagree with what is on screen for ~200ms after a close.
+  // `open` is derived rather than stored because both surfaces defer their
+  // exit behind a spring (see HeaderMenu.isPresenting and the sheet
+  // controller's dismiss promise), so a flag set here would disagree with
+  // what is on screen for ~200ms after a close.
+  //
+  // It asks about the SHEET and the drawer both. The rows are the sheet's now
+  // (Streamlined Concept), but this module's own dismiss-before-you-navigate
+  // rule predates that and still has to cover a drawer somebody opened.
   get open() {
-    return !!window.HeaderMenu?.isPresenting?.();
+    return !!window.NotificationsSheet?.isOpen?.();
   },
 
   toggle() {
@@ -347,11 +352,11 @@ const Notifications = {
   },
 
   show() {
-    window.HeaderMenu?.open?.();
+    window.NotificationsSheet?.open?.();
   },
 
   hide() {
-    window.HeaderMenu?.close?.();
+    window.NotificationsSheet?.close?.();
   },
 
   // Screenshot-state deep link (`?shot=notifications`): the list only exists
@@ -361,14 +366,25 @@ const Notifications = {
   // mock rows to render. Once per page load — reopening after a manual
   // dismiss would fight the user, and refresh() runs again on live events.
   //
+  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB. That tab is
+  // React state inside the sheet, so without a URL that reaches it neither the
+  // capture pipeline nor a declared check could see the tab, its collapsed
+  // conversation rows, or its "All messages" entry — the platform's own rule
+  // for a screen that is otherwise only reachable by clicking. The sheet reads
+  // the same parameter for the tab; this only has to open it.
+  //
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'notifications') return;
+    if (shot !== 'notifications' && shot !== 'notifications-messages') return;
     Notifications._shotOpened = true;
-    Notifications.show();
+    // The list is the Notifications SHEET now (Streamlined Concept), so the
+    // deep link resolves a screen underneath and presents over it rather
+    // than opening the drawer.
+    if (window.App?.openNotificationsSheet) window.App.openNotificationsSheet();
+    else Notifications.show();
   },
 
   // #1329: a presented drawer is MODAL on touch — it covers the screen the
@@ -454,6 +470,43 @@ const Notifications = {
     } catch (err) {
       console.warn('[notifications] markOneRead failed', err);
     }
+  },
+
+  // Reading a conversation clears its notifications. Reflect that in THIS
+  // document, without a second round-trip.
+  //
+  // `POST /api/conversations/:id/read` already marks every unread
+  // notification row for that conversation read server-side (see markRead in
+  // services/conversations.js — including the invite, which carries no
+  // message id and so matches its NULL branch). Nothing needs asking for.
+  // What needs fixing is local: this tab's `items`/`unread` would otherwise
+  // stay stale until the next refresh, so the bell would go on counting
+  // messages you have just sat and read.
+  //
+  // That was survivable while the Messages row owned the messages count and
+  // the bell subtracted it. The bell owns it now, so a stale badge is the
+  // visible bug — which is why this reconcile lands in the same change.
+  //
+  // Called by the Messages store on a local read, and on a `conversation_read`
+  // for this same viewer in another tab. `window.Notifications` is the seam:
+  // this module stays import-free (see the top of the file), so the store
+  // calls in rather than being imported.
+  markConversationRead(conversationId) {
+    const id = Number(conversationId);
+    if (!Number.isSafeInteger(id) || id <= 0) return;
+    const now = new Date().toISOString();
+    let cleared = 0;
+    for (const n of Notifications.items) {
+      if (!n || n.readAt || Number(n.conversationId) !== id) continue;
+      n.readAt = now;
+      cleared += 1;
+    }
+    if (!cleared) return;
+    // `unread` is the server's account-wide total; only ever walk it down by
+    // what was actually cleared here, and never below zero.
+    Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications._renderBadge();
+    Notifications._renderList();
   },
 
   _onItemClick(id) {
@@ -618,8 +671,31 @@ const Notifications = {
     return Notifications.items.filter((n) => n && n.kind === 'session_done' && !n.readAt).length;
   },
 
-  // The bell's own unread count: everything except the session-related
-  // kinds that live in the cog drawer now.
+  // The bell's own unread count.
+  //
+  // ONE EVENT, ONE BADGE, ON THE SURFACE THAT OWNS IT. Still the rule; what
+  // changed is which surface owns a message.
+  //
+  // #1443 subtracted `conversation_message` here on the grounds that the
+  // Messages row's own count was the better one — per-conversation, and what
+  // you tap to act on. The count it deferred to was a TAG ON A ROW INSIDE A
+  // MENU, two taps down behind the app chip, on a surface you open to choose
+  // where to go rather than to find out that something happened. A message is
+  // a thing that happened to you, which is what the bell is for and what the
+  // notifications list already renders (`conversation_*` rows have had their
+  // own copy since #488). So the tag is gone and the split with it: a DM
+  // raises exactly one badge, the bell's, and the row it used to sit on is a
+  // destination again like every other row in that menu.
+  //
+  // The session split SURVIVES, and the asymmetry is deliberate rather than
+  // an oversight: #improve-btn is where the sessions themselves are, so its
+  // green count sends you somewhere the bell cannot. Nothing carries a
+  // messages count any more, so subtracting one would only lose it.
+  //
+  // Math.max(0, …) because the session split reads the loaded items page
+  // while `unread` is the server's total: on an account with more unread than
+  // one page holds the subtraction can overshoot, and a negative badge is
+  // worse than an undercount.
   _bellUnread() {
     return Math.max(0, Notifications.unread - Notifications._sessionUnread());
   },
@@ -637,25 +713,39 @@ const Notifications = {
     // reasons to open me". Sessions are not notifications and the drawer is
     // not where you go to look at one, so the green half moved onto
     // #improve-btn — where the sessions themselves are. The red half stays
-    // here on the bell's drawer.
+    // here on the bell — and message notifications are back inside it, which
+    // is what retired the third badge. #1443 subtracted `conversation_message`
+    // in favour of a count on the Messages ROW of the chip's menu; that row
+    // carries no count now, so the bell's number is the only one an incoming
+    // message raises. See _bellUnread.
     //
     // It PUBLISHES rather than paints: that button is React-owned end to end,
     // and this module cannot import the store (two test files load it as a
     // classic script in a vm, where a top-level `import` is a syntax error —
     // the same constraint dev-chat.js documents). window.Improve is the seam.
     const aiUnread = Notifications._sessionUnread();
-    const redCount = Notifications._bellUnread() + Notifications.invites.length;
+    const notifCount = Notifications._bellUnread() + Notifications.invites.length;
 
-    const badge = document.getElementById('notifications-badge');
-    if (badge) {
-      if (redCount > 0) {
-        badge.textContent = redCount > 99 ? '99+' : String(redCount);
-        badge.classList.remove('hidden');
+    const paint = (id, count) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (count > 0) {
+        el.textContent = count > 99 ? '99+' : String(count);
+        el.classList.remove('hidden');
       } else {
-        badge.classList.add('hidden');
+        el.classList.add('hidden');
       }
-    }
+    };
+    // The bell's badge, in the header's right group. The only one this
+    // function paints by id now.
+    paint('notifications-badge', notifCount);
 
+    // The green session badge (#notifications-badge-ai on the hamburger) is
+    // React-owned (<MenuIndicators/> in platform-header.tsx): it PUBLISHES
+    // rather than paints — a classList write by id would be a hydration
+    // mismatch React patches straight back out. window.Improve is the seam,
+    // because this module loads as a classic script and cannot import the
+    // store.
     if (typeof window !== 'undefined' && window.Improve
       && typeof window.Improve.setSessionBadge === 'function') {
       window.Improve.setSessionBadge(aiUnread, Notifications._sessionDoneUnread());
@@ -663,6 +753,22 @@ const Notifications = {
 
     const markAll = document.getElementById('notifications-mark-all');
     if (markAll) markAll.disabled = Notifications._bellUnread() === 0;
+    // The app-context sheet's per-change unread dots (Streamlined Concept):
+    // which sessions have an unread session-kind notification right now.
+    // Published into the notifications store — the sheet's rows subscribe.
+    //
+    // Only when the SET changes. The store compares by identity, so pushing a
+    // freshly-built array every time would notify every subscriber (the
+    // screen, the pinned sections and every session row) on every badge
+    // repaint — and _renderBadge runs on each WS event and each refresh.
+    if (Notifications._store) {
+      const ids = Notifications.items
+        .filter((n) => isSessionNotif(n) && !n.readAt && n.sessionId)
+        .map((n) => n.sessionId);
+      const prev = Notifications._store.get().sessionUnreadIds || [];
+      const same = prev.length === ids.length && prev.every((v, i) => v === ids[i]);
+      if (!same) Notifications._store.set({ sessionUnreadIds: ids });
+    }
     Notifications._updateTitle();
     // The cog drawer used to render a pinned section from this same items
     // store and was nudged here whenever the store changed. It is retired;
@@ -698,7 +804,23 @@ const Notifications = {
   // moment you looked at it would make the section unusable.
   _onSavedClick(messageId) {
     const saved = Notifications.saved.find((s) => s.messageId === messageId);
-    if (!saved || !saved.appSlug) return;
+    if (!saved) return;
+    // A conversation save opens the Messages screen on that conversation, via
+    // the island's controller with the hash as the fallback — the same pair
+    // _onItemClick uses for the conversation notification kinds, and for the
+    // same reason: the hash keeps a native exact-open working during startup
+    // before the island publishes. There is no per-message deep link in
+    // Messages yet, so it lands on the thread and the reader scrolls, which is
+    // the resolution the app-chat branch below settles for too when a message
+    // was posted outside a topic.
+    if (saved.conversationId) {
+      Notifications._dismissSheetForNav();
+      const messages = window.UsernodeReact?.messages;
+      if (messages?.open) messages.open(saved.conversationId);
+      else window.location.hash = `#messages/${saved.conversationId}`;
+      return;
+    }
+    if (!saved.appSlug) return;
     // Both branches below navigate — see _onItemClick for the touch-sheet
     // contract (#1329).
     Notifications._dismissSheetForNav();
@@ -732,27 +854,33 @@ const Notifications = {
   // reachable by a bare reference behind a typeof guard, not on window).
   async _unsave(messageId) {
     const saved = Notifications.saved.find((s) => s.messageId === messageId);
-    if (!saved || !saved.appSlug) return;
+    if (!saved || !(saved.appSlug || saved.conversationId)) return;
+    const endpoint = saved.conversationId
+      ? `/api/conversations/${saved.conversationId}/messages/${messageId}/bookmark`
+      : `/api/apps/${saved.appSlug}/messages/${messageId}/bookmark`;
     const previous = Notifications.saved;
     Notifications.saved = Notifications.saved.filter((s) => s.messageId !== messageId);
     Notifications._renderSaved();
-    if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
+    if (saved.conversationId) {
+      // The Messages twin of the GroupChat repaint below: if that
+      // conversation is open, its row's star stops being filled.
+      window.UsernodeReact?.messages?.paintSaved?.(messageId, false);
+    } else if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
       GroupChat._paintBookmark(messageId, false);
       const msg = GroupChat._findMessage && GroupChat._findMessage(messageId);
       if (msg) msg.bookmarked = false;
     }
     try {
-      const res = await fetch(
-        `/api/apps/${saved.appSlug}/messages/${messageId}/bookmark`,
-        { method: 'DELETE' }
-      );
+      const res = await fetch(endpoint, { method: 'DELETE' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       // Put it back rather than leaving the drawer disagreeing with the
       // server about what is saved.
       Notifications.saved = previous;
       Notifications._renderSaved();
-      if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
+      if (saved.conversationId) {
+        window.UsernodeReact?.messages?.paintSaved?.(messageId, true);
+      } else if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
         GroupChat._paintBookmark(messageId, true);
       }
       console.warn('[notifications] unsave failed', err);
@@ -917,6 +1045,10 @@ const Notifications = {
       // a bug.
       store.set({
         list: [],
+        // The full screen shows read rows regardless of the drawer's
+        // showOlder reveal, so its list maps ALL items even when the
+        // drawer's own list is empty (Streamlined Concept).
+        screenList: screenViews(Notifications.items),
         // `empty` is still the ORIGINAL "you have never had a notification"
         // hint, so it now also requires that there be no older ones to
         // reveal — otherwise a fully-read drawer would claim nothing had
@@ -930,7 +1062,10 @@ const Notifications = {
         showOlder: Notifications.showOlder,
         // Nothing to append a pager to — see the note in the populated branch.
         canLoadMore: false,
-        loadingMore: false,
+        // The screen HAS rows to append to (the read ones above), so its
+        // pager follows the server cursor even while the drawer's is off.
+        screenCanLoadMore: Notifications.hasMore,
+        loadingMore: Notifications.loading,
         touch,
       });
       return;
@@ -942,6 +1077,7 @@ const Notifications = {
     // used to float to the top of the grouped list; see PRIORITY_KINDS.)
     store.set({
       list: Notifications._bellItems().map(rowView),
+      screenList: screenViews(Notifications.items),
       empty: false,
       caughtUp: false,
       olderCount,
@@ -951,6 +1087,7 @@ const Notifications = {
       // owns that space and the older-toggle is the affordance that belongs
       // there.
       canLoadMore: Notifications.hasMore,
+      screenCanLoadMore: Notifications.hasMore,
       loadingMore: Notifications.loading,
       touch,
     });
@@ -1039,12 +1176,25 @@ function isTouchNow() {
 // `time` is the age of the SAVE, not of the message: the section is
 // ordered by when you saved things, so a timestamp measuring anything else
 // would contradict the order the rows are in.
+// One section, two kinds of save. A conversation save carries a
+// `conversationId` and no `appSlug`; an app-chat save the reverse — that
+// field IS the discriminator, here and at the click and unsave sites, so
+// nothing has to carry a separate `kind` string that could disagree with it.
+//
+// `appName` keeps its name in the descriptor because the component renders it
+// as "@who in <that>", and the answer to "in what" is the app for one kind
+// and the conversation for the other. Renaming the field to suit both would
+// have touched every call site to say the same thing.
 function savedView(s) {
+  const conversationId = Number(s.conversationId) || 0;
   return {
     messageId: s.messageId,
     slug: s.appSlug || '',
+    conversationId,
     who: s.author ? `@${s.author}` : 'System',
-    appName: s.appName || s.appSlug || 'an app',
+    appName: conversationId
+      ? (s.conversationTitle || 'a conversation')
+      : (s.appName || s.appSlug || 'an app'),
     time: relativeTime(s.savedAt),
     text: (s.content || '').slice(0, 140),
   };
@@ -1113,6 +1263,48 @@ function completionAlertInfo(n) {
 }
 
 
+// Consecutive notifications from ONE conversation, as a single row.
+//
+// A message notification is created per member PER MESSAGE (sendMessage in
+// services/conversations.js), so a friend sending four lines puts four
+// near-identical rows in the sheet and buries everything else under them.
+// The per-conversation count was the one thing the retired Messages tag did
+// better than the bell, and this is where it comes back: the run collapses to
+// its newest row carrying `count`, so a thread reads as one thing.
+//
+// CONSECUTIVE, not "all rows for this conversation". The feed is newest-first
+// chronological and the collapsed row sits exactly where its newest member
+// sat, so nothing reorders and nothing jumps a section boundary. Two bursts
+// with other notifications between them stay two rows, which is honest: they
+// happened at different times, and merging them would date the older one
+// wrongly.
+//
+// The read state has to match too. A run is entirely unread or entirely read,
+// which is what lets the sheet's Unread tab filter whole rows without ever
+// hiding an unread message inside a row it counted as read.
+function collapseConversationRuns(items) {
+  const runs = [];
+  for (const n of items) {
+    const prev = runs[runs.length - 1];
+    const id = n && n.conversationId != null ? Number(n.conversationId) : null;
+    if (prev && id !== null && prev.conversationId === id
+        && prev.read === !!n.readAt) {
+      prev.count += 1;
+      continue;
+    }
+    runs.push({ item: n, conversationId: id, read: !!(n && n.readAt), count: 1 });
+  }
+  return runs;
+}
+
+// The sheet's rows: one descriptor per run. `count` rides only on a genuine
+// collapse, so a lone notification's view is byte-identical to what it was.
+function screenViews(items) {
+  return collapseConversationRuns(items).map((run) => (
+    run.count > 1 ? { ...rowView(run.item), count: run.count } : rowView(run.item)
+  ));
+}
+
 // One notification row, as data. It has ONE renderer again — NotificationRow in
 // ./notifications-list.tsx — which both drawers use: the bell's own list, and
 // the cog drawer's pinned "Needs attention" section, which reaches this builder
@@ -1140,6 +1332,13 @@ function rowView(n) {
     unread: !n.readAt,
     unreadCls,
     time: relativeTime(n.createdAt),
+    // Streamlined Concept: the full-screen Notifications view buckets rows
+    // into Today/Earlier and leads each with an avatar-initial chip, so the
+    // raw timestamp and the resolved names ride along as data. The drawer's
+    // renderer ignores all three.
+    createdAtMs: Date.parse(n.createdAt) || 0,
+    who,
+    appLine,
     // The meta line's own layout. `mb` and `wrap` differ per kind, and the
     // plain mention/reply row is the only one that is not a flex row at all.
     mb: true,
@@ -1168,6 +1367,26 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon,
+      // What the sheet's Messages tab filters on. Carried as a flag rather
+      // than re-deriving it there from `kind`: CONVERSATION_NOTIF_KINDS lives
+      // in this module and the tab must never drift from the set the rest of
+      // the routing, grouping and copy already agree on.
+      conversation: true,
+      conversationId: n.conversationId != null ? Number(n.conversationId) : null,
+      // A conversation row names MESSAGES as its source, not "app".
+      //
+      // `appLine` is the sheet's secondary line — "<where this came from> ·
+      // <when>" — and it falls back to the literal string 'app' when a
+      // notification has no app, which every conversation row is by
+      // construction (serialize nulls the app fields on one). So the sheet
+      // rendered "app · 4m ago" under every message. That was easy to miss
+      // while the bell subtracted messages from its count and nobody was
+      // being sent here to read them; it is the first thing you see now.
+      //
+      // Deliberately the SURFACE and not the conversation's title: the title
+      // is already the last segment of the line above, and repeating it under
+      // itself reads as a rendering fault rather than as attribution.
+      appLine: 'Messages',
       segments: [
         { t: 'who', v: who },
         { t: 'text', v: verb },
