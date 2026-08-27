@@ -804,7 +804,23 @@ const Notifications = {
   // moment you looked at it would make the section unusable.
   _onSavedClick(messageId) {
     const saved = Notifications.saved.find((s) => s.messageId === messageId);
-    if (!saved || !saved.appSlug) return;
+    if (!saved) return;
+    // A conversation save opens the Messages screen on that conversation, via
+    // the island's controller with the hash as the fallback — the same pair
+    // _onItemClick uses for the conversation notification kinds, and for the
+    // same reason: the hash keeps a native exact-open working during startup
+    // before the island publishes. There is no per-message deep link in
+    // Messages yet, so it lands on the thread and the reader scrolls, which is
+    // the resolution the app-chat branch below settles for too when a message
+    // was posted outside a topic.
+    if (saved.conversationId) {
+      Notifications._dismissSheetForNav();
+      const messages = window.UsernodeReact?.messages;
+      if (messages?.open) messages.open(saved.conversationId);
+      else window.location.hash = `#messages/${saved.conversationId}`;
+      return;
+    }
+    if (!saved.appSlug) return;
     // Both branches below navigate — see _onItemClick for the touch-sheet
     // contract (#1329).
     Notifications._dismissSheetForNav();
@@ -838,27 +854,33 @@ const Notifications = {
   // reachable by a bare reference behind a typeof guard, not on window).
   async _unsave(messageId) {
     const saved = Notifications.saved.find((s) => s.messageId === messageId);
-    if (!saved || !saved.appSlug) return;
+    if (!saved || !(saved.appSlug || saved.conversationId)) return;
+    const endpoint = saved.conversationId
+      ? `/api/conversations/${saved.conversationId}/messages/${messageId}/bookmark`
+      : `/api/apps/${saved.appSlug}/messages/${messageId}/bookmark`;
     const previous = Notifications.saved;
     Notifications.saved = Notifications.saved.filter((s) => s.messageId !== messageId);
     Notifications._renderSaved();
-    if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
+    if (saved.conversationId) {
+      // The Messages twin of the GroupChat repaint below: if that
+      // conversation is open, its row's star stops being filled.
+      window.UsernodeReact?.messages?.paintSaved?.(messageId, false);
+    } else if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
       GroupChat._paintBookmark(messageId, false);
       const msg = GroupChat._findMessage && GroupChat._findMessage(messageId);
       if (msg) msg.bookmarked = false;
     }
     try {
-      const res = await fetch(
-        `/api/apps/${saved.appSlug}/messages/${messageId}/bookmark`,
-        { method: 'DELETE' }
-      );
+      const res = await fetch(endpoint, { method: 'DELETE' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       // Put it back rather than leaving the drawer disagreeing with the
       // server about what is saved.
       Notifications.saved = previous;
       Notifications._renderSaved();
-      if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
+      if (saved.conversationId) {
+        window.UsernodeReact?.messages?.paintSaved?.(messageId, true);
+      } else if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
         GroupChat._paintBookmark(messageId, true);
       }
       console.warn('[notifications] unsave failed', err);
@@ -1154,12 +1176,25 @@ function isTouchNow() {
 // `time` is the age of the SAVE, not of the message: the section is
 // ordered by when you saved things, so a timestamp measuring anything else
 // would contradict the order the rows are in.
+// One section, two kinds of save. A conversation save carries a
+// `conversationId` and no `appSlug`; an app-chat save the reverse — that
+// field IS the discriminator, here and at the click and unsave sites, so
+// nothing has to carry a separate `kind` string that could disagree with it.
+//
+// `appName` keeps its name in the descriptor because the component renders it
+// as "@who in <that>", and the answer to "in what" is the app for one kind
+// and the conversation for the other. Renaming the field to suit both would
+// have touched every call site to say the same thing.
 function savedView(s) {
+  const conversationId = Number(s.conversationId) || 0;
   return {
     messageId: s.messageId,
     slug: s.appSlug || '',
+    conversationId,
     who: s.author ? `@${s.author}` : 'System',
-    appName: s.appName || s.appSlug || 'an app',
+    appName: conversationId
+      ? (s.conversationTitle || 'a conversation')
+      : (s.appName || s.appSlug || 'an app'),
     time: relativeTime(s.savedAt),
     text: (s.content || '').slice(0, 140),
   };

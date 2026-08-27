@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 
 import * as api from './api';
-import { edit, react, setReply } from './store';
+import { edit, react, setReply, toggleSaved } from './store';
 import type { ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
@@ -52,6 +52,12 @@ export function MessageRow({ message, conversationId }: { message: ConversationM
     catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn’t update the reaction.'); }
   }
 
+  async function save() {
+    setNotice('');
+    try { await toggleSaved(message.id); }
+    catch (err) { setNotice(err instanceof Error ? err.message : 'Couldn\u2019t update your saved messages.'); }
+  }
+
   async function report() {
     setBusy(true); setNotice('');
     try {
@@ -95,6 +101,22 @@ export function MessageRow({ message, conversationId }: { message: ConversationM
       {!message.pending && !message.failed ? <div className="messages-message-actions">
         <button type="button" onClick={() => setReply(conversationId, message)} title="Reply" aria-label="Reply">↩</button>
         <button type="button" onClick={() => setPicker((open) => !open)} title="React" aria-label="React">☺</button>
+        {/* Save, the Messages half of the app-chat bookmark (#1280). It sits
+            beside React rather than behind the ⋯ because it is the same rank
+            of act as reacting — personal, one tap, instantly reversible — and
+            it is available on your OWN messages too: saving is a private note
+            to yourself about anything worth finding again, not a judgement on
+            someone else's message. The mark carries the state in its FILL,
+            same as the app-chat button, and `aria-pressed` says so for anyone
+            who cannot see the difference. */}
+        <button
+          type="button"
+          onClick={() => void save()}
+          aria-pressed={!!message.saved}
+          className={message.saved ? 'messages-action-saved' : undefined}
+          title={message.saved ? 'Saved. Click to unsave' : 'Save to your notifications'}
+          aria-label={message.saved ? 'Unsave message' : 'Save message'}
+        >{message.saved ? '★' : '☆'}</button>
         {mine && message.content ? <button type="button" onClick={() => { setEditValue(message.content); setEditing(true); }} title="Edit" aria-label="Edit">✎</button> : null}
         {!mine ? <button type="button" onClick={() => { setReporting((open) => !open); setNotice(''); }} title="Report" aria-label="Report">!</button> : null}
       </div> : null}

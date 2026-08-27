@@ -468,6 +468,39 @@ export async function react(messageId: number, emoji: string): Promise<void> {
   publish({ messages: state.messages.map((item) => item.id === messageId ? { ...item, reactions } : item) });
 }
 
+/**
+ * Toggle the viewer's save on one message.
+ *
+ * OPTIMISTIC, and for the reason app group chat's toggle is (see
+ * GroupChat.toggleBookmark): a save is a personal, instantly reversible act,
+ * and a spinner on a bookmark reads as breakage. The flip is published first
+ * and reverted if the server refuses, so the button never sits in a state the
+ * server disagrees with — and the error is rethrown so the row can say so.
+ *
+ * The drawer's pinned "Saved" section is fed by the notifications payload, so
+ * it only learns about this through a refresh. Notifications is published on
+ * `window` by the React bundle; guard for the harnesses where it is absent.
+ */
+export async function toggleSaved(messageId: number): Promise<void> {
+  const conversationId = state.route.conversationId;
+  if (!conversationId) return;
+  const current = state.messages.find((item) => item.id === messageId);
+  if (!current) return;
+  const next = !current.saved;
+  const paint = (saved: boolean) => publish({
+    messages: state.messages.map((item) => item.id === messageId ? { ...item, saved } : item),
+  });
+  paint(next);
+  try {
+    await api.setMessageSaved(conversationId, messageId, next);
+    const host = window as unknown as { Notifications?: { refresh?: () => void } };
+    host.Notifications?.refresh?.();
+  } catch (err) {
+    paint(!next);
+    throw err;
+  }
+}
+
 export async function markRead(messageId: number): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId) return;
@@ -590,6 +623,27 @@ export function takePendingShare(): SharedObjectReference | null | undefined {
   return value;
 }
 
+/**
+ * Repaint one message's save state from OUTSIDE this feature.
+ *
+ * The notifications drawer can unsave a message from its pinned section, and
+ * when that conversation happens to be open the star behind it must stop being
+ * filled. This is the Messages twin of GroupChat._paintBookmark, and it works
+ * the same way: it writes the MODEL and lets the component re-render, rather
+ * than reaching for the button — the row is React's, and a direct DOM write
+ * would be a second author that the next publish silently reverted.
+ *
+ * A no-op when that message is not on screen, which is the common case.
+ */
+function paintSaved(messageId: number, saved: boolean): void {
+  if (!state.messages.some((item) => item.id === messageId)) return;
+  publish({
+    messages: state.messages.map((item) => (
+      item.id === messageId ? { ...item, saved } : item
+    )),
+  });
+}
+
 export const messagesController = {
   open,
   route,
@@ -599,6 +653,7 @@ export const messagesController = {
   syncChrome,
   handleEvent,
   share,
+  paintSaved,
   refresh: () => loadConversations(true),
 };
 

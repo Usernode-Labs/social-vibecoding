@@ -5702,6 +5702,33 @@ CREATE TABLE IF NOT EXISTS conversation_message_reactions (
 CREATE INDEX IF NOT EXISTS idx_conversation_reactions_message
   ON conversation_message_reactions (message_id);
 
+-- Personal saves on a DIRECT/GROUP conversation message — the Messages-area
+-- half of the bookmark that app group chat has carried since #1280.
+--
+-- It is a second table rather than a widened `message_bookmarks` because that
+-- one's `message_id` is a foreign key into `chat_messages`, and a DM is a row
+-- of `conversation_messages`. One column cannot reference two tables, and the
+-- alternatives — dropping the FK for a soft (kind, id) pair, or a shared
+-- supertype — would trade a constraint the database enforces for one the
+-- application would have to remember. Two narrow tables, one service
+-- (src/services/message-bookmarks.js) reading both, one section rendering the
+-- union.
+--
+-- Same shape and the same reasoning as `message_bookmarks`: one row per
+-- (user, message), the UNIQUE constraint is what makes saving an idempotent
+-- upsert, and `staging:private` because it is one person's private feed that
+-- a staging clone must not carry.
+CREATE TABLE IF NOT EXISTS conversation_message_bookmarks (
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message_id INTEGER NOT NULL REFERENCES conversation_messages(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, message_id)
+);
+-- "This user's saves, newest first" — the section's only read order.
+CREATE INDEX IF NOT EXISTS conversation_message_bookmarks_user_idx
+  ON conversation_message_bookmarks (user_id, created_at DESC);
+
 -- Upload-before-send, like app group chat. Unlinked rows remain readable
 -- only to their uploader and are eligible for orphan collection after 24h.
 CREATE TABLE IF NOT EXISTS conversation_message_attachments (
@@ -5904,6 +5931,7 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_conversation_unread
   WHERE read_at IS NULL AND conversation_id IS NOT NULL;
 
 COMMENT ON TABLE conversations IS 'staging:private';
+COMMENT ON TABLE conversation_message_bookmarks IS 'staging:private';
 COMMENT ON TABLE conversation_direct_pairs IS 'staging:private';
 COMMENT ON TABLE conversation_members IS 'staging:private';
 COMMENT ON TABLE conversation_messages IS 'staging:private';

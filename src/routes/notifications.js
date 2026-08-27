@@ -301,9 +301,23 @@ function notificationsRoutes(config) {
         // cursor follow-up would only re-send what the client already has.
         // Best-effort: a failure here renders an empty section rather than
         // 500ing the whole dropdown.
-        payload.savedMessages = await messageBookmarks.listForUserSafe(
-          pool, req.user.id, { isAdmin: !!req.user.isAdmin }
-        );
+        //
+        // Both kinds of save land in this one list: an app's group chat and
+        // the Messages area's conversations. They are separate tables (see
+        // src/services/message-bookmarks.js) but one SECTION, so they are
+        // merged here and sorted by save time — the section is "what I
+        // saved, most recent first", and splitting it by where the message
+        // happened to be posted would make the reader do the merge instead.
+        // The cap is applied after the merge for the same reason.
+        const [appSaved, conversationSaved] = await Promise.all([
+          messageBookmarks.listForUserSafe(
+            pool, req.user.id, { isAdmin: !!req.user.isAdmin }
+          ),
+          messageBookmarks.listConversationsForUserSafe(pool, req.user.id),
+        ]);
+        payload.savedMessages = [...appSaved, ...conversationSaved]
+          .sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
+          .slice(0, messageBookmarks.MAX_SAVED);
         // Staging-only demo rows (?demo=1) — see stagingMockNotifications.
         // First page only (they'd duplicate on cursor follow-ups), unread
         // count bumped to match so the client's red-badge subtraction
