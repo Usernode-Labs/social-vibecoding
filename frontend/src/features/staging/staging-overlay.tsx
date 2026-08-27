@@ -70,12 +70,31 @@ export function StagingOverlay(): ReactNode {
   // the preview UNDER the persistent bars (its APP PREVIEW frame), and that
   // is also what makes the switch a real toggle.
   //
-  // `previewActive` is the session path's own flag — AppView.ensureStaging
-  // publishes it and closeStagingOverlay takes it back — so it is exactly
-  // "this preview belongs to a session that is still behind it". A preview
-  // reached any other way keeps the full-viewport behaviour.
-  const { previewActive } = useStoreState(improveStore) as { previewActive: boolean };
-  const underChrome = state.open && state.mode !== 'docked' && !!previewActive;
+  // ── AND ONLY WHEN THE STRIP IS ACTUALLY THERE ────────────────────────
+  //
+  // `previewActive` was doing this job alone, and it cannot: AppView.
+  // ensureStaging publishes it whenever a preview opens, from a session or
+  // not. So a preview opened from anywhere else went under-chrome too — and
+  // under-chrome hides BOTH of this overlay's exits (app.css puts
+  // `display:none` on #staging-back and leaves .staging-dock-only hidden
+  // outside docked mode) on the promise that the strip's pencil segment is
+  // the way back. With no session on screen there is no strip and no pencil,
+  // so the preview had no exit at all.
+  //
+  // The route gate is what "belongs to a session that is still behind it"
+  // actually means, and it is the same pair <SessionStatusPill/> and the chip
+  // already read. Components agreeing by construction, rather than one flag
+  // standing in for a condition it only usually implies.
+  //
+  // The tell was already in this file: the measure effect below falls back to
+  // the HEADER's bottom edge when #dc-session-header is missing — it knew the
+  // strip might not exist, while the class that hides both exits assumed it
+  // did.
+  const { previewActive, tab, subTab } = useStoreState(improveStore) as {
+    previewActive: boolean; tab: string; subTab: string;
+  };
+  const onSession = tab === 'dev' && subTab === 'sessions';
+  const underChrome = state.open && state.mode !== 'docked' && !!previewActive && onSession;
   useClassToggle(overlayRef, 'staging-overlay-under-chrome', underChrome);
 
   // The chrome's height is the strip's bottom edge — two stacked bars whose
