@@ -166,8 +166,11 @@ test('the header back button defers to the console, then goes home', () => {
     'and home is the fallback for a screen that named none');
 });
 
-test('the back button has both icons and one named toggle', () => {
-  assert.ok(html.includes('id="back-icon-home"'), 'the house icon ships');
+test('the back button has one icon and one named toggle', () => {
+  // ONE icon. #back-icon-home retired in #1443: Home is a row of the chip's
+  // menu, so a house glyph an inch to the chip's left was a second control
+  // for one question. The anchor means "back a level" and nothing else.
+  assert.ok(!html.includes('id="back-icon-home"'), 'the house icon is retired');
   assert.ok(html.includes('id="back-icon-arrow"'), 'the chevron ships');
   // #1036 widened it to setBackIcon(mode, href): the control is a real
   // anchor now, so the same choke point that owns which icon shows also
@@ -182,11 +185,13 @@ test('the back button has both icons and one named toggle', () => {
   // the session status pill). See features/header/back-button-store.js.
   assert.match(body, /UsernodeReact\?\.backButton\?\.set\?\.\(/,
     'setBackIcon publishes the slot state rather than only writing to the DOM');
-  assert.ok(body.indexOf('backButton') < body.indexOf('back-icon-home'),
+  assert.ok(body.indexOf('backButton') < body.indexOf('back-btn'),
     'the publish comes first; the DOM writes are the pre-hydration fallback');
-  assert.match(body, /back-icon-home/, 'it toggles the home icon');
-  assert.match(body, /back-icon-arrow/, 'it toggles the arrow icon');
-  assert.match(body, /aria-label/, 'and relabels the button for screen readers');
+  // With one child the ANCHOR's own `hidden` is the whole of the visibility
+  // state, so the fallback toggles one node rather than three — and there is
+  // no second accessible name to swap, because there is no second meaning.
+  assert.ok(!body.includes('back-icon-home'), 'no house icon left to toggle');
+  assert.match(body, /back-btn/, 'it toggles the anchor itself');
   assert.match(body, /setAttribute\('href'/, 'and retargets the anchor (#1036)');
   // Leaving the console must hand the button back, or every later screen
   // inherits a chevron that means "home" — but NOT from _exitAdminConsole

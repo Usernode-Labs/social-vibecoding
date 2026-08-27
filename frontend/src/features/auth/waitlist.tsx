@@ -205,7 +205,7 @@ export function WaitlistScreen() {
         setMsg({ text: (data && data.error) || 'That code did not work.', tone: 'error' });
       }
     } catch {
-      setMsg({ text: 'Connection issue — try again.', tone: 'error' });
+      setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
     }
     setSubmitting(false);
   }, []);

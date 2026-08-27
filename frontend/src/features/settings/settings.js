@@ -484,7 +484,7 @@
       // Published rather than written by id: the dot rides the Profile
       // screen's account group, which React renders only once profile data
       // lands. See App.renderAdminButton for the same move and why.
-      window.App?.Visibility?.publish?.('profile-byok-dot', !!this.state.hasApiKey);
+      window.App?.Visibility?.publish?.('switcher-byok-dot', !!this.state.hasApiKey);
       // Let dev-chat swap its budget indicator for the BYOK badge
       // without having to observe us directly.
       if (window.DevChat && typeof DevChat.renderBudget === 'function') {

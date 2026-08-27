@@ -452,8 +452,11 @@ test('the account row can show the viewer’s picture', () => {
   assert.match(app, /applyUserAvatar\(\) \{/);
   assert.match(app, /App\.applyUserAvatar\(\);/, 'called on sign-in');
   // The writer follows the row: same pair, same contract, new ids.
-  const fn = app.slice(app.indexOf('  applyUserAvatar() {'));
-  assert.match(fn.slice(0, 600), /getElementById\('home-account-avatar'\)/);
+  const at = app.indexOf('  applyUserAvatar() {');
+  const fn = app.slice(at, app.indexOf('\n  },', at));
+  assert.match(fn, /getElementById\('home-account-avatar'\)/);
+  assert.ok(!fn.includes('switcher-avatar'),
+    'the chip names the app, not the viewer — it carries no avatar');
 });
 
 test('?shot=profile-edit opens the sheet for the screenshot capture', () => {

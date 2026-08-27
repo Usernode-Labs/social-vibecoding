@@ -23,7 +23,7 @@
  * the prerendered document is a hydration mismatch, and a console error on
  * any route fails proposal checks.
  *
- * During the transition (until header-title-tab.tsx takes ownership of the
+ * During the transition (until app-switcher-chip.tsx takes ownership of the
  * subtree) app.js DUAL-WRITES: it publishes here AND still assigns
  * `textContent` directly. The direct write is removed in the same change
  * that makes React render the text.

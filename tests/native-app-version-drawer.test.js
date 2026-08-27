@@ -43,7 +43,7 @@ function rendered() {
   const slotText = raw
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
     .replace(/&#x27;/g, "'").replace(/&amp;/g, '&');
-  const rowClass = (html.match(/id="about-row-native-app-version"[^>]*class="([^"]*)"/) || [, ''])[1];
+  const rowClass = (html.match(/id="drawer-row-native-app-version"[^>]*class="([^"]*)"/) || [, ''])[1];
   return {
     html,
     rawSlot: raw,
@@ -136,15 +136,15 @@ test('the drawer island imports and initializes the native version renderer afte
     'layout-effect init prevents a pre-hydration class/text mutation');
 });
 
-test('the About block separates the mobile app version from the platform version', () => {
+test("the Improve panel's footer separates the mobile app version from the platform version", () => {
   // Settings' About block, not a drawer footer: the two rows that describe the
   // PLATFORM outlived the app-scoped block they were passing through, and the
   // fork line that used to follow them went to the app's own page instead.
-  const aboutAt = html.indexOf('id="settings-about"');
-  assert.ok(aboutAt > -1, 'Settings has an About block');
-  const revisionAt = html.indexOf('id="about-row-platform-version"');
+  const aboutAt = html.indexOf('id="improve-footer"');
+  assert.ok(aboutAt > -1, 'the Improve panel has its reference footer');
+  const revisionAt = html.indexOf('id="drawer-row-platform-version"');
   assert.ok(revisionAt > aboutAt, 'the version rows live inside it');
-  const versionAt = html.indexOf('id="about-row-native-app-version"');
+  const versionAt = html.indexOf('id="drawer-row-native-app-version"');
   assert.ok(versionAt > revisionAt,
     'About order is platform version → mobile app version');
   assert.match(html.slice(revisionAt, versionAt), /Platform version/);

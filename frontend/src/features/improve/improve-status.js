@@ -88,11 +88,11 @@ const ImproveStatus = {
   // straight off the rendered row rather than threading state: its markup is
   // already the single source of truth for both conditions.
   //
-  // Scoped to #settings-about — where the Streamlined Concept board's removal
-  // of the drawer's reference footer moved that row — so a deploying dApp pill
-  // on a home tile can never light this dot. The row is in the shell at all
-  // times (the settings screen is hidden, never unmounted), so reading it does
-  // not depend on Settings being open.
+  // Scoped to #improve-footer — the panel's reference block, where #1443 put
+  // the version rows back after #1431 had scattered them — so a deploying dApp
+  // pill on a home tile can never light this dot. The rows are in the shell at
+  // all times (the panel is hidden, never unmounted), so reading them does not
+  // depend on the panel being open.
   //
   // THE DOT MOVED WITH THE ROWS. It was `#header-menu-deploy-dot` on the
   // hamburger, from when the version rows lived in that drawer's footer; they
@@ -108,9 +108,9 @@ const ImproveStatus = {
   // old dot could not show because it had exactly one colour.
   refreshDeployDot() {
     const deploying = !!document.querySelector(
-      '#settings-about .drawer-ver--deploying');
+      '#improve-footer .drawer-ver--deploying');
     const stale = !deploying && !!document.querySelector(
-      '#settings-about button.drawer-ver--stale');
+      '#improve-footer button.drawer-ver--stale');
     const state = deploying ? 'deploying' : (stale ? 'stale' : 'idle');
     if (typeof window !== 'undefined') window.Improve?.setVersionState?.(state);
   },

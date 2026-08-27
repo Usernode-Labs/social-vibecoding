@@ -31,7 +31,7 @@ const header = html.slice(0, html.indexOf('</header>'));
 // notifications. These four slots are the load-bearing survivors, and where
 // each one now lives is the thing this file pins:
 //
-//   #platform-version-pill-slot  → Settings' About block (#settings-about).
+//   #platform-version-pill-slot  → Settings' About block (#improve-footer).
 //   #native-app-version-slot        Both describe the PLATFORM — the deployed
 //                                   web build and the installed mobile app —
 //                                   so they outlived the app-scoped footer
@@ -58,8 +58,8 @@ const ABOUT_SLOTS = [
 ];
 
 test('each surviving slot exists exactly once, in its new region', () => {
-  const aboutStart = html.indexOf('id="settings-about"');
-  assert.ok(aboutStart > -1, '#settings-about is missing from the shell');
+  const aboutStart = html.indexOf('id="improve-footer"');
+  assert.ok(aboutStart > -1, '#improve-footer is missing from the shell');
   for (const id of ABOUT_SLOTS) {
     const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
     assert.equal(hits.length, 1, `exactly one #${id} in the shell`);
@@ -201,11 +201,11 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
   // .drawer-ver--deploying instead of the pill class. The SCOPE has followed
   // those rows through every move: #drawer-footer → the Improve panel's
   // footer → Settings' About block, which is where they finally stopped.
-  assert.match(fn.slice(0, 1400), /#settings-about \.drawer-ver--deploying/,
+  assert.match(fn.slice(0, 1400), /#improve-footer \.drawer-ver--deploying/,
     'reads the deploying state off the rendered pills — the single source of truth');
   // The second state the old single-colour dot could not show: the violet
   // "platform rolled past the SHA this tab loaded against" reload button.
-  assert.match(fn.slice(0, 1400), /#settings-about button\.drawer-ver--stale/,
+  assert.match(fn.slice(0, 1400), /#improve-footer button\.drawer-ver--stale/,
     'and the stale state, which is the other thing those rows say');
   // It PUBLISHES: #improve-btn is React-owned, so an id lookup plus a
   // classList write would be a mismatch React patches straight back out.
@@ -224,8 +224,8 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
 // ─── App-scoped row lifecycle ────────────────────────────────────────────
 
 test('the mobile app version row ships hidden', () => {
-  const nativeRow = html.match(/<div id="about-row-native-app-version"[^>]*>/);
-  assert.ok(nativeRow, '#about-row-native-app-version exists');
+  const nativeRow = html.match(/<div id="drawer-row-native-app-version"[^>]*>/);
+  assert.ok(nativeRow, '#drawer-row-native-app-version exists');
   assert.match(nativeRow[0], /class="hidden /,
     'the mobile app version ships hidden until the native bridge answers');
 
@@ -272,8 +272,8 @@ test('reference rows are plain divs — the pills carry their own anchors', () =
   // onclick="location.reload()">, and the live state an <a>. Nesting
   // those inside a clickable row would be invalid markup. The rule followed the
   // rows all the way to Settings; #drawer-row-kudos is retired.
-  for (const id of ['about-row-platform-version',
-    'about-row-native-app-version', 'drawer-row-ai-budget']) {
+  for (const id of ['drawer-row-platform-version',
+    'drawer-row-native-app-version', 'drawer-row-ai-budget']) {
     const row = html.match(new RegExp(`<(\\w+) id="${id}"`));
     assert.ok(row, `${id} exists`);
     assert.equal(row[1], 'div', `${id} is a <div>, never an <a>/<button>`);

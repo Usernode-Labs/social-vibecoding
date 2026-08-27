@@ -32,21 +32,27 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
-const panel = read('frontend/src/features/profile/account-panel.tsx');
+const panel = read('frontend/src/features/app-context/app-context-sheet.tsx');
 const appJs = read('public/js/app.js');
 const dapp = JSON.parse(read('dapp.json'));
 
-test('the row ships in the Profile account group, hidden by default', () => {
-  assert.match(panel, /id="profile-row-admin"/, 'the row is rendered');
-  assert.match(panel, /id="profile-row-admin"[\s\S]{0,200}?href="#admin"/,
+test("the row ships in the chip's menu, hidden by default", () => {
+  assert.match(panel, /id="switcher-row-admin"/, 'the row is rendered');
+  assert.match(panel, /id="switcher-row-admin"[\s\S]{0,200}?href="#admin"/,
     'navigation rides the anchor hash');
-  assert.match(panel, /className=\{`hidden \$\{TILE\}`\}/,
+  // Ships hidden through MenuRow's `shipsHidden` prop, which prefixes the
+  // shared ROW constant. The className stays a constant either way — that is
+  // what keeps the outside `hidden` toggle a sanctioned seam and not a
+  // second owner of the node.
+  assert.match(panel, /shipsHidden/,
     'it ships hidden — the gate reveals it, never the other way round');
+  assert.match(panel, /className=\{shipsHidden \? `hidden \$\{ROW\}` : ROW\}/,
+    'and the hidden state is a prefix on the constant, not a computed class');
 });
 
-test('it sits beside Settings, which is the pair the drawer closed with', () => {
-  const settings = panel.indexOf('id="profile-row-settings"');
-  const admin = panel.indexOf('id="profile-row-admin"');
+test("it sits below Settings, in the menu's You group", () => {
+  const settings = panel.indexOf('id="switcher-row-settings"');
+  const admin = panel.indexOf('id="switcher-row-admin"');
   assert.ok(settings !== -1 && admin !== -1, 'both rows are present');
   assert.ok(settings < admin, 'Settings leads, Admin follows');
 });
@@ -73,11 +79,11 @@ test('visibility is gated on isAdmin — which covers view-only admins too', () 
 test('the gate is published, not written by id', () => {
   const at = appJs.indexOf('  renderAdminButton() {');
   const body = appJs.slice(at, appJs.indexOf('\n  },', at));
-  assert.match(body, /Visibility\.publish\('profile-row-admin'/,
+  assert.match(body, /Visibility\.publish\('switcher-row-admin'/,
     'the row renders inside a React-owned subtree — publish, do not classList');
   assert.doesNotMatch(body, /getElementById/,
     'an id lookup at boot finds nothing, and React would undo it if it did');
-  assert.match(panel, /useVisibilityHiddenClass\(adminRef, 'profile-row-admin', false\)/,
+  assert.match(panel, /useVisibilityHiddenClass\(adminRef, 'switcher-row-admin', false\)/,
     'and the component subscribes to exactly that key');
 });
 
@@ -95,10 +101,12 @@ test('the row is not gated on the environment', () => {
 
 test('dapp.json locks the rendered row in with a check', () => {
   const hit = dapp.tests.find((t) => String(t.expectSelector || '')
-    .includes('#profile-row-admin'));
+    .includes('#switcher-row-admin'));
   assert.ok(hit, 'a declared check must assert the row actually renders');
   assert.match(String(hit.expectSelector), /:not\(\.hidden\)/,
     'and that it is REVEALED for the admin identity, not merely present');
-  assert.match(String(hit.path), /#profile/,
-    'on the screen that renders it');
+  // The menu, not a screen: `?shot=app-context` is the capture path that
+  // presents it, the same one the other menu checks use.
+  assert.match(String(hit.path), /shot=app-context/,
+    'on the surface that renders it');
 });

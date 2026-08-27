@@ -5718,8 +5718,20 @@ body:has(#staging-overlay.staging-overlay-under-chrome) #dc-session-header {
 
 /* Same call the docked mode makes, for the same reason: "Back to session"
    is meaningless beside a session that never left the screen. The strip's
-   pencil segment is the way back. */
-#staging-overlay.staging-overlay-under-chrome #staging-back { display: none; }
+   pencil segment is the way back.
+
+   THE `:has()` IS A SAFETY NET, NOT A REFINEMENT. Under-chrome hides this
+   button AND leaves .staging-dock-only hidden, so the ONLY way out of the
+   preview is the pencil in #dc-session-header. If that strip is not on
+   screen there is no way out at all — which is exactly what happened while
+   the under-chrome class was gated on `previewActive` alone, a flag
+   ensureStaging publishes for every preview and not only a session's
+   (features/staging/staging-overlay.tsx now gates on the route too).
+   Hiding the last exit is worth making structurally impossible rather than
+   conditional on two owners agreeing: no strip, no hide. */
+body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #staging-back {
+  display: none;
+}
 
 /* Docked chrome: "Back to session" makes no sense beside the still-
    visible session — the ×-close (.staging-dock-only) replaces it. */

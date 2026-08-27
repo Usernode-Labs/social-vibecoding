@@ -76,7 +76,7 @@ import { ImproveIsland } from './features/improve';
 import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
-import { MessagesIsland } from './features/messages';
+import { MessagesScreen } from './features/messages';
 import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
@@ -234,7 +234,17 @@ export function Shell() {
           module writes inside it. It ships hidden and empty for prerender and
           hydration parity; the hash router publishes visibility and the
           feature loads authenticated data only after #messages opens.
+
+          A SCREEN, and #1443 put it back to one. #1431 made it a sheet on the
+          grounds that the header's chat bubble is on every route, so a
+          full-screen Messages had to answer "back to where?". That reasoning
+          died with the bubble: Messages is a row in the chip's menu now, and
+          the menu's rule is that everything in it has its own page. It is
+          also what the surface is FOR — reading past conversations and
+          sending from them is a place you go, not an overlay you dismiss,
+          which is how every messaging product on earth models it.
       */}
+      <Island name="MessagesScreen"><MessagesScreen /></Island>
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down
@@ -396,14 +406,6 @@ export function Shell() {
           dismissed back to it, on the same chassis as the sheet above.
       */}
       <Island name="NotificationsIsland"><NotificationsIsland /></Island>
-      {/*
-          Messages (Streamlined Concept). A SHEET for the same reason the bell
-          is: the chat bubble is in the header on every route, so a
-          full-screen Messages had to answer "back to where?" — and it had a
-          SECOND back level of its own on top of that. Dismissal is the outer
-          one now; the thread's own back button is the inner one.
-      */}
-      <Island name="MessagesIsland"><MessagesIsland /></Island>
       {/* Developer console (slide-up panel, anchored to bottom) — an ISLAND
           since #1079 chunk B: features/dev-console owns the whole subtree and
           public/js/dev-console.js is retired. */}

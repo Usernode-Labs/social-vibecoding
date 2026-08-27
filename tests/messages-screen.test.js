@@ -1,15 +1,8 @@
 'use strict';
 
 // Frontend contract for #488. These assertions deliberately pin the seams
-// where a private, React-owned surface meets the classic hash router and REST
+// where a private, React-owned screen meets the classic hash router and REST
 // API. The database behavior lives in platform-messaging-*.test.js.
-//
-// It was a SCREEN until the Streamlined Concept's second pass. The chat
-// bubble is in the header on every route, so that screen's back arrow had to
-// answer "back to where?" and answered home — and Messages had a SECOND back
-// level of its own on top of it (thread -> list), driven by writing the
-// platform header from inside the feature. As a sheet the outer level is
-// dismissal and the inner one is a button in the thread header.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,64 +17,26 @@ const app = read('public/js/app.js');
 const api = read('frontend/src/features/messages/api.ts');
 const store = read('frontend/src/features/messages/store.ts');
 const screen = read('frontend/src/features/messages/index.tsx');
-const sheetCtl = read('frontend/src/features/messages/sheet-controller.js');
-const headerTsx = read('frontend/src/features/header/platform-header.tsx');
 const composer = read('frontend/src/features/messages/composer.tsx');
 const row = read('frontend/src/features/messages/message-row.tsx');
 const markdown = read('frontend/src/features/messages/format.tsx');
 const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
 const dapp = JSON.parse(read('dapp.json'));
 
-test('Messages is a React-owned SHEET with global navigation', () => {
-  assert.match(html, /id="messages-sheet"/);
-  assert.match(html, /id="messages-sheet-overlay"/);
-  assert.match(html, /id="messages-btn"\s+href="#messages"/);
+test('Messages is a hidden React-owned top-level screen with global navigation', () => {
+  assert.match(html, /<main id="messages-screen" class="hidden /);
+  assert.match(html, /id="switcher-row-messages" href="#messages"/);
   assert.match(html, /id="drawer-messages-badge" class="hidden /);
-  // The nav order check. THE UI OVERHAUL took Leaderboard out of the
-  // hamburger — a link to shared progress belongs beside the shared progress,
-  // so it is the Challenges area's now — and the four rows left are the
-  // navigation the drawer was always for.
-  // Streamlined Concept: Messages is a header glyph beside the bell. The
-  // companion assertion here used to pin the drawer's Profile | Settings |
-  // Admin group; the drawer is retired outright, and those three are the
-  // Profile screen's account group now — see
-  // tests/admin-console-entry-row.test.js, which owns that contract.
+  // The nav order check. The menu reads platform-then-you: Home, Discover,
+  // Messages, then Profile, Settings, Admin. `~` rather than `+` because the
+  // section labels sit between the groups.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#platform-header #messages-btn + #notifications-btn'));
-  assert.match(sheetCtl, /createSheetController\(/, 'on the shared sheet chassis');
-  assert.match(screen, /messagesSheetStore/);
-  assert.doesNotMatch(screen, /useVisibilityHiddenClass/,
-    'a sheet is not revealed by the screen machinery');
-  assert.ok(!/'messages-screen'/.test(app), 'no screen id survives in app.js');
-  assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,900}openMessagesSheet/);
-});
-
-test('the bubble opens it in place, and the two back levels collapse to one', () => {
-  // Plain click presents over the current screen with NO hash write, so there
-  // is no history entry to back out of; a modified click keeps the href.
-  assert.match(headerTsx, /id="messages-btn"[\s\S]{0,400}href="#messages"/);
-  assert.match(headerTsx, /NavLink\?\.isNativeClick\?\.\(event\)[\s\S]{0,120}MessagesSheet\?\.toggle/);
-
-  // The OUTER back level is gone with the screen: nothing writes the platform
-  // header from inside this feature any more, and the #back-btn chain has no
-  // Messages hook left.
-  assert.match(store, /export function syncChrome\(\): void \{\}/,
-    'syncChrome is a retired no-op, kept only because classic callers name it');
-  assert.ok(!/_inMessages/.test(app), 'no screen-state flag');
-  assert.ok(!/_exitMessages/.test(app), 'no exit helper');
-  assert.ok(!/messages\?\.handleBack/.test(app),
-    'the thread back is a control inside the sheet, not a link in the back chain');
-
-  // The INNER one stays, as a button rather than an address.
-  assert.match(screen, /className="messages-thread-back"[\s\S]{0,200}onClick=\{\(\) => handleBack\(\)\}/);
-  // ONE PANE at every width. The list/thread split was `md:` classes keyed to
-  // the VIEWPORT, and the sheet is 24rem at its widest — so on a desktop the
-  // two panes were sized against a surface they do not span and the thread
-  // got a few squeezed characters.
-  assert.ok(!/md:flex|md:hidden/.test(screen),
-    'no viewport-keyed pane classes survive inside the sheet');
-  assert.ok(!/isMobile/.test(store),
-    'and the store no longer asks the viewport whether both panes fit');
+    === '#switcher-nav #switcher-row-home ~ #switcher-row-discover ~ #switcher-row-messages'
+      + ' ~ #switcher-row-profile ~ #switcher-row-settings ~ #switcher-row-admin'),
+  'a declared check pins the menu order');
+  assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
+  assert.match(app, /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/);
+  assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,600}navigateToMessages/);
 });
 
 test('deep links validate ids and route list/thread without a client events socket send', () => {
@@ -90,14 +45,9 @@ test('deep links validate ids and route list/thread without a client events sock
   assert.match(messagesRoute, /const conversationId = App\._numericSegment\(parts\[1\]\)/);
   assert.match(messagesRoute, /conversationId != null && conversationId <= 2147483647/,
     'SERIAL conversation ids retain their signed-int32 bound without constraining other hash routes');
-  assert.match(messagesRoute, /App\.openMessagesSheet\(/);
+  assert.match(messagesRoute, /App\.navigateToMessages\(/);
   assert.match(api, /id <= MAX_ID/);
-  // `open` used to write `location.hash` and let the router come back round
-  // to route(). The sheet is not an address, so it routes and presents
-  // directly — which is also what makes it idempotent.
-  assert.match(store, /export function open\(conversationId\?: number \| null\): void \{[\s\S]{0,300}MessagesSheet\?\.open\?\.\(\)/);
-  assert.doesNotMatch(store, /window\.location\.hash = `#messages/,
-    'nothing in the feature writes the address any more');
+  assert.match(store, /const target = validId\(conversationId\) \? `#messages\/\$\{conversationId\}` : '#messages'/);
   assert.match(store, /api\.setTyping\(conversationId, typing\)/,
     'typing uses its authenticated HTTP endpoint');
   assert.doesNotMatch(store, /eventsWs.*send|eventsWsSend/,

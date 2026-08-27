@@ -110,30 +110,36 @@ test('both top bars carry the identical shape: py-3, no hairline, safe-area', ()
   }
 });
 
-test('FLOOR: the lead icon wrapper is 28px square on both bars', () => {
+test('FLOOR: each bar holds its 28px content row open', () => {
   for (const bar of BARS) {
-    // First element inside the header: the fixed-size wrapper holding the
-    // lead icon. `h-7` is what holds the row open when #header-title is
-    // hidden (native WebView); `flex items-center` centres the icon inside
-    // those 28px.
+    // `h-7` on the bar's LEAD GROUP is what holds the row open when
+    // #header-title is hidden (native WebView), and `flex items-center`
+    // centres whatever is in it inside those 28px. That is the floor, and it
+    // is the whole of what parity requires.
     //
-    // `w-7`, not the `w-5` it was: the platform bar's slot holds the 28px APP
-    // GLYPH now as well as the back arrow (features/header/header-app-icon.tsx),
-    // and the two bars' lead slots must stay the same size or the title starts
-    // at a different x on each. The 20px arrow is centred inside it.
-    const wrapper = withoutComments(bar.slice).match(/<div class="([^"]*\bw-7\b[^"]*)"/);
-    assert.ok(wrapper, `#${bar.id} still has its w-7 lead-icon wrapper`);
-    const classes = wrapper[1].split(/\s+/);
-    assert.ok(classes.includes('h-7'),
-      `#${bar.id}'s back-btn wrapper carries h-7 — the header's 28px content-row floor`);
+    // WIDTH IS NO LONGER PART OF IT, and only on the platform bar. The fixed
+    // `w-7` box existed to (a) keep a CENTRED title from shifting as the back
+    // anchor came and went and (b) hold either the arrow or the app glyph,
+    // which never drew together. #1443 retired the app glyph and made the
+    // chip the header's flush-left label, so the box had one occupant and no
+    // centring to protect — all it did was reserve an inch of dead space at
+    // the top-left of every root screen.
+    //
+    // The landing bar still has its w-7 box: its title IS centred and its
+    // back button still comes and goes, so the reason survives there. Two
+    // bars, one floor, and the width rule kept exactly where it still buys
+    // something.
+    const lead = withoutComments(bar.slice).match(/<div[^>]*class="([^"]*\bh-7\b[^"]*)"/);
+    assert.ok(lead, `#${bar.id} still has a lead group carrying the 28px floor`);
+    const classes = lead[1].split(/\s+/);
     assert.ok(classes.includes('flex') && classes.includes('items-center'),
-      `#${bar.id}'s back-btn wrapper centres its icon in those 28px`);
-    // features/header/use-header-layout.ts measures this element as part of
-    // the title's left side group (leftGroup.offsetWidth), so the WIDTH must
-    // be FIXED — 28px now, holding either the back arrow or the app glyph,
-    // which never draw together.
-    assert.ok(classes.includes('w-7') && classes.includes('shrink-0'),
-      `#${bar.id}'s lead-icon wrapper stays w-7 shrink-0 (the header-layout hook measures it)`);
+      `#${bar.id}'s lead group centres its content in those 28px`);
+    assert.ok(classes.includes('shrink-0'),
+      `#${bar.id}'s lead group never compresses below the floor`);
+    if (bar.id === 'landing-header') {
+      assert.ok(classes.includes('w-7'),
+        '#landing-header keeps its fixed 28px box — its title is centred');
+    }
   }
 });
 

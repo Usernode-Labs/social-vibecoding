@@ -1336,7 +1336,7 @@
       "expectSelector": "#platform-header #improve-btn:not(.hidden)"
     },
     {
-      "name": "The Improve panel offers the three views in order (Streamlined Concept)",
+      "name": "The Improve panel offers the three views in order (#1443)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#improve-views [data-context-row=\"app\"] ~ [data-context-row=\"board\"] ~ [data-context-row=\"activity\"]"
     },
@@ -1346,9 +1346,9 @@
       "expectSelector": "#improve-quick-actions #improve-row-new-session"
     },
     {
-      "name": "The center title is a tappable app-context tab on an app screen (Streamlined Concept)",
+      "name": "The chip is the header's label on an app screen (#1443)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#header-title #header-title-tab"
+      "expectSelector": "#header-title #app-switcher-btn"
     },
     {
       "name": "Improve is on the header right on the Dev screens too, not a contextual eye",
@@ -1366,15 +1366,15 @@
       "expectSelector": "#dev-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
     },
     {
-      "name": "The self-hosted platform row gets a use-the-app row too (#1386, Streamlined Concept)",
+      "name": "The self-hosted platform row gets a use-the-app row too (#1386, #1443)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#improve-views [data-context-row=\"app\"]",
       "expectText": "The platform itself"
     },
     {
-      "name": "Home offers the platform's app-context tab in the header (#1386, Streamlined Concept)",
+      "name": "The chip is the header's label on Home too, not only inside an app (#1443)",
       "path": "/",
-      "expectSelector": "#header-title #header-title-tab"
+      "expectSelector": "#header-title #app-switcher-btn"
     },
     {
       "name": "Home shows the platform Improve button (improve Social Vibecoding itself)",
@@ -1686,9 +1686,9 @@
       "expectSelector": "#improve-panel #improve-row-feedback"
     },
     {
-      "name": "The Improve panel leads with the quick actions, then the app's views",
+      "name": "The Improve panel: quick actions, the app's views, the work in flight, then what the app is (#1443)",
       "path": "/?demo=1",
-      "expectSelector": "#improve-body > *:has(#improve-quick-actions) + #improve-views"
+      "expectSelector": "#improve-body > *:has(#improve-quick-actions) + #improve-views + #improve-sessions + #improve-footer"
     },
     {
       "name": "The Profile account group ships the native Node status row",
@@ -1706,14 +1706,14 @@
       "expectSelector": "#improve-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
     },
     {
-      "name": "Admin & moderation renders in the Profile account group for admins (#588)",
-      "path": "/#profile",
-      "expectSelector": "#profile-row-admin:not(.hidden)"
+      "name": "Admin & moderation renders in the chip's menu for admins (#588, #1443)",
+      "path": "/?shot=app-context&demo=1",
+      "expectSelector": "#switcher-nav #switcher-row-admin:not(.hidden)"
     },
     {
-      "name": "Settings' About block renders the platform build as plain text, not a pill",
-      "path": "/#settings",
-      "expectSelector": "#settings-about #about-row-platform-version #platform-version-pill-slot .drawer-ver"
+      "name": "The Improve panel renders the platform build as plain text, not a pill (#1443)",
+      "path": "/?demo=1",
+      "expectSelector": "#improve-footer #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
     },
     {
       "name": "Settings renders the AI-credit allowance as inline text",
@@ -1743,14 +1743,19 @@
       "expectText": "View on GitHub"
     },
     {
-      "name": "Notifications and Messages are header glyphs, not drawer rows (Streamlined Concept)",
+      "name": "The header carries the chip and the bell, and no second alerting glyph (#1443)",
       "path": "/",
-      "expectSelector": "#platform-header #messages-btn + #notifications-btn"
+      "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#app-switcher-btn) #notifications-btn"
     },
     {
-      "name": "The title tab opens the Apps switcher, with Home and Explore (Streamlined Concept)",
+      "name": "The menu's destination order: platform, then you (#1443)",
+      "path": "/?shot=app-context&demo=1",
+      "expectSelector": "#switcher-nav #switcher-row-home ~ #switcher-row-discover ~ #switcher-row-messages ~ #switcher-row-profile ~ #switcher-row-settings ~ #switcher-row-admin"
+    },
+    {
+      "name": "The chip opens the menu, and it lists Home and Discover (#1443)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #apps-switcher-home + #apps-switcher-explore"
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-home + #switcher-row-discover"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -2465,9 +2470,9 @@
       "expectSelector": "#platform-header #header-status-pill"
     },
     {
-      "name": "A session bar carries no centre title tab — the change's name is the strip's (Streamlined Concept)",
+      "name": "A session bar carries no chip — the change's name is the strip's (#1443)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
-      "expectSelector": "#platform-header:not(:has(#header-title-tab)) #back-btn:not(.hidden)"
+      "expectSelector": "#platform-header:not(:has(#app-switcher-btn)) #back-btn:not(.hidden)"
     },
     {
       "name": "Inside an app's detail page the header arrow links back to the list (#1036)",

@@ -88,7 +88,7 @@ async function checkoutStatus(deps, params) {
   if (!headSha) {
     return {
       code: 'invalid_head_sha',
-      message: 'headSha must be a git commit id — 7 to 40 hexadecimal characters, '
+      message: 'headSha must be a git commit id: 7 to 40 hexadecimal characters, '
         + 'as printed by `git rev-parse HEAD`.',
     };
   }
