@@ -349,7 +349,7 @@ function replayPool({ row, credential, keyRow }) {
           if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
           if (sql.startsWith('SELECT a.attempt_id, a.protocol')) return { rows: [{ ...row }] };
           if (sql.startsWith('SELECT c.credential_reference')) return { rows: [{ ...credential }] };
-          if (sql.startsWith('SELECT installation_id, key_generation, user_id')) return { rows: [{ ...keyRow }] };
+          if (sql.startsWith('SELECT installation_id, key_generation,')) return { rows: [{ ...keyRow }] };
           throw new Error(`Unhandled replay query: ${sql}`);
         },
         release() {},
@@ -385,7 +385,7 @@ test('committed exchange exact retry survives web-session deletion and accepts a
     encrypted_response: sealed.encryptedResponse, response_digest: sealed.responseDigest,
   };
   const keyRow = {
-    installation_id: request.installation.id, key_generation: 1, user_id: 41,
+    installation_id: request.installation.id, key_generation: 1,
     possession_key_id: keys.possessionKeyId,
     possession_key_thumbprint: keys.possessionKeyThumbprint,
     possession_public_jwk: keys.possessionJwk,
@@ -508,7 +508,7 @@ test('schema cross-binds session, attempt, installation, token, and account subj
   assert.match(schema, /FOREIGN KEY \(native_session_incarnation_id, user_id\)\s+REFERENCES native_session_web_incarnations\(id, user_id\)/);
   assert.match(schema, /FOREIGN KEY \(web_session_incarnation_id, user_id\)\s+REFERENCES native_session_web_incarnations\(id, user_id\)/);
   assert.match(schema, /FOREIGN KEY \(attempt_id, user_id, web_session_incarnation_id, network_id, chain_id\)/);
-  assert.match(schema, /FOREIGN KEY \(installation_id, installation_key_generation, user_id\)/);
+  assert.match(schema, /FOREIGN KEY \(installation_id, installation_key_generation\)\s+REFERENCES native_installation_key_generations\(installation_id, key_generation\)/);
   assert.match(schema, /FOREIGN KEY \(mobile_auth_token_id, user_id\)[\s\S]*?ON DELETE SET NULL \(mobile_auth_token_id\)/);
   assert.match(schema, /FOREIGN KEY \(account_id, user_id\)\s+REFERENCES onchain_accounts\(id, user_id\)/);
 });

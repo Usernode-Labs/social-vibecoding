@@ -4653,14 +4653,15 @@ CREATE TABLE IF NOT EXISTS native_session_tickets (
 CREATE INDEX IF NOT EXISTS native_session_tickets_expiry_idx
   ON native_session_tickets (expires_at) WHERE state = 'issued';
 
--- Installation identity is continuity-only in protocol 2, not hardware
--- attestation. The caller submits public JWKs; the server validates them and
--- derives the purpose-specific ids and RFC 7638 thumbprints stored here.
+-- Installation identity is app/device continuity-only in protocol 2, not
+-- user identity or hardware attestation. The caller submits public JWKs; the
+-- server validates them and derives the purpose-specific ids and RFC 7638
+-- thumbprints stored here. Authenticated attempts and credentials, not this
+-- stable installation row, carry the exact user binding.
 CREATE TABLE IF NOT EXISTS native_installation_key_generations (
   installation_id                 VARCHAR(47) NOT NULL
     CHECK (installation_id ~ '^nsi_[A-Za-z0-9_-]{43}$'),
   key_generation                  INTEGER NOT NULL CHECK (key_generation = 1),
-  user_id                         BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   possession_key_id               VARCHAR(48) NOT NULL UNIQUE
     CHECK (possession_key_id ~ '^nskp_[A-Za-z0-9_-]{43}$'),
   possession_key_thumbprint       CHAR(43) NOT NULL
@@ -4674,7 +4675,6 @@ CREATE TABLE IF NOT EXISTS native_installation_key_generations (
   created_at                      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (installation_id, key_generation),
   UNIQUE (installation_id),
-  UNIQUE (installation_id, key_generation, user_id),
   UNIQUE (possession_key_thumbprint),
   UNIQUE (envelope_key_thumbprint),
   CHECK (jsonb_typeof(possession_public_jwk) = 'object'),
@@ -4710,8 +4710,8 @@ CREATE TABLE IF NOT EXISTS native_session_credentials (
     REFERENCES native_session_attempts(
       attempt_id, user_id, web_session_incarnation_id, network_id, chain_id
     ),
-  FOREIGN KEY (installation_id, installation_key_generation, user_id)
-    REFERENCES native_installation_key_generations(installation_id, key_generation, user_id),
+  FOREIGN KEY (installation_id, installation_key_generation)
+    REFERENCES native_installation_key_generations(installation_id, key_generation),
   FOREIGN KEY (mobile_auth_token_id, user_id)
     REFERENCES mobile_auth_tokens(id, user_id)
     ON DELETE SET NULL (mobile_auth_token_id),

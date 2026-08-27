@@ -193,7 +193,7 @@
     },
 
     _removeStoredAttempt() {
-      try { sessionStorage.removeItem(NativeChrome._ATTEMPT_STORAGE_KEY); }
+      try { localStorage.removeItem(NativeChrome._ATTEMPT_STORAGE_KEY); }
       catch (_) {}
     },
 
@@ -201,7 +201,7 @@
       let value = null;
       try {
         value = JSON.parse(
-          sessionStorage.getItem(NativeChrome._ATTEMPT_STORAGE_KEY) || 'null'
+          localStorage.getItem(NativeChrome._ATTEMPT_STORAGE_KEY) || 'null'
         );
       } catch (_) {}
       const keys = value && typeof value === 'object'
@@ -220,7 +220,7 @@
     },
 
     _writeStoredAttempt(value) {
-      sessionStorage.setItem(
+      localStorage.setItem(
         NativeChrome._ATTEMPT_STORAGE_KEY, JSON.stringify(value)
       );
       return value;
@@ -272,8 +272,9 @@
     },
 
     // App calls this synchronously before publishing/replacing App.user.
-    // A saved exact attempt survives a document replacement only for the
-    // same participant, so a lost native response can be replayed exactly.
+    // A saved non-secret exact attempt survives Activity/WebView recreation
+    // only for the same participant, so an already-Ready native session can
+    // be reclaimed by exact replay rather than stranded behind a new attempt.
     prepareIdentityPublication(user) {
       const participantId = user && user.id != null ? String(user.id) : null;
       const stored = NativeChrome._readStoredAttempt();
@@ -410,6 +411,10 @@
     // Close the JS/native realm synchronously before the first logout await.
     prepareWebLogout() {
       NativeChrome._logoutRunning = true;
+      // TODO(session-lifecycle-v2): Once web logout reports an authoritative
+      // success/failure result, retain this replay metadata until success.
+      // Today a failed web logout followed by Activity recreation stays
+      // safely closed but may require a process restart to recover.
       NativeChrome._closeRealm({ discardAttempt: true });
       return NativeChrome.getInfo().then((info) => {
         const capabilities = Array.isArray(info && info.capabilities)

@@ -70,7 +70,7 @@ function loadNativeChrome({
   },
   fetchImpl,
   establishImpl,
-  sharedSessionStorage,
+  sharedAttemptStorage,
 } = {}) {
   const calls = {
     info: 0,
@@ -82,7 +82,7 @@ function loadNativeChrome({
   };
   const windowListeners = {};
   const documentListeners = {};
-  const storage = sharedSessionStorage || new Map();
+  const storage = sharedAttemptStorage || new Map();
   const add = (target, type, listener) => {
     if (!target[type]) target[type] = [];
     target[type].push(listener);
@@ -98,11 +98,18 @@ function loadNativeChrome({
       }
     },
     App: { user: null },
-    localStorage: { getItem() { return '1'; }, setItem() {} },
-    sessionStorage: {
-      getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+    localStorage: {
+      getItem(key) {
+        if (storage.has(key)) return storage.get(key);
+        return key === 'sv:onboarding_permissions_done' ? '1' : null;
+      },
       setItem(key, value) { storage.set(key, String(value)); },
       removeItem(key) { storage.delete(key); },
+    },
+    sessionStorage: {
+      getItem() { throw new Error('native attempt must not use sessionStorage'); },
+      setItem() { throw new Error('native attempt must not use sessionStorage'); },
+      removeItem() { throw new Error('native attempt must not use sessionStorage'); },
     },
     WalletSheet: {
       _setSessionWalletAdmission(value) { calls.admission.push(value); },
@@ -210,12 +217,12 @@ test('protocol 2 sends one exact ticket-backed establishment transaction',
     );
   });
 
-test('concurrent calls share one lease and a replacement realm replays its attempt',
+test('concurrent calls share one lease and a recreated WebView replays its attempt',
   async () => {
     const shared = new Map();
     const native = deferred();
     const loaded = loadNativeChrome({
-      sharedSessionStorage: shared,
+      sharedAttemptStorage: shared,
       establishImpl: (payload, count) => count === 1
         ? native.promise
         : establishResult(payload, '41'),
@@ -232,13 +239,14 @@ test('concurrent calls share one lease and a replacement realm replays its attem
     assert.equal(await first, await duplicate);
     const attemptId = loaded.calls.establish[0].attemptId;
 
-    loaded.dispatchWindow('pagehide');
-    assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
-    await loaded.NativeChrome.recoverSessionAdmission();
-    assert.equal(loaded.calls.fetch.length, 2,
+    const replacement = loadNativeChrome({ sharedAttemptStorage: shared });
+    replacement.NativeChrome.prepareIdentityPublication({ id: 41 });
+    replacement.sandbox.App.user = { id: 41 };
+    await replacement.NativeChrome.recoverSessionAdmission();
+    assert.equal(replacement.calls.fetch.length, 1,
       'the server, not web storage, replays the exact ticket');
-    assert.equal(loaded.calls.establish[1].attemptId, attemptId);
-    assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
+    assert.equal(replacement.calls.establish[0].attemptId, attemptId);
+    assert.equal(replacement.NativeChrome.isSessionAdmitted(), true);
   });
 
 test('a terminal ticket drops only attempt metadata for a later fresh recovery',
@@ -289,6 +297,8 @@ test('logout is terminal despite a throwing UI sink and late publication',
     const establishments = loaded.calls.establish.length;
     const preflight = loaded.NativeChrome.prepareWebLogout();
     assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+    assert.equal(loaded.storage.has(
+      loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
     assert.ok(loaded.calls.events.includes('sv:native-realm-close'),
       'the private bridge closes before the throwing UI notification');
     await preflight;

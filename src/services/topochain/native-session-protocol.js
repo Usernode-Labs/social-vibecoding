@@ -61,13 +61,12 @@ function exactAttempt(row, expected) {
     && row.request_digest === expected.requestDigest;
 }
 
-function exactInstallation(row, { installation, keys, userId }) {
+function exactInstallation(row, { installation, keys }) {
   if (!row) return false;
   const possession = row.possession_public_jwk || {};
   const envelope = row.envelope_public_jwk || {};
   return row.installation_id === installation.id
     && Number(row.key_generation) === installation.keyGeneration
-    && String(row.user_id) === String(userId)
     && row.possession_key_id === keys.possessionKeyId
     && row.possession_key_thumbprint === keys.possessionKeyThumbprint
     && possession.kty === keys.possessionJwk.kty
@@ -149,14 +148,14 @@ async function replayExchange(client, { row, request, keys, exchangeDigest, conf
   }
 
   const { rows: keyRows } = await client.query(
-    `SELECT installation_id, key_generation, user_id,
+    `SELECT installation_id, key_generation,
             possession_key_id, possession_key_thumbprint, possession_public_jwk,
             envelope_key_id, envelope_key_thumbprint, envelope_public_jwk
        FROM native_installation_key_generations
       WHERE installation_id = $1 AND key_generation = $2`,
     [request.installation.id, request.installation.keyGeneration]
   );
-  if (!exactInstallation(keyRows[0], { installation: request.installation, keys, userId: row.user_id })) {
+  if (!exactInstallation(keyRows[0], { installation: request.installation, keys })) {
     protocolError(409, 'native_session_installation_conflict', 'The installation key generation is already bound to different keys.');
   }
 
@@ -492,18 +491,19 @@ class NativeSessionProtocol {
 
       await client.query(
         `INSERT INTO native_installation_key_generations
-           (installation_id, key_generation, user_id,
-            possession_key_id, possession_key_thumbprint, possession_public_jwk,
+           (installation_id, key_generation, possession_key_id,
+            possession_key_thumbprint, possession_public_jwk,
             envelope_key_id, envelope_key_thumbprint, envelope_public_jwk,
             created_at)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb, $10)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $9)
          ON CONFLICT DO NOTHING`,
-        [request.installation.id, request.installation.keyGeneration, row.user_id,
-          keys.possessionKeyId, keys.possessionKeyThumbprint, JSON.stringify(keys.possessionJwk),
-          keys.envelopeKeyId, keys.envelopeKeyThumbprint, JSON.stringify(keys.envelopeJwk), now]
+        [request.installation.id, request.installation.keyGeneration,
+          keys.possessionKeyId, keys.possessionKeyThumbprint,
+          JSON.stringify(keys.possessionJwk), keys.envelopeKeyId,
+          keys.envelopeKeyThumbprint, JSON.stringify(keys.envelopeJwk), now]
       );
       const { rows: installationRows } = await client.query(
-        `SELECT installation_id, key_generation, user_id,
+        `SELECT installation_id, key_generation,
                 possession_key_id, possession_key_thumbprint, possession_public_jwk,
                 envelope_key_id, envelope_key_thumbprint, envelope_public_jwk
            FROM native_installation_key_generations
@@ -512,7 +512,7 @@ class NativeSessionProtocol {
         [request.installation.id, request.installation.keyGeneration]
       );
       if (!exactInstallation(installationRows[0], {
-        installation: request.installation, keys, userId: row.user_id,
+        installation: request.installation, keys,
       })) {
         protocolError(409, 'native_session_installation_conflict', 'The installation key generation is already bound to different keys.');
       }
