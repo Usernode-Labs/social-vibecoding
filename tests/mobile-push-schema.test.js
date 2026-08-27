@@ -25,9 +25,13 @@ test('push schema keeps deployment and user device state private with bounded ex
     assert.ok(debugAccess.DENIED_TABLES.has(table));
     assert.ok(dbExport.EXCLUDED_TABLE_DATA.includes(table));
   }
-  assert.match(schema, /user_id\s+INTEGER NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
-  assert.match(schema, /session_expires_at TIMESTAMPTZ NOT NULL/);
-  assert.doesNotMatch(schema, /mobile_auth_token_id/);
+  const registrations = schema.match(
+    /CREATE TABLE IF NOT EXISTS mobile_push_registrations \([\s\S]*?\n\);/
+  )?.[0];
+  assert.ok(registrations, 'push registration table exists');
+  assert.match(registrations, /user_id\s+INTEGER NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
+  assert.match(registrations, /session_expires_at TIMESTAMPTZ NOT NULL/);
+  assert.doesNotMatch(registrations, /mobile_auth_token_id/);
   assert.match(schema, /registration_id[\s\S]*ON DELETE SET NULL/);
   assert.match(schema, /platform\s+VARCHAR\(16\) CHECK \(platform IN \('android', 'ios'\)\)/,
     'delivery rows snapshot their platform before invalid registrations are deleted');

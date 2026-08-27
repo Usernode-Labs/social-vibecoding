@@ -24,7 +24,7 @@
 //      are PUBLIC_PATH redirect stubs (served pre-auth).
 //
 // HTTP-level tests against a throwaway express app + a substring-
-// dispatching mock pool (same idiom as tests/mobile-auth-from-session.test.js).
+// dispatching mock pool.
 //
 // Run with: node --test tests/platform-access-gate.test.js
 'use strict';

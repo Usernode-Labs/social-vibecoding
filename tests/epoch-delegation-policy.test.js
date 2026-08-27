@@ -8,29 +8,23 @@ const express = require('express');
 const nodeStatus = require('../src/services/node-status');
 const {
   policyRequestSchema,
-  EpochDelegationService,
 } = require('../src/services/topochain/epoch-delegations');
 const {
-  nativeEpochDelegationRoutes,
   managedEpochDelegationRoutes,
 } = require('../src/routes/topochain/epoch-delegation');
 
 const NETWORK = {
   id: 'testnet',
-  chainId: 'utc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqcmpl5h',
+  chainId: 'utc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqkmzk3k',
 };
 const requestId = (byte) => `ndp_${Buffer.alloc(32, byte).toString('base64url')}`;
 
-test('native delegation request is closed and its rollout gate defaults shut', () => {
+test('native delegation request is a closed DTO', () => {
   assert.equal(policyRequestSchema.safeParse({ requestId: requestId(1), delegated: true }).success, true);
   assert.equal(policyRequestSchema.safeParse({ requestId: 'request-1', delegated: true }).success, false);
   assert.equal(policyRequestSchema.safeParse({
     requestId: requestId(1), delegated: true, account: 'caller-owned',
   }).success, false);
-  assert.equal(new EpochDelegationService({
-    pool: null,
-    config: { nativeSessionV2Network: NETWORK },
-  }).enabled, false);
 });
 
 test('canonical epoch sampling uses one live, internally consistent node status', async () => {
@@ -77,15 +71,19 @@ async function withServer(app, run) {
   }
 }
 
-test('managed current+next read requires its API key', async () => {
+test('managed E through E+2 read requires its API key', async () => {
   const expected = {
     success: true,
-    epochs: [{ epoch: 8, accounts: [] }, { epoch: 9, accounts: [] }],
+    epochs: [
+      { epoch: 8, accounts: [] },
+      { epoch: 9, accounts: [] },
+      { epoch: 10, accounts: [] },
+    ],
   };
   const app = express();
   app.use(managedEpochDelegationRoutes(
     { topochainPartnerApiKey: 'managed-secret' },
-    { service: { enabled: true, getManagedAssignments: async () => expected } },
+    { service: { getManagedAssignments: async () => expected } },
   ));
   await withServer(app, async (base) => {
     assert.equal((await fetch(`${base}/api/v1/delegations?include=next`)).status, 401);
@@ -94,23 +92,5 @@ test('managed current+next read requires its API key', async () => {
     });
     assert.equal(accepted.status, 200);
     assert.deepEqual(await accepted.json(), expected);
-  });
-});
-
-test('disabled rollout keeps native dark and managed polling fail-closed', async () => {
-  const app = express();
-  const disabled = { enabled: false };
-  app.use(nativeEpochDelegationRoutes({}, { service: disabled }));
-  app.use(managedEpochDelegationRoutes(
-    { topochainPartnerApiKey: 'managed-secret' },
-    { service: disabled },
-  ));
-  await withServer(app, async (base) => {
-    assert.equal((await fetch(`${base}/api/v4/mobile/native/delegation`)).status, 404);
-    const managed = await fetch(`${base}/api/v1/delegations?include=next`, {
-      headers: { 'x-api-key': 'managed-secret' },
-    });
-    assert.equal(managed.status, 503);
-    assert.equal((await managed.json()).code, 'native_delegation_unavailable');
   });
 });

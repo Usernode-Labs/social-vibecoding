@@ -10,13 +10,14 @@ const {
   EpochDelegationError,
   EpochDelegationService,
 } = require('../src/services/topochain/epoch-delegations');
+const { cutover } = require('../scripts/cutover-native-delegation');
 
 const DSN = process.env.TEST_DATABASE_URL
   || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@localhost:5432/postgres';
 const NETWORK = {
   id: 'testnet',
-  chainId: 'utc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqcmpl5h',
+  chainId: 'utc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqkmzk3k',
 };
 const AUTH = { userId: '41', mobileTokenId: '71' };
 const ADDRESS = 'ut1-policy-account';
@@ -32,9 +33,30 @@ function extractTable(name) {
   return match[0];
 }
 
+function extractTrigger(functionName, triggerName) {
+  const start = schemaSql.indexOf(`CREATE OR REPLACE FUNCTION ${functionName}()`);
+  const endMarker = `FOR EACH ROW EXECUTE FUNCTION ${functionName}();`;
+  const end = schemaSql.indexOf(endMarker, start);
+  if (start < 0 || end < 0) throw new Error(`schema.sql no longer contains ${triggerName}`);
+  return schemaSql.slice(start, end + endMarker.length);
+}
+
 const POLICY_DDL = [
+  extractTable('account_delegation_periods'),
   extractTable('native_epoch_delegation_fences'),
   extractTable('native_epoch_delegation_policies'),
+  extractTrigger(
+    'prevent_native_delegation_cutover_change',
+    'native_delegation_cutover_immutable',
+  ),
+  extractTrigger(
+    'prevent_legacy_delegation_change_after_cutover',
+    'legacy_delegation_frozen_after_cutover',
+  ),
+  extractTrigger(
+    'prevent_native_epoch_policy_change',
+    'native_epoch_delegation_policy_append_only',
+  ),
 ];
 const STUB_DDL = `
   CREATE TABLE onchain_accounts (
@@ -42,6 +64,13 @@ const STUB_DDL = `
     user_id BIGINT NOT NULL,
     address VARCHAR(255) NOT NULL,
     PRIMARY KEY (id, user_id)
+  );
+  CREATE TABLE mobile_auth_tokens (
+    id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    ability VARCHAR(20) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (id, user_id)
   );
   CREATE TABLE native_session_credentials (
     credential_reference VARCHAR(47) PRIMARY KEY,
@@ -81,6 +110,10 @@ async function withDatabase(t, run) {
       [ADDRESS],
     );
     await pool.query(
+      `INSERT INTO mobile_auth_tokens (id, user_id, ability, expires_at)
+       VALUES (71, 41, 'session', NOW() + INTERVAL '1 day')`,
+    );
+    await pool.query(
       `INSERT INTO native_session_credentials
          (credential_reference, credential_generation, user_id, account_id,
           network_id, chain_id, mobile_auth_token_id, state, expires_at)
@@ -109,7 +142,6 @@ function service(pool, sampleEpoch) {
   return new EpochDelegationService({
     pool,
     config: {
-      nativeEpochDelegationEnabled: true,
       nativeSessionV2Network: NETWORK,
     },
     sampleEpoch,
@@ -119,6 +151,56 @@ function service(pool, sampleEpoch) {
 test('real PostgreSQL enforces epoch policy ordering, constraints, and replay', async (t) => {
   await withDatabase(t, async (pool) => {
     let epoch = 10;
+    const cutoverAt = new Date('2030-01-01T00:00:00.000Z');
+    const cutoverInput = {
+      networkId: NETWORK.id,
+      chainId: NETWORK.chainId,
+      observedEpoch: epoch,
+      cutoverEpoch: epoch,
+      cutoverAt,
+    };
+    await pool.query(
+      `INSERT INTO account_delegation_periods
+         (account, started_at, ended_at, created_at, updated_at)
+       VALUES ($1, $2::timestamptz - INTERVAL '1 day', NULL,
+               $2::timestamptz - INTERVAL '1 day',
+               $2::timestamptz - INTERVAL '1 day')`,
+      [ADDRESS, cutoverAt],
+    );
+    const inventory = [{ account: ADDRESS, accountId: '9001', userId: '41' }];
+    const operator = await pool.connect();
+    try {
+      assert.equal(await cutover(operator, cutoverInput, inventory), 'applied');
+      assert.equal(await cutover(operator, cutoverInput, inventory), 'already-applied');
+    } finally {
+      operator.release();
+    }
+    await assert.rejects(pool.query(
+      `UPDATE native_epoch_delegation_fences
+          SET cutover_epoch = cutover_epoch + 1
+        WHERE network_id = $1 AND chain_id = $2`,
+      [NETWORK.id, NETWORK.chainId],
+    ), (error) => error.code === 'P0001');
+    await assert.rejects(pool.query(
+      `DELETE FROM native_epoch_delegation_fences
+        WHERE network_id = $1 AND chain_id = $2`,
+      [NETWORK.id, NETWORK.chainId],
+    ), (error) => error.code === 'P0001');
+    await assert.rejects(pool.query(
+      `INSERT INTO account_delegation_periods
+         (account, started_at, ended_at, created_at, updated_at)
+       VALUES ('ut1-late-write', NOW(), NULL, NOW(), NOW())`,
+    ), (error) => error.code === 'P0001');
+    await assert.rejects(pool.query(
+      `UPDATE account_delegation_periods SET updated_at = NOW()
+        WHERE account = $1`,
+      [ADDRESS],
+    ), (error) => error.code === 'P0001');
+    await assert.rejects(pool.query(
+      'DELETE FROM account_delegation_periods WHERE account = $1',
+      [ADDRESS],
+    ), (error) => error.code === 'P0001');
+
     const protocol = service(pool, async () => sample(epoch));
     const [left, right] = await Promise.all([
       protocol.setNativePolicy({
@@ -150,12 +232,14 @@ test('real PostgreSQL enforces epoch policy ordering, constraints, and replay', 
     });
     assert.deepEqual([next.operation.acceptedEpoch, next.operation.effectiveEpoch], [11, 13]);
     assert.deepEqual(next.epochs.map(({ epoch: at, delegated }) => [at, delegated]), [
-      [11, false], [12, latest.operation.delegated], [13, nextDesired],
+      [11, true], [12, latest.operation.delegated], [13, nextDesired],
     ]);
     const managed = await protocol.getManagedAssignments();
-    assert.deepEqual(managed.epochs.map(({ epoch: at }) => at), [11, 12]);
+    assert.deepEqual(managed.epochs.map(({ epoch: at }) => at), [11, 12, 13]);
     assert.deepEqual(managed.epochs[1].accounts,
       latest.operation.delegated ? [{ account: ADDRESS }] : []);
+    assert.deepEqual(managed.epochs[2].accounts,
+      nextDesired ? [{ account: ADDRESS }] : []);
 
     await assert.rejects(pool.query(
       `INSERT INTO native_epoch_delegation_policies
@@ -169,11 +253,25 @@ test('real PostgreSQL enforces epoch policy ordering, constraints, and replay', 
       [requestId(1)],
     ), (error) => error.code === '23505');
     await assert.rejects(pool.query(
-      `UPDATE native_epoch_delegation_policies
-          SET effective_epoch = effective_epoch + 1
+      `INSERT INTO native_epoch_delegation_policies
+         (request_id, source, credential_reference, credential_generation,
+          user_id, account_id, account_address, network_id, chain_id,
+          delegated, changed, accepted_epoch, effective_epoch)
+       SELECT $2, source, credential_reference, credential_generation,
+              user_id, account_id, account_address, network_id, chain_id,
+              delegated, changed, accepted_epoch, effective_epoch + 1
+         FROM native_epoch_delegation_policies WHERE request_id = $1`,
+      [requestId(1), requestId(4)],
+    ), (error) => error.code === '23514');
+    await assert.rejects(pool.query(
+      `UPDATE native_epoch_delegation_policies SET delegated = NOT delegated
         WHERE request_id = $1`,
       [requestId(1)],
-    ), (error) => error.code === '23514');
+    ), (error) => error.code === 'P0001');
+    await assert.rejects(pool.query(
+      'DELETE FROM native_epoch_delegation_policies WHERE request_id = $1',
+      [requestId(1)],
+    ), (error) => error.code === 'P0001');
 
     let releaseOld;
     let oldSampled;
@@ -208,5 +306,19 @@ test('real PostgreSQL enforces epoch policy ordering, constraints, and replay', 
     assert.equal((await pool.query(
       'SELECT observed_epoch FROM native_epoch_delegation_fences',
     )).rows[0].observed_epoch, '52');
+
+    await pool.query(
+      `UPDATE mobile_auth_tokens
+          SET expires_at = NOW() - INTERVAL '1 second'
+        WHERE id = 71`,
+    );
+    await assert.rejects(
+      service(pool, async () => sample(53)).setNativePolicy({
+        ...AUTH,
+        body: { requestId: requestId(10), delegated: false },
+      }),
+      (error) => error instanceof EpochDelegationError
+        && error.code === 'invalid_native_delegation_credential',
+    );
   });
 });

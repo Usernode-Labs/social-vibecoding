@@ -287,7 +287,7 @@ function makeMockPool() {
     const sql = collapse(rawSql);
 
     // ── mobileTokenAuth's own lookup + bookkeeping bump ────────────────
-    if (sql.startsWith('SELECT t.id, t.user_id, t.ability, t.expires_at, u.username FROM mobile_auth_tokens')) {
+    if (sql.startsWith('SELECT t.id, c.user_id, t.ability, t.expires_at, u.username FROM native_session_credentials')) {
       const tok = TOKENS.find((t) => t.token_hash === params[0]);
       if (!tok) return { rows: [] };
       const user = USERS.find((u) => u.id === tok.user_id);

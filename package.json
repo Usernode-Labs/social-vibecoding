@@ -16,6 +16,7 @@
     "test": "node --require ./tests/lib/test-net.js --test --test-force-exit tests/*.test.js",
     "ensure:shell": "node scripts/ensure-shell-artifacts.js --runtime",
     "migrate:kubernetes": "node scripts/migrate-kubernetes.js",
+    "cutover:native-delegation": "node scripts/cutover-native-delegation.js",
     "build:css": "node scripts/build-tailwind.js",
     "watch:css": "node scripts/build-tailwind.js --watch",
     "vendor:assets": "node scripts/vendor-assets.js",

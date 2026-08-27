@@ -274,8 +274,12 @@ class NativeSessionProtocol {
     this.now = now;
   }
 
-  get enabled() {
-    return !!(this.config.nativeSessionV2Network && this.config.dataEncryptionKey);
+  _network() {
+    const network = this.config.nativeSessionV2Network;
+    if (!network || network.id !== 'testnet' || !network.chainId) {
+      protocolError(503, 'native_session_configuration_invalid', 'Native session configuration is unavailable.');
+    }
+    return network;
   }
 
   async createTicket({ sessionToken, body }) {
@@ -285,7 +289,7 @@ class NativeSessionProtocol {
     }
     if (!sessionToken) protocolError(401, 'unauthenticated', 'Unauthenticated.');
     const request = parsed.data;
-    const network = this.config.nativeSessionV2Network;
+    const network = this._network();
 
     return withTransaction(this.pool, async (client) => {
       const now = this.now();
@@ -426,7 +430,7 @@ class NativeSessionProtocol {
     }
     const ticketHash = sha256Hex(request.ticket);
     const exchangeDigest = exchangeSemanticDigest(request, keys);
-    const network = this.config.nativeSessionV2Network;
+    const network = this._network();
 
     return withTransaction(this.pool, async (client) => {
       let row = await loadExchange(client, ticketHash);

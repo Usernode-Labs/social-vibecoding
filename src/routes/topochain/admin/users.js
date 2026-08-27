@@ -10,9 +10,9 @@
 // a CSV-imported one) has no platform login of their own, so both
 // columns need a value that satisfies the constraints without granting a
 // usable account: `password` gets a random, nobody-knows-it bcrypt hash
-// (the same trick mobile-auth.js's OTP signup uses); `username` gets an
+// (the same trick the web email-signup flow uses); `username` gets an
 // opaque `topochain_<hex>` token rather than reusing `email` the way
-// mobile-auth.js does, so an admin-entered email can never collide with —
+// email-signup.js does, so an admin-entered email can never collide with —
 // or silently double as — a real platform login username.
 'use strict';
 
@@ -35,7 +35,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // bcrypt cost (12, src/middleware/auth.js) because it protects a secret
 // someone might actually try to crack; this hash protects nothing —
 // `password_set = FALSE` on every row that gets one blocks any login
-// attempt outright (mobile-auth.js's own login path checks it BEFORE
+// attempt outright (the platform login path checks it BEFORE
 // ever comparing a password), so the value only needs to exist to
 // satisfy the NOT NULL column. A low cost keeps `import-csv` (which can
 // mint many of these per call, inside one transaction — see its own
@@ -203,7 +203,7 @@ function parseUserFields(body, details) {
       continue;
     }
     // Emails are stored in normalized lower-case form everywhere (the
-    // mobile OTP flow already does this — mobile-auth.js's
+    // web email-signup flow already does this — email-signup.js's
     // validateEmailField), so login and the uniqueness checks can match
     // case-insensitively (issue #1269).
     fields[key] = key === 'email' ? body[key].trim().toLowerCase() : body[key];

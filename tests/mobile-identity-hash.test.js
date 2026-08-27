@@ -56,7 +56,7 @@ test('casing and surrounding whitespace cannot fork one account into two', () =>
 });
 
 test('a username-only account has no email and still gets a namespace', () => {
-  // Platform accounts predating the mobile signup flow have a NULL email.
+  // Platform accounts predating email signup can have a NULL email.
   const nullEmail = mobileIdentityHash({ id: 42, email: null });
   assert.match(nullEmail, /^[0-9a-f]{16}$/);
   assert.equal(mobileIdentityHash({ id: 42 }), nullEmail);

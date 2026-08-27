@@ -7,10 +7,9 @@
 // against a throwaway express app + a substring-dispatching mock pool (no
 // live DB). Auth goes through the REAL mobileTokenAuth middleware against
 // a seeded `mobile_auth_tokens` fixture. Unlike Task 9's test file, this
-// one needs (a) MUTABLE fixture state (user_activities/mobile_logs/
-// user_terms_consents/account_delegation_periods all get written to), so
-// it follows tests/topochain-partner-api.test.js's reset-before-each
-// pattern instead; and (b) a `global.fetch` stub for the zk-bridge calls,
+// one needs (a) mutable user_activities fixture state, so it follows
+// tests/topochain-partner-api.test.js's reset-before-each pattern instead;
+// and (b) a `global.fetch` stub for the zk-bridge calls,
 // since src/services/topochain/zk-bridge.js talks to the bridge via the
 // bare global `fetch` (never injected through the pool).
 //
@@ -33,25 +32,19 @@ function collapse(sql) {
 // ─── Fixture data (mostly immutable — mutable pieces noted below) ───────
 
 const USERS = [
-  { id: 1, email: 'alice@example.com', accept_logs: true },
-  { id: 2, email: 'bob@example.com', accept_logs: false }, // opted out of logging
-  { id: 3, email: 'carol@example.com', accept_logs: true }, // has an existing zkpassport completion
-  { id: 4, email: 'dave@example.com', accept_logs: true }, // enrolled, wrong wallet
-  { id: 5, email: 'erin@example.com', accept_logs: true }, // not enrolled anywhere
-  { id: 6, email: 'frank@example.com', accept_logs: true }, // owns a delegation-test wallet
-  { id: 7, email: 'grace@example.com', accept_logs: true }, // owns a DIFFERENT wallet
-  { id: 8, email: 'heidi@example.com', accept_logs: true }, // fresh zkpassport happy-path user
-  { id: 9, email: 'ivan@example.com', accept_logs: true }, // holds session/nullifier-collision rows
+  { id: 1, email: 'alice@example.com' },
+  { id: 3, email: 'carol@example.com' }, // has an existing zkpassport completion
+  { id: 4, email: 'dave@example.com' }, // enrolled, wrong wallet
+  { id: 5, email: 'erin@example.com' }, // not enrolled anywhere
+  { id: 8, email: 'heidi@example.com' }, // fresh zkpassport happy-path user
+  { id: 9, email: 'ivan@example.com' }, // holds session/nullifier-collision rows
 ];
 
 const TOKENS = [
   { user_id: 1, raw: 'alice-token' },
-  { user_id: 2, raw: 'bob-token' },
   { user_id: 3, raw: 'carol-token' },
   { user_id: 4, raw: 'dave-token' },
   { user_id: 5, raw: 'erin-token' },
-  { user_id: 6, raw: 'frank-token' },
-  { user_id: 7, raw: 'grace-token' },
   { user_id: 8, raw: 'heidi-token' },
 ].map((t) => ({ ...t, token_hash: crypto.createHash('sha256').update(t.raw).digest('hex'), ability: 'session', expires_at: T(1) }));
 
@@ -122,33 +115,13 @@ const ONCHAIN_ACCOUNTS = [
   { user_id: 3, address: 'wallet_carol_100', season_event_id: 100, season_id: 10 },
   { user_id: 4, address: 'wallet_dave_100', season_event_id: 100, season_id: 10 },
   { user_id: 8, address: 'wallet_heidi_100', season_event_id: 100, season_id: 10 },
-  { user_id: 6, address: 'wallet_frank', season_event_id: null, season_id: 10 },
-  { user_id: 7, address: 'wallet_grace', season_event_id: null, season_id: 10 },
-  { user_id: null, address: 'wallet_orphan', season_event_id: null, season_id: 10 },
-  // The same ut1… address exists once PER SEASON EVENT in production (up
-  // to 9 rows for one address), with different claimants across events.
-  // Foreign/unclaimed rows are listed FIRST on purpose: an ownership
-  // check that resolves "the" row for an address (unordered LIMIT 1)
-  // instead of asking whether ANY row belongs to the caller picks one of
-  // these and wrongly 409s the real owner (carol, user 3).
-  { user_id: null, address: 'wallet_shared', season_event_id: 90, season_id: 9 },
-  { user_id: 4, address: 'wallet_shared', season_event_id: 95, season_id: 9 },
-  { user_id: 3, address: 'wallet_shared', season_event_id: 100, season_id: 10 },
-];
-
-const TERMS_VERSIONS = [
-  { id: 1, version: 'v1', title: 'Terms v1', terms_link: 'https://x/v1', published_at: T(-30) },
-  { id: 2, version: 'v2-draft', title: 'Terms v2 (draft)', terms_link: 'https://x/v2', published_at: null }, // unpublished
 ];
 
 // ─── Mutable state — reset before every test ────────────────────────────
 
 let userActivities;
 let nextActivityId;
-let userTermsConsents;
-let mobileLogs;
-let delegationRows;
-let nextDelegationId;
+let nativeCredentialActiveAtWrite;
 
 function resetFixtures() {
   userActivities = [
@@ -172,10 +145,7 @@ function resetFixtures() {
     },
   ];
   nextActivityId = 100;
-  userTermsConsents = [];
-  mobileLogs = [];
-  delegationRows = [];
-  nextDelegationId = 1;
+  nativeCredentialActiveAtWrite = true;
 }
 
 // ─── Mock pool ───────────────────────────────────────────────────────────
@@ -263,7 +233,7 @@ function handleQuery(rawSql, params = []) {
   if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
 
   // mobileTokenAuth.
-  if (sql.startsWith('SELECT t.id, t.user_id, t.ability, t.expires_at, u.username FROM mobile_auth_tokens')) {
+  if (sql.startsWith('SELECT t.id, c.user_id, t.ability, t.expires_at, u.username FROM native_session_credentials')) {
     const tok = TOKENS.find((t) => t.token_hash === params[0]);
     if (!tok) return { rows: [] };
     const user = USERS.find((u) => u.id === tok.user_id);
@@ -320,44 +290,6 @@ function handleQuery(rawSql, params = []) {
     return { rows: seasonEventsRows(sql, params) };
   }
 
-  // ── POST /logs ───────────────────────────────────────────────────────
-  if (sql.startsWith('SELECT accept_logs FROM users WHERE id = $1')) {
-    const u = USERS.find((x) => x.id === params[0]);
-    return { rows: u ? [{ accept_logs: u.accept_logs }] : [] };
-  }
-  if (sql.startsWith('INSERT INTO mobile_logs')) {
-    mobileLogs.push({ user_id: params[0], payload: params[1] });
-    return { rows: [] };
-  }
-
-  // ── GET /terms/current ───────────────────────────────────────────────
-  if (sql.includes('FROM terms_versions WHERE published_at IS NOT NULL')) {
-    const rows = TERMS_VERSIONS.filter((v) => v.published_at != null).sort((a, b) => b.published_at - a.published_at || b.id - a.id);
-    return { rows: rows.slice(0, 1) };
-  }
-  if (sql.startsWith('SELECT status, responded_at FROM user_terms_consents')) {
-    const [userId, versionId] = params;
-    const row = userTermsConsents.find((c) => c.user_id === userId && c.terms_version_id === versionId);
-    return { rows: row ? [{ status: row.status, responded_at: row.responded_at }] : [] };
-  }
-
-  // ── POST /terms/consent ───────────────────────────────────────────────
-  if (sql.startsWith('SELECT id, version, published_at FROM terms_versions WHERE id = $1')) {
-    const v = TERMS_VERSIONS.find((x) => x.id === params[0]);
-    return { rows: v ? [{ id: v.id, version: v.version, published_at: v.published_at }] : [] };
-  }
-  if (sql.startsWith('INSERT INTO user_terms_consents')) {
-    const [userId, versionId, status, respondedAt, ip, appVersion] = params;
-    let row = userTermsConsents.find((c) => c.user_id === userId && c.terms_version_id === versionId);
-    if (row) {
-      row.status = status; row.responded_at = respondedAt; row.ip = ip; row.app_version = appVersion;
-    } else {
-      row = { user_id: userId, terms_version_id: versionId, status, responded_at: respondedAt, ip, app_version: appVersion };
-      userTermsConsents.push(row);
-    }
-    return { rows: [{ user_id: row.user_id, terms_version_id: row.terms_version_id, status: row.status, responded_at: row.responded_at }] };
-  }
-
   // ── POST /zkpassport/complete ─────────────────────────────────────────
   if (sql.startsWith('SELECT c.id, c.season_event_id, c.enabled, c.completed')) {
     const c = CHALLENGES.find((x) => x.id === params[0]);
@@ -401,6 +333,9 @@ function handleQuery(rawSql, params = []) {
     const row = userActivities.find((a) => a.challenge_id === challengeId && a.metadata && a.metadata.nullifier_hex === nullifierHex);
     return { rows: row ? [{ id: row.id }] : [] };
   }
+  if (sql.startsWith('SELECT c.credential_reference FROM native_session_credentials')) {
+    return { rows: nativeCredentialActiveAtWrite ? [{ credential_reference: 'nsc_test' }] : [] };
+  }
   if (sql.startsWith('INSERT INTO user_activities')) {
     const [userId, seasonEventId, activityType, points, description, metadataJson, activityAt, challengeId, verifiedAt] = params;
     const metadata = JSON.parse(metadataJson);
@@ -424,43 +359,6 @@ function handleQuery(rawSql, params = []) {
     };
     userActivities.push(row);
     return { rows: [{ id: row.id }] };
-  }
-
-  // ── GET/POST /delegation ───────────────────────────────────────────────
-  if (sql.startsWith('SELECT address FROM onchain_accounts WHERE address = $1 AND user_id = $2')) {
-    const [address, userId] = params;
-    const row = ONCHAIN_ACCOUNTS.find((a) => a.address === address && a.user_id === userId);
-    return { rows: row ? [{ address: row.address }] : [] };
-  }
-  if (sql.startsWith('SELECT address, user_id FROM onchain_accounts WHERE address = $1')) {
-    const row = ONCHAIN_ACCOUNTS.find((a) => a.address === params[0]);
-    return { rows: row ? [{ address: row.address, user_id: row.user_id }] : [] };
-  }
-  // POST /delegation ownership: known = the address exists in ANY row,
-  // owned = at least one of its rows belongs to the caller.
-  if (sql.startsWith('SELECT EXISTS(SELECT 1 FROM onchain_accounts WHERE address = $1) AS known')) {
-    return { rows: [{
-      known: ONCHAIN_ACCOUNTS.some((a) => a.address === params[0]),
-      owned: ONCHAIN_ACCOUNTS.some((a) => a.address === params[0] && a.user_id === params[1]),
-    }] };
-  }
-  if (sql.startsWith('SELECT started_at FROM account_delegation_periods WHERE account = $1 AND ended_at IS NULL')) {
-    const row = delegationRows.find((d) => d.account === params[0] && d.ended_at == null);
-    return { rows: row ? [{ started_at: row.started_at }] : [] };
-  }
-  if (sql.startsWith('SELECT id, started_at FROM account_delegation_periods WHERE account = $1 AND ended_at IS NULL FOR UPDATE')) {
-    const row = delegationRows.find((d) => d.account === params[0] && d.ended_at == null);
-    return { rows: row ? [{ id: row.id, started_at: row.started_at }] : [] };
-  }
-  if (sql.startsWith('INSERT INTO account_delegation_periods')) {
-    const startedAt = new Date();
-    delegationRows.push({ id: nextDelegationId++, account: params[0], started_at: startedAt, ended_at: null });
-    return { rows: [{ started_at: startedAt }] };
-  }
-  if (sql.startsWith('UPDATE account_delegation_periods SET ended_at = NOW()')) {
-    const row = delegationRows.find((d) => d.id === params[0]);
-    row.ended_at = new Date();
-    return { rows: [] };
   }
 
   throw new Error(`Unhandled mock query: ${sql}`);
@@ -518,12 +416,9 @@ function bearer(raw) {
   return { authorization: `Bearer ${raw}` };
 }
 const ALICE = bearer('alice-token');
-const BOB = bearer('bob-token');
 const CAROL = bearer('carol-token');
 const DAVE = bearer('dave-token');
 const ERIN = bearer('erin-token');
-const FRANK = bearer('frank-token');
-const GRACE = bearer('grace-token');
 const HEIDI = bearer('heidi-token');
 
 const BRIDGE_URL = 'http://fake-zk-bridge.test';
@@ -742,94 +637,6 @@ test('GET /seasons: unknown season_id -> 422', async () => {
   });
 });
 
-// ─── POST /logs (SPEC 2031-2044) ─────────────────────────────────────────
-
-test('POST /logs: accept_logs user -> stored, {continue:true}', async () => {
-  await withServer({}, async (base) => {
-    const res = await postJson(base, '/api/v4/mobile/logs', { foo: 'bar' }, ALICE);
-    assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { success: true, continue: true });
-    assert.equal(mobileLogs.length, 1);
-    assert.deepEqual(JSON.parse(mobileLogs[0].payload), { foo: 'bar' });
-  });
-});
-
-test('POST /logs: opted-out user -> discarded, {continue:false}, nothing stored', async () => {
-  await withServer({}, async (base) => {
-    const res = await postJson(base, '/api/v4/mobile/logs', { foo: 'bar' }, BOB);
-    assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { success: true, continue: false });
-    assert.equal(mobileLogs.length, 0, 'the body must be discarded, not written');
-  });
-});
-
-test('POST /logs: empty body -> stored as null', async () => {
-  await withServer({}, async (base) => {
-    const res = await postJson(base, '/api/v4/mobile/logs', {}, ALICE);
-    assert.equal(res.status, 200);
-    assert.equal(mobileLogs[0].payload, null);
-  });
-});
-
-// ─── GET /terms/current + POST /terms/consent (SPEC 2046-2090) ──────────
-
-test('GET /terms/current: no consent yet -> consent object with nulls', async () => {
-  await withServer({}, async (base) => {
-    const res = await getJson(base, '/api/v4/mobile/terms/current', ALICE);
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.data.version, 'v1');
-    assert.deepEqual(body.data.consent, { status: null, accepted: false, responded_at: null });
-  });
-});
-
-test('POST /terms/consent -> then GET reflects it; re-posting a DIFFERENT status overwrites the same row', async () => {
-  await withServer({}, async (base) => {
-    const accept = await postJson(base, '/api/v4/mobile/terms/consent', { terms_version_id: 1, status: 'accepted' }, ALICE);
-    assert.equal(accept.status, 200);
-    const acceptBody = await accept.json();
-    assert.equal(acceptBody.data.status, 'accepted');
-    assert.ok(!('ip' in acceptBody.data), 'ip is recorded but never echoed');
-    assert.ok(!('app_version' in acceptBody.data), 'app_version is recorded but never echoed');
-
-    const afterAccept = await getJson(base, '/api/v4/mobile/terms/current', ALICE);
-    assert.equal((await afterAccept.json()).data.consent.status, 'accepted');
-
-    // Overwrite: same (user, version) row, new status — this IS how a
-    // user withdraws consent (SPEC's own words).
-    const refuse = await postJson(base, '/api/v4/mobile/terms/consent', { terms_version_id: 1, status: 'refused' }, ALICE);
-    assert.equal(refuse.status, 200);
-    assert.equal(userTermsConsents.length, 1, 'one row per (user, version), overwritten — not a second row');
-
-    const afterRefuse = await getJson(base, '/api/v4/mobile/terms/current', ALICE);
-    assert.equal((await afterRefuse.json()).data.consent.status, 'refused');
-  });
-});
-
-test('POST /terms/consent: unpublished version -> 422 exact message', async () => {
-  await withServer({}, async (base) => {
-    const res = await postJson(base, '/api/v4/mobile/terms/consent', { terms_version_id: 2, status: 'accepted' }, ALICE);
-    assert.equal(res.status, 422);
-    assert.deepEqual(await res.json(), { success: false, error: 'Cannot consent to an unpublished terms version.' });
-  });
-});
-
-test('POST /terms/consent: unknown terms_version_id -> 422 validation envelope', async () => {
-  await withServer({}, async (base) => {
-    const res = await postJson(base, '/api/v4/mobile/terms/consent', { terms_version_id: 999999, status: 'accepted' }, ALICE);
-    assert.equal(res.status, 422);
-    const body = await res.json();
-    assert.ok(body.details.terms_version_id);
-  });
-});
-
-test('POST /terms/consent: invalid status -> 422', async () => {
-  await withServer({}, async (base) => {
-    const res = await postJson(base, '/api/v4/mobile/terms/consent', { terms_version_id: 1, status: 'maybe' }, ALICE);
-    assert.equal(res.status, 422);
-  });
-});
-
 // ─── POST /zkpassport/complete (SPEC 2092-2141, 2939, 2961-2973) ────────
 
 test('zkpassport: happy path -> 201, activity row with points/metadata, source=zkpassport', async () => {
@@ -853,6 +660,25 @@ test('zkpassport: happy path -> 201, activity row with points/metadata, source=z
       assert.equal(stored.metadata.kind, 'challenge_completion');
       assert.equal(stored.metadata.session_id, 'sess-heidi-7');
       assert.equal(stored.metadata.wallet_address, 'wallet_heidi_100');
+    });
+  });
+});
+
+test('zkpassport: credential revoked during verification cannot cross the final write fence', async () => {
+  await withServer({ topochainZkBridgeUrl: BRIDGE_URL }, async (base) => {
+    await withFetchMock(async () => {
+      nativeCredentialActiveAtWrite = false;
+      return bridgeResponse({ verified: true });
+    }, async () => {
+      const before = userActivities.length;
+      const res = await postJson(base, '/api/v4/mobile/zkpassport/complete', {
+        challenge_id: 7,
+        session_id: 'sess-revoked-at-write',
+        nullifier_hex: '0xdead1008',
+        wallet_address: 'wallet_heidi_100',
+      }, HEIDI);
+      assert.equal(res.status, 401);
+      assert.equal(userActivities.length, before);
     });
   });
 });
@@ -1048,106 +874,6 @@ test('zkpassport: malformed nullifier_hex -> 422', async () => {
     const res = await postJson(base, '/api/v4/mobile/zkpassport/complete', {
       challenge_id: 7, session_id: 's', nullifier_hex: 'not-hex', wallet_address: 'wallet_heidi_100',
     }, HEIDI);
-    assert.equal(res.status, 422);
-  });
-});
-
-// ─── GET+POST /delegation (SPEC 2142-2191) ───────────────────────────────
-
-test('GET /delegation: owns the wallet, no delegation row yet -> delegated false', async () => {
-  await withServer({}, async (base) => {
-    const res = await getJson(base, '/api/v4/mobile/delegation?wallet_address=wallet_frank', FRANK);
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.deepEqual(body.data, { account: 'wallet_frank', delegated: false, delegated_since: null });
-  });
-});
-
-test('GET /delegation: wallet exists but belongs to someone else -> 404 (never leaks ownership)', async () => {
-  await withServer({}, async (base) => {
-    const res = await getJson(base, '/api/v4/mobile/delegation?wallet_address=wallet_frank', GRACE);
-    assert.equal(res.status, 404);
-    assert.deepEqual(await res.json(), { success: false, error: 'Unknown account address.' });
-  });
-});
-
-test('GET /delegation: genuinely unknown wallet -> the SAME 404', async () => {
-  await withServer({}, async (base) => {
-    const res = await getJson(base, '/api/v4/mobile/delegation?wallet_address=wallet_nope', FRANK);
-    assert.equal(res.status, 404);
-    assert.deepEqual(await res.json(), { success: false, error: 'Unknown account address.' });
-  });
-});
-
-test('GET /delegation: missing wallet_address -> 422', async () => {
-  await withServer({}, async (base) => {
-    const res = await getJson(base, '/api/v4/mobile/delegation', FRANK);
-    assert.equal(res.status, 422);
-  });
-});
-
-test('POST /delegation: unknown account -> 404', async () => {
-  await withServer({}, async (base) => {
-    const res = await postJson(base, '/api/v4/mobile/delegation', { wallet_address: 'wallet_nope', delegated: true }, FRANK);
-    assert.equal(res.status, 404);
-  });
-});
-
-test('POST /delegation: wallet owned by a DIFFERENT user -> 409 user_wallet_mismatch', async () => {
-  await withServer({}, async (base) => {
-    const res = await postJson(base, '/api/v4/mobile/delegation', { wallet_address: 'wallet_frank', delegated: true }, GRACE);
-    assert.equal(res.status, 409);
-    const body = await res.json();
-    assert.equal(body.success, false);
-    assert.equal(body.code, 'user_wallet_mismatch');
-  });
-});
-
-test('POST /delegation: orphan account (no owning user) -> 409, never a false-owned toggle', async () => {
-  await withServer({}, async (base) => {
-    const res = await postJson(base, '/api/v4/mobile/delegation', { wallet_address: 'wallet_orphan', delegated: true }, FRANK);
-    assert.equal(res.status, 409);
-  });
-});
-
-test('POST /delegation: owner toggles on, then off — idempotent re-assert reports changed:false', async () => {
-  await withServer({}, async (base) => {
-    const on = await postJson(base, '/api/v4/mobile/delegation', { wallet_address: 'wallet_frank', delegated: true }, FRANK);
-    assert.equal(on.status, 200);
-    const onBody = await on.json();
-    assert.equal(onBody.data.delegated, true);
-    assert.equal(onBody.data.changed, true);
-    assert.ok(onBody.data.delegated_since);
-
-    const onAgain = await postJson(base, '/api/v4/mobile/delegation', { wallet_address: 'wallet_frank', delegated: true }, FRANK);
-    assert.equal((await onAgain.json()).data.changed, false, 'idempotent re-assert');
-
-    const off = await postJson(base, '/api/v4/mobile/delegation', { wallet_address: 'wallet_frank', delegated: false }, FRANK);
-    const offBody = await off.json();
-    assert.equal(offBody.data.delegated, false);
-    assert.equal(offBody.data.changed, true);
-    assert.equal(offBody.data.delegated_since, null);
-  });
-});
-
-test('POST /delegation: an address duplicated across events delegates for its CURRENT owner, 409s everyone else', async () => {
-  await withServer({}, async (base) => {
-    // carol owns wallet_shared via its season-10 row; the address also
-    // has an unclaimed row and another user's row listed before hers.
-    const on = await postJson(base, '/api/v4/mobile/delegation', { wallet_address: 'wallet_shared', delegated: true }, CAROL);
-    assert.equal(on.status, 200, 'the real owner must not lose the row-resolution coin flip');
-    assert.equal((await on.json()).data.delegated, true);
-
-    // A user with no claim on ANY row of the address still 409s.
-    const foreign = await postJson(base, '/api/v4/mobile/delegation', { wallet_address: 'wallet_shared', delegated: false }, GRACE);
-    assert.equal(foreign.status, 409);
-    assert.equal((await foreign.json()).code, 'user_wallet_mismatch');
-  });
-});
-
-test('POST /delegation: missing delegated field -> 422', async () => {
-  await withServer({}, async (base) => {
-    const res = await postJson(base, '/api/v4/mobile/delegation', { wallet_address: 'wallet_frank' }, FRANK);
     assert.equal(res.status, 422);
   });
 });

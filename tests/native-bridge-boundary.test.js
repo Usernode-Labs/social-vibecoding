@@ -235,7 +235,7 @@ function loadBridge({
   };
 }
 
-test('top-frame privileged calls carry one closure-only realm capability', async () => {
+test('exact-session calls carry both closure-only root and realm claims', async () => {
   const loaded = loadBridge({
     capabilities: [
       'privilegedBridgeCapability',
@@ -269,8 +269,10 @@ test('top-frame privileged calls carry one closure-only realm capability', async
   );
   assert.equal('privilegedCapability' in loaded.nativePosts[0], false);
   assert.equal('privilegedCapability' in loaded.nativePosts[1], false);
-  assert.equal('privilegedCapability' in loaded.nativePosts[4], false,
-    'wallet reads remain available to embedded dapps');
+  assert.equal(
+    loaded.nativePosts[4].privilegedCapability,
+    'navigation-capability'
+  );
   assert.equal(loaded.nativePosts[4].realmSessionClaim, 'realm-41');
   assert.equal('realmSessionClaim' in loaded.nativePosts[2], false,
     'establishment cannot borrow a not-yet-created realm claim');
@@ -817,7 +819,7 @@ test('a failed bridge probe is marked degraded, a real one is not', async () => 
   assert.equal(empty.degraded, undefined);
 });
 
-test('parent relay denies privileged methods and requires the current realm for reads',
+test('parent relay denies root methods and injects both claims for realm calls',
   async () => {
   const loaded = loadBridge({ capabilities: [
     'privilegedBridgeCapability', 'establishNativeSession',
@@ -839,26 +841,24 @@ test('parent relay denies privileged methods and requires the current realm for 
 
   dispatch('getPrivilegedBridgeCapability', 'bootstrap');
   dispatch('logout', 'logout');
-  dispatch('setIosKeepAlive', 'legacy-ios-setting');
   dispatch('manageStaking', 'manage-staking');
   dispatch('getWalletState', 'closed-wallet');
 
   assert.deepEqual(loaded.nativePosts.map((post) => post.method), []);
-  assert.equal(childReplies.length, 5);
+  assert.equal(childReplies.length, 4);
   assert.match(childReplies[0].value.error, /top-level page/);
   assert.match(childReplies[1].value.error, /top-level page/);
   assert.match(childReplies[2].value.error, /top-level page/,
-    'removed v3 actions stay fenced for installed old app builds');
-  assert.match(childReplies[3].value.error, /top-level page/,
     'embedded apps cannot open native delegation management');
-  assert.match(childReplies[4].value.error, /not established/);
+  assert.match(childReplies[3].value.error, /not established/);
 
   await establishRealm(loaded);
   dispatch('getWalletState', 'open-wallet');
-  assert.equal(childReplies[5].value.error, null);
-  assert.deepEqual(childReplies[5].value.value, { address: 'ut1-wallet' });
+  assert.equal(childReplies[4].value.error, null);
+  assert.deepEqual(childReplies[4].value.value, { address: 'ut1-wallet' });
   const relayed = loaded.nativePosts.at(-1);
   assert.equal(relayed.method, 'getWalletState');
+  assert.equal(relayed.privilegedCapability, 'navigation-capability');
   assert.equal(relayed.realmSessionClaim, 'realm-41');
 });
 
@@ -919,6 +919,7 @@ test('native realm gate rejects top-frame and iframe wallet calls until establis
   assert.equal(childReplies[1].value.error, null);
   for (const post of loaded.nativePosts.slice(3)) {
     if (post.method !== 'getBridgeInfo') {
+      assert.equal(post.privilegedCapability, 'navigation-capability');
       assert.equal(post.realmSessionClaim, 'realm-41');
     }
   }
@@ -1198,7 +1199,7 @@ test('a submission result cannot cross into a replacement Social identity', asyn
   );
 });
 
-test('trusted top frame records a relayed child-app submission', async () => {
+test('trusted top frame records a dual-claim relayed child-app submission', async () => {
   const childReplies = [];
   const explorerRequests = [];
   const loaded = loadBridge({
@@ -1256,6 +1257,9 @@ test('trusted top frame records a relayed child-app submission', async () => {
       'establishNativeSession', 'submitTransaction',
     ]
   );
+  const relayed = loaded.nativePosts.at(-1);
+  assert.equal(relayed.privilegedCapability, 'navigation-capability');
+  assert.equal(relayed.realmSessionClaim, 'realm-23');
   for (let i = 0; i < 20 && explorerRequests.length === 0; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 1));
   }

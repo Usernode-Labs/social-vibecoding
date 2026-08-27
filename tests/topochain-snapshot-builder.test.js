@@ -253,6 +253,11 @@ function handleQuery(rawSql, params = []) {
     return { rows };
   }
 
+  // These lifecycle tables are covered against real PostgreSQL elsewhere.
+  // Existing snapshot fixtures model the pre-cutover history path.
+  if (sql.includes('FROM native_epoch_delegation_fences')) return { rows: [] };
+  if (sql.includes('FROM native_epoch_delegation_policies')) return { rows: [] };
+
   // Builder: the snapshot upsert.
   if (sql.startsWith('INSERT INTO leaderboard_snapshots')) {
     const row = Object.fromEntries(SNAPSHOT_COLUMNS.map((c, i) => [c, params[i]]));

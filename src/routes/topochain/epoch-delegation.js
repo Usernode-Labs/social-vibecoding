@@ -28,15 +28,6 @@ function nativeEpochDelegationRoutes(config, { service } = {}) {
     config,
   });
 
-  // Keep the accepting side dark until both its exact protocol-2 network
-  // binding and the independent epoch-policy rollout gate exist. There is no
-  // fallback to the legacy wallet-address endpoint.
-  if (!protocol.enabled) {
-    router.get(NATIVE_DELEGATION_PATH, (_req, res) => fail(res, 404, 'Not found.'));
-    router.post(NATIVE_DELEGATION_PATH, (_req, res) => fail(res, 404, 'Not found.'));
-    return router;
-  }
-
   const auth = mobileTokenAuth(config);
   router.get(NATIVE_DELEGATION_PATH, auth, async (req, res) => {
     try {
@@ -73,21 +64,8 @@ function managedEpochDelegationRoutes(config, { service } = {}) {
   });
   const auth = partnerApiKey(config);
 
-  // The producer poller must not observe an empty unseeded epoch table before
-  // the verified baseline cutover. Unlike the native surface (dark 404), an
-  // authenticated poller gets an explicit retryable failure while disabled.
-  if (!protocol.enabled) {
-    router.get(MANAGED_DELEGATIONS_PATH, auth, (_req, res) => fail(
-      res,
-      503,
-      'Native delegation is unavailable.',
-      { code: 'native_delegation_unavailable' },
-    ));
-    return router;
-  }
-
   // This is the exact collection shape consumed by usernode's managed
-  // producer poller: one authenticated response containing current and next.
+  // producer poller: one authenticated response containing E, E+1 and E+2.
   router.get(MANAGED_DELEGATIONS_PATH, auth, async (_req, res) => {
     try {
       const response = await protocol.getManagedAssignments();

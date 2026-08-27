@@ -127,16 +127,20 @@ function computeEpochWeights({ startEpoch, endEpoch, boundaries, scheduleStartMs
   return { weights, K: Math.max(sum, 1) };
 }
 
-// 0.5 for an epoch whose start time falls inside any delegation period
-// [startedAtMs, endedAtMs) (open period ⇒ endedAtMs null ⇒ +∞), 1
-// otherwise. Without epoch timing data delegation is never guessed:
-// every multiplier is 1. `periods` = [{ startedAtMs, endedAtMs }].
-function delegationMultipliers({ epochs, boundaries, periods }) {
+// Before the immutable cutover C, timestamp history decides delegation by an
+// epoch's reconstructed start time. At and after C, only the epoch ledger is
+// authoritative; legacy periods are not consulted even if malformed history
+// overlaps the boundary. `epochDelegated` is Map(epoch -> boolean).
+function delegationMultipliers({
+  epochs, boundaries, periods, cutoverEpoch = null, epochDelegated = new Map(),
+}) {
   const mults = new Map();
   const hasTiming = boundaries instanceof Map && boundaries.size > 0;
   for (const epoch of epochs) {
     let m = 1;
-    if (hasTiming) {
+    if (cutoverEpoch !== null && epoch >= cutoverEpoch) {
+      if (epochDelegated.get(epoch) === true) m = 0.5;
+    } else if (hasTiming) {
       const span = boundaries.get(epoch);
       if (span) {
         const delegated = (periods || []).some((p) => {

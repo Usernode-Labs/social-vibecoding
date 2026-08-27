@@ -239,7 +239,7 @@
       "key": "TOPOCHAIN_PARTNER_API_KEY",
       "group": "Topochain",
       "private": true,
-      "description": "Shared secret compared against the partner group's X-API-Key header (src/middleware/topochain-auth.js#partnerApiKey). Generate with `openssl rand -hex 32` and hand it to partner API callers at their /api/v4 cutover. Unset doesn't block boot — every partner-group request returns 500 'API key authentication not configured.' until it is set. Rotates independently of TOPOCHAIN_INGEST_API_KEY."
+      "description": "Required shared secret compared against authenticated managed and partner API X-API-Key headers. Generate with `openssl rand -hex 32`. Missing canonical deployment configuration stops the server at boot. Rotates independently of TOPOCHAIN_INGEST_API_KEY."
     },
     {
       "key": "TOPOCHAIN_ZK_BRIDGE_URL",
@@ -249,13 +249,7 @@
     {
       "key": "NATIVE_SESSION_V2_TESTNET_CHAIN_ID",
       "group": "Topochain",
-      "description": "Exact canonical Rust ChainId (lower-case utc bech32m, 32-byte payload) for the sole protocol-2 network mapping id=testnet. Unset or malformed keeps both native-establish routes dark with 404; there is no internal/custom fallback. HTTPS/TLS remains the server-authenticity boundary."
-    },
-    {
-      "key": "NATIVE_EPOCH_DELEGATION_ENABLED",
-      "group": "Topochain",
-      "default": "false",
-      "description": "Independent rollout gate for protocol-2 epoch delegation. Keep false until cutover epoch C is verified/seeded and every active signer is inventoried; while false the native route is dark and the managed poller fails closed."
+      "description": "Required exact canonical Rust ChainId (lower-case utc bech32m, 32-byte payload) for the sole protocol-2 network mapping id=testnet. Missing or malformed canonical deployment configuration stops the server at boot; there is no alternate lifecycle. HTTPS/TLS remains the server-authenticity boundary."
     },
     {
       "key": "MOBILE_PUSH_ENABLED",

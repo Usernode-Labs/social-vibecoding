@@ -69,7 +69,7 @@ function fakeClient() {
         session_expires_at: registration?.session_expires_at || null,
       }] };
     }
-    if (sql.startsWith('SELECT id, expires_at FROM mobile_auth_tokens')) {
+    if (sql.startsWith('SELECT t.id, t.expires_at FROM mobile_auth_tokens t')) {
       const token = state.tokens.get(String(params[0]));
       return { rows: token && token.active && String(token.userId) === String(params[1])
         ? [{ id: token.id, expires_at: token.expiresAt }] : [] };
@@ -286,7 +286,10 @@ test('registration mutations lock deployment identity before session and registr
     sql.includes('FROM mobile_push_deployment_state') && sql.includes('FOR KEY SHARE')
   ));
   const sessionLock = client.state.queries.findIndex((sql) => (
-    sql.startsWith('SELECT id, expires_at FROM mobile_auth_tokens')
+    sql.startsWith('SELECT t.id, t.expires_at FROM mobile_auth_tokens t')
+      && sql.includes('JOIN native_session_credentials c')
+      && sql.includes("c.state = 'valid'")
+      && sql.includes('FOR SHARE OF c')
   ));
   const registrationLock = client.state.queries.findIndex((sql) => (
     sql.startsWith('SELECT id, user_id, environment')
@@ -305,7 +308,7 @@ test('a mismatched Firebase project cannot create a registration', async () => {
   );
   assert.equal(client.state.registrations.length, 0);
   assert.equal(client.state.queries.some((sql) => (
-    sql.startsWith('SELECT id, expires_at FROM mobile_auth_tokens')
+    sql.startsWith('SELECT t.id, t.expires_at FROM mobile_auth_tokens t')
   )), false, 'deployment mismatch fails before session/registration locks');
 });
 

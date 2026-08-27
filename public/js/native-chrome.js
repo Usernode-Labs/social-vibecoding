@@ -416,23 +416,33 @@
       // Today a failed web logout followed by Activity recreation stays
       // safely closed but may require a process restart to recover.
       NativeChrome._closeRealm({ discardAttempt: true });
-      return NativeChrome.getInfo().then((info) => {
-        const capabilities = Array.isArray(info && info.capabilities)
-          ? info.capabilities : [];
-        return {
-          nativeTerminal: !!window.usernode &&
-            window.usernode.isNative === true &&
-            info && info.sessionLifecycleProtocol === 2 &&
-            capabilities.includes('logout') &&
-            typeof window.usernode.logout === 'function',
-        };
-      });
+      const bridge = window.usernode;
+      // Classification is deliberately non-fallible. The server logout must
+      // never wait on native health; semantic protocol validation belongs to
+      // the terminal native call after server authority has been revoked.
+      return { nativeTerminal: !!bridge && bridge.isNative === true };
     },
 
     // Successful native logout replaces this WebView. Callers must return
     // this exact promise and perform no continuation work in the old document.
     commitNativeLogout() {
-      return window.usernode.logout();
+      const bridge = window.usernode;
+      if (!bridge || bridge.isNative !== true) {
+        return Promise.reject(new Error('Native sign-out is unavailable'));
+      }
+      return NativeChrome.getInfo().then((info) => {
+        const capabilities = Array.isArray(info && info.capabilities)
+          ? info.capabilities : [];
+        if (!info || info.degraded === true ||
+            info.sessionLifecycleProtocol !== 2 ||
+            !capabilities.includes('logout') ||
+            typeof bridge.logout !== 'function') {
+          throw new Error(
+            'This Usernode app version must be updated for secure sign-out'
+          );
+        }
+        return bridge.logout();
+      });
     },
 
     // ── First-run permissions step (thin-shell onboarding) ───────────

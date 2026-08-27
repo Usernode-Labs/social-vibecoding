@@ -359,6 +359,14 @@ test('semantic protocol absence is update-required with no legacy fallback',
     assert.equal(loaded.NativeChrome.lastSessionFailure().stage,
       'update-required');
     assert.equal(loaded.calls.fetch.length, 0);
+    assert.equal(
+      loaded.NativeChrome.prepareWebLogout().nativeTerminal,
+      true,
+    );
+    await assert.rejects(
+      loaded.NativeChrome.commitNativeLogout(),
+      /must be updated for secure sign-out/,
+    );
   });
 
 test('App closes the realm synchronously before publishing either identity',

@@ -48,10 +48,9 @@
 //      /delegations/:account to overwrite the one row and made SPEC
 //      1451's "full audit trail" unrepresentable; that constraint was
 //      dropped when the admin console grew a per-account timeline.)
-//      Turning delegation on INSERTS a fresh period; turning it off sets
-//      `ended_at = NOW()` on the open one; closed rows are immutable.
-//      Note history only accumulates from the schema change forward —
-//      periods overwritten before it are gone.
+//      Before native cutover, turning delegation on inserted a fresh period
+//      and turning it off closed the open one. The one-shot cutover closes the
+//      final open rows and PostgreSQL freezes this legacy history thereafter.
 'use strict';
 
 const { Router } = require('express');
@@ -61,7 +60,7 @@ const { partnerApiKey } = require('../../middleware/topochain-auth');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
-const { readDelegationState, setDelegationState } = require('../../services/topochain/delegations');
+const { readDelegationState } = require('../../services/topochain/delegations');
 const { managedEpochDelegationRoutes } = require('./epoch-delegation');
 
 // ─── Small shared formatters ─────────────────────────────────────────────
@@ -80,15 +79,6 @@ function toIntId(v) {
 // ever reaches a SQL string, even though the three possible outputs here
 // happen to equal their own keys.
 const IDENTIFIER_COLUMNS = { email: 'email', telegram: 'telegram', discord: 'discord' };
-
-// Laravel-style `boolean` rule (SPEC 1424: "accepts true, false, 1, 0,
-// '1', '0'"). Anything else is not a valid boolean -> undefined (caller
-// treats that as a validation failure).
-function toBool(v) {
-  if (v === true || v === 1 || v === '1' || v === 'true') return true;
-  if (v === false || v === 0 || v === '0' || v === 'false') return false;
-  return undefined;
-}
 
 function topochainPartnerRoutes(config) {
   const router = Router();
@@ -264,7 +254,9 @@ function topochainPartnerRoutes(config) {
   // ── GET /delegations (SPEC 1360-1389, v1 GET /delegations) ─────────
   //
   // v4 addition: pagination (SPEC 1389 "v4 should paginate" + §4.8 rule 6).
-  // Still lists open periods only (ended_at IS NULL), oldest first.
+  // Historical compatibility only: it lists open timestamp periods. The
+  // cutover closes and freezes all of them; managed production reads use the
+  // epoch ledger at /api/v1/delegations.
   router.get('/api/v4/delegations', partnerApiKey(config), async (req, res) => {
     try {
       const { page, perPage } = paginate(req); // may throw ValidationError (422)
@@ -310,9 +302,8 @@ function topochainPartnerRoutes(config) {
       );
       if (!acctRows.length) return fail(res, 404, 'Unknown account address.');
 
-      // Task 10 extracted this read into services/topochain/delegations.js
-      // (readDelegationState) — same query, now shared with the mobile
-      // group's GET /delegation.
+      // This legacy endpoint remains a read over timestamp history only.
+      // Native policy and managed producer reads use the epoch ledger.
       const state = await readDelegationState(pool, account);
 
       return ok(res, {
@@ -325,65 +316,6 @@ function topochainPartnerRoutes(config) {
     } catch (err) {
       log.error('topochain-partner', 'GET /delegations/:account failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
-    }
-  });
-
-  // ── PUT /delegations/{account} (SPEC 1418-1453) ──────────────────────
-  //
-  // Idempotent, transactional, row-locked (SPEC 1449). Validation runs
-  // BEFORE the account lookup (SPEC 1447: "a bad body on an unknown
-  // account returns 422, not 404"). Judgment call #4 above explains why
-  // this upserts a single row per account instead of inserting a new
-  // history row on every re-assertion.
-  router.put('/api/v4/delegations/:account', partnerApiKey(config), async (req, res) => {
-    const account = req.params.account;
-    const body = req.body || {};
-
-    const delegated = toBool(body.delegated);
-    if (body.delegated === undefined || delegated === undefined) {
-      return fail(res, 422, 'The given data was invalid.', {
-        details: { delegated: ['The delegated field is required and must be a boolean.'] },
-      });
-    }
-
-    const client = await pool.connect();
-    try {
-      const { rows: acctRows } = await client.query(
-        'SELECT address FROM onchain_accounts WHERE address = $1 LIMIT 1',
-        [account]
-      );
-      if (!acctRows.length) return fail(res, 404, 'Unknown account address.');
-
-      await client.query('BEGIN');
-      try {
-        // Task 10 extracted the toggle state machine itself into
-        // services/topochain/delegations.js (setDelegationState) — same
-        // queries as before, now shared with the mobile group's POST
-        // /delegation. Only the transaction boundary + response/message
-        // shaping stay here (they differ slightly between the two callers).
-        const result = await setDelegationState(client, account, delegated);
-        await client.query('COMMIT');
-
-        return ok(res, {
-          data: {
-            account,
-            delegated: result.delegated,
-            changed: result.changed,
-            delegated_since: iso(result.delegatedSince),
-          },
-          message: result.changed
-            ? (delegated ? 'Account marked as delegated.' : 'Account unmarked as delegated.')
-            : 'Delegation flag unchanged.',
-        });
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      }
-    } catch (err) {
-      log.error('topochain-partner', 'PUT /delegations/:account failed', { message: err.message });
-      return fail(res, 500, 'Internal server error.');
-    } finally {
-      client.release();
     }
   });
 

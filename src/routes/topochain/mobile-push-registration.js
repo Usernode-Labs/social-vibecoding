@@ -183,9 +183,14 @@ async function transaction(pool, fn) {
 
 async function lockSession(client, userId, tokenId) {
   const { rows } = await client.query(
-    `SELECT id, expires_at FROM mobile_auth_tokens
-      WHERE id = $1 AND user_id = $2 AND ability = 'session' AND expires_at > NOW()
-      FOR UPDATE`,
+    `SELECT t.id, t.expires_at
+       FROM mobile_auth_tokens t
+       JOIN native_session_credentials c
+         ON c.mobile_auth_token_id = t.id AND c.user_id = t.user_id
+      WHERE t.id = $1 AND t.user_id = $2
+        AND t.ability = 'session' AND t.expires_at > NOW()
+        AND c.state = 'valid' AND c.expires_at > NOW()
+      FOR SHARE OF c`,
     [tokenId, userId]
   );
   if (!rows[0]) throw new SessionInactive();

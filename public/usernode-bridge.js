@@ -101,10 +101,6 @@
     requestNotificationPermission: true,
     requestAlarmPermissions: true,
     openNotificationSettings: true,
-    // Removed in bridge v4, but old v3 iOS builds still accept it. Keep the
-    // legacy action fenced so an embedded app cannot borrow the top frame's
-    // trusted origin through the relay.
-    setIosKeepAlive: true,
     logout: true,
     establishNativeSession: true,
     markPrivilegedBridgeReady: true,
@@ -553,6 +549,8 @@
 
   function callNative(method, args) {
     var needsRealmSession = isRealmSessionMethod(method);
+    var needsRootCapability = isPrivilegedNativeMethod(method) ||
+      (!_inIframe && needsRealmSession);
     var realmSession = (!_inIframe && needsRealmSession)
       ? _realmSession : null;
     if (!_inIframe && needsRealmSession && !realmSession) {
@@ -561,7 +559,7 @@
         "native-session-closed"
       ));
     }
-    if (!isPrivilegedNativeMethod(method)) {
+    if (!needsRootCapability) {
       return postNative(
         method, args, null,
         realmSession && realmSession.claim,
@@ -698,6 +696,10 @@
       }
       var relayRealmSession = isRealmSessionMethod(data.method)
         ? _realmSession : null;
+      if (relayRealmSession && !_privilegedCapability) {
+        reply(null, "Native root authority is not available for this session");
+        return;
+      }
       var relayRealmGeneration = relayRealmSession
         ? relayRealmSession.generation : null;
       var nativeId = "relay-" + String(Date.now()) + "-" +
@@ -750,6 +752,7 @@
           args: nativeArgs,
         };
         if (relayRealmSession) {
+          relayPayload.privilegedCapability = _privilegedCapability;
           relayPayload.realmSessionClaim = relayRealmSession.claim;
         }
         window.Usernode.postMessage(JSON.stringify(relayPayload));
@@ -4941,8 +4944,7 @@
   //  Public API: native settings (bridge v3)
   //  (usernode.getSettingsState / setNodeSleepEnabled /
   //   setDebugMode / setFacematchStrict / resetZkChallenge /
-  //   requestPermissions / openBatterySettings / setIosKeepAlive /
-  //   logout)
+  //   requestPermissions / openBatterySettings / logout)
   // =====================================================================
   //
   // Backs the "Usernode app" sections of the Settings modal. Contract:
@@ -5054,14 +5056,6 @@
     return callNativeChromeAction(
       "setFacematchStrict", { enabled: !!enabled },
       _SETTINGS_STATE_TIMEOUT_MS
-    );
-  };
-
-  // setIosKeepAlive(enabled) → refreshed settings state. iOS only; the
-  // app ignores it elsewhere (state simply won't change).
-  window.usernode.setIosKeepAlive = function (enabled) {
-    return callNativeChromeAction(
-      "setIosKeepAlive", { enabled: !!enabled }, _SETTINGS_STATE_TIMEOUT_MS
     );
   };
 

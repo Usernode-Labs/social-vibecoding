@@ -8,7 +8,8 @@
 // wallet) tallies with server-resolved user_id), `user_activities` (the
 // points ledger), `slot_outcome_reports` (slot timing, used only to map
 // epochs to wall-clock for challenge windows and delegation), and
-// `account_delegation_periods`.
+// timestamp delegation before the immutable cutover C, and the epoch policy
+// ledger from C onward.
 //
 // It is a port of the source system's LeaderboardAggregationService
 // ("epoch_average_v2" mode), with the pure arithmetic in ./scoring.js
@@ -130,6 +131,47 @@ const DELEGATION_PERIODS_SQL = `
      AND (oa.season_event_id = $2 OR (oa.season_event_id IS NULL AND oa.season_id = $3))
 `;
 
+const DELEGATION_CUTOVER_SQL = `
+  SELECT chain_id, cutover_epoch
+    FROM native_epoch_delegation_fences
+   WHERE network_id = 'testnet' AND chain_id = ANY($1)
+     AND cutover_epoch IS NOT NULL
+   ORDER BY chain_id
+`;
+
+const EPOCH_DELEGATION_POLICIES_SQL = `
+  SELECT p.user_id, p.account_address, p.chain_id, p.delegated,
+         p.effective_epoch, p.id
+    FROM native_epoch_delegation_policies p
+    JOIN onchain_accounts oa
+      ON oa.id = p.account_id AND oa.user_id = p.user_id
+     AND oa.address = p.account_address
+   WHERE p.user_id = ANY($1) AND p.network_id = 'testnet'
+     AND p.chain_id = ANY($2) AND p.effective_epoch <= $3
+     AND (oa.season_event_id = $4
+       OR (oa.season_event_id IS NULL AND oa.season_id = $5))
+   ORDER BY p.user_id, p.account_address, p.chain_id, p.effective_epoch, p.id
+`;
+
+function epochPolicyStateByUser(rows, userIds, epochs) {
+  const byUser = new Map();
+  for (const userId of userIds) {
+    const policies = rows.filter((row) => Number(row.user_id) === userId);
+    const states = new Map();
+    for (const epoch of epochs) {
+      const latest = new Map();
+      for (const row of policies) {
+        if (Number(row.effective_epoch) > epoch) continue;
+        const key = `${row.chain_id}\0${row.account_address}`;
+        latest.set(key, !!row.delegated);
+      }
+      states.set(epoch, [...latest.values()].some(Boolean));
+    }
+    byUser.set(userId, states);
+  }
+  return byUser;
+}
+
 // Column order of the snapshot upsert's bound parameters — exported so
 // the mock-pool tests map positional params by name instead of encoding
 // positions of their own.
@@ -233,9 +275,13 @@ async function aggregateEvent(pool, event, now) {
     fillRange: { startEpoch, endEpoch },
   });
 
-  const [podiumRes, delegationRes] = await Promise.all([
+  const [podiumRes, delegationRes, cutoverRes, epochPoliciesRes] = await Promise.all([
     pool.query(PODIUM_FLAGS_SQL, [userIds]),
     pool.query(DELEGATION_PERIODS_SQL, [userIds, event.id, event.season_id]),
+    pool.query(DELEGATION_CUTOVER_SQL, [chains]),
+    pool.query(EPOCH_DELEGATION_POLICIES_SQL, [
+      userIds, chains, endEpoch, event.id, event.season_id,
+    ]),
   ]);
   const excludedByUser = new Map(podiumRes.rows.map((r) => [Number(r.id), !!r.exclude_podium]));
   const periodsByUser = new Map();
@@ -244,6 +290,20 @@ async function aggregateEvent(pool, event, now) {
     if (!periodsByUser.has(userId)) periodsByUser.set(userId, []);
     periodsByUser.get(userId).push({ startedAtMs: toMs(r.started_at), endedAtMs: toMs(r.ended_at) });
   }
+  if (cutoverRes.rows.length > 0 && cutoverRes.rows.length !== chains.length) {
+    throw new Error('event chains do not share one delegation authority boundary');
+  }
+  const cutoverEpochs = new Set(cutoverRes.rows.map((row) => Number(row.cutover_epoch)));
+  if (cutoverEpochs.size > 1) {
+    throw new Error('event chains have different delegation cutover epochs');
+  }
+  const cutoverEpoch = cutoverEpochs.size === 1 ? [...cutoverEpochs][0] : null;
+  const scoredEpochs = [...new Set(statsRes.rows.map((row) => Number(row.epoch)))].sort((a, b) => a - b);
+  const epochDelegatedByUser = epochPolicyStateByUser(
+    epochPoliciesRes.rows,
+    userIds,
+    scoredEpochs,
+  );
 
   const nowMs = now.getTime();
 
@@ -274,6 +334,8 @@ async function aggregateEvent(pool, event, now) {
         epochs: [...ratios.keys()],
         boundaries,
         periods: periodsByUser.get(userId) || [],
+        cutoverEpoch,
+        epochDelegated: epochDelegatedByUser.get(userId),
       });
 
       const challengeDetails = [];

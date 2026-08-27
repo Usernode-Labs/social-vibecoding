@@ -5,7 +5,7 @@
 // for how a transport is chosen.
 //
 // The three senders keep their exact signatures, so every existing caller
-// (src/routes/topochain/mobile-auth.js, src/routes/public-api.js,
+// (src/services/email-signup.js, src/routes/public-api.js,
 // src/routes/topochain/admin/waitlist.js) is unchanged. This path stays so
 // those requires — and the tests that pin them — keep resolving.
 'use strict';

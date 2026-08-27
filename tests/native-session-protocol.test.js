@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
+const cookieParser = require('cookie-parser');
 const { bech32m } = require('bech32');
 const { canonicalNativeSessionV2Network } = require('../src/config');
 const {
@@ -459,6 +460,7 @@ async function withNativeRoute(config, fn) {
   const { nativeSessionRoutes } = require('../src/routes/topochain/native-session');
   const app = express();
   app.use(express.json());
+  app.use(cookieParser());
   app.use(nativeSessionRoutes(config));
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
@@ -472,13 +474,19 @@ async function withNativeRoute(config, fn) {
   }
 }
 
-test('API stays dark without config and rejects non-closed DTOs before DB access', async () => {
+test('API rejects invalid config and non-closed DTOs before DB access', async () => {
   await withNativeRoute({ dataEncryptionKey: DATA_KEY, nativeSessionV2Network: null }, async (base) => {
     const res = await fetch(`${base}/api/v4/mobile/auth/native-establish-ticket`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: 'session=test-session' },
+      body: JSON.stringify({
+        protocol: 2,
+        attemptId: opaque('nsa_', 9),
+        desiredRuntime: 'running',
+      }),
     });
-    assert.equal(res.status, 404);
-    assert.deepEqual(await res.json(), { success: false, error: 'Not found.' });
+    assert.equal(res.status, 503);
+    assert.equal((await res.json()).code, 'native_session_configuration_invalid');
   });
   await withNativeRoute({ dataEncryptionKey: DATA_KEY, nativeSessionV2Network: NETWORK }, async (base) => {
     const res = await fetch(`${base}/api/v4/mobile/auth/native-establish-exchange`, {

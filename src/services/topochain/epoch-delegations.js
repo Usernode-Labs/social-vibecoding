@@ -93,14 +93,9 @@ class EpochDelegationService {
     this.sampleEpoch = sampleEpoch;
   }
 
-  get enabled() {
-    return this.config.nativeEpochDelegationEnabled === true
-      && !!this.config.nativeSessionV2Network;
-  }
-
   _network() {
     const network = this.config.nativeSessionV2Network;
-    if (!this.enabled || !network || network.id !== 'testnet' || !network.chainId) {
+    if (!network || network.id !== 'testnet' || !network.chainId) {
       protocolError(503, 'native_delegation_unavailable', 'Native delegation is unavailable.');
     }
     return network;
@@ -129,10 +124,13 @@ class EpochDelegationService {
       `SELECT c.credential_reference, c.credential_generation, c.user_id,
               c.account_id, c.network_id, c.chain_id, a.address
          FROM native_session_credentials c
+         JOIN mobile_auth_tokens t
+           ON t.id = c.mobile_auth_token_id AND t.user_id = c.user_id
          JOIN onchain_accounts a
            ON a.id = c.account_id AND a.user_id = c.user_id
         WHERE c.mobile_auth_token_id = $1 AND c.user_id = $2
           AND c.state = 'valid' AND c.expires_at > NOW()
+          AND t.ability = 'session' AND t.expires_at > NOW()
         FOR SHARE OF c`,
       [mobileTokenId, userId]
     );
@@ -173,28 +171,29 @@ class EpochDelegationService {
   }
 
   async _lockFence(client, sample) {
-    await client.query(
-      `INSERT INTO native_epoch_delegation_fences
-         (network_id, chain_id, observed_epoch, updated_at)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (network_id, chain_id) DO NOTHING`,
-      [sample.networkId, sample.chainId, sample.epoch]
-    );
     const { rows } = await client.query(
-      `SELECT observed_epoch
+      `SELECT observed_epoch, cutover_epoch
          FROM native_epoch_delegation_fences
         WHERE network_id = $1 AND chain_id = $2
         FOR UPDATE`,
       [sample.networkId, sample.chainId]
     );
     const fence = rows[0];
-    if (!fence) throw new Error('native delegation fence missing after insert');
+    if (!fence || fence.cutover_epoch == null) {
+      protocolError(503, 'native_delegation_cutover_missing', 'Native delegation cutover has not been established.');
+    }
     return fence;
   }
 
   _assertFreshSample(sample, fence) {
     if (sample.epoch < Number(fence.observed_epoch)) {
       protocolError(503, 'node_epoch_sample_stale', 'The canonical node epoch advanced while the request was being accepted.');
+    }
+  }
+
+  _assertCutoverActive(sample, fence) {
+    if (sample.epoch < Number(fence.cutover_epoch)) {
+      protocolError(503, 'native_delegation_cutover_pending', 'Native delegation cutover is not active yet.');
     }
   }
 
@@ -220,6 +219,7 @@ class EpochDelegationService {
       const credential = await this._loadCredential(client, { userId, mobileTokenId });
       const fence = await this._lockFence(client, sample);
       this._assertFreshSample(sample, fence);
+      this._assertCutoverActive(sample, fence);
       await this._advanceObservedEpoch(client, sample, fence);
 
       const replay = await this._findRequest(client, request.requestId);
@@ -236,10 +236,10 @@ class EpochDelegationService {
 
       const { rows } = await client.query(
         `INSERT INTO native_epoch_delegation_policies
-           (request_id, credential_reference, credential_generation, user_id,
+           (request_id, source, credential_reference, credential_generation, user_id,
             account_id, account_address, network_id, chain_id, delegated,
             changed, accepted_epoch, effective_epoch, accepted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+         VALUES ($1, 'native', $2, $3, $4, $5, $6, $7, $8, $9, $10,
                  $11::bigint, $11::bigint + 2, NOW())
          RETURNING id, request_id, credential_reference, credential_generation,
                    user_id, account_id, account_address AS address,
@@ -316,6 +316,7 @@ class EpochDelegationService {
       const credential = await this._loadCredential(client, { userId, mobileTokenId });
       const fence = await this._lockFence(client, sample);
       this._assertFreshSample(sample, fence);
+      this._assertCutoverActive(sample, fence);
       await this._advanceObservedEpoch(client, sample, fence);
       return this._snapshot(client, credential, sample);
     });
@@ -349,10 +350,12 @@ class EpochDelegationService {
     return withTransaction(this.pool, async (client) => {
       const fence = await this._lockFence(client, sample);
       this._assertFreshSample(sample, fence);
+      this._assertCutoverActive(sample, fence);
       await this._advanceObservedEpoch(client, sample, fence);
       const current = await this._managedAssignmentAt(client, network, sample.epoch);
       const next = await this._managedAssignmentAt(client, network, sample.epoch + 1);
-      return { success: true, epochs: [current, next] };
+      const boundary = await this._managedAssignmentAt(client, network, sample.epoch + 2);
+      return { success: true, epochs: [current, next, boundary] };
     });
   }
 }

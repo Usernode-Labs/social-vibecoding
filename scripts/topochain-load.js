@@ -196,7 +196,7 @@ function mergeParticipants(rows) {
 //   - a null/empty password (199 of 200 production rows, per §8.3) gets a
 //     random, unusable bcrypt hash — of 32 random bytes nobody has ever
 //     seen — purely to satisfy the target's NOT NULL, and `passwordSet:
-//     false` so the mobile OTP flow (§4.5, Task 8) knows to treat this
+//     false` so the shared web email-signup flow knows to treat this
 //     account as still needing a caller-chosen password.
 //   - `opts.randomBytesFn` / `opts.bcryptImpl` are injectable so unit
 //     tests can assert the passwordless branch deterministically without

@@ -558,8 +558,8 @@ test('a gmail failure body is bounded in the surfaced error', async () => {
 
 test('GET /api/public/waitlist/confirm/:token stamps once and redirects', async () => {
   // Drives the REAL router from src/routes/public-api.js over a loopback
-  // listener (same idiom as tests/topochain-mobile-auth.test.js) against a
-  // mock pool, so this pins the wiring and not a re-implementation.
+  // listener against a mock pool, so this pins the actual route wiring
+  // and not a re-implementation.
   const express = require('express');
   const TOKEN = 'c'.repeat(48);
   let confirmedAt = null;

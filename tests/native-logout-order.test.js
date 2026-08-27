@@ -9,13 +9,7 @@ const settingsSource = fs.readFileSync(
   'utf8'
 );
 
-function deferred() {
-  let resolve;
-  const promise = new Promise((res) => { resolve = res; });
-  return { promise, resolve };
-}
-
-function loadSettings({ nativeTerminal = true, preparePromise, webOk = true } = {}) {
+function loadSettings({ nativeTerminal = true, nativeFailure, webOk = true } = {}) {
   const order = [];
   const logoutButton = { disabled: false };
   let href = 'https://social.example/#settings';
@@ -37,17 +31,17 @@ function loadSettings({ nativeTerminal = true, preparePromise, webOk = true } = 
     NativeChrome: {
       prepareWebLogout() {
         order.push('close-native-realm');
-        return preparePromise || Promise.resolve({ nativeTerminal });
+        return { nativeTerminal };
       },
       commitNativeLogout() {
         order.push('native-terminal');
-        return true;
+        return nativeFailure ? Promise.reject(nativeFailure) : Promise.resolve(true);
       },
     },
     PlatformUI: {
       toast(message, options) {
-        order.push('logout-error');
-        assert.match(message, /could not sign out/i);
+        order.push(/signed out/i.test(message)
+          ? 'local-shutdown-error' : 'logout-error');
         assert.equal(options.error, true);
       },
     },
@@ -70,12 +64,10 @@ function loadSettings({ nativeTerminal = true, preparePromise, webOk = true } = 
 }
 
 test('realm closes synchronously before the first logout await', async () => {
-  const preflight = deferred();
-  const loaded = loadSettings({ preparePromise: preflight.promise });
+  const loaded = loadSettings({ nativeTerminal: false });
 
   const logout = loaded.sandbox.Settings.logout();
-  assert.deepEqual(loaded.order, ['close-native-realm']);
-  preflight.resolve({ nativeTerminal: false });
+  assert.deepEqual(loaded.order, ['close-native-realm', 'web-session']);
   await logout;
   assert.deepEqual(loaded.order, [
     'close-native-realm', 'web-session', 'sw-cache', 'navigate',
@@ -95,7 +87,7 @@ test('web logout and cache cleanup precede terminal protocol-2 logout',
       'native success owns runtime replacement; old JS does not continue');
   });
 
-test('web-only or update-required builds hard-navigate without native fallback',
+test('web-only logout hard-navigates after clearing the web session',
   async () => {
     const loaded = loadSettings({ nativeTerminal: false });
 
@@ -106,6 +98,20 @@ test('web-only or update-required builds hard-navigate without native fallback',
     ]);
     assert.equal(loaded.href, '/');
   });
+
+test('native terminal failure leaves server logout complete and the realm closed', async () => {
+  const loaded = loadSettings({
+    nativeFailure: new Error('app update required'),
+  });
+
+  assert.equal(await loaded.sandbox.Settings.logout(), false);
+  assert.deepEqual(loaded.order, [
+    'close-native-realm', 'web-session', 'sw-cache', 'native-terminal',
+    'local-shutdown-error',
+  ]);
+  assert.equal(loaded.logoutButton.disabled, true);
+  assert.equal(loaded.href, 'https://social.example/#settings');
+});
 
 test('failed web logout leaves native terminal untouched and the page closed',
   async () => {

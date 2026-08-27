@@ -21,14 +21,6 @@ function nativeSessionRoutes(config) {
   const router = Router();
   const protocol = new NativeSessionProtocol({ pool: getPool(config), config });
 
-  // Protocol 2 is deployment-dark unless an operator pins the exact canonical
-  // Rust testnet ChainId. A generic 404 neither advertises a partial rollout
-  // nor falls back to a legacy bearer/wallet authority.
-  if (!protocol.enabled) {
-    router.post([TICKET_PATH, EXCHANGE_PATH], (_req, res) => fail(res, 404, 'Not found.'));
-    return router;
-  }
-
   router.post(TICKET_PATH, async (req, res) => {
     try {
       const rawJson = await protocol.createTicket({

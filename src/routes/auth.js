@@ -26,6 +26,7 @@ const { isCliSurfaceEnabled } = require('./cli-auth');
 // whether that link is configurable at all decides whether /api/auth/me
 // advertises the Claude Code / Codex flows (#1049).
 const githubLink = require('../services/github-link');
+const emailSignup = require('../services/email-signup');
 // The platform's own self-hosted app row. The home screen's Improve button is
 // about the PLATFORM, and the client has no other way to learn that row's slug
 // — GET /api/apps hides self-hosted rows from non-admins on purpose.
@@ -73,6 +74,45 @@ function roleFields(isAdmin, adminReadonly) {
 // cookie on any dev box reached over LAN HTTP (mobile testing) because
 // NODE_ENV was usually unset => secure=true => browser refuses cookie on HTTP.
 const SECURE_COOKIE = process.env.NODE_ENV === 'production';
+const SIGNUP_COOKIE = 'usernode_signup';
+
+function createSessionCookie(res, token, expiresAt) {
+  res.cookie('session', token, {
+    httpOnly: true,
+    secure: SECURE_COOKIE,
+    sameSite: 'lax',
+    expires: expiresAt,
+  });
+}
+
+async function createSession(queryable, userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+  await queryable.query(
+    'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
+    [token, userId, expiresAt]
+  );
+  return { token, expiresAt };
+}
+
+function createSignupCookie(res, token, expiresAt) {
+  res.cookie(SIGNUP_COOKIE, token, {
+    httpOnly: true,
+    secure: SECURE_COOKIE,
+    sameSite: 'lax',
+    path: '/api/auth/otp',
+    expires: expiresAt,
+  });
+}
+
+function clearSignupCookie(res) {
+  res.clearCookie(SIGNUP_COOKIE, {
+    httpOnly: true,
+    secure: SECURE_COOKIE,
+    sameSite: 'lax',
+    path: '/api/auth/otp',
+  });
+}
 
 function authRoutes(config) {
   const router = Router();
@@ -91,7 +131,7 @@ function authRoutes(config) {
       // login is now the only sign-in surface for the app). An @-shaped
       // identifier can name TWO different accounts at once: the account
       // whose email it is, and an account whose username merely looks
-      // like an email (the mobile OTP flow uses the email as the
+      // like an email (the web email-signup flow uses the email as the
       // username, so one person routinely owns both — issue #1269).
       // First-match-wins lookup let the email row shadow the username
       // row and the wrong account's password got checked, so both
@@ -146,22 +186,8 @@ function authRoutes(config) {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
-      const token = crypto.randomBytes(32).toString('hex');
-      const expiresAt = new Date(
-        Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000
-      );
-
-      await pool.query(
-        'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
-        [token, user.id, expiresAt]
-      );
-
-      res.cookie('session', token, {
-        httpOnly: true,
-        secure: SECURE_COOKIE,
-        sameSite: 'lax',
-        expires: expiresAt,
-      });
+      const { token, expiresAt } = await createSession(pool, user.id);
+      createSessionCookie(res, token, expiresAt);
 
       log.info('auth', 'Login successful', { userId: user.id, username: user.username, matchedBy });
 
@@ -173,6 +199,67 @@ function authRoutes(config) {
     } catch (err) {
       log.error('auth', 'Login error', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Social email-code onboarding is a web-session flow. Verification puts a
+  // narrow, ten-minute continuation in an HttpOnly cookie; password setup
+  // consumes it and creates the ordinary web session in one transaction.
+  // Browser JavaScript never receives a mobile bearer.
+  router.post('/api/auth/otp/request', authLimiter, async (req, res) => {
+    try {
+      await emailSignup.requestCode(pool, config, req.body?.email);
+      return res.json({ ok: true });
+    } catch (error) {
+      if (error instanceof emailSignup.EmailSignupError) {
+        return res.status(422).json({ error: error.message, code: error.code });
+      }
+      log.error('email-signup', 'OTP request failed', { message: error.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/auth/otp/verify', authLimiter, async (req, res) => {
+    try {
+      const verified = await emailSignup.verifyCode(pool, req.body?.email, req.body?.code);
+      createSignupCookie(res, verified.signupToken, verified.expiresAt);
+      return res.json({ ok: true });
+    } catch (error) {
+      if (error instanceof emailSignup.EmailSignupError) {
+        return res.status(422).json({ error: error.message, code: error.code });
+      }
+      log.error('email-signup', 'OTP verification failed', { message: error.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/auth/otp/set-password', authLimiter, async (req, res) => {
+    const password = req.body?.password;
+    if (password !== req.body?.passwordConfirmation) {
+      return res.status(422).json({ error: 'Passwords do not match.', code: 'password_mismatch' });
+    }
+    try {
+      const completed = await emailSignup.completePassword(pool, {
+        signupToken: req.cookies?.[SIGNUP_COOKIE],
+        password,
+        createSession,
+      });
+      clearSignupCookie(res);
+      createSessionCookie(res, completed.session.token, completed.session.expiresAt);
+      return res.json({
+        user: {
+          id: completed.user.id,
+          username: completed.user.username,
+          ...roleFields(completed.user.isAdmin, completed.user.adminReadonly),
+        },
+      });
+    } catch (error) {
+      if (error instanceof emailSignup.EmailSignupError) {
+        clearSignupCookie(res);
+        return res.status(422).json({ error: error.message, code: error.code });
+      }
+      log.error('email-signup', 'Password setup failed', { message: error.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -826,25 +913,6 @@ function authRoutes(config) {
     });
   }
 
-  function createSessionCookie(res, token, expiresAt) {
-    res.cookie('session', token, {
-      httpOnly: true,
-      secure: SECURE_COOKIE,
-      sameSite: 'lax',
-      expires: expiresAt,
-    });
-  }
-
-  async function createSession(pool, userId) {
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
-    await pool.query(
-      'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
-      [token, userId, expiresAt]
-    );
-    return { token, expiresAt };
-  }
-
   router.post('/api/auth/wallet-check', walletCheckLimiter, async (req, res) => {
     const { pubkey } = req.body || {};
     if (!pubkey || typeof pubkey !== 'string') {
@@ -1024,12 +1092,12 @@ function authRoutes(config) {
   // Pre-login (PUBLIC_PATHS). Key invariants:
   //   - Always answers `{ ok: true }` for a well-formed email, whether or
   //     not an account matched — the same anti-enumeration contract as the
-  //     mobile OTP flow (see src/services/mail/index.js).
+  //     web email-signup flow (see src/services/mail/index.js).
   //   - Only non-admin accounts with a CONFIRMED email are eligible. Admins
   //     keep the admin-issued temporary-password path: control of an inbox
   //     must never be enough to take over an admin console login (the same
-  //     stance as the OTP set-password guard in
-  //     src/routes/topochain/mobile-auth.js).
+  //     stance as the shared OTP set-password guard in
+  //     src/services/email-signup.js).
   //   - The DB stores only the sha256 of the token; the plaintext exists in
   //     the emailed link alone and is never logged.
   //   - A new request overwrites any previous outstanding token (single

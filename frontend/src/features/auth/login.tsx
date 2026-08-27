@@ -175,7 +175,6 @@ export function LoginScreen() {
     walletDetectRan: false,
     resetToken: null as string | null,
     otpEmail: null as string | null,
-    otpSetPasswordToken: null as string | null,
   }).current;
 
   // The probe resolves long after its own render, and it needs the view that is
@@ -372,9 +371,8 @@ export function LoginScreen() {
 
   // ── Email-code sign-in (the #signup route) ───────────────────────────
   //
-  // Steps: request a code (public v4 endpoint, also creates the account at
-  // verify time) → verify → choose a password → immediately log in with it for
-  // the web session.
+  // Steps: request a code → verify into a narrow HttpOnly signup cookie →
+  // choose a password. Password setup atomically creates the web session.
 
   const otpRequestCode = useCallback(async () => {
     setOtpError(null);
@@ -386,14 +384,15 @@ export function LoginScreen() {
     if (blockedOffline(setOtpError)) return;
     setOtpStatus('Sending code...');
     try {
-      const res = await fetch('/api/v4/mobile/auth/otp/request', {
+      const res = await fetch('/api/auth/otp/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ email }),
       });
       const data = await res.json();
       setOtpStatus(null);
-      if (!res.ok || !data.success) {
+      if (!res.ok || !data.ok) {
         setOtpError(data.error || 'Could not send a code');
         return;
       }
@@ -424,14 +423,15 @@ export function LoginScreen() {
     if (blockedOffline(setOtpError)) return;
     setOtpStatus('Verifying...');
     try {
-      const res = await fetch('/api/v4/mobile/auth/otp/verify', {
+      const res = await fetch('/api/auth/otp/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ email: st.otpEmail, code }),
       });
       const data = await res.json();
       setOtpStatus(null);
-      if (!res.ok || !data.success || !data.set_password_token) {
+      if (!res.ok || !data.ok) {
         // The server's one generic message covers wrong/expired codes — and
         // also accounts that already have a password (they must use the
         // password form instead). Say both.
@@ -441,7 +441,6 @@ export function LoginScreen() {
         );
         return;
       }
-      st.otpSetPasswordToken = data.set_password_token;
       otpShowStep('password');
     } catch {
       setOtpStatus(null);
@@ -464,34 +463,16 @@ export function LoginScreen() {
     if (blockedOffline(setOtpError)) return;
     setOtpStatus('Setting password...');
     try {
-      const res = await fetch('/api/v4/mobile/auth/set-password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + st.otpSetPasswordToken,
-        },
-        body: JSON.stringify({ password: value, password_confirmation: confirm }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setOtpStatus(null);
-        setOtpError(data.error || 'Could not set the password');
-        return;
-      }
-      st.otpSetPasswordToken = null;
-      // Password is set — now open the WEB session with it. The token in
-      // `data.token` is a mobile bearer, not a cookie; protocol 2 establishes
-      // native later from the authenticated web-session ticket endpoint.
-      setOtpStatus('Signing you in...');
-      const loginRes = await fetch('/api/auth/login', {
+      const res = await fetch('/api/auth/otp/set-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: st.otpEmail, password: value }),
+        credentials: 'same-origin',
+        body: JSON.stringify({ password: value, passwordConfirmation: confirm }),
       });
-      const loginData = await loginRes.json();
-      if (!loginRes.ok) {
+      const data = await res.json();
+      if (!res.ok || !data.user) {
         setOtpStatus(null);
-        setOtpError(loginData.error || 'Sign-in failed. Try the password form');
+        setOtpError(data.error || 'Could not set the password');
         return;
       }
       setOtpStatus('Signed in!');
@@ -901,8 +882,7 @@ export function LoginScreen() {
           </p>
           {/*
               Email-code sign-in sub-view (thin-shell migration). The ONE
-              email-code path, backed by the public v4 endpoints
-              (otp/request, otp/verify, set-password). It serves both
+              email-code path, backed by the web-auth endpoints. It serves both
               first-time sign-ups (otp/verify creates the account — this is
               the #signup route) and migrated password-less participants.
           */}

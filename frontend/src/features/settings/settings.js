@@ -2950,21 +2950,16 @@
       };
 
       // This call closes the private realm synchronously, before this function
-      // reaches its first await. Protocol-2 logout is the only native path;
-      // unsupported builds continue as web-only and hard-navigate below.
-      let preflightPromise = Promise.resolve({ nativeTerminal: false });
-      try {
-        if (window.NativeChrome && NativeChrome.prepareWebLogout) {
-          preflightPromise = NativeChrome.prepareWebLogout();
-        }
-      } catch (error) {
-        console.warn('[settings] native logout preflight failed:', error);
-      }
+      // reaches its first await. Native capability probing deliberately waits
+      // until after the server has revoked the HttpOnly session, so a degraded
+      // bridge can never prevent the authoritative logout boundary.
       let preflight = { nativeTerminal: false };
       try {
-        preflight = await preflightPromise || preflight;
+        if (window.NativeChrome && NativeChrome.prepareWebLogout) {
+          preflight = NativeChrome.prepareWebLogout() || preflight;
+        }
       } catch (error) {
-        console.warn('[settings] native logout preflight failed:', error);
+        return fail(error);
       }
 
       try {
@@ -2992,12 +2987,23 @@
       // native logout replaces the WebView, so the old document has no
       // timeout or navigation continuation.
       if (preflight.nativeTerminal) {
-        // A rejection leaves this old document closed; it never resumes work.
-        return NativeChrome.commitNativeLogout();
+        // A rejection leaves this old document closed and server authority
+        // revoked. Do not navigate or reopen admission; the deliberately
+        // simple rare-failure recovery is an app restart/update.
+        return NativeChrome.commitNativeLogout().catch((error) => {
+          if (window.PlatformUI && PlatformUI.toast) {
+            PlatformUI.toast(
+              'Signed out. Close and reopen the app to finish shutting down Usernode.',
+              { error: true }
+            );
+          }
+          console.warn('[settings] local native shutdown failed:', error);
+          return false;
+        });
       }
 
       // Hard navigation on purpose: enterAuthed is one-shot per document
-      // in a regular browser or an old app without hard logout. `/` boots
+      // in a regular browser. `/` boots
       // the anonymous shell on the landing screen — the public app
       // directory a guest normally sees — instead of the bare sign-in
       // form (#1159); the landing header's Sign in CTA keeps re-login one
