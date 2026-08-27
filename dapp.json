@@ -1164,6 +1164,18 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Waitlist confirm step drops the join pitch",
+      "path": "/?shot=waitlist-joined",
+      "expectSelector": "#auth-waitlist-screen h1.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist joined state shows the confirm-your-email step",
+      "path": "/?shot=waitlist-joined",
+      "expectSelector": "#waitlist-confirm:not(.hidden) #waitlist-code",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Leaderboard screen renders with the Kudos Top-users tab",
       "path": "/#leaderboard/users",
       "expectText": "Top users"

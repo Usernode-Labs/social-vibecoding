@@ -249,6 +249,17 @@ const ADDED_IDS = {
   'more-invite-url': "The signup's shareable invite link; joins through it set waitlist_signups.invited_by.",
   'more-invite-copy': 'Copies the invite link to the clipboard.',
   'more-invite-joined': 'How many people joined through this link. Empty until the stage-2 load effect fills it.',
+  // ── The two-step waitlist: each step of the join ends visibly ────
+  // The join screen stacked three states in one column and only the middle
+  // one ever ended: the pitch stayed up after a join, and a correct code
+  // merely HID #waitlist-confirm with nothing taking its place. Five ids,
+  // all additive — nothing is retired, so every dapp.json selector on this
+  // screen still resolves.
+  'waitlist-step': 'The step line above the title: "Step 1 of 2 \u00b7 Your email" \u2192 "Step 2 of 2 \u00b7 Confirm your email" \u2192 "All done". Hidden for a waiting-room session, which gets #waitlist-queued instead of a flow it is already past. Two steps, not three: the stage-2 survey is optional and counting it would read as required.',
+  'waitlist-confirmed': 'The panel that replaces #waitlist-confirm once the six-digit code is accepted. Before it, `confirmed` only removed the block being typed into, and a control that disappears without a word reads as a failure.',
+  'more-saved': 'The stage-2 survey\'s ending. A successful save wrote one line into #more-msg and left the whole three-minute form on screen under a heading still asking "Want in sooner?"; this panel takes the screen instead. #more-msg survives for the error and ?connect= cases.',
+  'more-saved-edit': 'Returns to that form with every value still in place \u2014 the form is hidden, never unmounted, and answers merge server-side, so adding to them later is the intended path rather than a recovery.',
+  'more-saved-back': 'The way out of the ending, to #landing.',
   // ── #1372: the mobile-browser install strip ──────────────────────
   // A visitor on a phone browser is offered the native app. The strip is
   // always in the document and starts `hidden` (the island rule: data loads

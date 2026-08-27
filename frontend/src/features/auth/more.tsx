@@ -26,6 +26,18 @@
  * `_renderMore` did — the form element is mounted from the first render, just
  * hidden, so its refs are live well before the fetch resolves.
  *
+ * ── Saving ends the form ─────────────────────────────────────────────
+ *
+ * A successful POST used to write "Saved. Thanks." into `#more-msg` and leave
+ * the whole questionnaire on screen under a heading still asking "Want in
+ * sooner?". After three minutes of typing that is a footnote, not an ending.
+ * `saved` now hides the intro and the form and reveals `#more-saved`.
+ *
+ * Editing is one button away rather than a dead end, because answers MERGE
+ * server-side — reopening this form and adding to it is the intended path, not
+ * a recovery. `moreOnShow` resets the flag so the emailed link always lands on
+ * the form.
+ *
  * ── ?connect= ────────────────────────────────────────────────────────
  *
  * GitHub / X / LinkedIn verification is a `/waitlist/connect/<provider>` OAuth
@@ -42,7 +54,7 @@ import { flushSync } from 'react-dom';
 import { Button } from '@/components/ui/button';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
-import { AUTH_SCREEN_IDS, hiddenFirst, useAuthScreensPatch } from './shared';
+import { AUTH_SCREEN_IDS, hiddenFirst, hiddenLast, useAuthScreensPatch } from './shared';
 import {
   ChipRow,
   MsgTone,
@@ -97,6 +109,8 @@ export function MoreScreen() {
   const [copied, setCopied] = useState(false);
   const [msg, setMsg] = useState<{ text: string; tone: MsgTone } | null>(null);
   const [saving, setSaving] = useState(false);
+  /** Answers are in. The form steps aside for `#more-saved`. */
+  const [saved, setSaved] = useState(false);
 
   const madeUrl = useRef<HTMLInputElement>(null);
   const madeNote = useRef<HTMLInputElement>(null);
@@ -238,6 +252,9 @@ export function MoreScreen() {
   const moreOnShow = useCallback(
     (value?: string) => {
       token.current = value || null;
+      // Reopening the link from the waitlist mail is a visit to the FORM. A
+      // previous save in this tab must not be what a later show paints.
+      setSaved(false);
       void loadMore();
     },
     [loadMore],
@@ -298,7 +315,10 @@ export function MoreScreen() {
         });
         const data = await res.json().catch(() => null);
         if (res.ok) {
-          setMsg({ text: (data && data.message) || 'Saved. Thanks.', tone: 'ok' });
+          // The confirmation is a whole panel now, so the one-line status this
+          // used to write would only be a second, quieter copy of it.
+          setMsg(null);
+          setSaved(true);
         } else {
           setMsg({
             text: (data && data.error) || 'Something went wrong. Try again.',
@@ -312,6 +332,15 @@ export function MoreScreen() {
     },
     [lossHad, lossKinds, tools],
   );
+
+  /**
+   * Back to the form. Every field is still mounted and still holds what was
+   * typed — the form is hidden, never unmounted — so this needs no reload and
+   * loses nothing.
+   */
+  const onEditAgain = useCallback(() => {
+    setSaved(false);
+  }, []);
 
   const live = useRef({ moreOnShow });
   live.current = { moreOnShow };
@@ -338,13 +367,18 @@ export function MoreScreen() {
         &larr; Back
       </a>
       <div className="max-w-2xl mx-auto px-6 py-16">
-        <p className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400">
+        <p
+          className={hiddenLast(
+            saved,
+            'text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400',
+          )}
+        >
           Optional (moves you up the list)
         </p>
-        <h1 className="mt-1 text-2xl font-bold">
+        <h1 className={hiddenLast(saved, 'mt-1 text-2xl font-bold')}>
           Want in sooner?
         </h1>
-        <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
+        <p className={hiddenLast(saved, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
           Four more questions, about three minutes. These are the answers we
         actually read when we pick the next group, so they&rsquo;re worth more
         than the order you signed up in. Every one is optional, and you can
@@ -376,13 +410,16 @@ export function MoreScreen() {
         </div>
         <form
           id="more-form"
-          className={hiddenFirst(status !== 'ready', 'mt-6 space-y-8')}
+          className={hiddenFirst(status !== 'ready' || saved, 'mt-6 space-y-8')}
           onSubmit={onSubmit}
         >
           {/* 4 · Something you've made — relocated from the join form, where
               it used to be required. Joining takes an email now; this is one
               of the things that helps you move up instead. */}
           <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
+              Question 1 of 4
+            </p>
             <label
               htmlFor="more-made-url"
               className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
@@ -411,6 +448,9 @@ export function MoreScreen() {
           </div>
           {/* 5 · The group */}
           <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
+              Question 2 of 4
+            </p>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Tell us about a group you&rsquo;re part of that could use its own app.
             </label>
@@ -468,6 +508,9 @@ export function MoreScreen() {
           </div>
           {/* 6 · The loss */}
           <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
+              Question 3 of 4
+            </p>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Ever had a tool you relied on get killed, paywalled, or ruined?
             </label>
@@ -514,6 +557,9 @@ export function MoreScreen() {
           </div>
           {/* 7 · Handles */}
           <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
+              Question 4 of 4
+            </p>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Where else are you?
             </label>
@@ -601,6 +647,9 @@ export function MoreScreen() {
               renders empty until the load effect fills it, so the first
               render still matches the prerender. */}
           <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
+              One more thing
+            </p>
             <label
               htmlFor="more-invite-url"
               className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
@@ -675,6 +724,47 @@ export function MoreScreen() {
             </p>
           </div>
         </form>
+        {/*
+            The ending. Everything above is hidden when this is up, so the
+            screen says one thing: you're done. The two controls after it are
+            the only two things left to want — change an answer, or leave.
+        */}
+        <div id="more-saved" className={hiddenFirst(!saved, 'mt-6')}>
+          <div className="rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 p-5">
+            <h2 className="text-xl font-bold text-emerald-700 dark:text-emerald-400">
+              Saved, thanks &#127881;
+            </h2>
+            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+              These are the answers we actually read when we pick the next
+            group. Your spot is safe either way, and we&rsquo;ll email you when
+            it opens.
+            </p>
+            <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+              Thought of something later? The link in your waitlist email
+            reopens this form, and answers merge, so nothing you already typed
+            is lost.
+            </p>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              id="more-saved-edit"
+              variant="neutral"
+              ink="neutral"
+              size="narrow"
+              onClick={onEditAgain}
+            >
+              Edit my answers
+            </Button>
+            <a
+              id="more-saved-back"
+              href="#landing"
+              className="text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
+            >
+              Back to Social Vibecoding
+            </a>
+          </div>
+        </div>
       </div>
     </main>
   );
