@@ -1764,6 +1764,27 @@
       "expectText": "sent a message in"
     },
     {
+      "name": "The notifications sheet offers a Messages tab",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] #notifications-screen-tabs #notifications-tab-messages"
+    },
+    {
+      "name": "The messages deep link lands on the Messages tab",
+      "path": "/?shot=notifications-messages&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] #notifications-tab-messages[aria-selected=\"true\"]"
+    },
+    {
+      "name": "The Messages tab leads to the full Messages screen",
+      "path": "/?shot=notifications-messages&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] #notifications-all-messages",
+      "expectText": "All messages"
+    },
+    {
+      "name": "Consecutive messages from one conversation collapse to a counted row",
+      "path": "/?shot=notifications-messages&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"] [aria-label=\"2 notifications\"]"
+    },
+    {
       "name": "The chip opens the menu, and it lists Home and Discover (#1443)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-home + #switcher-row-discover"

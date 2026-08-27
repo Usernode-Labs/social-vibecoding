@@ -80,12 +80,18 @@ test('the screen renders from the store: all rows, tabs, sections, pager', () =>
   // The controller publishes the FULL list for the screen — read and unread,
   // independent of the drawer's showOlder reveal — from both _renderList
   // branches.
-  assert.equal((controllerSrc.match(/screenList: Notifications\.items\.map\(rowView\)/g) || []).length, 2);
+  // Through screenViews now, which maps the same items and then collapses a
+  // run of consecutive same-conversation rows into one counted row. Still
+  // BOTH branches, which is what this count is protecting: publishing the
+  // full list from only one of them is how the screen goes blank on an
+  // otherwise-empty drawer.
+  assert.equal((controllerSrc.match(/screenList: screenViews\(Notifications\.items\)/g) || []).length, 2);
+  assert.match(controllerSrc, /function screenViews\(items\)/);
   assert.match(storeSrc, /screenList: null/);
   // rowView carries the screen's extra data; the drawer's renderer ignores it.
   assert.match(controllerSrc, /createdAtMs: Date\.parse\(n\.createdAt\) \|\| 0/);
   // The screen partitions client-side and acts through the controller.
-  assert.match(screen, /tab === 'unread' \? unread : all/);
+  assert.match(screen, /tab === 'unread' \? unread : tab === 'messages' \? messages : all/);
   assert.match(screen, /createdAtMs >= boundary/);
   assert.match(screen, /_onItemClick\(view\.id\)/);
   assert.match(screen, /markAllRead\(\)/);
