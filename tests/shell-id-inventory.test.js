@@ -212,6 +212,7 @@ const ADDED_IDS = {
   'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go.',
   'switcher-avatar': 'The viewer\'s picture in the chip. Ships with NO src, so a viewer with no photo issues no request; App.applyUserAvatar swaps which of this and the glyph carries `hidden`, the same contract it uses for Home\'s account row.',
   'switcher-avatar-glyph': 'The generic person glyph shown until a photo exists.',
+  'app-switcher-name': 'The label inside the chip — the same text #header-title carried as a bare heading, now a named slot so a declared check can assert WHAT the chip says and not merely that it exists.',
   'switcher-nav': 'The menu\'s destination list, and its ONLY vertical scroller. The app strip above is horizontal and therefore vertically bounded, so no number of apps can push a destination out of reach — the clipping bug that hid Home and Profile on a 39-app account cannot occur in this shape.',
   'switcher-row-home': 'Home. Was the sheet\'s #apps-switcher-home footer button.',
   'switcher-row-discover': 'Discover (#apps). Was #apps-switcher-explore.',

@@ -59,6 +59,7 @@ import { ChevronDownIcon, UserIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
 import { headerTitleStore } from './header-title-store.js';
 import { improveStore } from '../improve/improve-store.js';
+import { appContextStore } from '../app-context/app-context-store.js';
 
 // Hoisted so they are unmistakably constants: app.js toggles `hidden` on both
 // of these nodes, and a className React re-renders from props would undo it.
@@ -68,6 +69,12 @@ const GLYPH_CLASS = 'w-5 h-5 rounded-full text-zinc-400 dark:text-zinc-500 shrin
 export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
   const { text } = useStoreState(headerTitleStore);
   const { tab, subTab } = useStoreState(improveStore);
+  // The trigger reports its surface's state, which is #improve-btn's own
+  // convention for the other panel in this bar. Read from the store rather
+  // than written onto the node by the controller: the sheet has two other
+  // ways to close (backdrop, Escape) and a trigger that only hears about the
+  // ones routed through itself goes stale on both.
+  const { open } = useStoreState(appContextStore);
   const onSession = tab === 'dev' && subTab === 'sessions';
 
   return (
@@ -83,6 +90,7 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
           className={'pointer-events-auto inline-flex items-center gap-1.5 max-w-full h-7 '
             + 'align-middle un-touch-target'}
           aria-haspopup="dialog"
+          aria-expanded={open ? 'true' : 'false'}
           aria-label={`${text}: open the menu`}
           onClick={() => (window as unknown as {
             AppContext?: { toggle?: () => void };
@@ -90,7 +98,7 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
         >
           <img id="switcher-avatar" className={AVATAR_CLASS} alt="" />
           <UserIcon id="switcher-avatar-glyph" className={GLYPH_CLASS} aria-hidden="true" />
-          <span className="truncate">
+          <span id="app-switcher-name" className="truncate">
             {text}
           </span>
           <ChevronDownIcon className="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />

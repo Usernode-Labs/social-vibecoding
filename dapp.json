@@ -1686,9 +1686,9 @@
       "expectSelector": "#improve-panel #improve-row-feedback"
     },
     {
-      "name": "The Improve panel leads with the quick actions, then the work in flight (#1443)",
+      "name": "The Improve panel: quick actions, then the work in flight, then what the app is (#1443)",
       "path": "/?demo=1",
-      "expectSelector": "#improve-body > *:has(#improve-quick-actions) + *:has(#improve-sessions)"
+      "expectSelector": "#improve-body > *:has(#improve-quick-actions) + #improve-sessions + #improve-footer"
     },
     {
       "name": "The Profile account group ships the native Node status row",
@@ -1745,7 +1745,7 @@
     {
       "name": "The header carries the chip and the bell, and no second alerting glyph (#1443)",
       "path": "/",
-      "expectSelector": "#platform-header #app-switcher-btn ~ #notifications-btn:not(:has(~ #messages-btn))"
+      "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#app-switcher-btn) #notifications-btn"
     },
     {
       "name": "The menu's destination order: platform, then you (#1443)",
