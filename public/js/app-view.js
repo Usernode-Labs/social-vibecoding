@@ -2124,6 +2124,11 @@ const AppView = {
     // re-read in _repaintDevBody: that runs again every time the layout
     // flips, and re-seeding there would undo the tab just tapped.
     AppView._boardTab = AppView._loadBoardTab(App.currentApp);
+    // …and the filter bar is rebuilt once per mount for the same reason it is
+    // NOT rebuilt per repaint: a fresh mount is a new app (or a return to
+    // this one), which is exactly when the controls should come back from
+    // storage rather than keep the last app's caret.
+    AppView._devFilterBarBuilt = false;
     AppView._reactDevBoard()?.mountBoard(content, {
       selfHosted: !!AppView.appData?.self_hosted,
       readOnly: !!AppView.readOnly,
@@ -2294,6 +2299,10 @@ const AppView = {
     // after the fact, with the guard and the target unchanged.
     AppView._reactDevBoard()?.mountTopicSubView(content, {
       backHref: AppView._devPageHref(),
+      // The bar names the KIND, not the title: the card below it already
+      // carries the title, the number and the author. `ref.kind` is resolved
+      // before the mount, so the bar is never briefly blank on a cold link.
+      title: ref.kind === 'issue' ? 'Issue' : 'Change',
       onBackClick: (e) => {
         // #1036: real anchor — leave a modified click to the browser.
         if (window.NavLink && NavLink.isNativeClick(e)) return;
@@ -4169,25 +4178,33 @@ const AppView = {
     // below therefore ends in _reanchorCardMenu() rather than dismissing an
     // open menu outright; see that function for why that distinction is the
     // difference between the ⋯ working and appearing not to.
+    // #482, re-scoped: THE FILTER BAR IS THE BOARD'S, NOT THE COLUMNS'.
+    //
+    // It used to be built only where the columns were, which was defensible
+    // while the other layout was a "Feed" you had chosen instead of the
+    // board. It is not one now: `All` IS the board, drawn as a stream where
+    // four columns will not fit, and building the bar only for the columns
+    // left that surface with a bare "+" on an empty band and no way to search
+    // a board it was showing every card of.
+    //
+    // Built + wired ONCE per mount and kept stable across every repaint, so
+    // search-input focus and typed text survive a WS-driven refresh and a
+    // layout flip alike. `_devFilterBarBuilt` is what makes it once-per-mount:
+    // the old key was "#dev-kanban-board is missing", which is a fact about
+    // the columns and would rebuild the bar (losing the caret) every time the
+    // stream handed back to them.
+    if (!AppView._devFilterBarBuilt) {
+      // Restore this app's persisted filters before building the bar, so the
+      // controls (and the board) come back exactly as the user left them
+      // across navigation / reload. Keyed per slug, so switching apps shows
+      // that app's own filters (or a clean board).
+      AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
+      AppView._renderKanbanFilterBar();
+      AppView._devFilterBarBuilt = true;
+    }
     if (AppView._boardLayout() === 'columns') {
-      // #482: two-node shell — the filter bar is built + wired once per
-      // mount and kept stable across repaints (so search-input focus and
-      // typed text survive WS-driven refreshes); only the board region
-      // re-renders. Switching list → kanban rebuilds the bar from the
-      // surviving _kanbanFilters, so filter state outlives the toggle.
-      // Keyed on the BOARD alone. #dev-kanban-filterbar used to be built into
-      // #dev-body beside it, so its absence was a fair "not mounted yet"
-      // signal; it is a permanent host in the React frame's action row now
-      // (#1367 follow-up) and is always present, so testing for it here would
-      // never rebuild the bar. The board is still the node this branch owns.
       if (!document.getElementById('dev-kanban-board')) {
-        // Restore this app's persisted filters before building the bar, so
-        // the controls (and the board) come back exactly as the user left
-        // them across navigation / reload. Keyed per slug, so switching apps
-        // shows that app's own filters (or a clean board).
-        AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
         body.innerHTML = '<div id="dev-kanban-board"></div>';
-        AppView._renderKanbanFilterBar();
       }
       AppView._repaintKanbanBoard();
       return;
@@ -4201,17 +4218,13 @@ const AppView = {
     if (!document.getElementById('dev-feed')) {
       body.innerHTML = '<div id="dev-feed"></div>';
     }
-    // The feed has no filters, so the shared action row shows the "+" alone.
-    // Emptying the host rather than hiding it lets `empty:hidden` collapse it,
-    // and means a switch back to kanban rebuilds the chips from the surviving
-    // _kanbanFilters exactly as a fresh mount does.
-    AppView._clearKanbanFilterBar();
     AppView._rerenderFeed();
     // THE STRIP OUTLIVES THE BODY. #dev-kanban-tabs is a row of the React
     // frame now, above this host, so it is on screen while the stream is —
     // and its counts come from the same derivation the columns use. Without
     // this the strip would hold whatever the last column render left it.
     AppView._publishBoardView();
+    AppView._updateKanbanFilterBarUI();
     AppView._reanchorCardMenu();
   },
 
@@ -4219,23 +4232,14 @@ const AppView = {
   // _repaintKanbanBoard because the strip needs it in BOTH layouts and only
   // one of them renders columns.
   //
-  // THE STREAM'S COUNTS ARE UNFILTERED, and that is not a shortcut. The
-  // filter bar is a COLUMNS-only control — _repaintDevBody empties its host
-  // on the stream, where _rerenderFeed applies no filters — so a filter set
-  // on a column tab and then left behind would go on quietly subtracting
-  // from a strip whose surface shows everything. Counts nobody can explain
-  // are worse than counts nobody can narrow. The filters themselves survive
-  // untouched, so stepping back onto a column finds them exactly as they
-  // were.
+  // The counts are FILTERED, in both layouts, because the bar that narrows
+  // them is on screen in both. An earlier cut published unfiltered counts on
+  // the stream, which was the right answer to the wrong arrangement: the
+  // filters were genuinely unreachable there, so subtracting by them would
+  // have been arithmetic nobody could explain. The bar is the board's now,
+  // so the strip counts what the surface under it is showing.
   _publishBoardView() {
-    const stream = AppView._boardLayout() === 'stream';
-    const saved = AppView._kanbanFilters;
-    if (stream) AppView._kanbanFilters = AppView._defaultKanbanFilters();
-    try {
-      AppView._lastKanbanView = AppView._kanbanView();
-    } finally {
-      if (stream) AppView._kanbanFilters = saved;
-    }
+    AppView._lastKanbanView = AppView._kanbanView();
     AppView._reactDevBoard()?.publishKanban(AppView._lastKanbanView);
   },
 
@@ -4325,7 +4329,17 @@ const AppView = {
           ts(m.last_message_at)),
       });
     }
-    return items.sort((a, b) => b.t - a.t);
+    // THE SAME FILTERS THE COLUMNS APPLY, through the same predicate. The
+    // stream used to ignore them because the bar was not on screen with it;
+    // now that it is, a search that narrowed the columns and did nothing to
+    // the stream would be the worse half of that bargain. `shared-session`
+    // is `session` to the predicate — the feed's kind names are its own.
+    if (!AppView._kanbanFiltersActive()) return items.sort((a, b) => b.t - a.t);
+    const f = AppView._kanbanFilters;
+    return items
+      .filter((e) => AppView._devCardMatches(
+        e.kind === 'shared-session' ? 'session' : e.kind, e.item, f))
+      .sort((a, b) => b.t - a.t);
   },
 
   // The list feed's VIEW MODEL (card/model.ts DevFeedView).
@@ -4349,7 +4363,16 @@ const AppView = {
       return { loading: true, block, emptyNote: null, entries: [], footer: null };
     }
     if (!items.length) {
-      return { loading: false, block, emptyNote: { loadFailed: !!meta.note }, entries: [], footer: null };
+      // "No activity yet" is a claim about the APP; with a filter on it is a
+      // claim about the filter, and the columns already say the other thing
+      // ("No matching cards"). Same distinction, same words, both layouts.
+      return {
+        loading: false,
+        block,
+        emptyNote: { loadFailed: !!meta.note, filtered: AppView._kanbanFiltersActive() },
+        entries: [],
+        footer: null,
+      };
     }
 
     const shown = Math.min(AppView._feedShown || 20, items.length);
@@ -4983,7 +5006,19 @@ const AppView = {
   // stays: it is the single point every control already calls, and inlining it
   // would be twelve edits to say the same thing.
   _repaintBoardSurface() {
-    AppView._repaintKanbanBoard();
+    if (AppView._boardLayout() === 'columns') {
+      AppView._repaintKanbanBoard();
+      return;
+    }
+    // The stream's equivalent of _repaintKanbanBoard: the same single write
+    // point for the persisted filters, the same republish of the strip and
+    // the bar, the same card-menu re-anchor. _rerenderFeed carries the Kudos
+    // and Explore wiring itself.
+    AppView._saveKanbanFilters(App.currentApp);
+    AppView._rerenderFeed();
+    AppView._publishBoardView();
+    AppView._updateKanbanFilterBarUI();
+    AppView._reanchorCardMenu();
   },
 
   // The filter bar is features/dev-board/kanban-filters.tsx's. Mounted once
@@ -4996,12 +5031,12 @@ const AppView = {
   // the model on an ordinary repaint, or it would take the caret with it — so
   // it is uncontrolled, and Clear bumps `seq`, which is the field's React key.
 
-  // Empty the shared action row's filter host. Called on the way into the
-  // feed, which has no filters; `empty:hidden` on the host then collapses it
-  // so the "+" sits alone at the right of the row.
-  _clearKanbanFilterBar() {
-    AppView._publishKanbanFilters({ mounted: false });
-  },
+  // `_clearKanbanFilterBar()` is retired. It emptied #dev-kanban-filterbar on
+  // the way into the stream, on the reasoning that the feed had no filters —
+  // which stopped being true when the bar became the BOARD's rather than the
+  // columns'. Nothing empties that host now: it is built once per mount and
+  // lives as long as the board does, so a typed search survives a layout flip
+  // with its caret.
 
   _publishKanbanFilters(patch) {
     AppView._reactDevBoard()?.publishKanbanFilters(patch);

@@ -87,7 +87,7 @@ export interface DevBoardBridge {
   mountChatSubView(host: Element | null): void;
   mountTopicSubView(
     host: Element | null,
-    options: { backHref: string; onBackClick: (event: MouseEvent) => void },
+    options: { backHref: string; title: string; onBackClick: (event: MouseEvent) => void },
   ): void;
   mountAttrPopover(host: Element | null): void;
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
@@ -196,6 +196,7 @@ export const devBoardBridge: DevBoardBridge = {
       host,
       createElement(DevTopicSubView, {
         backHref: options.backHref,
+        title: options.title,
         onBackClick: (event) => options.onBackClick(event as unknown as MouseEvent),
       }),
     );

@@ -46,6 +46,15 @@ const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
 const CHAT_FRAME = read('frontend/src/features/dev-board/chat-frame.tsx');
 const SESSION_FRAME = read('frontend/src/features/dev-board/session-frame.tsx');
 const TABS = read('frontend/src/features/dev-board/board-tabs.tsx');
+const SCREEN_BAR = read('frontend/src/features/shell/screen-bar.tsx');
+const TOPIC_FRAME = read('frontend/src/features/dev-board/topic-frame.tsx');
+const CHIP = read('frontend/src/features/header/app-switcher-chip.tsx');
+
+/** Source with comments stripped — these files RECORD what they retired. */
+const code = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
 // The Kanban|Feed pills used to live here. They are gone with the mode.
 const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
 const MAIN = read('frontend/src/main.tsx');
@@ -429,4 +438,66 @@ test('no Dev-board id leaked into the prerendered shell', () => {
   assert.match(APP_VIEW_ISLAND, /id="app-content"/, '#app-content is still rendered');
   assert.match(APP_VIEW_ISLAND, /id="app-content"[\s\S]{0,220}?\{\/\* Tab content renders here \*\/\}/,
     '#app-content is still EMPTY — the interim roots and every innerHTML render fill it');
+});
+
+// ── The shell's second bar ────────────────────────────────────────────────
+//
+// The screen's name was a 10px SUBTITLE inside the header chip, sized to fit
+// a 28px pill that is pinned from both directions
+// (tests/header-height-parity.test.js). One bar was carrying two information
+// layers, and the second one was shrunk into the gaps of the first. It has a
+// bar of its own now.
+
+test('the screen bar names the screen, and the chip is the app alone', () => {
+  // Nothing renders a subtitle any more — not the chip, not anything else.
+  assert.ok(!CHIP.includes('app-switcher-subtitle'),
+    'the chip draws no second line');
+  assert.ok(!code(CHIP).includes('subtitle'),
+    'and holds no subtitle state to draw one from');
+  // The store field survives ONLY because document.title still wants both
+  // halves ("Notes · Board", widest scope first — tabs truncate from the
+  // right). Renamed, because a field called `subtitle` that renders no
+  // subtitle is a name that outlives everyone who remembers it.
+  const store = read('frontend/src/features/header/header-title-store.js');
+  assert.match(store, /screen: '',/, 'the field is `screen` now');
+  assert.ok(!/subtitle:/.test(store), 'and `subtitle` is gone from the state');
+  const appJs = read('public/js/app.js');
+  assert.match(appJs, /setHeaderTitle\(text, screen\)/);
+  assert.match(appJs, /document\.title = screen \? `\$\{text\} · \$\{screen\}` : text;/,
+    'the tab title still joins both halves, widest scope first');
+});
+
+test('every screen with a name inside an app draws the bar — and the app itself does not', () => {
+  assert.match(FRAME, /<ScreenBar title="Board">/);
+  assert.match(read('frontend/src/features/dev-board/chat-frame.tsx'),
+    /<ScreenBar title="Activity" \/>/);
+  assert.match(TOPIC_FRAME, /<ScreenBar\n\s+title=\{title\}/);
+  // The App tab renders no frame of its own — features/app-frame is the app,
+  // and a bar naming "App" above an app would be a third answer to a question
+  // nobody asked.
+  assert.ok(!read('frontend/src/features/app-frame/app-frame.tsx').includes('ScreenBar'));
+});
+
+test('the bar is ONE component, so the topic stops drawing its own', () => {
+  // The topic's strip was `py-1.5` with a text `← Back` — the one screen in
+  // the app with a bar of its own shape and height, under a chip that was
+  // meanwhile still saying "Board".
+  assert.ok(!code(TOPIC_FRAME).includes('← Back'), 'the hand-rolled label is gone');
+  assert.ok(!code(TOPIC_FRAME).includes('py-1.5'), 'and so is its own geometry');
+  assert.match(SCREEN_BAR, /min-h-\[52px\]/,
+    'the bar matches the 52px top bar above it, so the two read as one block');
+  // One h1 per screen stays the rule: the chip is it.
+  assert.ok(!SCREEN_BAR.includes('<h1'), 'the bar is not a second h1');
+});
+
+test("the board's action sits in the bar, and the search row is its own", () => {
+  const bar = FRAME.slice(FRAME.indexOf('<ScreenBar title="Board">'),
+    FRAME.indexOf('</ScreenBar>'));
+  assert.match(bar, /id="dev-plus-btn"/, 'the "+" is the screen bar\'s action');
+  assert.match(bar, /rounded-full/, 'drawn as the disc the board draws');
+  const actions = FRAME.slice(FRAME.indexOf('<div id="dev-actions"'));
+  const row = actions.slice(0, actions.indexOf('</div>', actions.indexOf('dev-kanban-filterbar')));
+  assert.ok(!row.includes('dev-plus-btn'), 'and it is no longer in the search row');
+  assert.ok(!FRAME.includes('ml-auto'),
+    'so the row needs no auto margin to keep it off the left edge');
 });

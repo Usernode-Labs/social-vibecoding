@@ -1437,14 +1437,14 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "The + button shares the actions row with the filter host",
+      "name": "The + button sits in the screen bar, beside the name of the screen",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions #dev-plus-btn"
+      "expectSelector": ".screen-bar #dev-plus-btn.rounded-full"
     },
     {
-      "name": "The Board names itself in the chip, under the app it belongs to",
+      "name": "The Board names itself in the screen bar; the chip is the app alone",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#app-switcher-btn #app-switcher-subtitle",
+      "expectSelector": "#platform-header + .screen-bar",
       "expectText": "Board"
     },
     {
@@ -2696,9 +2696,9 @@
       "expectSelector": "#dev-actions > #dev-kanban-filterbar #dev-kanban-filters-btn.rounded-full"
     },
     {
-      "name": "The filter chips and the + button are siblings in one row",
+      "name": "The search row sits between the screen bar and the tab strip",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > #dev-kanban-filterbar + div > #dev-plus-btn"
+      "expectSelector": ".screen-bar + #dev-actions + #dev-kanban-tabs"
     },
     {
       "name": "The Filters dialog offers the priority select (Streamlined Concept)",
@@ -2706,14 +2706,14 @@
       "expectSelector": "#board-filters-modal #board-filters-priority"
     },
     {
-      "name": "On the Feed the + button stays right-aligned with its menu anchored on-screen",
+      "name": "The stream keeps the search box — the filters are the board's, not the columns'",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > div.ml-auto > #dev-plus-btn"
+      "expectSelector": "#dev-actions #dev-kanban-search"
     },
     {
-      "name": "The feed shows the + button with no filter chips beside it",
+      "name": "The stream keeps the Filters button too",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > #dev-kanban-filterbar:empty + div > #dev-plus-btn"
+      "expectSelector": "#dev-actions #dev-kanban-filters-btn"
     },
     {
       "name": "The Notifications sheet shows read rows on the All tab (Streamlined Concept)",
