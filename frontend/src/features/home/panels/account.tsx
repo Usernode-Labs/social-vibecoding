@@ -33,7 +33,7 @@ export function AccountPanel() {
     <a
       id="home-account-row"
       href="#profile"
-      className={'flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 '
+      className={'flex items-center gap-3 rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 '
         + 'px-3 min-h-[56px] hover:bg-zinc-50 dark:hover:bg-zinc-800'}
     >
       <span className="relative w-9 h-9 shrink-0 flex items-center justify-center">

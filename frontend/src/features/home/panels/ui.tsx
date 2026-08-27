@@ -79,7 +79,7 @@ export function PanelShell({
     <article
       className={`home-panel home-panel-card${
         expanded ? ' home-panel--expanded' : ''
-      } rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden`}
+      } rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 overflow-hidden`}
       data-panel={panelKey}
       {...stampProps(stamps)}
     >

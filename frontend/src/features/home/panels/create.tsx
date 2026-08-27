@@ -61,7 +61,7 @@ export function CreatePanel({ view }: { view: CreateView }) {
     >
       <button
         type="button"
-        className="home-create-btn home-create-tile w-full rounded-xl p-4 flex flex-row items-center justify-center text-center gap-3 transition-colors"
+        className="home-create-btn home-create-tile w-full rounded-sm p-4 flex flex-row items-center justify-center text-center gap-3 transition-colors"
         {...(view.canCreate ? null : { 'aria-disabled': true })}
         title={label}
         aria-label={label}
@@ -78,7 +78,7 @@ export function CreatePanel({ view }: { view: CreateView }) {
         }}
       >
         <span
-          className="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
+          className="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-md flex items-center justify-center shrink-0"
           aria-hidden="true"
         >
           <PlusWideIcon className="w-6 h-6" strokeWidth="2.5" />

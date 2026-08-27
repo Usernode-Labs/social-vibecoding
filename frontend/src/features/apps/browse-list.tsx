@@ -100,7 +100,7 @@ function Row({ view }: { view: RowView }): ReactNode {
       chevron={false}
       leading={(
         <div
-          className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
+          className="app-icon-tile w-11 h-11 shrink-0 rounded-md overflow-hidden flex items-center justify-center font-bold text-lg"
           data-icon={appIconKind(view.app)}
           // The same slug-derived identity tint the launcher grid draws. An
           // app that is a lilac tile on Home was a blank white square here,

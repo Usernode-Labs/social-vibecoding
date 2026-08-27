@@ -50,7 +50,7 @@ function TileIcon({ icon }: { icon: IconView }) {
         alt=""
         loading="lazy"
         draggable={false}
-        className="w-full h-full rounded-lg object-cover"
+        className="w-full h-full rounded-md object-cover"
       />
     );
   }
@@ -81,7 +81,7 @@ function DiscoverTile({ tile }: { tile: DiscoverTileView }) {
     >
       <div className="home-discover-icon-wrap relative">
         <div
-          className="app-icon-tile home-discover-icon rounded-lg overflow-hidden flex items-center justify-center font-bold text-base"
+          className="app-icon-tile home-discover-icon rounded-md overflow-hidden flex items-center justify-center font-bold text-base"
           data-icon={tile.icon.kind}
         >
           <TileIcon icon={tile.icon} />

@@ -583,7 +583,11 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   // stops short of the card's corner radius. It is a pseudo-element rather
   // than `border-top` — a border cannot be inset — which is also what frees
   // the md+ block below to own the `border` shorthand outright.
-  assert.match(listTag, /max-md:rounded-2xl/, 'phone: the rows sit in one card');
+  // rounded-2xl -> rounded-sm + a frame in the WeOS pass: the brand draws a
+  // card as a framed near-rectangle, and the inset-hairline reasoning above is
+  // unchanged by it (a 2px corner still clips a full-bleed rule).
+  assert.match(listTag, /max-md:rounded-sm/, 'phone: the rows sit in one card');
+  assert.match(listTag, /max-md:border-\[var\(--frame-line\)\]/, 'phone: that card is framed');
   assert.match(listTag, /max-md:bg-white/, 'phone: that card is a white surface');
   const css = read('public/css/app.css');
   assert.match(css, /\.browse-row \+ \.browse-row::before \{/,

@@ -23,7 +23,7 @@ import type { CreditOptionsModalView } from './model';
 
 export function CreditOptionsCard({ view }: { view: CreditOptionsModalView }): ReactNode {
   return (
-    <div className="dc-credits-modal-card w-full max-w-lg rounded-xl bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 shadow-xl p-4">
+    <div className="dc-credits-modal-card w-full max-w-lg rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 shadow-xl p-4">
       <div dangerouslySetInnerHTML={{ __html: view.cardHtml }} />
       <div className="flex justify-end mt-3">
         {/* `data-credits-close` is app-view.js's: the scrim's delegated

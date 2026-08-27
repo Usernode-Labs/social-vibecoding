@@ -128,7 +128,7 @@ export function PublicProfileCard({
     <>
       <article
         id="public-profile-card"
-        className="rounded-2xl bg-white dark:bg-zinc-900 p-5"
+        className="rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 p-5"
       >
         <div className="flex items-start gap-4">
           <PublicAvatar profile={profile} />

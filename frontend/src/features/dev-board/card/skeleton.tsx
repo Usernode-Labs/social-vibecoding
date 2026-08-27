@@ -24,7 +24,7 @@
  * A spinner is a fixed mark that says "busy, somewhere". A skeleton says
  * WHERE the content is going and roughly HOW MUCH of it there is, which is
  * the part that stops a half-drawn screen reading as a finished one. These
- * are drawn at the real card's geometry — same `rounded-2xl`, same white /
+ * are drawn at the real card's geometry — same `rounded-sm` + frame, same white /
  * `zinc-900` ground, same `px-3.5 py-3`, same 32px leading tile — so the
  * arriving cards land on top of their own outlines rather than replacing a
  * different-shaped grey block.
@@ -43,7 +43,7 @@ import type { ReactNode } from 'react';
 
 /** The card shell, matching `.gc-vote-item`'s box (see dev-card.tsx). */
 export const SKELETON_CARD_CLS =
-  'w-full flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-3.5 py-3';
+  'w-full flex items-center gap-3 rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 px-3.5 py-3';
 /** The leading icon tile, at the real card's 32px `rounded-lg` box. */
 export const SKELETON_TILE_CLS = 'w-8 h-8 rounded-lg bg-zinc-200 dark:bg-zinc-800 shrink-0';
 /** Title line. */

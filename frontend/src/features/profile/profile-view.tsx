@@ -63,7 +63,7 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
   return (
     <div
       id="profile-identity-card"
-      className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-5"
+      className="rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 p-4 mb-5"
     >
       <div className="flex items-center gap-4">
         <IdentityAvatar url={identity.avatarUrl} name={identity.name || ''} initial={identity.initial} />
@@ -124,7 +124,7 @@ function PublicControls({ controls, status, publishing, previewOpen }: {
   return (
     <section
       id="public-profile-controls"
-      className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-5"
+      className="rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 p-4 mb-5"
     >
       <h2 className="font-semibold text-base">Public profile</h2>
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
@@ -207,7 +207,7 @@ function Completed({ completed }: { completed: any }): ReactNode {
       {completed.rows.length === 0 ? (
         <div
           id="profile-completed-empty"
-          className="rounded-2xl bg-white dark:bg-zinc-900 p-4 text-center"
+          className="rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 p-4 text-center"
         >
           <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
             No completed challenges yet.
@@ -225,7 +225,7 @@ function Completed({ completed }: { completed: any }): ReactNode {
             <a
               key={row.id}
               className={
-                'rounded-2xl bg-white dark:bg-zinc-900 p-3 mb-2 '
+                'rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 p-3 mb-2 '
                 // dark:hover was zinc-900 back when the card was transparent;
                 // it is the card's own fill now, so the row had no hover at
                 // all in dark. One step up the ramp, as everywhere else.
@@ -270,7 +270,7 @@ function Completed({ completed }: { completed: any }): ReactNode {
 function TokenCard({ token }: { token: any }): ReactNode {
   if (token.gated) {
     return (
-      <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
+      <div className="rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 p-4">
         <div className="font-semibold mb-1">Token allocation withheld</div>
         <div className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
           Review and accept the terms to see your token allocation.
@@ -287,7 +287,7 @@ function TokenCard({ token }: { token: any }): ReactNode {
     );
   }
   return (
-    <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
+    <div className="rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 p-4">
       <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">
         Token allocation
       </div>
@@ -396,7 +396,7 @@ export function ProfileRoot(): ReactNode {
             Points breakdown
           </div>
           <div
-            className="rounded-2xl bg-white dark:bg-zinc-900"
+            className="rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900"
           >
             {view.breakdown.map((row: any, index: number) => (
               // The separator is INSET to the text column and drawn by the row

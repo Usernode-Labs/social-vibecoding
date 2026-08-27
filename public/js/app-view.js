@@ -116,7 +116,7 @@ const AppView = {
   // every card the Dev board renders (issues, proposals, sessions, gov rows,
   // recently-merged), which is exactly why they were pulled onto a shared
   // class in the first place.
-  DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-3.5 py-3 text-left transition-colors',
+  DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 px-3.5 py-3 text-left transition-colors',
   // Trailing chevron marking a card as tappable (same affordance as the
   // General chat card).
   DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',

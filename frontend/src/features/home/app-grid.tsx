@@ -58,6 +58,7 @@
  * element (no `style` prop is passed), so there is no writer to race.
  */
 
+import { EmojiMark } from '../apps/app-card-view';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Bars3Icon } from '@/components/ui/icons';
@@ -83,7 +84,7 @@ function AppIcon({ icon }: { icon: IconView }) {
     // rather than being cropped by it (same note as AppCard.iconTileFor).
     return <img src={icon.src} alt="" className="w-full h-full object-cover" />;
   }
-  if (icon.kind === 'emoji') return <span className="text-3xl leading-none">{icon.emoji}</span>;
+  if (icon.kind === 'emoji') return <EmojiMark emoji={icon.emoji} />;
   return <>{icon.letter}</>;
 }
 
@@ -100,7 +101,7 @@ const wired = new WeakSet<Element>();
 
 /**
  * One placeholder tile, at the real card's geometry: the same 3.5rem
- * `rounded-2xl` icon box and the same fixed 26px title lane, so the arriving
+ * `rounded-md` icon box and the same fixed 26px title lane, so the arriving
  * grid lands on its own outlines instead of pushing the placeholders aside.
  *
  * `.app-card` is deliberately NOT on these. It carries the hover transition
@@ -111,8 +112,8 @@ const wired = new WeakSet<Element>();
  */
 function SkeletonTile() {
   return (
-    <div className="relative rounded-xl p-3 flex flex-col items-center text-center gap-1.5">
-      <div className="w-14 h-14 rounded-2xl bg-zinc-200 dark:bg-zinc-800 shrink-0"></div>
+    <div className="relative rounded-sm p-3 flex flex-col items-center text-center gap-1.5">
+      <div className="w-14 h-14 rounded-md bg-zinc-200 dark:bg-zinc-800 shrink-0"></div>
       <div className="w-full h-[26px] flex justify-center pt-1">
         <div className="h-2.5 w-2/3 rounded bg-zinc-200/70 dark:bg-zinc-800/70"></div>
       </div>
@@ -177,7 +178,7 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
   return (
     <div
       ref={wireRef}
-      className={`app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${
+      className={`app-card app-card-draggable touch-pan-y relative rounded-sm transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${
         app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer') : 'cursor-not-allowed grayscale-[0.75]'
       }`}
       data-slug={app.slug}
@@ -220,7 +221,7 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
             surface, which is the point.
         */}
         <div
-          className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
+          className="app-icon-tile w-14 h-14 rounded-md overflow-hidden flex items-center justify-center font-bold text-xl"
           data-icon={app.icon.kind}
         >
           <AppIcon icon={app.icon} />

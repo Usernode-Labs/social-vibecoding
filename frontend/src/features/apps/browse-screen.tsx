@@ -202,7 +202,7 @@ export function BrowseScreen() {
           // page ground with no surface under them at all. At md+ nothing
           // changes: every row is its own box in the grid (app.css), so the
           // card classes are scoped to below that breakpoint.
-          className="max-md:mx-3 max-md:my-3 max-md:overflow-hidden max-md:rounded-2xl max-md:bg-white max-md:dark:bg-zinc-900 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"
+          className="max-md:mx-3 max-md:my-3 max-md:overflow-hidden max-md:rounded-sm max-md:border max-md:border-[var(--frame-line)] max-md:bg-white max-md:dark:bg-zinc-900 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"
         >
           {state.error
             ? <div className="p-4 text-red-400 text-sm">Failed to load apps</div>

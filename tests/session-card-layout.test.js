@@ -117,7 +117,12 @@ const SPINNER = 'dc-status-spinner-arc';
 // `rounded-2xl` since the widget language landed (#1191): the card is a white
 // surface on the grey page ground with no hairline, so the corner carries the
 // shape the border used to.
-const SHELL = 'w-full flex items-center gap-3 rounded-2xl';
+// The shared single-row shell, tracking DEV_CARD_CLS. rounded-2xl -> a framed
+// near-rectangle in the WeOS pass: the brand draws every card as a ruled box,
+// and this constant exists to assert that the session cards use the SAME shell
+// as the board's — so it follows that shell rather than pinning a shape the
+// product no longer draws.
+const SHELL = 'w-full flex items-center gap-3 rounded-sm border border-[var(--frame-line)]';
 
 // The ⋯ registry key a card emitted, or null.
 function menuKeyOf(html) {

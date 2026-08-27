@@ -185,6 +185,12 @@ const SHELL_ASSETS = [
   // shell cache an offline launch renders the whole product in the fallback
   // system stack, which is legible but is not the product.
   '/vendor/geist-sans-1.7.2-variable.woff2',
+  // The app-icon artwork. NOT listed file by file: the set is ~105 icons and
+  // hand-listing them here would be a second manifest to keep in step with the
+  // two that already exist. The launcher's own tiles are the common case and
+  // they are fetched on first paint, so the runtime cache below picks them up;
+  // an offline launcher falls back to the text emoji exactly as an unvendored
+  // pick does, which is the same graceful path rather than a new one.
   '/usernode-native/v1/native.css',
   '/usernode-native/v1/native.js',
   '/usernode-bridge.js',

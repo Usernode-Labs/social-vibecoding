@@ -226,7 +226,10 @@ test('one skeleton module renders both the components and the HTML strings', () 
   // changes shape, and the placeholder stops standing where the row lands.
   assert.match(SK, /export const SKELETON_CARD_CLS =/);
   assert.match(SK, /export function skeletonListHtml\(n: number\): string/);
-  assert.match(SK, /rounded-2xl bg-white dark:bg-zinc-900/,
+  // Tracks DEV_CARD_CLS through the WeOS squaring pass — the assertion's
+  // point is that the two agree, so it moves with them rather than pinning a
+  // shape the real card no longer has.
+  assert.match(SK, /rounded-sm border border-\[var\(--frame-line\)\] bg-white dark:bg-zinc-900/,
     'the placeholder sits on the same ground as a real card');
   // Tailwind's extractor is a regex over source text, so every width class
   // has to be a complete literal rather than a computed `w-${n}/4`.

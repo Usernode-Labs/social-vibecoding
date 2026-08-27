@@ -129,11 +129,18 @@
      read, and it is a different claim from the hairlines inside a list — those
      separate rows, this one says "this is a window".
 
-     Applied ONLY to surfaces that already float above the page (dialogs,
-     sheets, popovers, the Improve panel, anchored panels). The 100+ resting
-     cards in the interior keep figure/ground: a frame on every one of them
-     would be a cage, not a language. */
-  --frame-line: rgba(12, 11, 9, 0.72);
+     Applied to EVERY card surface, floating or resting. The first pass scoped
+     it to floating surfaces only, on the theory that framing the resting cards
+     would read as a cage — but that is not what the brand does and not how it
+     reads: the marketing site frames the hero card, the ownership grid, the
+     contributions table and the nav bar alike, and the universality is the
+     point. A frame on one card is a box; a frame on all of them is a grid,
+     which is the y2k/print idea the language is built on.
+
+     The pairing that makes it work is figure/ground PLUS rule, not rule
+     instead of it: these cards are still white on a warm ground, so the line
+     sharpens an edge that already exists rather than inventing one. */
+  --frame-line: rgba(12, 11, 9, 0.88);
 
 
   /* ── Safe-area tokens ────────────────────────────────────
@@ -860,7 +867,7 @@ html.un-kb .platform-safe-sheet {
   /* Dark mode frames from the light side: a near-black rule on a near-black
      sheet is invisible, so the frame becomes a low-alpha WHITE rule — same
      job (this is a window), inverted material. */
-  --frame-line: rgba(247, 246, 233, 0.22);
+  --frame-line: rgba(247, 246, 233, 0.28);
   /* One step UP from the page here, not white: the page is near-black, so a
      bubble has to be lighter than it or it stops being a bubble. */
   --bubble-bg: #1d1c19;
@@ -1268,7 +1275,7 @@ html, body {
      tinted face on the warm ground has less figure/ground than white had —
      the mock draws the line for the same reason. */
   background-color: #fcfab3;
-  border: 1px solid rgba(12, 11, 9, 0.28);
+  border: 1px solid var(--frame-line);
   color: var(--text-secondary);
 }
 /* THE PER-APP IDENTITY TINT IS GONE. The reskin hashed each app's slug into
@@ -1318,17 +1325,17 @@ html, body {
    don't inherit `currentColor` so we can't collapse to a single
    variable-driven version cleanly. */
 .home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23086bb3' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='4' ry='4' stroke='%23086bb3' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
 }
 .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23086bb3' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='4' ry='4' stroke='%23086bb3' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .dark .home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%236fb7fb' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='4' ry='4' stroke='%236fb7fb' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .dark .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%236fb7fb' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='4' ry='4' stroke='%236fb7fb' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 
 /* Drag-reorderable starred cards (issue #191): a long-press must
@@ -2051,14 +2058,14 @@ html, body {
   /* Same SVG-outline trick as .home-create-tile above (a data-URL SVG can't
      inherit currentColor, so each colour is its own image) — stepped to the
      neutral hairline so the slot reads as present-but-locked. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='4' ry='4' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .home-create-widget--disabled .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='4' ry='4' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .dark .home-create-widget--disabled .home-create-tile,
 .dark .home-create-widget--disabled .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%232e2e50' stroke-opacity='0.95' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='4' ry='4' stroke='%232e2e50' stroke-opacity='0.95' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .home-create-widget--disabled .app-icon-tile--empty {
   color: var(--text-faint);

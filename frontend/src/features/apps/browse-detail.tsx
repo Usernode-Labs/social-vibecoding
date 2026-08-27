@@ -82,7 +82,7 @@ function controller(): any {
 }
 
 const NOTE_CLASS = 'px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400';
-const CARD_CLASS = 'mt-5 rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden';
+const CARD_CLASS = 'mt-5 rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 overflow-hidden';
 
 // The inset row hairline, as @/components/ui/grouped-list.tsx draws it: a
 // pseudo-element on every row but the last, starting at the text column rather
@@ -264,7 +264,7 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
       </div>
 
       {view.actions.length ? (
-        <div className="mt-5 rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
+        <div className="mt-5 rounded-sm border border-[var(--frame-line)] bg-white dark:bg-zinc-900 overflow-hidden">
           {view.actions.map((a) => (
             <button
               key={a.index}

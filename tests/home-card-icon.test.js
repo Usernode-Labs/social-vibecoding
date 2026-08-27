@@ -233,8 +233,8 @@ test('the tile hairline steps down to --border in dark mode', () => {
   // silently drift back to a token that no longer reads.
   assert.match(
     css,
-    /\.app-icon-tile \{[^}]*border: 1px solid rgba\(12, 11, 9, 0\.28\);/,
-    'light mode draws the visible ink-alpha hairline'
+    /\.app-icon-tile \{[^}]*border: 1px solid var\(--frame-line\);/,
+    'the tile draws the same frame line every other card surface draws'
   );
   // The widget strip mirrors the pinned homescreen grid, and on a
   // dual-icon shell the widget wears exactly these per-theme faces — so
@@ -506,7 +506,11 @@ test('image icons fill the tile inside its hairline (w-full/h-full)', () => {
   const html = Home.renderAppCard(
     baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) })
   );
-  assert.match(html, /<img[^>]*class="w-full h-full rounded-xl object-cover"/);
+  // rounded-md, tracking the tile that clips it: an <img> rounder than its
+  // own tile leaves the artwork's corners floating inside the frame. The
+  // assertion's point — the image FILLS the tile rather than being inset —
+  // is what w-full/h-full carries, and that is unchanged.
+  assert.match(html, /<img[^>]*class="w-full h-full rounded-md object-cover"/);
   assert.doesNotMatch(html, /<img[^>]*w-14 h-14/,
     'a fixed 56px image would be cropped by the 1px border box');
 });

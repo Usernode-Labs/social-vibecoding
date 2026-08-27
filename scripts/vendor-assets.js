@@ -8,6 +8,8 @@
 //      child apps load instead of cdn.tailwindcss.com.
 //   3. The shell's UI face, Geist, also fetched from a pinned URL into
 //      public/vendor/ — with its OFL licence text beside it.
+//   4. The OpenMoji subset the illustrated icon tier draws from, into
+//      public/vendor/openmoji/ — CC BY-SA 4.0, shipped unmodified.
 //
 //   npm run vendor:assets
 //
@@ -122,6 +124,78 @@ const REMOTE_ASSETS = [
   },
 ];
 
+
+// ── OpenMoji (the illustrated icon tier) ────────────────────────────────
+//
+// App icons are emoji CHARACTERS, and rendering them as text hands the most-
+// looked-at surface in the product to the viewer's platform font: the same
+// app is Apple emoji on macOS, Segoe on Windows, Noto on Android, and on
+// brand nowhere. Serving the glyph fixes that.
+//
+// A SUBSET, not the set. The package ships 11,458 SVGs and an author can pick
+// any emoji, so completeness is not achievable and is not the goal — the
+// renderer falls back to the plain character for anything unvendored, which
+// is exactly the previous behaviour. See frontend/src/lib/openmoji.ts.
+//
+// Digests are NOT pinned per file here, unlike every asset above. Three
+// reasons that is the right call and not laziness: there are ~100 of them and
+// a hand-maintained digest table that large rots; they are static artwork
+// rather than executable code, so a substituted file cannot do anything a
+// wrong picture cannot; and the version in the URL is pinned, which is what
+// stops the set drifting under us. The count and the version ARE asserted.
+const OPENMOJI_VERSION = '17.0.0';
+const OPENMOJI_DIR = path.join(ROOT, 'public', 'vendor', 'openmoji');
+// Kept in step with VENDORED in frontend/src/lib/openmoji.ts —
+// tests/openmoji-subset.test.js fails if the two lists diverge.
+const OPENMOJI_STEMS = [
+  '1F9EA', '1FA90', '1F3D7', '1F524', '1F319', '1F9FE', '1F4CD',
+  '1F680', '2728', '1F4A1', '1F4CA', '1F4C8', '1F4DD', '1F4C5', '1F4CB',
+  '1F3AF', '1F3AE', '1F3B2', '1F3B5', '1F3A8', '1F4F7', '1F4F1', '1F4BB',
+  '1F5A5', '2699', '1F527', '1F528', '1F9F0', '1F50D', '1F513',
+  '1F512', '1F4E6', '1F6D2', '1F4B0', '1F4B3', '1F3E0', '1F3E2', '1F5FA',
+  '1F30D', '1F326', '2600', '1F331', '1F333', '1F340', '1F41B',
+  '1F436', '1F431', '1F418', '1F984', '1F995', '2764', '2B50', '1F31F',
+  '26A1', '1F525', '1F3C6', '1F947', '1F393', '1F4DA', '1F4D6', '270F',
+  '1F58A', '1F4CE', '1F517', '1F5D3', '23F0', '231A', '1F553',
+  '1F4AC', '1F4E3', '1F514', '1F4EC', '2709', '1F310', '1F6F0',
+  '1F52C', '1F52D', '1F9EC', '1F9E0', '1F916', '1F47E', '1F3AA', '1F3AD',
+  '1F3B8', '1F3BA', '1F374', '2615', '1F355', '1F34E', '1F95A', '1F9C1',
+  '1F6B2', '2708', '1F697', '1F686', '26F5', '1F3D5', '1F3D6',
+  '26F0', '1F30A', '1F3C3', '1F9D8', '1F3CB', '26BD', '1F3C0',
+];
+
+async function fetchOpenmoji() {
+  fs.mkdirSync(OPENMOJI_DIR, { recursive: true });
+  let bytes = 0;
+  const missing = [];
+  for (const stem of OPENMOJI_STEMS) {
+    const url = `https://cdn.jsdelivr.net/npm/openmoji@${OPENMOJI_VERSION}/color/svg/${stem}.svg`;
+    let res;
+    try {
+      res = await fetch(url, { redirect: 'follow' });
+    } catch (err) {
+      return fail(`could not fetch ${url} (${err.message}). This step needs network access.`);
+    }
+    // A 404 is a BAD STEM, not a soft miss: the list is hand-maintained, and a
+    // typo would otherwise ship a renderer pointing at a file that does not
+    // exist. Collect them all so one run names every bad entry.
+    if (res.status === 404) { missing.push(stem); continue; }
+    if (!res.ok) fail(`${url} returned HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    fs.writeFileSync(path.join(OPENMOJI_DIR, `${stem}.svg`), buf);
+    bytes += buf.length;
+  }
+  if (missing.length) {
+    fail(`OpenMoji has no artwork for: ${missing.join(', ')}. `
+      + 'Fix the stem in OPENMOJI_STEMS (and in frontend/src/lib/openmoji.ts) '
+      + 'rather than deleting it silently — a stem in the manifest that is not '
+      + 'on disk renders a broken image, which is worse than the text fallback.');
+  }
+  console.log(`[vendor-assets] OpenMoji ${OPENMOJI_VERSION} → public/vendor/openmoji/ `
+    + `(${OPENMOJI_STEMS.length} icons, ${(bytes / 1024).toFixed(1)} KB)`);
+  return { count: OPENMOJI_STEMS.length, bytes };
+}
+
 function fail(message) {
   console.error(`[vendor-assets] ${message}`);
   process.exit(1);
@@ -198,6 +272,8 @@ for (const asset of REMOTE_ASSETS) remoteRows.push(await fetchRemote(asset));
 // platform serves to child apps, and the shell's own UI font — so they get
 // their own README sections rather than one table under prose that only
 // describes Tailwind.
+const openmoji = await fetchOpenmoji();
+
 const tailwindRows = remoteRows.filter((r) => r.section === 'tailwind');
 const fontRows = remoteRows.filter((r) => r.section === 'font');
 
@@ -262,6 +338,44 @@ ${fontRows.map((r) => `- **${r.rel}** — ${r.purpose}`).join('\n')}
 The licence file is the one thing in this directory the browser never
 requests. It ships because the SIL OFL requires the licence to be
 distributed with the font — do not delete it as unused.
+
+## The illustrated icon tier (OpenMoji)
+
+\`public/vendor/openmoji/\` — \${openmoji.count} SVG icons, \${(openmoji.bytes / 1024).toFixed(1)} KB, from
+\`openmoji@\${OPENMOJI_VERSION}\` at a version-pinned jsdelivr path.
+
+**All emojis designed by [OpenMoji](https://openmoji.org/) — the open-source
+emoji and icon project. License: [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).**
+
+That credit line is a licence obligation, not a courtesy. Two things follow
+from CC BY-SA that a future change must not quietly break:
+
+1. The attribution has to remain somewhere a reader can find it.
+2. Any icon we **modify** must itself be distributed under CC BY-SA 4.0. We
+   ship them unmodified, which keeps the obligation to (1) alone — recolouring
+   one to the brand palette would change that.
+
+Share-alike binds derivatives of the ARTWORK, not the application that renders
+it, so this does not affect the licence of the shell.
+
+### Why a subset
+
+The package ships 11,458 SVGs. Vendoring all of them would put ~12 MB of
+artwork in the image to serve a handful of glyphs, and an app author can pick
+any emoji, so no subset is ever complete. That is why the renderer
+(\`frontend/src/lib/openmoji.ts\`) falls back to the plain text character for
+anything unvendored: a miss is exactly the behaviour the shell had before,
+never a broken image.
+
+Icons are served rather than typed because \`apps.icon_emoji\` is a CHARACTER,
+and a character is painted by the viewer's own platform font — the same app
+was Apple emoji on macOS, Segoe on Windows and Noto on Android. The launcher
+now looks the same everywhere.
+
+Filenames are OpenMoji's own codepoint stems, and the one trap is that OpenMoji
+**drops** U+FE0F (🏗️ is \`1F3D7.svg\`) while **keeping** ZWJ (👩‍💻 is
+\`1F469-200D-1F4BB.svg\`). \`tests/openmoji-subset.test.js\` pins both halves,
+and the vendor step fails loudly on a stem with no artwork.
 
 ## Centrally-hosted Tailwind runtime (served to child apps)
 

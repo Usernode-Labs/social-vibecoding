@@ -1879,7 +1879,7 @@ const App = {
         if (nameEl) nameEl.textContent = data.newName;
         // Only letter-fallback tiles track the name; a custom icon
         // (emoji/image from dapp.json) must not be clobbered by a rename.
-        const avatar = card.querySelector('[data-icon]') || card.querySelector('div.rounded-xl');
+        const avatar = card.querySelector('[data-icon]') || card.querySelector('div.app-icon-tile');
         if (avatar && (avatar.dataset?.icon || 'letter') === 'letter') {
           avatar.textContent = (data.newName || '?').charAt(0).toUpperCase();
         }

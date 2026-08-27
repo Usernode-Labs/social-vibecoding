@@ -80,7 +80,10 @@ test('the feed draws CARDS, and nothing strips the shared tile treatment', () =>
   // board and the feed read it. Since the widget language landed (#1191) the
   // tile is drawn by SURFACE rather than by hairline — a white card on the
   // grey page ground, with the corner carrying the shape the border used to.
-  assert.match(APP_VIEW, /DEV_CARD_CLS: '[^']*rounded-2xl[^']*bg-white[^']*'/,
+  // The tile is drawn by surface AND rule now: the WeOS pass frames every
+  // card, so the shared class carries the frame as well as the fill. The
+  // "both surfaces read it" invariant this asserts is unchanged.
+  assert.match(APP_VIEW, /DEV_CARD_CLS: '[^']*rounded-sm[^']*var\(--frame-line\)[^']*bg-white[^']*'/,
     'DEV_CARD_CLS draws the tile both surfaces use');
   // Cards need a gap where the stream had a separator.
   assert.match(CSS, /#dev-feed \.dev-feed-entry \+ \.dev-feed-entry \{[^}]*margin-top:\s*0\.5rem/,

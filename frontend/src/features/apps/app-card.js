@@ -63,7 +63,7 @@ export function iconTileFor(app) {
       // w-full/h-full (not w-14/h-14): the tile draws a 1px hairline border,
       // so the image fills the border box's *content* area and stays flush
       // inside the ring instead of being cropped.
-      html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-xl object-cover">`,
+      html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-md object-cover">`,
     };
   }
   if (app.icon_emoji) {

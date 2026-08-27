@@ -19,6 +19,8 @@ import type { ReactNode } from 'react';
 
 import { Glyph } from '@/components/ui/icons';
 
+import { openmojiUrl } from '../../lib/openmoji';
+
 import {
   appPillsFor,
   iconViewFor,
@@ -28,6 +30,39 @@ import {
 } from './app-card.js';
 
 type AppRecord = Record<string, any>;
+
+/**
+ * The emoji identity mark — OpenMoji where vendored, the plain character where
+ * not. ONE definition, because it was two: the launcher grid kept its own copy
+ * of this branch, so the platform-font drift this fixes would have survived on
+ * the single most-looked-at surface in the product.
+ *
+ * `size` is the text-size class the fallback `<span>` uses; the <img> sizes
+ * itself to the tile at 88% (see the note below), so callers pass the class
+ * they already had.
+ */
+export function EmojiMark({ emoji, size = 'text-3xl' }: { emoji: string; size?: string }): ReactNode {
+  // 88% (not 100%) because OpenMoji's artboard has less internal padding than
+  // a system emoji's em-box: at full bleed the artwork touches the tile's
+  // hairline, where the text glyph it replaces sat visually inset.
+  //
+  // The <span> is NOT a degraded path — it is exactly what this rendered
+  // before, so an unvendored pick is the status quo rather than a broken
+  // image. See lib/openmoji.ts.
+  const src = openmojiUrl(emoji);
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        draggable="false"
+        className="w-[88%] h-[88%] object-contain"
+      />
+    );
+  }
+  return <span className={`${size} leading-none`} aria-hidden="true">{emoji}</span>;
+}
 
 /**
  * The tile's inner markup. Carries no sizing of its own except the emoji's
@@ -47,12 +82,12 @@ export function AppIconContent({ app }: { app: AppRecord }): ReactNode {
         alt=""
         loading="lazy"
         draggable="false"
-        className="w-full h-full rounded-xl object-cover"
+        className="w-full h-full rounded-md object-cover"
       />
     );
   }
   if (icon.kind === 'emoji') {
-    return <span className="text-3xl leading-none" aria-hidden="true">{icon.emoji}</span>;
+    return <EmojiMark emoji={icon.emoji} />;
   }
   return icon.letter;
 }

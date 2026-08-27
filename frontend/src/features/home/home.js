@@ -2854,7 +2854,7 @@ const Home = {
       if (!ctx) return null;
       const stroke = 2;
       const inset = stroke / 2;
-      const radius = Math.round(size * (12 / 56)); // rounded-xl at 56px
+      const radius = Math.round(size * (6 / 56)); // rounded-md at 56px
       const box = size - stroke;
       if (ctx.roundRect) {
         ctx.beginPath();

@@ -37,6 +37,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
 
+import { EmojiMark } from '../apps/app-card-view';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
@@ -146,7 +147,7 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
   return (
     <div
       className={
-        'app-card relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 cursor-pointer' +
+        'app-card relative rounded-sm transition-colors p-3 flex flex-col items-center text-center gap-1.5 cursor-pointer' +
         // `grayscale` alone, where this was `opacity-50 grayscale`. Opacity
         // composites toward whatever is behind, so it fades on the light page
         // and muddies on the dark one; draining the colour reads the same on
@@ -160,7 +161,7 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
       <div className="relative w-14 h-14 shrink-0">
         {app.icon_url ? (
           <div
-            className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            className="app-icon-tile w-14 h-14 rounded-md overflow-hidden flex items-center justify-center font-bold text-xl"
             data-icon="image"
           >
             <img
@@ -168,21 +169,19 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
               alt=""
               loading="lazy"
               draggable={false}
-              className="w-full h-full rounded-xl object-cover"
+              className="w-full h-full rounded-md object-cover"
             />
           </div>
         ) : app.icon_emoji ? (
           <div
-            className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            className="app-icon-tile w-14 h-14 rounded-md overflow-hidden flex items-center justify-center font-bold text-xl"
             data-icon="emoji"
           >
-            <span className="text-3xl leading-none" aria-hidden="true">
-              {app.icon_emoji}
-            </span>
+            <EmojiMark emoji={app.icon_emoji} />
           </div>
         ) : (
           <div
-            className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
+            className="app-icon-tile w-14 h-14 rounded-md overflow-hidden flex items-center justify-center font-bold text-xl"
             data-icon="letter"
           >
             {(app.name || '?').charAt(0).toUpperCase()}

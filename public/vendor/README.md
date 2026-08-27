@@ -66,6 +66,44 @@ The licence file is the one thing in this directory the browser never
 requests. It ships because the SIL OFL requires the licence to be
 distributed with the font — do not delete it as unused.
 
+## The illustrated icon tier (OpenMoji)
+
+`public/vendor/openmoji/` — ${openmoji.count} SVG icons, ${(openmoji.bytes / 1024).toFixed(1)} KB, from
+`openmoji@${OPENMOJI_VERSION}` at a version-pinned jsdelivr path.
+
+**All emojis designed by [OpenMoji](https://openmoji.org/) — the open-source
+emoji and icon project. License: [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).**
+
+That credit line is a licence obligation, not a courtesy. Two things follow
+from CC BY-SA that a future change must not quietly break:
+
+1. The attribution has to remain somewhere a reader can find it.
+2. Any icon we **modify** must itself be distributed under CC BY-SA 4.0. We
+   ship them unmodified, which keeps the obligation to (1) alone — recolouring
+   one to the brand palette would change that.
+
+Share-alike binds derivatives of the ARTWORK, not the application that renders
+it, so this does not affect the licence of the shell.
+
+### Why a subset
+
+The package ships 11,458 SVGs. Vendoring all of them would put ~12 MB of
+artwork in the image to serve a handful of glyphs, and an app author can pick
+any emoji, so no subset is ever complete. That is why the renderer
+(`frontend/src/lib/openmoji.ts`) falls back to the plain text character for
+anything unvendored: a miss is exactly the behaviour the shell had before,
+never a broken image.
+
+Icons are served rather than typed because `apps.icon_emoji` is a CHARACTER,
+and a character is painted by the viewer's own platform font — the same app
+was Apple emoji on macOS, Segoe on Windows and Noto on Android. The launcher
+now looks the same everywhere.
+
+Filenames are OpenMoji's own codepoint stems, and the one trap is that OpenMoji
+**drops** U+FE0F (🏗️ is `1F3D7.svg`) while **keeping** ZWJ (👩‍💻 is
+`1F469-200D-1F4BB.svg`). `tests/openmoji-subset.test.js` pins both halves,
+and the vendor step fails loudly on a stem with no artwork.
+
 ## Centrally-hosted Tailwind runtime (served to child apps)
 
 Not under `public/vendor/` — it lives at a versioned path modelled on
