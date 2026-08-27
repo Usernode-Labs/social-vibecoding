@@ -1,10 +1,12 @@
 // Route tests for the staging (?demo=1) session-notification mocks and
 // the kind-scoped mark-all on POST /api/notifications/read.
 //
-// GET /api/notifications?demo=1 in staging injects six unread mock rows
+// GET /api/notifications?demo=1 in staging injects seven unread mock rows
 // — one per session-related kind (session_done / auto_solve_done /
 // stale_pr / check_failed), a second session_done covering the #971
-// untitled tail of the label ladder, and a `conversation_message` — so
+// untitled tail of the label ladder, and a consecutive PAIR of
+// `conversation_message` rows in one conversation (which the sheet collapses
+// into a single counted row) — so
 // the green session badge, the bell's EXCLUSION of the session kinds from
 // its own count, and the message notifications it DOES count are all
 // reviewable in a staging preview. Per the "Staging
@@ -92,7 +94,7 @@ function startServer(mod) {
 
 const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_failed'];
 
-test('staging + ?demo=1: seven mock rows prepend, and only the unread ones bump unread', async () => {
+test('staging + ?demo=1: eight mock rows prepend, and only the unread ones bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -102,7 +104,7 @@ test('staging + ?demo=1: seven mock rows prepend, and only the unread ones bump 
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 7, 'exactly seven mock rows injected');
+    assert.equal(mocks.length, 8, 'exactly eight mock rows injected');
     assert.deepEqual(
       [...new Set(mocks.map((n) => n.kind))].sort(),
       [...SESSION_KINDS, 'conversation_message'].sort(),
@@ -116,9 +118,23 @@ test('staging + ?demo=1: seven mock rows prepend, and only the unread ones bump 
     // and lists them: a staging clone has no conversations (the tables are
     // staging:private), so without it a preview shows the sheet with no
     // message in it. It leads the list, which is what the screenshots catch.
-    const conversationMock = mocks.find((n) => n.kind === 'conversation_message');
-    assert.ok(conversationMock, 'a message notification is injected');
-    assert.equal(mocks[0].id, conversationMock.id, 'and it is the newest of the set');
+    const conversationMocks = mocks.filter((n) => n.kind === 'conversation_message');
+    assert.equal(conversationMocks.length, 2,
+      'TWO of them, so a preview can show a collapsed run and not just one row');
+    const conversationMock = conversationMocks[0];
+    assert.equal(mocks[0].id, conversationMock.id, 'and they lead the set');
+    // Adjacent, and in one conversation: that is what collapses them into a
+    // single row carrying a count. Split them with any other row and the
+    // preview shows two ordinary rows instead.
+    assert.equal(mocks[1].id, conversationMocks[1].id, 'the pair is consecutive');
+    assert.equal(
+      conversationMocks[0].conversationId, conversationMocks[1].conversationId,
+      'and both sit in the same conversation',
+    );
+    assert.ok(
+      Date.parse(conversationMocks[0].createdAt) > Date.parse(conversationMocks[1].createdAt),
+      'newest first, like the feed they are prepended to',
+    );
     assert.equal(conversationMock.appSlug, null,
       'a conversation row carries no app attribution — serialize fails that shape closed');
     assert.match(conversationMock.conversationTitle, /^\[Mock\]/);
@@ -129,8 +145,8 @@ test('staging + ?demo=1: seven mock rows prepend, and only the unread ones bump 
     // "See more notifications" button: without it the button does not
     // render at all and the caught-up state is unreachable, so the two things
     // a reviewer is asked to look at are both invisible.
-    assert.equal(mocks.filter((n) => !n.readAt).length, 6,
-      'six unread rows feed the badges');
+    assert.equal(mocks.filter((n) => !n.readAt).length, 7,
+      'seven unread rows feed the badges');
     const readMocks = mocks.filter((n) => n.readAt);
     assert.equal(readMocks.length, 1, 'exactly one already-read row');
     assert.match(readMocks[0].sessionTitle, /\[Mock\]/,
@@ -149,7 +165,7 @@ test('staging + ?demo=1: seven mock rows prepend, and only the unread ones bump 
     // seven would claim the read row as unread — inflating the badge by one
     // and leaving "Mark all read" enabled with nothing left to mark.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
-    assert.equal(body.unread, 2 + 6);
+    assert.equal(body.unread, 2 + 7);
   } finally {
     server.close();
   }
@@ -193,7 +209,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 7);
+  assert.equal(rows.length, 8);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     // `readAt` is null on every row EXCEPT the one that exists to be read —
@@ -214,6 +230,8 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   // the sender, the conversation's title, and the snippet under it.
   const conversation = rows.find((r) => r.kind === 'conversation_message');
   assert.ok(conversation, 'a message notification is among the mocks');
+  assert.equal(rows.filter((r) => r.kind === 'conversation_message').length, 2,
+    'a PAIR, so the collapsed-run row has something to collapse');
   assert.equal(conversation.readAt, null, 'it is unread, so the bell counts it');
   assert.match(conversation.sourceUsername, /staging-demo/, 'an obviously-fake sender');
   assert.match(conversation.conversationTitle, /^\[Mock\]/);

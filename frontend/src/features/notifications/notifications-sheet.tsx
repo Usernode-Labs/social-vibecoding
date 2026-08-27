@@ -1,9 +1,24 @@
 /**
  * The Notifications SHEET (#notifications-sheet) — Streamlined Concept.
  *
- * All | Unread tabs, TODAY / EARLIER sections, one row per notification with
- * an avatar-initial chip, the source app + relative time as the subtitle, an
- * unread dot and a trailing chevron.
+ * All | Unread | Messages tabs, TODAY / EARLIER sections, one row per
+ * notification with an avatar-initial chip, the source app + relative time as
+ * the subtitle, an unread dot and a trailing chevron.
+ *
+ * ── Messages, and why it has a tab of its own ──────────────────────────
+ *
+ * A message notification is one row in a flat chronological list that also
+ * carries every session completion, proposal nudge and kudos on a busy
+ * account, so it sinks within hours — and it is the one kind you ANSWER
+ * rather than just read. The tab is the place to catch up on conversations
+ * whatever the rest of the feed is doing, and it carries the way out of the
+ * sheet: `#notifications-all-messages` opens the same #messages screen the
+ * app chip's Messages row does.
+ *
+ * The rows on it are already collapsed per conversation — a run of
+ * consecutive same-conversation notifications renders as one row with a
+ * count, see collapseConversationRuns in ./notifications.js — so a friend
+ * sending four lines is one entry here, not four.
  *
  * ── It was a screen, and a screen needed a back button ─────────────────
  *
@@ -33,8 +48,9 @@
 
 import { useState, type ReactNode } from 'react';
 
-import { ChevronRightIcon, XIcon } from '@/components/ui/icons';
+import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
 import { notificationsSheetStore } from './notifications-sheet-store.js';
@@ -46,7 +62,18 @@ type ScreenRowView = NotificationRowView & {
   createdAtMs: number;
   who: string;
   appLine: string;
+  /** Set on a conversation row — what the Messages tab filters on. */
+  conversation?: boolean;
+  conversationId?: number | null;
+  /**
+   * How many notifications this row stands for. Present only on a genuine
+   * collapse (a run of consecutive same-conversation rows, see
+   * collapseConversationRuns in ./notifications.js); absent means one.
+   */
+  count?: number;
 };
+
+type Tab = 'all' | 'unread' | 'messages';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Notifications : null) || null;
@@ -112,6 +139,24 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
           {`${view.appLine} · ${view.time}`}
         </span>
       </span>
+      {/*
+          A collapsed conversation run says how many it stands for. Only ever
+          rendered above 1, so an ordinary row is unchanged — and it is a
+          COUNT, not an alerting badge: it sits in the row's own ink when the
+          run is read, violet only while it is still waiting on you.
+      */}
+      {view.count && view.count > 1 ? (
+        <span
+          className={'shrink-0 min-w-[1.25rem] px-1.5 h-5 rounded-full text-[0.65rem] font-semibold '
+            + 'flex items-center justify-center '
+            + (view.unread
+              ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400'
+              : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400')}
+          aria-label={`${view.count} notifications`}
+        >
+          {view.count > 99 ? '99+' : view.count}
+        </span>
+      ) : null}
       {view.unread ? (
         <span className="w-2 h-2 shrink-0 rounded-full bg-violet-500" aria-label="Unread">
         </span>
@@ -132,11 +177,33 @@ export function NotificationsSheetView() {
     screenCanLoadMore?: boolean;
     loadingMore: boolean;
   };
-  const [tab, setTab] = useState<'all' | 'unread'>('all');
+  const [tab, setTab] = useState<Tab>('all');
+
+  // `?shot=notifications-messages` lands on the Messages tab, so the capture
+  // pipeline and the declared checks can reach a view that is otherwise only
+  // one click away and therefore invisible to both.
+  //
+  // In an effect and not in the initial state, for the reason every deep link
+  // in this bundle is: the SSG pass renders this island in Node, where there
+  // is no `location` and the prerendered markup has to match the client's
+  // first pass byte for byte. Reading it during render would mismatch on
+  // hydration, and a console error on any route fails proposal checks.
+  useIsomorphicLayoutEffect(() => {
+    let shot: string | null = null;
+    try { shot = new URLSearchParams(window.location.search).get('shot'); }
+    catch { shot = null; }
+    if (shot === 'notifications-messages') setTab('messages');
+  }, []);
 
   const all = snap.screenList || [];
   const unread = all.filter((view) => view.unread);
-  const rows = tab === 'unread' ? unread : all;
+  const messages = all.filter((view) => view.conversation);
+  const rows = tab === 'unread' ? unread : tab === 'messages' ? messages : all;
+  // The tab counts NOTIFICATIONS, not rows. A collapsed conversation row
+  // stands for `count` of them, so summing is what keeps this number equal to
+  // the one on the bell — after collapsing, `unread.length` would say 1 where
+  // the badge says 4.
+  const unreadCount = unread.reduce((sum, view) => sum + (view.count || 1), 0);
   const boundary = startOfToday();
   const today = rows.filter((view) => view.createdAtMs >= boundary);
   const earlier = rows.filter((view) => view.createdAtMs < boundary);
@@ -187,7 +254,23 @@ export function NotificationsSheetView() {
           className={tabCls(tab === 'unread')}
           onClick={() => setTab('unread')}
         >
-          {unread.length ? `Unread (${unread.length})` : 'Unread'}
+          {unreadCount ? `Unread (${unreadCount})` : 'Unread'}
+        </button>
+        {/*
+            Messages. One place to catch up on conversations regardless of how
+            busy the rest of the feed is: a message sinks fast in a flat
+            chronological list that also carries every session, proposal and
+            kudos notification, and it is the one kind you answer rather than
+            just read.
+        */}
+        <button
+          id="notifications-tab-messages"
+          role="tab"
+          aria-selected={tab === 'messages'}
+          className={tabCls(tab === 'messages')}
+          onClick={() => setTab('messages')}
+        >
+          Messages
         </button>
         <span className="flex-1">
         </span>
@@ -221,7 +304,44 @@ export function NotificationsSheetView() {
           Above the tab sections deliberately: an invite is actionable on
           either tab, and a save has no read state to filter by.
       */}
-      <NotificationsPinnedSections />
+      {/*
+          The Messages tab is a messages-only view, so Saved and Invites step
+          aside on it — they are neither, and between them they can hold the
+          top ~384px of the sheet (each is `max-h-48`), which is most of a
+          phone's first screen.
+          
+          In their place, the way OUT: this tab lists the conversations that
+          pinged you, and the next thing you want is the rest of them. It goes
+          to the same #messages screen the app chip's Messages row does — one
+          destination, reached from either place — and dismisses the sheet
+          first, because on touch it is a modal kit sheet that would otherwise
+          cover the screen it just sent you to (the contract _onItemClick
+          follows for every row that routes).
+      */}
+      {tab === 'messages' ? (
+        <button
+          id="notifications-all-messages"
+          type="button"
+          className={'w-full text-left px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 '
+            + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors flex items-center gap-3 '
+            + 'text-sm font-medium text-violet-600 dark:text-violet-400'}
+          onClick={(event) => {
+            event.stopPropagation();
+            NotificationsSheet.close();
+            const bridge = (window as any).UsernodeReact?.messages;
+            if (bridge?.open) bridge.open();
+            else window.location.hash = '#messages';
+          }}
+        >
+          <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
+          <span className="flex-1 min-w-0">
+            All messages
+          </span>
+          <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
+        </button>
+      ) : (
+        <NotificationsPinnedSections />
+      )}
       {today.length ? (
         <>
           <SectionHead>

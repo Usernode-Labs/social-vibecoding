@@ -366,12 +366,19 @@ const Notifications = {
   // mock rows to render. Once per page load — reopening after a manual
   // dismiss would fight the user, and refresh() runs again on live events.
   //
+  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB. That tab is
+  // React state inside the sheet, so without a URL that reaches it neither the
+  // capture pipeline nor a declared check could see the tab, its collapsed
+  // conversation rows, or its "All messages" entry — the platform's own rule
+  // for a screen that is otherwise only reachable by clicking. The sheet reads
+  // the same parameter for the tab; this only has to open it.
+  //
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'notifications') return;
+    if (shot !== 'notifications' && shot !== 'notifications-messages') return;
     Notifications._shotOpened = true;
     // The list is the Notifications SHEET now (Streamlined Concept), so the
     // deep link resolves a screen underneath and presents over it rather
@@ -1019,7 +1026,7 @@ const Notifications = {
         // The full screen shows read rows regardless of the drawer's
         // showOlder reveal, so its list maps ALL items even when the
         // drawer's own list is empty (Streamlined Concept).
-        screenList: Notifications.items.map(rowView),
+        screenList: screenViews(Notifications.items),
         // `empty` is still the ORIGINAL "you have never had a notification"
         // hint, so it now also requires that there be no older ones to
         // reveal — otherwise a fully-read drawer would claim nothing had
@@ -1048,7 +1055,7 @@ const Notifications = {
     // used to float to the top of the grouped list; see PRIORITY_KINDS.)
     store.set({
       list: Notifications._bellItems().map(rowView),
-      screenList: Notifications.items.map(rowView),
+      screenList: screenViews(Notifications.items),
       empty: false,
       caughtUp: false,
       olderCount,
@@ -1221,6 +1228,48 @@ function completionAlertInfo(n) {
 }
 
 
+// Consecutive notifications from ONE conversation, as a single row.
+//
+// A message notification is created per member PER MESSAGE (sendMessage in
+// services/conversations.js), so a friend sending four lines puts four
+// near-identical rows in the sheet and buries everything else under them.
+// The per-conversation count was the one thing the retired Messages tag did
+// better than the bell, and this is where it comes back: the run collapses to
+// its newest row carrying `count`, so a thread reads as one thing.
+//
+// CONSECUTIVE, not "all rows for this conversation". The feed is newest-first
+// chronological and the collapsed row sits exactly where its newest member
+// sat, so nothing reorders and nothing jumps a section boundary. Two bursts
+// with other notifications between them stay two rows, which is honest: they
+// happened at different times, and merging them would date the older one
+// wrongly.
+//
+// The read state has to match too. A run is entirely unread or entirely read,
+// which is what lets the sheet's Unread tab filter whole rows without ever
+// hiding an unread message inside a row it counted as read.
+function collapseConversationRuns(items) {
+  const runs = [];
+  for (const n of items) {
+    const prev = runs[runs.length - 1];
+    const id = n && n.conversationId != null ? Number(n.conversationId) : null;
+    if (prev && id !== null && prev.conversationId === id
+        && prev.read === !!n.readAt) {
+      prev.count += 1;
+      continue;
+    }
+    runs.push({ item: n, conversationId: id, read: !!(n && n.readAt), count: 1 });
+  }
+  return runs;
+}
+
+// The sheet's rows: one descriptor per run. `count` rides only on a genuine
+// collapse, so a lone notification's view is byte-identical to what it was.
+function screenViews(items) {
+  return collapseConversationRuns(items).map((run) => (
+    run.count > 1 ? { ...rowView(run.item), count: run.count } : rowView(run.item)
+  ));
+}
+
 // One notification row, as data. It has ONE renderer again — NotificationRow in
 // ./notifications-list.tsx — which both drawers use: the bell's own list, and
 // the cog drawer's pinned "Needs attention" section, which reaches this builder
@@ -1283,6 +1332,12 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon,
+      // What the sheet's Messages tab filters on. Carried as a flag rather
+      // than re-deriving it there from `kind`: CONVERSATION_NOTIF_KINDS lives
+      // in this module and the tab must never drift from the set the rest of
+      // the routing, grouping and copy already agree on.
+      conversation: true,
+      conversationId: n.conversationId != null ? Number(n.conversationId) : null,
       // A conversation row names MESSAGES as its source, not "app".
       //
       // `appLine` is the sheet's secondary line — "<where this came from> ·

@@ -66,6 +66,26 @@ function stagingMockNotifications() {
       sessionId: null, sessionTitle: null,
       prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
+    // ...and its predecessor in the SAME conversation, one minute older and
+    // adjacent to it in this list. That adjacency is the point: a run of
+    // consecutive same-conversation rows collapses to one row carrying a
+    // count (collapseConversationRuns in the notifications module), which is
+    // the behaviour a preview has to be able to show. One demo message would
+    // render an ordinary uncollapsed row and prove nothing.
+    {
+      ...base,
+      id: 990208, kind: 'conversation_message',
+      createdAt: new Date(now - 3 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      sourceUsername: 'staging-demo-user',
+      conversationId: 990401,
+      conversationKind: 'direct',
+      conversationTitle: '[Mock] Staging demo conversation',
+      conversationMessageId: 990502,
+      messageContent: '[Mock] Ping - are you around?',
+      sessionId: null, sessionTitle: null,
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     // #971: the issue's exact case — a session that finished BEFORE it was
     // promoted, so it has a session title but no PR title. The row must show
     // the title, never the `dev/…` branch name beside it.
