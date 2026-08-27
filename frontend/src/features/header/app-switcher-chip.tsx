@@ -54,6 +54,32 @@
  * chip names the APP you are in, and a picture of you inside it was answering
  * a different question. Profile is a row of the menu behind it.
  *
+ * ── The subtitle, and the 28px it has to live inside ───────────────────
+ *
+ * A destination INSIDE an app (the Board, Activity) publishes a subtitle
+ * rather than overwriting the title: the chip keeps naming the app and the
+ * subtitle says which part of it. Before this, tapping through to a board
+ * replaced "Notes" with "Board", so the one control that exists to say where
+ * you are stopped saying the largest part of it — and the app's name was then
+ * available nowhere on the screen.
+ *
+ * Stacking two lines inside the 28px content row is the whole constraint. The
+ * row is pinned from both directions by tests/header-height-parity.test.js,
+ * and growing it is the #909 regression that file exists to catch: the bar
+ * would jump every time you entered or left a board. So the two lines are
+ * sized to fit rather than the box grown to hold them —
+ * `text-sm` (14px) + `mt-0.5` (2px) + `text-[0.625rem]` (10px) = 26px inside
+ * the 28px chip. `leading-none` is on EACH line, not just the column: the
+ * Tailwind text-* scale ships a line-height with every step (`text-sm` is
+ * 14px/20px), and a line-height on the child wins over one inherited from the
+ * column — with it left to inherit, the two lines measured 32px and spilled
+ * out of the pill they are supposed to sit inside.
+ *
+ * The name drops 16px → 14px ONLY when there is a subtitle. Unsubtitled — Home,
+ * Discover, Messages, Settings, an app's own screen — it inherits the h1's
+ * `text-base` exactly as it always has, so the four screens out of five that
+ * have no subtitle are pixel-for-pixel what #1443 shipped.
+ *
  * ── A session has no chip ──────────────────────────────────────────────
  *
  * On a dev session the bar is ← + status on the left and the doing/seeing
@@ -72,7 +98,7 @@ import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from '../app-context/app-context-store.js';
 
 export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
-  const { text } = useStoreState(headerTitleStore);
+  const { text, subtitle } = useStoreState(headerTitleStore);
   const { tab, subTab } = useStoreState(improveStore);
   // The trigger reports its surface's state, which is #improve-btn's own
   // convention for the other panel in this bar. Read from the store rather
@@ -98,13 +124,27 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
             + 'dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700'}
           aria-haspopup="dialog"
           aria-expanded={open ? 'true' : 'false'}
-          aria-label={`${text}: open the menu`}
+          aria-label={subtitle ? `${text}, ${subtitle}: open the menu` : `${text}: open the menu`}
           onClick={() => (window as unknown as {
             AppContext?: { toggle?: () => void };
           }).AppContext?.toggle?.()}
         >
-          <span id="app-switcher-name" className="truncate">
-            {text}
+          <span className="min-w-0 flex flex-col items-start justify-center leading-none">
+            <span
+              id="app-switcher-name"
+              className={'max-w-full truncate' + (subtitle ? ' text-sm leading-none' : '')}
+            >
+              {text}
+            </span>
+            {subtitle ? (
+              <span
+                id="app-switcher-subtitle"
+                className="max-w-full truncate mt-0.5 text-[0.625rem] leading-none font-medium
+                           text-zinc-500 dark:text-zinc-400"
+              >
+                {subtitle}
+              </span>
+            ) : null}
           </span>
           <ChevronDownIcon className="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
         </button>

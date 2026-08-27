@@ -46,6 +46,8 @@ const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
 const CHAT_FRAME = read('frontend/src/features/dev-board/chat-frame.tsx');
 const SESSION_FRAME = read('frontend/src/features/dev-board/session-frame.tsx');
 const STORE = read('frontend/src/features/dev-board/view-mode-store.ts');
+// The Kanban|Feed control lives here now, not in the board frame.
+const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
 // Streamlined Concept: the Board draws its own Kanban|Feed control now,
 // inside the frame itself — there is no separate toggle module to read.
 const MAIN = read('frontend/src/main.tsx');
@@ -328,9 +330,13 @@ test('the view toggle is real React state, and the className writer is gone', ()
     '_setViewMode publishes the new mode');
   assert.match(STORE, /useSyncExternalStore\(subscribe, getSnapshot/,
     'the frame subscribes through useSyncExternalStore');
-  // Streamlined Concept: the Board draws its own Kanban|Feed control again
-  // (see BoardViewToggle in the frame), so the FRAME is the store's reader.
-  assert.match(FRAME, /useDevViewMode\(\)/, 'the board control reads the store');
+  // The control moved to the Improve panel's Board row, so the PANEL is the
+  // store's reader now and the frame draws no view control at all. The store
+  // itself is unchanged — which is the point of asserting both halves here.
+  assert.match(PANEL, /useDevViewMode\(\)/, 'the layout control reads the store');
+  assert.ok(!/useDevViewMode\(\)/.test(FRAME), 'the frame reads no view mode');
+  assert.ok(!FRAME.includes('id="dev-view-toggle"'),
+    'the Board draws no view tab strip above its cards');
   // The click still runs the module's behaviour, unchanged.
   assert.match(APP_VIEW, /_selectViewMode\(v\) \{/, 'the click handler lives in the module');
   assert.match(APP_VIEW, /AppView\._setViewMode\(mode\);\s*\n\s*\/\/[^\n]*\n\s*AppView\._repaintDevBody\(\);/,
@@ -344,11 +350,14 @@ test('the view toggle is real React state, and the className writer is gone', ()
     assert.ok(!FRAME.includes(`id: '${id}'`) && !FRAME.includes(`id="${id}"`),
       `${id} was retired with the dev-screen tab strip`);
   }
-  // The control is still a tablist reflecting the live mode, so the active
-  // view reaches the a11y tree exactly as the strip did.
-  assert.match(FRAME, /role="tablist"/, 'the board control is a tablist');
-  assert.match(FRAME, /aria-selected=\{mode === '(feed|kanban)' \? 'true' : 'false'\}/,
-    'aria-selected reflects the active segment');
+  // The control still reports the live mode to the a11y tree. It is a pair of
+  // toggle buttons rather than a tablist now, because it no longer selects
+  // between panels of content — it restates one panel in another layout, and
+  // `aria-pressed` is what that means.
+  assert.match(PANEL, /aria-pressed=\{active \? 'true' : 'false'\}/,
+    'aria-pressed reflects the active layout');
+  assert.match(PANEL, /data-view-segment=\{key\}/,
+    'each layout still names itself with data-view-segment');
   // Seeded from the module before the first paint, so ?view=kanban does not
   // flash list first.
   assert.match(MOUNT, /publishViewMode\(options\.viewMode\);/, 'the store is seeded at mount');

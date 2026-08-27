@@ -258,10 +258,18 @@ export function AppsSwitcherSheet(): ReactNode {
           </button>
         </div>
         {/* The apps, as a horizontal strip — vertically BOUNDED, which is what
-            keeps every row below reachable at any app count. See the header. */}
+            keeps every row below reachable at any app count. See the header.
+
+            `pt-1` is not spacing, it is CLEARANCE. `overflow-x-auto` makes this
+            a scroll container on BOTH axes (overflow-y computes to `auto`), so
+            anything drawn above the content box is clipped — and the current
+            app's tile carries `ring-2 ring-offset-2`, which paints 4px outside
+            its border box. With no top padding the selected tile's ring came
+            back with its top arc sliced flat. 4px = pt-1 is exactly that
+            outset; the row below is unmoved because pb-5 absorbs it. */}
         <div
           id="apps-switcher-list"
-          className="shrink-0 flex gap-4 px-5 pb-5 overflow-x-auto overscroll-contain"
+          className="shrink-0 flex gap-4 px-5 pt-1 pb-5 overflow-x-auto overscroll-contain"
         >
           {rows.map((app) => (
             <AppTile key={app.slug} app={app} current={app.slug === slug} />

@@ -44,18 +44,16 @@ import { useCallback, type ReactNode } from 'react';
 import {
   AppWindowIcon,
   BoardIcon,
-  ChatIcon,
   ChevronRightIcon,
   GitHubIcon,
   HomeIcon,
   NewspaperIcon,
-  PencilSparklesIcon,
-  ShareIcon,
   TerminalIcon,
   XIcon,
 } from '@/components/ui/icons';
 
 import { NativeAppVersionRow } from '../header/native-app-version-row';
+import { useDevViewMode } from '../dev-board/view-mode-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -79,6 +77,16 @@ const ROW_SELECTED =
   ' bg-violet-500/10 text-violet-700 dark:text-violet-400';
 
 /**
+ * The Board's two layouts, in the order the retired tab strip listed them.
+ * Kanban leads: it is the view of work IN FLIGHT, which is what the Board is
+ * for; the feed is the same cards read newest-first.
+ */
+const BOARD_LAYOUTS = [
+  { key: 'kanban', label: 'Kanban' },
+  { key: 'feed', label: 'Feed' },
+] as const;
+
+/**
  * One quick action — a segment of the action group, not a control of its own.
  *
  * ── Why there is no disc ───────────────────────────────────────────────
@@ -90,17 +98,32 @@ const ROW_SELECTED =
  * decorative container around an icon is something to avoid on its own.
  * The glyph is the glyph now, and the GROUP does the separating.
  *
- * `flex-auto`, not `flex-1` and not a three-column grid. Equal thirds put
- * "New change" one pixel short of its own label on a 375pt screen while
- * "Share" sat in twice the room it needed; sizing from content and then
- * sharing the slack gives each label what it asks for. It also means Share
- * can be absent — it is conditional — without leaving a hole where a third
- * column would have been.
+ * ── Why there is no glyph either, and why the thirds are equal ─────────
+ *
+ * These two facts are one decision. The segments were `flex-auto` — sized
+ * from content, then sharing the slack — because equal thirds truncated "New
+ * change": with a 16px glyph and its 6px gap the label needs 109px, and the
+ * panel is 320px WIDE ON DESKTOP (it is a fixed side panel, not a fluid one),
+ * which leaves a 287px well and 95px thirds. That constraint is real and the
+ * earlier note recorded it correctly; only its conclusion was avoidable.
+ *
+ * Content-sizing bought the fit with raggedness — 134 / 155 / 109px at 430pt,
+ * so the two hairlines landed at arbitrary offsets and a well whose divisions
+ * track label length reads as a lopsided accident rather than as one control
+ * with three equal choices. Dropping the glyphs returns those 22px per
+ * segment: the widest label is 87px, every third is 95px at the narrowest
+ * width either idiom draws, and nothing truncates from 320pt up. So the
+ * segments can be `flex-1 basis-0` — actually equal — and the hairlines sit
+ * still when a label changes or Share (which is conditional) is absent.
+ *
+ * The glyphs were decoration, not affordance: three verbs in a divided well
+ * are already unambiguous, and this is the same argument that took the discs
+ * away one step further. Nothing selected them — `#feedback-queue-dot`, the
+ * one piece of state that ever rode this row, lives on #improve-btn.
  */
-function QuickAction({ id, label, icon, onClick }: {
+function QuickAction({ id, label, onClick }: {
   id: string;
   label: string;
-  icon: ReactNode;
   onClick: () => void;
 }): ReactNode {
   return (
@@ -108,15 +131,73 @@ function QuickAction({ id, label, icon, onClick }: {
       id={id}
       type="button"
       onClick={onClick}
-      className="flex flex-auto min-w-0 items-center justify-center gap-1.5 py-2.5 text-violet-600 hover:bg-violet-500/10 dark:text-violet-400 un-touch-target"
+      className="flex flex-1 basis-0 min-w-0 items-center justify-center px-1 py-2.5 text-violet-600 hover:bg-violet-500/10 dark:text-violet-400 un-touch-target"
     >
-      <span className="shrink-0 [&>svg]:h-4 [&>svg]:w-4" aria-hidden="true">
-        {icon}
-      </span>
       <span className="min-w-0 truncate text-sm font-medium">
         {label}
       </span>
     </button>
+  );
+}
+
+/**
+ * The Board's two layouts, under the Board row — and ONLY while you are on it.
+ *
+ * ── Why it is here and not on the board ────────────────────────────────
+ *
+ * It was a full-width Kanban|Feed tab strip at the top of the board itself.
+ * With the header chip naming "Board" the strip's first tab restated the
+ * destination you had just arrived at, so the page opened with two rows of
+ * navigation saying the same word — and the strip read as a choice of PLACE
+ * when it is a choice of LAYOUT over one place's contents.
+ *
+ * Kanban and Feed are not destinations: both render `#dev-body` from the same
+ * cached issue / proposal / governance / merged cards, one by column and one
+ * newest-first. They are not Board and Activity either, which is the tempting
+ * reading — Activity is the app's chat stream (`renderGroupChatTab`), a
+ * different screen over different data. So they belong subordinate to the
+ * Board row rather than beside it, which is what indenting them here says.
+ *
+ * ── Only while on the Board ────────────────────────────────────────────
+ *
+ * Rendering them from any other screen would put a layout control in front of
+ * people who cannot see its effect, and would cost this panel two rows of the
+ * vertical space the sessions list below is always short of. Off the Board the
+ * Board row still navigates, landing in whichever layout `_getViewMode()`
+ * resolves — the persisted preference, exactly as the strip left it.
+ *
+ * ── The seam ───────────────────────────────────────────────────────────
+ *
+ * `useDevViewMode()` is the same store the retired strip read, and
+ * `AppView._selectViewMode` is the same entry point its buttons called, so
+ * persistence, the `?view=` override clear and the repaint all still run in
+ * app-view.js. Nothing about the mechanism moved — only where you reach it.
+ */
+function BoardLayoutChoice(): ReactNode {
+  const mode = useDevViewMode();
+  return (
+    <div id="improve-board-layouts" className="flex items-center gap-1 pl-14 pr-4 pb-2">
+      {BOARD_LAYOUTS.map(({ key, label }) => {
+        const active = mode === key;
+        return (
+          <button
+            key={key}
+            type="button"
+            data-view-segment={key}
+            aria-pressed={active ? 'true' : 'false'}
+            className={'px-2.5 py-1 rounded-full text-xs font-medium un-touch-target '
+              + (active
+                ? 'bg-violet-500/10 text-violet-700 dark:text-violet-400'
+                : 'text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800')}
+            onClick={() => (window as unknown as {
+              AppView?: { _selectViewMode?: (mode: string) => void };
+            }).AppView?._selectViewMode?.(key)}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -345,7 +426,15 @@ export function ImprovePanel() {
                 "these belong together and the list below is something else" —
                 which is the separation the stacked-circles version never had.
                 Overflow-hidden so the segments' hover fill respects the
-                rounded corners. */}
+                rounded corners.
+
+                The segments are `flex-1 basis-0`, i.e. EQUAL thirds, not
+                `flex-auto`. Content-proportional sizing gave "New change" half
+                again the width of "Share" and put the two hairlines at
+                arbitrary offsets — a divided well whose divisions track label
+                length reads as a lopsided accident rather than as one control
+                with three equal choices. Equal segments also keep the hairlines
+                still when a label changes (the Share segment is conditional). */}
             <div
               id="improve-quick-actions"
               className="flex items-stretch divide-x divide-zinc-950/5 dark:divide-white/10 overflow-hidden rounded-xl bg-zinc-100 dark:bg-white/5"
@@ -353,14 +442,12 @@ export function ImprovePanel() {
               <QuickAction
                 id="improve-row-feedback"
                 label="Feedback"
-                icon={<ChatIcon />}
                 onClick={() => Improve.giveFeedback()}
               />
               {state.readOnly ? null : (
                 <QuickAction
                   id="improve-row-new-session"
                   label="New change"
-                  icon={<PencilSparklesIcon />}
                   onClick={() => Improve.startSession()}
                 />
               )}
@@ -368,7 +455,6 @@ export function ImprovePanel() {
                 <QuickAction
                   id="improve-row-share"
                   label="Share"
-                  icon={<ShareIcon />}
                   onClick={() => Improve.share()}
                 />
               ) : null}
@@ -408,6 +494,7 @@ export function ImprovePanel() {
               selected={onBoard}
               href={slug ? `#app/${slug}/board` : undefined}
             />
+            {onBoard ? <BoardLayoutChoice /> : null}
             <ContextRow
               id="app-context-row-activity"
               row="activity"

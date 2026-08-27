@@ -3835,14 +3835,27 @@ const App = {
   // builds that don't know `titleChanged` ignore the message
   // (Flutter logs and drops unknown methods), so this is safe to ship
   // ahead of the Flutter rebuild.
-  setHeaderTitle(text) {
+  // `subtitle` is the destination WITHIN the screen the title names — the
+  // Board and Activity screens pass it so the chip can keep saying which app
+  // you are in (see header-title-store.js). Every other call site omits it and
+  // gets the previous behaviour, including the clear: the bridge coerces the
+  // missing argument to '', so navigating from a board to a root screen drops
+  // the subtitle rather than leaving it stranded under the new title.
+  //
+  // `document.title` joins them the other way round: "Notes \u00b7 Board", widest
+  // scope first, because a browser tab and the native AppBar truncate from the
+  // RIGHT, so the app's name is the half that must survive. The separator is a
+  // middle dot, not a dash — tests/no-em-dash-in-copy.test.js bans the em dash
+  // in shipped copy and calls a plain hyphen a typo, and `\u00b7` is what this
+  // file already joins title fragments with elsewhere.
+  setHeaderTitle(text, subtitle) {
     // Streamlined Concept: #header-title is React-owned now
     // (frontend/src/features/header/app-switcher-chip.tsx renders it as the
     // tappable app-context tab), so the text goes through the bridge into
     // header-title-store — never a direct textContent write, which React
     // would reconcile away.
-    window.UsernodeReact?.headerTitle?.set?.(text);
-    document.title = text;
+    window.UsernodeReact?.headerTitle?.set?.(text, subtitle);
+    document.title = subtitle ? `${text} · ${subtitle}` : text;
     // Re-apply the dev-chat status marker ("⏳ thinking / ✅ done",
     // #108) that the plain title assignment above just wiped, then let
     // Notifications re-apply its "(N) " unread prefix outermost.

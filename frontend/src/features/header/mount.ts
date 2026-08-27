@@ -27,9 +27,19 @@ if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
   const bridge = (host.UsernodeReact ||= {});
   bridge.headerTitle = {
-    /** @param text The visible title — forwarded from App.setHeaderTitle. */
-    set(text: string) {
-      headerTitleStore.set({ text: String(text ?? '') });
+    /**
+     * @param text The visible title — forwarded from App.setHeaderTitle.
+     * @param subtitle The destination within it ('Board', 'Activity'), or ''
+     *   at the root of a screen. Omitted by every caller that has none, and
+     *   defaulted here rather than left undefined so a root screen actively
+     *   CLEARS a subtitle the previous screen published — a stale "Board"
+     *   under the Home title is exactly the bug the second argument invites.
+     */
+    set(text: string, subtitle?: string) {
+      headerTitleStore.set({
+        text: String(text ?? ''),
+        subtitle: String(subtitle ?? ''),
+      });
     },
   };
   bridge.backButton = {
