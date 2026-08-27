@@ -23,12 +23,14 @@
  * `!!slug` gate went with the chip's — a menu you can only open inside an app
  * is not a way to get to an app.
  *
- * ── The app views moved here from the Improve panel ────────────────────
+ * ── What is NOT here: the app's own views ──────────────────────────────
  *
- * #1431 put App / Board / Activity in the Improve panel as `#improve-views`.
- * They are destinations, so under the rule they belong here, and the Improve
- * panel goes back to being about making a change rather than about getting
- * around. Same three routes, same `Improve.openApp()` for the first.
+ * App / Board / Activity sat here for one round of #1443, on the argument
+ * that they are destinations and destinations belong in the menu. They are
+ * back in the Improve panel (`#improve-views`), because the sharper line is
+ * not destination-vs-not: this menu answers WHICH APP, and those three answer
+ * WHICH PART OF IT. The panel you open from inside an app is where you look
+ * for the second question.
  *
  * ── Why the strip is horizontal, and why that is the scroll fix ────────
  *
@@ -51,12 +53,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import {
-  AppWindowIcon,
   ChatBubbleTailIcon,
   ChevronRightIcon,
   CogIcon,
   HomeIcon,
-  NewspaperIcon,
   PlusWideIcon,
   SearchIcon,
   ShieldCheckIcon,
@@ -68,7 +68,6 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { improveStore } from '../improve/improve-store.js';
-import { Improve } from '../improve/improve-controller.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 
@@ -173,7 +172,7 @@ function AppTile({ app, current }: { app: SwitcherApp; current: boolean }) {
 
 export function AppsSwitcherSheet(): ReactNode {
   const { open } = useStoreState(appContextStore);
-  const { slug, name, selfHosted, tab, subTab } = useStoreState(improveStore);
+  const { slug } = useStoreState(improveStore);
   const [apps, setApps] = useState<SwitcherApp[] | null>(null);
 
   // Both flags arrive from classic modules through the visibility store —
@@ -213,14 +212,6 @@ export function AppsSwitcherSheet(): ReactNode {
   }, [open, apps]);
 
   const rows = apps || [];
-  // The app-scoped section exists only while an app is on screen. Same three
-  // gates #improve-views used, moved with the rows.
-  const inApp = !!slug;
-  const onApp = tab !== 'dev';
-  const onActivity = tab === 'dev' && subTab === 'chat';
-  const onBoard = tab === 'dev' && (subTab === 'forum' || subTab === 'topic');
-  const AppRowIcon = selfHosted ? HomeIcon : AppWindowIcon;
-  const here = 'text-violet-600 dark:text-violet-400';
 
   return (
     <>
@@ -286,36 +277,6 @@ export function AppsSwitcherSheet(): ReactNode {
           id="switcher-nav"
           className="flex-1 min-h-0 overflow-y-auto border-t border-zinc-100 dark:border-zinc-800 pb-2 platform-safe-sheet"
         >
-          {inApp ? (
-            <>
-              <div className={SECTION}>{name || 'This app'}</div>
-              <MenuRow
-                id="switcher-row-app"
-                href={`#app/${slug}/app`}
-                icon={<AppRowIcon className={onApp ? here : undefined} />}
-                label={selfHosted ? 'Home' : name || 'App'}
-                onClick={(e) => {
-                  if ((window as any).NavLink?.isNativeClick?.(e)) return;
-                  e.preventDefault();
-                  AppContext.dismissForNav();
-                  Improve.openApp();
-                }}
-              />
-              <MenuRow
-                id="switcher-row-board"
-                href={`#app/${slug}/board`}
-                icon={<NewspaperIcon className={onBoard ? here : undefined} />}
-                label="Board"
-              />
-              <MenuRow
-                id="switcher-row-activity"
-                href={`#app/${slug}/activity`}
-                icon={<ChatBubbleTailIcon className={onActivity ? here : undefined} />}
-                label="Activity"
-              />
-            </>
-          ) : null}
-          <div className={SECTION}>Platform</div>
           <MenuRow
             id="switcher-row-home"
             href="/"

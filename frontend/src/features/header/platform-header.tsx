@@ -98,6 +98,14 @@ function SessionStatusPill() {
   );
 }
 
+// LIGHT-MODE SURFACES ARE zinc-50, NOT zinc-100. tailwind.config.js overrides
+// the ramp, and `zinc-100` there is #eaeaea — byte-identical to the light page
+// ground these controls sit on, so every one of these discs was invisible in
+// light mode and the bar read as three bare glyphs on nothing. #eaeaea is also
+// what the chip was given when it first got a surface, which is how the bug
+// surfaced. zinc-50 (#f5f5f7) lifts off the ground; dark mode was always fine
+// (zinc-800 on zinc-950) and is unchanged.
+//
 // The anchor's own classes, hoisted out of the JSX so the `hidden` suffix is
 // the ONLY thing that varies between the two states — the string itself has to
 // stay byte-identical to the hand-written shell's (tests/baselines).
@@ -107,7 +115,7 @@ function SessionStatusPill() {
 // row is pinned to 28px (tests/header-height-parity.test.js, and #909 before
 // it), so the ratio scales rather than the row.
 const BACK_BTN_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-full'
-  + ' bg-zinc-100 text-zinc-900 hover:bg-zinc-200'
+  + ' bg-zinc-50 text-zinc-900 hover:bg-white'
   + ' dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 un-touch-target';
 
 export function PlatformHeader() {
@@ -294,7 +302,7 @@ export function PlatformHeader() {
             slot go. See app-switcher-chip.tsx.
         */}
         <AppSwitcherChip titleRef={titleRef} />
-        <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center">
+        <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center gap-1">
           {/*
               HEADER SLIM-DOWN: the fork label, the platform + app build pills
               and the kudos-budget badge used to live here as four inline
@@ -384,7 +392,7 @@ export function PlatformHeader() {
           <a
             id="notifications-btn"
             href="#notifications"
-            className="relative w-7 h-7 mr-1 flex items-center justify-center rounded-full un-touch-target bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target bg-zinc-50 text-zinc-900 hover:bg-white dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
             aria-label="Notifications"
             aria-haspopup="dialog"
             onClick={(event) => {

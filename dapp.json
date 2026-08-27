@@ -1336,9 +1336,9 @@
       "expectSelector": "#platform-header #improve-btn:not(.hidden)"
     },
     {
-      "name": "The menu offers the app's three views in order (#1443)",
-      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#switcher-nav #switcher-row-app ~ #switcher-row-board ~ #switcher-row-activity"
+      "name": "The Improve panel offers the three views in order (#1443)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-views [data-context-row=\"app\"] ~ [data-context-row=\"board\"] ~ [data-context-row=\"activity\"]"
     },
     {
       "name": "The app-context sheet carries the + New change action (Streamlined Concept)",
@@ -1367,9 +1367,9 @@
     },
     {
       "name": "The self-hosted platform row gets a use-the-app row too (#1386, #1443)",
-      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#switcher-nav #switcher-row-app",
-      "expectText": "Home"
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-views [data-context-row=\"app\"]",
+      "expectText": "The platform itself"
     },
     {
       "name": "The chip is the header's label on Home too, not only inside an app (#1443)",
@@ -1686,9 +1686,9 @@
       "expectSelector": "#improve-panel #improve-row-feedback"
     },
     {
-      "name": "The Improve panel: quick actions, then the work in flight, then what the app is (#1443)",
+      "name": "The Improve panel: quick actions, the app's views, the work in flight, then what the app is (#1443)",
       "path": "/?demo=1",
-      "expectSelector": "#improve-body > *:has(#improve-quick-actions) + #improve-sessions + #improve-footer"
+      "expectSelector": "#improve-body > *:has(#improve-quick-actions) + #improve-views + #improve-sessions + #improve-footer"
     },
     {
       "name": "The Profile account group ships the native Node status row",

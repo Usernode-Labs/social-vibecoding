@@ -208,19 +208,23 @@ const ADDED_IDS = {
   'messages-screen': 'The Messages screen root, restored. #1431 made it #messages-sheet because a header chat bubble on every route left a full-screen Messages with no honest answer to "back to where?" — the bubble is gone and Messages is a menu row now, so the screen is both the honest shape and the one every messaging product uses for reading past conversations.',
   'improve-footer': 'The panel\'s reference block, restored. #1431 dissolved it and rehomed each fact separately; every move was defensible alone and the sum meant leaving the app to read facts about the app you were standing in.',
   'drawer-row-native-app-version': 'The installed Flutter release, back in that footer. #1431 renamed it #about-row-native-app-version for the Settings About block it built; the block is gone with the rows it existed to hold, so the name goes back too. `.drawer-ver-row` is the shared CSS recipe, not a claim about a drawer.',
+  // ── #1443: the app's own views stayed in the Improve panel ──────
+  // They spent one round of #1443 as menu rows, on the argument that they are
+  // destinations. They came back: the menu answers WHICH APP, and these three
+  // answer WHICH PART OF IT, which is the question the panel you open from
+  // inside an app is already about.
+  'improve-views': 'The block holding the three. #1431 built it; #1443 kept it.',
+  'app-context-row-app': 'View and use the app — Improve.openApp(). Labelled Home on the self-hosted platform row.',
+  'app-context-row-board': 'The app\'s Board.',
+  'app-context-row-activity': 'The app\'s Activity stream.',
   // ── #1443: the chip and its menu ────────────────────────────────
-  'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go.',
-  'switcher-avatar': 'The viewer\'s picture in the chip. Ships with NO src, so a viewer with no photo issues no request; App.applyUserAvatar swaps which of this and the glyph carries `hidden`, the same contract it uses for Home\'s account row.',
-  'switcher-avatar-glyph': 'The generic person glyph shown until a photo exists.',
+  'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go. It carries the same tinted 28px surface as #back-btn and the bell, because on the bare page ground it read as the heading it replaced.',
   'app-switcher-name': 'The label inside the chip — the same text #header-title carried as a bare heading, now a named slot so a declared check can assert WHAT the chip says and not merely that it exists.',
   'switcher-nav': 'The menu\'s destination list, and its ONLY vertical scroller. The app strip above is horizontal and therefore vertically bounded, so no number of apps can push a destination out of reach — the clipping bug that hid Home and Profile on a 39-app account cannot occur in this shape.',
   'switcher-row-home': 'Home. Was the sheet\'s #apps-switcher-home footer button.',
   'switcher-row-discover': 'Discover (#apps). Was #apps-switcher-explore.',
   'switcher-row-messages': 'Messages. Was #messages-btn in the header; it has its own page, so it is a row. Carries #drawer-messages-badge, unchanged writer.',
   'switcher-row-profile': 'Profile.',
-  // #switcher-row-app / -board / -activity are NOT here on purpose: they
-  // render only while an app is on screen, so they never reach the prerender
-  // this inventory reads. They were #app-context-row-* in the Improve panel.
   'switcher-row-settings': 'Settings. Was #profile-row-settings on the Profile screen.',
   'switcher-byok-dot': 'The BYOK dot on that row — was #profile-byok-dot. settings.js publishes the flag; the className stays a constant.',
   'switcher-row-admin': 'Admin & moderation. Was #profile-row-admin. Ships `hidden`; App.renderAdminButton publishes the isAdmin flag, unchanged.',

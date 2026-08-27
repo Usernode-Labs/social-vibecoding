@@ -387,35 +387,28 @@ const App = {
   // and the <img> gets no src until there is one, so a user with no
   // picture never issues a request.
   applyUserAvatar() {
-    // TWO pairs now, and they are the same contract in two places: Home's
-    // account row (features/home/panels/account.tsx) and the header chip
-    // (features/header/app-switcher-chip.tsx). Each is a `hidden` toggle on a
-    // constant className over an element with no children — the sanctioned
-    // seam — so this stays a plain DOM write rather than a store.
+    // ONE pair: Home's account row (features/home/panels/account.tsx). A
+    // `hidden` toggle on a constant className over an element with no
+    // children — the sanctioned seam — so this stays a plain DOM write.
     //
-    // Both are optional: the chip is absent on a dev session and Home's row
-    // is absent until Home has rendered, and a missing pair is a no-op rather
-    // than a reason to skip the other. The early return this replaced meant a
-    // boot that reached here before Home mounted left the CHIP unpainted for
-    // the rest of the session.
-    const url = (App.user && App.user.avatarUrl) || '';
-    const paint = (imgId, glyphId) => {
-      const img = document.getElementById(imgId);
-      const glyph = document.getElementById(glyphId);
-      if (!img || !glyph) return;
-      if (url) {
-        img.src = url;
-        img.classList.remove('hidden');
-        glyph.classList.add('hidden');
-      } else {
-        img.removeAttribute('src');
-        img.classList.add('hidden');
-        glyph.classList.remove('hidden');
-      }
-    };
-    paint('home-account-avatar', 'home-account-glyph');
-    paint('switcher-avatar', 'switcher-avatar-glyph');
+    // The header chip carried a second pair for one round of #1443 and does
+    // not any more: the chip names the APP you are in, and a picture of the
+    // viewer inside it answered a different question.
+    const img = document.getElementById('home-account-avatar');
+    const glyph = document.getElementById('home-account-glyph');
+    if (!img || !glyph) return;
+    const url = App.user && App.user.avatarUrl;
+    if (url) {
+      img.src = url;
+      img.classList.remove('hidden');
+      glyph.classList.add('hidden');
+    } else {
+      img.removeAttribute('src');
+      img.classList.add('hidden');
+      glyph.classList.remove('hidden');
+    }
   },
+
 
   enterAuthed(user) {
     App.user = user;

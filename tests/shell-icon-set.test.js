@@ -158,16 +158,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   const shipped = new Set(HTML.match(/\sd="[^"]*"/g).map((s) => s.slice(4, -1)));
   const absent = [...modulePaths()].filter((d) => !shipped.has(d));
   const expected = [
-    // ── The app's three view rows went behind state (#1443) ────────
-    // AppWindowIcon, BoardIcon and NewspaperIcon prerendered while App /
-    // Board / Activity sat in the Improve panel, which ships in every
-    // document. They are rows of the chip's menu now, and that section
-    // renders only while an app is on screen — so a cold document has no app
-    // and draws none of them.
-    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
-    'M4 9.5h16',
-    'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
-    'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
+    // AppWindowIcon, BoardIcon and NewspaperIcon are NOT on this list: App /
+    // Board / Activity spent one round of #1443 as menu rows — which renders
+    // only inside an app, so they left the cold document — and came back to
+    // the Improve panel, which ships in every document. They prerender.
+    //
     // ── The chip's menu brought four back (#1443) ──────────────────
     // CogIcon, ShieldCheckIcon, UserIcon and ChevronDownIcon were absent
     // while their rows lived on the Profile screen, which renders from

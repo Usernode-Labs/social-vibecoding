@@ -484,19 +484,16 @@ test("the Board owns the view control; the header's label is the chip", () => {
 
   // A destination names where it GOES, and the "use the app" row's label
   // follows the target: the platform's reads "Home", an app's reads its own
-  // name. That logic lives on the CHIP'S MENU now (#1443) — the rows are
-  // destinations, and destinations are what the menu is.
-  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  // name. The rows spent one round of #1443 in the chip's menu and came back
+  // here — the menu answers WHICH APP, these three answer WHICH PART OF IT.
+  const sheet = read('frontend/src/features/improve/improve-panel.tsx');
   assert.match(sheet, /label=\{selfHosted \? 'Home' : name \|\| 'App'\}/,
     "the platform's row is labelled Home, an app's by its name");
   assert.match(sheet, /const AppRowIcon = selfHosted \? HomeIcon : AppWindowIcon;/,
     'and the icon follows the destination with it');
-  // The ID names the row's role, not its destination — the selector contract
-  // dapp.json's checks are written against. `data-context-row` went with the
-  // move: the menu's rows are addressed by id, as every other row in it is,
-  // rather than by an attribute that existed only inside the old panel.
-  assert.match(sheet, /id="switcher-row-app"/,
-    'the id stays "switcher-row-app" whichever destination it names');
+  // The ATTRIBUTE names the row's role, not its destination — the selector
+  // contract dapp.json's checks are written against.
+  assert.match(sheet, /row="app"/, 'data-context-row stays "app" on both rows');
   const controller = read('frontend/src/features/improve/improve-controller.js');
   // #1406 widened where this segment is reachable from. It used to be true
   // that "no app open" meant "already home", because every other screen
@@ -538,11 +535,11 @@ test("the Board owns the view control; the header's label is the chip", () => {
     'a session with no preview draws no switch — the gate moved with it');
 });
 
-test('the Improve panel is work and reference — one scroller, the footer below', () => {
-  // #1443: the app's VIEWS left for the chip's menu, because they are
-  // destinations and the menu is where destinations live. What is left is
-  // what the panel is for: the quick actions, the work in flight, and the
-  // reference footer that says what this app IS.
+test('the Improve panel is navigation, work and reference — one scroller', () => {
+  // Four bands: the quick actions, the app's three views, the work in flight,
+  // and the reference footer that says what this app IS. The views spent one
+  // round of #1443 in the chip's menu and came back; the footer came back from
+  // three separate screens #1431 had scattered it across.
   const panel = read('frontend/src/features/improve/improve-panel.tsx');
   const html = read('public/index.html');
 
@@ -565,15 +562,14 @@ test('the Improve panel is work and reference — one scroller, the footer below
   const actionsAt = html.indexOf('id="improve-quick-actions"');
   assert.match(html.slice(Math.max(0, actionsAt - 160), actionsAt), /\bshrink-0\b/,
     'the quick-action band keeps its height');
+  const viewsAt = html.indexOf('id="improve-views"');
+  assert.match(html.slice(viewsAt, html.indexOf('>', viewsAt)), /\bshrink-0\b/,
+    '#improve-views keeps its height');
   const footerAt = html.indexOf('id="improve-footer"');
   assert.match(html.slice(footerAt, html.indexOf('>', footerAt)), /\bshrink-0\b/,
     'the reference footer keeps its height');
-  assert.ok(actionsAt < scrollAt && scrollAt < footerAt,
-    'actions, then the scroller, then the reference footer');
-
-  // The app's three views are NOT here any more — they are menu rows.
-  assert.ok(!panel.includes('id="improve-views"'),
-    'the view rows moved to the chip\'s menu');
+  assert.ok(actionsAt < viewsAt && viewsAt < scrollAt && scrollAt < footerAt,
+    'actions, views, the scroller, then the reference footer');
 
   // The footer came back (#1443). #1431 dissolved it and rehomed each fact
   // separately; every move was defensible alone and the sum meant leaving the

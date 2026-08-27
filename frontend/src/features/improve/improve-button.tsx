@@ -105,8 +105,14 @@ import { Improve } from './improve-controller.js';
 // h-7 and no vertical padding are the header's 28px content-row ceiling,
 // pinned by tests/header-height-parity.test.js — a filled pill keeps it by
 // taking its height from `h-7` and its shape from `rounded-full`.
+// No trailing margin. `mr-2.5` sat here from when this button had siblings to
+// its right; as the LAST control in the bar it was 10px of dead space between
+// Improve and the header's own px-4 edge, so the accent pill never actually
+// reached the right margin the rest of the shell aligns to. The bell↔Improve
+// gap is the right group's `gap-1` now — spacing belongs to the layout, not to
+// the last child's margin (#1443).
 const IMPROVE_BTN_CLASS =
-  'relative inline-flex items-center h-7 px-3 mr-2.5 rounded-full '
+  'relative inline-flex items-center h-7 px-3 rounded-full '
   + 'bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold '
   + 'un-touch-target';
 

@@ -3,7 +3,7 @@
  *
  * The header carries four things now, and only one of them opens a list:
  *
- *     [ (avatar) Cool App ⌄ ] .................... [ bell ] [ Improve ]
+ *     [ Cool App ⌄ ] ........................... [ bell ] [ Improve ]
  *
  * ── The rule this control exists to keep ───────────────────────────────
  *
@@ -35,14 +35,24 @@
  * chip takes taps and never the overlap. The 28px content-row floor
  * (tests/header-height-parity.test.js) is why the chip is `h-7`.
  *
- * ── The avatar is app.js's, by id ──────────────────────────────────────
+ * ── It reads as a control, because it is one ───────────────────────────
  *
- * `App.applyUserAvatar` swaps which of #switcher-avatar / #switcher-avatar-glyph
- * carries `hidden`, exactly as it does for Home's account row. Both ship as
- * this renders them, neither has children, and both classNames are constants,
- * so the write is the sanctioned `hidden`-toggle seam rather than a second
- * owner. The <img> ships with NO src, so a viewer with no photo issues no
- * request.
+ * The chip carries the same 28px tinted surface as #back-btn and the bell:
+ * `bg-zinc-50 / dark:bg-zinc-800`, rounded full. Sitting on the page ground
+ * as bare text, it looked like the heading it replaced — which is the one
+ * thing it must not look like, since the whole design rests on people finding
+ * it tappable. Same tint as the glyph discs, so the bar reads as one set of
+ * controls with the accent pill as the only filled thing.
+ *
+ * zinc-50 rather than zinc-100 for a reason worth knowing: the config
+ * overrides the ramp and `zinc-100` is #eaeaea, which is EXACTLY the light
+ * page ground. Giving the chip that value made a surface you could not see —
+ * and it turned out the bell and #back-btn had been invisible in light mode
+ * for the same reason. All three moved together.
+ *
+ * It carried the viewer's avatar for one round and does not any more: the
+ * chip names the APP you are in, and a picture of you inside it was answering
+ * a different question. Profile is a row of the menu behind it.
  *
  * ── A session has no chip ──────────────────────────────────────────────
  *
@@ -54,17 +64,12 @@
 
 import type { RefObject } from 'react';
 
-import { ChevronDownIcon, UserIcon } from '@/components/ui/icons';
+import { ChevronDownIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { headerTitleStore } from './header-title-store.js';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from '../app-context/app-context-store.js';
-
-// Hoisted so they are unmistakably constants: app.js toggles `hidden` on both
-// of these nodes, and a className React re-renders from props would undo it.
-const AVATAR_CLASS = 'hidden w-5 h-5 rounded-full object-cover shrink-0';
-const GLYPH_CLASS = 'w-5 h-5 rounded-full text-zinc-400 dark:text-zinc-500 shrink-0';
 
 export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
   const { text } = useStoreState(headerTitleStore);
@@ -87,8 +92,10 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
         <button
           id="app-switcher-btn"
           type="button"
-          className={'pointer-events-auto inline-flex items-center gap-1.5 max-w-full h-7 '
-            + 'align-middle un-touch-target'}
+          className={'pointer-events-auto inline-flex items-center gap-1 max-w-full h-7 '
+            + 'pl-3 pr-2 rounded-full align-middle un-touch-target '
+            + 'bg-zinc-50 text-zinc-900 hover:bg-white '
+            + 'dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700'}
           aria-haspopup="dialog"
           aria-expanded={open ? 'true' : 'false'}
           aria-label={`${text}: open the menu`}
@@ -96,8 +103,6 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
             AppContext?: { toggle?: () => void };
           }).AppContext?.toggle?.()}
         >
-          <img id="switcher-avatar" className={AVATAR_CLASS} alt="" />
-          <UserIcon id="switcher-avatar-glyph" className={GLYPH_CLASS} aria-hidden="true" />
           <span id="app-switcher-name" className="truncate">
             {text}
           </span>

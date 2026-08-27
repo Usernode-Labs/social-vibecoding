@@ -42,8 +42,13 @@
 import { useCallback, type ReactNode } from 'react';
 
 import {
+  AppWindowIcon,
+  BoardIcon,
   ChatIcon,
+  ChevronRightIcon,
   GitHubIcon,
+  HomeIcon,
+  NewspaperIcon,
   PencilSparklesIcon,
   ShareIcon,
   TerminalIcon,
@@ -124,6 +129,57 @@ function QuickAction({ id, label, icon, onClick }: {
  * label truncates at 55% before the detail starts giving ground, so a long
  * app name shortens rather than evicting "View and use the app".
  */
+function ContextRow({
+  id, row, icon, label, detail, onClick, href, selected,
+}: {
+  id?: string;
+  row: string;
+  icon: ReactNode;
+  label: string;
+  detail: string;
+  onClick?: () => void;
+  href?: string;
+  selected?: boolean;
+}): ReactNode {
+  // The board marks the row you are ON with a tinted surface — this panel is
+  // the app's navigation now, so it says where you are as well as where you
+  // can go.
+  const cls = ROW_BASE + (selected ? ROW_SELECTED : ROW_REST);
+  const body = (
+    <>
+      {/* The glyph, undressed. It sat in an IconTile square until the quick
+          actions above lost their circles — two decorative container shapes
+          in one column was the clutter, and removing only one of them would
+          have left the other looking arbitrary. */}
+      <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="min-w-0 max-w-[55%] shrink truncate text-sm font-medium">
+        {label}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-right text-xs text-zinc-500 dark:text-zinc-400">
+        {detail}
+      </span>
+      <ChevronRightIcon
+        className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500"
+        aria-hidden="true"
+      />
+    </>
+  );
+  if (href) {
+    return (
+      <a id={id} data-context-row={row} href={href} className={cls} onClick={dismissForNav}>
+        {body}
+      </a>
+    );
+  }
+  return (
+    <button id={id} data-context-row={row} type="button" className={cls} onClick={onClick}>
+      {body}
+    </button>
+  );
+}
+
 /**
  * A reference row in the footer: a glyph, a label, and an optional value.
  *
@@ -183,6 +239,11 @@ export function ImprovePanel() {
   const {
     open, target, name, slug, selfHosted, sessions, otherSessions, tab, subTab,
   } = state;
+
+  const AppRowIcon = selfHosted ? HomeIcon : AppWindowIcon;
+  const onApp = tab !== 'dev';
+  const onActivity = tab === 'dev' && subTab === 'chat';
+  const onBoard = tab === 'dev' && (subTab === 'forum' || subTab === 'topic');
 
   const close = useCallback(() => Improve.close(), []);
 
@@ -315,7 +376,51 @@ export function ImprovePanel() {
           </div>
 
           {/*
-              ── Zone 2: the work in flight, and the only scroller ──────
+              ── Zone 2: the app's three views ──────────────────────────
+
+              One line each: the label leads, the detail is muted and
+              right-aligned, and the row you are ON carries a tint — so the
+              block says where you are as well as where you can go.
+
+              #1443 moved these to the chip's menu on the argument that they
+              are destinations and destinations belong there, then moved them
+              back. The consistency argument was real but it was the weaker
+              one: these three are the app's OWN views, and the panel you open
+              from inside an app is where you look for them. The menu answers
+              "which app"; this answers "which part of it".
+          */}
+          <div id="improve-views" className="shrink-0">
+            <ContextRow
+              id="app-context-row-app"
+              row="app"
+              icon={<AppRowIcon />}
+              label={selfHosted ? 'Home' : name || 'App'}
+              detail={selfHosted ? 'The platform itself' : 'View and use the app'}
+              selected={onApp}
+              onClick={() => Improve.openApp()}
+            />
+            <ContextRow
+              id="app-context-row-board"
+              row="board"
+              icon={<BoardIcon />}
+              label="Board"
+              detail="All feedback and changes"
+              selected={onBoard}
+              href={slug ? `#app/${slug}/board` : undefined}
+            />
+            <ContextRow
+              id="app-context-row-activity"
+              row="activity"
+              icon={<NewspaperIcon />}
+              label="Activity"
+              detail="Updates and discussions"
+              selected={onActivity}
+              href={slug ? `#app/${slug}/activity` : undefined}
+            />
+          </div>
+
+          {/*
+              ── Zone 3: the work in flight, and the only scroller ──────
 
               THE ONE SCROLLER in this panel, which is what lets the two zones
               above stay on screen at any viewport: they are `shrink-0`, this
@@ -417,7 +522,7 @@ export function ImprovePanel() {
           </div>
 
           {/*
-              ── Zone 3: what this app IS ───────────────────────────────
+              ── Zone 4: what this app IS ───────────────────────────────
 
               #1431 dissolved this block and rehomed its contents: the GitHub
               link to Home's per-app menu, the app's version deleted as a
