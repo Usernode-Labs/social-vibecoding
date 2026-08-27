@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const kubernetes = require('../src/services/kubernetes');
 
 function notFound() {
@@ -44,8 +47,76 @@ test('kpack Build is isolated in social-builds and returns status.latestImage', 
   assert.equal(created.namespace, 'social-builds');
   assert.equal(created.body.spec.source.git.revision, revision);
   assert.equal(created.body.spec.serviceAccountName, 'social-kpack-builder');
+  assert.deepEqual(created.body.spec.env, [{ name: 'BP_NODE_VERSION', value: '22.*' }]);
   assert.equal(result.imageRef, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
   assert.match(result.buildRef, /^social-builds\//);
+});
+
+test('kpack runs the shell generator during build when the checked-out app declares it', async (t) => {
+  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'usernode-kpack-source-'));
+  t.after(() => fs.rmSync(sourceDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(sourceDir, 'package.json'), JSON.stringify({
+    scripts: { 'ensure:shell': 'node scripts/ensure-shell-artifacts.js --runtime' },
+  }));
+  let created;
+  kubernetes._setClientsForTest({
+    custom: {
+      async createNamespacedCustomObject(request) { created = request; },
+      async getNamespacedCustomObject() {
+        return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: 'ghcr.io/example/demo@sha256:built' } };
+      },
+    },
+  });
+
+  await kubernetes.createBuild(config(), {
+    app: { id: 10, slug: 'self-app', repo_url: 'https://github.com/example/self-app' },
+    revision: 'b'.repeat(40), environment: 'staging', sessionId: 42, sourceDir,
+  });
+
+  assert.deepEqual(created.body.spec.env, [
+    { name: 'BP_NODE_VERSION', value: '22.*' },
+    { name: 'BP_NODE_RUN_SCRIPTS', value: 'ensure:shell' },
+  ]);
+});
+
+test('a terminal failed kpack Build is deleted before the failure returns', async () => {
+  let deleted;
+  kubernetes._setClientsForTest({
+    custom: {
+      async createNamespacedCustomObject() {},
+      async getNamespacedCustomObject() {
+        return { status: { conditions: [{ type: 'Succeeded', status: 'False', message: 'npm failed' }] } };
+      },
+      async deleteNamespacedCustomObject(request) { deleted = request; },
+    },
+  });
+
+  await assert.rejects(kubernetes.createBuild(config(), {
+    app: { id: 7, slug: 'demo', repo_url: 'https://github.com/example/demo' },
+    revision: 'c'.repeat(40), environment: 'production',
+  }), /npm failed/);
+  assert.equal(deleted.name, `sv-7-${'c'.repeat(12)}`);
+  assert.equal(deleted.namespace, 'social-builds');
+  assert.equal(deleted.propagationPolicy, 'Background');
+});
+
+test('failed-build sweep removes only terminal failed managed Builds', async () => {
+  const deleted = [];
+  kubernetes._setClientsForTest({
+    custom: {
+      async listNamespacedCustomObject() {
+        return { items: [
+          { metadata: { name: 'failed' }, status: { conditions: [{ type: 'Succeeded', status: 'False' }] } },
+          { metadata: { name: 'running' }, status: { conditions: [{ type: 'Succeeded', status: 'Unknown' }] } },
+          { metadata: { name: 'passed' }, status: { conditions: [{ type: 'Succeeded', status: 'True' }] } },
+        ] };
+      },
+      async deleteNamespacedCustomObject({ name }) { deleted.push(name); },
+    },
+  });
+
+  assert.deepEqual(await kubernetes.deleteFailedBuilds(config()), { examined: 3, deleted: 1 });
+  assert.deepEqual(deleted, ['failed']);
 });
 
 test('application deploy reconciles Secret, Deployment, Service and Ingress with a digest', async () => {
@@ -93,6 +164,49 @@ test('mutable image tags are refused before any Kubernetes write', async () => {
     }),
     /immutable image digest/
   );
+});
+
+test('a failed staging rollout removes its quota-consuming resources', async () => {
+  let deploymentCreated = false;
+  const deleted = [];
+  const missing = async () => { throw notFound(); };
+  const remove = (kind) => async ({ name }) => { deleted.push(`${kind}/${name}`); };
+  kubernetes._setClientsForTest({
+    core: {
+      readNamespacedSecret: missing,
+      readNamespacedService: missing,
+      async createNamespacedSecret() {},
+      async createNamespacedService() {},
+      deleteNamespacedSecret: remove('Secret'),
+      deleteNamespacedService: remove('Service'),
+    },
+    apps: {
+      async readNamespacedDeployment() {
+        if (!deploymentCreated) throw notFound();
+        throw new Error('quota denied');
+      },
+      async createNamespacedDeployment() { deploymentCreated = true; },
+      deleteNamespacedDeployment: remove('Deployment'),
+    },
+    networking: {
+      readNamespacedIngress: missing,
+      async createNamespacedIngress() {},
+      deleteNamespacedIngress: remove('Ingress'),
+    },
+  });
+
+  await assert.rejects(kubernetes.deployApplication({ ...config(), selfAppSlug: 'self-app' }, {
+    app: { id: 10, slug: 'self-app' }, environment: 'staging', sessionId: 42,
+    imageRef: 'ghcr.io/example/self-app@sha256:deadbeef', env: {},
+  }), /quota denied/);
+
+  assert.deepEqual(deleted.sort(), [
+    'Deployment/sv-preview-10-s42',
+    'Ingress/sv-preview-10-s42',
+    'Secret/sv-preview-10-s42-env',
+    'Secret/sv-preview-10-s42-tls',
+    'Service/sv-preview-10-s42',
+  ]);
 });
 
 test('worker runtime reconciles a retained PVC, Secret and warm Deployment', async () => {

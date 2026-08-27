@@ -13,7 +13,12 @@ async function build(config, { app, revision, environment, sessionId, sourceDir,
     await docker.buildImage(sourceDir, dockerImage);
     return { runtimeKind: 'docker', imageRef: dockerImage, buildRef: null };
   }
-  return kubernetes.createBuild(config, { app, revision, environment, sessionId });
+  return kubernetes.createBuild(config, { app, revision, environment, sessionId, sourceDir });
+}
+
+async function cleanupFailedBuilds(config) {
+  if (mode(config) !== 'kubernetes') return { examined: 0, deleted: 0 };
+  return kubernetes.deleteFailedBuilds(config);
 }
 
 // The short, DNS-resolvable identity a container is reachable by, given the
@@ -100,4 +105,6 @@ async function remove(config, ref, options = {}) {
   if (options.deleteBuilds && ref.appId != null) await kubernetes.deleteBuilds(config, ref.appId);
 }
 
-module.exports = { mode, build, deploy, dnsAlias, status, logs, restart, remove };
+module.exports = {
+  mode, build, cleanupFailedBuilds, deploy, dnsAlias, status, logs, restart, remove,
+};

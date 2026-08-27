@@ -119,3 +119,13 @@ test('the build context carries what the builder stage needs', () => {
       `.dockerignore excludes ${line}, which the builder stage needs`);
   }
 });
+
+test('the scaffold keeps dependencies out of Git and Cloud Native Buildpacks input', () => {
+  const list = files();
+  assert.match(file(list, '.gitignore'), /^node_modules\/$/m,
+    'generated apps must not commit dependency trees');
+  const project = file(list, 'project.toml');
+  assert.match(project, /schema-version = "0\.2"/);
+  assert.match(project, /exclude = \[[\s\S]*"node_modules\/"[\s\S]*\]/,
+    'kpack must exclude a dependency tree even if a repository accidentally tracks one');
+});
