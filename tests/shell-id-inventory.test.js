@@ -443,7 +443,7 @@ const ADDED_IDS = {
   'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
   'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
   'notifications-saved': 'Pinned "Saved" section at the top of the bell drawer, holding the messages this user bookmarked (#1280).',
-  // #1344 — verified users may claim one company-funded OpenRouter key.
+  // #1344 — eligible users may claim one company-funded OpenRouter key.
   // These are static settings controls; settings.js owns their state and the
   // one-time plaintext reveal lifecycle.
   'settings-openrouter-managed-card': 'Included managed OpenRouter key status and claim card (#1344).',

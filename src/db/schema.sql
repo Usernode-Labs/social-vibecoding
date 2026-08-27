@@ -5278,8 +5278,9 @@ WHERE g.provider = 'anthropic'
 -- (same treatment the legacy users.anthropic_key_enc already gets).
 COMMENT ON TABLE  credentials.user_ai_credentials IS 'staging:private';
 
--- One company-funded OpenRouter child key reservation per verified Usernode
--- account. The row is deliberately retained after remote deletion: its
+-- One company-funded OpenRouter child key reservation per Usernode account.
+-- Deployments may optionally require a verified identity before insertion.
+-- The row is deliberately retained after remote deletion: its
 -- UNIQUE(user_id) tombstone is the durable "issued once" guarantee, while
 -- the child secret itself lives only in user_ai_credentials (encrypted).
 -- Management keys are deploy secrets and never enter either table.

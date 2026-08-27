@@ -50,6 +50,8 @@ function credentialRoutes(config) {
       const managed = managedOpenRouter.publicState(managedRow);
       const configured = meta?.status === 'valid';
       const available = betaAllowed(req.user.id) && !!config.openrouterManagementApiKey;
+      const verificationRequired = managedOpenRouter.requiresVerifiedIdentity(config);
+      const identityEligible = !verificationRequired || !!managedRow.verified;
       res.json({
         configured,
         status: meta?.status || null,
@@ -62,12 +64,13 @@ function credentialRoutes(config) {
         managedProvisioning: {
           available,
           verified: !!managedRow.verified,
+          verificationRequired,
           alreadyIssued: !!managed,
-          canClaim: available && !!managedRow.verified && !managed && !configured,
+          canClaim: available && identityEligible && !managed && !configured,
           dailyLimitUsd: config.openrouterManagedDailyLimitUsd,
           reason: !betaAllowed(req.user.id) ? 'not_available'
             : (!config.openrouterManagementApiKey ? 'not_configured'
-              : (!managedRow.verified ? 'verification_required'
+              : (!identityEligible ? 'verification_required'
                 : (managed ? 'already_issued' : (configured ? 'personal_key_configured' : null)))),
         },
       });

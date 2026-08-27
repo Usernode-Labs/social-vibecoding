@@ -365,11 +365,12 @@ function socialIdentityRoutes(config) {
     if (!providerAdapter(provider)) return res.status(404).json({ error: 'not_found' });
     try {
       await socialIdentity.clearIdentity(pool, req.user.id, provider);
-      // Identity loss does not automatically revoke a paid child key. It
-      // creates a deduplicated admin review notification so a human can
-      // decide whether to block or delete it from the Users console.
+      // When managed-key verification is required, identity loss does not
+      // automatically revoke a paid child key. It creates a deduplicated
+      // admin review notification so a human can decide whether to block or
+      // delete it from the Users console. The default-open policy skips this.
       await managedOpenRouter.notifyIdentityReview({
-        pool, userId: req.user.id,
+        pool, userId: req.user.id, config,
       }).catch((err) => {
         log.warn('social-identity', 'managed OpenRouter review notification failed', {
           provider, userId: req.user.id, message: err.message,
