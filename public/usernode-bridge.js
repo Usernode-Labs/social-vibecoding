@@ -115,6 +115,7 @@
     setSocialPushEnabled: true,
     claimPendingSocialNotification: true,
     ackPendingSocialNotification: true,
+    setSocialBadgeCount: true,
     manageStaking: true,
   };
   var _SESSION_WALLET_METHODS = {
@@ -4833,6 +4834,19 @@
     return callNativeChromeAction(
       "ackPendingSocialNotification", { notificationId: notificationId },
       _SOCIAL_PUSH_TIMEOUT_MS
+    );
+  };
+
+  // setSocialBadgeCount(count) → sets the OS homescreen icon badge to the
+  // given unread total (0 clears it). Additive capability (#1445):
+  // feature-detect via getBridgeInfo().capabilities before calling — the
+  // Flutter shell only advertises 'setSocialBadgeCount' on builds where
+  // the call has a visible effect, and older builds never see it. The
+  // value is authoritative and idempotent (last write wins); producer
+  // requirements live in NATIVE-BRIDGE.md.
+  window.usernode.setSocialBadgeCount = function (count) {
+    return callNativeChromeAction(
+      "setSocialBadgeCount", { count: count }, _SOCIAL_PUSH_TIMEOUT_MS
     );
   };
 

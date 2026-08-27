@@ -35,6 +35,8 @@ function loadCoordinator({
   caps = capabilities,
   bridgeReadyImpl,
   getInfoImpl,
+  badgeImpl,
+  includeBadgeMethod = true,
   refreshImpl,
   invalidationRefreshVersion = 1,
   foregroundStorage = new Map(),
@@ -111,6 +113,12 @@ function loadCoordinator({
         calls.push(['ack', id]);
         return ackImpl ? ackImpl(id) : true;
       },
+      ...(includeBadgeMethod ? {
+        async setSocialBadgeCount(count) {
+          calls.push(['badge', count]);
+          return badgeImpl ? badgeImpl(count) : true;
+        },
+      } : {}),
     },
     addEventListener(type, listener) {
       const list = windowListeners.get(type) || [];
@@ -1384,3 +1392,146 @@ test('a stalled invalidation response body is covered by the same deadline',
     assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
     assert.equal(sandbox.Notifications.items[0].id, 3);
   });
+
+// ── Homescreen icon badge (#1445) ──────────────────────────────────────
+
+const BADGE_CAPS = [...capabilities, 'setSocialBadgeCount'];
+
+test('publishBadgeCount forwards the unread total to a capable build once', async () => {
+  const loaded = loadCoordinator({ caps: BADGE_CAPS });
+
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(3), true);
+  // Re-publishing the confirmed value is a no-op, not a second native call.
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(3), true);
+  assert.deepEqual(
+    loaded.calls.filter(([name]) => name === 'badge'),
+    [['badge', 3]]
+  );
+
+  // A changed total goes out again.
+  await loaded.sandbox.SocialPush.publishBadgeCount(0);
+  assert.deepEqual(
+    loaded.calls.filter(([name]) => name === 'badge'),
+    [['badge', 3], ['badge', 0]]
+  );
+});
+
+test('publishBadgeCount rejects unusable counts without touching the bridge', async () => {
+  const loaded = loadCoordinator({ caps: BADGE_CAPS });
+
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(-1), false);
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(1.5), false);
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount('7'), false);
+  assert.equal(loaded.calls.some(([name]) => name === 'badge'), false);
+});
+
+test('concurrent publishes coalesce to the latest value', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const loaded = loadCoordinator({
+    caps: BADGE_CAPS,
+    badgeImpl: () => gate,
+  });
+
+  const first = loaded.sandbox.SocialPush.publishBadgeCount(1);
+  await settle();
+  // A newer total arrives while the first send is in flight.
+  const second = loaded.sandbox.SocialPush.publishBadgeCount(5);
+  release(true);
+  await first;
+  await second;
+  assert.deepEqual(
+    loaded.calls.filter(([name]) => name === 'badge'),
+    [['badge', 1], ['badge', 5]],
+    'the in-flight value settles, then the coalesced latest goes out'
+  );
+});
+
+test('the badge capability is NOT required for push support', async () => {
+  // An app build without setSocialBadgeCount keeps full push support:
+  // isSupported stays true (state reads work) and the badge publish is a
+  // quiet no-op rather than an error.
+  const loaded = loadCoordinator();
+
+  assert.equal(await loaded.sandbox.SocialPush.isSupported(), true);
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(4), false);
+  assert.equal(loaded.calls.some(([name]) => name === 'badge'), false);
+
+  // Same for a mixed cache generation whose bridge predates the wrapper.
+  const older = loadCoordinator({ caps: BADGE_CAPS, includeBadgeMethod: false });
+  assert.equal(await older.sandbox.SocialPush.publishBadgeCount(4), false);
+  assert.equal(older.calls.some(([name]) => name === 'badge'), false);
+});
+
+test('a degraded capability probe is retried, never latched as unsupported', async () => {
+  let degraded = true;
+  const loaded = loadCoordinator({
+    caps: BADGE_CAPS,
+    getInfoImpl: () => (degraded
+      ? { version: 0, capabilities: [], degraded: true }
+      : { version: 4, capabilities: BADGE_CAPS }),
+  });
+
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(2), false);
+  assert.equal(loaded.calls.some(([name]) => name === 'badge'), false);
+
+  degraded = false;
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(2), true);
+  assert.deepEqual(
+    loaded.calls.filter(([name]) => name === 'badge'),
+    [['badge', 2]]
+  );
+});
+
+test('publishes wait for session admission and replay when it arrives', async () => {
+  let admitted = false;
+  const loaded = loadCoordinator({
+    caps: BADGE_CAPS,
+    isSessionAdmittedImpl: () => admitted,
+  });
+
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(6), false);
+  assert.equal(loaded.calls.some(([name]) => name === 'badge'), false);
+
+  admitted = true;
+  loaded.fire('usernode:native-session-admission', { admitted: true });
+  await settle();
+  assert.deepEqual(
+    loaded.calls.filter(([name]) => name === 'badge'),
+    [['badge', 6]],
+    'the remembered count goes out once the session is admitted'
+  );
+});
+
+test('a new admission republishes the remembered count over replayed state', async () => {
+  const loaded = loadCoordinator({ caps: BADGE_CAPS });
+
+  await loaded.sandbox.SocialPush.publishBadgeCount(9);
+  loaded.fire('usernode:native-session-admission', { admitted: true });
+  await settle();
+  assert.deepEqual(
+    loaded.calls.filter(([name]) => name === 'badge'),
+    [['badge', 9], ['badge', 9]],
+    'the confirmation is forgotten, so the same count is re-applied'
+  );
+});
+
+test('a badge send failure warns and leaves the count retryable', async () => {
+  let fail = true;
+  const loaded = loadCoordinator({
+    caps: BADGE_CAPS,
+    badgeImpl: () => {
+      if (fail) throw new Error('bridge hiccup');
+      return true;
+    },
+  });
+
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(8), false);
+  fail = false;
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(8), true);
+  assert.deepEqual(
+    loaded.calls.filter(([name]) => name === 'badge'),
+    [['badge', 8], ['badge', 8]],
+    'a failed send is not remembered as applied'
+  );
+});

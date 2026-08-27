@@ -770,6 +770,7 @@ const Notifications = {
       if (!same) Notifications._store.set({ sessionUnreadIds: ids });
     }
     Notifications._updateTitle();
+    Notifications._publishAppBadge();
     // The cog drawer used to render a pinned section from this same items
     // store and was nudged here whenever the store changed. It is retired;
     // the list in the hamburger is React-rendered from the store directly,
@@ -781,6 +782,42 @@ const Notifications = {
     const total = Notifications._badgeTotal();
     if (total > 0) document.title = `(${total}) ${base}`;
     else document.title = base;
+  },
+
+  // #1445: the homescreen icon badge. Two feature-detected targets, both
+  // fed the server's account-wide unread total (`Notifications.unread` —
+  // the same number countUnread stamps into every push payload, so the
+  // icon never disagrees with what the next push would set):
+  //
+  //   - navigator.setAppBadge / clearAppBadge for installed PWAs. The
+  //     Flutter WebView has neither, so the detect no-ops there.
+  //   - window.SocialPush.publishBadgeCount for the native shell.
+  //     SocialPush owns capability probing and session-admission gating
+  //     (it is a classic script loaded before this deferred bundle, but
+  //     the optional chain also tolerates a mixed cache generation that
+  //     predates the seam).
+  //
+  // Publishes 0 when signed out so a device is not left badged for a
+  // session that ended in-app. Best-effort throughout: a badge failure
+  // must never break the bell render this rides on.
+  _publishAppBadge() {
+    const signedIn = typeof window !== 'undefined' && window.App && App.user;
+    const count = signedIn ? Math.max(0, Number(Notifications.unread) || 0) : 0;
+    try {
+      if (typeof navigator !== 'undefined') {
+        if (count > 0 && typeof navigator.setAppBadge === 'function') {
+          Promise.resolve(navigator.setAppBadge(count)).catch(() => {});
+        } else if (count === 0 && typeof navigator.clearAppBadge === 'function') {
+          Promise.resolve(navigator.clearAppBadge()).catch(() => {});
+        }
+      }
+    } catch { /* Unsupported surface — the OS badge is best-effort. */ }
+    try {
+      if (typeof window !== 'undefined' && window.SocialPush
+        && typeof window.SocialPush.publishBadgeCount === 'function') {
+        window.SocialPush.publishBadgeCount(count);
+      }
+    } catch { /* Same stance for the native seam. */ }
   },
 
   // --- pinned saved-messages section (#1280) ----------------------------

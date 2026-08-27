@@ -267,7 +267,7 @@ function buildNotificationCopy(kind, context, now = new Date()) {
 
 function buildMessage({
   token, notificationId, kind, environment, installationId, userId,
-  expiresAt, context, now = new Date(),
+  expiresAt, context, unreadCount, now = new Date(),
 }) {
   if (typeof token !== 'string' || !token) throw new Error('mobile_push_registration_missing');
   if (!ALLOWED_KINDS.has(kind)) throw new Error('mobile_push_kind_not_allowed');
@@ -280,7 +280,7 @@ function buildMessage({
   if (!Number.isFinite(ttl) || ttl <= 0) throw new Error('mobile_push_delivery_expired');
 
   const collapseId = `usernode-social-${id}`;
-  return {
+  const message = {
     token,
     notification: buildNotificationCopy(kind, context, now),
     data: {
@@ -305,6 +305,16 @@ function buildMessage({
       payload: { aps: { category: 'USERNODE_SOCIAL', threadId: 'usernode-social' } },
     },
   };
+  // #1445: the homescreen icon badge. iOS only ever badges the icon when a
+  // push carries `aps.badge`; Android launchers read the count from
+  // `notificationCount`. Like the copy context above, this is display-only
+  // and optional — anything but a usable count degrades to omitting the
+  // field (the pre-badge payload) rather than failing the delivery.
+  if (Number.isSafeInteger(unreadCount) && unreadCount >= 0) {
+    message.android.notification.notificationCount = unreadCount;
+    message.apns.payload.aps.badge = unreadCount;
+  }
+  return message;
 }
 
 module.exports = {

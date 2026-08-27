@@ -62,6 +62,15 @@ One additive **widget** capability extends v4 the same way:
   pinned canvas tile the first time it appears. See the homescreen
   shortcuts section below for the contract it unlocks.
 
+One additive **notification** capability extends v4 the same way:
+
+- `setSocialBadgeCount`: the shell applies a web-published unread total to
+  the OS app-icon badge (issue #1445). Advertise it only on builds where
+  the call has a visible effect end to end — SV feature-detects it
+  separately from the four social-push methods, so builds without it keep
+  full push support and simply never see the call. See "Homescreen icon
+  badge" below for the producer contract it unlocks.
+
 ## Methods
 
 ### Wallet / transactions (pre-existing, v1)
@@ -154,6 +163,45 @@ faces and the widget flips natively with SV closed. A shell that accepts
 and stores `icon_url_dark` but does not select on `colorScheme` must NOT
 advertise the capability: SV would send an asset nobody renders and would
 have given up the repaint-on-flip fallback for nothing.
+
+### Homescreen icon badge (additive; `setSocialBadgeCount`)
+
+#### `setSocialBadgeCount({ count })` → resolves when applied
+
+Privileged top-frame action (issue #1445), same per-realm capability and
+session-admission rules as the four social-push methods. SV calls it from
+the trusted Social shell every time the signed-in account's unread
+notification total changes — on every bell repaint, after mark-read, and
+with `count: 0` on sign-out — so the OS app-icon badge tracks what the
+user would see inside the app.
+
+Producer requirements for a build that advertises the capability:
+
+- **Apply `count` to the OS app-icon badge**: on iOS via
+  `UNUserNotificationCenter` badge count; on Android via the launcher
+  badge, cancelling the shell's own tray notifications when the count
+  reaches 0 so the notification dot clears with it.
+- **`count` is authoritative and the call idempotent** — a non-negative
+  integer, last write wins. Re-applying the current value must be a
+  no-op, not a flicker.
+- **Persist nothing beyond the OS surface**: the value is derived state
+  SV republishes on session admission and page restore; the shell must
+  not replay a stale stored count over a newer one.
+- **Clear the badge on logout / session end**, matching SV's own
+  `count: 0` publish, so a signed-out device is never left badged.
+- **Advertise `setSocialBadgeCount` only where the call has a visible
+  effect.** SV feature-detects it separately from the social-push
+  capability set (a degraded `getBridgeInfo` is re-probed, never latched
+  as unsupported), and builds without it lose nothing: the badge still
+  appears via the `aps.badge` / `notificationCount` fields the platform
+  stamps into every push, and clears on the next app open once a
+  capable build is installed.
+
+The FCM payload side of the same feature needs no shell code at all:
+iOS applies `aps.badge` and Android launchers read
+`notification.notificationCount` while the app is closed. This method
+exists for the live half — updating and clearing the badge while the
+user is inside the app.
 
 ### Chrome data (v2 — the app-as-SV-chrome surface)
 
