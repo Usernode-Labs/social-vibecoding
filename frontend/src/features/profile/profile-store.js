@@ -234,7 +234,7 @@ export function completedView(payload, now = Date.now()) {
   const rows = (payload && Array.isArray(payload.completed)) ? payload.completed : [];
   const seasonName = payload && payload.season ? payload.season.name : null;
   return {
-    title: seasonName ? `Completed challenges — ${seasonName}` : 'Completed challenges',
+    title: seasonName ? `Completed challenges: ${seasonName}` : 'Completed challenges',
     count: (payload && Number(payload.total) > 0)
       ? `${Number(payload.done || 0)} of ${Number(payload.total)} done`
       : null,

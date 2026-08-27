@@ -13,9 +13,9 @@
  * notice — because that is what the hand-written document shipped and the
  * prerender pass has to reproduce it byte for byte. Same for everything the
  * options payload fills: the two selects hold only their placeholder `<option>`,
- * the three chip rows are empty `<div>`s, the connect row and the invites list
- * are empty, and the loss detail block keeps its `hidden`. Nothing is fetched
- * until the router shows the screen.
+ * the three chip rows are empty `<div>`s, the connect row is empty, the invite
+ * link and its joined-count are empty, and the loss detail block keeps its
+ * `hidden`. Nothing is fetched until the router shows the screen.
  *
  * ── Uncontrolled inputs, on purpose ──────────────────────────────────
  *
@@ -28,10 +28,12 @@
  *
  * ── ?connect= ────────────────────────────────────────────────────────
  *
- * GitHub / X verification is a `/waitlist/connect/<provider>` OAuth round trip
+ * GitHub / X / LinkedIn verification is a `/waitlist/connect/<provider>` OAuth
+ * round trip
  * that comes back to `#more/<token>?connect=<outcome>` — inside the hash, so the
  * token never reaches a server log. The outcome is read on show and painted into
- * the same status line the submit uses.
+ * the same status line the submit uses. It proves the account is THEIRS; no
+ * provider here can tell us whether they followed anything.
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -52,16 +54,14 @@ import {
   WaitlistOptions,
 } from './waitlist-shared';
 
-/** Hard ceiling on invite rows, matching `_addInviteRow`'s own cap. */
-const MAX_INVITE_ROWS = 5;
-
 /** `GET /api/public/waitlist/more/<token>`. Every field is optional. */
 interface MoreAnswers {
+  made_url?: string;
+  made_note?: string;
   group?: { name?: string; size?: string; role?: string; tools?: string[]; need?: string };
   loss?: { had?: string; product?: string; kind?: string[]; story?: string };
   handles?: { farcaster?: string; discord?: string; telegram?: string; other?: string };
   verified?: Record<string, string>;
-  invites?: string[];
   admit_together?: boolean;
   referrer_handle?: string;
 }
@@ -70,12 +70,8 @@ interface MorePayload {
   ok?: boolean;
   answers?: MoreAnswers;
   oauth?: Record<string, boolean>;
-}
-
-/** One invite row. The id keys the row; the value is only its initial one. */
-interface InviteRow {
-  id: number;
-  initial: string;
+  /** The signup's own share link, and who has joined through it so far. */
+  invite?: { url?: string | null; count?: number; emails?: string[] };
 }
 
 export function MoreScreen() {
@@ -95,10 +91,15 @@ export function MoreScreen() {
     verified: Record<string, string>;
     oauth: Record<string, boolean>;
   }>({ verified: {}, oauth: {} });
-  const [invites, setInvites] = useState<InviteRow[]>([]);
+  const [inviteUrl, setInviteUrl] = useState('');
+  const [inviteCount, setInviteCount] = useState(0);
+  const [inviteEmails, setInviteEmails] = useState<string[]>([]);
+  const [copied, setCopied] = useState(false);
   const [msg, setMsg] = useState<{ text: string; tone: MsgTone } | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const madeUrl = useRef<HTMLInputElement>(null);
+  const madeNote = useRef<HTMLInputElement>(null);
   const groupName = useRef<HTMLInputElement>(null);
   const groupSize = useRef<HTMLSelectElement>(null);
   const groupRole = useRef<HTMLSelectElement>(null);
@@ -112,27 +113,8 @@ export function MoreScreen() {
   const admitTogether = useRef<HTMLInputElement>(null);
   const referrer = useRef<HTMLInputElement>(null);
 
-  // The token from `#more/<token>`, and the next invite row's key.
+  // The token from `#more/<token>`.
   const token = useRef<string | null>(null);
-  const nextInviteId = useRef(0);
-  const inviteEls = useRef(new Map<number, HTMLInputElement | null>());
-
-  /**
-   * The invite rows, mirrored in a ref. Add and remove used to read
-   * `#more-invites`'s live child count, so several clicks in one tick each saw
-   * the previous one's row; reading `invites` instead would see the value from
-   * the last render and let a fast clicker past the cap. The ref restores the
-   * live read, and every write goes through {@link setInviteRows}.
-   */
-  const invitesRef = useRef<InviteRow[]>([]);
-  const setInviteRows = useCallback((next: InviteRow[]) => {
-    invitesRef.current = next;
-    setInvites(next);
-  }, []);
-
-  const inviteRows = useCallback((values: string[]): InviteRow[] => {
-    return values.map((initial) => ({ id: nextInviteId.current++, initial }));
-  }, []);
 
   /**
    * Read the OAuth round trip's outcome out of the hash's own query string.
@@ -145,7 +127,7 @@ export function MoreScreen() {
     } catch {
       outcome = null;
     }
-    if (outcome === 'ok') return { text: 'Account verified — thanks.', tone: 'ok' };
+    if (outcome === 'ok') return { text: 'Account verified. Thanks.', tone: 'ok' };
     if (outcome === 'failed' || outcome === 'denied' || outcome === 'unavailable') {
       return {
         text:
@@ -183,6 +165,16 @@ export function MoreScreen() {
       if (other.current) other.current.value = handles.other || '';
 
       setConnect({ verified: a.verified || {}, oauth: payload.oauth || {} });
+
+      if (madeUrl.current) madeUrl.current.value = a.made_url || '';
+      if (madeNote.current) madeNote.current.value = a.made_note || '';
+
+      // The share link and its joined-count. Both start empty so the first
+      // render matches the prerender; this effect is the only thing that
+      // fills them.
+      setInviteUrl(payload.invite?.url || '');
+      setInviteCount(payload.invite?.count || 0);
+      setInviteEmails(Array.isArray(payload.invite?.emails) ? payload.invite.emails : []);
 
       if (admitTogether.current) admitTogether.current.checked = !!a.admit_together;
       if (referrer.current) referrer.current.value = a.referrer_handle || '';
@@ -236,15 +228,12 @@ export function MoreScreen() {
     // dropped, which is exactly why `_renderMore` called `_fillSelect` first.
     // flushSync reproduces that order — options rendered, then values assigned,
     // all in this tick, so the reveal below is still a single paint.
-    const stored = Array.isArray(data.answers?.invites) ? data.answers.invites.slice() : [];
-    while (stored.length < 2) stored.push('');
     flushSync(() => {
       setOpts(loaded);
-      setInviteRows(inviteRows(stored.slice(0, loaded.max_invites || MAX_INVITE_ROWS)));
     });
     render(data);
     setStatus('ready');
-  }, [inviteRows, render, setInviteRows]);
+  }, [render]);
 
   const moreOnShow = useCallback(
     (value?: string) => {
@@ -261,39 +250,35 @@ export function MoreScreen() {
     setLossKinds((prev) => toggleChip(prev, key));
   }, []);
 
-  const addInvite = useCallback(() => {
-    const rows = invitesRef.current;
-    if (rows.length >= MAX_INVITE_ROWS) return;
-    setInviteRows([...rows, ...inviteRows([''])]);
-  }, [inviteRows, setInviteRows]);
-
-  /** Drop the row, or — when it's the last one — just empty it. */
-  const removeInvite = useCallback(
-    (id: number) => {
-      const rows = invitesRef.current;
-      if (rows.length > 1) {
-        setInviteRows(rows.filter((row) => row.id !== id));
-        return;
-      }
-      const el = inviteEls.current.get(id);
-      if (el) el.value = '';
-    },
-    [setInviteRows],
-  );
+  /**
+   * Copy the invite link. clipboard.writeText rejects on an insecure origin
+   * and is absent in some in-app WebViews, so a failure selects the text for
+   * the person to copy by hand rather than silently doing nothing.
+   */
+  const onCopyInvite = useCallback(async () => {
+    const el = document.getElementById('more-invite-url') as HTMLInputElement | null;
+    if (!el || !el.value) return;
+    try {
+      await navigator.clipboard.writeText(el.value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      el.select();
+    }
+  }, []);
 
   const onSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       const value = token.current;
-      const typed = [...document.querySelectorAll<HTMLInputElement>('#more-invites [data-invite]')]
-        .map((el) => el.value.trim())
-        .filter(Boolean);
       setSaving(true);
       try {
         const res = await fetch('/api/public/waitlist/more/' + encodeURIComponent(value || ''), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            made_url: madeUrl.current?.value.trim() || undefined,
+            made_note: madeNote.current?.value.trim() || undefined,
             group_name: groupName.current?.value.trim() || undefined,
             group_size: groupSize.current?.value || undefined,
             group_role: groupRole.current?.value || undefined,
@@ -307,22 +292,21 @@ export function MoreScreen() {
             discord: discord.current?.value.trim() || undefined,
             telegram: telegram.current?.value.trim() || undefined,
             other_handle: other.current?.value.trim() || undefined,
-            invites: typed,
             admit_together: !!admitTogether.current?.checked,
             referrer_handle: referrer.current?.value.trim() || undefined,
           }),
         });
         const data = await res.json().catch(() => null);
         if (res.ok) {
-          setMsg({ text: (data && data.message) || 'Saved — thanks.', tone: 'ok' });
+          setMsg({ text: (data && data.message) || 'Saved. Thanks.', tone: 'ok' });
         } else {
           setMsg({
-            text: (data && data.error) || 'Something went wrong — try again.',
+            text: (data && data.error) || 'Something went wrong. Try again.',
             tone: 'error',
           });
         }
       } catch {
-        setMsg({ text: 'Connection issue — try again.', tone: 'error' });
+        setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
       }
       setSaving(false);
     },
@@ -355,7 +339,7 @@ export function MoreScreen() {
       </a>
       <div className="max-w-2xl mx-auto px-6 py-16">
         <p className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400">
-          Optional — moves you up the list
+          Optional (moves you up the list)
         </p>
         <h1 className="mt-1 text-2xl font-bold">
           Want in sooner?
@@ -376,13 +360,13 @@ export function MoreScreen() {
         >
           {status === 'throttled' ? (
             <>
-              Your link is fine — we&rsquo;re limiting requests from your
+              Your link is fine, we&rsquo;re limiting requests from your
               address right now. Try again in {retryText}, or just reopen the
               link from your waitlist email then.
             </>
           ) : (
             <>
-              {"This link doesn't look right — use the one from your waitlist email, or "}
+              {"This link doesn't look right. Use the one from your waitlist email, or "}
               <a href="#landing" className="underline">
                 join the waitlist
               </a>
@@ -395,13 +379,43 @@ export function MoreScreen() {
           className={hiddenFirst(status !== 'ready', 'mt-6 space-y-8')}
           onSubmit={onSubmit}
         >
+          {/* 4 · Something you've made — relocated from the join form, where
+              it used to be required. Joining takes an email now; this is one
+              of the things that helps you move up instead. */}
+          <div>
+            <label
+              htmlFor="more-made-url"
+              className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
+            >
+              Link something you&rsquo;ve made
+            </label>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+              A repo, a site, a bot, a mod, a newsletter, a spreadsheet that runs your fantasy league. Built with AI counts, we care that it exists, not how you made it.
+            </p>
+            <input
+              ref={madeUrl}
+              id="more-made-url"
+              type="url"
+              maxLength={2000}
+              placeholder="https://"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+            />
+            <input
+              ref={madeNote}
+              id="more-made-note"
+              type="text"
+              maxLength={140}
+              placeholder="What is it, in one line? — optional"
+              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+            />
+          </div>
           {/* 5 · The group */}
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Tell us about a group you&rsquo;re part of that could use its own app.
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
-              A team, a server, a club, a group chat, a co-op, a band, a league, a neighbourhood. Not a hypothetical one — a real group you&rsquo;re actually in.
+              A team, a server, a club, a group chat, a co-op, a band, a league, a neighbourhood. Not a hypothetical one, a real group you&rsquo;re actually in.
             </p>
             <input
               ref={groupName}
@@ -434,7 +448,7 @@ export function MoreScreen() {
               </select>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3 mb-1.5">
-              What does it run on today? — pick any
+              What does it run on today? (pick any)
             </p>
             <MultiChipRow
               id="more-group-tools"
@@ -479,7 +493,7 @@ export function MoreScreen() {
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
               <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
-                What happened? — pick any
+                What happened? (pick any)
               </p>
               <MultiChipRow
                 id="more-loss-kinds"
@@ -504,17 +518,24 @@ export function MoreScreen() {
               Where else are you?
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
-              Connecting an account proves you&rsquo;re a person with a history, which is most of what gets a signup read quickly.
+              Connecting an account proves you&rsquo;re a person with a history, which is most of what gets a signup read quickly. It confirms the account is yours and nothing else, so follow us if you want to, but we won&rsquo;t claim we checked.
             </p>
             {/*
-                GitHub / X: a verified pill when connected, a connect link when
-                the platform has OAuth creds for the provider, nothing otherwise
-                (the text handles below still work).
+                GitHub / X / LinkedIn: a verified pill when connected, a connect
+                link when the platform has OAuth creds for the provider, nothing
+                otherwise (the text handles below still work).
+
+                "Verified" here means the account is THEIRS. The onboarding doc
+                asks to verify that the follow itself happened; LinkedIn and
+                Instagram expose no API that reports it, and X only does on a
+                paid tier with the follows.read scope, so the copy above stops
+                at what we can actually stand behind.
             */}
             <div id="more-connect-row" className="flex flex-wrap gap-2 mb-3">
               {[
                 ['github', 'GitHub'],
                 ['x', 'X'],
+                ['linkedin', 'LinkedIn'],
               ].map(([provider, label]) =>
                 connect.verified[provider] ? (
                   <span
@@ -545,7 +566,7 @@ export function MoreScreen() {
                 id="more-handle-farcaster"
                 type="text"
                 maxLength={255}
-                placeholder="Farcaster — @handle"
+                placeholder="Farcaster (@handle)"
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
               <input
@@ -553,7 +574,7 @@ export function MoreScreen() {
                 id="more-handle-discord"
                 type="text"
                 maxLength={255}
-                placeholder="Discord — username"
+                placeholder="Discord (username)"
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
               <input
@@ -561,7 +582,7 @@ export function MoreScreen() {
                 id="more-handle-telegram"
                 type="text"
                 maxLength={255}
-                placeholder="Telegram — @handle"
+                placeholder="Telegram (@handle)"
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
               <input
@@ -569,52 +590,55 @@ export function MoreScreen() {
                 id="more-handle-other"
                 type="text"
                 maxLength={255}
-                placeholder="Anywhere else — Twitch, YouTube, Mastodon…"
+                placeholder="Anywhere else: Twitch, YouTube, Mastodon…"
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
             </div>
           </div>
-          {/* 8 · Friends */}
+          {/* 8 · Friends. The typed-address rows that used to live here sent
+              nothing and attributed nothing; this is a real link, and a join
+              through it sets waitlist_signups.invited_by. Everything below
+              renders empty until the load effect fills it, so the first
+              render still matches the prerender. */}
           <div>
-            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
-              Would you join with friends?
+            <label
+              htmlFor="more-invite-url"
+              className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
+            >
+              Bring someone you&rsquo;d build with
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
-              A network is more fun with people you already know. Drop their handles or emails and we&rsquo;ll try to bring you in together.
+              We try to admit people together. Things are more fun with people you know. Share your link, and if they join we&rsquo;ll connect your applications so we can try to bring you in together.
             </p>
-            <div id="more-invites" className="space-y-2">
-              {invites.map((row) => (
-                <div key={row.id} className="flex items-center gap-2">
-                  <input
-                    ref={(el) => {
-                      inviteEls.current.set(row.id, el);
-                    }}
-                    type="text"
-                    maxLength={255}
-                    placeholder="@handle or email"
-                    defaultValue={row.initial}
-                    className="flex-1 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                    data-invite="1"
-                  />
-                  <button
-                    type="button"
-                    aria-label="Remove"
-                    className="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
-                    onClick={() => removeInvite(row.id)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+            <div className="flex gap-2">
+              <input
+                id="more-invite-url"
+                type="text"
+                readOnly={true}
+                value={inviteUrl}
+                placeholder="Your link appears here"
+                className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              />
+              <Button
+                type="button"
+                id="more-invite-copy"
+                layout="shrink"
+                size="narrow"
+                onClick={onCopyInvite}
+              >
+                {copied ? 'Copied' : 'Copy'}
+              </Button>
             </div>
-            <button
-              type="button"
-              id="more-invite-add"
-              className="mt-2 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
-              onClick={addInvite}
-            >
-              + Add another
-            </button>
+            <div id="more-invite-joined" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+              {inviteCount > 0 ? (
+                <>
+                  <span className="font-medium text-zinc-700 dark:text-zinc-200">
+                    {`${inviteCount} ${inviteCount === 1 ? 'person' : 'people'} from your invite joined 🎉 `}
+                  </span>
+                  {inviteEmails.join(', ')}
+                </>
+              ) : null}
+            </div>
             <label className="mt-3 flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-300 cursor-pointer">
               <input
                 ref={admitTogether}
@@ -622,14 +646,14 @@ export function MoreScreen() {
                 type="checkbox"
                 className="mt-0.5 size-4 shrink-0 rounded accent-violet-600"
               />
-              Only let me in when at least one of them gets in too
+              Only let me in when at least one person from my link gets in too
             </label>
             <input
               ref={referrer}
               id="more-referrer"
               type="text"
               maxLength={255}
-              placeholder="Did someone here refer you? Their handle — optional"
+              placeholder="Did someone here refer you? Their handle (optional)"
               className="mt-3 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
           </div>
@@ -647,7 +671,7 @@ export function MoreScreen() {
               {msg ? msg.text : null}
             </p>
             <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-3">
-              A blank answer just means we have less to go on — nothing here is required.
+              A blank answer just means we have less to go on, and nothing here is required.
             </p>
           </div>
         </form>

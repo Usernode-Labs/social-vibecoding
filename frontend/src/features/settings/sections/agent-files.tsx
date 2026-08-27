@@ -40,7 +40,7 @@ export function AgentFilesSection() {
           <div id="agent-files-instructions-list" className="space-y-1.5">
             <AgentFilesList
               kind="instruction"
-              empty="No instruction files yet — upload a markdown file to guide the coding agent on every build you start."
+              empty="No instruction files yet. Upload a markdown file to guide the coding agent on every build you start."
             />
           </div>
         </div>
@@ -59,7 +59,7 @@ export function AgentFilesSection() {
           <div id="agent-files-skills-list" className="space-y-1.5">
             <AgentFilesList
               kind="skill"
-              empty="No skills yet — upload a skill file the agent can use while building for you."
+              empty="No skills yet. Upload a skill file the agent can use while building for you."
             />
           </div>
         </div>

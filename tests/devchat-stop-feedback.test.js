@@ -522,7 +522,7 @@ test('rung 2 (40s): admits it is stuck and offers Force stop', async () => {
 
   const row = DevChat.messages.find((m) => m._stopping);
   // The wording drops the euphemism — by now it genuinely is not coming.
-  assert.equal(row.content, 'Still stopping — the agent isn’t responding.');
+  assert.equal(row.content, 'Still stopping. The agent isn’t responding.');
   // The flag renderMessages branches on to draw the in-row button.
   assert.equal(row._forceOffered, true);
   // Still exactly one row: escalation mutates, never appends.
@@ -626,7 +626,7 @@ test('a tab joining a long-pending stop lands on the stuck rung immediately', ()
   DevChat._enterStoppingState({ stopRequestedAt: Date.now() - 90000 });
 
   const row = DevChat.messages.find((m) => m._stopping);
-  assert.equal(row.content, 'Still stopping — the agent isn’t responding.');
+  assert.equal(row.content, 'Still stopping. The agent isn’t responding.');
   assert.equal(row._forceOffered, true, 'Force stop is offered without waiting 40 more seconds');
   assert.deepEqual(armedDelays(timers), [], 'nothing left to wait for');
 });

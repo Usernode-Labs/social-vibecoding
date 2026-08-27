@@ -1689,6 +1689,29 @@ is a separate GitHub App and is unrelated.
 - GitHub permits only one callback URL per OAuth app. Do not reuse this app
   for account linking; create the dedicated `GITHUB_LINK_*` app above.
 
+### Creating the LinkedIn OpenID Connect app
+
+LinkedIn Developers → Create app, then add the **Sign In with LinkedIn
+using OpenID Connect** product to it. Without that product the authorize
+call is rejected before any platform code runs.
+
+- **Authorized redirect URL:**
+  `https://<your-domain>/waitlist/connect/linkedin/callback` — on the
+  canonical deployment,
+  `https://social-vibecoding.usernodelabs.org/waitlist/connect/linkedin/callback`.
+- **Scopes: `openid profile`,** and nothing else. `email` is deliberately
+  not requested: the waitlist row already has an address. The token is used
+  once for `GET /v2/userinfo` to resolve the member's name, then dropped.
+- Client ID → `WAITLIST_LINKEDIN_CLIENT_ID`, client secret →
+  `WAITLIST_LINKEDIN_CLIENT_SECRET` (declared `private: true`, so encrypted
+  at rest and never returned by any API). Both halves must be set or the
+  Connect LinkedIn button stays hidden.
+- **This confirms the account is theirs. It cannot confirm a follow.**
+  LinkedIn exposes no API reporting whether a member follows a company
+  page, so the stage-2 copy says "connect" and never claims otherwise. The
+  same is true of Instagram; X can answer it, but only with the
+  `follows.read` scope on a paid API tier.
+
 ## Cross-references
 
 - [EXTRACT-PLAN.md](./EXTRACT-PLAN.md) — the standalone-deploy

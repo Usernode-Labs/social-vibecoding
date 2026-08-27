@@ -412,12 +412,17 @@ sends, which run through the shell's bridge).
 #### `openNativeScreen({ screen })` → `true`
 
 Pushes an allowlisted native route. Allowed screens: `diagnostics` (the
-minimal native diagnostics screen), `benchmark`, and `httpLogs` — the
-debugging UIs over native-only data that survive the thin-shell migration.
-The former `settings`, `profile`, and `terms` screens were deleted with
-their web replacements and are rejected like any other value. Rejected
-entirely unless the top frame is the trusted SV origin (sub-apps cannot
-drive native navigation).
+minimal native diagnostics screen), `benchmark`, `httpLogs`, and `zkIdentity`
+— the debugging UIs and hardware-backed identity flow that survive the
+thin-shell migration. The former `settings`, `profile`, and `terms` screens
+were deleted with their web replacements and are rejected like any other
+value. Rejected entirely unless the top frame is the trusted SV origin
+(sub-apps cannot drive native navigation).
+
+The additive `zkIdentityFlow` capability means
+`openNativeScreen('zkIdentity')` is dispatchable. SV gates its ZK identity
+entry action on that feature capability so older app builds never expose a
+dead button.
 
 #### `captureScreenshot()` → `{ contentType, base64 }`
 

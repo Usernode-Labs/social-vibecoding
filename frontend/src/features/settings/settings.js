@@ -240,11 +240,11 @@
       // over it anyway.
       const RULE_BLOCKS = {
         'connector-allow-rules': {
-          success: 'Copied — paste it into ~/.claude/settings.json',
+          success: 'Copied. Paste it into ~/.claude/settings.json',
           failure: 'Could not copy the allow rules',
         },
         'connector-repo-allow-rules': {
-          success: 'Copied — commit it as .claude/settings.json in your app repo',
+          success: 'Copied. Commit it as .claude/settings.json in your app repo',
           failure: 'Could not copy the allow rules',
         },
       };
@@ -375,7 +375,7 @@
           status.classList.remove('hidden');
           let remaining = Math.ceil(ms / 1000);
           const render = () => {
-            status.textContent = `Alert in ${remaining}s — stay here for the chime, or switch away / background the app for a notification.`;
+            status.textContent = `Alert in ${remaining}s. Stay here for the chime, or switch away / background the app for a notification.`;
           };
           render();
           this._alertsTestTimer = setInterval(() => {
@@ -385,7 +385,7 @@
               return;
             }
             this._clearAlertsTestCountdown();
-            status.textContent = 'Sent — you should hear a chime now (or get a notification if you switched away).';
+            status.textContent = 'Sent. You should hear a chime now (or get a notification if you switched away).';
           }, 1000);
         });
       }
@@ -1046,7 +1046,7 @@
         });
       }
       if (status && agents.some((a) => a.demo)) {
-        status.textContent = 'Demo data — changes are not saved.';
+        status.textContent = 'Demo data: changes are not saved.';
         status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
@@ -1450,7 +1450,7 @@
           text += `That is the limit of ${cap} per connection per ${days} days; it will come back once the window rolls over.`;
         } else if (quietUntil > Date.now()) {
           text += `It stays quiet for ${cooldown} minutes after each one, so a conversation opened before `
-            + `${new Date(quietUntil).toLocaleTimeString()} will not carry it — one opened after that will.`;
+            + `${new Date(quietUntil).toLocaleTimeString()} will not carry it. One opened after that will.`;
         } else {
           text += 'Open a new conversation to see it again.';
         }
@@ -1698,8 +1698,8 @@
         strandedNote: link.pendingAttemptAt
           ? `Your last ${name} connection attempt didn't complete. `
             + `If ${name} showed "Something went wrong — You weren't able to give access to the App", `
-            + `the platform's callback address isn't registered on the ${name} developer app — `
-            + 'an administrator needs to update that app’s settings.'
+            + `the platform's callback address isn't registered on the ${name} developer app, `
+            + 'so an administrator needs to update that app’s settings.'
           : null,
         diagnostics: link.diagnostics
           ? this._socialIdentityDiagnosticsView(provider, link.diagnostics, demo)
@@ -1720,7 +1720,7 @@
         source = `Reusing the waitlist ${name} app’s credentials.`;
       } else if (diagnostics.credentialSource === 'dedicated') {
         source = diagnostics.sameAppAsWaitlist
-          ? `Dedicated ${name} credentials — same app as the waitlist pair.`
+          ? `Dedicated ${name} credentials, same app as the waitlist pair.`
           : `Dedicated ${name} app credentials.`;
       } else {
         source = `No complete ${name} credential pair is configured.`;
@@ -1908,7 +1908,7 @@
       // three writers (revoke succeeded, revoke failed, demo data).
       more.classList.toggle('hidden', !this._cliTokenCursor);
       if (this._cliTokensDemo() && this._cliTokens.some((t) => t.demo)) {
-        status.textContent = 'Demo data — changes are not saved.';
+        status.textContent = 'Demo data: changes are not saved.';
         status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
@@ -2390,7 +2390,7 @@
       const compatibility = model?.compatibility === 'verified'
         ? ' · verified'
         : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
-      return `${model?.name || model?.id || 'Unknown model'} — ${this._openRouterModelCostSummary(model)}${compatibility}`;
+      return `${model?.name || model?.id || 'Unknown model'}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
     },
 
     _syncOpenRouterModelDetails() {
@@ -3000,7 +3000,7 @@
         title: 'Sign out without the app?',
         message: 'The Usernode app isn’t responding to this screen' +
           detail + ', so it may stay signed in on this device. ' +
-          'You’ll be signed out of Social either way — force-close ' +
+          'You’ll be signed out of Social either way. Force-close ' +
           'and reopen the app to finish signing out there.',
         confirmLabel: 'Sign out anyway',
         cancelLabel: 'Cancel',
@@ -3062,8 +3062,8 @@
       if (!flagged) return;
       if (!window.PlatformUI || typeof PlatformUI.toast !== 'function') return;
       PlatformUI.toast(
-        'Signed out of Social. The Usernode app didn’t confirm — ' +
-        'force-close and reopen it to finish signing out there.',
+        'Signed out of Social. The Usernode app didn’t confirm. ' +
+        'Force-close and reopen it to finish signing out there.',
         { duration: 10000, priority: true }
       );
     },
@@ -3176,7 +3176,7 @@
 
     async _onGrantCapChange(appId, value) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
-      if (this._isDemoGrant(appId)) { status('Demo data — changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
       const cents = Math.round(parseFloat(value) * 100);
       if (!Number.isFinite(cents) || cents <= 0) {
         status('Enter a valid cap (at least $0.01).', 'error');
@@ -3200,7 +3200,7 @@
 
     async _onGrantByokChange(appId, checked) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
-      if (this._isDemoGrant(appId)) { status('Demo data — changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
       try {
         const r = await fetch(`/api/me/llm-grants/${appId}`, {
           method: 'PATCH',
@@ -3231,7 +3231,7 @@
         danger: true,
       });
       if (!ok) return;
-      if (this._isDemoGrant(appId)) { status('Demo data — changes are not saved.', 'info'); return; }
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
       try {
         const r = await fetch(`/api/me/llm-grants/${appId}`, {
           method: 'DELETE', credentials: 'same-origin',
@@ -3291,7 +3291,7 @@
         const file = input.files && input.files[0];
         if (!file) return;
         if (file.size > 48 * 1024) {
-          this._setAgentFilesStatus(`"${file.name}" is too large — the limit is 48 KB per file.`, 'error');
+          this._setAgentFilesStatus(`"${file.name}" is too large. The limit is 48 KB per file.`, 'error');
           return;
         }
         const reader = new FileReader();
@@ -3355,7 +3355,7 @@
       const pending = this._pendingAgentFile;
       if (!pending) return;
       if (this._agentFilesDemo()) {
-        this._setAgentFilesStatus('Demo data — changes are not saved.', 'info');
+        this._setAgentFilesStatus('Demo data: changes are not saved.', 'info');
         this._hideAgentFilesForm();
         return;
       }
@@ -3378,7 +3378,7 @@
           return;
         }
         this._hideAgentFilesForm();
-        this._setAgentFilesStatus(`Saved "${j.file?.name || name}" — it applies from your next run.`, 'ok');
+        this._setAgentFilesStatus(`Saved "${j.file?.name || name}". It applies from your next run.`, 'ok');
         this._loadAgentFiles();
       } catch (err) {
         this._setAgentFilesStatus('Network error: ' + err.message, 'error');
@@ -3428,7 +3428,7 @@
       });
       if (!ok) return;
       if (this._agentFilesDemo()) {
-        this._setAgentFilesStatus('Demo data — changes are not saved.', 'info');
+        this._setAgentFilesStatus('Demo data: changes are not saved.', 'info');
         return;
       }
       try {
@@ -3660,7 +3660,7 @@
       'not-native': 'This screen can’t reach the Usernode app from here.',
       'page-changed': 'The request was cancelled because this page changed.',
       'privileged-unavailable': 'The Usernode app refused this screen’s ' +
-        'secure connection. See “Usernode app — connection” below.',
+        'secure connection. See “Usernode app: connection” below.',
     },
     USERNODE_READ_ERROR_FALLBACK: 'The Usernode app returned no settings.',
 
@@ -3682,14 +3682,14 @@
       'ready': 'This screen can manage the app’s settings.',
       'blocked-frame': 'The app is refusing this screen’s secure ' +
         'connection, so app settings and app sign-out can’t be ' +
-        'changed from here. Force-close the app and reopen it — that ' +
+        'changed from here. Force-close the app and reopen it, which ' +
         'usually re-establishes it. If it keeps happening, reinstalling ' +
         'the app clears the stuck state.',
       'unsupported': 'This app build predates the secure connection this ' +
         'screen uses. Update the Usernode app to manage its settings here.',
       'inconclusive': 'The app hasn’t answered yet, so we can’t ' +
         'tell whether the secure connection is up. It may still be ' +
-        'starting — try again in a moment.',
+        'starting, so try again in a moment.',
       'unattached': 'The app never answered this screen’s secure ' +
         'connection request. Force-close the app and reopen it; if that ' +
         'doesn’t help, reinstalling the app clears the stuck state.',
@@ -3716,7 +3716,7 @@
         state: 'blocked-frame',
         code: 'privileged_frame_unauthorized',
         kind: 'privileged-unavailable',
-        message: 'Staging demo — privileged bridge is unavailable for this main frame',
+        message: 'Staging demo: privileged bridge is unavailable for this main frame',
         at: 0,
         attempts: 3,
       },
@@ -3724,7 +3724,7 @@
         getSettingsState: {
           method: 'getSettingsState',
           kind: 'privileged-unavailable',
-          message: 'Staging demo — privileged bridge is unavailable for this main frame',
+          message: 'Staging demo: privileged bridge is unavailable for this main frame',
           at: 0,
         },
       },
@@ -3820,7 +3820,7 @@
       readError: {
         method: 'getBridgeInfo',
         kind: 'timeout',
-        message: 'Staging demo — the capability probe did not answer',
+        message: 'Staging demo: the capability probe did not answer',
         at: 0,
       },
       entries: [
@@ -3869,7 +3869,7 @@
       }
     },
 
-    // ── Settings → "Usernode app — widget icons" ──────────────────────
+    // ── Settings → "Usernode app: widget icons" ──────────────────────
     //
     // Gated on being in the app (or the demo link), NEVER on the
     // capability or the mechanism: this box exists to explain why the
@@ -3900,6 +3900,12 @@
         console.warn('[settings] getBridgeDiagnostics failed:', err);
         return null;
       }
+    },
+
+    _hasNativeCapability(name) {
+      const diag = this._bridgeDiagnostics();
+      return !!diag && Array.isArray(diag.capabilities) &&
+        diag.capabilities.includes(name);
     },
 
     // The copyable report. Deliberately assembled from the diagnostics
@@ -3934,7 +3940,7 @@
         : 'last read errors: none');
       methods.forEach((method) => {
         const rec = diag.lastErrors[method];
-        lines.push(`  ${method}: ${rec.kind} — ${rec.message || 'no message'} ` +
+        lines.push(`  ${method}: ${rec.kind}, ${rec.message || 'no message'} ` +
           `(${at(rec.at)})`);
       });
       const readiness = (window.SocialPush &&
@@ -3951,7 +3957,7 @@
         ? NativeChrome.lastSessionFailure()
         : null;
       if (session) {
-        lines.push(`last session failure: ${session.stage} — ` +
+        lines.push(`last session failure: ${session.stage}, ` +
           `${session.message || 'no message'} (${at(session.at)})`);
       }
       return lines.join('\n');
@@ -4233,7 +4239,7 @@
         // log the diagnostic error the real branches do.
         this._unNotifNotice = {
           tone: 'info',
-          text: 'This is a preview of the in-app row — the notification ' +
+          text: 'This is a preview of the in-app row. The notification ' +
             'permission itself lives in the Usernode app.',
         };
         return;
@@ -4619,8 +4625,8 @@
           declineBtn.addEventListener('click', () => postConsent('refused',
             () => {
               if (window.PlatformUI) {
-                PlatformUI.toast('Your token allocation stays paused — ' +
-                  'you can accept later from your profile');
+                PlatformUI.toast('Your token allocation stays paused. ' +
+                  'You can accept later from your profile');
               }
             }));
           consentButtons.push(declineBtn);
@@ -4695,6 +4701,7 @@
       const perms = (s && s.permissions) || {};
       const isAndroid = perms.platform === 'android';
       const demo = this._unDemoMode();
+      const canOpenZkIdentity = this._hasNativeCapability('zkIdentityFlow');
       return {
         gated: this._usernodeGated === true,
         connection: this._usernodeConnectionView(),
@@ -4715,6 +4722,11 @@
             checked: s.facematchStrict !== false,
             action: '_setFacematchStrict',
           },
+          open: canOpenZkIdentity ? {
+            id: 'settings-usernode-open-zk-identity',
+            label: 'Open ZK identity',
+            action: '_openZkIdentityScreen',
+          } : null,
           reset: { label: 'Restart ZK challenge', action: '_resetZkChallenge', danger: true },
         } : null,
         widgetIcons: this._widgetIconsView(),
@@ -4803,7 +4815,7 @@
       return {
         kind: 'permissions',
         demo: !!this._unDemoMode(),
-        heading: 'Usernode app — device permissions',
+        heading: 'Usernode app: device permissions',
         description: isAndroid
           ? 'Block production needs the app to wake your device at exact slot times.'
           : 'Notifications let Usernode alert you about node and account activity.',
@@ -4867,7 +4879,7 @@
           reason: stuck
             ? 'The Usernode app isn’t accepting this screen’s secure ' +
               'connection, so notifications can’t be set up. See “Usernode ' +
-              'app — connection” above.'
+              'app: connection” above.'
             : (admissionPending
               ? 'Finishing secure app sign-in before enabling notifications…'
               : 'Notification settings are temporarily unavailable.'),
@@ -4878,7 +4890,7 @@
       }
       let status = 'Off on this device.';
       if (state.deliveryActive) {
-        status = 'On — this device is registered for activity notifications.';
+        status = 'On. This device is registered for activity notifications.';
       } else if (state.permissionStatus === 'denied') {
         status = 'Notification permission is denied in the device settings.';
       } else if (state.enabled && state.registrationStatus === 'registering') {
@@ -4893,8 +4905,8 @@
       const state = this._bpState;
       if (state === undefined) return { kind: 'checking' };
       if (!state) return { kind: 'note', text: 'Could not check block-production status right now.' };
-      if (state.bp_released) return { kind: 'note', text: 'Released — your node produces blocks when it wins slots.' };
-      if (state.bp_requested) return { kind: 'note', text: 'Request pending — you’ll start producing automatically once an admin releases your keys.' };
+      if (state.bp_released) return { kind: 'note', text: 'Released. Your node produces blocks when it wins slots.' };
+      if (state.bp_requested) return { kind: 'note', text: 'Request pending. You’ll start producing automatically once an admin releases your keys.' };
       if (!state.has_platform_access) return { kind: 'note', text: 'Available once your account has platform access.' };
       return { kind: 'ask' };
     },
@@ -4906,15 +4918,15 @@
         ? 'Light + dark pair'
         : (diag.resolved === false
           ? `Single face (${diag.scheme})`
-          : 'Undecided — single face for now');
+          : 'Undecided, single face for now');
       const build = diag.build
         ? `${diag.build.appVersion} (${diag.build.buildNumber || '?'})`
-        : 'unknown — the verdict is re-confirmed each time';
+        : 'unknown, the verdict is re-confirmed each time';
       const healedAt = diag.lastHealAt ? this._widgetIconTime(diag.lastHealAt) : 'never';
       const notes = [
         { text: `Verdict bound to app version: ${build}`, tone: 'muted' },
         { text: `Last icon check: ${healedAt}` +
-          (diag.lastHealOutcome ? ` — ${diag.lastHealOutcome}` : ''), tone: 'muted' },
+          (diag.lastHealOutcome ? `: ${diag.lastHealOutcome}` : ''), tone: 'muted' },
       ];
       if (diag.readError) {
         notes.push({
@@ -4934,7 +4946,7 @@
           { id: 'settings-widget-registry-row', label: 'Pinned registry',
             ok: diag.registryLoaded === true,
             text: diag.registryLoaded === true
-              ? `Loaded — ${diag.entries.length} pinned` : 'Could not be read' },
+              ? `Loaded: ${diag.entries.length} pinned` : 'Could not be read' },
           // Tri-state, and the third state is the point: `has()` used to
           // collapse "couldn't say" into "no".
           { id: 'settings-widget-capability-row', label: 'Dark icon capability',
@@ -5011,6 +5023,9 @@
     _setNodeSleep(v) { return this._unApply(window.usernode.setNodeSleepEnabled(v)); },
     _setFacematchStrict(v) { return this._unApply(window.usernode.setFacematchStrict(v)); },
     _setDebugMode(v) { return this._unApply(window.usernode.setDebugMode(v)); },
+    _openZkIdentityScreen() {
+      return this._openNativeScreen('zkIdentity', 'Could not open ZK identity');
+    },
     _openBenchmarkScreen() {
       return this._openNativeScreen('benchmark', 'Could not open the benchmark');
     },
@@ -5121,7 +5136,7 @@
         if (!res.ok || !data || data.success === false) {
           throw new Error((data && data.error) || 'Request failed');
         }
-        if (window.PlatformUI) PlatformUI.toast('Request sent — an admin will release your keys');
+        if (window.PlatformUI) PlatformUI.toast('Request sent. An admin will release your keys');
         this._bpState = Object.assign({}, this._bpState || {}, { bp_requested: true });
         this._publishUsernode();
       } catch (e) {

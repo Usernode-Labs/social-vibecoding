@@ -106,13 +106,13 @@ function statusLine(progress: CreationProgressState, outcome: CreationOutcome): 
     return progress.errorReason
       || 'Setup stopped before your app was running. Retrying usually clears a transient failure.';
   }
-  return 'This usually takes under a minute. You can close this and keep going — we’ll finish in the background and your app will appear in your apps.';
+  return 'This usually takes under a minute. You can close this and keep going. We’ll finish in the background and your app will appear in your apps.';
 }
 
 /** The three things to do next, once there is an app to do them to. */
 const NEXT_STEPS = [
   'Open your app and try what it shipped with.',
-  'Describe a change in chat — a coding agent writes it.',
+  'Describe a change in chat, and a coding agent writes it.',
   'Collaborators vote it in, and it goes live.',
 ];
 

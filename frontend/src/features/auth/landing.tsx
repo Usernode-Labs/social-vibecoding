@@ -763,11 +763,11 @@ export function LandingScreen() {
               Usernode Social Vibecoding is a place where users describe the app
           they want in chat, an AI builds it, and the community votes the
           changes in. Every app below was built here by the people who use
-          it — they run on the Usernode chain, and contributors own a share
+          it. They run on the Usernode chain, and contributors own a share
           of what they build.
             </p>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-              Platform access opens in batches — the apps below are open to
+              Platform access opens in batches. The apps below are open to
           everyone right now.
             </p>
             <a
@@ -795,7 +795,7 @@ export function LandingScreen() {
                   : 'hidden text-sm text-zinc-500 dark:text-zinc-400'
               }
             >
-              You're already on the waitlist — we'll email you when your spot opens.
+              You're already on the waitlist. We'll email you when your spot opens.
             </p>
           </section>
           <section>
@@ -804,7 +804,7 @@ export function LandingScreen() {
             </h2>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
               Community-built apps on the Usernode chain. Many are open to
-          everyone — the grayed-out ones need an account.
+          everyone. The grayed-out ones need an account.
             </p>
             {/* Same launcher-grid shape as the authed homescreen (#app-list). */}
             <div id="landing-apps" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">

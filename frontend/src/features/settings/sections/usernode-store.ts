@@ -131,7 +131,7 @@ export interface UsernodeSectionState {
   belowDemoCut: boolean;
   nodeSleep: UnToggle | null;
   blockProduction: UnBlockProduction;
-  privacy: { facematch: UnToggle; reset: UnAction } | null;
+  privacy: { facematch: UnToggle; open: UnAction | null; reset: UnAction } | null;
   widgetIcons: UnWidgetIcons | null;
   diagnostics: { debugMode: UnToggle | null; actions: UnAction[] } | null;
   about: { notes: UnNote[]; actions: UnAction[] } | null;

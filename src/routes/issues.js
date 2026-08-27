@@ -859,7 +859,7 @@ function issueRoutes(config) {
         const parsed = parseOwnerRepo(app.repo_url);
         if (!github.isEnabled() || !parsed) {
           return res.status(422).json({
-            error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+            error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
           });
         }
         const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -913,7 +913,7 @@ function issueRoutes(config) {
           return res.status(403).json({ error: 'Full admin access required' });
         }
         if (!github.isEnabled()) {
-          return res.status(422).json({ error: 'GitHub is not configured — campaigns cannot run' });
+          return res.status(422).json({ error: 'GitHub is not configured, so campaigns cannot run' });
         }
         const campaignTitle = typeof title === 'string' ? title.trim() : '';
         const instructions = typeof payload?.instructions === 'string' ? payload.instructions.trim() : '';
@@ -1790,7 +1790,7 @@ function issueRoutes(config) {
       const parsed = parseOwnerRepo(app.repo_url);
       if (!github.isEnabled() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -1908,7 +1908,7 @@ function issueRoutes(config) {
       const parsed = parseOwnerRepo(app.repo_url);
       if (!github.isEnabled() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -1989,7 +1989,7 @@ function issueRoutes(config) {
       const parsed = parseOwnerRepo(app.repo_url);
       if (!github.isEnabled() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -2756,8 +2756,8 @@ async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, 
 
       resolved.push(row.id);
       const msg = cause?.kind === 'pr-merge'
-        ? `Close proposal for issue #${n} resolved automatically — PR #${cause.prNumber} closed the issue`
-        : `Close proposal for issue #${n} resolved automatically — the issue was closed on GitHub`;
+        ? `Close proposal for issue #${n} resolved automatically: PR #${cause.prNumber} closed the issue`
+        : `Close proposal for issue #${n} resolved automatically: the issue was closed on GitHub`;
       await sendSystemMessage(pool, row.app_id, msg, 'system')
         .catch((err) => log.warn('issues', 'Superseded chat message failed', { err: err.message }));
       await sendSystemMessage(pool, row.app_id, msg, 'system',
@@ -3110,7 +3110,7 @@ async function maybeApplyMaintenanceCampaignProposal(config, pool, issue, option
     ? `by admin override (${options.forceBy?.username || 'admin'})`
     : `by group vote (${upCount}/${required})`;
   const startedMsg = `Maintenance campaign "${issue.payload?.title || issue.title}" approved ${appliedHow}. `
-    + 'The platform is now opening one PR per app — progress on the campaign dashboard.';
+    + 'The platform is now opening one PR per app. Progress is on the campaign dashboard.';
   await sendSystemMessage(pool, issue.app_id, startedMsg, 'system')
     .catch((err) => log.warn('issues', 'Campaign chat msg failed', { err: err.message }));
   await sendSystemMessage(pool, issue.app_id, startedMsg, 'system',

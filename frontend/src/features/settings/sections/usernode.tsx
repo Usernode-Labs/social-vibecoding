@@ -41,10 +41,10 @@ function Connection({ s }: { s: UsernodeSectionState }): ReactNode {
   return (
     <UnSection
       id="settings-usernode-connection"
-      title="Usernode app — connection"
+      title="Usernode app: connection"
       description="What this screen can reach in the app, and what to do when it can’t."
     >
-      {c.demo ? <UnP note={{ text: 'Staging demo — sample data', tone: 'demo' }} /> : null}
+      {c.demo ? <UnP note={{ text: 'Staging demo: sample data', tone: 'demo' }} /> : null}
       <UnRow row={c.row} />
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">{c.reason}</p>
       <UnP note={{ text: c.build, tone: 'mono' }} />
@@ -92,7 +92,7 @@ function Body({ s }: { s: UsernodeSectionState }): ReactNode {
   }
   return (
     <UnSection title={b.heading} description={b.description}>
-      {b.demo ? <UnP note={{ text: 'Staging demo — sample data', tone: 'demo' }} /> : null}
+      {b.demo ? <UnP note={{ text: 'Staging demo: sample data', tone: 'demo' }} /> : null}
       <UnRow row={b.row} />
       {b.button ? <UnBtn btn={b.button} /> : null}
       {b.notice ? (
@@ -121,7 +121,7 @@ function SocialPush({ s }: { s: UsernodeSectionState }): ReactNode {
   if (p.kind === 'absent') return null;
   return (
     <UnSection
-      title="Usernode app — activity notifications"
+      title="Usernode app: activity notifications"
       description="Get a device notification when a dev session or auto-solve run finishes. Notification content is loaded only after you open Social."
     >
       {p.kind === 'checking' ? <UnP note={{ text: 'Checking status…' }} /> : null}
@@ -151,8 +151,8 @@ function BlockProduction({ s }: { s: UsernodeSectionState }): ReactNode {
   const bp = s.blockProduction;
   return (
     <UnSection
-      title="Usernode app — block production"
-      description="Producing blocks earns points. Access is released manually — ask below and an admin will release your keys in batches."
+      title="Usernode app: block production"
+      description="Producing blocks earns points. Access is released manually, so ask below and an admin will release your keys in batches."
     >
       <div>
         {bp.kind === 'checking' ? <UnP note={{ text: 'Checking status…' }} /> : null}
@@ -170,10 +170,10 @@ function WidgetIcons({ s }: { s: UsernodeSectionState }): ReactNode {
   if (!w) return null;
   return (
     <UnSection
-      title="Usernode app — widget icons"
+      title="Usernode app: widget icons"
       description="What the homescreen widget was told to show, and what it reports back."
     >
-      {w.demo ? <UnP note={{ text: 'Staging demo — sample data', tone: 'demo' }} /> : null}
+      {w.demo ? <UnP note={{ text: 'Staging demo: sample data', tone: 'demo' }} /> : null}
       {w.rows.map((row) => <UnRow key={row.id || row.label} row={row} />)}
       {w.notes.map((n, i) => <UnP key={`${n.tone || 'muted'}-${i}`} note={n} />)}
       {w.entries.length === 1 && w.entries[0].empty ? (
@@ -199,24 +199,25 @@ function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
     <>
       {s.nodeSleep ? (
         <UnSection
-          title="Usernode app — node"
+          title="Usernode app: node"
           description="The node pauses when the app has been inactive for a while and wakes on your next interaction."
         ><UnSwitch toggle={s.nodeSleep} /></UnSection>
       ) : null}
       <BlockProduction s={s} />
       {s.privacy ? (
         <UnSection
-          title="Usernode app — privacy & identity"
+          title="Usernode app: privacy & identity"
           description="Controls for the ZK passport identity flow."
         >
           <UnSwitch toggle={s.privacy.facematch} />
+          {s.privacy.open ? <UnBtn btn={s.privacy.open} /> : null}
           <UnBtn btn={s.privacy.reset} />
         </UnSection>
       ) : null}
       <WidgetIcons s={s} />
       {s.diagnostics ? (
         <UnSection
-          title="Usernode app — diagnostics"
+          title="Usernode app: diagnostics"
           description="Debugging tools for the app and its embedded node."
         >
           {s.diagnostics.debugMode ? <UnSwitch toggle={s.diagnostics.debugMode} /> : null}
@@ -224,7 +225,7 @@ function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
         </UnSection>
       ) : null}
       {s.about ? (
-        <UnSection title="Usernode app — about & legal">
+        <UnSection title="Usernode app: about & legal">
           {s.about.notes.map((n, i) => (
             <p key={i} className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{n.text}</p>
           ))}
@@ -233,7 +234,7 @@ function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
         </UnSection>
       ) : null}
       {s.account ? (
-        <UnSection title="Usernode app — account">
+        <UnSection title="Usernode app: account">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             The app signs in automatically with your platform account. If this message persists, try closing and reopening the app.
           </p>

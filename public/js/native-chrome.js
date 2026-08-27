@@ -802,7 +802,7 @@
         return {
           verdict: 'settings',
           settings: s.canOpenSettings === true,
-          reason: 'the notification permission is denied — iOS shows no ' +
+          reason: 'the notification permission is denied, so iOS shows no ' +
             'prompt for a determined permission',
         };
       }
@@ -838,7 +838,7 @@
         verdict: 'silent',
         settings: s.canOpenSettings === true,
         reason: 'the app answered without granting and the permission is ' +
-          'still un-determined — no OS prompt was presented',
+          'still un-determined, no OS prompt was presented',
       };
     },
 

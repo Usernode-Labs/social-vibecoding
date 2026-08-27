@@ -76,7 +76,7 @@ function ConversationList() {
   const snap = useMessagesSnapshot();
   return (
     <section className={`messages-list-pane ${snap.route.conversationId ? 'hidden' : 'flex'}`} aria-label="Conversations">
-      {!snap.online ? <div className="messages-network-banner">Offline — queued messages retry when you reconnect.</div> : null}
+      {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
       <div className="messages-list-scroll platform-safe-scroll">
         {snap.loadingList && !snap.listLoaded ? <div className="messages-state"><span className="messages-spinner" />Loading conversations…</div> : null}
         {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>Try again</button></div> : null}

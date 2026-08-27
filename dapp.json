@@ -441,10 +441,23 @@
       "description": "Client secret paired with WAITLIST_X_CLIENT_ID. The token exchange authenticates with HTTP Basic, so an X app created as \"Native App / Single page App\" (a public client, no secret) can never work here. Private: encrypted at rest and never returned by any API. Both halves must be set together or the Connect X button stays hidden."
     },
     {
+      "key": "WAITLIST_LINKEDIN_CLIENT_ID",
+      "group": "Waitlist",
+      "required": false,
+      "description": "Client ID of the LinkedIn OpenID Connect app that confirms a waitlist signer controls their LinkedIn account. It needs the openid and profile scopes. Callback: https://<your-domain>/waitlist/connect/linkedin/callback. Unset: the Connect LinkedIn button is hidden. It confirms account ownership only, never whether the member follows a page: LinkedIn exposes no API that reports that."
+    },
+    {
+      "key": "WAITLIST_LINKEDIN_CLIENT_SECRET",
+      "group": "Waitlist",
+      "required": false,
+      "private": true,
+      "description": "Client secret paired with WAITLIST_LINKEDIN_CLIENT_ID. The token exchange authenticates with the secret in the form body, so a LinkedIn app with no secret can never work here. Private: encrypted at rest and never returned by any API. Both halves must be set together or the Connect LinkedIn button stays hidden."
+    },
+    {
       "key": "WAITLIST_OAUTH_ORIGIN",
       "group": "Waitlist",
       "required": false,
-      "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it resolves to this deployment's production origin in production and http://localhost:<PORT> in dev. Changing it means registering the matching callback URL with GitHub and X too — both validate redirect_uri before any platform code runs."
+      "description": "Overrides the origin the waitlist connect callback URLs are built from. Unset it resolves to this deployment's production origin in production and http://localhost:<PORT> in dev. Changing it means registering the matching callback URL with GitHub, X and LinkedIn too — all three validate redirect_uri before any platform code runs."
     }
   ],
   "tests": [
@@ -1022,7 +1035,7 @@
       "name": "Estimator-off long run shows the cohort note in place of an estimate (#906)",
       "path": "/#app/usernode-2d5619/dev/sessions/900811",
       "expectSelector": ".dc-cc-attached-summary .dc-cc-cohort",
-      "expectText": "this is a long one — some runs go 30 min+"
+      "expectText": "this is a long one, some runs go 30 min+"
     },
     {
       "name": "A turn the server cannot stop offers a spinner, not a red Stop (#1378)",
@@ -1039,7 +1052,7 @@
       "name": "A chat-shared own session flips its ⋯ row to \"Chat shared — stop sharing\"",
       "path": "/?demo=1&shot=card-menu&card=session:990104#app/usernode-2d5619/dev",
       "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Stop others reading this chat\"]",
-      "expectText": "Chat shared — stop sharing"
+      "expectText": "Chat shared. Stop sharing"
     },
     {
       "name": "A published chat arrives expanded on the shared session’s own page",
@@ -1273,7 +1286,7 @@
       "name": "A long-stalled close proposal degrades to the retry copy, no spinner (#1010)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "[data-gov-row='9100006'] .gc-checks-running-badge",
-      "expectText": "Close pending — will retry automatically"
+      "expectText": "Close pending, will retry automatically"
     },
     {
       "name": "The closing state also renders on the proposal's own discussion page (#1010)",
@@ -1554,7 +1567,7 @@
       "name": "Visible own session renders under the Yours-visible divider",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Yours · visible",
-      "expectSelector": ".dev-col-divider-label[title^=\"Visible to everyone — including a live preview\"]"
+      "expectSelector": ".dev-col-divider-label[title^=\"Visible to everyone, including a live preview\"]"
     },
     {
       "name": "Visible own session offers its public discussion from the ⋯ menu",
@@ -2312,7 +2325,7 @@
     {
       "name": "A spent allowance says so instead of showing a count (#964)",
       "path": "/?shot=feedback-spent",
-      "expectText": "resets Monday 00:00 UTC"
+      "expectText": "Resets Monday 00:00 UTC"
     },
     {
       "name": "Out of daily credits: the chat offers every way to keep building (#967, #1049, #1086)",
@@ -2398,7 +2411,7 @@
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",
       "path": "/?demo=1#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden) #connector-url",
-      "expectText": "Claude — claude.ai"
+      "expectText": "Claude (claude.ai)"
     },
     {
       "name": "Connector setup walks Claude web and ChatGPT web through numbered onboarding steps (#1289)",
@@ -2410,7 +2423,7 @@
       "name": "Offline: the signed-in shell keeps a visible offline strip above everything (#1021)",
       "path": "/?shot=offline",
       "expectSelector": "body.is-offline #offline-banner:not(.hidden)",
-      "expectText": "You're offline — showing saved content"
+      "expectText": "You're offline. Showing saved content"
     },
     {
       "name": "Offline sign-in explains why the form cannot work instead of failing silently (#1021)",
@@ -2631,6 +2644,11 @@
       "expectSelector": "#board-filters-modal #board-filters-priority"
     },
     {
+      "name": "On the Feed the + button stays right-aligned with its menu anchored on-screen",
+      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-actions > div.ml-auto > #dev-plus-btn"
+    },
+    {
       "name": "The feed shows the + button with no filter chips beside it",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
       "expectSelector": "#dev-actions > #dev-kanban-filterbar:empty + div > #dev-plus-btn"
@@ -2674,6 +2692,23 @@
       "name": "Real sessions still render beside it, each on its own destination (#1417)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#improve-panel [data-improve-row=\"session\"][href*=\"/dev/sessions/\"]"
+    },
+    {
+      "name": "The all-apps directory offers a Sort control, defaulting to Recommended (#1383)",
+      "path": "/#apps",
+      "expectSelector": "#browse-search-bar #browse-sort-select",
+      "expectText": "Recommended"
+    },
+    {
+      "name": "?sort= orders the directory on arrival (#1383)",
+      "path": "/?sort=new#apps",
+      "expectSelector": "#browse-list[data-sort=\"new\"] .browse-row"
+    },
+    {
+      "name": "Sorting by activity shows what it sorted on (#1383)",
+      "path": "/?demo=1&sort=active#apps",
+      "expectSelector": "#browse-list[data-sort=\"active\"] .browse-row",
+      "expectText": "merged in 30d"
     }
   ],
   "governance": {

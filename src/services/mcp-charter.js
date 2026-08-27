@@ -95,6 +95,19 @@ const CHARTER_SECTIONS = Object.freeze([
     text: 'The section above is about this connector, not about you. If you are yourself the user\'s coding agent — a Claude Code or Codex session that also holds this connector — then you are both parties to the hand-off, and the steps written as "give this to the user\'s coding agent" are yours to carry out rather than to relay. Call prepare_work for the request you are building and read the work order it returns: it names the repository, the fork, the branch and the exact base commit your branch has to start from, and that base commit is not discoverable from inside a checkout — the branch you were handed may have been cut from something far older. Then push and call submit_work yourself with that task id. That is the expected path, not an overreach: the task belongs to the Usernode account this connector is signed in as, not to the chat that created it. Do not relay a work order to the user as though somebody else were going to build it.',
   },
   {
+    // Charter-only, and deliberately so (#1433). SERVER_INSTRUCTIONS sits at
+    // 1399 of its 1400-character budget, so a brief here would have to be
+    // paid for by deleting an existing clause — and every clause in
+    // BRIEF_ORDER is either a safety rule or the pointer at this document.
+    // The prompt to actually perform the check rides on list_apps' own
+    // description instead, which is where a caller reads `repoUrl` and is
+    // 1600 characters under ITS budget. This section is the reasoning behind
+    // that prompt, for a reader who followed it here.
+    id: 'verify-your-checkout',
+    title: 'Verify the checkout you were handed',
+    text: 'If this conversation has a checkout of an app\'s repository, do not assume it is current — verify it before you read code from it to answer a question, and before the first edit of a change. The check a checkout can run on itself does not settle this: `git fetch origin` compares it against ITS OWN remote, so a fork whose default branch is far behind the app\'s canonical repository reports zero commits behind and reads as up to date. Nothing inside the checkout says which repository is canonical, and a session started on a ready-made branch inherits whatever commit that branch was cut from. Call get_checkout_status with `headSha` (from `git rev-parse HEAD`) and `remoteUrl` (from `git remote get-url origin`): the platform knows which repository the app is built from and where its default branch points, you know your working copy, and only the two together answer the question. A verdict other than `current` means code you read there may describe a version that no longer exists — say so plainly rather than reporting findings from it as though they described the live app. For work that will be SUBMITTED, the base commit still comes from prepare_work, never from merging a default branch yourself: which commit a change is diffed against decides what the group is voting on, so it is not the agent\'s call to change.',
+  },
+  {
     id: 'where-to-start',
     title: 'Where to start, and the duplicate check',
     brief: 'Start from list_apps, and list_requests before filing anything — page `nextCursor` until it is null, or the duplicate check is not done.',

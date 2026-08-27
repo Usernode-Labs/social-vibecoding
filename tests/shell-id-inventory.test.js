@@ -185,6 +185,24 @@ const RETIRED_IDS = {
   'settings-home-panels-section': 'Settings → Home screen widgets. A checkbox per widget only made sense while the blocks were optional furniture a viewer arranged; they are three fixed areas of the screen now. The ⋮ menu on a block still hides one, and POST /api/home-panels/:key/visibility is untouched.',
   'settings-home-panels-list': 'The checkbox list inside that retired section.',
   'settings-home-panels-status': 'Save/error line of that retired section.',
+  // ── Andrea's simpler waitlist flow: joining is email-only ─────────
+  // "Link something you've made" was a REQUIRED stage-1 field, which
+  // contradicted the flow the onboarding doc settled on and that Andrea
+  // and Evan agreed in its comments ("Just an email!"). The question is
+  // not gone — it moved to the stage-2 "Want in sooner?" form as
+  // #more-made-url / #more-made-note, where it is one of the things that
+  // helps you move up rather than a gate on joining.
+  'waitlist-made-url': 'Moved to the stage-2 survey as #more-made-url; joining no longer asks it.',
+  'waitlist-made-note': 'Moved to the stage-2 survey as #more-made-note, with its url field.',
+  // ── Andrea's simpler waitlist flow: the invite link is real now ────
+  // The five typed-address rows collected emails and did nothing with
+  // them: no invite was sent, no attribution was recorded, no count was
+  // ever shown. They are replaced by a share link whose joins ARE
+  // attributed (waitlist_signups.invited_by), which is the mechanic the
+  // doc asks for. Nothing that worked was removed, because nothing here
+  // worked.
+  'more-invites': 'Typed-address invite rows retired for the share link (#more-invite-url); they sent nothing.',
+  'more-invite-add': 'The "add another" button for the retired invite rows.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -201,6 +219,29 @@ const ADDED_IDS = {
   'apps-switcher-home': 'The sheet\'s Home button, one half of the board\'s footer pair.',
   'apps-switcher-explore': 'Its Explore button, the other half.',
   // ── Streamlined Concept: the drawer leads with Your apps ─────────
+  // ── Andrea's simpler waitlist flow ────────────────────────────────
+  // The relocated join question (see RETIRED_IDS above).
+  'more-made-url': "The \"link something you've made\" field, relocated from the join form (was #waitlist-made-url).",
+  'more-made-note': 'Its one-line description (was #waitlist-made-note).',
+  // The doc asks for "Email + verification code". The mailed link still
+  // works and confirms the same row; the code exists for the phone, where
+  // leaving for the mail app and back loses the WebView's place.
+  'waitlist-confirm': 'The confirm-your-email block on the join success state. Hides once the code is accepted.',
+  'waitlist-code': 'Six-digit email verification code; confirms the same row the mailed link does.',
+  'waitlist-code-submit': 'Submits the verification code.',
+  // The share link that replaced the typed rows (see RETIRED_IDS above).
+  'more-invite-url': "The signup's shareable invite link; joins through it set waitlist_signups.invited_by.",
+  'more-invite-copy': 'Copies the invite link to the clipboard.',
+  'more-invite-joined': 'How many people joined through this link. Empty until the stage-2 load effect fills it.',
+  // ── #1372: the mobile-browser install strip ──────────────────────
+  // A visitor on a phone browser is offered the native app. The strip is
+  // always in the document and starts `hidden` (the island rule: data loads
+  // in effects, so the first render must match the prerender), which is why
+  // these ids are present here even on a build where no store listing has
+  // been published and the strip can never show.
+  'mobile-install-banner': 'The phone-browser strip offering the native app (#1372). Sits under #offline-banner and stacks with it.',
+  'mobile-install-open': 'The store link. href comes from app_version_configs.update_url via GET /api/public/mobile-app, per OS.',
+  'mobile-install-dismiss': 'Dismisses the strip for good; the answer is kept in localStorage.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
@@ -343,6 +384,13 @@ const ADDED_IDS = {
   'settings-openrouter-copy': 'Copy action for the one-time child-key reveal (#1344).',
   'settings-openrouter-dismiss-reveal': 'Clears the one-time plaintext key from the settings DOM (#1344).',
   'settings-openrouter-personal-controls': 'Personal-BYOK controls hidden while a managed key owns the credential slot (#1344).',
+  // #1383 — the #apps directory's Sort control. It rides INSIDE
+  // #browse-search-bar rather than in a strip of its own: both narrow the
+  // same list, and one sticky row costs the phone less of the fold than two.
+  // The <select> is controlled off browse-store's `sort`, so the remembered
+  // choice, a ?sort= deep link and a hand change all show the same value.
+  'browse-sort-bar': 'Sort row inside the browse search bar (#1383).',
+  'browse-sort-select': 'The five-order Sort control for the all-apps directory (#1383).',
   // ── Streamlined Concept: the Board Filters dialog ────────────────
   // The Figma board (Streamlined Concept / Dev Sessions and Navigation)
   // moves the Board's filter selects and the needs-vote toggle off the

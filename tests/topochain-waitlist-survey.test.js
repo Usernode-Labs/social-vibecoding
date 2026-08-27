@@ -63,7 +63,11 @@ test('the known keys are surfaced, and nothing else is', () => {
   const html = render(HOSTILE);
   for (const label of [
     'Made', 'Where', 'Found us', 'Referred by', 'Group', 'Group need',
-    'Lost a tool', 'Loss story', 'Verified', 'Handles', 'Invites',
+    // "Invites (typed)" rather than "Invites": the stage-2 form collects a
+    // share link now, and a row carrying typed addresses predates that. The
+    // label says which it is, and legacy rows keep being shown — an admin
+    // reading one should still see what that person actually typed.
+    'Lost a tool', 'Loss story', 'Verified', 'Handles', 'Invites \\(typed\\)',
   ]) {
     assert.match(html, new RegExp(`${label}:`), `${label} is surfaced`);
   }

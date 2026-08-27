@@ -278,6 +278,7 @@ const OWNED = [
   { sel: '#agent-files-instructions-list' }, // features/settings/agent-files-list.tsx
   { sel: '#agent-files-skills-list' },
   { sel: '#browse-list' },                   // features/apps/browse-list.tsx
+  { sel: '#browse-sort-bar' },               // features/apps/browse-screen.tsx (#1383)
   { sel: '#standings-tabs' },                // @/components/ui/tabs, via the leaderboard
   { sel: '#leaderboard-event-bar' },         // features/leaderboard/event-bar.tsx
   { sel: '#admin-section-content', when: '#admin/e2e' },     // features/admin/admin-e2e.tsx

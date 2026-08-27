@@ -1217,6 +1217,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(registered.sort(), [
     'answer_questions', 'claim_request', 'create_request', 'get_app',
+    // #1433. Read-only, and named `get_` so the shipped allow rules already
+    // cover it — a drift check that prompts every call is one nobody runs.
+    'get_checkout_status',
     'get_connector_guidance',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
     'get_request', 'list_apps',
@@ -2012,7 +2015,7 @@ test('every route the connector could not use is named back to the caller', () =
   });
   assert.deepEqual(shaped.testingPaths.map((p) => p.path), ['/ok', '/a', '/b']);
   assert.deepEqual(shaped.rejectedPaths, [
-    'https://evil.example/x (not a usable in-app path — it must start with a single "/")',
+    'https://evil.example/x (not a usable in-app path: it must start with a single "/")',
     '/ok (already listed)',
     '/c (over the 3-route cap)',
   ]);

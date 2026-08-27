@@ -870,7 +870,7 @@ async function persistScoutPublication({
     ? `Scout revised the spec (now ${lineCount} lines).`
     : `Scout drafted a ${lineCount}-line spec from the codebase.`;
   const scoutText = localAgentLabel
-    ? `${baseScoutText} Drafted on ${localAgentLabel} — no Usernode credits used.`
+    ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Usernode credits were used.`
     : baseScoutText;
   const persist = async (client, { requiredSnapshot }) => {
     await client.query(
@@ -1983,7 +1983,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(409).json({
           error: existingRows[0].headless_status === 'generating'
             ? 'An auto session is already being generated for this issue.'
-            : 'This issue already has a ready auto session — start a session from it instead.',
+            : 'This issue already has a ready auto session. Start a session from it instead.',
         });
       }
 
@@ -2131,7 +2131,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (src.headless_status !== 'ready') {
         return res.status(409).json({
           error: src.headless_status === 'generating'
-            ? 'The auto session is still generating — try again when it finishes.'
+            ? 'The auto session is still generating. Try again when it finishes.'
             : 'This auto session is not in a cloneable state.',
         });
       }
@@ -2765,7 +2765,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           error: isAppTarget
             // Never silently reroute to the platform repo — the card said
             // where it would file. Surface the actionable hint instead.
-            ? "Couldn't file to this app's repo — the bot may not be installed on it"
+            ? "Couldn't file to this app's repo. The bot may not be installed on it"
             : 'GitHub unreachable',
         });
       }
@@ -3402,7 +3402,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const src = srcRows[0];
       if (src.user_id === req.user.id) {
         return res.status(400).json({
-          error: "That's your own chat — use “Start a new change” to branch off it.",
+          error: "That's your own chat. Use “Start a new change” to branch off it.",
         });
       }
 
@@ -3788,7 +3788,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const session = rows[0];
       if (!['active', 'promoted'].includes(session.status)) {
         return res.status(409).json({
-          error: `Cannot sync a ${session.status} session — resume or unarchive first.`,
+          error: `Cannot sync a ${session.status} session. Resume or unarchive first.`,
         });
       }
 
@@ -3800,7 +3800,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!syncMainSvc.getSyncState(sessionId)
           && isSessionBusy(sessionId)) {
         return res.status(409).json({
-          error: 'Claude is still working in this session — wait for the turn to finish before syncing.',
+          error: 'Claude is still working in this session. Wait for the turn to finish before syncing.',
           busy: true,
         });
       }
@@ -3955,7 +3955,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         );
         if (importedRows.length) {
           return res.status(409).json({
-            error: 'This proposal was imported from GitHub — it has no dev chat. Discuss it on the proposal page instead.',
+            error: 'This proposal was imported from GitHub, so it has no dev chat. Discuss it on the proposal page instead.',
           });
         }
         return res.status(404).json({ error: 'Active session not found' });
@@ -4282,7 +4282,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             sessionId: session.id, appSlug: session.app_slug,
           });
           await sendStatus(
-            'This turn can’t run: the app has no GitHub repository (repo provisioning failed when the app was created). The platform repairs this automatically — try again in a few minutes.',
+            'This turn can’t run: the app has no GitHub repository (repo provisioning failed when the app was created). The platform repairs this automatically, so try again in a few minutes.',
             { turnError: true }
           );
           send('done', {});
@@ -4378,7 +4378,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             : (toolResult.commitSha ? 'build_done' : 'chat');
           const directText = toolResult.toolResultText
             || (toolResult.isError
-              ? '_The OpenRouter turn did not complete successfully — see the status messages above._'
+              ? '_The OpenRouter turn did not complete successfully. See the status messages above._'
               : '_Done._');
           const directPills = turnPills(directOutcome);
           const directKind = fallbackKindForTurn({
@@ -4884,7 +4884,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           const stripped = stripFakeCompletionMarker(mayorText1, { sessionId: session.id });
           if (stripped !== mayorText1) {
             mayorText1 = stripped
-              || '(I described what should change, but didn\'t actually run the coding agent — try sending again.)';
+              || '(I described what should change, but didn\'t actually run the coding agent. Try sending again.)';
           }
         }
 
@@ -5042,7 +5042,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
               toolNames: mayor1.toolUses.map((t) => t.name),
             });
           } else if (needsEmptyReplyFallback(mayorText1, mayor1.toolUses)) {
-            mayorText1 = '_The assistant ended its turn without a reply — please send your message again._';
+            mayorText1 = '_The assistant ended its turn without a reply. Please send your message again._';
             send('token', { text: mayorText1 });
             log.warn('sessions', 'Mayor turn produced no visible output — substituting fallback text', {
               sessionId: session.id,
@@ -5440,7 +5440,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             phase2ToolResults.push({
               type: 'tool_result',
               tool_use_id: tu.id,
-              content: 'Skipped — only one action runs per turn.',
+              content: 'Skipped: only one action runs per turn.',
               is_error: true,
             });
           }
@@ -5561,7 +5561,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             });
           }
           if (!mayorText2.trim()) {
-            mayorText2 = '_The wrap-up was declined by the model\'s safety classifiers — the dispatched work above still completed; see the status messages for the outcome._';
+            mayorText2 = '_The wrap-up was declined by the model\'s safety classifiers. The dispatched work above still completed; see the status messages for the outcome._';
             send('token', { text: mayorText2 });
           }
         } else if (!mayorText2.trim()) {
@@ -5569,12 +5569,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // tool runs, even if the Mayor produces no wrap-up text.
           if (toolResult.isError) {
             mayorText2 = toolKind === 'scout'
-              ? "_The scout didn't finish successfully — see the status above._"
-              : "_The coding agent didn't complete successfully — see the status messages above._";
+              ? "_The scout didn't finish successfully. See the status above._"
+              : "_The coding agent didn't complete successfully. See the status messages above._";
           } else if (toolKind === 'scout') {
             // Spec/scout just planned something — make the build handoff
             // explicit so a finished spec doesn't read as a finished change.
-            mayorText2 = "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
+            mayorText2 = "_Spec updated: it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
           } else {
             mayorText2 = '_Done._';
           }
@@ -7020,17 +7020,17 @@ function buildHeadlessFollowUpMessage(src) {
   const issueRef = n ? `GitHub issue #${n}` : 'a GitHub issue';
   const intro =
     `This session was cloned from an auto session that ran unattended on ${issueRef}. `
-    + `You're on your own branch (forked from the auto session's, so its commits carry over) — `
+    + `You're on your own branch (forked from the auto session's, so its commits carry over). `
     + `other users can clone the same auto session independently without affecting yours.`;
   switch (src.headless_outcome) {
     case 'spec':
-      return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec — open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
+      return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec. Open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
     case 'code':
-      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch — see the "Changes ready" card above. A staging preview may be shown there ("Preview staging" / "Test this change") if one built; if it didn't, the card still lets you propose and the preview is rebuilt then. No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch. See the "Changes ready" card above. A staging preview may be shown there ("Preview staging" / "Test this change") if one built; if it didn't, the card still lets you propose and the preview is rebuilt then. No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card, which opens the PR on this branch and starts the vote (or just ask me).`;
     case 'spec_code':
-      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is committed and pushed on this branch. See the "Changes ready" card above; a staging preview may be shown there if one built, and either way the card lets you propose (the preview is rebuilt at propose time if needed). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it: the change is committed and pushed on this branch. See the "Changes ready" card above; a staging preview may be shown there if one built, and either way the card lets you propose (the preview is rebuilt at propose time if needed). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card, which opens the PR on this branch and starts the vote (or just ask me).`;
     default:
-      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec — open the spec viewer to review it alongside the questions.' : ''}`;
+      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision. See its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec, so open the spec viewer to review it alongside the questions.' : ''}`;
   }
 }
 
@@ -7228,14 +7228,14 @@ function questionsBodyHasContent(body) {
   return true;
 }
 
-const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s proposal session. '
-  + 'Answer in a comment (or edit the issue body), then press **Generate proposal** on the issue again — the next run reads the answers.';
+const HEADLESS_QUESTION_FOOTER = '\n\nPosted by this issue\'s proposal session. '
+  + 'Answer in a comment (or edit the issue body), then press **Generate proposal** on the issue again: the next run reads the answers.';
 
 // #945: the same footer for the platform-side dual-post. Reading is now
 // symmetric (a run reads both the GitHub comments and this thread), so the
 // wording points at whichever surface the reader is already looking at.
-const HEADLESS_QUESTION_THREAD_FOOTER = '\n\n— Posted by this issue\'s proposal session. '
-  + 'Answer right here in this thread (or on the GitHub issue), then press **Generate proposal** on the issue again — the next run reads both.';
+const HEADLESS_QUESTION_THREAD_FOOTER = '\n\nPosted by this issue\'s proposal session. '
+  + 'Answer right here in this thread (or on the GitHub issue), then press **Generate proposal** on the issue again: the next run reads both.';
 
 // Best-effort: a failed post must never fail or change the run's outcome
 // (the parked session remains the fallback channel). Returns whether the
@@ -7607,8 +7607,8 @@ async function runHeadlessSession({
       }
       const directText = toolResult.toolResultText
         || (toolResult.isError
-          ? '_The OpenRouter run did not complete successfully — review the status above._'
-          : '_Change committed and pushed — start a session from this auto session to review it._');
+          ? '_The OpenRouter run did not complete successfully. Review the status above._'
+          : '_Change committed and pushed. Start a session from this auto session to review it._');
       if (!toolResult.isError && !toolResult.commitSha && directText.trim()) {
         questionTextToPost = directText;
       }
@@ -7773,7 +7773,7 @@ async function runHeadlessSession({
         // Nothing visible at all (no text, nothing salvageable, no
         // dispatch): persist an explicit note so the cloned session
         // doesn't open onto silence. Refusals already persisted a status.
-        await sendStatus('The auto session ended its planning turn without a reply — re-run "Generate proposal" to retry.', { turnError: true });
+        await sendStatus('The auto session ended its planning turn without a reply. Re-run "Generate proposal" to retry.', { turnError: true });
         log.warn('sessions', 'Headless Mayor turn produced no visible output — persisted fallback status', {
           sessionId: session.id,
           stopReason: mayor1.stopReason,
@@ -7858,7 +7858,7 @@ async function runHeadlessSession({
           phase2ToolResults.push({
             type: 'tool_result',
             tool_use_id: tu.id,
-            content: 'Skipped — only one action runs per turn.',
+            content: 'Skipped: only one action runs per turn.',
             is_error: true,
           });
         }
@@ -7884,8 +7884,8 @@ async function runHeadlessSession({
         const specHasQuestions = specHasBlockingQuestions(currentSpec);
         const decisionTurnId = headlessTurnId;
         const decisionFallback = specHasQuestions
-          ? '_The spec has open questions — review them before implementation._'
-          : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._';
+          ? '_The spec has open questions. Review them before implementation._'
+          : '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._';
         const decisionEffect = await runHeadlessMayorEffect({
           pool,
           sessionId: session.id,
@@ -7925,8 +7925,8 @@ async function runHeadlessSession({
           const finalText = mayorText2.trim()
             ? mayorText2
             : (specHasQuestions
-              ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
-              : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._');
+              ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
+              : '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._');
           const messageApplied = await persistHeadlessMayorRow({
             pool,
             sessionId: session.id,
@@ -8001,7 +8001,7 @@ async function runHeadlessSession({
             const buildBilling = await limits.resolveBillingPath(pool, config.dataEncryptionKey, user.id);
             let buildResult;
             if (buildBilling.error) {
-              await sendStatus('Spec drafted; implementation skipped — daily budget reached.');
+              await sendStatus('Spec drafted; implementation skipped, because the daily budget was reached.');
               buildResult = {
                 toolResultText: 'Implementation skipped — the daily LLM budget is exhausted. The spec remains the deliverable; a human will review and build it later.',
                 isError: true,
@@ -8011,7 +8011,7 @@ async function runHeadlessSession({
               // and its debits) must bill the re-resolved payer — the
               // turn-start resolution may differ now that the scout spent.
               userApiKey = buildBilling.apiKey;
-              await sendStatus('Auto session: spec looks straightforward — implementing it now...');
+              await sendStatus('Auto session: spec looks straightforward, so implementing it now...');
               const buildPromptArg = typeof buildCall.input?.prompt === 'string' && buildCall.input.prompt.trim()
                 ? buildCall.input.prompt.trim()
                 : seed;
@@ -8062,10 +8062,10 @@ async function runHeadlessSession({
             headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
           }
           const phase3Fallback = outcome === 'spec_code'
-            ? '_Spec drafted and change committed — start a session from this auto session to review it and propose it to the group._'
+            ? '_Spec drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
             : outcome === 'question'
-              ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
-              : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+              ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
+              : '_Spec drafted, but the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           postDispatchBillingAvailable = await resolveHeadlessPayer('phase-3-wrapup');
           const phase3Effect = await runHeadlessMayorEffect({
             pool,
@@ -8105,10 +8105,10 @@ async function runHeadlessSession({
           if (outcome === 'question') questionTextToPost = mayorText3.trim();
           if (!mayorText3.trim()) {
             mayorText3 = outcome === 'spec_code'
-              ? '_Spec drafted and change committed — start a session from this auto session to review it and propose it to the group._'
+              ? '_Spec drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
               : outcome === 'question'
-                ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
-                : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+                ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
+                : '_Spec drafted, but the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           }
           const servedModel3 = mayor3.servedModel || selectedModel;
           const costCents3 = mayor3.usage
@@ -8141,8 +8141,8 @@ async function runHeadlessSession({
         // --- Phase 2: Mayor wrap-up (mirrors the chat handler) — scout
         // error, direct phase-1 build, or any other dispatch path. ---
         const directFallback = toolResult.isError
-          ? "_The auto session's dispatch didn't finish successfully — see the status above._"
-          : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
+          ? "_The auto session's dispatch didn't finish successfully. See the status above._"
+          : '_Change committed and pushed. Start a session from this auto session to review it and propose it to the group._';
         const directEffect = await runHeadlessMayorEffect({
           pool,
           sessionId: session.id,
@@ -8165,8 +8165,8 @@ async function runHeadlessSession({
         let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         if (!mayorText2.trim()) {
           mayorText2 = toolResult.isError
-            ? "_The auto session's dispatch didn't finish successfully — see the status above._"
-            : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
+            ? "_The auto session's dispatch didn't finish successfully. See the status above._"
+            : '_Change committed and pushed. Start a session from this auto session to review it and propose it to the group._';
         }
         const servedModelW = mayor2.servedModel || selectedModel;
         const costCents2 = mayor2.usage
@@ -8333,7 +8333,7 @@ function describeStoppedLanding({ sha = null, ahead = null, pushOk = false } = {
   const what = ahead != null
     ? `${ahead} change${ahead === 1 ? '' : 's'}`
     : 'changes';
-  return ` — it had already committed ${what} to the branch`
+  return `, but it had already committed ${what} to the branch`
     + ` (${String(sha).slice(0, 8)}${pushOk ? ', pushed' : ', not pushed'});`
     + ' no pull request was opened';
 }
@@ -8341,14 +8341,14 @@ function describeStoppedLanding({ sha = null, ahead = null, pushOk = false } = {
 function staticWrapUpText(outcome, { toolKind = null } = {}) {
   if (outcome === 'push_failed' || outcome === 'failed') {
     return toolKind === 'scout'
-      ? "_The scout didn't finish successfully — see the status above._"
-      : "_The coding agent didn't complete successfully — see the status messages above._";
+      ? "_The scout didn't finish successfully. See the status above._"
+      : "_The coding agent didn't complete successfully. See the status messages above._";
   }
   if (outcome === 'spec' || outcome === 'spec_done') {
-    return "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
+    return "_Spec updated: it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
   }
   if (outcome === 'no_changes') {
-    return '_The coding agent finished without changing anything — see the status messages above._';
+    return '_The coding agent finished without changing anything. See the status messages above._';
   }
   return '_Done._';
 }
@@ -9201,7 +9201,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         outcome = 'question';
         dispatchSummary = apiFailure
           ? `${describeAgentApiFailure(apiFailure)}. No spec was produced.`
-          : 'The scout did not complete successfully — no spec was produced.';
+          : 'The scout did not complete successfully, so no spec was produced.';
       }
     } else {
       const testing = testingNotes.extract(result.lastResultText || '');
@@ -9283,7 +9283,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
             sessionId: session.id, errName, err: errMsg, missingKeys,
           });
           dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
-            + 'Headless mode: no PR was opened. The staging preview could not be built, but the commit is reviewable — the "Changes ready" card still appears on a clone.'
+            + 'Headless mode: no PR was opened. The staging preview could not be built, but the commit is reviewable: the "Changes ready" card still appears on a clone.'
             + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
             + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
         }
@@ -9313,12 +9313,12 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
   }
   const fallbackMayorText = outcome === 'spec'
-    ? '_Spec drafted — review it in the spec viewer after starting a session from this auto session._'
+    ? '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._'
     : outcome === 'spec_code'
-      ? '_Spec drafted and change committed — start a session from this auto session to open the PR._'
+      ? '_Spec drafted and change committed. Start a session from this auto session to open the PR._'
       : outcome === 'code'
-        ? '_Change committed and pushed — start a session from this auto session to open the PR._'
-        : "_The auto session's dispatch didn't finish successfully — see the status above._";
+        ? '_Change committed and pushed. Start a session from this auto session to open the PR._'
+        : "_The auto session's dispatch didn't finish successfully. See the status above._";
   let mayorText2;
   let servedModelR;
   let recoveredUsage = null;
@@ -10213,7 +10213,7 @@ function salvageAssistantText(mayorText, suggestions, quickReplies) {
     // sanitizeSuggestedAnswers allows empty question labels when the
     // answers themselves survived — the chips still render, so anchor
     // them to a generic ask.
-    return 'I have a couple of clarifying questions — pick an answer below.';
+    return 'I have a couple of clarifying questions. Pick an answer below.';
   }
   if (Array.isArray(quickReplies) && quickReplies.length) {
     return 'What would you like to do next?';
@@ -10270,7 +10270,7 @@ function buildDataSummaryReprompt(rawContent, toolUses) {
 // Explicit fallback for a data-informed turn whose re-prompt ALSO
 // produced no text — the generic "What would you like to do next?"
 // would mask that findings were fetched and lost. Exported for tests.
-const DATA_SUMMARY_FALLBACK_TEXT = '_I fetched the data but failed to summarize it — please ask again._';
+const DATA_SUMMARY_FALLBACK_TEXT = '_I fetched the data but failed to summarize it. Please ask again._';
 
 // Would the turn end with nothing visible? True when no text survived
 // (after salvage) AND no dispatch tool ran — a dispatch produces its own
@@ -10300,7 +10300,7 @@ function describeTurnError(err) {
       : `The AI provider rate-limited this request: ${message}`;
   }
   if (status === 529 || /overloaded/i.test(message)) {
-    return 'The AI provider is overloaded right now — try again in a minute.';
+    return 'The AI provider is overloaded right now. Try again in a minute.';
   }
   // spawn E2BIG: the OS rejected a process launch because a single
   // argument crossed Linux's 128 KiB limit. Deterministic — a verbatim
@@ -10309,7 +10309,7 @@ function describeTurnError(err) {
   // that it travels as a file (worker.TURN_PROMPT_PATH), but other
   // spawns can still theoretically hit it.
   if (/\bE2BIG\b/.test(message)) {
-    return 'This request was too large to hand to the coding agent — trim the session spec or attachments before retrying';
+    return 'This request was too large to hand to the coding agent. Trim the session spec or attachments before retrying';
   }
   return message;
 }
@@ -10817,7 +10817,7 @@ async function runScoutTool({
     runLocally
       // No model label: the local runtime uses whatever model the user's own
       // Claude Code is configured for, and claiming ours would be a lie.
-      ? `Scouting on ${lease.label} — your machine, read-only${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
+      ? `Scouting on ${lease.label}: your machine, read-only${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
       : `Scouting the repo for context (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`,
     runLocally
       ? {
@@ -11086,7 +11086,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         missing: 'The local turn record disappeared',
         aborted: `${lease.label} was interrupted`,
       }[outcome] || null;
-      const detail = finished?.error_detail ? ` — ${finished.error_detail}` : '';
+      const detail = finished?.error_detail ? `: ${finished.error_detail}` : '';
       return {
         exitCode: outcome === 'completed' ? 0 : 1,
         ccIsError: outcome !== 'completed',
@@ -11153,10 +11153,10 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       // each still names the reason it is retrying.
       const scoutRetryStatus = (r) => {
         if (headless && shouldRetryHeadlessTurn(r, stopHandle, !!(r?.lastResultText || '').trim())) {
-          return 'The coding step failed unexpectedly — retrying once…';
+          return 'The coding step failed unexpectedly, retrying once…';
         }
         if (shouldRetryApiErrorTurn(r, stopHandle)) {
-          return 'The coding agent lost its connection to the API — retrying once…';
+          return 'The coding agent lost its connection to the API, retrying once…';
         }
         return null;
       };
@@ -11329,7 +11329,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       // dropped connection, and freezing this as a spec version would put a
       // one-line error notice in the viewer's version history forever.
       isError = true;
-      const msg = `${describeAgentApiFailure(apiFailure)}. The spec doc was not updated — send your request again to retry.`;
+      const msg = `${describeAgentApiFailure(apiFailure)}. The spec doc was not updated, so send your request again to retry.`;
       await sendStatus(msg);
       summaryParts.push(msg);
     } else if (result.ccIsError) {
@@ -11475,7 +11475,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
 function describeMarkerlessExit(cause) {
   switch (cause) {
     case 'oom_killed':
-      return 'The coding agent was killed — most likely it ran out of memory.';
+      return 'The coding agent was killed, most likely because it ran out of memory.';
     case 'container_gone':
       return "The coding agent's worker container disappeared mid-run.";
     case 'probe_unobservable':
@@ -11623,8 +11623,8 @@ async function runCodexAttemptLoop({
     if (attemptNumber >= 2) break;
     if (typeof sendStatus === 'function') {
       const status = retryFresh
-        ? 'The saved OpenRouter model context is unavailable — retrying fresh once…'
-        : 'The coding step failed unexpectedly — retrying once…';
+        ? 'The saved OpenRouter model context is unavailable, retrying fresh once…'
+        : 'The coding step failed unexpectedly, retrying once…';
       try { await sendStatus(status); } catch {}
     }
     if (!retryFresh && typeof waitForStopped === 'function') {
@@ -12331,7 +12331,7 @@ async function runClaudeCodeTool({
   }
   await sendStatus(
     runLocally
-      ? `Handing this turn to ${lease.label} — your machine, your Claude subscription${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
+      ? `Handing this turn to ${lease.label}: your machine, your Claude subscription${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
       : (isCodexSession
         ? `Starting OpenRouter (${modelLabel}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`
         : `Spinning up coding agent (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`),
@@ -13008,7 +13008,7 @@ ${buildGuidance.testingGuidance}`;
         missing: 'The local turn record disappeared',
         aborted: `${lease.label} was interrupted`,
       }[outcome] || null;
-      const detail = finished?.error_detail ? ` — ${finished.error_detail}` : '';
+      const detail = finished?.error_detail ? `: ${finished.error_detail}` : '';
       return {
         sha: headSha,
         ahead: headSha ? 1 : 0,
@@ -13085,7 +13085,7 @@ ${buildGuidance.testingGuidance}`;
         // retry must stay on the same attached machine.
         result = await dispatchLocalBuild();
         if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
-          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
+          await sendStatus('The coding step failed unexpectedly, retrying once…', executionAgentMeta);
           await waitForTurnStopped(session.id, containerName);
           result = await dispatchLocalBuild();
         }
@@ -13160,7 +13160,7 @@ ${buildGuidance.testingGuidance}`;
         // Claude session — legacy combined path, keep the headless retry.
         result = await doBuild({});
         if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
-          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
+          await sendStatus('The coding step failed unexpectedly, retrying once…', executionAgentMeta);
           await waitForTurnStopped(session.id, containerName);
           if (!result.turnId || !await worker.finishTurn(session.id, { turnId: result.turnId })) {
             throw new Error('Could not durably finish the first build attempt before retry');
@@ -13353,7 +13353,7 @@ ${buildGuidance.testingGuidance}`;
         // "-1" (which also normalizes the old "code null" rendering).
         msg = `${describeMarkerlessExit(result.markerlessCause)} No changes were made.`;
       } else {
-        msg = `${executionAgentName} exited with code ${result.exitCode} — no changes were made.`;
+        msg = `${executionAgentName} exited with code ${result.exitCode}, so no changes were made.`;
       }
       if (msg) {
         await sendStatus(msg, executionAgentMeta);
@@ -13404,7 +13404,7 @@ ${buildGuidance.testingGuidance}`;
         session.testing_path = testing.testingPath;
         session.testing_paths = testing.testingPaths || [];
       }
-      await sendStatus('Changes committed and pushed (headless) — building staging preview (no PR yet)...');
+      await sendStatus('Changes committed and pushed (headless). Building staging preview (no PR yet)...');
 
       const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
       let stagingResult = null;
@@ -13482,7 +13482,7 @@ ${buildGuidance.testingGuidance}`;
           prNumber: null,
         });
         summaryParts.push(
-          `Staging preview failed to build (non-fatal — commit ${commitHash.substring(0, 8)} is pushed; `
+          `Staging preview failed to build (non-fatal: commit ${commitHash.substring(0, 8)} is pushed; `
           + `a preview can be built from a cloned session).\n\n${fix}`
         );
         // #461: record the failure as a terminal 'error' checks verdict
@@ -13574,7 +13574,7 @@ ${buildGuidance.testingGuidance}`;
           ...github.describeGithubError(prErr),
         });
         if (prErr.code === 'github_unavailable') {
-          await sendStatus('GitHub is having trouble creating the pull request right now (their side, not this change) — it will be created when you propose, or on the next turn.');
+          await sendStatus('GitHub is having trouble creating the pull request right now (their side, not this change). It will be created when you propose, or on the next turn.');
           summaryParts.push('NOTE: GitHub\'s API is currently failing to create pull requests (GitHub-side outage). The commit is pushed and safe on the branch; the PR will be created automatically at propose time or on the next turn. Do NOT retry by dispatching extra commits — just tell the user to wait a few minutes.');
         }
       }
@@ -13745,7 +13745,7 @@ ${buildGuidance.testingGuidance}`;
               appSlug: session.app_slug,
               merged: false,
             });
-            const resetMsg = `Votes reset on PR #${session.pr_number || session.id} — new commit ${commitHash.substring(0, 8)} pushed.`;
+            const resetMsg = `Votes reset on PR #${session.pr_number || session.id}: new commit ${commitHash.substring(0, 8)} pushed.`;
             await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
             // Dual-post into the proposal's thread (lifecycle in context).
             await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
@@ -13787,7 +13787,7 @@ ${buildGuidance.testingGuidance}`;
           `Staging build failed.\n\n` +
           `What still happened: commit ${commitHash.substring(0, 8)} was pushed to ${session.branch_name}` +
           (session.pr_number ? ` and PR #${session.pr_number} was created/updated` : '') +
-          `. Only the staging preview container is missing — there is no preview URL for this commit.\n\n` +
+          `. Only the staging preview container is missing, so there is no preview URL for this commit.\n\n` +
           fix;
 
         // The commit (and PR, if any) already landed — `changesReady: true`
@@ -13879,7 +13879,7 @@ ${buildGuidance.testingGuidance}`;
       // …"; the two together are how a reader of the transcript tells a local
       // spec turn from a local build turn months later.
       if (runLocally) {
-        statusText += ` Coding done on ${lease.label} — no Usernode credits used.`;
+        statusText += ` Coding done on ${lease.label}, so no Usernode credits were used.`;
       }
       const completionMeta = {
         ...executionAgentMeta,
@@ -14087,6 +14087,9 @@ If the user's next request is a DISTINCT, separate change — a new feature or f
 
 YOUR ROLE:
 You talk to the user in plain English and decide whether their latest message needs the session's selected coding agent to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.
+
+WRITING STYLE:
+Do not use em dashes (—) in anything you write: chat replies, quick-reply pills, suggested answers, and the prompts you send to the scout and the coding agent. Readers read a dash-heavy line as machine-written, which is the opposite of the plain-English voice this chat is for. Use a full stop and a second sentence, a colon, parentheses, or a comma instead, whichever the sentence actually wants. Never swap in a plain hyphen; that reads as a typo and keeps the same texture. When you dispatch the coding agent to write copy the user will see, say the same thing in the prompt.
 
 THE SPEC DOC:
 Every session has a markdown SPEC DOC that the user can read in the dev-chat spec viewer (a side-panel they open via the spec preview cards in the chat). It is your collaborative working surface for planning before code is written. The current spec is included verbatim below in the CURRENT SPEC DOC block — refer to it whenever you discuss or summarize the spec. The viewer is read-only: the user cannot hand-edit the spec, so all revisions go through you — and YOU never edit the spec in-process either. ALL spec writing and revising, however small, is done by dispatching the scout (dispatch_scout), which reads the repo and rewrites the doc; you only relay what the user wants changed. When they're happy with the spec they'll ask you to dispatch the coding agent in chat — you don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.

@@ -82,7 +82,7 @@ function MailCard({ mail }: { mail: MailStatus | null }) {
     return (
       <div className="rounded-xl border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 px-4 py-3 text-sm sm:px-5">
         <div className="font-semibold text-sky-800 dark:text-sky-300">
-          Staging preview — email is rendered to the log, never delivered
+          Staging preview: email is rendered to the log, never delivered
         </div>
         <p className="text-sky-800/80 dark:text-sky-300/80 mt-1">
           This preview holds a clone of production data, so it must not mail real
@@ -98,10 +98,10 @@ function MailCard({ mail }: { mail: MailStatus | null }) {
     return (
       <div className={`${PANEL_CLS} px-4 py-3 text-sm sm:px-5`}>
         <span className="font-semibold text-emerald-700 dark:text-emerald-400">
-          Email is configured
+          Email is configured:
         </span>
         <span className="text-zinc-500 dark:text-zinc-400">
-          {' — login codes and waitlist confirmations are being sent via '}
+          {' login codes and waitlist confirmations are being sent via '}
           <span className="font-medium">{mail.provider || 'unknown'}</span>.
         </span>
         <Sender mail={mail} />
@@ -114,7 +114,7 @@ function MailCard({ mail }: { mail: MailStatus | null }) {
   return (
     <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm sm:px-5">
       <div className="font-semibold text-amber-800 dark:text-amber-300">
-        Email is not deliverable — no mail sender configured
+        Email is not deliverable: no mail sender configured
       </div>
       <p className="text-amber-800/80 dark:text-amber-300/80 mt-1">
         These flows still report success to the user but deliver nothing:
@@ -126,7 +126,7 @@ function MailCard({ mail }: { mail: MailStatus | null }) {
       <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
         {(mail.providers || []).map((p) => (
           <li key={p.name}>
-            {`${p.label || p.name} — `}
+            {`${p.label || p.name}: `}
             {p.configured
               ? <span className="text-emerald-700 dark:text-emerald-400">ready</span>
               : (

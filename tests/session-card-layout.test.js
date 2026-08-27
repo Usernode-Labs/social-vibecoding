@@ -470,7 +470,7 @@ test('kanban In progress: private → archived toggle → visible → issues →
     'Yours · visible',
     'data-session-chip="2"',
     'Issue five',
-    'Others',
+    '>Others<',
     'data-shared-session-row="71"',
   ]);
   // The long copy survives as the divider label's tooltip rather than as a
@@ -559,7 +559,7 @@ test('list view pinned block: only a visible session still renders (no private c
   const html = rowsHtml(AppView._mySessionsRows());
   assert.notEqual(html, '');
   assert.doesNotMatch(html, /Only you can see your active sessions/);
-  assertOrder(html, ['Visible to everyone —', 'data-session-chip="2"']);
+  assertOrder(html, ['Visible to everyone,', 'data-session-chip="2"']);
 });
 
 test('list view pinned block: nothing to show → empty string', () => {

@@ -4,14 +4,17 @@
 //
 // Contracts guarded here:
 //
-//   1. Stage 1 mirrors topochain's required set: made_url (a real link)
-//      and discovery_source (a known key) are required; location and the
-//      free-text extras are optional. Unknown enum values are rejected,
-//      never stored.
+//   1. Stage 1 is email-only: NOTHING in the survey is required, so a
+//      bare join with just an address is valid and yields an empty
+//      answers object. The doc's "Simpler waitlist flow proposal"
+//      settled this, and Andrea and Evan agreed it in its comments.
+//      Unknown enum values are still rejected, never stored, and
+//      made_url has moved to stage 2.
 //   2. Stage 2 is all-optional but still validates enum keys (group
-//      size/role/tools, loss answers/kinds) and caps invites at
-//      MAX_INVITES. The cleaned payload contains only known keys — a
-//      hostile body can't smuggle arbitrary JSON into answers.
+//      size/role/tools, loss answers/kinds). The cleaned payload contains
+//      only known keys — a hostile body can't smuggle arbitrary JSON into
+//      answers, and the retired `invites` key is dropped rather than
+//      rejected so a stale client still saves.
 //   3. publicOptions() (what the SPA renders from) exposes exactly the
 //      option sets the validators accept, so client and server can't
 //      drift.
@@ -26,30 +29,32 @@ const q = require('../src/services/waitlist-questions');
 
 // ─── 1. Stage 1 ───────────────────────────────────────────────────────
 
-test('stage 1 requires a plausible made_url', () => {
-  assert.equal(q.validateStage1({ discovery_source: 'x' }).ok, false);
-  assert.equal(q.validateStage1({ made_url: 'not a link', discovery_source: 'x' }).ok, false);
-  assert.equal(
-    q.validateStage1({ made_url: 'https://example.com/repo', discovery_source: 'x' }).ok,
-    true
-  );
+test('stage 1 accepts an email-only join — every survey field is optional', () => {
+  const bare = q.validateStage1({});
+  assert.equal(bare.ok, true);
+  assert.deepEqual(bare.value, {});
 });
 
-test('stage 1 requires a KNOWN discovery source', () => {
-  const base = { made_url: 'https://example.com' };
-  assert.equal(q.validateStage1({ ...base }).ok, false);
-  assert.equal(q.validateStage1({ ...base, discovery_source: 'carrier-pigeon' }).ok, false);
+test('stage 1 still rejects unknown enum values it is given', () => {
+  assert.equal(q.validateStage1({ discovery_source: 'carrier-pigeon' }).ok, false);
+  assert.equal(q.validateStage1({ country: 'ZZ' }).ok, false);
   for (const key of Object.keys(q.DISCOVERY_SOURCES)) {
-    assert.equal(q.validateStage1({ ...base, discovery_source: key }).ok, true);
+    assert.equal(q.validateStage1({ discovery_source: key }).ok, true);
   }
 });
 
+test('stage 1 no longer accepts made_url — it belongs to stage 2 now', () => {
+  const r = q.validateStage1({ made_url: 'https://example.com', made_note: 'a bot' });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.made_url, undefined);
+  assert.equal(r.value.made_note, undefined);
+});
+
 test('stage 1 cleans optional fields and rejects unknown countries', () => {
-  const base = { made_url: 'https://example.com', discovery_source: 'friend' };
+  const base = { discovery_source: 'friend' };
 
   const full = q.validateStage1({
     ...base,
-    made_note: '  A Discord bot  ',
     country: 'de',
     city: 'Berlin',
     discovery_detail: 'alice',
@@ -57,8 +62,8 @@ test('stage 1 cleans optional fields and rejects unknown countries', () => {
     evil_extra: 'nope',
   });
   assert.equal(full.ok, true);
-  assert.equal(full.value.made_note, 'A Discord bot');
   assert.equal(full.value.country, 'DE'); // normalized upper-case
+  assert.equal(full.value.city, 'Berlin');
   assert.equal(full.value.discovery.detail, 'alice');
   assert.equal(full.value.referrer_handle, '@bob');
   assert.equal('evil_extra' in full.value, false);
@@ -69,6 +74,14 @@ test('stage 1 cleans optional fields and rejects unknown countries', () => {
 });
 
 // ─── 2. Stage 2 ───────────────────────────────────────────────────────
+
+test('stage 2 takes made_url and validates it looks like a link', () => {
+  assert.equal(q.validateStage2({ made_url: 'not a link' }).ok, false);
+  const r = q.validateStage2({ made_url: 'https://example.com/repo', made_note: '  A Discord bot  ' });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.made_url, 'https://example.com/repo');
+  assert.equal(r.value.made_note, 'A Discord bot');
+});
 
 test('stage 2 accepts an empty body (everything optional)', () => {
   const r = q.validateStage2({});
@@ -99,7 +112,7 @@ test('stage 2 validates enum keys in every section', () => {
   assert.equal(ok.value.loss.had, 'yes');
 });
 
-test('stage 2 shapes handles/invites and caps invites at MAX_INVITES', () => {
+test('stage 2 shapes handles and no longer accepts typed invites', () => {
   const r = q.validateStage2({
     farcaster: '@fc',
     discord: 'disc',
@@ -113,7 +126,10 @@ test('stage 2 shapes handles/invites and caps invites at MAX_INVITES', () => {
   assert.deepEqual(r.value.handles, {
     farcaster: '@fc', discord: 'disc', telegram: '@tg', other: 'twitch.tv/me',
   });
-  assert.equal(r.value.invites.length, q.MAX_INVITES);
+  // The share link replaced the typed rows, so a stale client still
+  // sending `invites` gets a NORMAL save with the key dropped — not a
+  // validation error somebody would have to debug.
+  assert.equal(r.value.invites, undefined);
   assert.equal(r.value.admit_together, true);
   assert.equal(r.value.referrer_handle, '@ref');
 });
@@ -135,7 +151,8 @@ test('publicOptions exposes exactly the option sets the validators accept', () =
   assert.deepEqual(opts.loss_answers, q.LOSS_ANSWERS);
   assert.deepEqual(opts.loss_kinds, q.LOSS_KINDS);
   assert.deepEqual(opts.countries, q.COUNTRIES);
-  assert.equal(opts.max_invites, q.MAX_INVITES);
+  // max_invites went with the typed invite rows.
+  assert.equal('max_invites' in opts, false);
   // Every detail label points at a real source.
   for (const key of Object.keys(q.DISCOVERY_DETAIL_LABELS)) {
     assert.ok(key in q.DISCOVERY_SOURCES, `label for unknown source: ${key}`);

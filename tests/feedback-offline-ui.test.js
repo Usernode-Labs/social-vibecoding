@@ -77,7 +77,7 @@ test('the saved confirmation reads as success, and consumes the draft', () => {
     feedbackJs.indexOf('const saveForLater = async (body)'),
     feedbackJs.indexOf('// Keep the dialog honest while it is open'),
   );
-  assert.match(saveForLater, /Saved on this device — we'll send it as soon as you're back online\./);
+  assert.match(saveForLater, /Saved on this device. We'll send it as soon as you're back online\./);
   assert.match(saveForLater, /text-emerald-400/, 'the same green a filed issue gets');
   // Same cleanup as a successful submit: the draft is gone, the dialog locks
   // and closes on the shared 1500 ms grace window.
@@ -129,7 +129,7 @@ test('a captured screenshot survives a failed upload', () => {
   );
   const networkCatch = uploadCatch.slice(uploadCatch.indexOf('} catch {'));
   assert.doesNotMatch(networkCatch, /resetScreenshotState\(\)/, 'the blob must be kept for the outbox');
-  assert.match(networkCatch, /Saved with your feedback — it'll upload when you're back online/);
+  assert.match(networkCatch, /Saved with your feedback. It'll upload when you're back online/);
   assert.match(feedbackJs, /let screenshotBlob = null;/);
   // Cleared with the rest of the attachment state, and re-uploaded before an
   // online submit so the promise on screen stays true.

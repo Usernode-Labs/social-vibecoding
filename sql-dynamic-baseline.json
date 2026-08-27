@@ -145,7 +145,7 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "ee6527c5eafba31903a2",
+      "fingerprint": "6addf75e8851124809f5",
       "count": 1,
       "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
     },
@@ -610,6 +610,20 @@
       "fingerprint": "c150bb9fc0ce89416368",
       "count": 1,
       "preview": "`SELECT DISTINCT ${USER_SELECT_QUALIFIED} FROM users u ${joinClause} ${whereClause} ORDER BY u.id DESC LIMIT $${dataParams.length - 1} OFFSET $${dataParams.leng"
+    },
+    {
+      "source": "src/routes/topochain/admin/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "27d7dffe2bcda3d40d0a",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS c FROM waitlist_signups w ${where}`"
+    },
+    {
+      "source": "src/routes/topochain/admin/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "a5ba989b29c286008dbf",
+      "count": 1,
+      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited"
     },
     {
       "source": "src/routes/topochain/ingest.js",

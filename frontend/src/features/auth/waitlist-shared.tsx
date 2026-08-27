@@ -21,7 +21,6 @@ export interface WaitlistOptions {
   group_tools?: Record<string, string>;
   loss_answers?: Record<string, string>;
   loss_kinds?: Record<string, string>;
-  max_invites?: number;
 }
 
 let optionsPromise: Promise<WaitlistOptions | null> | null = null;

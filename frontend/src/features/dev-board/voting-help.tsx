@@ -54,7 +54,7 @@ export function VotingHelp({ live }: VotingHelpProps) {
           </li>
           <li>
             {'A proposal with clear support and no objections merges on its own after a '
-              + 'short visibility window (a few days), so everyone has a chance to look — '}
+              + 'short visibility window (a few days), so everyone has a chance to look: '}
             <strong>silence counts as agreement</strong>
             .
           </li>
@@ -70,7 +70,7 @@ export function VotingHelp({ live }: VotingHelpProps) {
           <li>
             {'If enough people vote No, the proposal becomes '}
             <strong>Contested</strong>
-            {' — the time-based path turns off and it needs a straight majority of Yes '
+            {'. The time-based path turns off and it needs a straight majority of Yes '
               + 'votes to merge.'}
           </li>
           <li>

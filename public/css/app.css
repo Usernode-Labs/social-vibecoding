@@ -54,6 +54,14 @@
   --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
   --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
 
+  /* Content-row height of the mobile install strip (#1372). Declared here,
+     unconditionally, rather than on either element that reads it: `body`
+     reserves this much padding and the strip itself is sized to it, and a
+     custom property set on the strip could not be read by its own ancestor.
+     One declaration, so the reserved space and the drawn height cannot
+     drift into a gap or into covered content. */
+  --install-strip-h: 3rem;
+
   /* ── Semantic state tokens (dev board) ───────────────────
      ONE meaning per hue, so the same lifecycle stage never reads two
      ways depending on which helper drew it. Every dev-card status
@@ -7798,6 +7806,100 @@ body.is-offline #offline-banner {
    clearing the strip needs the override. */
 body.is-offline [data-auth-back] {
   top: calc(env(safe-area-inset-top, 0px) + 1rem + var(--offline-strip-h)) !important;
+}
+
+/* ── The mobile install strip (#1372) ─────────────────────────────────
+   Offers the native app to a phone-browser visitor. Same shape as the
+   offline strip above and for the same reason: the auth screens are
+   `fixed inset-0 z-40` and fully opaque, so an in-flow strip would be
+   painted over on exactly the screens an anonymous visitor arrives on.
+
+   Everything here keys off `:not(.hidden)` rather than the body class,
+   so the ONE thing that decides whether the strip is up is the `hidden`
+   class the island toggles through its ref. The body class exists only
+   to reserve the space, which is allowed to settle a frame later — a
+   padding that lags cannot produce a wrongly-displayed strip, and a
+   second display switch could. */
+#mobile-install-banner:not(.hidden) {
+  display: flex;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Between the two layers, deliberately. ABOVE the anonymous screens
+     (z-40) so the strip is visible on the landing screen — which is
+     where an install offer is aimed — and BELOW the drawer and Improve
+     panels (z-50) and the offline banner (z-60), because an install
+     offer is the least important thing on the page and must never sit
+     on top of a surface the user deliberately opened. */
+  z-index: 45;
+  box-sizing: border-box;
+  /* Same trick as the offline strip: the safe-area padding lands on the
+     header's safe-area extension — background over background — so only
+     the text row has to be reserved below. */
+  height: calc(var(--platform-safe-top) + var(--install-strip-h));
+  padding-top: var(--platform-safe-top);
+}
+
+body.has-install-strip {
+  padding-top: var(--install-strip-h);
+}
+
+/* Both strips up: this one sits below the offline banner, which has
+   already covered the safe area. */
+body.is-offline #mobile-install-banner:not(.hidden) {
+  top: calc(var(--platform-safe-top) + var(--offline-strip-h));
+  height: var(--install-strip-h);
+  padding-top: 0;
+}
+
+body.is-offline.has-install-strip {
+  padding-top: calc(var(--offline-strip-h) + var(--install-strip-h));
+}
+
+/* The six anonymous screens (#auth-landing-screen and its siblings) are
+   `fixed inset-0 z-40`, so the `body` padding above does nothing for
+   them: without this the strip would land squarely on the landing
+   header's title and its Sign in / Join waitlist buttons — on exactly
+   the screens an install offer is aimed at. Move the overlay instead.
+
+   The offset is the strip's CONTENT row only, and deliberately not its
+   full height. Each of these screens opens with a `.un-safe-top-extend`
+   header, so the screen supplies its own notch band directly beneath the
+   offset — and the strip, being opaque and above it, covers exactly that
+   band. Content therefore starts where the strip ends: no overlap, and
+   no blank inset-high gap either. Offsetting by the full height would
+   make the screen re-reserve a notch the strip has already consumed.
+
+   Reading --install-strip-h (never a bare env()) is what keeps this in
+   step with the strip's own height, per the safe-area tokens at the top
+   of this file. */
+body.has-install-strip #auth-landing-screen,
+body.has-install-strip #auth-login-screen,
+body.has-install-strip #auth-register-screen,
+body.has-install-strip #auth-waiting-screen,
+body.has-install-strip #auth-waitlist-screen,
+body.has-install-strip #auth-more-screen {
+  top: var(--install-strip-h);
+}
+
+body.is-offline.has-install-strip #auth-landing-screen,
+body.is-offline.has-install-strip #auth-login-screen,
+body.is-offline.has-install-strip #auth-register-screen,
+body.is-offline.has-install-strip #auth-waiting-screen,
+body.is-offline.has-install-strip #auth-waitlist-screen,
+body.is-offline.has-install-strip #auth-more-screen {
+  top: calc(var(--offline-strip-h) + var(--install-strip-h));
+}
+
+/* The corner Back link needs NO offset of its own once the strip is up:
+   it is pinned inside a screen that has already moved clear, and lands
+   1rem below the strip on its own. The `body.is-offline` rule above
+   exists for a banner overlapping a screen that stayed put, so in the
+   combined case it double-counts the offline strip. Put the link back on
+   its authored inline value. */
+body.is-offline.has-install-strip [data-auth-back] {
+  top: calc(env(safe-area-inset-top, 0px) + 1rem) !important;
 }
 
 /* Blocks that exist only to explain the offline state. Hidden — and

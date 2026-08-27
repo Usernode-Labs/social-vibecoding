@@ -47,9 +47,15 @@ const KEYS = [
   'WAITLIST_GITHUB_CLIENT_SECRET',
   'WAITLIST_X_CLIENT_ID',
   'WAITLIST_X_CLIENT_SECRET',
+  'WAITLIST_LINKEDIN_CLIENT_ID',
+  'WAITLIST_LINKEDIN_CLIENT_SECRET',
   'WAITLIST_OAUTH_ORIGIN',
 ];
-const SECRETS = ['WAITLIST_GITHUB_CLIENT_SECRET', 'WAITLIST_X_CLIENT_SECRET'];
+const SECRETS = [
+  'WAITLIST_GITHUB_CLIENT_SECRET',
+  'WAITLIST_X_CLIENT_SECRET',
+  'WAITLIST_LINKEDIN_CLIENT_SECRET',
+];
 
 // ── the declaration side ───────────────────────────────────────────────
 
@@ -59,7 +65,7 @@ test('every waitlist OAuth variable is declared in platform_env', () => {
     assert.ok(BY_KEY.get(key).description.length > 40,
       `${key}'s description has to tell an admin what setting it does`);
     assert.equal(BY_KEY.get(key).group, 'Waitlist',
-      'all five belong to one panel heading so they are read together');
+      'they all belong to one panel heading so they are read together');
   }
 });
 
@@ -89,7 +95,7 @@ test('none of them can block a proposal from merging', () => {
   }
 });
 
-test('exactly the two client secrets are declared private', () => {
+test('exactly the client secrets are declared private', () => {
   // private:true means encrypted at rest and never returned by any API —
   // right for a value that can complete OAuth authorizations for this
   // deployment. A client id travels in the authorize URL's query string in
@@ -104,7 +110,7 @@ test('exactly the two client secrets are declared private', () => {
   for (const key of KEYS.filter((k) => k !== 'WAITLIST_OAUTH_ORIGIN')) {
     assert.equal(BY_KEY.get(key).default, null, `${key} must not carry a committed default`);
   }
-  // All five are settable from the panel — they are NOT deploy-owned
+  // All of them are settable from the panel — they are NOT deploy-owned
   // credentials, and an operator has no other way to turn connect on.
   for (const key of KEYS) {
     assert.equal(BY_KEY.get(key).unwritable, false, `${key} must be writable from the panel`);
@@ -112,7 +118,7 @@ test('exactly the two client secrets are declared private', () => {
 });
 
 test('no waitlist module reads an undeclared WAITLIST_* variable', () => {
-  // Drift guard. A sixth waitlist variable has to be declared in the same
+  // Drift guard. Another waitlist variable has to be declared in the same
   // commit that starts reading it, or this fails.
   const MODULES = ['src/config.js', 'src/routes/waitlist-connect.js'];
   const seen = new Set();
@@ -155,6 +161,8 @@ const UNSET = {
   waitlistGithubClientSecret: '',
   waitlistXClientId: '',
   waitlistXClientSecret: '',
+  waitlistLinkedinClientId: '',
+  waitlistLinkedinClientSecret: '',
   waitlistOauthOrigin: '',
 };
 // Both providers configured — used only to mint a real state nonce, and to
@@ -166,6 +174,8 @@ const CONFIGURED = {
   waitlistGithubClientSecret: 'gh-secret',
   waitlistXClientId: 'x-id',
   waitlistXClientSecret: 'x-secret',
+  waitlistLinkedinClientId: 'li-id',
+  waitlistLinkedinClientSecret: 'li-secret',
 };
 
 async function serve(router) {
@@ -192,7 +202,7 @@ test.after(() => {
 });
 
 test('an unconfigured provider bounces the start route back to the form', async () => {
-  for (const provider of ['github', 'x']) {
+  for (const provider of ['github', 'x', 'linkedin']) {
     const res = await get(unset.base, `/waitlist/connect/${provider}?token=${TOKEN}`);
     assert.equal(res.status, 302, `${provider} must redirect, not error`);
     assert.equal(res.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`,
@@ -235,6 +245,18 @@ test('the callback URLs are exactly the ones the runbooks tell operators to regi
   assert.equal(ghUrl.searchParams.get('redirect_uri'),
     `${PRODUCTION_ORIGIN}/waitlist/connect/github/callback`);
   assert.equal(ghUrl.searchParams.get('scope'), null, 'no scope is requested');
+
+  const li = await get(configured.base, `/waitlist/connect/linkedin?token=${TOKEN}`);
+  const liUrl = new URL(li.headers.get('location'));
+  assert.equal(liUrl.origin + liUrl.pathname, 'https://www.linkedin.com/oauth/v2/authorization');
+  assert.equal(liUrl.searchParams.get('redirect_uri'),
+    `${PRODUCTION_ORIGIN}/waitlist/connect/linkedin/callback`);
+  assert.equal(liUrl.searchParams.get('response_type'), 'code');
+  // `openid profile` is the SMALLEST scope that returns a name. No email —
+  // the waitlist row already has one — and there is no follow scope to ask
+  // for: LinkedIn exposes no API that reports whether a member follows a
+  // page, which is why the copy says "connect" and never "verified follow".
+  assert.equal(liUrl.searchParams.get('scope'), 'openid profile');
 });
 
 test('the stage-2 payload reports each provider unavailable on its own', async () => {
@@ -245,13 +267,13 @@ test('the stage-2 payload reports each provider unavailable on its own', async (
   try {
     const res = await fetch(`${none.base}/api/public/waitlist/more/${TOKEN}`);
     assert.equal(res.status, 200);
-    assert.deepEqual((await res.json()).oauth, { github: false, x: false });
+    assert.deepEqual((await res.json()).oauth, { github: false, x: false, linkedin: false });
   } finally {
     none.server.close();
   }
 
   // The asymmetric case this deployment is actually in: GitHub live, X
-  // still waiting on a human to create the app.
+  // and LinkedIn still waiting on a human to create the app.
   const half = await serve(publicApiRoutes({
     ...UNSET,
     waitlistGithubClientId: 'gh-id',
@@ -260,7 +282,7 @@ test('the stage-2 payload reports each provider unavailable on its own', async (
   try {
     const res = await fetch(`${half.base}/api/public/waitlist/more/${TOKEN}`);
     assert.equal(res.status, 200);
-    assert.deepEqual((await res.json()).oauth, { github: true, x: false },
+    assert.deepEqual((await res.json()).oauth, { github: true, x: false, linkedin: false },
       'each provider is judged on its own pair of credentials');
   } finally {
     half.server.close();

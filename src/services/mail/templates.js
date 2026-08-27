@@ -66,17 +66,25 @@ function waitlistJoined(payload) {
   let html = p('Thanks for joining the Usernode waitlist.')
     + p("We'll email you at this address as soon as your access is ready.");
 
+  // The code comes first. On a phone, leaving for the mail app and coming
+  // back loses the WebView's place, so typing six digits beats following a
+  // link; on desktop the link below is still one click. Either confirms
+  // the same row.
+  if (payload.code) {
+    text += `\n\nYour verification code is ${payload.code}. It works for 15 minutes.`;
+    html += p(`Your verification code is <strong>${payload.code}</strong>. It works for 15 minutes.`);
+  }
   if (confirmUrl) {
-    text += '\n\nConfirm this email address so we can reach you when it opens up:\n'
+    text += '\n\nOr confirm this email address in one click:\n'
       + confirmUrl;
-    html += p('Confirm this email address so we can reach you when it opens up:')
+    html += p('Or confirm this email address in one click:')
       + p(link(confirmUrl));
   }
   if (surveyUrl) {
-    text += '\n\nWant in sooner? A few optional questions move you up the list — '
-      + `answer (or add to) them any time here: ${surveyUrl}`;
-    html += p('Want in sooner? A few optional questions move you up the list — '
-      + `answer (or add to) them any time here: ${link(surveyUrl)}`);
+    text += '\n\nWant in sooner? A few optional questions move you up the list. '
+      + `Answer (or add to) them any time here: ${surveyUrl}`;
+    html += p('Want in sooner? A few optional questions move you up the list. '
+      + `Answer (or add to) them any time here: ${link(surveyUrl)}`);
   }
 
   return { subject: "You're on the Usernode waitlist", text, html };
@@ -85,17 +93,17 @@ function waitlistJoined(payload) {
 function waitlistReleased(payload) {
   const url = payload.url;
   const text = payload.hasAccount
-    ? "Good news — you're off the Usernode waitlist and your account now has platform access.\n\n"
+    ? "Good news, you're off the Usernode waitlist and your account now has platform access.\n\n"
       + `Sign in to get started: ${url}`
-    : "Good news — you're off the Usernode waitlist.\n\n"
+    : "Good news, you're off the Usernode waitlist.\n\n"
       + `Create your account with this email address to get started: ${url}`;
   return {
     subject: 'Your Usernode access is ready',
     text,
     html: HTML_SHELL(
       p(payload.hasAccount
-        ? "Good news — you're off the Usernode waitlist and your account now has platform access."
-        : "Good news — you're off the Usernode waitlist.")
+        ? "Good news, you're off the Usernode waitlist and your account now has platform access."
+        : "Good news, you're off the Usernode waitlist.")
       + p(payload.hasAccount
         ? `Sign in to get started: ${link(url)}`
         : `Create your account with this email address to get started: ${link(url)}`)
@@ -115,13 +123,13 @@ function passwordReset(payload) {
       + 'email address.\n\n'
       + `Set a new password here: ${url}\n\n`
       + 'The link expires in 30 minutes and works once. If you did not request '
-      + 'this, you can ignore this email — your password is unchanged.',
+      + 'this, you can ignore it. Your password is unchanged.',
     html: HTML_SHELL(
       p('Someone asked to reset the password for the Usernode account with this '
         + 'email address.')
       + p(`Set a new password here: ${link(url)}`)
       + p('The link expires in 30 minutes and works once. If you did not request '
-        + 'this, you can ignore this email — your password is unchanged.')
+        + 'this, you can ignore it. Your password is unchanged.')
     ),
   };
 }

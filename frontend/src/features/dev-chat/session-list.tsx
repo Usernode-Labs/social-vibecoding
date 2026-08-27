@@ -122,7 +122,7 @@ function EmptyPitch(): ReactNode {
         Want to change this app? Just ask.
       </p>
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3 max-w-xs mx-auto">
-        {"Describe what you'd like different in plain English — an AI writes the code and opens a "
+        {"Describe what you'd like different in plain English. An AI writes the code and opens a "
           + 'real pull request. No coding required. The app’s users then vote it in.'}
       </p>
       <p className="text-xs text-zinc-500 dark:text-zinc-500">

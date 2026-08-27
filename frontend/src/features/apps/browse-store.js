@@ -37,4 +37,13 @@ export const browseStore = createStore({
   error: false,
   /** null until the detail level is entered; else a detail descriptor. */
   detail: null,
+  /**
+   * Which of Browse.SORTS orders the list (#1383). 'recommended' is the
+   * PRERENDER value: the persisted choice and the ?sort= override are read on
+   * screen entry (Browse._applyInitialSort), never during render — neither
+   * localStorage nor location.search exists in the SSG pass, and a first
+   * client render that disagreed with the prerendered markup is a hydration
+   * console.error, which fails proposal checks.
+   */
+  sort: 'recommended',
 });

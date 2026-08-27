@@ -242,7 +242,7 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
     if (dstep) {
       await dstep({
         phase: 'platform_advance', level: 'warn',
-        message: 'Sync commit does not sit directly on the reviewed revision — votes are not carried.',
+        message: 'Sync commit does not sit directly on the reviewed revision, so votes are not carried.',
         detail: { reviewedHead: priorReviewedSha, firstParent, pushed: nextSha },
       });
     }
@@ -289,7 +289,7 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
   if (dstep) {
     await dstep({
       phase: 'platform_advance',
-      message: `Review advanced to the pushed sync commit — ${votesMoved} vote${votesMoved === 1 ? '' : 's'} carried, checks ${carryChecks ? 'carried forward' : 're-running'}.`,
+      message: `Review advanced to the pushed sync commit: ${votesMoved} vote${votesMoved === 1 ? '' : 's'} carried, checks ${carryChecks ? 'carried forward' : 're-running'}.`,
       detail: {
         from: priorReviewedSha, to: nextSha,
         syncResult: result.syncResult, votesCarried: votesMoved,
@@ -329,7 +329,7 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
       const { sendSystemMessage } = require('./ws');
       await sendSystemMessage(
         pool, session.app_id,
-        `${label} ${how} — existing votes were kept (now pinned to commit ${nextSha.slice(0, 8)}).${checksNote}`,
+        `${label} ${how}. Existing votes were kept (now pinned to commit ${nextSha.slice(0, 8)}).${checksNote}`,
         'system',
         { headChanged: true, votesKept: true, headSha: nextSha },
         { type: 'session', ref: session.id }
@@ -613,7 +613,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     let message;
     switch (syncResult) {
       case 'already_synced':
-        message = 'Already up to date with main — nothing to merge.';
+        message = 'Already up to date with main, so there is nothing to merge.';
         break;
       case 'clean':
         message = `Merged main cleanly. Pushed ${result.sha ? result.sha.slice(0, 7) : 'merge commit'}.`;
@@ -637,7 +637,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
       dstep({ phase: 'sync_result', level: 'error', message: 'Worker sync: Claude could not resolve the conflicts.', detail: { syncResult, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
     } else {
       await persistConflictState(pool, session, { state: 'clean', files: [] });
-      dstep({ phase: 'sync_result', message: `Worker sync ${syncResult}${result.sha ? ` — pushed ${String(result.sha).slice(0, 9)}` : ''}.`, detail: { syncResult, sha: result.sha || null, behind: result.behind || 0, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
+      dstep({ phase: 'sync_result', message: `Worker sync ${syncResult}${result.sha ? `, pushed ${String(result.sha).slice(0, 9)}` : ''}.`, detail: { syncResult, sha: result.sha || null, behind: result.behind || 0, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
     }
 
     // #788 follow-up: a sync that pushed changed the branch's contents,

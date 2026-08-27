@@ -587,7 +587,7 @@
       selection.style.cssText = 'position:absolute;display:none;border:1px solid rgba(255,255,255,0.9);box-shadow:0 0 0 100vmax rgba(0,0,0,0.6);';
       overlay.appendChild(selection);
       const hint = document.createElement('div');
-      hint.textContent = 'Drag to select the area to capture — Esc to cancel';
+      hint.textContent = 'Drag to select the area to capture. Esc to cancel';
       hint.style.cssText = 'position:absolute;top:16px;left:50%;transform:translateX(-50%);background:rgba(24,24,27,0.92);color:#fff;font:500 13px system-ui,sans-serif;padding:8px 14px;border-radius:9999px;pointer-events:none;max-width:90vw;text-align:center;';
       overlay.appendChild(hint);
 

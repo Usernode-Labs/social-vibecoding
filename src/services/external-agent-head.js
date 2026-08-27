@@ -484,7 +484,7 @@ async function pushForkBranchToAppBranch({
       return {
         ok: false,
         code: 'branch_moved',
-        message: `${targetBranch} is no longer at the commit this update was built against — somebody else advanced `
+        message: `${targetBranch} is no longer at the commit this update was built against. Somebody else advanced `
           + 'this proposal in the meantime. Re-read the proposal, rebase your branch onto its current head and '
           + 'submit again.',
         retryable: false,

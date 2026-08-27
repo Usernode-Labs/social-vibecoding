@@ -129,7 +129,14 @@ test('the stage-1 survey lives on its own #waitlist screen', () => {
     assert.match(classes[1], new RegExp(cls.replace('-', '\\-')), `screen is ${cls}`);
   }
   // The whole survey moved here, ids intact so the wiring is a pure move.
-  for (const id of ['waitlist-form', 'waitlist-email', 'waitlist-made-url',
+  //
+  // #waitlist-made-url is deliberately NOT in this list any more. It was a
+  // REQUIRED stage-1 field, which contradicted the email-only join the
+  // onboarding doc settled on, so the question moved to the stage-2
+  // "Want in sooner?" form as #more-made-url (recorded in RETIRED_IDS /
+  // ADDED_IDS in tests/shell-id-inventory.test.js). Joining asks for an
+  // address and nothing else; everything below is still on this screen.
+  for (const id of ['waitlist-form', 'waitlist-email',
     'waitlist-country', 'waitlist-discovery-chips', 'waitlist-submit',
     'waitlist-msg', 'waitlist-joined', 'waitlist-more-offer',
     'waitlist-more-link', 'waitlist-queued']) {

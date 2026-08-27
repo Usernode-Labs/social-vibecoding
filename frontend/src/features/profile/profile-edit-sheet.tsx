@@ -225,7 +225,7 @@ export function ProfileEditSheet({
       setShowRemove(true);
     } catch (err) {
       setPhotoError((err && (err as Error).message)
-        || 'That image could not be used — try a PNG, JPEG or WebP.');
+        || 'That image could not be used. Try a PNG, JPEG or WebP.');
     }
   };
 

@@ -446,6 +446,23 @@ test('no admin- or API-supplied URL is ever rendered as a clickable anchor', () 
     'the submitted URL is selectable text so an admin can still copy it out');
   assert.ok(fs.existsSync(path.join(root, 'tests/topochain-waitlist-survey.test.js')),
     'and the executed test for it exists');
+  // The Signals column reports what a signup DID and carries no score:
+  // weighting those facts decides who gets in first, which is still an open
+  // product decision. If a score ever appears it must be a deliberate change
+  // to services/waitlist-signals.js, not something that leaks in through a
+  // column that started computing its own total.
+  assert.match(waitlist, /label: 'Signals'/,
+    'the waitlist list surfaces the per-signup signals');
+  assert.doesNotMatch(waitlist, /s\.score|signals\.score|\.total\b/,
+    'the Signals column must not compute or render a score');
+  // Comments stripped first: that module's comments explain at length WHY it
+  // computes no score, so a naive search for the word matches the very
+  // documentation of the rule.
+  const signals = stripAllComments(
+    fs.readFileSync(path.join(root, 'src/services/waitlist-signals.js'), 'utf8'),
+  );
+  assert.doesNotMatch(signals, /score|weight/i,
+    'services/waitlist-signals.js reports facts only — no scoring, by design');
   // The one outbound navigation left is the CSV export, which builds a
   // same-origin path from a numeric id the client fetched itself.
   const programme = fs.readFileSync(path.join(REACT_DIR, 'programme-users.tsx'), 'utf8');

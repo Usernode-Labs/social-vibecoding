@@ -349,7 +349,7 @@ function SeasonsScreen() {
     if (!canWrite()) return;
     const confirmed = await topo()._confirm({
       title: 'Delete this season?',
-      message: 'Seasons that still have events, enrollments, onchain accounts or token allocations cannot be deleted — unlink or remove those first. This cannot be undone.',
+      message: 'Seasons that still have events, enrollments, onchain accounts or token allocations cannot be deleted. Unlink or remove those first. This cannot be undone.',
       confirmLabel: 'Delete',
       danger: true,
     });

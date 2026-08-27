@@ -22,7 +22,7 @@ export function AdminPreviewSection() {
           View as non-admin
         </SwitchRow>
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          Purely a client-side display toggle &mdash; your server-side admin privileges are unaffected. The page will reload so the rest of the UI picks up the change.
+          Purely a client-side display toggle, so your server-side admin privileges are unaffected. The page will reload so the rest of the UI picks up the change.
         </p>
       </div>
     </div>

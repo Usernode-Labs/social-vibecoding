@@ -145,7 +145,7 @@ test('_votingHelpText: default regime, at threshold — queued, no window to wai
     merge_window_ends_at: null, check_state: 'passing', requires_explicit_approval: true,
   });
   assert.match(s, /votes it needs \(3 of 3\)/);
-  assert.match(s, /queued to merge shortly/);
+  assert.match(s, /Queued to merge shortly/);
 });
 
 test('_votingHelpText: a blocker still folds into the threshold-met sentence', () => {

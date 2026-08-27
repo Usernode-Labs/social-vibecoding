@@ -65,7 +65,7 @@ const GROUP_TOOLS = {
   spreadsheet: 'A spreadsheet somebody maintains',
   docs: 'Notion or Google Docs',
   forum: 'A forum',
-  nothing: "Nothing — it's word of mouth",
+  nothing: "Nothing, it's word of mouth",
 };
 
 // ── Stage 2: the loss ───────────────────────────────────────────────────
@@ -167,8 +167,6 @@ const COUNTRIES = {
   },
 };
 
-const MAX_INVITES = 5;
-
 // Every country code offered by the form, flattened out of the regions.
 function countryCodes() {
   return Object.values(COUNTRIES).flatMap((region) => Object.keys(region));
@@ -185,36 +183,35 @@ function str(v, max) {
   return s.length > max ? null : s;
 }
 
-// Stage 1: the four public-form questions (minus email, which the join
-// route validates separately). Mirrors topochain: made_url and
-// discovery_source required, everything else optional.
+// Stage 1: email plus a couple of optional context questions. NOTHING
+// here is required — the doc's "Simpler waitlist flow proposal" settled
+// on an email-only join, and Andrea and Evan agreed it in its comments
+// ("Just an email!"), so a bare POST carrying only an address is a valid
+// signup and yields an empty answers object.
+//
+// "Link something you've made" used to be required here. It moved to
+// stage 2, where it is one of the things that helps you move up rather
+// than a gate on joining at all.
+//
+// Unknown enum values are still rejected rather than stored: optional
+// means "may be absent", never "may be anything".
 function validateStage1(body) {
-  const madeUrl = str(body?.made_url, 2000);
-  if (!madeUrl) return { ok: false, error: 'Please link something you have made.' };
-  if (!/^https?:\/\/\S+\.\S+/i.test(madeUrl)) {
-    return { ok: false, error: 'That does not look like a link — it should start with https://' };
-  }
-
-  const source = str(body?.discovery_source, 32);
-  if (!source || !Object.prototype.hasOwnProperty.call(DISCOVERY_SOURCES, source)) {
-    return { ok: false, error: 'Please tell us how you found us.' };
-  }
-
   const country = str(body?.country, 2);
   if (country && !countryCodes().includes(country.toUpperCase())) {
     return { ok: false, error: 'Unknown country.' };
   }
 
-  const madeNote = str(body?.made_note, 140);
+  const source = str(body?.discovery_source, 32);
+  if (source && !Object.prototype.hasOwnProperty.call(DISCOVERY_SOURCES, source)) {
+    return { ok: false, error: 'Unknown discovery source.' };
+  }
+
   const detail = str(body?.discovery_detail, 255);
-  const referrer = str(body?.referrer_handle, 255);
   const city = str(body?.city, 120);
+  const referrer = str(body?.referrer_handle, 255);
 
-  const discovery = { source };
-  if (detail) discovery.detail = detail;
-
-  const value = { made_url: madeUrl, discovery };
-  if (madeNote) value.made_note = madeNote;
+  const value = {};
+  if (source) value.discovery = detail ? { source, detail } : { source };
   if (country) value.country = country.toUpperCase();
   if (city) value.city = city;
   if (referrer) value.referrer_handle = referrer;
@@ -223,9 +220,24 @@ function validateStage1(body) {
 
 // Stage 2: everything optional; unknown enum keys are rejected rather
 // than silently stored. Produces the section shape stored in
-// answers.group / answers.loss / answers.handles / answers.invites.
+// answers.made_url / answers.group / answers.loss / answers.handles.
+// Who invited whom is NOT in here — it lives in the invite_code /
+// invited_by columns, because it is a relationship between rows rather
+// than an answer somebody typed.
 function validateStage2(body) {
   const value = {};
+
+  // Moved here from stage 1: "link something you've made" is one of the
+  // things that helps you move up, not a gate on joining.
+  const madeUrl = str(body?.made_url, 2000);
+  if (madeUrl) {
+    if (!/^https?:\/\/\S+\.\S+/i.test(madeUrl)) {
+      return { ok: false, error: 'That does not look like a link — it should start with https://' };
+    }
+    value.made_url = madeUrl;
+    const madeNote = str(body?.made_note, 140);
+    if (madeNote) value.made_note = madeNote;
+  }
 
   const group = {};
   const groupName = str(body?.group_name, 255);
@@ -289,14 +301,10 @@ function validateStage2(body) {
   }
   if (Object.keys(handles).length) value.handles = handles;
 
-  if (body?.invites != null) {
-    if (!Array.isArray(body.invites)) return { ok: false, error: 'invites must be a list.' };
-    const invites = body.invites
-      .map((v) => str(v, 255))
-      .filter(Boolean)
-      .slice(0, MAX_INVITES);
-    if (invites.length) value.invites = invites;
-  }
+  // `invites` (five typed addresses) was retired for the share link:
+  // it sent nothing, attributed nothing and was never read back, so the
+  // key is deliberately dropped rather than validated. A stale client
+  // still sending it gets a normal save with the key ignored.
 
   if (body?.admit_together != null) value.admit_together = !!body.admit_together;
 
@@ -318,7 +326,6 @@ function publicOptions() {
     loss_answers: LOSS_ANSWERS,
     loss_kinds: LOSS_KINDS,
     countries: COUNTRIES,
-    max_invites: MAX_INVITES,
   };
 }
 
@@ -332,7 +339,6 @@ module.exports = {
   LOSS_ANSWERS,
   LOSS_KINDS,
   COUNTRIES,
-  MAX_INVITES,
   countryCodes,
   validateStage1,
   validateStage2,

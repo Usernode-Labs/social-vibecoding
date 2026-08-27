@@ -6102,3 +6102,54 @@ BEGIN
       FOR EACH ROW EXECUTE FUNCTION reject_retired_username();
   END IF;
 END $$;
+
+-- ── Waitlist email verification codes ──────────────────────────────────
+--
+-- The six-digit code that rides beside the one-click confirm link in the
+-- join mail (the onboarding doc's "Email + verification code"). Both work
+-- and both stamp waitlist_signups.confirmed_at; whichever the signer uses
+-- first wins. The code exists for the phone, where leaving the app for the
+-- mail client loses the WebView's place.
+--
+-- Same shape and same guarantees as `mobile_otp_codes`, deliberately: only
+-- the bcrypt hash is stored, one live code per address, capped attempts and
+-- a short expiry. Keyed by email like the waitlist itself, so a code can
+-- exist before any account does. Schema only is migrated; rows are not.
+CREATE TABLE IF NOT EXISTS waitlist_verification_codes (
+  id           BIGSERIAL PRIMARY KEY,
+  email        VARCHAR(255) NOT NULL,
+  code_hash    VARCHAR(255) NOT NULL,
+  attempts     SMALLINT NOT NULL DEFAULT 0,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  consumed_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_waitlist_verification_codes_email
+  ON waitlist_verification_codes (email);
+COMMENT ON TABLE waitlist_verification_codes IS 'staging:private';
+
+-- ── Waitlist invite links ──────────────────────────────────────────────
+--
+-- `invite_code` is the shareable half of a signup's link
+-- (/#waitlist?ref=<code>), minted on demand the first time the stage-2
+-- form asks for it and stable thereafter — by the second ask it may
+-- already be in somebody's group chat.
+--
+-- `invited_by` is who that link brought in. It is set at INSERT time and
+-- therefore only on a FIRST join, so re-submitting with a different code
+-- can never re-parent an existing row: ON CONFLICT DO NOTHING enforces
+-- that for free rather than a separate guard having to.
+--
+-- This replaces the five typed email addresses the stage-2 form used to
+-- collect, which sent nothing and attributed nothing.
+--
+-- The graph is recorded and displayed; NOTHING consumes it to form a
+-- cohort. Admitting people together is a later, separate decision.
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS invite_code VARCHAR(32);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_signups_invite_code
+  ON waitlist_signups (invite_code) WHERE invite_code IS NOT NULL;
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS invited_by BIGINT
+  REFERENCES waitlist_signups(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_waitlist_signups_invited_by
+  ON waitlist_signups (invited_by);
+COMMENT ON COLUMN waitlist_signups.invite_code IS 'staging:private';

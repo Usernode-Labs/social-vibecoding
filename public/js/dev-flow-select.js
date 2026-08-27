@@ -119,7 +119,7 @@
         done: !!gh.linked,
         detail: gh.linked
           ? 'Linked as ' + (gh.login || 'your GitHub account') + '.'
-          : 'Identity only — Usernode asks for no access to your repositories and stores no token. It just needs to know which GitHub account is yours, so the work comes back under your name.',
+          : 'Identity only. Usernode asks for no access to your repositories and stores no token. It just needs to know which GitHub account is yours, so the work comes back under your name.',
         actions: gh.linked ? [] : [{ action: 'link-github', label: 'Link GitHub', primary: true }],
       },
       {
@@ -137,7 +137,7 @@
         done: !!task,
         detail: task
           ? prepareDetail(task, target, targetKind)
-          : 'Usernode writes the work order — the repository, the fork, the branch, the exact base commit and the platform rules your agent has to follow. Say what to build and it mints one.',
+          : 'Usernode writes the work order: the repository, the fork, the branch, the exact base commit and the platform rules your agent has to follow. Say what to build and it mints one.',
         // #1281: the field lives HERE rather than in the composer. In a
         // launchpad venue the composer is hidden — no turn will run in this
         // session — so a step that told you to type in it would be pointing
@@ -234,7 +234,7 @@
   // false.
   function submitDetail(targetKind) {
     if (targetKind === 'session') {
-      return 'Usernode moves this session onto the commit your agent pushed. No new proposal, no new pull request — the same session, further along.';
+      return 'Usernode moves this session onto the commit your agent pushed. No new proposal, no new pull request, just the same session further along.';
     }
     if (targetKind === 'proposal') {
       return 'Usernode moves this proposal onto the commit your agent pushed. Its existing votes are cleared and its checks re-run, because the group would otherwise be approving code it never saw.';
@@ -246,14 +246,14 @@
     if (!task) return 'Paste the work order into ' + label + ' and let it build.';
     if (branch && branch.pushed) return 'Branch ' + task.branch + ' is pushed and ready to submit.';
     if (branch && branch.unpushed) {
-      return 'Branch ' + task.branch + ' exists on your fork but is still on the base commit — it looks like the commits were made locally and never pushed.';
+      return 'Branch ' + task.branch + ' exists on your fork but is still on the base commit. It looks like the commits were made locally and never pushed.';
     }
     var base = 'Copy the work order, paste it into ' + label
       + ', and let it push branch ' + task.branch + ' to your fork. Usernode checks for the branch when you come back to this tab.';
     // The one thing that trips people up on a continuation: the agent gets
     // its own conversation over there, and this transcript will not grow.
     if (targetKind === 'session' || targetKind === 'proposal') {
-      base += ' The agent talks to you in ' + label + ', not here — this transcript stays where it is until the update lands.';
+      base += ' The agent talks to you in ' + label + ', not here. This transcript stays where it is until the update lands.';
     }
     return base;
   }
@@ -396,7 +396,7 @@
     var connectors = s.status.connectors && s.status.connectors.count
       ? '<div class="dc-flow-card-hint">You already have ' + escapeHtml(String(s.status.connectors.count))
         + ' Claude / ChatGPT connector' + (s.status.connectors.count === 1 ? '' : 's')
-        + ' connected — you can also just ask it to pick this task up.</div>'
+        + ' connected. You can also just ask it to pick this task up.</div>'
       : '';
 
     return ''

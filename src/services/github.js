@@ -160,7 +160,7 @@ const ACTIONS_SECRETS_MAX = 300;      // 3 pages of 100 — a hard stall guard
 const ACTIONS_SECRETS_TIMEOUT_MS = 4000;
 
 const ACTIONS_SECRETS_FORBIDDEN_MESSAGE =
-  "The platform's GitHub token can't read this repo's Actions secrets — it needs admin "
+  "The platform's GitHub token can't read this repo's Actions secrets, because it needs admin "
   + 'access on the platform repo (or the GitHub App needs the `secrets: read` permission).';
 
 function actionsSecretsFailure(code, message) {
@@ -719,6 +719,36 @@ async function getBranchSha(owner, repo, branchName) {
   return ref.object.sha;
 }
 
+// #1433: where a repository's default branch actually points, right now.
+//
+// The default branch is READ rather than assumed. `main` is the platform's
+// own convention (DEFAULT_BASE_BRANCH in services/external-agent-tasks.js)
+// and it is right for every repo the platform creates, but this runs against
+// whatever repository an app was pointed at — including imported ones, whose
+// default branch is somebody else's decision.
+//
+// Two small calls rather than one large one: `repos.getCommit` would answer
+// both halves in a single request, but it carries the commit's full file
+// list, and a merge commit on this repository routinely runs to hundreds of
+// entries. `listCommits` with `per_page: 1` returns the same sha and date in
+// a fixed-size payload.
+async function getRepoHead(owner, repo) {
+  const octokit = await getOctokit(owner);
+  const { data: info } = await octokit.rest.repos.get({ owner, repo });
+  const defaultBranch = info.default_branch || 'main';
+  const { data: commits } = await octokit.rest.repos.listCommits({
+    owner, repo, sha: defaultBranch, per_page: 1,
+  });
+  const top = Array.isArray(commits) && commits[0] ? commits[0] : null;
+  return {
+    defaultBranch,
+    headSha: top && typeof top.sha === 'string' ? top.sha.toLowerCase() : null,
+    headCommittedAt: top && top.commit && top.commit.committer
+      ? (top.commit.committer.date || null)
+      : null,
+  };
+}
+
 // Fast-forward a CLI handoff's platform branch to an exact pushed commit.
 // `force:false` is intentional even though callers preflight ancestry: it
 // closes the race if another writer moves the ref between compare + update.
@@ -1072,7 +1102,7 @@ async function createPR(owner, repo, {
       const detail = err && (err.message || '') +
         ' ' + JSON.stringify(err?.response?.data?.errors || err?.response?.data || '');
       if (err && err.status === 422 && /No commits between/i.test(detail)) {
-        const e = new Error(`No commits between main and ${headRef} — the branch has no pushed commits.`);
+        const e = new Error(`No commits between main and ${headRef}: the branch has no pushed commits.`);
         e.code = 'no_commits';
         throw e;
       }
@@ -1538,7 +1568,7 @@ async function verifyBotAccess(owner, repo) {
     if (err.status === 401) {
       return {
         ok: false, status: 500, code: 'unauthorized',
-        message: 'Platform GitHub credentials are invalid — contact an admin.',
+        message: 'Platform GitHub credentials are invalid. Contact an admin.',
       };
     }
     return { ok: false, status: 502, code: 'github_error', message: `GitHub error: ${err.message}` };
@@ -1553,7 +1583,7 @@ async function verifyBotAccess(owner, repo) {
   if (resp.data.private === true) {
     return {
       ok: false, status: 400, code: 'private_repo',
-      message: `${owner}/${repo} is a private repository. Usernode currently supports public repositories only — switch the repo to public on GitHub and resubmit.`,
+      message: `${owner}/${repo} is a private repository. Usernode currently supports public repositories only. Switch the repo to public on GitHub and resubmit.`,
     };
   }
 
@@ -2086,6 +2116,7 @@ module.exports = {
   compareCommitAncestry,
   getCommitParents,
   getBranchSha,
+  getRepoHead,
   advanceBranchToSha,
   createProposalCommit,
   createPR,

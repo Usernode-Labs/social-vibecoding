@@ -94,7 +94,7 @@ function DiscoverTile({ tile }: { tile: DiscoverTileView }) {
           }`}
           data-slug={tile.slug}
           data-added={String(added)}
-          title={added ? 'Added — tap to remove from Your apps' : 'Add to Your apps'}
+          title={added ? 'Added. Tap to remove from Your apps' : 'Add to Your apps'}
           aria-label={added ? `Remove ${tile.name} from Your apps` : `Add ${tile.name} to Your apps`}
           aria-pressed={added}
         >
@@ -165,7 +165,7 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
         <Lane tiles={view.featured} />
       ) : (
         <p className="home-panel-rows home-discover-lane home-discover-empty flex items-center justify-center px-2.5 text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
-          Nothing featured right now — browse the directory.
+          Nothing featured right now. Browse the directory.
         </p>
       )}
       {/*

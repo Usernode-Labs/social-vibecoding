@@ -899,13 +899,13 @@ function demoConnector(kind, overrides = {}) {
   const base = {
     claude: {
       id: 'staging-demo-connector-1',
-      client_name: 'Claude — claude.ai',
+      client_name: 'Claude (claude.ai)',
       connected_at: iso(now - 6 * day),
       last_used_at: iso(now - 20 * 60 * 1000),
     },
     chatgpt: {
       id: 'staging-demo-connector-2',
-      client_name: 'ChatGPT — chatgpt.com',
+      client_name: 'ChatGPT (chatgpt.com)',
       connected_at: iso(now - 2 * day),
       last_used_at: null,
     },

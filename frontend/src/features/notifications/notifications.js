@@ -1134,7 +1134,7 @@ function completionAlertInfo(n) {
     let body;
     if (n.detail === 'failed') {
       title = 'Proposal failed';
-      body = `Proposal for ${issue} in ${appName} failed — you can retry`;
+      body = `Proposal for ${issue} in ${appName} failed. You can retry`;
     } else if (n.detail === 'question') {
       title = 'Proposal has a question';
       body = `Proposal for ${issue} in ${appName} is waiting for your input`;
@@ -1160,7 +1160,7 @@ function completionAlertInfo(n) {
     sessionId: n.sessionId || null,
     headlessIssueNumber: null,
     title: 'Dev session finished',
-    body: `Your dev session in ${appName} finished — ${label}`,
+    body: `Your dev session in ${appName} finished: ${label}`,
   };
 }
 
@@ -1305,7 +1305,7 @@ function rowView(n) {
       segments: [
         { t: 'text', v: 'Your PR in' },
         { t: 'strong', v: appLine },
-        { t: 'text', v: "is going stale — it'll auto-archive soon without votes" },
+        { t: 'text', v: "is going stale, it'll auto-archive soon without votes" },
       ],
       body: {
         text: n.prTitle || n.sessionTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your PR'),
@@ -1328,7 +1328,7 @@ function rowView(n) {
       segments: [
         { t: 'text', v: 'Your proposal in' },
         { t: 'strong', v: appLine },
-        { t: 'text', v: "can't merge — its preview won't boot, so checks can't run" },
+        { t: 'text', v: "can't merge, because its preview won't boot, so checks can't run" },
       ],
       body: {
         text: n.prTitle || n.sessionTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your proposal'),
@@ -1440,7 +1440,7 @@ function rowView(n) {
       code: 'pushed code',
       spec_code: 'drafted a spec and pushed code',
       question: 'replied with a question',
-      failed: 'failed — you can retry',
+      failed: 'failed, you can retry',
     }[n.detail] || 'finished';
     return {
       ...base,

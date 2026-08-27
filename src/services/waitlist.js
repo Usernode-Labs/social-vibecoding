@@ -14,6 +14,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const log = require('./logger');
 const { ANSWERS_VERSION } = require('./waitlist-questions');
 
@@ -32,19 +33,81 @@ function normalizeEmail(raw) {
 // row, and moreToken is null in that case: the stage-2 capability link
 // only goes to the FIRST join (and its email), never to whoever types
 // the same address again later.
-async function joinWaitlist(pool, { email, ip = null, answers = null }) {
+async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode = null }) {
   const moreToken = crypto.randomBytes(24).toString('hex');
   const stored = answers
     ? { _version: ANSWERS_VERSION, ...answers }
     : null;
+
+  // Resolve the inviter BEFORE the insert, and treat an unresolvable code
+  // as no code at all: someone arriving on a stale, mistyped or invented
+  // ?ref= link must still be able to join.
+  let invitedBy = null;
+  if (typeof inviteCode === 'string' && /^[a-z0-9]{10}$/.test(inviteCode)) {
+    const { rows } = await pool.query(
+      'SELECT id FROM waitlist_signups WHERE invite_code = $1',
+      [inviteCode]
+    );
+    if (rows[0]) invitedBy = rows[0].id;
+  }
+
+  // Attribution rides on the INSERT, so ON CONFLICT DO NOTHING already
+  // means an existing row can never be re-parented by someone
+  // re-submitting with a different code. There is deliberately no
+  // separate UPDATE path.
   const { rowCount } = await pool.query(
-    `INSERT INTO waitlist_signups (email, ip, answers, more_token)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (email) DO NOTHING`,
-    [email, ip, stored ? JSON.stringify(stored) : null, moreToken]
+    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy]
   );
   const created = rowCount > 0;
   return { created, moreToken: created ? moreToken : null };
+}
+
+// The shareable half of a signup's invite link. Minted on first ask and
+// stable thereafter — by the second call the link may already be in
+// somebody's group chat. Returns null for a signup that does not exist,
+// rather than minting a code for nothing.
+async function inviteCodeFor(pool, signupId) {
+  const { rows } = await pool.query(
+    'SELECT invite_code FROM waitlist_signups WHERE id = $1',
+    [signupId]
+  );
+  if (!rows[0]) return null;
+  if (rows[0].invite_code) return rows[0].invite_code;
+
+  const code = crypto.randomBytes(8).toString('hex').slice(0, 10);
+  // COALESCE so two concurrent asks cannot hand out two different links
+  // for the same signup; the first write wins and both callers see it.
+  const { rows: updated } = await pool.query(
+    `UPDATE waitlist_signups
+        SET invite_code = COALESCE(invite_code, $1)
+      WHERE id = $2
+      RETURNING invite_code`,
+    [code, signupId]
+  );
+  return updated[0] ? updated[0].invite_code : null;
+}
+
+// Mask an address for display back to the person who invited it. Enough
+// to recognise a friend who joined, never a harvestable list — and never
+// something that still looks like a working address when the column holds
+// something unexpected.
+function maskEmail(email) {
+  const [local, domain] = String(email == null ? '' : email).split('@');
+  if (!domain || !local) return '***';
+  return `${local.slice(0, 2)}***@${domain}`;
+}
+
+// Who this signup brought in, oldest first. The count is the honest
+// number; the addresses are masked.
+async function invitedBySignup(pool, signupId) {
+  const { rows } = await pool.query(
+    'SELECT email FROM waitlist_signups WHERE invited_by = $1 ORDER BY submitted_at ASC, id ASC',
+    [signupId]
+  );
+  return { count: rows.length, emails: rows.map((r) => maskEmail(r.email)) };
 }
 
 // Look up a signup by its stage-2 capability token. Returns the row
@@ -74,6 +137,86 @@ async function confirmSignupByMoreToken(pool, token) {
     [row.id]
   );
   return rows[0] || null;
+}
+
+// How long a verification code lives, and how many wrong guesses it
+// survives. Both mirror mobile_otp_codes rather than inventing new
+// numbers — somebody reading a code out of their mail is the same person
+// in the same hurry either way.
+const CODE_TTL_MINUTES = 15;
+const MAX_CODE_ATTEMPTS = 5;
+
+// Mint a six-digit verification code for an email on the waitlist.
+// Returns the PLAINTEXT code for the caller to mail; only its bcrypt hash
+// is stored. Any unconsumed code for the address is deleted first, so
+// exactly one code is ever live and a forwarded older mail is dead.
+async function issueVerificationCode(pool, email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) throw new Error('invalid email');
+  // randomInt is the uniform generator; % 1000000 over random bytes is
+  // not, and this value protects an address someone else typed.
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  const hash = await bcrypt.hash(code, 10);
+  await pool.query(
+    'DELETE FROM waitlist_verification_codes WHERE email = $1 AND consumed_at IS NULL',
+    [normalized]
+  );
+  await pool.query(
+    `INSERT INTO waitlist_verification_codes (email, code_hash, expires_at)
+     VALUES ($1, $2, NOW() + INTERVAL '${CODE_TTL_MINUTES} minutes')`,
+    [normalized, hash]
+  );
+  return code;
+}
+
+// Confirm a signup with the code from its join mail. Returns the signup
+// row (with more_token, so the caller can hand back the stage-2
+// capability) or null.
+//
+// EVERY failure returns the same null — unknown email, malformed code,
+// wrong code, expired, already consumed, too many attempts — so this can
+// never be used to test whether an address is on the list. That is the
+// same non-enumeration contract joinWaitlist keeps.
+async function confirmSignupByCode(pool, email, code) {
+  const normalized = normalizeEmail(email);
+  if (!normalized || typeof code !== 'string' || !/^[0-9]{6}$/.test(code)) return null;
+
+  const { rows } = await pool.query(
+    `SELECT id, code_hash, attempts, expires_at
+       FROM waitlist_verification_codes
+      WHERE email = $1 AND consumed_at IS NULL
+      ORDER BY id DESC
+      LIMIT 1`,
+    [normalized]
+  );
+  const entry = rows[0];
+  if (!entry) return null;
+  if (new Date(entry.expires_at) < new Date()) return null;
+  if (entry.attempts >= MAX_CODE_ATTEMPTS) return null;
+
+  const matches = await bcrypt.compare(code, entry.code_hash);
+  if (!matches) {
+    await pool.query(
+      'UPDATE waitlist_verification_codes SET attempts = attempts + 1 WHERE id = $1',
+      [entry.id]
+    );
+    return null;
+  }
+
+  await pool.query(
+    'UPDATE waitlist_verification_codes SET consumed_at = NOW() WHERE id = $1',
+    [entry.id]
+  );
+  // COALESCE, not a plain assignment: the mailed LINK may have confirmed
+  // this row already, and the first timestamp is the true one.
+  const { rows: signup } = await pool.query(
+    `UPDATE waitlist_signups
+        SET confirmed_at = COALESCE(confirmed_at, NOW())
+      WHERE email = $1
+      RETURNING id, email, confirmed_at, more_token`,
+    [normalized]
+  );
+  return signup[0] || null;
 }
 
 // Merge a validated stage-2 payload into the signup's answers. Merging
@@ -191,10 +334,16 @@ async function releaseWaitlistSignup(pool, signupId) {
 }
 
 module.exports = {
+  MAX_CODE_ATTEMPTS,
   normalizeEmail,
   joinWaitlist,
   getSignupByMoreToken,
   confirmSignupByMoreToken,
+  issueVerificationCode,
+  confirmSignupByCode,
+  inviteCodeFor,
+  invitedBySignup,
+  maskEmail,
   mergeMoreAnswers,
   setVerifiedHandle,
   grantPlatformAccess,

@@ -911,6 +911,22 @@ test('a failed read still leaves the snapshot-independent blocks up', () => {
     'the build line simply goes missing without a snapshot');
 });
 
+test('the native ZK identity entry is capability-gated and dispatchable', () => {
+  const view = sliceMethod(settingsJs, '_usernodeView');
+  assert.match(view,
+    /const canOpenZkIdentity = this\._hasNativeCapability\('zkIdentityFlow'\)/,
+    'the button follows the additive feature capability, not bridge version');
+  assert.match(view,
+    /open: canOpenZkIdentity \? \{[\s\S]*label: 'Open ZK identity'[\s\S]*action: '_openZkIdentityScreen'/,
+    'supported builds publish a visible settings action');
+  assert.match(usernodeTsx,
+    /s\.privacy\.open \? <UnBtn btn=\{s\.privacy\.open\} \/> : null/,
+    'unsupported builds render no dead control');
+  assert.match(sliceMethod(settingsJs, '_openZkIdentityScreen'),
+    /_openNativeScreen\('zkIdentity', 'Could not open ZK identity'\)/,
+    'the action uses the allowlisted native target');
+});
+
 
 test('the usernode read is retried once on readiness and never leaks a listener', () => {
   assert.match(settingsJs, /_armUsernodeAuthStatusRetry\(\)\s*\{/);
@@ -1102,7 +1118,7 @@ test('the Experimental toggle still gates the whole section', () => {
   assert.match(settingsJs, /_renderExperimentalSection\(\)[\s\S]{0,4000}_renderLocalAgentsSection\(\)/);
 });
 
-// ── "Usernode app — connection" (the diagnostics panel) ─────────────────
+// ── "Usernode app: connection" (the diagnostics panel) ─────────────────
 
 test('the usernode section is gated on being in the app, not on a capability', () => {
   const section = settingsJs.slice(
@@ -1147,7 +1163,7 @@ test('the panel has stable ids and both actions', () => {
   }
 });
 
-// ── Settings → "Usernode app — widget icons" ────────────────────────
+// ── Settings → "Usernode app: widget icons" ────────────────────────
 //
 // The homescreen widget's icon path is invisible from both ends: the
 // user sees "the tile is the wrong colour", and SV's side of the story
@@ -1158,7 +1174,7 @@ test('the widget-icon box reports every step of the icon decision', () => {
   // #1079: the DECISIONS are _widgetIconsView's; the heading is the
   // component's. Every property below is unchanged.
   const widget = sliceMethod(settingsJs, '_widgetIconsView');
-  assert.match(usernodeTsx, /Usernode app — widget icons/);
+  assert.match(usernodeTsx, /Usernode app: widget icons/);
   for (const id of [
     'settings-widget-mechanism-row',
     'settings-widget-registry-row',
@@ -1244,7 +1260,7 @@ test('?widgeticons=demo opens the box on a plain browser', () => {
   const widget = sliceMethod(settingsJs, '_widgetIconsView');
   assert.match(widget, /recheck: !this\._widgetIconsDemo\(\)/);
   assert.match(usernodeTsx, /w\.recheck \? <UnBtn btn=\{\{ label: 'Re-check icons'/);
-  assert.match(usernodeTsx, /Staging demo — sample data/);
+  assert.match(usernodeTsx, /Staging demo: sample data/);
 });
 
 test('Try again re-probes, re-admits and re-arms readiness in one press', () => {
@@ -1355,7 +1371,7 @@ test('the bridgediag demo hook is read-only and reads the HASH query', () => {
   // component's — a demo snapshot still says so on screen.
   assert.match(sliceMethod(settingsJs, '_usernodeConnectionView'),
     /demo: !!this\._bridgeDiagDemo\(\)/);
-  assert.match(usernodeTsx, /c\.demo \? <UnP note=\{\{ text: 'Staging demo — sample data'/,
+  assert.match(usernodeTsx, /c\.demo \? <UnP note=\{\{ text: 'Staging demo: sample data'/,
     'the demo snapshot is labelled as fake on screen');
   // Read-only hook: the buttons render so the screenshot shows the real
   // panel, but they must not touch a bridge or a session.

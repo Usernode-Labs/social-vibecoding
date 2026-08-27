@@ -60,11 +60,19 @@ export function WaitlistScreen() {
   const [msg, setMsg] = useState<{ text: string; tone: MsgTone } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [discovery, setDiscovery] = useState<string | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
 
   const email = useRef<HTMLInputElement>(null);
-  const madeUrl = useRef<HTMLInputElement>(null);
-  const madeNote = useRef<HTMLInputElement>(null);
+  const code = useRef<HTMLInputElement>(null);
   const country = useRef<HTMLSelectElement>(null);
+  /**
+   * The inviter's code, from `/#waitlist?ref=<code>`. It rides in the hash's
+   * own query segment — after the `?` INSIDE the fragment — the same place
+   * the OAuth connect round trip puts its status, so it never reaches a
+   * server log, ours or a proxy's. Read on show rather than at mount: this
+   * screen stays mounted across navigations.
+   */
+  const inviteRef = useRef<string | null>(null);
   const city = useRef<HTMLInputElement>(null);
   const discoveryDetail = useRef<HTMLInputElement>(null);
   const referrer = useRef<HTMLInputElement>(null);
@@ -89,6 +97,16 @@ export function WaitlistScreen() {
       setOffer(true);
     }
 
+    // Who invited them, if they arrived on somebody's share link. A code
+    // that doesn't resolve is dropped server-side rather than refused, so a
+    // stale link never blocks a join.
+    try {
+      const ref = new URLSearchParams(location.hash.split('?')[1] || '').get('ref');
+      inviteRef.current = ref && /^[a-z0-9]{10}$/.test(ref) ? ref : null;
+    } catch {
+      inviteRef.current = null;
+    }
+
     const session = sessionExists();
     setHasSession(session);
     // Never resurrect the form over the success state (a re-show after a join,
@@ -109,16 +127,10 @@ export function WaitlistScreen() {
     async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       const emailVal = email.current?.value.trim() || '';
-      const madeUrlVal = madeUrl.current?.value.trim() || '';
-      // Client preflight mirroring the server's stage-1 rules, so the common
-      // misses get a message without a round trip.
+      // Client preflight mirroring the server's stage-1 rules. Only the
+      // address is required now, so this is the only miss worth catching
+      // without a round trip.
       if (!emailVal) return setMsg({ text: 'Please enter your email.', tone: 'error' });
-      if (!madeUrlVal) {
-        return setMsg({ text: 'Please link something you have made.', tone: 'error' });
-      }
-      if (!discovery) {
-        return setMsg({ text: 'Please tell us how you found us.', tone: 'error' });
-      }
 
       setSubmitting(true);
       try {
@@ -127,13 +139,12 @@ export function WaitlistScreen() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             email: emailVal,
-            made_url: madeUrlVal,
-            made_note: madeNote.current?.value.trim() || undefined,
             country: country.current?.value || undefined,
             city: city.current?.value.trim() || undefined,
-            discovery_source: discovery,
+            discovery_source: discovery || undefined,
             discovery_detail: discoveryDetail.current?.value.trim() || undefined,
             referrer_handle: referrer.current?.value.trim() || undefined,
+            invite_code: inviteRef.current || undefined,
           }),
         });
         const data = await res.json().catch(() => null);
@@ -150,17 +161,54 @@ export function WaitlistScreen() {
           }
         } else {
           setMsg({
-            text: (data && data.error) || 'Something went wrong — try again.',
+            text: (data && data.error) || 'Something went wrong. Try again.',
             tone: 'error',
           });
         }
       } catch {
-        setMsg({ text: 'Connection issue — try again.', tone: 'error' });
+        setMsg({ text: 'Connection issue. Try again.', tone: 'error' });
       }
       setSubmitting(false);
     },
     [discovery],
   );
+
+  /**
+   * Confirm the address with the six-digit code from the join mail. The link
+   * in that same mail does the same thing; whichever is used first wins.
+   *
+   * The email input keeps its value after a join — the form is hidden, not
+   * cleared — so `email.current` is still the address the code went to.
+   */
+  const onConfirmCode = useCallback(async () => {
+    const codeVal = code.current?.value.trim() || '';
+    if (!/^[0-9]{6}$/.test(codeVal)) {
+      return setMsg({ text: 'Enter the six-digit code from your email.', tone: 'error' });
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/public/waitlist/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.current?.value.trim() || '', code: codeVal }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        setMsg(null);
+        setConfirmed(true);
+        const token = (data && data.more_token) || null;
+        if (token) {
+          setMoreToken(token);
+          setOffer(true);
+        }
+      } else {
+        setMsg({ text: (data && data.error) || 'That code did not work.', tone: 'error' });
+      }
+    } catch {
+      setMsg({ text: 'Connection issue — try again.', tone: 'error' });
+    }
+    setSubmitting(false);
+  }, []);
 
   const live = useRef({ waitlistOnShow });
   live.current = { waitlistOnShow };
@@ -193,15 +241,15 @@ export function WaitlistScreen() {
           Usernode Social Vibecoding is a place where users describe the app
         they want in chat, an AI builds it, and the community votes the
         changes in. Every app in the directory was built here by the people
-        who use it — they run on the Usernode chain, and contributors own a
+        who use it. They run on the Usernode chain, and contributors own a
         share of what they build.
         </p>
         <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
           Platform access opens in batches. Join the waitlist and we'll email
-        you when your spot opens — the public apps are open to everyone right
+        you when your spot opens. The public apps are open to everyone right
         now.
           <span className="font-medium text-zinc-700 dark:text-zinc-200">
-            Four questions to join.
+            Just your email to join.
           </span>
         </p>
         {/*
@@ -238,36 +286,6 @@ export function WaitlistScreen() {
             />
           </div>
           <div>
-            <label
-              htmlFor="waitlist-made-url"
-              className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
-            >
-              Link something you&rsquo;ve made
-              <span className="text-red-700 dark:text-red-400">
-                *
-              </span>
-            </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
-              A repo, a site, a bot, a mod, a newsletter, a spreadsheet that runs your fantasy league. Built with AI counts — we care that it exists, not how you made it.
-            </p>
-            <input
-              ref={madeUrl}
-              id="waitlist-made-url"
-              type="url"
-              maxLength={2000}
-              placeholder="https://"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-            />
-            <input
-              ref={madeNote}
-              id="waitlist-made-note"
-              type="text"
-              maxLength={140}
-              placeholder="What is it, in one line? — optional"
-              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-            />
-          </div>
-          <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Where are you?
               <span className="text-zinc-500 font-normal dark:text-zinc-400">
@@ -275,7 +293,7 @@ export function WaitlistScreen() {
               </span>
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
-              We balance each group across regions. It&rsquo;s never used to reject anyone — leave it blank if you&rsquo;d rather not say.
+              We balance each group across regions. It&rsquo;s never used to reject anyone, so leave it blank if you&rsquo;d rather not say.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <select
@@ -309,8 +327,8 @@ export function WaitlistScreen() {
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               How did you find us?
-              <span className="text-red-700 dark:text-red-400">
-                *
+              <span className="text-zinc-500 font-normal dark:text-zinc-400">
+                Optional
               </span>
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
@@ -327,7 +345,7 @@ export function WaitlistScreen() {
               id="waitlist-discovery-detail"
               type="text"
               maxLength={255}
-              placeholder={detailLabel + ' — optional'}
+              placeholder={detailLabel + ' (optional)'}
               className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
             <input
@@ -335,7 +353,7 @@ export function WaitlistScreen() {
               id="waitlist-referrer"
               type="text"
               maxLength={255}
-              placeholder="Did someone refer you? Their handle — optional"
+              placeholder="Did someone refer you? Their handle (optional)"
               className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
           </div>
@@ -360,8 +378,51 @@ export function WaitlistScreen() {
         */}
         <div id="waitlist-joined" className={hiddenFirst(!joined, 'mt-8')}>
           <p className="text-sm text-emerald-700 dark:text-emerald-400 font-medium">
-            You're on the waitlist — we'll email you when your spot opens.
+            You&rsquo;re on the list 🎉
           </p>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            We&rsquo;re opening access in small groups. We&rsquo;ll email you when yours comes up.
+          </p>
+          {/*
+              Confirming by code, for the phone: leaving for the mail app and
+              coming back loses the WebView's place, so typing six digits
+              beats following a link. The same mail carries both, and the
+              first one used stamps confirmed_at.
+          */}
+          <div id="waitlist-confirm" className={hiddenLast(confirmed, 'mt-4')}>
+            <label
+              htmlFor="waitlist-code"
+              className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
+            >
+              Confirm your email
+            </label>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+              We sent a six-digit code. You can also just click the link in that email.
+            </p>
+            <div className="flex gap-2">
+              <input
+                ref={code}
+                id="waitlist-code"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                placeholder="000000"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              />
+              <Button
+                id="waitlist-code-submit"
+                type="button"
+                disabled={submitting}
+                disabledStyle="dim"
+                layout="shrink"
+                size="narrow"
+                onClick={onConfirmCode}
+              >
+                Confirm
+              </Button>
+            </div>
+          </div>
           <div
             id="waitlist-more-offer"
             className={hiddenFirst(
@@ -370,13 +431,13 @@ export function WaitlistScreen() {
             )}
           >
             <p className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400">
-              Optional — moves you up the list
+              Optional (moves you up the list)
             </p>
             <h3 className="mt-1 text-base font-semibold">
               Want in sooner?
             </h3>
             <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
-              Four more questions, about three minutes — the group you&rsquo;d bring,
+              Four more questions, about three minutes: the group you&rsquo;d bring,
             a tool you&rsquo;ve lost, where else you are. These are the answers we
             actually read when we pick the next group.
             </p>
@@ -389,7 +450,7 @@ export function WaitlistScreen() {
                 Answer them now
               </a>
               <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                Or stop here — you&rsquo;re on the list either way, and the link is in your email.
+                Or stop here. You&rsquo;re on the list either way, and the link is in your email.
               </span>
             </div>
           </div>
@@ -403,7 +464,7 @@ export function WaitlistScreen() {
           id="waitlist-queued"
           className={hiddenFirst(!hasSession, 'mt-8 text-sm text-zinc-500 dark:text-zinc-400')}
         >
-          You're already on the waitlist — we'll email you when your spot opens.
+          You're already on the waitlist. We'll email you when your spot opens.
         </p>
       </div>
     </main>
