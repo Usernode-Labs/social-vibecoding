@@ -1,8 +1,13 @@
-// #1406 / #1408 — two small UI tweaks.
+// #1406 / #1408 — two small UI tweaks, of which ONE survives.
 //
-//   #1406  The improve button and the view selector stay on the other platform
-//          screens (settings, profile, messages) instead of vanishing the
-//          moment you leave home.
+//   #1406  kept the improve button and the view selector alive on the other
+//          platform screens (settings, profile, messages). The Streamlined
+//          Concept took the other side of that decision on purpose — a
+//          platform screen carries a plain title and an empty right slot,
+//          navigation lives in the drawer — so `_publishPlatformChrome`, the
+//          header-resident selector and their checks are gone. What survives
+//          of #1406 is the navigation guard it fixed in Improve.openApp,
+//          asserted below.
 //   #1408  Text boxes grow with their content up to a ceiling.
 //
 // #1407 was here too — centring the title in the space the side groups LEAVE
@@ -23,9 +28,7 @@ const path = require('node:path');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const APP_JS = read('public/js/app.js');
-const HOME_JS = read('frontend/src/features/home/home.js');
 const IMPROVE_JS = read('frontend/src/features/improve/improve-controller.js');
-const TOGGLE_TSX = read('frontend/src/features/improve/view-toggle.tsx');
 const GROW_TS = read('frontend/src/lib/use-auto-grow.ts');
 const COMPOSER = read('frontend/src/features/messages/composer.tsx');
 const ROW = read('frontend/src/features/messages/message-row.tsx');
@@ -43,69 +46,24 @@ const fnBody = (name) => {
   return APP_JS.slice(start, end);
 };
 
-// ── #1406: the controls survive onto the other platform screens ────────
+// ── The half of #1406 the Streamlined Concept superseded ────────────────
 
-test('one shared entry point republishes the platform target', () => {
-  // _enterScreenChrome is the single function every non-home platform screen
-  // passes through — leaderboard, profile, admin, settings, browse, messages.
-  // Doing this there rather than in six navigate* functions is what keeps the
-  // next screen from having to remember.
+test('platform screens do NOT republish a platform target any more', () => {
+  // The clear is the whole of the screen-entry chrome now: a plain title, an
+  // empty right slot. The republish half (`_publishPlatformChrome`) is gone
+  // with the header selector it fed.
   const enter = fnBody('_enterScreenChrome');
-
-  // The clear STILL runs first: it is what drops an open app's target, and
-  // these screens are reached from inside an app as often as from home.
-  const clearAt = enter.indexOf('setAppOpen(false)');
-  const publishAt = enter.indexOf('_publishPlatformChrome()');
-  assert.ok(clearAt !== -1, 'the app target is still cleared');
-  assert.ok(publishAt !== -1, 'and the platform chrome published after it');
-  assert.ok(clearAt < publishAt, 'in that order — a swap, exactly as on home');
-
-  // The publish half is its own function because it must be able to run
-  // AGAIN (see the cold-load test below) while the clear must not: re-running
-  // setAppOpen(false) after an app has opened would drop that app's target.
-  const publish = fnBody('_publishPlatformChrome');
-  assert.doesNotMatch(publish, /setAppOpen/,
-    'the destructive half must not be inside the repeatable one');
-  assert.match(publish, /Home\.publishImproveTarget\(\)/);
+  assert.match(enter, /setAppOpen\(false\)/, 'the app target is still cleared');
+  assert.doesNotMatch(enter, /_publishPlatformChrome/,
+    'no republish — a platform screen carries no improve target');
+  assert.ok(APP_JS.indexOf('_publishPlatformChrome() {') === -1,
+    'the repeatable half retired with its one caller');
 });
 
-test('the publish gate asks whether an APP is on screen, not whether home is', () => {
-  const start = HOME_JS.indexOf('  publishImproveTarget() {');
-  const publish = HOME_JS.slice(start, HOME_JS.indexOf('\n  },', start));
-  // Still refuses over an open app — that guard is why the header button never
-  // describes the wrong thing during a transition.
-  assert.match(publish, /currentApp/);
-  assert.match(publish, /_isScreenVisible\('app-view'\)/);
-  // But no longer refuses every screen that is not home, which was the whole
-  // reason the controls disappeared.
-  assert.doesNotMatch(publish, /!App\._isScreenVisible\('home-screen'\)/);
-});
-
-test('the selector marks NO segment on a screen that is none of them', () => {
-  // The control's job is saying where you are. On settings you are not on
-  // home, not on the app tab and not in the dev area, so claiming one of the
-  // three would be a false statement made by a control people navigate with.
-  const publish = fnBody('_publishPlatformChrome');
-  assert.match(publish, /setTab\?\.\('other'\)/, 'the screen says so explicitly');
-  // Published AFTER the target, because setTab no-ops while there is no slug.
-  assert.ok(publish.indexOf('publishImproveTarget')
-    < publish.indexOf("setTab?.('other')"));
-
-  // 'other' is only ever passed, never inferred — anything unrecognised still
-  // collapses to 'app' exactly as before.
-  const setTab = IMPROVE_JS.slice(IMPROVE_JS.indexOf('  setTab(tab) {'));
-  assert.match(setTab.slice(0, 400), /tab === 'other' \? 'other' : 'app'/);
-
-  // And the component renders that as "none selected" rather than defaulting.
-  assert.match(TOGGLE_TSX, /const active: Segment \| null/);
-  assert.match(TOGGLE_TSX, /tab === 'app' \? 'app' : null/);
-});
-
-test('clicking Home from another screen actually navigates', () => {
+test('clicking Home from another screen actually navigates (#1406\'s keeper)', () => {
   // The bug this avoids: #1386 could no-op here because "no app open" meant
-  // "already home". #1406 makes that false, so the guard is the home screen
-  // itself — otherwise the segment renders inactive, is clicked, and nothing
-  // happens.
+  // "already home". The guard is the home screen itself — otherwise the row
+  // renders, is clicked, and nothing happens.
   const start = IMPROVE_JS.indexOf('  openApp() {');
   const body = IMPROVE_JS.slice(start, IMPROVE_JS.indexOf('\n  },', start));
   assert.match(body, /_isScreenVisible\('home-screen'\)/);
@@ -115,62 +73,6 @@ test('clicking Home from another screen actually navigates', () => {
   // A deployment where the helper is missing still navigates rather than
   // silently doing nothing.
   assert.match(body, /typeof window\.App\._isScreenVisible === 'function'/);
-});
-
-test('a direct load of one of these screens fetches the app list first', () => {
-  // The catch the declared checks made: only Home.load() and Browse._load()
-  // ever fetch /api/apps, and both are gated on their own screen being on
-  // show. So arriving at /#settings by NAVIGATION worked (home had already
-  // filled the list) while a refresh on that URL published nothing at all —
-  // no improve button, no selector. The fix is to ask for the payload from
-  // the screen that needs it, not to guess the platform's slug: the row the
-  // viewer was actually served is what decides whether the button exists.
-  const publish = fnBody('_publishPlatformChrome');
-  assert.match(publish, /Home\.ensureAppsLoaded\?\.\(\)/);
-  assert.match(publish, /loading\.then\(/, 'and republishes when it lands');
-
-  const ensure = HOME_JS.slice(
-    HOME_JS.indexOf('  ensureAppsLoaded() {'),
-    HOME_JS.indexOf('\n  },', HOME_JS.indexOf('  ensureAppsLoaded() {'))
-  );
-  assert.ok(ensure.length > 0, 'Home.ensureAppsLoaded exists');
-  assert.match(ensure, /fetch\(`\/api\/apps\$\{demoQS\}`\)/,
-    'the same endpoint and the same ?demo=1 pass-through as load()');
-  assert.match(ensure, /Home\._apps = apps/);
-  assert.match(ensure, /Home\._appsLoaded = true/);
-  // NOT a render: home is not the screen on show, and navigateHome runs the
-  // real load() before it ever is.
-  assert.doesNotMatch(ensure, /Home\.render\(\)/);
-});
-
-test('the re-publish terminates, whether the fetch works or not', () => {
-  // _publishPlatformChrome re-enters itself from the promise, so the exit
-  // condition is entirely in ensureAppsLoaded's first two lines: it must
-  // answer null on the second ask. Guarding on _appsLoaded alone would loop
-  // forever on a failed fetch, which is the offline case.
-  const ensure = HOME_JS.slice(
-    HOME_JS.indexOf('  ensureAppsLoaded() {'),
-    HOME_JS.indexOf('\n  },', HOME_JS.indexOf('  ensureAppsLoaded() {'))
-  );
-  assert.match(ensure,
-    /if \(Home\._appsLoaded \|\| Home\._appsFetchAttempted\) return null;/);
-  // Set BEFORE the fetch, not in its success branch — that ordering is the
-  // whole guarantee.
-  const flagAt = ensure.indexOf('Home._appsFetchAttempted = true');
-  const fetchAt = ensure.indexOf('await fetch(');
-  assert.ok(flagAt !== -1 && fetchAt !== -1 && flagAt < fetchAt,
-    'the attempt is recorded before it can fail');
-  assert.match(HOME_JS, /_appsFetchAttempted: false,/, 'and it starts false');
-});
-
-test('a late payload never overwrites a header its screen no longer owns', () => {
-  // The fetch can land after the viewer has opened an app or gone home. Both
-  // publish their own target, so re-running this then would describe the
-  // wrong thing — the same mistake publishImproveTarget's own gates avoid.
-  const publish = fnBody('_publishPlatformChrome');
-  const cb = publish.slice(publish.indexOf('loading.then('));
-  assert.match(cb, /if \(App\.currentApp\) return;/);
-  assert.match(cb, /if \(App\._isScreenVisible\('home-screen'\)\) return;/);
 });
 
 // ── #1408: text boxes that grow ────────────────────────────────────────

@@ -52,6 +52,14 @@ export const notificationsStore = createStore({
    * entries while the list nested; there is one shape now.
    */
   list: null,
+  /**
+   * The full-screen Notifications view's list (Streamlined Concept): EVERY
+   * fetched row, read and unread, in the same newest-first order — the
+   * screen's All | Unread tabs and Today/Earlier sections partition it
+   * client-side, so it never depends on the drawer's `showOlder` reveal.
+   * Published from the same _renderList pass that fills `list`.
+   */
+  screenList: null,
   /** The "you'll get pinged here" hint. Hidden in the shipped markup. */
   empty: false,
   /**
@@ -76,4 +84,10 @@ export const notificationsStore = createStore({
   loadingMore: false,
   /** PlatformUI.isTouch() at render time — gates the swipe-action wiring. */
   touch: false,
+  /**
+   * Streamlined Concept: ids of dev sessions with an UNREAD session-kind
+   * notification, published by Notifications._renderBadge. The app-context
+   * sheet's change rows read it to draw their unread dot.
+   */
+  sessionUnreadIds: [],
 });

@@ -280,7 +280,7 @@ test('unsupported native bridge keeps Wallet navigation but hides delegation',
     // CONTENTS, never whether Wallet is reachable. Read off the rendered row
     // rather than a stub node's classList.
     assert.doesNotMatch(loaded.rowHtml, /class="hidden /);
-    assert.match(loaded.rowHtml, /id="drawer-row-wallet"/);
+    assert.match(loaded.rowHtml, /id="account-row-wallet"/);
     assert.equal(loaded.wallet._stakingSupported, false);
     assert.equal(loaded.stateReads, 0);
     // And no delegation card at all on an unsupported bridge.

@@ -31,9 +31,17 @@ const header = html.slice(0, html.indexOf('</header>'));
 // notifications. These four slots are the load-bearing survivors, and where
 // each one now lives is the thing this file pins:
 //
-//   #platform-version-pill-slot  → the Improve panel's footer (app-scoped
-//   #native-app-version-slot        reference information, which is what the
-//   #app-fork-badge-slot            panel is for)
+//   #platform-version-pill-slot  → Settings' About block (#settings-about).
+//   #native-app-version-slot        Both describe the PLATFORM — the deployed
+//                                   web build and the installed mobile app —
+//                                   so they outlived the app-scoped footer
+//                                   they were passing through.
+//   #app-fork-badge-slot         → RETIRED with the drawer's reference footer.
+//                                  Fork lineage is a fact about an app, and it
+//                                  renders on the app's own page from the
+//                                  detail descriptor now (#browse-detail-fork,
+//                                  features/apps/browse-detail.tsx) rather than
+//                                  through a slot a legacy module wrote into.
 //   #kudos-budget-slot           → RETIRED with the drawer's status pane. The
 //                                  kudos figure lives on the Leaderboard,
 //                                  which the home screen's Challenges area
@@ -44,21 +52,25 @@ const header = html.slice(0, html.indexOf('</header>'));
 // each kept its id while changing parent, because renderers across app.js /
 // app-view.js / kudos.js resolve them with getElementById. A well-meaning
 // rename would break the value silently.
-const IMPROVE_SLOTS = [
+const ABOUT_SLOTS = [
   'platform-version-pill-slot',
   'native-app-version-slot',
-  'app-fork-badge-slot',
 ];
 
 test('each surviving slot exists exactly once, in its new region', () => {
-  const improveStart = html.indexOf('id="improve-footer"');
-  assert.ok(improveStart > -1, '#improve-footer is missing from the shell');
-  for (const id of IMPROVE_SLOTS) {
+  const aboutStart = html.indexOf('id="settings-about"');
+  assert.ok(aboutStart > -1, '#settings-about is missing from the shell');
+  for (const id of ABOUT_SLOTS) {
     const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
     assert.equal(hits.length, 1, `exactly one #${id} in the shell`);
-    assert.ok(html.indexOf(`id="${id}"`) > improveStart,
-      `#${id} lives inside the Improve panel's footer`);
+    assert.ok(html.indexOf(`id="${id}"`) > aboutStart,
+      `#${id} lives inside Settings' About block`);
   }
+  // The fork slot is gone outright, writer included.
+  assert.ok(!html.includes('id="app-fork-badge-slot"'),
+    'the fork slot is retired — the app page renders lineage from its descriptor');
+  assert.ok(!/renderForkBadge\(\) \{/.test(appViewJs),
+    'and nothing writes into it any more');
 
   // The AI-credit slot is a settings pane's now.
   const apiKey = html.indexOf('data-settings-section="api-key"');
@@ -74,7 +86,7 @@ test('each surviving slot exists exactly once, in its new region', () => {
 });
 
 test('none of the moved slots are duplicated in the header', () => {
-  for (const id of [...IMPROVE_SLOTS, 'ai-budget-slot', 'kudos-budget-slot']) {
+  for (const id of [...ABOUT_SLOTS, 'ai-budget-slot', 'kudos-budget-slot']) {
     assert.ok(!header.includes(`id="${id}"`), `#${id} has left the header`);
   }
   assert.ok(!header.includes('id="leaderboard-btn"'),
@@ -83,12 +95,13 @@ test('none of the moved slots are duplicated in the header', () => {
     'the admin shield left the header (it is #drawer-row-admin now)');
 });
 
-test('the header keeps navigation + alerting only, hamburger last', () => {
+test('the header keeps navigation + alerting only, hamburger first', () => {
   // THE UI OVERHAUL took four controls out of this group — #app-mode-switch,
   // #feedback-btn, #work-drawer-btn and #dev-console-btn — and put the whole
-  // of what they did behind #improve-btn. What is left is Improve, the bell
-  // and the hamburger, in that order.
-  const order = ['improve-btn', 'header-menu-btn'];
+  // of what they did behind #improve-btn. The hamburger then went too: the
+  // board's header leads with the app glyph and the title as ONE switcher
+  // cluster, so the bar reads back-slot → title → Improve.
+  const order = ['back-btn', 'header-title', 'improve-btn'];
   let prev = -1;
   for (const id of order) {
     const at = header.indexOf(`id="${id}"`);
@@ -96,12 +109,17 @@ test('the header keeps navigation + alerting only, hamburger last', () => {
     assert.ok(at > prev, `#${id} comes after the previous header control`);
     prev = at;
   }
-  // Two controls left, and the hamburger owns the last slot: it is the
-  // catch-all menu AND the notifications surface now.
-  // The retired five must not creep back in as a second way to do the same
-  // things — that split is exactly what the overhaul removed.
+  // The retired controls must not creep back in as a second way to do the
+  // same things — that split is exactly what the overhaul removed. The
+  // hamburger joins them: its rows are the Improve panel's and its badges are
+  // the Improve button's.
+  assert.ok(!header.includes('id="header-menu-btn"'),
+    'the hamburger is gone from the bar');
+  // #notifications-btn is deliberately NOT here any more: the Streamlined
+  // board gives the bell back its own control in the right group, because the
+  // drawer it used to live in is the APP's surface now.
   for (const id of ['app-mode-switch', 'feedback-btn', 'work-drawer-btn',
-    'dev-console-btn', 'notifications-btn']) {
+    'dev-console-btn']) {
     assert.equal(header.indexOf(`id="${id}"`), -1,
       `#${id} was retired and must not return to the header`);
   }
@@ -116,9 +134,9 @@ test("the work badge sits exactly where the bell's unread one does", () => {
   // it rides the hamburger — same badge, same writer, new parent. The geometry
   // rule below is unchanged and is the whole point of the test.
   const cog = header.match(/<span id="notifications-badge-ai"[^>]*>/);
-  const bell = header.match(/<span id="notifications-badge"[^>]*>/);
+  const bellBadge = header.match(/<span id="notifications-badge"[^>]*>/);
   assert.ok(cog, '#notifications-badge-ai is on the hamburger');
-  assert.ok(bell, '#notifications-badge is on the bell');
+  assert.ok(bellBadge, '#notifications-badge is on the bell');
 
   // Two badges side by side in the same header read as one convention
   // only if their geometry matches. Colour is the ONLY intended
@@ -127,56 +145,67 @@ test("the work badge sits exactly where the bell's unread one does", () => {
   // that catches a corner, size or padding drift on either one.
   const classesOf = (tag) => tag.match(/class="([^"]*)"/)[1]
     .split(/\s+/).filter((c) => c && !/^bg-(emerald|red)-500$/.test(c)).sort();
-  assert.deepEqual(classesOf(cog[0]), classesOf(bell[0]),
+  assert.deepEqual(classesOf(cog[0]), classesOf(bellBadge[0]),
     'the two header badges must differ only in colour');
 
   // Pin the corner explicitly so the equality check above can't be
   // satisfied by moving BOTH badges somewhere unintended.
   assert.match(cog[0], /-top-1 -right-1/, 'the work badge is top-right');
-  assert.match(bell[0], /-top-1 -right-1/, 'the bell badge is top-right');
+  assert.match(bellBadge[0], /-top-1 -right-1/, 'the bell badge is top-right');
   // …and keep the colours themselves distinct.
   assert.match(cog[0], /bg-emerald-500/, 'the cog badge stays green');
-  assert.match(bell[0], /bg-red-500/, 'the bell badge stays red');
+  assert.match(bellBadge[0], /bg-red-500/, 'the bell badge stays red');
 });
 
 test('the version dot rides the Improve button, hidden by default', () => {
-  // It was #header-menu-deploy-dot on the hamburger, from when the platform
-  // version rows lived in that drawer's footer. THE UI OVERHAUL moved those
-  // rows into the Improve panel, so the dot was pointing at something behind
-  // a different control; it followed them, and was renamed with the move.
-  const dot = html.match(/<span id="improve-version-dot"[^>]*>/);
-  assert.ok(dot, '#improve-version-dot exists');
+  // #1412 built it as #improve-version-dot on the Improve button; the
+  // Streamlined Concept parked it on the hamburger's badge cluster as
+  // #header-menu-deploy-dot; and with the hamburger gone it is back where
+  // #1412 put it, under its original name. A `header-menu-*` id on the
+  // Improve button would be a lie that outlives everyone who remembers it.
+  // It renders from improveStore (<ImproveIndicators/>), never from a
+  // classList write by id.
+  const dot = header.match(/<span id="improve-version-dot"[^>]*>/);
+  assert.ok(dot, '#improve-version-dot exists on the Improve button');
   assert.match(dot[0], /class="hidden /, 'ships hidden');
   assert.match(dot[0], /bg-amber-/, 'renders amber at rest, matching the deploying pill');
   assert.ok(!html.includes('id="header-menu-deploy-dot"'),
-    'and the hamburger copy is gone, not duplicated');
-  const btn = html.match(/<button id="improve-btn"[^>]*>/);
-  assert.match(btn[0], /relative/, 'the button is a positioning context for it');
-  // The badge that moved with it, and the one that stayed.
-  const at = html.indexOf('id="improve-btn"');
-  const end = html.indexOf('</button>', at);
-  assert.ok(html.slice(at, end).includes('id="notifications-badge-ai"'),
-    'the green session count sits on the Improve button, beside the sessions it counts');
-  assert.match(header.match(/<button id="header-menu-btn"[^>]*>[\s\S]*?<\/button>/)[0],
-    /id="notifications-badge"/, 'the bell\'s red unread badge stays on the hamburger');
+    'and the hamburger-era copy is gone, not duplicated');
+
+  const improve = header.match(/<button id="improve-btn"[^>]*>[\s\S]*?<\/button>/)[0];
+  assert.match(header.match(/<button id="improve-btn"[^>]*>/)[0], /relative/,
+    'the Improve button is a positioning context for its three corners');
+  // The work indicators cluster on the control whose panel holds the work.
+  assert.ok(improve.includes('id="notifications-badge-ai"'),
+    'the green session count sits on the Improve button');
+  assert.ok(improve.includes('id="feedback-queue-dot"'),
+    'beside its own outbox dot');
+  const bell = header.match(/<a id="notifications-btn"[^>]*>[\s\S]*?<\/a>/)[0];
+  assert.ok(bell.includes('id="notifications-badge"'),
+    'the bell\'s red unread badge rides the bell itself');
+  assert.ok(!improve.includes('id="notifications-badge"'),
+    'and never the Improve button — they count different things');
 });
 
+
 test('the deploy dot is derived from the rendered pills, not a duplicate flag', () => {
-  // #1079 chunk B moved App.DrawerStatus into the React bundle, beside the
-  // drawer markup it drives; app.js keeps a forwarder for its call sites.
+  // #1079 chunk B moved it into the React bundle; app.js keeps a forwarder for
+  // its call sites. It is ImproveStatus now, in the improve feature — its two
+  // publishers are both about the Improve button, and the drawer it was named
+  // after no longer has anything to do with either.
   const headerMenuJs = fs.readFileSync(
-    path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
-  assert.match(headerMenuJs, /refreshDeployDot\(\)\s*\{/, 'DrawerStatus.refreshDeployDot is defined');
+    path.join(root, 'frontend/src/features/improve/improve-status.js'), 'utf8');
+  assert.match(headerMenuJs, /refreshDeployDot\(\)\s*\{/, 'ImproveStatus.refreshDeployDot is defined');
   const fn = headerMenuJs.slice(headerMenuJs.indexOf('  refreshDeployDot() {'));
   // Post-#913 the version rows signalled a rolling deploy with
-  // .drawer-ver--deploying instead of the pill class; THE UI OVERHAUL moved
-  // those rows from #drawer-footer to the Improve panel's footer, so the
-  // scope moved with them — and now the dot has too.
-  assert.match(fn.slice(0, 1400), /#improve-footer \.drawer-ver--deploying/,
+  // .drawer-ver--deploying instead of the pill class. The SCOPE has followed
+  // those rows through every move: #drawer-footer → the Improve panel's
+  // footer → Settings' About block, which is where they finally stopped.
+  assert.match(fn.slice(0, 1400), /#settings-about \.drawer-ver--deploying/,
     'reads the deploying state off the rendered pills — the single source of truth');
   // The second state the old single-colour dot could not show: the violet
   // "platform rolled past the SHA this tab loaded against" reload button.
-  assert.match(fn.slice(0, 1400), /#improve-footer button\.drawer-ver--stale/,
+  assert.match(fn.slice(0, 1400), /#settings-about button\.drawer-ver--stale/,
     'and the stale state, which is the other thing those rows say');
   // It PUBLISHES: #improve-btn is React-owned, so an id lookup plus a
   // classList write would be a mismatch React patches straight back out.
@@ -184,35 +213,28 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
     'the dot is store state, not a class toggled by id');
   assert.ok(!/getElementById\('improve-version-dot'\)/.test(headerMenuJs),
     'nothing resolves the dot by id');
-  // The platform-revision renderer and the drawer lifecycle both synchronize
+  // The platform-revision renderer and the app-open lifecycle both synchronize
   // the dot. dApp deploy pills live on home cards and are out of scope.
-  const calls = (appJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length
-    + (headerMenuJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length;
+  const calls = (appJs.match(/ImproveStatus\.refreshDeployDot\(\)/g) || []).length
+    + (headerMenuJs.match(/ImproveStatus\.refreshDeployDot\(\)/g) || []).length;
   assert.ok(calls >= 2,
     `refreshDeployDot is called from the revision renderer and lifecycle (found ${calls})`);
 });
 
 // ─── App-scoped row lifecycle ────────────────────────────────────────────
 
-test('the mobile app version and fork rows ship hidden', () => {
-  const nativeRow = html.match(/<div id="drawer-row-native-app-version"[^>]*>/);
-  const forkRow = html.match(/<div id="drawer-row-app-fork"[^>]*>/);
-  assert.ok(nativeRow, '#drawer-row-native-app-version exists');
-  assert.ok(forkRow, '#drawer-row-app-fork exists');
+test('the mobile app version row ships hidden', () => {
+  const nativeRow = html.match(/<div id="about-row-native-app-version"[^>]*>/);
+  assert.ok(nativeRow, '#about-row-native-app-version exists');
   assert.match(nativeRow[0], /class="hidden /,
     'the mobile app version ships hidden until the native bridge answers');
-  assert.match(forkRow[0], /class="hidden /, 'the fork row ships hidden');
 
-  // Hidden from every navigate* that leaves an app behind — one call per
-  // site that also hides #drawer-row-share.
-  const hides = (appJs.match(/DrawerStatus\.setAppOpen\(false\)/g) || []).length;
-  const shareHides = (appJs.match(/if \(_drs\) _drs\.classList\.add\('hidden'\);/g) || []).length;
-  assert.ok(hides > shareHides,
-    'setAppOpen(false) runs everywhere the Share row is hidden, plus navigateHome');
-  assert.match(appJs, /DrawerStatus\.setAppOpen\(true\)/,
+  // The app-open lifecycle is unchanged — it publishes what the Improve panel
+  // and the drawer are ABOUT, which outlived the reference rows entirely.
+  assert.match(appJs, /ImproveStatus\.setAppOpen\(true\)/,
     'the app-open lifecycle still drives the header mode switch');
-  assert.match(appViewJs, /DrawerStatus\.setAppOpen\(false\)/,
-    'AppView.close() clears app-scoped lineage too');
+  assert.match(appViewJs, /ImproveStatus\.setAppOpen\(false\)/,
+    'and AppView.close() clears it');
 });
 
 test('version information contains no particular dApp version', () => {
@@ -225,18 +247,22 @@ test('version information contains no particular dApp version', () => {
     'the semantic version/build is labelled as the installed mobile app');
 });
 
-test('the fork row visibility is driven by renderForkBadge', () => {
-  // Anchored on the next member, not on `_forkSource`: that field moved into
-  // the fork dialog's island in #1078 chunk I and survives here only in the
-  // comment explaining where it went.
-  const fn = appViewJs.slice(
-    appViewJs.indexOf('  renderForkBadge() {'),
-    appViewJs.indexOf('  promptFork(source) {')
-  );
-  assert.ok(fn.length > 0, 'renderForkBadge located');
-  assert.match(fn, /setRow\(false\)/, 'a non-fork hides the row');
-  assert.match(fn, /setRow\(true\)/, 'a fork reveals it');
-  assert.match(fn, /DrawerStatus\.setForkVisible/, 'through DrawerStatus.setForkVisible');
+test('fork lineage renders from the app page descriptor, not a written slot', () => {
+  const browseJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/apps/browse.js'), 'utf8');
+  const detailTsx = fs.readFileSync(
+    path.join(root, 'frontend/src/features/apps/browse-detail.tsx'), 'utf8');
+  // The two states the badge had, now derived rather than written: a linkable
+  // source becomes an href, a deleted one ("<deleted>") stays inert text.
+  assert.match(browseJs, /const forkedFrom = /, 'the detail descriptor carries lineage');
+  assert.match(browseJs, /forkRef\.linkable && forkRef\.slug/,
+    'linkable sources get a href, deleted ones do not');
+  assert.match(detailTsx, /id="browse-detail-fork"/, 'and the page renders it');
+  // Never markup: the source name is user-supplied and React escapes text
+  // children, which is why the imperative version needed escapeHtml at all.
+  const forkBlock = detailTsx.slice(detailTsx.indexOf('id="browse-detail-fork"'));
+  assert.ok(!forkBlock.slice(0, 900).includes('dangerouslySetInnerHTML'),
+    'the source name is a text child, never markup');
 });
 
 // ─── Status-pane rows are not clickable containers ───────────────────────
@@ -244,11 +270,10 @@ test('the fork row visibility is driven by renderForkBadge', () => {
 test('reference rows are plain divs — the pills carry their own anchors', () => {
   // renderPlatformVersionPill's stale state renders a <button
   // onclick="location.reload()">, and the live state an <a>. Nesting
-  // those inside a clickable row would be invalid markup. The rule follows the
-  // rows to the Improve panel and to Settings; #drawer-row-kudos is retired.
-  for (const id of ['drawer-row-platform-version',
-    'drawer-row-native-app-version', 'drawer-row-app-fork',
-    'drawer-row-ai-budget']) {
+  // those inside a clickable row would be invalid markup. The rule followed the
+  // rows all the way to Settings; #drawer-row-kudos is retired.
+  for (const id of ['about-row-platform-version',
+    'about-row-native-app-version', 'drawer-row-ai-budget']) {
     const row = html.match(new RegExp(`<(\\w+) id="${id}"`));
     assert.ok(row, `${id} exists`);
     assert.equal(row[1], 'div', `${id} is a <div>, never an <a>/<button>`);
@@ -326,31 +351,10 @@ test('the drawer constrains a long pill so it cannot widen the 15rem panel', () 
     'and their value truncates rather than overflowing');
 });
 
-// ─── One scroller, and it is the notification list ──────────────────────
 
-test('the drawer body holds one scroller, notifications leading', () => {
-  const scroller = html.match(/<div id="header-menu-rows"[^>]*>/);
-  assert.ok(scroller, '#header-menu-rows exists');
-  // The BODY does not scroll. It did, and the navigation rows below the list
-  // went with it — off the bottom of a short viewport, behind a scroll nobody
-  // expects in a menu. The list scrolls inside #drawer-notifications instead;
-  // the rows are `shrink-0` and always on screen.
-  assert.ok(!/overflow-y-auto/.test(scroller[0]),
-    'the drawer body itself must not scroll');
-  assert.match(scroller[0], /min-h-0/,
-    'min-h-0 is required for a flex child to bound its children rather than grow');
-  const notif = html.match(/<div id="drawer-notifications"[^>]*>/);
-  assert.match(notif[0], /flex-1/, 'the notifications block takes the free space');
-  assert.match(notif[0], /min-h-0/, 'and may shrink below its content, so it can scroll');
-  const at = html.indexOf('id="header-menu-rows"');
-  for (const id of ['drawer-notifications', 'drawer-row-admin']) {
-    assert.ok(html.indexOf(`id="${id}"`) > at, `#${id} is inside the scroller`);
-  }
-  // Notifications lead: the bell merged INTO this drawer, and "what happened
-  // while I was away" is what the catch-all menu opens onto now.
-  assert.ok(html.indexOf('id="drawer-notifications"') < html.indexOf('id="drawer-row-node"'),
-    'notifications come before every navigation row');
-});
+// The drawer's scroller went with the drawer. What it held is on screens now:
+// the account rows in the Profile screen's account group
+// (features/profile/account-panel.tsx), the notification list in its own sheet.
 
 // ─── The kudos badge no longer pokes at header layout ────────────────────
 

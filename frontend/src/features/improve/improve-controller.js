@@ -9,7 +9,7 @@
  * mode — everything you do *to* the app rather than *with* it — is this panel.
  * That means this file absorbed responsibilities from three retired places:
  *
- *   * `App.DrawerStatus.setAppOpen()`'s show/hide of `#app-mode-switch`
+ *   * `App.ImproveStatus.setAppOpen()`'s show/hide of `#app-mode-switch`
  *     becomes `Improve.setTarget()`, which publishes what the panel is about
  *     (and therefore whether the header button exists at all);
  *   * the drawer's `#drawer-row-github` / `#drawer-row-share` / version rows
@@ -55,6 +55,19 @@ function isBusy(session) {
 }
 
 /**
+ * A PARKED session (owner review).
+ *
+ * "Changes in progress" and "Changes in other apps" are lists of what is
+ * MOVING. A paused session is not in progress — it is set down — and listing
+ * it under that heading both overstates the list and pushes the rows that are
+ * actually running further from the thumb. Paused work stays reachable where
+ * parked work belongs: the Board, and the session's own screen.
+ */
+function isParked(session) {
+  return String((session && session.status) || '').toLowerCase() === 'paused';
+}
+
+/**
  * A session row's display status.
  *
  * Deliberately the same three words the cog drawer used, so a viewer who knew
@@ -93,6 +106,9 @@ function toRow(session, appNameFallback) {
     status: statusLabel(session),
     busy: isBusy(session),
     sortAt: timeOf(session.last_activity_at) || timeOf(session.created_at),
+    // Streamlined Concept: the app-context sheet's change rows show a
+    // relative time, the way the Figma board draws them.
+    lastActivityAt: session.last_activity_at || session.created_at || null,
   };
 }
 
@@ -147,7 +163,7 @@ const Improve = {
 
   // ── What the panel is about ──────────────────────────────────────
   //
-  // Called from App.DrawerStatus.setAppOpen() for an open app, and from
+  // Called from App.ImproveStatus.setAppOpen() for an open app, and from
   // Home.publishImproveTarget() for the platform's own self-hosted row while
   // home is on screen (#1367). Passing null clears the target, which hides the
   // header button — every OTHER screen does that.
@@ -166,6 +182,8 @@ const Improve = {
         name: '',
         selfHosted: false,
         repoUrl: null,
+        iconUrl: null,
+        iconEmoji: null,
         version: null,
         deploying: false,
         readOnly: false,
@@ -188,6 +206,8 @@ const Improve = {
       name: target.name || '',
       selfHosted: !!target.selfHosted,
       repoUrl: target.repoUrl || null,
+      iconUrl: target.iconUrl || null,
+      iconEmoji: target.iconEmoji || null,
       version: target.version || null,
       deploying: !!target.deploying,
       readOnly: !!target.readOnly,
@@ -206,13 +226,43 @@ const Improve = {
    * assigned. Only meaningful while there IS a target, so a switch with none
    * published is dropped rather than stored against nothing.
    */
-  setTab(tab) {
+  setTab(tab, subTab) {
     if (!improveStore.get().slug) return;
-    // #1406: 'other' is a platform screen that is neither half of an app. It
-    // is passed explicitly by App._enterScreenChrome and never inferred, so
-    // anything unrecognised still collapses to 'app' exactly as before.
+    // #1406's 'other' value survives in the store's type but has no publisher
+    // since the Streamlined Concept took platform screens back to a plain
+    // title; anything unrecognised still collapses to 'app' exactly as before.
     const next = tab === 'dev' ? 'dev' : (tab === 'other' ? 'other' : 'app');
-    improveStore.set({ tab: next });
+    improveStore.set({
+      tab: next,
+      // Which dev sub-view: the header's eye is a PREVIEW control on a
+      // session and a back-to-the-app control everywhere else.
+      subTab: next === 'dev' ? (subTab || 'forum') : null,
+    });
+  },
+
+  /**
+   * The open session's staging preview, or null.
+   *
+   * Called by DevChat._publishPreview() whenever the open session or its
+   * `staging_url` changes. Gates the header's eye — see improve-button.tsx.
+   */
+  setSessionPreview(preview) {
+    improveStore.set({
+      previewSessionId: (preview && preview.sessionId) || null,
+      previewUrl: (preview && preview.url) || null,
+    });
+  },
+
+  /**
+   * Whether a staging preview is on screen right now — the "seeing" half of
+   * the doing↔seeing loop. AppView.ensureStaging publishes true (every
+   * preview open funnels through it, #439); AppView.closeStagingOverlay
+   * publishes false. Drives the eye/pencil pair and the Preview chip.
+   */
+  setPreviewActive(on) {
+    if (improveStore.get().previewActive !== !!on) {
+      improveStore.set({ previewActive: !!on });
+    }
   },
 
   /**
@@ -268,7 +318,7 @@ const Improve = {
   update(patch) {
     if (!patch || !improveStore.get().slug) return;
     const allowed = {};
-    for (const key of ['name', 'repoUrl', 'version', 'deploying', 'readOnly', 'canShare', 'selfHosted']) {
+    for (const key of ['name', 'repoUrl', 'iconUrl', 'iconEmoji', 'version', 'deploying', 'readOnly', 'canShare', 'selfHosted']) {
       if (key in patch) allowed[key] = patch[key];
     }
     improveStore.set(allowed);
@@ -299,7 +349,6 @@ const Improve = {
     if (!panel) return;
     // One surface at a time: opening this closes the hamburger, the same
     // courtesy the cog and bell drawers paid each other.
-    if (window.HeaderMenu?.isPresenting?.()) window.HeaderMenu.close?.();
 
     if (!Improve._sheet) {
       // Publish `open` BEFORE presenting: the kit sheet measures the content's
@@ -426,6 +475,10 @@ const Improve = {
       else others.push(row);
     };
     for (const session of Improve._all) {
+      // Active only — see isParked. (statusLabel keeps its 'Paused' branch:
+      // it is the shared vocabulary, and a caller that does not filter still
+      // gets the right word.)
+      if (isParked(session)) continue;
       place(toRow(session, session.app_slug === slug ? name : null), session.app_slug);
     }
     // #1417: open connector work orders go in the SAME two buckets, by the
@@ -536,7 +589,7 @@ const Improve = {
   },
 
   /**
-   * The platform version dot's state, from DrawerStatus.refreshDeployDot().
+   * The platform version dot's state, from ImproveStatus.refreshDeployDot().
    *
    * 'deploying' | 'stale' | 'idle' — read off the version rows this panel's
    * own footer renders, which is why the dot moved here from the hamburger.

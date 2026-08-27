@@ -1,4 +1,6 @@
-// #613: drag-and-drop reorder of Dev-board cards, persisted server-side.
+// #613: per-column card order for the Dev board, persisted server-side.
+// The drag gesture that once wrote these orders is retired; the endpoints,
+// the table and the FE's read-side overlay are what remain.
 //
 // Covers:
 //   1. parseOrder — the pure body validator (type/ref shape, dedupe, length
@@ -250,5 +252,8 @@ test('ws service exports pushBoardOrderUpdate; server + FE are wired', () => {
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
   assert.match(fe, /_applyManualOrder/, 'FE has the overlay helper');
   assert.match(fe, /board-order/, 'FE fetches the order endpoint');
-  assert.match(fe, /dev-drag-handle/, 'FE renders a drag handle');
+  // The FE is read-only on this now: drag-to-reorder was retired to give the
+  // narrowest card its 24px left gutter back, so nothing in the UI writes an
+  // order. A saved one is still fetched and laid over the derived order.
+  assert.doesNotMatch(fe, /dev-drag-handle/, 'the drag handle stays retired');
 });

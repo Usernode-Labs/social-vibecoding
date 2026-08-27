@@ -41,6 +41,25 @@ declare global {
       open: boolean;
       [key: string]: unknown;
     };
+    /**
+     * The three platform SHEETS, each built by lib/sheet-controller.js and
+     * published at its controller's module scope. Classic scripts and the
+     * header glyphs reach them here.
+     */
+    MessagesSheet?: {
+      open(): void;
+      close(): Promise<void> | void;
+      toggle(): void;
+      isOpen(): boolean;
+      [key: string]: unknown;
+    };
+    NotificationsSheet?: {
+      open(): void;
+      close(): Promise<void> | void;
+      toggle(): void;
+      isOpen(): boolean;
+      [key: string]: unknown;
+    };
     /** features/settings/settings.js */
     Settings?: {
       init(): void;
@@ -103,9 +122,8 @@ declare global {
     };
     /**
      * features/header/header-menu-controller.js — the hamburger drawer's
-     * open/close, and the app-scoped drawer rows' visibility. Both were
-     * App.HeaderMenu / App.DrawerStatus in app.js, which now forwards onto
-     * these so its own call sites (plus app-view.js, native-chrome.js,
+     * open/close. It was App.HeaderMenu in app.js, which now forwards onto
+     * this so its own call sites (plus app-view.js, native-chrome.js,
      * node-pill.js, wallet-sheet.js) are untouched.
      */
     HeaderMenu?: {
@@ -116,10 +134,9 @@ declare global {
       consumeNavPending(): boolean;
       [key: string]: unknown;
     };
-    /** features/header/header-menu-controller.js */
-    DrawerStatus?: {
+    /** features/improve/improve-status.js */
+    ImproveStatus?: {
       setAppOpen(open: boolean): void;
-      setForkVisible(visible: boolean): void;
       refreshDeployDot(): void;
       [key: string]: unknown;
     };

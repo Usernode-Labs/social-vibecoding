@@ -21,7 +21,7 @@
 // Static-assertion style (cf. tests/header-status-pane.test.js): read the
 // shipped source files and assert the wiring is present.
 //
-// Run with: node --test tests/ai-credit-drawer.test.js
+// Run with: node --test tests/ai-credit-row.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -40,9 +40,9 @@ test('the shell still carries the renderer, now via the React bundle', () => {
   assert.ok(!html.includes('src="/js/ai-credit.js"'),
     'the classic tag is retired — a surviving one would load a second copy');
   const menu = fs.readFileSync(
-    path.join(root, 'frontend/src/features/header/header-menu.tsx'), 'utf8');
+    path.join(root, 'frontend/src/features/header/platform-header.tsx'), 'utf8');
   assert.match(menu, /import '\.\/ai-credit\.js'/,
-    'the header-menu island must import it, or nothing defines window.AiCredit');
+    'the header bar island must import it, or nothing defines window.AiCredit');
 });
 
 test('the renderer publishes into the store the row reads', () => {
@@ -75,12 +75,10 @@ test('the settings screen refreshes the row when a section opens', () => {
   const body = fn.slice(0, fn.indexOf('\n    },'));
   assert.match(body, /AiCredit\.refreshAll\(\)/,
     '_renderContent refreshes the figure — it is throttled inside AiCredit');
-  // …and the drawer must NOT still poll for a row it no longer shows.
-  const headerMenuJs = fs.readFileSync(
-    path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
-  const open = headerMenuJs.slice(headerMenuJs.indexOf('  open() {'));
-  assert.ok(!/AiCredit\.refreshAll\(\)/.test(open.slice(0, open.indexOf('\n  },'))),
-    'a drawer that does not render the row must not refresh it');
+  // The drawer used to poll for this row too, and the second half of this
+  // test pinned that it had stopped. The drawer is retired outright now, so
+  // Settings is the only surface that renders the row and the only one that
+  // refreshes it.
 });
 
 test('the row renders inside the Anthropic API key section', () => {
@@ -127,16 +125,10 @@ test('the pill carries the class hook the dapp.json check asserts on', () => {
   assert.match(row, /ai-budget-meter/, '#ai-budget-slot meter has a stable hook class');
 });
 
-test('?shot=menu opens the drawer and is not env-gated', () => {
-  const fn = appJs.slice(appJs.indexOf('  _applyMenuShot() {'));
-  const body = fn.slice(0, 800);
-  assert.ok(body.length > 0, '_applyMenuShot is defined');
-  assert.match(body, /shot !== 'menu'/, 'keys off ?shot=menu');
-  assert.match(body, /App\.HeaderMenu\.open\(\)/, 'opens the drawer');
-  assert.ok(!/staging|USERNODE_ENV/i.test(body),
-    'pure UI state — never env-gated, or the production "before" shot starves');
-  assert.match(appJs, /App\._applyMenuShot\(\);/, 'called from the authed boot');
-});
+// `?shot=menu` opened the drawer so the capture pipeline could see this row.
+// The hamburger is retired and the drawer with it; the row is Settings' own
+// (#drawer-row-ai-budget under #settings/api-key), which the checks reach by
+// its real address. There is no capture-only door left to pin.
 
 test('tooltips need no escaping, because nothing builds an attribute string', () => {
   // The tooltip interpolates server-provided values, and used to do it into

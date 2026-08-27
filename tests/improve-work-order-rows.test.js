@@ -34,7 +34,13 @@ const svc = require('../src/services/external-agent-tasks');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const ROUTE = read('src/routes/sessions.js');
 const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
-const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
+// The rows render in the hamburger DRAWER via the extracted SessionRow
+// (Streamlined Concept) — the Improve panel slimmed to its two actions, and
+// the board's drawer is the app's own surface.
+const ROW_TSX = read('frontend/src/features/improve/session-row.tsx');
+// The app's rows merged into the Improve panel — one surface for the app's
+// navigation and its work. This file used to read app-context-rows.tsx.
+const SHEET_TSX = read('frontend/src/features/improve/improve-panel.tsx');
 const SERVICE = read('src/services/external-agent-tasks.js');
 
 // A pool that answers one query and records what it was asked, so a test
@@ -177,15 +183,15 @@ test('the two kinds cannot collide on a React key', () => {
   // alone repeats across kinds and React reuses the wrong node.
   assert.match(CONTROLLER, /key: `s\$\{session\.id\}`/);
   assert.match(CONTROLLER, /key: `t\$\{task\.id\}`/);
-  assert.match(PANEL, /key=\{session\.key\}/);
-  assert.doesNotMatch(PANEL, /key=\{session\.id\}/);
+  assert.match(SHEET_TSX, /key=\{session\.key\}/);
+  assert.doesNotMatch(SHEET_TSX, /key=\{session\.id\}/);
 });
 
 test('the row renders the destination it was given', () => {
   // The component used to build `#app/<slug>/dev/sessions/<id>` from the row.
   // Every task row would have gone to a session page that does not exist.
-  assert.match(PANEL, /href=\{session\.href\}/);
-  assert.doesNotMatch(PANEL, /href=\{`#app\/\$\{session\.appSlug\}\/dev\/sessions/);
+  assert.match(ROW_TSX, /href=\{session\.href\}/);
+  assert.doesNotMatch(ROW_TSX, /href=\{`#app\/\$\{session\.appSlug\}\/dev\/sessions/);
 });
 
 test('ordering compares times, not ids from two different tables', () => {

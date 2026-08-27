@@ -1,11 +1,11 @@
 // #613/#617: AppView._applyManualOrder() is the pure overlay that re-sorts
 // one already-bucketed kanban column against a saved manual order. Cards
 // ABSENT from the stored order come first, in their derived order (they
-// arrived after the last drag, so they surface at the top — #617); ranked
+// arrived after the order was saved, so they surface at the top — #617); ranked
 // cards follow in stored order; stale stored refs are skipped; an empty
 // order is a no-op. Also covers _cardOrderKey (card → identity string) which
-// the drag handler and the server share, and _orderKeyToRef (the inverse the
-// commit path uses).
+// the saved overlay and the server share. The inverse parser went with the
+// drag gesture — nothing in the UI writes an order any more.
 //
 // The helpers are pure (no DOM, no AppView state), so we load app-view.js
 // into a vm context exactly like tests/dev-kanban-buckets.test.js.
@@ -71,7 +71,7 @@ test('empty order returns the cards unchanged (today\'s board)', () => {
 test('stored order reorders matched cards, unmatched lead in derived order', () => {
   const AppView = makeAppView();
   // Derived order 1,2,3,4; saved order ranks 3 then 1. Unranked 2 and 4
-  // arrived after the last drag, so they surface first (#617).
+  // arrived after the order was saved, so they surface first (#617).
   const cards = [issue(1), issue(2), issue(3), issue(4)];
   const order = [{ type: 'issue', ref: 3 }, { type: 'issue', ref: 1 }];
   const out = AppView._applyManualOrder(cards, order, (c) => AppView._cardOrderKey('issues', c));
@@ -97,7 +97,7 @@ test('review column keys distinguish proposal vs gov by kind', () => {
 
 test('#617: a new card absent from a non-empty saved order renders at the top', () => {
   const AppView = makeAppView();
-  // The column was fully snapshotted as 1,3,2 by a drag; issues 5 and 4
+  // The column was fully snapshotted as 1,3,2 by a saved order; issues 5 and 4
   // were filed afterwards (derived order puts 5 before 4, newest first).
   const cards = [issue(5), issue(4), issue(3), issue(2), issue(1)];
   const order = [
@@ -114,19 +114,8 @@ test('_cardOrderKey shapes match the stored (type, ref) pairs', () => {
   assert.equal(AppView._cardOrderKey('issues', issue(7)), 'issue:7');
   assert.equal(AppView._cardOrderKey('review', review('proposal', 5)), 'proposal:5');
   assert.equal(AppView._cardOrderKey('review', review('gov', 8)), 'gov:8');
-  // A card missing its identity yields null (rendered un-draggable).
+  // A card missing its identity yields null (it simply stays unranked).
   assert.equal(AppView._cardOrderKey('issues', { title: 'no number' }), null);
-});
-
-test('_orderKeyToRef inverts _cardOrderKey for the commit path', () => {
-  const AppView = makeAppView();
-  const a = AppView._orderKeyToRef('issue:7');
-  assert.equal(a.type, 'issue');
-  assert.equal(a.ref, 7);
-  const b = AppView._orderKeyToRef('proposal:45');
-  assert.equal(b.type, 'proposal');
-  assert.equal(b.ref, 45);
-  assert.equal(AppView._orderKeyToRef('garbage'), null);
 });
 
 test('a single-card column is a no-op even with a saved order', () => {

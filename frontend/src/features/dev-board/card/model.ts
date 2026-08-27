@@ -238,7 +238,7 @@ export interface DividerSpec {
  * kanban In-progress column share the shape.
  */
 export type ListRow =
-  | { t: 'card'; key: string; card: DevCardModel; orderKey?: string | null; commentsFor?: number | null }
+  | { t: 'card'; key: string; card: DevCardModel; commentsFor?: number | null }
   | { t: 'divider'; key: string; d: DividerSpec }
   | { t: 'note'; key: string; text: string }
   | { t: 'archived'; key: string; rows: ArchivedRow[] };
@@ -273,8 +273,6 @@ export interface KanbanColView {
   rows: ListRow[];
   /** The no-cards note ('Nothing here yet' / 'No matching cards'), or null. */
   empty?: string | null;
-  /** #613 — drag-to-reorder: the stored column_key, or null when off. */
-  orderCol?: string | null;
   footer: FooterSpec | null;
 }
 

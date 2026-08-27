@@ -86,6 +86,7 @@ import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
 import { AppsMore } from './apps-more';
+import { AccountPanel } from './panels/account';
 import { ChallengesSection, CreateSection, DiscoverSection } from './panels/sections';
 import { WidgetStrip } from './widget-strip';
 
@@ -259,6 +260,23 @@ export function HomeScreen() {
         <DiscoverSection />
         <ChallengesSection />
         <CreateSection />
+        {/*
+            ── AREA 5: YOU ────────────────────────────────────────────
+
+            The entrance to Profile, and through it to Settings and Admin.
+            Profile's only link used to be a hamburger row, and the drawer
+            went with the hamburger — which left all three reachable only by
+            typing the hash. LAST, because the reading order this section
+            block states for itself ends with you, and putting an account row
+            first would push the launcher grid down for something nobody
+            opens Home to do.
+
+            Not a `<Section>`: it has no title bar, no ⋮ and no panel model,
+            the same reason CreatePanel is not one. It is one row.
+        */}
+        <section id="home-account-section" className="px-3 mt-4">
+          <AccountPanel />
+        </section>
         {/*
             #home-panels — the widgets' FALLBACK host — is gone with the
             placement it existed for. It caught the moment before the first

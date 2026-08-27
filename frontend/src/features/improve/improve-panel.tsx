@@ -7,7 +7,7 @@
  * (the switch, the feedback bubble, the work cog) collapse into one button, and
  * it is why the rows below span what used to be four different places — the
  * feedback dialog, the Dev "+" menu, the cog drawer's session list and the
- * hamburger's GitHub / Share / version footer.
+ * hamburger's Share row.
  *
  * ── A fully React-owned island ─────────────────────────────────────────
  *
@@ -41,157 +41,159 @@
 
 import { useCallback, type ReactNode } from 'react';
 
-import { Button } from '@/components/ui/button';
 import {
+  AppWindowIcon,
+  BoardIcon,
   ChatIcon,
-  GitHubIcon,
-  PlusIcon,
+  ChevronRightIcon,
+  HomeIcon,
+  NewspaperIcon,
+  PencilSparklesIcon,
   ShareIcon,
   TerminalIcon,
   XIcon,
 } from '@/components/ui/icons';
 
-import { NativeAppVersionRow } from '../header/native-app-version-row';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
-import { ImproveViewToggle } from './view-toggle';
+import { SessionRow } from './session-row';
 
-const ROW_CLASS =
-  'w-full flex items-center gap-3 px-4 min-h-[44px] text-left text-zinc-600 '
-  + 'dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors';
+/** Close the panel before whatever the row does next. */
+function dismissForNav(): void {
+  Improve.dismissForNav();
+}
 
-const ROW_LABEL_CLASS = 'text-sm font-medium flex-1 min-w-0 truncate';
-
+// Sentence case, not uppercase: the board's own labels read "Changes in
+// progress", and the app name above them is the app's name as written.
 const SECTION_LABEL_CLASS =
-  'px-4 pt-3 pb-1 text-[0.7rem] font-semibold '
-  + 'text-zinc-500 dark:text-zinc-400';
+  'px-4 pt-2.5 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400';
+
+const ROW_BASE =
+  'w-full flex items-center gap-3 px-4 min-h-[44px] text-left';
+const ROW_REST =
+  ' text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800';
+const ROW_SELECTED =
+  ' bg-violet-500/10 text-violet-700 dark:text-violet-400';
 
 /**
- * One tappable row.
+ * One quick action — a segment of the action group, not a control of its own.
  *
- * Rendered as a `<button>` rather than an `<a>` unless an `href` is given: the
- * navigating rows go through `App`'s router so the panel can dismiss itself
- * first, and only the two genuinely external destinations (the repo, a shared
- * link) are real anchors.
+ * ── Why there is no disc ───────────────────────────────────────────────
+ *
+ * It shipped as a 56px filled circle with the caption beneath, which cost 100
+ * vertical points and, worse, put a family of CIRCLES immediately above the
+ * view rows' family of SQUARES. Two decorative icon containers stacked with
+ * nothing between them read as clutter rather than as two groups — and a
+ * decorative container around an icon is something to avoid on its own.
+ * The glyph is the glyph now, and the GROUP does the separating.
+ *
+ * `flex-auto`, not `flex-1` and not a three-column grid. Equal thirds put
+ * "New change" one pixel short of its own label on a 375pt screen while
+ * "Share" sat in twice the room it needed; sizing from content and then
+ * sharing the slack gives each label what it asks for. It also means Share
+ * can be absent — it is conditional — without leaving a hole where a third
+ * column would have been.
  */
-function ImproveRow({
-  id,
-  icon,
-  label,
-  detail,
-  onClick,
-  href,
-  external,
-}: {
-  id?: string;
-  icon: ReactNode;
+function QuickAction({ id, label, icon, onClick }: {
+  id: string;
   label: string;
-  detail?: ReactNode;
-  onClick?: () => void;
-  href?: string;
-  external?: boolean;
-}) {
-  const body = (
-    <>
-      {icon}
-      <span className={ROW_LABEL_CLASS}>{label}</span>
-      {detail}
-    </>
-  );
-  if (href) {
-    return (
-      <a
-        id={id}
-        href={href}
-        {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
-        className={ROW_CLASS}
-        onClick={() => Improve.dismissForNav()}
-      >
-        {body}
-      </a>
-    );
-  }
+  icon: ReactNode;
+  onClick: () => void;
+}): ReactNode {
   return (
-    <button id={id} type="button" className={ROW_CLASS} onClick={onClick}>
-      {body}
+    <button
+      id={id}
+      type="button"
+      onClick={onClick}
+      className="flex flex-auto min-w-0 items-center justify-center gap-1.5 py-2.5 text-violet-600 hover:bg-violet-500/10 dark:text-violet-400 un-touch-target"
+    >
+      <span className="shrink-0 [&>svg]:h-4 [&>svg]:w-4" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="min-w-0 truncate text-sm font-medium">
+        {label}
+      </span>
     </button>
   );
 }
 
 /**
- * A row — the compact shape the cog drawer used, minus the app column.
+ * A destination row: label left, one-line detail right, chevron.
  *
- * Serves both kinds (#1417). The destination arrives on the row as `href`
- * rather than being built here from an id: a session's id addresses a session
- * page, a work order's addresses nothing the browser can open, and a
- * component that assumed the first would send every task row to a 404.
+ * ONE LINE, deliberately. It shipped as a stacked label-over-detail pair in
+ * the drawer and the board draws it flat — vertical space in this panel is
+ * the sessions list's, and three two-line rows cost a session row each. The
+ * label truncates at 55% before the detail starts giving ground, so a long
+ * app name shortens rather than evicting "View and use the app".
  */
-function SessionRow({
-  session,
-  showApp,
+function ContextRow({
+  id, row, icon, label, detail, onClick, href, selected,
 }: {
-  session: {
-    key: string;
-    kind: 'session' | 'task';
-    id: number;
-    appSlug: string | null;
-    appName: string;
-    title: string;
-    href: string;
-    status: string | null;
-    busy: boolean;
-  };
-  showApp: boolean;
-}) {
-  return (
-    <a
-      href={session.href}
-      data-improve-row={session.kind}
-      className="flex items-center gap-2 px-4 min-h-[44px] text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-      onClick={() => Improve.dismissForNav()}
-    >
-      {/* The busy dot is the whole reason a session row is worth scanning:
-          it says an AI turn is in flight right now. Pulsing only while busy —
-          a static dot on every row would say nothing.
-
-          A work order is never busy: its agent runs on the user's own machine,
-          where the platform cannot see whether a turn is in flight. It gets
-          the idle dot, hollow rather than filled, so the row reads as "handed
-          off, state unknown here" instead of borrowing a liveness claim this
-          side has no way to make. */}
-      <span
-        className={
-          session.busy
-            ? 'w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse'
-            : session.kind === 'task'
-              ? 'w-2 h-2 rounded-full border border-zinc-400 dark:border-zinc-500 shrink-0'
-              : 'w-2 h-2 rounded-full bg-zinc-300 dark:bg-zinc-600 shrink-0'
-        }
+  id?: string;
+  row: string;
+  icon: ReactNode;
+  label: string;
+  detail: string;
+  onClick?: () => void;
+  href?: string;
+  selected?: boolean;
+}): ReactNode {
+  // The board marks the row you are ON with a tinted surface — this panel is
+  // the app's navigation now, so it says where you are as well as where you
+  // can go.
+  const cls = ROW_BASE + (selected ? ROW_SELECTED : ROW_REST);
+  const body = (
+    <>
+      {/* The glyph, undressed. It sat in an IconTile square until the quick
+          actions above lost their circles — two decorative container shapes
+          in one column was the clutter, and removing only one of them would
+          have left the other looking arbitrary. */}
+      <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="min-w-0 max-w-[55%] shrink truncate text-sm font-medium">
+        {label}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-right text-xs text-zinc-500 dark:text-zinc-400">
+        {detail}
+      </span>
+      <ChevronRightIcon
+        className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500"
         aria-hidden="true"
       />
-      {showApp ? (
-        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[35%] truncate">
-          {session.appName}
-        </span>
-      ) : null}
-      <span className="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">
-        {session.title}
-      </span>
-      {session.status ? (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
-          {session.status}
-        </span>
-      ) : null}
-    </a>
+    </>
+  );
+  if (href) {
+    return (
+      <a id={id} data-context-row={row} href={href} className={cls} onClick={dismissForNav}>
+        {body}
+      </a>
+    );
+  }
+  return (
+    <button id={id} data-context-row={row} type="button" className={cls} onClick={onClick}>
+      {body}
+    </button>
   );
 }
 
 export function ImprovePanel() {
   const state = useStoreState(improveStore);
-  const { open, target, slug, name, sessions, otherSessions } = state;
+  const {
+    open, target, name, slug, selfHosted, sessions, otherSessions, tab, subTab,
+  } = state;
 
   const close = useCallback(() => Improve.close(), []);
+
+  const AppRowIcon = selfHosted ? HomeIcon : AppWindowIcon;
+  const onApp = tab !== 'dev';
+  const onActivity = tab === 'dev' && subTab === 'chat';
+  const onBoard = tab === 'dev' && (subTab === 'forum' || subTab === 'topic');
+  // "Nothing anywhere", which is a different state from "nothing on this app"
+  // — and the only one that has spare vertical space to spend.
+  const nothingRunning = state.sessionsLoaded
+    && sessions.length === 0 && otherSessions.length === 0;
 
   // Everything below renders unconditionally — the panel is always mounted and
   // slid off-screen, never unmounted — so a closed panel is inert markup rather
@@ -217,25 +219,31 @@ export function ImprovePanel() {
         {...(open ? { 'data-open': '' } : {})}
         className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl improve-panel-transition"
       >
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 shrink-0">
-          <span className="flex-1 min-w-0">
-            <span className="block text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-              Improve
-            </span>
-            {/* The app's own name, so the panel says WHAT it is about — on the
-                home screen that is the platform itself, which is the only cue
-                telling you that "Improve" there means Social Vibecoding. */}
-            <span
-              id="improve-target-name"
-              className="block text-xs text-zinc-500 dark:text-zinc-400 truncate"
-            >
-              {name}
-            </span>
-          </span>
+        {/*
+            ONE LINE. It was a stacked title-over-subtitle pair with `py-3`,
+            which spent about seventy points saying two words. "Improve" and
+            the app's name are the same fact read at two altitudes, so they sit
+            on one baseline with the name muted after it — and the sheet starts
+            where its content starts.
+
+            The name keeps its id and its job: on the home screen the target is
+            the platform itself, and this is the only cue that says "Improve"
+            there means Social Vibecoding rather than an app.
+        */}
+        <div className="flex items-center gap-2 px-4 py-2 shrink-0">
+          <h2 className="shrink-0 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+            Improve
+          </h2>
+          <p
+            id="improve-target-name"
+            className="min-w-0 flex-1 truncate text-sm text-zinc-500 dark:text-zinc-400"
+          >
+            {name}
+          </p>
           <button
             id="improve-close"
             type="button"
-            className="text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 un-touch-target dark:text-zinc-400"
+            className="shrink-0 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 un-touch-target dark:text-zinc-400"
             aria-label="Close"
             onClick={close}
           >
@@ -244,246 +252,210 @@ export function ImprovePanel() {
         </div>
 
         {/*
-            A COLUMN FLEX, so #improve-footer can be bottom-anchored with
-            `mt-auto` (#1367): the version, GitHub and Share block hugs the
-            foot of the panel whenever the rows above it leave free space, and
-            degrades to "just at the end of the scroll" when they do not — a
-            long session list, a short viewport, the kit sheet. One rule, both
-            behaviours, no measurement, and the same trick the hamburger's own
-            footer used before those rows moved here.
-        */}
-        {/*
-            A COLUMN FLEX that does NOT scroll. Everything in this panel is a
-            control except the session list, and the list was the thing
-            pushing the controls off the bottom: with a handful of sessions
-            running, "Start a new session", "Developer terminal" and the
-            GitHub / Share / version footer all sat below the fold behind a
-            scroll. The list flexes and scrolls inside itself now (see the
-            wrapper below); every control is `shrink-0` and stays on screen.
-
-            `platform-safe-scroll` moves onto the scroller with the scrolling.
+            A COLUMN FLEX with EXACTLY ONE SCROLLER in it. The quick actions
+            and the view rows are `shrink-0`; #improve-sessions is
+            `flex-1 min-h-0 overflow-y-auto`. That is the whole layout rule,
+            and it gives both idioms their behaviour for free: a full-height
+            desktop side panel scrolls its list inside a fixed column, and a
+            mobile bottom sheet is content-sized until it reaches its cap and
+            then scrolls the same list — which is what the board draws.
+            No measurement, no fold, nothing pushed past the bottom.
         */}
         <div
           id="improve-body"
           className="flex-1 min-h-0 flex flex-col overflow-hidden"
         >
           {/*
-              ── The two controls at the top (#1367) ────────────────────
+              ── Zone 1: the quick actions ──────────────────────────────
 
-              Feedback first, and deliberately: it is the one action that needs
-              nothing of the viewer — no collaborator bit, no session, no repo.
-              Everything below it asks for progressively more.
+              Three circular controls with their captions BENEATH, which is
+              what makes three fit across a 390pt screen at all — a label
+              beside a disc costs the width three times over. Feedback first,
+              deliberately: it is the one action that needs nothing of the
+              viewer — no collaborator bit, no session, no repo.
 
-              It is a BUTTON now rather than a list row. The panel is a stack of
-              rows that all look alike, and the one thing here that every
-              viewer can always do looked exactly like the six they mostly
-              cannot. Same handler, same id — `#improve-row-feedback` is what
-              the dot's writer and the checks select on — only the chrome
-              changed.
+              Every id here predates the merge and keeps its meaning:
+              `#improve-row-feedback` is what the outbox dot's writer selects,
+              `#improve-row-new-session` has named Improve.startSession() since
+              this panel existed, and `#improve-row-share` keeps its canShare
+              gate. The drawer's own `#app-context-new-change` retires INTO
+              the middle one — two ids calling one method was the duplication
+              the merge exists to remove.
           */}
-          <div className="px-4 pt-3 pb-2 flex flex-col gap-2 shrink-0">
-            <Button
-              id="improve-row-feedback"
-              type="button"
-              layout="fullIconRow"
-              size="sm"
-              className="un-touch-target"
-              onClick={() => Improve.giveFeedback()}
-            >
-              <ChatIcon className="w-4 h-4 shrink-0" />
-              Give feedback
-            </Button>
-            {/*
-                The App / Feed / Kanban toggle, directly under it. `sm:hidden`
-                lives on the component: on a wide screen this copy steps aside
-                and the header's takes over, immediately left of #improve-btn.
-                See ./view-toggle.tsx for why both are always rendered.
-            */}
-            <ImproveViewToggle compact={false} />
-          </div>
-
-          {/*
-              THE SESSION LIST — the one scrolling region in the panel.
-
-              `flex-1 min-h-0` gives it whatever the controls above and below
-              do not use, and `overflow-y-auto` keeps a long list inside its
-              own box instead of spending the panel's height. The rows carry
-              an explicit `min-h-[44px]`, which REPLACES flexbox's automatic
-              `min-height: auto` floor and is exactly the kind of thing that
-              gets squeezed under 44px on a short viewport — `shrink-0` on the
-              rows' own wrapper inside the scroller keeps the tap target.
-
-              What is NOT in here is deliberate: "Start a new session" and
-              "Developer terminal" are actions, not list entries, and they
-              belong with the other controls that stay on screen. That does
-              move "Start a new session" below the other-apps section it used
-              to precede — actions grouped with actions.
-
-              The footer stays a DIRECT child of #improve-body: dapp.json
-              checks `#improve-body > #improve-footer > #improve-row-github`.
-          */}
-          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-          <div className="shrink-0">
-          <div className={SECTION_LABEL_CLASS}>Sessions</div>
-          {state.loadingSessions && !state.sessionsLoaded ? (
-            <div className="px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400">
-              Loading…
-            </div>
-          ) : null}
-          {sessions.map((session) => (
-            <SessionRow key={session.key} session={session} showApp={false} />
-          ))}
-          {state.sessionsLoaded && sessions.length === 0 ? (
+          <div className="shrink-0 px-4 pt-1 pb-2">
+            {/* ONE GROUP, not three controls in a row. A recessed well with
+                hairline dividers is the lightest treatment that still says
+                "these belong together and the list below is something else" —
+                which is the separation the stacked-circles version never had.
+                Overflow-hidden so the segments' hover fill respects the
+                rounded corners. */}
             <div
-              id="improve-sessions-empty"
-              className="px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400"
+              id="improve-quick-actions"
+              className="flex items-stretch divide-x divide-zinc-950/5 dark:divide-white/10 overflow-hidden rounded-xl bg-zinc-100 dark:bg-white/5"
             >
-              No work in progress on this app.
+              <QuickAction
+                id="improve-row-feedback"
+                label="Feedback"
+                icon={<ChatIcon />}
+                onClick={() => Improve.giveFeedback()}
+              />
+              {state.readOnly ? null : (
+                <QuickAction
+                  id="improve-row-new-session"
+                  label="New change"
+                  icon={<PencilSparklesIcon />}
+                  onClick={() => Improve.startSession()}
+                />
+              )}
+              {state.canShare ? (
+                <QuickAction
+                  id="improve-row-share"
+                  label="Share"
+                  icon={<ShareIcon />}
+                  onClick={() => Improve.share()}
+                />
+              ) : null}
             </div>
-          ) : null}
+          </div>
+
           {/*
-              THE "DEVELOPMENT" SECTION'S TWO NAVIGATION ROWS ARE GONE (#1367).
+              ── Zone 2: the app's three views ──────────────────────────
 
-              `#improve-row-kanban` and `#improve-row-feed` were list rows with
-              a chevron — "Development kanban" and "Latest development
-              activity" — and they are the App/Feed/Kanban toggle at the top of
-              this panel now. Three mutually exclusive views of one app, one of
-              them always current, is a segmented control rather than two
-              one-way links; and as links they could say where to GO but never
-              where you WERE, which is why following one left no way back to
-              the app. Improve.openDev(mode) is unchanged and is still what the
-              two segments call.
-
-              The heading went with them: the terminal below is the only row
-              left under it, and a section label over a single conditional row
-              is a heading that vanishes.
+              The board's drawer, moved here whole. One line each: the label
+              leads, the detail is muted and right-aligned, and the row you are
+              ON carries a tint — so the block says where you are as well as
+              where you can go.
           */}
-          {/* The developer terminal — the header's #dev-console-btn, as a row.
-              Shown on exactly the signal that used to show that button: an app
-              iframe is on screen and the console has something to attach to. */}
-          {/* The overflow area: sessions running on OTHER apps. Rendered only
-              when there are any, so the common case — one app, one session —
-              never pays for a heading it does not need. */}
-          {otherSessions.length > 0 ? (
-            <>
-              <div className={SECTION_LABEL_CLASS}>Running on your other apps</div>
-              {otherSessions.map((session) => (
-                <SessionRow key={session.key} session={session} showApp={true} />
-              ))}
-            </>
-          ) : null}
-
-          </div>
-          </div>
-
-          {/* THE TWO ACTIONS, pinned under the list. Both were inside it and
-              scrolled away with it. */}
-          <div className="shrink-0">
-            {state.readOnly ? null : (
-              <ImproveRow
-                id="improve-row-new-session"
-                icon={<PlusIcon className="w-5 h-5 shrink-0" />}
-                label="Start a new session"
-                onClick={() => Improve.startSession()}
-              />
-            )}
-            {state.showTerminal ? (
-              <ImproveRow
-                id="improve-row-terminal"
-                icon={<TerminalIcon className="w-5 h-5 shrink-0" />}
-                label="Developer terminal"
-                onClick={() => Improve.openTerminal()}
-              />
-            ) : null}
+          <div id="improve-views" className="shrink-0">
+            <ContextRow
+              id="app-context-row-app"
+              row="app"
+              icon={<AppRowIcon />}
+              label={selfHosted ? 'Home' : name || 'App'}
+              detail={selfHosted ? 'The platform itself' : 'View and use the app'}
+              selected={onApp}
+              onClick={() => Improve.openApp()}
+            />
+            <ContextRow
+              id="app-context-row-board"
+              row="board"
+              icon={<BoardIcon />}
+              label="Board"
+              detail="All feedback and changes"
+              selected={onBoard}
+              href={slug ? `#app/${slug}/board` : undefined}
+            />
+            <ContextRow
+              id="app-context-row-activity"
+              row="activity"
+              icon={<NewspaperIcon />}
+              label="Activity"
+              detail="Updates and discussions"
+              selected={onActivity}
+              href={slug ? `#app/${slug}/activity` : undefined}
+            />
           </div>
 
           {/*
-              The version, GitHub and Share block, at the foot of the panel
-              and always on it. It got there with `mt-auto` (#1367), which
-              collected the free space above it — and therefore stopped
-              working in the one case that mattered, a session list long
-              enough to leave none. The list is the flexing element now, so
-              this is simply the last `shrink-0` child. `pt-2` stays as the
-              floor so the border never crowds the row above it.
+              ── Zone 3: the work in flight, and the only scroller ──────
+
+              THE ONE SCROLLER in this panel, which is what lets the two zones
+              above stay on screen at any viewport: they are `shrink-0`, this
+              is `flex-1 min-h-0 overflow-y-auto`. On the desktop side panel
+              that means the list scrolls inside a full-height column; on the
+              mobile sheet the panel is content-sized until it hits its cap
+              and then this scrolls, which is the bottom-sheet behaviour the
+              board draws.
           */}
           <div
-            id="improve-footer"
-            className="shrink-0 pt-2 border-t border-zinc-100 dark:border-zinc-800 platform-safe-scroll"
+            id="improve-sessions"
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
           >
-            {state.repoUrl ? (
-              <ImproveRow
-                id="improve-row-github"
-                icon={<GitHubIcon className="w-5 h-5 shrink-0" />}
-                label="View on GitHub"
-                href={state.repoUrl}
-                external={true}
-              />
-            ) : null}
-            {state.canShare ? (
-              <ImproveRow
-                id="improve-row-share"
-                icon={<ShareIcon className="w-5 h-5 shrink-0" />}
-                label="Share app"
-                onClick={() => Improve.share()}
-              />
-            ) : null}
-            {/* Versions last, and as text rather than rows: they are the things
-                here you read instead of act on. `slug` gates the app's own so a
-                target-less panel never renders a dangling label. */}
-            {slug ? (
-              <div
-                id="improve-row-version"
-                className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400"
-              >
-                <span>Version</span>
-                <span
-                  id="improve-version-value"
-                  className="ml-auto font-mono truncate"
-                >
-                  {state.deploying ? 'deploying…' : state.version || 'unknown'}
-                </span>
+            {/* THE HEADING ONLY EARNS ITS LINE WHEN THERE IS A LIST UNDER IT.
+                A section label over an empty section is a label describing
+                nothing, and it was the reason the empty state read as
+                squeezed: two cramped lines in the rhythm a full list needs. */}
+            {nothingRunning ? null : (
+              <div className={SECTION_LABEL_CLASS}>
+                Changes in progress
+              </div>
+            )}
+            {state.loadingSessions && !state.sessionsLoaded ? (
+              <div className="px-4 pb-2 text-xs text-zinc-500 dark:text-zinc-400">
+                Loading…
               </div>
             ) : null}
+            {sessions.map((session) => (
+              <SessionRow
+                key={session.key}
+                session={session}
+                showApp={false}
+                onNavigate={dismissForNav}
+              />
+            ))}
             {/*
-                THE THREE ROWS BELOW CAME FROM #drawer-footer, ids and renderers
-                intact, because every one of them is a fact about the platform
-                or the open app rather than a navigation action — which is what
-                the hamburger is for now.
+                NOTHING RUNNING ANYWHERE — the one state with room to spare, so
+                it gets some. Everything else in this panel is tuned for a
+                contested column; here the list is the thing that is absent,
+                and a centred block with real air says "nothing is running"
+                far better than a muted fragment tucked under a heading.
 
-                They are rendered here as CONSTANT markup with empty slots: the
-                modules that fill them (App.loadVersion,
-                features/header/native-app-version.js, AppView.renderForkBadge)
-                all resolve their slot by getElementById and toggle `hidden` on
-                the row, so only the parent changed. `.drawer-ver-row` keeps its
-                name for the same reason — app.css draws all three off it, and
-                renaming would be a restyle rather than a move.
-
-                DrawerStatus.refreshDeployDot() reads the deploying pill out of
-                whichever of these is painted, which is why the amber dot on the
-                hamburger still lights when a deploy is in flight.
+                `text-sm`, not the `text-xs` the metadata around it uses: this
+                is the only prose on the surface, and prose has a floor.
             */}
-            <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
-              <span className="drawer-ver-label">
-                Platform version
-              </span>
-              <span
-                id="platform-version-pill-slot"
-                className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
+            {nothingRunning ? (
+              <div id="improve-sessions-empty" className="px-6 py-9 text-center">
+                <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
+                  No changes in progress.
+                </p>
+                <p className="mt-1 text-sm text-zinc-500 text-pretty dark:text-zinc-400">
+                  Start one with New change, or send feedback and let someone
+                  else pick it up.
+                </p>
+              </div>
+            ) : null}
+            {/* This app is quiet but another is not: the space is contested
+                again, so the note goes back to one muted line. */}
+            {state.sessionsLoaded && sessions.length === 0 && otherSessions.length > 0 ? (
+              <div className="px-4 pb-2 text-xs text-zinc-500 dark:text-zinc-400">
+                Nothing running on this app.
+              </div>
+            ) : null}
+
+            {/* The overflow area: changes running on the viewer's OTHER apps —
+                the board's own second section, and the reason its sticky calls
+                this surface "not focused on a selected app". */}
+            {otherSessions.length > 0 ? (
+              <>
+                <div className={SECTION_LABEL_CLASS}>
+                  Changes in other apps
+                </div>
+                {otherSessions.map((session) => (
+                  <SessionRow
+                    key={session.key}
+                    session={session}
+                    showApp={true}
+                    onNavigate={dismissForNav}
+                  />
+                ))}
+              </>
+            ) : null}
+
+            {state.showTerminal ? (
+              <button
+                id="improve-row-terminal"
+                type="button"
+                className={ROW_BASE + ROW_REST}
+                onClick={() => Improve.openTerminal()}
               >
-              </span>
-            </div>
-            {/* Installed Flutter app release (#1101) — version/build, e.g.
-                0.4.0/1223. Deliberately independent of the platform version
-                above and never the open app's commit. Hidden outside the
-                mobile app. */}
-            <NativeAppVersionRow />
-            {/* Fork lineage: the amber "⑂ Forked from <name>" label, written by
-                AppView.renderForkBadge() and revealed by
-                App.DrawerStatus.setForkVisible(). App context, not a version. */}
-            <div id="drawer-row-app-fork" className="hidden drawer-ver-row items-center gap-2 px-4">
-              <span id="app-fork-badge-slot" className="ml-auto inline-flex min-w-0 justify-end">
-              </span>
-            </div>
+                <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5" aria-hidden="true">
+                  <TerminalIcon />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  Developer terminal
+                </span>
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

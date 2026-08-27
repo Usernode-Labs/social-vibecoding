@@ -4,7 +4,7 @@
  * It replaced three things at once: the App/Dev segmented switch, the feedback
  * bubble and the work cog. The switch is the one worth explaining, because this
  * button inherits its lifecycle exactly. That control was shown by
- * `App.DrawerStatus.setAppOpen()` and hidden everywhere else; this one is shown
+ * `App.ImproveStatus.setAppOpen()` and hidden everywhere else; this one is shown
  * whenever ../improve/improve-store.js carries a TARGET.
  *
  * TWO publishers put one there. `setAppOpen()` does it for an open app, and
@@ -18,52 +18,50 @@
  * now — the call every path funnels through — so the button is either there on
  * every home visit or on none.
  *
- * ── Why a labelled pill and not a fifth icon ───────────────────────────
+ * ── Why a labelled pill and not an icon ────────────────────────────────
  *
- * Everything else in the right group is a 28px glyph, and a sixth would have
- * been unreadable — "improve" has no conventional glyph the way a bell or a
- * hamburger does. It also has to carry the weight the segmented switch carried:
- * that control was the one thing in the header that changed what the screen
- * WAS, and its replacement should not read as another notification affordance.
- * So it is a pill with a word in it, sized to the header's 28px content row.
+ * "improve" has no conventional glyph the way a bell or a hamburger does, so
+ * it is a word. It was a plain violet text action for as long as it was
+ * CONTEXTUAL — quiet on purpose, one of several things that could occupy the
+ * slot. Now that it is the standing action on every screen, the board draws
+ * it as the bar's one FILLED control, and a bare word beside two glyphs
+ * reads as a caption rather than as the primary thing to do. Sized to the
+ * header's 28px content row either way.
  *
  * ── What the button says while the panel is SHUT ───────────────────────
  *
- * Four things, in three corners, and each is here because the thing it is
- * about is behind this button rather than anywhere else:
+ * One thing: `#feedback-queue-dot` (bottom-left, amber) came with the retired
+ * feedback button, kept its id and its writer, and belongs here because this
+ * button is the only way to reach the feedback dialog — an unsent draft with
+ * no visible cue is the failure it exists to prevent.
  *
- *   - THE GLYPH is a spinner instead of a lightbulb while a dev session is
- *     mid-turn. It is the ambient "something is running" cue, and it costs no
- *     space at all.
- *   - `#notifications-badge-ai` (top-right, green) is the unread
- *     session-related count. It sat on the hamburger, next to the bell's red
- *     unread badge — but sessions are not notifications, and the drawer is not
- *     where you go to look at one. Green vs red on ONE control was also the
- *     thing that made it "two different reasons to open me"; the two reasons
- *     are two controls now.
- *   - `#improve-version-dot` (top-left) is the platform version cue: amber
- *     while a deploy is in flight, violet once the platform has rolled past
- *     the SHA this tab loaded against. It was `#header-menu-deploy-dot` on the
- *     hamburger, from when the version rows lived in that drawer's footer.
- *     They live in THIS panel's footer now, so the dot followed them.
- *   - `#feedback-queue-dot` (bottom-left, amber) came with the retired
- *     feedback button, kept its id and its writer, and belongs here because
- *     this button is the only way to reach the feedback dialog — an unsent
- *     draft with no visible cue is the failure it exists to prevent. It moved
- *     off the top-right corner when the green count arrived there.
+ * #1412 parked the green session count, the version dot and a
+ * spinner-while-working glyph here; the Streamlined Concept re-homed all of
+ * that onto the hamburger's badge cluster — see <MenuIndicators/> in
+ * ../header/platform-header.tsx (the working cue is the emerald badge's
+ * pulse there) — because this slot slims to a plain word and the board keeps
+ * the hamburger as THE indicator cluster.
  *
- * Three corners on one 28px pill is a lot, and it is bounded by how rarely
- * they coincide: the queue dot only appears offline, the version dot only
- * during a deploy or after a roll, the count only with unread session news.
+ * ── The slot is NOT contextual any more ────────────────────────────────
  *
- * All four render from ./improve-store.js. None may be written by id from a
- * classic module: this button is React-owned end to end, and a pre-hydration
- * `classList` write is a mismatch React patches straight back out.
+ * For a while this control swapped shape by route: the word on an app's
+ * default screens, an EYE on the Dev screens, and an eye/pencil PAIR on a
+ * session that had a staging preview. Improve turned out to be the action
+ * people reach for most, and a control that both moves and disappears is a
+ * bad one to make load-bearing — it was absent exactly on a session with no
+ * preview yet, which is where describing a change is most likely. It renders
+ * on every screen carrying a target now. The doing<->seeing loop it used to
+ * displace lives in the session strip
+ * (../dev-chat/session-header.tsx), beside the name of the change it acts
+ * on.
+ *
+ * The dot's visibility rides the visibility store; nothing here may be
+ * written by id from a classic module: this button is React-owned end to
+ * end, and a pre-hydration `classList` write is a mismatch React patches
+ * straight back out.
  */
 
 import { useRef } from 'react';
-
-import { LightBulbIcon, SpinnerArcIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -77,10 +75,40 @@ import { Improve } from './improve-controller.js';
  * thing that appears in the header when an app opens, so its height IS the
  * header's height there.
  */
+// A FILLED accent pill, per the Streamlined Concept board's session bar
+// (nodes 380:9672 and 380:9324 — the CHAT UI and APP PREVIEW frames).
+//
+// ── Read this before "restoring" the plain text action ─────────────────
+//
+// `git log -S "Improve is NOT a button"` finds a93c77f1, "Owner review round
+// 2: drawer regrouped, Improve as plain text", which moved this run off
+// exactly this fill and left a comment saying the owner had called it twice.
+// That looks like this pill is a regression. It is not, and the reason is a
+// date: THE BOARD IS NEWER THAN THAT REVIEW, confirmed by the owner — it is
+// where the current toolbar concept comes from (Improve beside the bell and
+// messages glyphs, with the title tab's dropdown opening the Apps sheet), and
+// it draws Improve filled.
+//
+// The review is not wrong either, for the bar it was written about. At
+// a93c77f1 the header's right group was the hamburger and this control, full
+// stop — no bell, no chat bubble — and "the header stays quiet and the word
+// carries it" is right for that bar. That bar no longer exists: the hamburger
+// is retired, two glyphs stand where it was, and Improve became the standing
+// action on every screen rather than a contextual one. A bare word among
+// glyphs reads as their caption; the board's answer is the one filled control
+// in the bar.
+//
+// `violet-600` is #0a6ee0 — the shell's accent is a BLUE, not a violet (see
+// tailwind.config.js: the scale name is an identity, not a hue), which is
+// exactly the blue the board draws.
+//
+// h-7 and no vertical padding are the header's 28px content-row ceiling,
+// pinned by tests/header-height-parity.test.js — a filled pill keeps it by
+// taking its height from `h-7` and its shape from `rounded-full`.
 const IMPROVE_BTN_CLASS =
-  'relative inline-flex items-center gap-1.5 h-7 px-2.5 mr-2.5 rounded-lg '
-  + 'bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium '
-  + 'transition-colors un-touch-target';
+  'relative inline-flex items-center h-7 px-3 mr-2.5 rounded-full '
+  + 'bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold '
+  + 'un-touch-target';
 
 /** Amber while a deploy runs, violet once the platform has rolled past us. */
 const VERSION_DOT: Record<string, string> = {
@@ -88,10 +116,66 @@ const VERSION_DOT: Record<string, string> = {
   stale: 'bg-violet-400',
 };
 
+// Byte-identical to the bell's own badge run, which is the point: the two are
+// twins at different corners of different controls, and a contrast/geometry
+// test diffs them as such.
+const AI_BADGE_CLS =
+  'absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full '
+  + 'bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center';
+
+/**
+ * What changed while you were not looking — three corners of one control.
+ *
+ * #1412 built these for the Improve button and the Streamlined header then
+ * parked them on the hamburger, because that was the control whose drawer
+ * held the sessions. It does not any more: this panel is the sessions
+ * surface, so the cue that says "go and look" belongs on the control that
+ * opens it. Everything #1412 built is kept whole — the writers publish
+ * through improveStore (Improve.setSessionBadge / setVersionState, never a
+ * classList write by id), the count carries `data-session-done` for the
+ * declared checks, the dot knows the violet "platform rolled past this tab"
+ * state, and a running turn shows as a pulse on the emerald badge, which also
+ * appears dot-sized and empty when a turn runs with nothing unread yet.
+ *
+ * Three corners, one rule: the outbox dot is bottom-left, the session count
+ * top-right, the version dot bottom-right — so a deploy rolling out during an
+ * unread finish cannot hide underneath the count.
+ *
+ * At rest everything is `hidden` with the exact class runs the prerender
+ * ships, so hydration matches.
+ */
+function ImproveIndicators() {
+  const { working, sessionUnread, sessionDone, versionState } = useStoreState(improveStore);
+  const showAi = working || sessionUnread > 0;
+  return (
+    <>
+      <span
+        id="notifications-badge-ai"
+        data-session-done={String(sessionDone)}
+        className={showAi
+          ? `${AI_BADGE_CLS}${working ? ' animate-pulse' : ''}`
+          : `hidden ${AI_BADGE_CLS}`}
+      >
+        {sessionUnread > 0 ? (sessionUnread > 99 ? '99+' : String(sessionUnread)) : ''}
+      </span>
+      {/* Renamed with the move. It was #header-menu-deploy-dot, from when the
+          version rows lived in that drawer's footer — a `header-menu-*` id on
+          the Improve button would be a lie that outlives everyone who
+          remembers it. */}
+      <span
+        id="improve-version-dot"
+        className={VERSION_DOT[versionState]
+          ? `absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full ${VERSION_DOT[versionState]}`
+          : 'hidden absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500'}
+        aria-hidden="true"
+      >
+      </span>
+    </>
+  );
+}
+
 export function ImproveButton() {
-  const {
-    target, open, working, sessionUnread, sessionDone, versionState,
-  } = useStoreState(improveStore);
+  const { target, open } = useStoreState(improveStore);
   // "this app" is wrong on home, where the target is the platform itself
   // (#1367). The visible label stays the single word "Improve" at both — what
   // is being improved is named in the panel's own header.
@@ -107,61 +191,51 @@ export function ImproveButton() {
   // The button materially changes the header's right-group width, which is one
   // of the two inputs to the title's centered-vs-flow decision. The group's
   // ResizeObserver catches it a frame later on its own; this is the explicit
-  // hook `App.DrawerStatus.setAppOpen()` used to call for the App/Dev switch,
+  // hook `App.ImproveStatus.setAppOpen()` used to call for the App/Dev switch,
   // so the title does not visibly jump.
   useIsomorphicLayoutEffect(() => {
     (window as unknown as { HeaderLayout?: { refresh?: () => void } })
       .HeaderLayout?.refresh?.();
+    // `target` is the only input left: the control no longer swaps shape by
+    // route, so the right group's width moves only when the word itself
+    // appears or clears.
   }, [target]);
+
+
+  // Improve renders on EVERY screen that has a target, Dev included.
+  //
+  // It used to be the contextual slot: a violet pill in the app's default
+  // state, an EYE on the Dev screens, and on a session with a preview an
+  // eye/pencil PAIR. That made the one control people reach for most a thing
+  // that moved and sometimes vanished — and it vanished on exactly the
+  // screens (a session with no preview yet) where wanting to describe a
+  // change is most likely. So the slot stops being contextual: Improve is
+  // always the header's right-hand action, next to the Messages and
+  // Notifications glyphs, and the doing<->seeing loop it used to displace
+  // moved down to the session strip, where the change it acts on is named
+  // (see ../dev-chat/session-header.tsx).
+  const pill = !!target;
 
   return (
     <button
       id="improve-btn"
       type="button"
-      className={target ? IMPROVE_BTN_CLASS : `hidden ${IMPROVE_BTN_CLASS}`}
+      className={pill ? IMPROVE_BTN_CLASS : `hidden ${IMPROVE_BTN_CLASS}`}
       aria-label={label}
       aria-haspopup="dialog"
       aria-expanded={open ? 'true' : 'false'}
       onClick={() => Improve.toggle()}
     >
-      {working
-        ? <SpinnerArcIcon className="w-4 h-4 animate-spin" aria-hidden="true" />
-        : <LightBulbIcon className="w-4 h-4" aria-hidden="true" />}
       Improve
-      {/* Bottom-LEFT since the green count took the top-right corner. */}
+      {/* Bottom-LEFT, where it landed when #1412's green count took the
+          top-right corner. All three indicators are on this control again
+          now, one per corner, so nothing needs to move. */}
       <span
         ref={dotRef}
         id="feedback-queue-dot"
         className="hidden absolute -bottom-0.5 -left-0.5 w-2 h-2 rounded-full bg-amber-400"
       />
-      {/* PRESENT-BUT-HIDDEN at rest, not absent, and both of these are the
-          same decision. The prerender has to emit the shape the document
-          always carried — an island whose first render differs from the
-          prerendered markup is a hydration mismatch, and a console error on
-          any route fails proposal checks — and two declared checks resolve
-          these ids on a route where neither is lit. `hidden` is how every
-          other indicator in the header says "nothing to report". */}
-      <span
-        id="improve-version-dot"
-        className={VERSION_DOT[versionState]
-          ? `absolute -top-0.5 -left-0.5 w-2 h-2 rounded-full ${VERSION_DOT[versionState]}`
-          : 'hidden absolute -top-0.5 -left-0.5 w-2 h-2 rounded-full bg-amber-500'}
-        aria-hidden="true"
-      />
-      {/* The green session count. `data-session-done` rides along on the same
-          node it always did — a declared check selects on it to prove the
-          badge is up for a real reason rather than merely present. Same
-          corner, size and pill geometry as the hamburger's red unread badge,
-          so the two still read as one badge convention across two controls. */}
-      <span
-        id="notifications-badge-ai"
-        data-session-done={String(sessionDone)}
-        className={sessionUnread > 0
-          ? 'absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center'
-          : 'hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center'}
-      >
-        {sessionUnread > 0 ? (sessionUnread > 99 ? '99+' : String(sessionUnread)) : ''}
-      </span>
+      <ImproveIndicators />
     </button>
   );
 }

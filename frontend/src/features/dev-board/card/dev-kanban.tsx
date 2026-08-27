@@ -3,23 +3,17 @@
  * that host. The host stays app-view.js's; the columns, the mobile tab
  * strip and every card render from `devKanbanStore`.
  *
- * ── The drag seam (#613) ──────────────────────────────────────────────
+ * ── The retired drag seam (#613) ──────────────────────────────────────
  *
- * `_initKanbanDrag`'s pointer recognizer MOVES these nodes during a drag
- * (insertBefore straight into `.dev-drag-list`), which React cannot know
- * about. Three things keep that sound, mirroring the home widget strip:
- *
- * 1. `_dragState` blocks every publish for the life of the gesture (the
- *    same guard that blocked innerHTML repaints).
- * 2. On drop, `_commitBoardOrder` REMOUNTS the board portal rather than
- *    republishing into it — React would reconcile keyed children over DOM
- *    the recognizer already rearranged, and children it deems stationary
- *    get no DOM operation, leaving them wherever the drag put them. A
- *    remount rebuilds the column exactly as the old innerHTML did.
- * 3. The drag handle and item shells render here with the exact classes
- *    the recognizer selects on (`.dev-drag-handle`, `.dev-drag-item`,
- *    `data-order-key`), and the recognizer's own mid-gesture writes
- *    (`opacity-50`, `cursor-grabbing`) touch classes React never renders.
+ * Cards once carried a six-dot grip in a 24px left gutter, and
+ * `_initKanbanDrag`'s pointer recognizer reordered a column by moving these
+ * nodes underneath React. The grip was the gesture's only entry point, and
+ * it cost every card that gutter on the narrowest screen there is — so the
+ * whole affordance is gone: no handle, no recognizer, no `_dragState`
+ * publish guard, no remount-on-drop. What survives is the READ side.
+ * `_applyManualOrder` still lays a saved order over the derived one in
+ * `_kanbanView`, so a column somebody already arranged keeps its
+ * arrangement; nothing in the UI can write a new one.
  *
  * ── Tabs (#814) ───────────────────────────────────────────────────────
  *
@@ -30,8 +24,6 @@
  */
 
 import type { ReactNode } from 'react';
-
-import { GripDotsIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../../lib/use-store-state';
 import { devKanbanStore } from './cards-store';
@@ -70,24 +62,6 @@ function Tab({ col, active, loading }: { col: KanbanColView; active: boolean; lo
   );
 }
 
-/** `_wrapDraggable`'s shell. No orderKey (read-only viewers) → no handle. */
-function DragItem({ orderKey, children }: { orderKey?: string | null; children: ReactNode }): ReactNode {
-  if (!orderKey) return <div className="dev-drag-item">{children}</div>;
-  return (
-    <div className="dev-drag-item relative pl-6" data-order-key={orderKey}>
-      <button
-        type="button"
-        className="dev-drag-handle absolute left-0 top-0 bottom-0 w-6 flex items-center justify-center text-zinc-300 dark:text-zinc-500 hover:text-zinc-500 dark:hover:text-zinc-400 cursor-grab touch-none"
-        aria-label="Drag to reorder"
-        title="Drag to reorder"
-      >
-        <GripDotsIcon className="w-4 h-4" aria-hidden="true" />
-      </button>
-      {children}
-    </div>
-  );
-}
-
 function Column({ col, active, loading }: { col: KanbanColView; active: boolean; loading: boolean }): ReactNode {
   let cards: ReactNode;
   if (loading) {
@@ -97,20 +71,10 @@ function Column({ col, active, loading }: { col: KanbanColView; active: boolean;
     cards = <CardSkeleton n={2} label={`Loading ${col.title}`} />;
   } else if (col.empty) {
     cards = <div className="text-xs text-zinc-500 dark:text-zinc-500 italic py-2">{col.empty}</div>;
-  } else if (col.orderCol) {
-    cards = (
-      <div className="space-y-2 dev-drag-list" data-order-col={col.orderCol}>
-        {col.rows.map((row: ListRow) => (
-          <DragItem key={row.key} orderKey={row.t === 'card' ? row.orderKey : null}>
-            <ListRowView row={row} />
-          </DragItem>
-        ))}
-      </div>
-    );
   } else {
     cards = (
       <div className="space-y-2">
-        {col.rows.map((row) => <ListRowView key={row.key} row={row} />)}
+        {col.rows.map((row: ListRow) => <ListRowView key={row.key} row={row} />)}
       </div>
     );
   }

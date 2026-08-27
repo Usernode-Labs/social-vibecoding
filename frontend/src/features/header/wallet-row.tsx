@@ -1,5 +1,5 @@
 /**
- * `#drawer-row-wallet` — the balance readout at the top of the drawer.
+ * `#account-row-wallet` — the balance readout in the Profile screen's account group.
  * See ./wallet-sheet-store.ts for what the seam carries.
  */
 
@@ -24,7 +24,7 @@ export function WalletRow(): ReactNode {
   const s = useStoreState(walletSheetStore);
   return (
     <button
-      id="drawer-row-wallet"
+      id="account-row-wallet"
       className={s.visible ? ROW : `hidden ${ROW}`}
       onClick={() => controller()?.openFromRow?.()}
     >
@@ -35,7 +35,7 @@ export function WalletRow(): ReactNode {
       {/* Blank until the module has a snapshot — the hand-written row shipped
           this span empty and the prerender has to agree. */}
       <span
-        id="drawer-wallet-balance"
+        id="account-wallet-balance"
         className="ml-auto text-xs font-semibold text-violet-700 dark:text-violet-400"
       >{s.balanceLabel}</span>
     </button>

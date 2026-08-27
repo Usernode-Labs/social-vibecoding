@@ -707,14 +707,3 @@ test('_onSessionStateEvent ignores events for another app', () => {
   assert.equal(AppView._ghIssues[0].headless.status, 'generating',
     'issue numbers are per-repo, so a cross-app event must not patch this row');
 });
-
-test('_onSessionStateChanged never repaints mid-drag', () => {
-  const { AppView } = makeAppViewWithStore();
-  let repaints = 0;
-  AppView._repaintDevBody = () => { repaints += 1; };
-  AppView.appData = { slug: 'demo-app' };
-  AppView._dragState = { dragging: true };
-
-  AppView._onSessionStateChanged();
-  assert.equal(repaints, 0, 'an innerHTML swap mid-drag would strand the card');
-});

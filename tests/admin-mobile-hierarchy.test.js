@@ -155,12 +155,15 @@ test('route() is idempotent, so a duplicate dispatch never repaints twice', () =
 test('the header back button defers to the console, then goes home', () => {
   const handler = appJs.slice(appJs.indexOf("document.getElementById('back-btn').addEventListener"));
   // Wide enough for every screen hook the handler chains (admin, settings,
-  // browse) plus the navigateHome fallthrough below them.
-  const body = handler.slice(0, 800);
+  // browse, the dev session), the follow-the-href step and the navigateHome
+  // fallthrough below them.
+  const body = handler.slice(0, 1800);
   assert.match(body, /App\._inAdmin && window\.AdminConsole\?\.handleBack\?\.\(\)/,
     'the console only gets a say while the admin screen is actually mounted');
+  assert.match(body, /window\.location\.hash = href/,
+    'a screen that named a parent goes THERE — the arrow\'s href is the answer');
   assert.match(body, /App\.navigateHome\(\)/,
-    'every other screen keeps the plain go-home behaviour');
+    'and home is the fallback for a screen that named none');
 });
 
 test('the back button has both icons and one named toggle', () => {
@@ -171,7 +174,16 @@ test('the back button has both icons and one named toggle', () => {
   // owns where it points.
   assert.match(appJs, /setBackIcon\(mode, href\)\s*\{/, 'App.setBackIcon owns the toggle');
   const fn = appJs.slice(appJs.indexOf('  setBackIcon(mode, href) {'));
-  const body = fn.slice(0, 900);
+  const body = fn.slice(0, fn.indexOf('\n  },'));
+  // The slot is React's, so the toggle PUBLISHES first — a rendered
+  // className belongs to React and it rewrites the attribute from its own
+  // props on every render of that island, which silently undid the
+  // classList writes below once the header gained state (the app glyph,
+  // the session status pill). See features/header/back-button-store.js.
+  assert.match(body, /UsernodeReact\?\.backButton\?\.set\?\.\(/,
+    'setBackIcon publishes the slot state rather than only writing to the DOM');
+  assert.ok(body.indexOf('backButton') < body.indexOf('back-icon-home'),
+    'the publish comes first; the DOM writes are the pre-hydration fallback');
   assert.match(body, /back-icon-home/, 'it toggles the home icon');
   assert.match(body, /back-icon-arrow/, 'it toggles the arrow icon');
   assert.match(body, /aria-label/, 'and relabels the button for screen readers');
@@ -240,10 +252,12 @@ test('the header becomes the section nav bar on mobile level 2 only', () => {
   assert.match(body, /AdminConsole\._isMobile\(\) && AdminConsole\._level === 2/,
     'only a mobile section view borrows the header');
   // #1036: the second argument is the anchor's href — inside a section
-  // the chevron pops to the console's own menu, so that is where it
-  // points; everywhere else it falls through to home.
-  assert.match(body, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
-    'the arrow appears exactly there, and targets the console menu');
+  // the chevron pops to the console's own menu, so that is where it points;
+  // at level 1 it points at PROFILE, this screen's parent since the drawer
+  // that linked Admin from anywhere was retired. ALWAYS an arrow: with the
+  // hamburger gone, a hidden back slot would strand level 1.
+  assert.match(body, /setBackIcon\('arrow', inSection \? '#admin' : '#profile'\)/,
+    'the arrow is always there, and targets the console menu inside a section');
   assert.match(body, /App\.setHeaderTitle\(s \? s\.label : /,
     'the title becomes the section label (which also feeds the native AppBar)');
   assert.match(body, /'Platform status'/,

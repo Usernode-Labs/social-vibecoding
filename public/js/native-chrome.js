@@ -128,25 +128,15 @@
       };
     },
 
-    async _initDrawerRows() {
-      // The Profile row is a plain #profile anchor; hash navigation
-      // drives the screen (App.navigateToProfile), the click handler
-      // only closes the drawer — same wiring as the Challenges row.
-      //
-      // NO capability gate: the row used to be revealed only when the
-      // bridge reported getProfileInfo, which kept the screen
-      // unreachable in an ordinary browser. Since the topochain merge
-      // the /challenges-api/me/* routes scope to the platform session
-      // server-side (src/routes/topochain/mobile.js), so the screen
-      // works identically on the web — the probe was the only thing
-      // still hiding it. The anchor now ships visible in index.html;
-      // this handler only wires the drawer-close behaviour.
-      const row = document.getElementById('drawer-row-profile');
-      if (!row) return;
-      row.addEventListener('click', () => {
-        if (window.App && App.HeaderMenu) App.HeaderMenu.close();
-      });
-    },
+    // `_initDrawerRows()` lived here. It existed for one reason: the Profile
+    // row sat in the hamburger drawer, so a tap had to close that drawer on
+    // its way to #profile. The drawer is retired and Profile is reached from
+    // Home's own account row, which is a plain anchor with nothing to
+    // dismiss — so there is no wiring left to do. The capability gate this
+    // function also used to carry (the row revealed only when the bridge
+    // reported getProfileInfo, which kept the screen unreachable in an
+    // ordinary browser) had already gone: /challenges-api/me/* scopes to the
+    // platform session server-side since the topochain merge.
 
     // ── Platform login handoff + node lifecycle (bridge v4) ──────────
 
@@ -1242,7 +1232,6 @@
       // the shell is still deciding whether this document is anonymous or B.
       NativeChrome._setAuthenticatedSessionAdmission(false);
       NativeChrome._setSessionWalletRelayAdmission(false);
-      NativeChrome._initDrawerRows();
       NativeChrome._initAuthStatusEvents();
       NativeChrome._initSessionRecoveryEvents();
       // Anonymous SPA boot (fold-auth-pages-into-SPA): the login handoff

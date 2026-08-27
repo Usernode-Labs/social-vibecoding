@@ -114,6 +114,10 @@ export const ChevronLeftInsetIcon = stroked('ChevronLeftInsetIcon', 'M15 18l-6-6
 
 export const ChevronRightIcon = stroked('ChevronRightIcon', 'M9 5l7 7-7 7');
 
+// Heroicons v1 outline view-grid — the drawer's "Your apps" row (owner
+// review round 2: the section header is a nav item of its own).
+export const Squares2X2Icon = stroked('Squares2X2Icon', 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z');
+
 /**
  * An app WINDOW — a framed rectangle with a title bar (#1367).
  *
@@ -125,6 +129,17 @@ export const ChevronRightIcon = stroked('ChevronRightIcon', 'M9 5l7 7-7 7');
 export const AppWindowIcon = stroked('AppWindowIcon', [
   'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
   'M4 9.5h16',
+]);
+
+/**
+ * The pencil with a spark — "back to building" on a session screen while its
+ * preview is up (Streamlined Concept: the Figma bar names lucide's
+ * pencil-sparkles; this is the shell's own transcription of that idea — the
+ * composer's pencil body plus a four-point spark in the freed corner).
+ */
+export const PencilSparklesIcon = stroked('PencilSparklesIcon', [
+  'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
+  'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
 ]);
 
 export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H3');
@@ -155,7 +170,10 @@ export const PlusIcon = stroked('PlusIcon', 'M12 5v14M5 12h14');
  */
 export const PlusWideIcon = stroked('PlusWideIcon', 'M12 4v16m8-8H4');
 
-/** The disclosure caret the home panels' expand toggle rotates. */
+/**
+ * The disclosure caret the home panels' expand toggle rotates — and
+ * (Streamlined Concept) the header title tab's "name ⌄" caret.
+ */
 export const ChevronDownIcon = stroked('ChevronDownIcon', 'M19 9l-7 7-7-7');
 
 export const HomeIcon = strokedPath(
@@ -306,12 +324,6 @@ export const ChatBubbleTailIcon = stroked(
   'M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z',
 );
 
-/** The dev board's discussion glyph — a squared bubble with a tail. */
-export const DiscussionIcon = stroked(
-  'DiscussionIcon',
-  'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
-);
-
 export const ThumbsUpIcon = stroked(
   'ThumbsUpIcon',
   'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
@@ -355,6 +367,19 @@ export const UserGroupIcon = stroked(
  * module exists to prevent — so it became an export rather than a duplicate.
  */
 export const BoardIcon = stroked('BoardIcon', 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z');
+
+/**
+ * A NEWSPAPER — the Activity row and screen.
+ *
+ * The Figma board names this slot `lucide/newspaper`, and the glyph is right:
+ * Activity is the project's record of what happened, not a chat. The path is
+ * the shell's own set's Heroicons v1 outline newspaper rather than lucide's,
+ * for the reason in this file's header — one grid, one stroke rhythm.
+ */
+export const NewspaperIcon = stroked(
+  'NewspaperIcon',
+  'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
+);
 
 /**
  * Three equal rules — the Dev screen's Feed tab, and the Improve panel's row
@@ -470,16 +495,6 @@ export const EllipsisHorizontalIcon = ({ id, className, ...rest }: IconProps) =>
   </svg>
 );
 EllipsisHorizontalIcon.displayName = 'EllipsisHorizontalIcon';
-
-/** The kanban card's drag handle: two columns of three dots, 20×20. */
-export const GripDotsIcon = ({ id, className, ...rest }: IconProps) => (
-  <svg id={id} className={className} viewBox="0 0 20 20" fill="currentColor" {...rest}>
-    <circle cx="7" cy="5" r="1.4" /><circle cx="13" cy="5" r="1.4" />
-    <circle cx="7" cy="10" r="1.4" /><circle cx="13" cy="10" r="1.4" />
-    <circle cx="7" cy="15" r="1.4" /><circle cx="13" cy="15" r="1.4" />
-  </svg>
-);
-GripDotsIcon.displayName = 'GripDotsIcon';
 
 /** "Open the staging preview" — the eye, and the same eye struck through. */
 export const EyeIcon = ({ id, className, strokeWidth = '2', ...rest }: IconProps) => (

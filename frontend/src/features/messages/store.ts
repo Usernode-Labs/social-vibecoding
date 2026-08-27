@@ -205,6 +205,17 @@ function validId(value: unknown): value is number {
 function syncDrawerBadge(): void {
   if (typeof document === 'undefined') return;
   const count = state.conversations.reduce((sum, item) => sum + Math.max(0, item.unreadCount || 0), 0);
+  // Streamlined Concept: the hamburger's red number sums Messages in, and
+  // notifications.js (import-free) paints it — publish the count on the
+  // window seam and nudge a repaint when it changes.
+  const host = window as unknown as {
+    __usernodeMessagesUnread?: number;
+    Notifications?: { _renderBadge?: () => void };
+  };
+  if (host.__usernodeMessagesUnread !== count) {
+    host.__usernodeMessagesUnread = count;
+    host.Notifications?._renderBadge?.();
+  }
   const badge = document.getElementById('drawer-messages-badge');
   if (!badge) return;
   badge.textContent = count > 99 ? '99+' : String(count);
@@ -239,40 +250,59 @@ export function isOpen(): boolean {
   return state.route.open;
 }
 
+/**
+ * Thread -> list, INSIDE the sheet.
+ *
+ * This used to be hooked into app.js's `#back-btn` chain and to rewrite the
+ * address on its way. Neither is true now: Messages is a sheet, so the
+ * platform header's arrow belongs to the screen underneath it, and the hash
+ * never names the overlay. The only caller left is the thread's own back
+ * control — which is where a two-level surface's inner back belongs.
+ */
 export function handleBack(): boolean {
-  if (!state.route.open || !state.route.conversationId || !isMobile()) return false;
-  const current = typeof location !== 'undefined' ? location.hash : '';
-  if (current.startsWith('#messages/') && typeof history !== 'undefined') {
-    try { history.replaceState(null, '', '#messages'); } catch { /* non-fatal */ }
-  }
+  if (!state.route.open || !state.route.conversationId) return false;
   route(null);
-  syncChrome();
   return true;
 }
 
-export function isMobile(): boolean {
-  try { return typeof window !== 'undefined' && !window.matchMedia('(min-width: 768px)').matches; }
-  catch { return false; }
-}
+/**
+ * Retired. It asked the VIEWPORT whether both panes fit, and Messages renders
+ * inside a sheet now — 24rem at its widest on a desktop slide-over, full
+ * width on a phone — so two panes never fit and the answer was the same
+ * everywhere. One pane: the list until a row is picked, the thread after it.
+ * Its one caller (`handleBack`) is unconditional as a result.
+ */
 
-export function syncChrome(): void {
-  const app = typeof window !== 'undefined' ? window.App : undefined;
-  if (!app) return;
-  const thread = isMobile() && !!state.route.conversationId;
-  app.setBackIcon?.(thread ? 'arrow' : 'home', thread ? '#messages' : undefined);
-  app.setHeaderTitle?.(thread ? state.active?.title || 'Messages' : 'Messages');
-}
+/**
+ * Retired, and kept as a no-op because the controller object is published on
+ * `window.UsernodeReact.messages` and classic callers still name it.
+ *
+ * It wrote the PLATFORM HEADER — the back arrow's mode and href, and the
+ * title — from inside this feature. A sheet does not own the header: the
+ * screen underneath does, and it is still on screen. Writing the header from
+ * here would retitle whatever the sheet is presented over and leave it
+ * retitled after a dismiss.
+ */
+export function syncChrome(): void {}
 
+/**
+ * Present the sheet, optionally straight into one conversation.
+ *
+ * It wrote `location.hash` and let the router come back round to `route()`.
+ * The sheet is not an address, so this routes directly and presents — which
+ * also makes it idempotent, the thing the old hash-equality branch existed
+ * to work around.
+ */
 export function open(conversationId?: number | null): void {
   if (typeof window === 'undefined') return;
-  const target = validId(conversationId) ? `#messages/${conversationId}` : '#messages';
-  if (window.location.hash === target) route(conversationId || null);
-  else window.location.hash = target;
+  route(validId(conversationId) ? (conversationId as number) : null);
+  window.MessagesSheet?.open?.();
 }
 
+/** List -> thread, inside the sheet. No address change: see `open`. */
 export function selectConversation(conversationId: number): void {
   if (!validId(conversationId) || typeof window === 'undefined') return;
-  window.location.hash = `#messages/${conversationId}`;
+  route(conversationId);
 }
 
 export async function createDirect(userId: number): Promise<ConversationDetail> {

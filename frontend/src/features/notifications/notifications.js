@@ -334,11 +334,16 @@ const Notifications = {
   // every existing caller — a notification click, a screenshot deep link, the
   // native Social coordinator — keeps working unchanged.
   //
-  // `open` is derived rather than stored for the same reason: the drawer's
-  // exit is deferred behind a spring (see HeaderMenu.isPresenting), so a flag
-  // set here would disagree with what is on screen for ~200ms after a close.
+  // `open` is derived rather than stored because both surfaces defer their
+  // exit behind a spring (see HeaderMenu.isPresenting and the sheet
+  // controller's dismiss promise), so a flag set here would disagree with
+  // what is on screen for ~200ms after a close.
+  //
+  // It asks about the SHEET and the drawer both. The rows are the sheet's now
+  // (Streamlined Concept), but this module's own dismiss-before-you-navigate
+  // rule predates that and still has to cover a drawer somebody opened.
   get open() {
-    return !!window.HeaderMenu?.isPresenting?.();
+    return !!window.NotificationsSheet?.isOpen?.();
   },
 
   toggle() {
@@ -347,11 +352,11 @@ const Notifications = {
   },
 
   show() {
-    window.HeaderMenu?.open?.();
+    window.NotificationsSheet?.open?.();
   },
 
   hide() {
-    window.HeaderMenu?.close?.();
+    window.NotificationsSheet?.close?.();
   },
 
   // Screenshot-state deep link (`?shot=notifications`): the list only exists
@@ -368,7 +373,11 @@ const Notifications = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
     if (shot !== 'notifications') return;
     Notifications._shotOpened = true;
-    Notifications.show();
+    // The list is the Notifications SHEET now (Streamlined Concept), so the
+    // deep link resolves a screen underneath and presents over it rather
+    // than opening the drawer.
+    if (window.App?.openNotificationsSheet) window.App.openNotificationsSheet();
+    else Notifications.show();
   },
 
   // #1329: a presented drawer is MODAL on touch — it covers the screen the
@@ -644,18 +653,36 @@ const Notifications = {
     // classic script in a vm, where a top-level `import` is a syntax error —
     // the same constraint dev-chat.js documents). window.Improve is the seam.
     const aiUnread = Notifications._sessionUnread();
-    const redCount = Notifications._bellUnread() + Notifications.invites.length;
+    const notifCount = Notifications._bellUnread() + Notifications.invites.length;
+    // Streamlined Concept: each header glyph wears its OWN count. The bell
+    // carries notifications (bell unread + invites) and the chat bubble
+    // carries unread Messages — the two are separate surfaces, so a single
+    // summed number would name neither. The messages store publishes its sum
+    // on a window seam (this module must stay import-free) and nudges a
+    // repaint whenever it changes.
+    const messagesUnread = Number(window.__usernodeMessagesUnread) || 0;
 
-    const badge = document.getElementById('notifications-badge');
-    if (badge) {
-      if (redCount > 0) {
-        badge.textContent = redCount > 99 ? '99+' : String(redCount);
-        badge.classList.remove('hidden');
+    const paint = (id, count) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (count > 0) {
+        el.textContent = count > 99 ? '99+' : String(count);
+        el.classList.remove('hidden');
       } else {
-        badge.classList.add('hidden');
+        el.classList.add('hidden');
       }
-    }
+    };
+    // The bell's badge, in the header's right group.
+    paint('notifications-badge', notifCount);
+    // The chat bubble's, beside it.
+    paint('drawer-messages-badge', messagesUnread);
 
+    // The green session badge (#notifications-badge-ai on the hamburger) is
+    // React-owned (<MenuIndicators/> in platform-header.tsx): it PUBLISHES
+    // rather than paints — a classList write by id would be a hydration
+    // mismatch React patches straight back out. window.Improve is the seam,
+    // because this module loads as a classic script and cannot import the
+    // store.
     if (typeof window !== 'undefined' && window.Improve
       && typeof window.Improve.setSessionBadge === 'function') {
       window.Improve.setSessionBadge(aiUnread, Notifications._sessionDoneUnread());
@@ -663,6 +690,22 @@ const Notifications = {
 
     const markAll = document.getElementById('notifications-mark-all');
     if (markAll) markAll.disabled = Notifications._bellUnread() === 0;
+    // The app-context sheet's per-change unread dots (Streamlined Concept):
+    // which sessions have an unread session-kind notification right now.
+    // Published into the notifications store — the sheet's rows subscribe.
+    //
+    // Only when the SET changes. The store compares by identity, so pushing a
+    // freshly-built array every time would notify every subscriber (the
+    // screen, the pinned sections and every session row) on every badge
+    // repaint — and _renderBadge runs on each WS event and each refresh.
+    if (Notifications._store) {
+      const ids = Notifications.items
+        .filter((n) => isSessionNotif(n) && !n.readAt && n.sessionId)
+        .map((n) => n.sessionId);
+      const prev = Notifications._store.get().sessionUnreadIds || [];
+      const same = prev.length === ids.length && prev.every((v, i) => v === ids[i]);
+      if (!same) Notifications._store.set({ sessionUnreadIds: ids });
+    }
     Notifications._updateTitle();
     // The cog drawer used to render a pinned section from this same items
     // store and was nudged here whenever the store changed. It is retired;
@@ -917,6 +960,10 @@ const Notifications = {
       // a bug.
       store.set({
         list: [],
+        // The full screen shows read rows regardless of the drawer's
+        // showOlder reveal, so its list maps ALL items even when the
+        // drawer's own list is empty (Streamlined Concept).
+        screenList: Notifications.items.map(rowView),
         // `empty` is still the ORIGINAL "you have never had a notification"
         // hint, so it now also requires that there be no older ones to
         // reveal — otherwise a fully-read drawer would claim nothing had
@@ -930,7 +977,10 @@ const Notifications = {
         showOlder: Notifications.showOlder,
         // Nothing to append a pager to — see the note in the populated branch.
         canLoadMore: false,
-        loadingMore: false,
+        // The screen HAS rows to append to (the read ones above), so its
+        // pager follows the server cursor even while the drawer's is off.
+        screenCanLoadMore: Notifications.hasMore,
+        loadingMore: Notifications.loading,
         touch,
       });
       return;
@@ -942,6 +992,7 @@ const Notifications = {
     // used to float to the top of the grouped list; see PRIORITY_KINDS.)
     store.set({
       list: Notifications._bellItems().map(rowView),
+      screenList: Notifications.items.map(rowView),
       empty: false,
       caughtUp: false,
       olderCount,
@@ -951,6 +1002,7 @@ const Notifications = {
       // owns that space and the older-toggle is the affordance that belongs
       // there.
       canLoadMore: Notifications.hasMore,
+      screenCanLoadMore: Notifications.hasMore,
       loadingMore: Notifications.loading,
       touch,
     });
@@ -1140,6 +1192,13 @@ function rowView(n) {
     unread: !n.readAt,
     unreadCls,
     time: relativeTime(n.createdAt),
+    // Streamlined Concept: the full-screen Notifications view buckets rows
+    // into Today/Earlier and leads each with an avatar-initial chip, so the
+    // raw timestamp and the resolved names ride along as data. The drawer's
+    // renderer ignores all three.
+    createdAtMs: Date.parse(n.createdAt) || 0,
+    who,
+    appLine,
     // The meta line's own layout. `mb` and `wrap` differ per kind, and the
     // plain mention/reply row is the only one that is not a flex row at all.
     mb: true,

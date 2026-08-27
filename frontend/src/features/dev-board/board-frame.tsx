@@ -29,10 +29,10 @@
  *     "Loading…". Rendering `#dev-feed` as a JSX child instead would make
  *     every view-mode re-render reconcile against nodes the module has since
  *     replaced.
- *   * `#dev-chat-card-preview`, `#dc-secrets-state` —
- *     leaves the module writes text or `innerHTML` into. They are safe because
- *     React renders their
- *     `className` (and the preview's placeholder text) as CONSTANT props: React
+ *   * `#dc-secrets-state` —
+ *     a leaf the module writes text or `innerHTML` into. It is safe because
+ *     React renders its
+ *     `className` as a CONSTANT prop: React
  *     only writes an attribute when the prop CHANGES, so a re-render of this
  *     component does not clobber a class or a string the module has since
  *     written. That is the same rule the dialog islands run under — see the
@@ -53,10 +53,9 @@
  * exists on the Dev route. Chunk H (#1085) folds it into the main tree.
  */
 
-import {
-  ChevronRightIcon,
-  DiscussionIcon,
-} from '@/components/ui/icons';
+import { BoardIcon, ListLinesIcon } from '@/components/ui/icons';
+
+import { useDevViewMode } from './view-mode-store';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { skeletonListHtml } from './card/skeleton';
@@ -64,6 +63,8 @@ import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
+  /** `AppView._selectViewMode` — the Board's own Kanban|Feed control calls it. */
+  onSelectViewMode?: (mode: string) => void;
   /** `AppView.appData?.self_hosted` — gates the "Dev" caption and several rows. */
   selfHosted: boolean;
   /** `AppView.readOnly`. */
@@ -79,23 +80,62 @@ export interface DevBoardFrameProps {
 }
 
 /*
- * THE DEV SCREEN'S TWO TABS ARE GONE (#1367 follow-up).
+ * THE BOARD OWNS ITS KANBAN|FEED CONTROL AGAIN (Streamlined Concept).
  *
- * `#dev-view-tabs` and its `#dev-view-feed` / `#dev-view-kanban` buttons were a
- * Feed/Kanban strip sitting at the top of this frame. The App/Feed/Kanban
- * toggle in the platform header replaced them: the same two destinations plus
- * the app itself, one control instead of two that disagreed about how many
- * options there were.
- *
- * BOTH FORM FACTORS STILL HAVE A SWITCH, which is what makes the removal safe.
- * The header copy is `hidden sm:inline-flex`, so on a wide screen it is right
- * there; below that breakpoint it steps aside for the copy inside the Improve
- * panel. See frontend/src/features/improve/view-toggle.tsx.
- *
- * `AppView._setViewMode()` and the view-mode store are untouched — only this
- * frame stopped drawing a control for them, and `onSelectViewMode` went with
- * it (the header toggle calls Improve.openDev, which routes to the same place).
+ * #1367 moved the strip into the platform header as the App/Feed/Kanban
+ * toggle because two controls disagreed about how many options there were.
+ * The Streamlined Concept resolves that differently: navigation BETWEEN the
+ * app's views is the app-context sheet behind the header's title tab, and
+ * Kanban vs Feed is the Board's own display mode — one control each, no
+ * disagreement. So the segmented pair below is back in the frame, reading
+ * the view-mode store and calling `onSelectViewMode`
+ * (AppView._selectViewMode), and the `data-view-segment` attributes stay
+ * the selector contract they always were.
  */
+function segmentCls(active: boolean): string {
+  const base =
+    'flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-2 rounded-md text-xs font-medium transition-colors un-touch-target';
+  return active
+    ? `${base} bg-white dark:bg-zinc-900 text-violet-600 dark:text-violet-400 shadow-sm`
+    : `${base} text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200`;
+}
+
+function BoardViewToggle({ onSelect }: { onSelect?: (mode: string) => void }) {
+  const mode = useDevViewMode();
+  return (
+    <div
+      id="dev-view-toggle"
+      className="flex items-center gap-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 p-0.5 mx-3 mt-2"
+      role="tablist"
+      aria-label="Board view"
+    >
+      <button
+        type="button"
+        role="tab"
+        data-view-segment="kanban"
+        aria-selected={mode === 'kanban' ? 'true' : 'false'}
+        className={segmentCls(mode === 'kanban')}
+        onClick={() => onSelect?.('kanban')}
+        title="Kanban: work in flight, by column"
+      >
+        <BoardIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        Kanban
+      </button>
+      <button
+        type="button"
+        role="tab"
+        data-view-segment="feed"
+        aria-selected={mode === 'feed' ? 'true' : 'false'}
+        className={segmentCls(mode === 'feed')}
+        onClick={() => onSelect?.('feed')}
+        title="Feed: recent development activity, newest first"
+      >
+        <ListLinesIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        Feed
+      </button>
+    </div>
+  );
+}
 
 /**
  * `AppView._plusMenuHeading(label, key, divider)`, as JSX.
@@ -136,24 +176,6 @@ const PLUS_TITLE_CLS = 'block text-sm font-medium text-zinc-800 dark:text-zinc-2
 const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
 
 /**
- * The General-chat card's tinted icon chip — `AppView._devCardIcon('chat')`.
- *
- * Only the `chat` entry is duplicated here, on purpose. The rest of
- * `AppView.DEV_CARD_ICONS` is still consumed by the feed, kanban, PM and
- * merged-section row builders, which write HTML strings into hosts this
- * component does not own, so the table stays in app-view.js as the single
- * source of truth for those. Duplicating the whole table to serve one card
- * would create exactly the drift risk the migration is trying to avoid.
- */
-function ChatCardIcon() {
-  return (
-    <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-700 flex items-center justify-center shrink-0 dark:text-violet-400">
-      <DiscussionIcon className="w-5 h-5" aria-hidden="true" />
-    </span>
-  );
-}
-
-/**
  * `#dev-body`'s initial content, as a constant string — see the header.
  *
  * A SKELETON, not the word "Loading…". The report this answers was that
@@ -185,16 +207,18 @@ const DEV_BODY_INITIAL_HTML =
 const DEV_BODY_INITIAL = { __html: DEV_BODY_INITIAL_HTML };
 
 export function DevBoardFrame({
+  onSelectViewMode,
   selfHosted,
   readOnly,
   canCollaborate,
   showsMembers,
-  cardCls,
-  cardHoverCls,
 }: DevBoardFrameProps) {
   const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
   return (
     <div className="flex flex-col h-full min-h-0">
+      {/* The Board's own display-mode control (Streamlined Concept) — see
+          the note on BoardViewToggle above. */}
+      <BoardViewToggle onSelect={onSelectViewMode} />
       {/*
           THE "DEV" SUB-HEADER ROW IS GONE (#1367 follow-up).
 
@@ -365,27 +389,6 @@ export function DevBoardFrame({
               App is locked. An admin must approve any proposal before it applies.
             </div>
           ) : null}
-        </div>
-        <div className="px-3 pt-2">
-          <button
-            id="dev-chat-card"
-            className={`${cardCls} ${cardHoverCls}`}
-            title="Open the general chat"
-          >
-            <ChatCardIcon />
-            <span className="flex-1 min-w-0">
-              <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                General chat
-              </span>
-              <span
-                id="dev-chat-card-preview"
-                className="block text-xs text-zinc-500 dark:text-zinc-400 truncate"
-              >
-                Talk with everyone building this app
-              </span>
-            </span>
-            <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" />
-          </button>
         </div>
         {/* Body region: the Feed mounts #dev-feed here; Kanban mounts
             #dev-kanban-filterbar + #dev-kanban-board. _repaintDevBody() owns
