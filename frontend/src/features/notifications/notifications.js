@@ -1283,6 +1283,20 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon,
+      // A conversation row names MESSAGES as its source, not "app".
+      //
+      // `appLine` is the sheet's secondary line — "<where this came from> ·
+      // <when>" — and it falls back to the literal string 'app' when a
+      // notification has no app, which every conversation row is by
+      // construction (serialize nulls the app fields on one). So the sheet
+      // rendered "app · 4m ago" under every message. That was easy to miss
+      // while the bell subtracted messages from its count and nobody was
+      // being sent here to read them; it is the first thing you see now.
+      //
+      // Deliberately the SURFACE and not the conversation's title: the title
+      // is already the last segment of the line above, and repeating it under
+      // itself reads as a rendering fault rather than as attribution.
+      appLine: 'Messages',
       segments: [
         { t: 'who', v: who },
         { t: 'text', v: verb },
