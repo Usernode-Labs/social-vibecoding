@@ -1785,6 +1785,16 @@
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"] [aria-label=\"2 notifications\"]"
     },
     {
+      "name": "A message in Messages offers a save button",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-message-9100102 .messages-message-actions button[aria-label=\"Save message\"]"
+    },
+    {
+      "name": "An already-saved message offers to unsave instead, and says so to a screen reader",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-message-9100101 .messages-message-actions button[aria-label=\"Unsave message\"][aria-pressed=\"true\"]"
+    },
+    {
       "name": "The chip opens the menu, and it lists Home and Discover (#1443)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-home + #switcher-row-discover"

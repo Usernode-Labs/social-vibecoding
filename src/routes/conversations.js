@@ -101,7 +101,13 @@ function demoMessages(user, conversationId) {
   const ada = demoUser(910001, 'ada');
   if (conversationId === 910001) return [
     {
-      id: 9100101, conversationId, sender: ada,
+      // `saved: true` on exactly one demo row, so the staging preview and the
+      // declared checks show BOTH states of the save button on one screen —
+      // filled here, empty on every other row. The real flag is hydrated per
+      // viewer in services/conversations.js; this is the ?demo=1 stand-in,
+      // because `conversation_message_bookmarks` is staging:private and a
+      // staging clone therefore has the table and none of the rows.
+      id: 9100101, conversationId, sender: ada, saved: true,
       content: 'Can you look at the latest proposal?', createdAt: '2026-08-13T13:20:00Z', editedAt: null,
       reply: null, reactions: [{ emoji: '👍', count: 2, reacted: false, users: ['ada', self.username] }],
       attachments: [], objects: [{
