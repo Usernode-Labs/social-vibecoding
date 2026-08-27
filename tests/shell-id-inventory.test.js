@@ -223,13 +223,11 @@ const ADDED_IDS = {
   'switcher-nav': 'The menu\'s destination list, and its ONLY vertical scroller. The app strip above is horizontal and therefore vertically bounded, so no number of apps can push a destination out of reach — the clipping bug that hid Home and Profile on a 39-app account cannot occur in this shape.',
   'switcher-row-home': 'Home. Was the sheet\'s #apps-switcher-home footer button.',
   'switcher-row-discover': 'Discover (#apps). Was #apps-switcher-explore.',
-  'switcher-row-messages': 'Messages. Was #messages-btn in the header; it has its own page, so it is a row. Carries #drawer-messages-badge, unchanged writer.',
+  'switcher-row-messages': 'Messages. Was #messages-btn in the header; it has its own page, so it is a row. Carries NO count: a message notification is counted on the bell and listed in the notifications sheet with every other notification, which leaves this a plain destination like Home and Discover beside it.',
   'switcher-row-profile': 'Profile.',
   'switcher-row-settings': 'Settings. Was #profile-row-settings on the Profile screen.',
   'switcher-byok-dot': 'The BYOK dot on that row — was #profile-byok-dot. settings.js publishes the flag; the className stays a constant.',
   'switcher-row-admin': 'Admin & moderation. Was #profile-row-admin. Ships `hidden`; App.renderAdminButton publishes the isAdmin flag, unchanged.',
-  // ── Streamlined Concept: the header's second alerting glyph ──────
-  'drawer-messages-badge': 'Unread-messages count, on that chat bubble. It keeps the id it wore as the drawer row\'s badge — Notifications._renderBadge is still its only writer, so only the parent changed.',
   // ── …and the Apps sheet behind the title tab ─────────────────────
   'apps-switcher-sheet': 'The board\'s Apps sheet — its "Switching between Apps" connector. Reuses the retired #app-context-sheet\'s controller, store and kit bottom-sheet lifecycle.',
   'apps-switcher-overlay': 'Its backdrop.',

@@ -26,7 +26,15 @@ const dapp = JSON.parse(read('dapp.json'));
 test('Messages is a hidden React-owned top-level screen with global navigation', () => {
   assert.match(html, /<main id="messages-screen" class="hidden /);
   assert.match(html, /id="switcher-row-messages" href="#messages"/);
-  assert.match(html, /id="drawer-messages-badge" class="hidden /);
+  // The row is a DESTINATION and carries no count. #1431 put an unread number
+  // on a header chat bubble and #1443 moved it onto this row; both made one
+  // incoming message light two badges in two colours, and the one it lit here
+  // sat two taps down inside the menu you open to choose where to go. Message
+  // notifications are counted on the bell and listed in the notifications
+  // sheet with the rest of them, so nothing paints #drawer-messages-badge and
+  // the element is gone rather than shipped hidden.
+  assert.doesNotMatch(html, /drawer-messages-badge/,
+    'the Messages row carries no unread tag');
   // The nav order check. The menu reads platform-then-you: Home, Discover,
   // Messages, then Profile, Settings, Admin. `~` rather than `+` because the
   // section labels sit between the groups.
@@ -54,11 +62,11 @@ test('deep links validate ids and route list/thread without a client events sock
     'the global event socket remains server-to-client only');
 });
 
-test('the global unread badge loads only after auth and reconciles on reconnect', () => {
+test('the conversation list loads only after auth and reconciles on reconnect', () => {
   const initialize = store.slice(store.indexOf('export function initializeMessagesStore()'),
     store.indexOf('\n}', store.indexOf('export function initializeMessagesStore()')) + 2);
   assert.match(initialize, /if \(window\.App\?\.user\) void loadConversations\(\)/,
-    'an already-authenticated shell seeds the always-mounted badge store');
+    'an already-authenticated shell seeds the always-mounted conversation store');
   assert.match(initialize, /else document\.addEventListener\('sv:authed', onAuthed, \{ once: true \}\)/,
     'an anonymous shell waits instead of issuing a session-gated request');
   assert.match(initialize, /document\.removeEventListener\('sv:authed', onAuthed\)/,
@@ -67,7 +75,7 @@ test('the global unread badge loads only after auth and reconciles on reconnect'
   const resync = app.slice(resyncStart, app.indexOf('// #1038:', resyncStart));
   assert.match(resync, /window\.UsernodeReact\?\.messages\?\.refresh\?\.\(\)/);
   assert.doesNotMatch(resync, /_inMessages[\s\S]*messages\?\.refresh/,
-    'reconnect refreshes the drawer badge even when the Messages screen is closed');
+    'reconnect refreshes the conversation list even when the Messages screen is closed');
 });
 
 test('an invitation resolves metadata before deciding whether history may be fetched', () => {

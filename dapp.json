@@ -1753,6 +1753,17 @@
       "expectSelector": "#switcher-nav #switcher-row-home ~ #switcher-row-discover ~ #switcher-row-messages ~ #switcher-row-profile ~ #switcher-row-settings ~ #switcher-row-admin"
     },
     {
+      "name": "Messages is a destination in the chip's menu, carrying no unread tag",
+      "path": "/?shot=app-context&demo=1",
+      "expectSelector": "#switcher-nav #switcher-row-messages:not(:has([aria-label=\"Unread messages\"]))"
+    },
+    {
+      "name": "A message notification is listed in the notifications sheet",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"]",
+      "expectText": "sent a message in"
+    },
+    {
       "name": "The chip opens the menu, and it lists Home and Discover (#1443)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-home + #switcher-row-discover"
