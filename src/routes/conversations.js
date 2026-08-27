@@ -7,6 +7,7 @@ const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const log = require('../services/logger');
 const conversations = require('../services/conversations');
+const messageBookmarks = require('../services/message-bookmarks');
 const attachments = require('../services/attachments');
 const {
   attachmentUploadLimiter,
@@ -100,7 +101,13 @@ function demoMessages(user, conversationId) {
   const ada = demoUser(910001, 'ada');
   if (conversationId === 910001) return [
     {
-      id: 9100101, conversationId, sender: ada,
+      // `saved: true` on exactly one demo row, so the staging preview and the
+      // declared checks show BOTH states of the save button on one screen —
+      // filled here, empty on every other row. The real flag is hydrated per
+      // viewer in services/conversations.js; this is the ?demo=1 stand-in,
+      // because `conversation_message_bookmarks` is staging:private and a
+      // staging clone therefore has the table and none of the rows.
+      id: 9100101, conversationId, sender: ada, saved: true,
       content: 'Can you look at the latest proposal?', createdAt: '2026-08-13T13:20:00Z', editedAt: null,
       reply: null, reactions: [{ emoji: '👍', count: 2, reacted: false, users: ['ada', self.username] }],
       attachments: [], objects: [{
@@ -358,10 +365,90 @@ function conversationRoutes(config) {
     }
   });
 
+  // #1280, extended to the Messages area: save/unsave one message.
+  //
+  // PUT saves, DELETE unsaves — the same verbs and the same optimistic
+  // client contract the app-chat bookmark has carried since #1280, so the two
+  // surfaces behave identically. Both go through `readableMessage`, which is
+  // a membership check: saving is a personal act that writes nothing anyone
+  // else can see, but it still must not become a way to pin the content of a
+  // conversation you are not in.
+  //
+  // No WebSocket broadcast, deliberately, and for the reason the app-chat
+  // toggle has none: a save is private to one user, so there is no audience
+  // to tell. It is not rate-limited as a mutation of the conversation either
+  // — it mutates only the saver's own list — but it takes the reaction
+  // limiter because it is a tap-repeatable button and that is the shape of
+  // abuse it could carry.
+  // The same two-part gate `listMessages` opens a conversation's history
+  // with: a current membership, and — for a direct conversation — a peer
+  // neither side has blocked. Then the message must actually belong to that
+  // conversation, so a readable id from one cannot be used to save a message
+  // out of another.
+  async function readableMessage(user, conversationId, messageId) {
+    const membership = await conversations.loadMembership(pool, conversationId, user.id);
+    if (!membership) return false;
+    if (!await conversations.canDirectInteract(pool, membership, user.id)) return false;
+    return !!await conversations.getMessage(pool, user, conversationId, messageId);
+  }
+
+  router.put(
+    '/api/conversations/:id/messages/:messageId/bookmark',
+    conversationReactionLimiter,
+    async (req, res) => {
+      const id = conversations.strictId(req.params.id);
+      const messageId = conversations.strictId(req.params.messageId);
+      if (!id || !messageId) return sendNotFound(res);
+      try {
+        if (!await readableMessage(req.user, id, messageId)) return sendNotFound(res);
+        await messageBookmarks.saveConversationMessage(pool, req.user.id, messageId);
+        return res.json({ saved: true });
+      } catch (err) {
+        log.error('conversations', 'bookmark save failed', { id, messageId, err: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+  );
+
+  router.delete(
+    '/api/conversations/:id/messages/:messageId/bookmark',
+    conversationReactionLimiter,
+    async (req, res) => {
+      const id = conversations.strictId(req.params.id);
+      const messageId = conversations.strictId(req.params.messageId);
+      if (!id || !messageId) return sendNotFound(res);
+      try {
+        // Unsave needs no readability check: it only ever deletes THIS user's
+        // own row, and a viewer who has since left the conversation must
+        // still be able to clear what they saved from it.
+        await messageBookmarks.removeConversationMessage(pool, req.user.id, messageId);
+        return res.json({ saved: false });
+      } catch (err) {
+        log.error('conversations', 'bookmark remove failed', { id, messageId, err: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+  );
+
   router.post('/api/conversations/:id/read', conversationMessageLimiter, async (req, res) => {
     const id = conversations.strictId(req.params.id);
     const messageId = conversations.strictId(req.body?.message_id);
     if (!id || !messageId) return sendNotFound(res);
+    // ?demo=1 has no rows behind it, so the real markRead below finds no
+    // conversation 910001 and answers 404 — and opening a thread ALWAYS
+    // marks it read (loadThread's last line), so every demo Messages route
+    // logged a console error on load. The client swallows the failure, which
+    // is why this survived: nothing on screen looked wrong. A console error
+    // on any route fails proposal checks, so the first declared check to load
+    // this screen is the first thing that could have caught it.
+    //
+    // Read state is per viewer and the demo conversations are request-time
+    // fictions, so there is nothing to record: acknowledging it is the whole
+    // correct behaviour, exactly as the other demo branches do.
+    if (isDemo(req)) {
+      if (!demoConversations(req.user).some((row) => row.id === id)) return sendNotFound(res);
+      return res.json({ ok: true, demo: true });
+    }
     try {
       const result = await conversations.markRead(pool, req.user, id, messageId);
       if (!result) return sendNotFound(res);

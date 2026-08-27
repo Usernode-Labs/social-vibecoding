@@ -469,18 +469,20 @@ test("the Board owns the view control; the header's label is the chip", () => {
   const frame = read('frontend/src/features/dev-board/board-frame.tsx');
 
   // #1443: navigation between the app's views is the chip's menu — the chip
-  // is the header's label on EVERY screen, not only inside an app — while
-  // Kanban vs Feed stays the Board's own display mode, drawn by the frame.
+  // is the header's label on EVERY screen, not only inside an app. Kanban vs
+  // Feed is not navigation at all: it is one place drawn two ways, so it sits
+  // under the Improve panel's Board row and the frame draws no view control.
   assert.ok(!/ImproveViewToggle/.test(header),
     'the header renders no view-toggle copy');
   assert.match(header, /<AppSwitcherChip titleRef=\{titleRef\} \/>/,
     "the header's label is the chip");
-  assert.match(frame, /id="dev-view-toggle"/, 'the Board draws its own control');
+  assert.ok(!/id="dev-view-toggle"/.test(frame),
+    'the Board draws no view tab strip above its cards');
   const frameCode = frame
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '');
   assert.ok(!/matchMedia|innerWidth/.test(frameCode),
-    'the control must not measure the viewport');
+    'the frame must not measure the viewport');
 
   // A destination names where it GOES, and the "use the app" row's label
   // follows the target: the platform's reads "Home", an app's reads its own

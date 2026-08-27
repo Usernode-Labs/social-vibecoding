@@ -457,6 +457,13 @@ html.un-kb .platform-safe-sheet {
   font-size: 13px;
 }
 .messages-message-actions button:hover { background: var(--bg-secondary); color: var(--text-primary); }
+/* A saved message's star, filled and in the accent — the state lives in the
+   glyph's FILL, the same way the app-chat bookmark's does, so the two
+   surfaces read as one feature. It keeps the accent on hover rather than
+   stepping to --text-primary with its neighbours: the others are actions you
+   might take, this one is a state that is currently true. */
+.messages-message-actions button.messages-action-saved,
+.messages-message-actions button.messages-action-saved:hover { color: var(--accent); }
 
 .messages-quote,
 .messages-reply-draft {

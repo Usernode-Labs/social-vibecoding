@@ -79,8 +79,16 @@ export type NotificationRowView = {
 
 type SavedView = {
   messageId: number;
+  /** The app the message was posted in — '' for a conversation save. */
   slug: string;
+  /**
+   * The conversation it was posted in — 0 for an app-chat save. Exactly one
+   * of this and `slug` is set, and which one is what the controller routes
+   * and unsaves on; the row itself renders both kinds identically.
+   */
+  conversationId: number;
   who: string;
+  /** Where it was said: the app's name, or the conversation's. */
   appName: string;
   time: string;
   text: string;

@@ -1356,14 +1356,14 @@
       "expectSelector": "#platform-header #improve-btn:not(.hidden)"
     },
     {
-      "name": "The Board draws its own Kanban|Feed control (Streamlined Concept)",
+      "name": "The Board opens straight onto its cards, with no view tab strip above them",
       "path": "/app/staging-demo-admins/dev",
-      "expectSelector": "#dev-view-toggle [data-view-segment=\"kanban\"]"
+      "expectSelector": "#dev-forum-scroll #dev-body"
     },
     {
-      "name": "The Board control marks the view actually on screen",
+      "name": "A ?view=kanban deep link resolves onto the kanban board",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
+      "expectSelector": "#dev-body #dev-kanban-board"
     },
     {
       "name": "The self-hosted platform row gets a use-the-app row too (#1386, #1443)",
@@ -1427,25 +1427,25 @@
       "expectSelector": "#dev-actions #dev-plus-btn"
     },
     {
-      "name": "The Board control offers Kanban then Feed, per the Figma board",
+      "name": "The Board names itself in the chip, under the app it belongs to",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-toggle [data-view-segment=\"kanban\"] + [data-view-segment=\"feed\"]",
-      "expectText": "Feed"
+      "expectSelector": "#app-switcher-btn #app-switcher-subtitle",
+      "expectText": "Board"
     },
     {
-      "name": "Feed is the selected segment on a ?view=feed deep link",
+      "name": "A ?view=feed deep link resolves onto the feed",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-toggle [data-view-segment=\"feed\"][aria-selected=\"true\"]"
+      "expectSelector": "#dev-body #dev-feed"
     },
     {
       "name": "A retired ?view=list link still resolves onto the Feed",
       "path": "/?demo=1&view=list#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"false\"] ~ [data-view-segment=\"feed\"][aria-selected=\"true\"]"
+      "expectSelector": "#dev-body #dev-feed"
     },
     {
-      "name": "Kanban is the selected segment on a ?view=kanban deep link",
+      "name": "Kanban survives as the resolved mode on a ?view=kanban deep link",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-view-toggle [data-view-segment=\"kanban\"][aria-selected=\"true\"]"
+      "expectSelector": "#dev-body #dev-kanban-board"
     },
     {
       "name": "The Feed renders activity rows into #dev-feed",
@@ -1783,6 +1783,16 @@
       "name": "Consecutive messages from one conversation collapse to a counted row",
       "path": "/?shot=notifications-messages&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990207\"] [aria-label=\"2 notifications\"]"
+    },
+    {
+      "name": "A message in Messages offers a save button",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-message-9100102 .messages-message-actions button[aria-label=\"Save message\"]"
+    },
+    {
+      "name": "An already-saved message offers to unsave instead, and says so to a screen reader",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-message-9100101 .messages-message-actions button[aria-label=\"Unsave message\"][aria-pressed=\"true\"]"
     },
     {
       "name": "The chip opens the menu, and it lists Home and Discover (#1443)",

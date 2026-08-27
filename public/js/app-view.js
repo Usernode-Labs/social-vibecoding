@@ -2106,7 +2106,9 @@ const AppView = {
     // a first-class destination (#app/<slug>/activity) reached from the
     // app-context sheet, so the header names it.
     if (subTab === 'chat') {
-      App.setHeaderTitle?.('Activity');
+      // The app's name stays the chip's label and "Activity" qualifies it —
+      // replacing the name here was the chip forgetting which app it was in.
+      App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Activity');
       AppView._renderChatSubView(content);
       return;
     }
@@ -2142,12 +2144,12 @@ const AppView = {
       cardCls: AppView.DEV_CARD_CLS,
       cardHoverCls: AppView.DEV_CARD_HOVER_CLS,
       viewMode: AppView._getViewMode(),
-      onSelectViewMode: (mode) => AppView._selectViewMode(mode),
     });
 
     // The card area is the BOARD (Streamlined Concept) — kanban and feed are
-    // its two display modes — and the header names it.
-    App.setHeaderTitle?.('Board');
+    // its two display modes — and the header names it AS A SUBTITLE under the
+    // app's own name, so the chip never stops saying which app you are in.
+    App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Board');
     AppView._wirePlusMenu(content);
     // Pull down on the dev feed to re-pull it (touch only; the scroller
     // is re-created on every render so this re-attaches each time).

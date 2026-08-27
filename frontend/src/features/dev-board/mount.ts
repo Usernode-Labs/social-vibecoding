@@ -175,9 +175,9 @@ export const devBoardBridge: DevBoardBridge = {
     // Seed before the first render so a cold `?view=kanban` deep link paints
     // kanban immediately rather than list-then-kanban.
     publishViewMode(options.viewMode);
-    // The Board draws its own Kanban|Feed control again (Streamlined
-    // Concept), so `onSelectViewMode` reaches the frame rather than being
-    // dropped here.
+    // `viewMode` seeds the store and is not a frame prop — the frame draws no
+    // Kanban|Feed control any more (the choice lives under the Improve panel's
+    // Board row), so it is dropped here rather than forwarded.
     const { viewMode: _viewMode, ...rest } = options;
     mountLegacyPortal(host, createElement(DevBoardFrame, rest));
   },

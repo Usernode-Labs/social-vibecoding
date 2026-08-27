@@ -12,9 +12,12 @@
  * attribute and `hidden` semantic is the one the template emitted.
  *
  * React-owned, and now stateful:
- *   * the header bar — the "Dev" caption, the Feed/Kanban tab strip, the "+"
- *     button and its dropdown, including every `data-plus` row and the two
- *     `data-plus-group` headings;
+ *   * the header bar — the "+" button and its dropdown, including every
+ *     `data-plus` row and the two `data-plus-group` headings. The Feed/Kanban
+ *     tab strip is NOT here any more: the Board's two layouts are a choice
+ *     under the Improve panel's Board row now (see improve-panel.tsx), because
+ *     a strip whose first tab restated the destination the header chip had
+ *     just named was navigation drawn twice;
  *   * `#dev-forum-scroll` and the General-chat card.
  *
  * Legacy-owned hosts, rendered by React but never reconciled into:
@@ -53,18 +56,12 @@
  * exists on the Dev route. Chunk H (#1085) folds it into the main tree.
  */
 
-import { BoardIcon, ListLinesIcon } from '@/components/ui/icons';
-
-import { useDevViewMode } from './view-mode-store';
-
 import { useStoreState } from '../../lib/use-store-state';
 import { skeletonListHtml } from './card/skeleton';
 import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
-  /** `AppView._selectViewMode` — the Board's own Kanban|Feed control calls it. */
-  onSelectViewMode?: (mode: string) => void;
   /** `AppView.appData?.self_hosted` — gates the "Dev" caption and several rows. */
   selfHosted: boolean;
   /** `AppView.readOnly`. */
@@ -77,64 +74,6 @@ export interface DevBoardFrameProps {
   cardCls: string;
   /** `AppView.DEV_CARD_HOVER_CLS`. */
   cardHoverCls: string;
-}
-
-/*
- * THE BOARD OWNS ITS KANBAN|FEED CONTROL AGAIN (Streamlined Concept).
- *
- * #1367 moved the strip into the platform header as the App/Feed/Kanban
- * toggle because two controls disagreed about how many options there were.
- * The Streamlined Concept resolves that differently: navigation BETWEEN the
- * app's views is the app-context sheet behind the header's title tab, and
- * Kanban vs Feed is the Board's own display mode — one control each, no
- * disagreement. So the segmented pair below is back in the frame, reading
- * the view-mode store and calling `onSelectViewMode`
- * (AppView._selectViewMode), and the `data-view-segment` attributes stay
- * the selector contract they always were.
- */
-function segmentCls(active: boolean): string {
-  const base =
-    'flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-2 rounded-md text-xs font-medium transition-colors un-touch-target';
-  return active
-    ? `${base} bg-white dark:bg-zinc-900 text-violet-600 dark:text-violet-400 shadow-sm`
-    : `${base} text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200`;
-}
-
-function BoardViewToggle({ onSelect }: { onSelect?: (mode: string) => void }) {
-  const mode = useDevViewMode();
-  return (
-    <div
-      id="dev-view-toggle"
-      className="flex items-center gap-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 p-0.5 mx-3 mt-2"
-      role="tablist"
-      aria-label="Board view"
-    >
-      <button
-        type="button"
-        role="tab"
-        data-view-segment="kanban"
-        aria-selected={mode === 'kanban' ? 'true' : 'false'}
-        className={segmentCls(mode === 'kanban')}
-        onClick={() => onSelect?.('kanban')}
-        title="Kanban: work in flight, by column"
-      >
-        <BoardIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-        Kanban
-      </button>
-      <button
-        type="button"
-        role="tab"
-        data-view-segment="feed"
-        aria-selected={mode === 'feed' ? 'true' : 'false'}
-        className={segmentCls(mode === 'feed')}
-        onClick={() => onSelect?.('feed')}
-        title="Feed: recent development activity, newest first"
-      >
-        <ListLinesIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-        Feed
-      </button>
-    </div>
-  );
 }
 
 /**
@@ -207,7 +146,6 @@ const DEV_BODY_INITIAL_HTML =
 const DEV_BODY_INITIAL = { __html: DEV_BODY_INITIAL_HTML };
 
 export function DevBoardFrame({
-  onSelectViewMode,
   selfHosted,
   readOnly,
   canCollaborate,
@@ -216,9 +154,6 @@ export function DevBoardFrame({
   const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* The Board's own display-mode control (Streamlined Concept) — see
-          the note on BoardViewToggle above. */}
-      <BoardViewToggle onSelect={onSelectViewMode} />
       {/*
           THE "DEV" SUB-HEADER ROW IS GONE (#1367 follow-up).
 

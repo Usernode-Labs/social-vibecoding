@@ -202,6 +202,8 @@ declare global {
         syncChrome(): void;
         handleEvent(event: Record<string, unknown>): void;
         share(reference?: unknown): Promise<void> | void;
+        /** Repaint one row's save state — the notifications drawer's unsave. */
+        paintSaved(messageId: number, saved: boolean): void;
         refresh(): Promise<void> | void;
       };
       [key: string]: unknown;
