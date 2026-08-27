@@ -64,6 +64,49 @@ function takeState(nonce) {
   return entry.expiresAt < Date.now() ? null : entry;
 }
 
+// state nonce → { token, status, provider, expiresAt }, for a round trip
+// that has already finished.
+//
+// `takeState` consumes the nonce, so the SECOND request to a callback URL
+// found nothing and fell through to `/#landing` — the public landing page,
+// with no message and no log line, after a provider round trip that had
+// already succeeded and stored the handle. Reported from production on
+// 2026-08-27 for GitHub and again for X: the server logged "Social handle
+// verified" both times, and both times the person landed on the home screen
+// instead of their form.
+//
+// A second request is ordinary: the back button, a reload, copying the URL
+// out of the address bar and reopening it, a link scanner, a browser retry.
+// So a finished round trip remembers WHERE it landed, and a repeat replays
+// that same destination.
+//
+// It records the outcome, never the authorization code, and the replay is a
+// redirect and nothing else — the code is single-use at the provider, so
+// re-exchanging it could only turn a success into an error. Reading is
+// deliberately non-destructive: people reload more than once. The record
+// holds no more than the caller already has (they must present the state
+// nonce, which was minted for that token and rides in their own URL), and it
+// expires on the same clock as the pending state.
+const completed = new Map();
+
+function rememberOutcome(nonce, provider, token, status) {
+  const now = Date.now();
+  for (const [k, v] of completed) {
+    if (v.expiresAt < now) completed.delete(k);
+  }
+  completed.set(nonce, { token, status, provider, expiresAt: now + STATE_TTL_MS });
+}
+
+function peekOutcome(nonce, provider) {
+  const done = completed.get(nonce);
+  if (!done || done.provider !== provider) return null;
+  if (done.expiresAt < Date.now()) {
+    completed.delete(nonce);
+    return null;
+  }
+  return done;
+}
+
 // Where the round-trip lands back in the SPA. `status` rides in the
 // hash's query segment (after '?' INSIDE the fragment) so it never
 // reaches any server log, ours or a proxy's.
@@ -286,32 +329,55 @@ function waitlistConnectRoutes(config) {
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const entry = takeState(state);
     if (!entry || entry.provider !== provider) {
-      // Expired / replayed / cross-provider state: nothing to recover.
+      // Already finished: a reload, the back button, or anything else that
+      // re-requests this URL. The first pass knows where it sent them; send
+      // them there again rather than to a landing page that answers a
+      // question they did not ask.
+      const done = peekOutcome(state, provider);
+      if (done) return res.redirect(formUrl(done.token, done.status));
+      // Genuinely unknown: no state record means no token, so there is no
+      // form to return to and the landing page is all that is left. Logged,
+      // because this used to be the one path through here that produced
+      // neither a redirect anybody could explain nor a line to grep for.
+      log.info('waitlist-connect', 'Callback with unknown or expired state', { provider });
       return res.redirect('/#landing');
     }
+
+    // Every exit below is terminal, so each one records where it sent the
+    // person before sending them.
+    const land = (status) => {
+      rememberOutcome(state, provider, entry.token, status);
+      return res.redirect(formUrl(entry.token, status));
+    };
 
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     if (!code) {
       // User denied on the provider page.
-      return res.redirect(formUrl(entry.token, 'denied'));
+      return land('denied');
     }
 
     const creds = providerConfig(config, provider);
-    if (!creds) return res.redirect(formUrl(entry.token, 'unavailable'));
+    if (!creds) return land('unavailable');
 
     try {
       const handle = await resolveHandle(
         provider, creds, code, callbackUrl(config, provider), entry.verifier
       );
       const updated = await waitlist.setVerifiedHandle(pool, entry.token, provider, handle);
-      if (!updated) return res.redirect('/#landing');
+      if (!updated) {
+        // The exchange worked but the token no longer resolves to a signup.
+        // Nothing to write and nothing to show, so the landing page stands —
+        // but say so, rather than leaving a silent bounce.
+        log.warn('waitlist-connect', 'Verified handle had no signup to write to', { provider });
+        return res.redirect('/#landing');
+      }
       log.info('waitlist-connect', 'Social handle verified', { provider });
-      return res.redirect(formUrl(entry.token, 'ok'));
+      return land('ok');
     } catch (err) {
       log.error('waitlist-connect', 'OAuth exchange failed', {
         provider, message: err.message,
       });
-      return res.redirect(formUrl(entry.token, 'failed'));
+      return land('failed');
     }
   });
 

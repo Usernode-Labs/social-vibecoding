@@ -370,6 +370,79 @@ test('WAITLIST_OAUTH_ORIGIN overrides both', async () => {
   }
 });
 
+// ── the callback is reachable more than once ───────────────────────────
+//
+// `takeState` DELETES the nonce, and the miss path redirects to `/#landing`
+// — the public landing page. So the second request to a callback URL used to
+// dump the person on the home screen with no message and no log line, after a
+// provider round trip that had already succeeded and stored their handle.
+//
+// A second request is not exotic. It is the back button, a reload, copying
+// the URL out of the address bar and reopening it, a link scanner, or a
+// browser retry. Reported from production on 2026-08-27 for GitHub and again
+// for X: both handles were verified and written (the server logged
+// "Social handle verified" for each), and both times the person landed on the
+// home screen instead of the form.
+//
+// So a completed state replays its OUTCOME instead of being forgotten.
+
+test('a second hit on the same callback URL replays the outcome, not /#landing', async () => {
+  const start = await get(configured.base, `/waitlist/connect/x?token=${TOKEN}`);
+  const state = new URL(start.headers.get('location')).searchParams.get('state');
+
+  // First hit against the unset router: credentials are missing, so it takes
+  // the `unavailable` exit — a terminal outcome that consumes the state
+  // without needing a provider round trip.
+  const first = await get(unset.base, `/waitlist/connect/x/callback?state=${state}&code=abc123`);
+  assert.equal(first.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`);
+
+  const second = await get(unset.base, `/waitlist/connect/x/callback?state=${state}&code=abc123`);
+  assert.equal(
+    second.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`,
+    'a reload of the callback must land back on the stage-2 form, not on the landing page',
+  );
+
+  // And it stays replayable — people reload more than once.
+  const third = await get(unset.base, `/waitlist/connect/x/callback?state=${state}&code=abc123`);
+  assert.equal(third.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`);
+});
+
+test('a replayed callback never re-runs the provider exchange', async () => {
+  // The replay must be a redirect and nothing else: the authorization code
+  // is single-use at the provider, so a second exchange would fail there and
+  // could only turn a success into an error. Proven by pointing the replay at
+  // a router whose fetch would throw if it were reached.
+  const start = await get(configured.base, `/waitlist/connect/github?token=${TOKEN}`);
+  const state = new URL(start.headers.get('location')).searchParams.get('state');
+  const first = await get(unset.base, `/waitlist/connect/github/callback?state=${state}&code=abc123`);
+  assert.equal(first.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`);
+
+  const replay = await get(configured.base, `/waitlist/connect/github/callback?state=${state}&code=abc123`);
+  assert.equal(
+    replay.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`,
+    'the replay repeats the recorded outcome; it does not attempt a fresh token exchange',
+  );
+});
+
+test('a genuinely unknown state still lands on the landing page', async () => {
+  // Nothing to recover: no state record means no token, so there is no form
+  // to return to. This one keeps its old behaviour on purpose.
+  const res = await get(unset.base, '/waitlist/connect/x/callback?state=neverminted&code=abc');
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get('location'), '/#landing');
+});
+
+test('a denied authorization is replayable too', async () => {
+  // The user pressed "Cancel" at the provider. Reloading that callback must
+  // return them to the form, not to the landing page.
+  const start = await get(configured.base, `/waitlist/connect/linkedin?token=${TOKEN}`);
+  const state = new URL(start.headers.get('location')).searchParams.get('state');
+  const first = await get(configured.base, `/waitlist/connect/linkedin/callback?state=${state}`);
+  assert.equal(first.headers.get('location'), `/#more/${TOKEN}?connect=denied`);
+  const second = await get(configured.base, `/waitlist/connect/linkedin/callback?state=${state}`);
+  assert.equal(second.headers.get('location'), `/#more/${TOKEN}?connect=denied`);
+});
+
 test('an id without a secret counts as unconfigured', async () => {
   // Half-configured is the easiest way to ship a button that dead-ends at
   // the provider. Both halves or neither.
