@@ -405,7 +405,7 @@ export function MoreScreen() {
               id="more-made-note"
               type="text"
               maxLength={140}
-              placeholder="What is it, in one line? — optional"
+              placeholder="What is it, in one line? (optional)"
               className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
           </div>

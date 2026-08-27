@@ -232,7 +232,7 @@ function validateStage2(body) {
   const madeUrl = str(body?.made_url, 2000);
   if (madeUrl) {
     if (!/^https?:\/\/\S+\.\S+/i.test(madeUrl)) {
-      return { ok: false, error: 'That does not look like a link — it should start with https://' };
+      return { ok: false, error: 'That does not look like a link. It should start with https://' };
     }
     value.made_url = madeUrl;
     const madeNote = str(body?.made_note, 140);
