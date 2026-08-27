@@ -403,6 +403,42 @@ async function updateProposalFromForkBranch(deps, params) {
   }));
 }
 
+// A managed local upload has already advanced the bot-owned PR branch. Apply
+// the same reviewed-head reconciliation as update-from-fork, including the
+// atomic stale-vote deletion, but defer the expensive check run until
+// proposal_submit_build. That preserves the oldest-first multi-commit upload
+// contract without leaving any approval attached to the earlier SHA.
+async function reconcileManagedCommitUpload(deps, params) {
+  const votes = deps.votes || require('../routes/votes');
+  const expectedHeadSha = String(params.expectedHeadSha || '').toLowerCase();
+  const revision = await votes.reconcileNativeReviewedHead({
+    config: deps.config,
+    pool: deps.pool,
+    session: params.session,
+    fresh: true,
+    notify: true,
+    deferChecks: true,
+  });
+  if (revision.blocked) {
+    return fail(
+      revision.transient ? 'platform_unavailable' : 'proposal_closed',
+      revision.reason || 'Usernode could not reconcile the proposal revision.',
+      { retryable: !!revision.transient }
+    );
+  }
+  const reconciledHead = String(revision.headSha || '').toLowerCase();
+  if (!SHA_RE.test(expectedHeadSha) || reconciledHead !== expectedHeadSha) {
+    return fail(
+      'branch_moved',
+      reconciledHead
+        ? `The proposal branch moved again to commit ${reconciledHead.slice(0, 8)} while this upload was being reconciled.`
+        : 'Usernode could not pin the promoted proposal to the uploaded commit.',
+      { retryable: false, ...(reconciledHead ? { headSha: reconciledHead } : {}) }
+    );
+  }
+  return { ok: true, ...revision };
+}
+
 // ── The revision's testing metadata (#1199) ────────────────────────────
 //
 // A revision changes which SCREEN the group should be looking at, so the
@@ -1708,6 +1744,7 @@ module.exports = {
   isContinuableStatus,
   withProposalLock,
   updateProposalFromForkBranch,
+  reconcileManagedCommitUpload,
   // The request-linking half of an update (#1310), unit-tested directly.
   applyLinkedIssues,
 };

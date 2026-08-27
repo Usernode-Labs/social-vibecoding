@@ -15,7 +15,7 @@ Use `production` unless the user explicitly requests `local`. Read `../usernode-
 4. Implement and test in the same checkout, then commit locally. Do not use personal GitHub credentials for the bot-owned platform branch and do not dispatch a web coding agent merely to obtain push access.
 5. Call `proposal_push_commit` with the local commit and repository path. Execute its exact returned host `argv`, then use the returned bot-owned `headSha`. Upload multiple local commits oldest-first. Local and bot commit SHAs may differ, but their Git trees must match; do not rebase merely because the SHAs differ.
 6. Call `proposal_submit_build` with the returned head SHA, new durable history, and structured local test results.
-7. Poll `proposal_status` until it reports `ready` or `failed`. When failed, fix the problem and submit a later fast-forwarding commit.
+7. Poll `proposal_status` until `revisionState` (when present) or `state` reports `ready` or `failed`. A promoted proposal keeps `state: promoted` while `revisionState` reports the managed revision's build/check progress. When failed, fix the problem and submit a later fast-forwarding commit.
 8. When ready, call only `proposal_promote` if the user wants the proposal opened for voting. Never substitute `api_write` or a hand-written `/promote` request.
 
 If a protected proposal tool returns `host_execution_required`, never retry that MCP tool. Run only its exact returned `argv` in its returned `cwd`. For promotion, that exact vector is the only authorized fallback after the dedicated tool's manual approval.
