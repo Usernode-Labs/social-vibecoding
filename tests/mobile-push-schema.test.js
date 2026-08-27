@@ -32,7 +32,9 @@ test('push schema keeps deployment and user device state private with bounded ex
   assert.match(registrations, /user_id\s+INTEGER NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
   assert.match(registrations, /session_expires_at TIMESTAMPTZ NOT NULL/);
   assert.doesNotMatch(registrations, /mobile_auth_token_id/);
-  assert.match(registrations, /native_session_credential_reference VARCHAR\(47\)/);
+  assert.match(registrations, /native_session_credential_reference VARCHAR\(47\) NOT NULL/);
+  assert.match(schema,
+    /mobile_push_registrations_native_credential_required_check[\s\S]*CHECK \(native_session_credential_reference IS NOT NULL\) NOT VALID/);
   assert.match(schema,
     /mobile_push_registrations_native_credential_user_fk[\s\S]*FOREIGN KEY \(native_session_credential_reference, user_id\)[\s\S]*REFERENCES native_session_credentials\(credential_reference, user_id\)/);
   assert.match(schema, /registration_id[\s\S]*ON DELETE SET NULL/);

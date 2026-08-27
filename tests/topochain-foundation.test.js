@@ -253,6 +253,7 @@ function makeMobileTokenPool(tokensByHash, { failLookup = false } = {}) {
           credential_reference: `nsc_${'A'.repeat(43)}`,
           credential_generation: 1,
           installation_id: `nsi_${'B'.repeat(43)}`,
+          attempt_id: `nsa_${'C'.repeat(43)}`,
           renewal_due: false,
           ...row,
         }] };
@@ -360,6 +361,7 @@ test('mobileTokenAuth: valid session token -> next(), req.user resolved from the
       expiresAt: FUTURE,
       credentialReference: `nsc_${'A'.repeat(43)}`,
       credentialGeneration: 1,
+      attemptId: `nsa_${'C'.repeat(43)}`,
     });
     assert.equal(res.getHeader('Usernode-Credential-Reference'), `nsc_${'A'.repeat(43)}`);
     assert.equal(res.getHeader('Usernode-Credential-Generation'), '1');

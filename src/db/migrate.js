@@ -1862,12 +1862,19 @@ async function seedStagingPushDeliveries(pool, config) {
 
   await pool.query(
     `INSERT INTO mobile_push_registrations
-       (user_id, environment, installation_id, provider, registration_hash,
+       (user_id, native_session_credential_reference, environment,
+        installation_id, provider, registration_hash,
         registration_enc, platform, permission_status, session_expires_at,
         last_seen_at)
-     VALUES
-       ($1, $2, $3::uuid, 'fcm', $4, $5, 'android', 'authorized',
-        NOW() + INTERVAL '7 days', NOW() - INTERVAL '20 minutes')
+     SELECT c.user_id::integer, c.credential_reference, $2, $3::uuid, 'fcm', $4, $5,
+            'android', 'authorized', c.expires_at,
+            NOW() - INTERVAL '20 minutes'
+       FROM native_session_credentials c
+      WHERE c.user_id = $1
+        AND c.state = 'valid'
+        AND c.expires_at > NOW()
+      ORDER BY c.created_at DESC
+      LIMIT 1
      ON CONFLICT (environment, installation_id) DO NOTHING`,
     [userId, ENVIRONMENT, LIVE_INSTALLATION, REGISTRATION_HASH, REGISTRATION_ENC]
   );

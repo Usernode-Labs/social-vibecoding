@@ -24,7 +24,10 @@ const {
   NativeSessionProtocol,
   buildCredentialPlaintext,
 } = require('../src/services/topochain/native-session-protocol');
-const { revokeNativeSessionCredentials } = require('../src/services/native-session-revocation');
+const {
+  revokeNativeSessionCredentials,
+  revokeExactNativeSessionCredential,
+} = require('../src/services/native-session-revocation');
 
 const collapse = (sql) => sql.replace(/\s+/g, ' ').trim();
 const opaque = (prefix, byte) => prefix + Buffer.alloc(32, byte).toString('base64url');
@@ -448,6 +451,38 @@ test('central web logout revokes attempts before credentials and deletes linked 
   assert.ok(calls[2].startsWith('UPDATE native_session_credentials'));
   assert.ok(calls[3].startsWith('DELETE FROM mobile_auth_tokens'));
   assert.ok(calls[4].startsWith('UPDATE mobile_push_registrations'));
+});
+
+test('native self logout revokes only its exact credential in lock order', async () => {
+  const calls = [];
+  const client = {
+    async query(rawSql) {
+      const sql = collapse(rawSql);
+      calls.push(sql);
+      if (sql.startsWith('UPDATE native_session_attempts')) return { rows: [] };
+      if (sql.startsWith('UPDATE native_session_tickets')) return { rows: [] };
+      if (sql.startsWith('UPDATE native_session_credentials')) {
+        return { rows: [{ credential_reference: opaque('nsc_', 3) }] };
+      }
+      if (sql.startsWith('UPDATE mobile_push_registrations')) return { rows: [] };
+      if (sql.startsWith('DELETE FROM mobile_auth_tokens')) return { rows: [] };
+      throw new Error(`Unhandled exact revocation query: ${sql}`);
+    },
+  };
+  const revoked = await revokeExactNativeSessionCredential(client, {
+    userId: 41,
+    attemptId: opaque('nsa_', 2),
+    credentialReference: opaque('nsc_', 3),
+    credentialGeneration: 1,
+    mobileAuthTokenId: 88,
+  });
+  assert.deepEqual(revoked, { credentialRevoked: true });
+  assert.ok(calls[0].startsWith('UPDATE native_session_attempts'));
+  assert.ok(calls[1].startsWith('UPDATE native_session_tickets'));
+  assert.ok(calls[2].startsWith('UPDATE native_session_credentials'));
+  assert.ok(calls[3].startsWith('UPDATE mobile_push_registrations'));
+  assert.ok(calls[4].startsWith('DELETE FROM mobile_auth_tokens'));
+  assert.match(calls[2], /credential_reference = \$1[\s\S]*credential_generation = \$2/);
 });
 
 async function withNativeRoute(config, fn) {

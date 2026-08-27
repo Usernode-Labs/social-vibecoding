@@ -107,4 +107,79 @@ async function revokeNativeSessionCredentials(client, scope) {
   };
 }
 
-module.exports = { revokeNativeSessionCredentials };
+// Mobile explicit logout carries only the bearer that names one exact native
+// credential. Keep this boundary narrower than web logout: another credential
+// for the same account or web incarnation is not authority to revoke here.
+async function revokeExactNativeSessionCredential(client, {
+  userId,
+  attemptId,
+  credentialReference,
+  credentialGeneration,
+  mobileAuthTokenId,
+}) {
+  if (userId == null
+      || typeof attemptId !== 'string'
+      || typeof credentialReference !== 'string'
+      || !Number.isSafeInteger(credentialGeneration)
+      || credentialGeneration <= 0
+      || mobileAuthTokenId == null) {
+    throw new Error('invalid_exact_native_session_revocation_scope');
+  }
+
+  // Preserve establishment's attempt -> ticket -> credential lock order.
+  await client.query(
+    `UPDATE native_session_attempts
+        SET state = 'revoked', updated_at = NOW()
+      WHERE attempt_id = $1 AND user_id = $2
+        AND state IN ('ticketed', 'exchanged')`,
+    [attemptId, userId]
+  );
+  await client.query(
+    `UPDATE native_session_tickets
+        SET state = 'revoked'
+      WHERE attempt_id = $1
+        AND state IN ('issued', 'exchanged')`,
+    [attemptId]
+  );
+
+  const { rows } = await client.query(
+    `UPDATE native_session_credentials
+        SET state = 'revoked', revocation_reason = 'web_logout', revoked_at = NOW()
+      WHERE credential_reference = $1
+        AND credential_generation = $2
+        AND user_id = $3
+        AND attempt_id = $4
+        AND mobile_auth_token_id = $5
+        AND state = 'valid'
+      RETURNING credential_reference`,
+    [
+      credentialReference,
+      credentialGeneration,
+      userId,
+      attemptId,
+      mobileAuthTokenId,
+    ]
+  );
+
+  if (rows.length) {
+    await client.query(
+      `UPDATE mobile_push_registrations
+          SET session_expires_at = LEAST(session_expires_at, NOW()),
+              updated_at = NOW()
+        WHERE native_session_credential_reference = $1`,
+      [credentialReference]
+    );
+    await client.query(
+      `DELETE FROM mobile_auth_tokens
+        WHERE id = $1 AND user_id = $2`,
+      [mobileAuthTokenId, userId]
+    );
+  }
+
+  return { credentialRevoked: rows.length === 1 };
+}
+
+module.exports = {
+  revokeNativeSessionCredentials,
+  revokeExactNativeSessionCredential,
+};

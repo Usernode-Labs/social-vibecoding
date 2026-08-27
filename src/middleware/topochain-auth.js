@@ -275,7 +275,7 @@ async function renewCredentialLease(pool, authenticated, tokenHash) {
   }
 }
 
-function mobileTokenAuth(config) {
+function mobileTokenAuth(config, { renewLease = true } = {}) {
   const pool = getPool(config);
 
   return async (req, res, next) => {
@@ -289,7 +289,7 @@ function mobileTokenAuth(config) {
       const { rows } = await pool.query(
         `SELECT t.id, c.user_id, t.ability, t.expires_at,
                 c.credential_reference, c.credential_generation,
-                c.installation_id,
+                c.installation_id, c.attempt_id,
                 c.expires_at <= NOW() + INTERVAL '89 days' AS renewal_due,
                 u.username
            FROM native_session_credentials c
@@ -321,7 +321,7 @@ function mobileTokenAuth(config) {
       return fail(res, 403, 'A participant session token is required.');
     }
 
-    if (row.renewal_due === true) {
+    if (renewLease && row.renewal_due === true) {
       try {
         row = await renewCredentialLease(pool, row, tokenHash);
       } catch (err) {
@@ -345,6 +345,7 @@ function mobileTokenAuth(config) {
       expiresAt: row.expires_at,
       credentialReference: row.credential_reference,
       credentialGeneration: row.credential_generation,
+      attemptId: row.attempt_id,
     };
 
     return next();

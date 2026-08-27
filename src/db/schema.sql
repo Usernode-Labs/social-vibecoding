@@ -4111,7 +4111,7 @@ CREATE TABLE IF NOT EXISTS mobile_push_installation_mutations (
 CREATE TABLE IF NOT EXISTS mobile_push_registrations (
   id                 BIGSERIAL PRIMARY KEY,
   user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  native_session_credential_reference VARCHAR(47),
+  native_session_credential_reference VARCHAR(47) NOT NULL,
   environment        VARCHAR(32) NOT NULL,
   installation_id    UUID NOT NULL,
   provider           VARCHAR(16) NOT NULL DEFAULT 'fcm' CHECK (provider = 'fcm'),
@@ -4133,6 +4133,27 @@ CREATE TABLE IF NOT EXISTS mobile_push_registrations (
 );
 ALTER TABLE mobile_push_registrations
   ADD COLUMN IF NOT EXISTS native_session_credential_reference VARCHAR(47);
+-- Existing unbound registrations predate native credential authority. Cut
+-- them off immediately, then reject every new unbound row. NOT VALID keeps
+-- historical diagnostic rows without weakening the constraint for writes.
+UPDATE mobile_push_registrations
+   SET session_expires_at = LEAST(session_expires_at, NOW()),
+       updated_at = NOW()
+ WHERE native_session_credential_reference IS NULL
+   AND session_expires_at > NOW();
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'mobile_push_registrations_native_credential_required_check'
+       AND conrelid = 'mobile_push_registrations'::regclass
+  ) THEN
+    ALTER TABLE mobile_push_registrations
+      ADD CONSTRAINT mobile_push_registrations_native_credential_required_check
+      CHECK (native_session_credential_reference IS NOT NULL) NOT VALID;
+  END IF;
+END;
+$$;
 CREATE INDEX IF NOT EXISTS idx_mobile_push_registrations_user
   ON mobile_push_registrations (user_id, environment);
 CREATE INDEX IF NOT EXISTS idx_mobile_push_registrations_native_credential
