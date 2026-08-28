@@ -181,7 +181,7 @@ function ImproveRow({
 export function ImprovePanel() {
   const state = useStoreState(improveStore);
   const {
-    open, target, name, slug, selfHosted, sessions, otherSessions,
+    open, adopted, target, name, slug, selfHosted, sessions, otherSessions,
   } = state;
 
   const close = useCallback(() => Improve.close(), []);
@@ -196,10 +196,15 @@ export function ImprovePanel() {
   // than a tree React has to rebuild on every open.
   return (
     <>
+      {/* The overlay is the WEB presentation's dim. Adopted into a kit sheet
+          the kit's own backdrop dims the scene (and fades with its spring), so
+          raising this one too both over-dimmed and, on close, held the dim at
+          full strength until the teardown — the background snapped clear
+          instead of fading with the slide. */}
       <div
         id="improve-overlay"
         aria-hidden="true"
-        {...(open ? { 'data-open': '' } : {})}
+        {...(open && !adopted ? { 'data-open': '' } : {})}
         className="fixed inset-0 z-40 bg-black/40"
         onClick={close}
       >

@@ -195,7 +195,9 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
 }
 
 export function NotificationsSheetView() {
-  const { open } = useStoreState(notificationsSheetStore) as { open: boolean };
+  const { open, adopted } = useStoreState(notificationsSheetStore) as {
+    open: boolean; adopted: boolean;
+  };
 
   // Pull-to-refresh went with the screen root. A kit sheet owns the vertical
   // drag for its own dismiss gesture, so a pull-down inside one cannot also
@@ -249,10 +251,12 @@ export function NotificationsSheetView() {
 
   return (
     <>
+      {/* The overlay is the WEB presentation's dim. Adopted into a kit sheet
+          the kit's own backdrop owns it — see lib/sheet-controller.js. */}
       <div
         id="notifications-sheet-overlay"
         aria-hidden="true"
-        {...(open ? { 'data-open': '' } : {})}
+        {...(open && !adopted ? { 'data-open': '' } : {})}
         className="fixed inset-0 z-40 bg-black/40"
         onClick={() => NotificationsSheet.close()}
       >

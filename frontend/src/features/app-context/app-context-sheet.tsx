@@ -186,7 +186,7 @@ function AppTile({ app, current }: { app: SwitcherApp; current: boolean }) {
 }
 
 export function AppsSwitcherSheet(): ReactNode {
-  const { open } = useStoreState(appContextStore);
+  const { open, adopted } = useStoreState(appContextStore);
   const { slug } = useStoreState(improveStore);
   const [apps, setApps] = useState<SwitcherApp[] | null>(null);
 
@@ -230,10 +230,12 @@ export function AppsSwitcherSheet(): ReactNode {
 
   return (
     <>
+      {/* The overlay is the WEB presentation's dim. Adopted into a kit sheet
+          the kit's own backdrop owns it — see lib/sheet-controller.js. */}
       <div
         id="apps-switcher-overlay"
         aria-hidden="true"
-        {...(open ? { 'data-open': '' } : {})}
+        {...(open && !adopted ? { 'data-open': '' } : {})}
         className="fixed inset-0 z-40 bg-black/40"
         onClick={close}
       >
