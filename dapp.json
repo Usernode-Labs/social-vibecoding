@@ -1785,6 +1785,18 @@
       "expectSelector": "#improve-footer:not(:has(#improve-row-version)) #drawer-row-platform-version"
     },
     {
+      "name": "A tab behind a deploy says the new build is downloading, and offers no reload yet",
+      "path": "/?shot=platform-updating&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-footer:not(:has(button.drawer-ver--stale)) span.drawer-ver--stale.drawer-ver--fetching",
+      "expectText": "1111111 \u00b7 updating\u2026"
+    },
+    {
+      "name": "Once the new build is cached, the same row becomes the reload button",
+      "path": "/?shot=platform-update-ready&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-footer button.drawer-ver--stale:not(.drawer-ver--fetching)",
+      "expectText": "1111111 \u00b7 reload"
+    },
+    {
       "name": "The Improve panel: quick actions, the app's views, the work in flight, then what the app is (#1443)",
       "path": "/?demo=1",
       "expectSelector": "#improve-body > #improve-quick-actions + #improve-views + #improve-sessions + #improve-footer"
