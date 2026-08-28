@@ -261,7 +261,29 @@ const READ_ONLY_TOOL_EXCEPTIONS = Object.freeze(['whoami']);
 // tests/mcp-instruction-budget.test.js enforces both, measuring the RESOLVED
 // descriptions off a registration recorder rather than the source text, so a
 // description assembled from constants is measured as the client sees it.
-const SERVER_INSTRUCTIONS_MAX_CHARS = 1400;
+// 1400 -> 1536, which is the CEILING the headroom invariant permits, not a
+// number picked to fit one more sentence.
+//
+// The budget had been reached: SERVER_INSTRUCTIONS measured 1399 of 1400, so
+// the next brief of any length failed the build. That is the guard working
+// exactly as designed — it fails LOUDLY — but it meant the field was full,
+// and the section that hit it is one that protects an ANSWER rather than a
+// diff: an agent reading a stale fork reports findings about a version of the
+// app that no longer exists, and nothing inside the checkout can tell it so.
+//
+// Why 1536 and not more: tests/mcp-instruction-budget.test.js asserts this
+// budget keeps at least 512 characters clear of the client's 2048, and 1536
+// is where that runs out. That invariant is the whole point of having a
+// number below the client's — raising IT to make room would turn the guard
+// into a restatement of the bug, which is what its own comment warns against.
+// So the budget moves to the edge of what is already allowed and no further.
+//
+// What this deliberately does NOT buy is room for the next addition. At 1530
+// of 1536 the build fails again on anything substantial, and that is correct:
+// content sitting close under the budget is not a safety problem, because it
+// fails at require time rather than silently. A brief earns its place here or
+// it lives in the section's `text`, where nothing is capped.
+const SERVER_INSTRUCTIONS_MAX_CHARS = 1536;
 const TOOL_DESCRIPTION_MAX_CHARS = 1800;
 
 module.exports = {
