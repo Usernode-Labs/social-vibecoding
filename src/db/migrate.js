@@ -60,6 +60,7 @@ async function migrate(config) {
   await seedStagingVenueLine(pool, config);
   await seedStagingDevFlowWizard(pool, config);
   await seedStagingSessionOptions(pool, config);
+  await seedStagingNoBranchSession(pool, config);
   await seedStagingSharedSession(pool, config);
   // #945: must run AFTER seedStagingSharedSession — the proposal-thread
   // half hangs off that fixture's session id.
@@ -2480,6 +2481,76 @@ async function seedStagingStartScreenSession(pool, config) {
     appId,
     owner: owner.username,
     sessionId: STAGING_START_SCREEN_SESSION_ID,
+    inserted: rowCount,
+  });
+}
+
+// #1350: a session with NO BRANCH at all.
+//
+// Until #1350 this state was unreachable — POST /api/apps/:slug/sessions
+// minted the branch and called github.createBranch before it returned, so
+// every row in chat_sessions had a branch_name from the moment it existed.
+// The branch is minted on the session's FIRST TURN now, which means an
+// untouched session legitimately has none, and several surfaces say
+// something different because of it:
+//
+//   • the own-tools launchpad prints the "start new work" instructions
+//     instead of the "continue this branch" ones (public/js/launchpad.js)
+//   • the web hand-off wizard carries the same banner above it
+//   • the local-CLI card drops "same branch" from its promise
+//     (public/js/session-options.js)
+//
+// None of that is visible without a branchless row to point at, and a
+// staging clone has none: chat_sessions is staging:private, so the table
+// arrives empty and every other fixture here seeds a branch. Hence this
+// one, which is 990401's twin in every respect EXCEPT branch_name — same
+// owner, same emptiness, same 'active' status — so a reviewer comparing
+// /dev/sessions/990401 with /dev/sessions/990411 sees the branch, and only
+// the branch, as the difference.
+//
+// No chat_session_messages rows: a session with a message has had a turn,
+// and a session that has had a turn has a branch. The emptiness is not
+// decoration here, it is what makes the row honest.
+//
+// Idempotent on the id; strict no-op in production.
+const STAGING_NO_BRANCH_SESSION_ID = 990411;
+
+async function seedStagingNoBranchSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging no-branch session fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const owner = await getStagingCheckViewer(pool, 'Staging no-branch session fixture');
+  if (!owner) return;
+
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, NULL, NULL,
+             '[staging fixture] No branch yet, nothing has run', 'active',
+             NOW() - INTERVAL '3 minutes', NOW() - INTERVAL '3 minutes')
+     ON CONFLICT (id) DO UPDATE SET
+       user_id = EXCLUDED.user_id,
+       session_title = EXCLUDED.session_title,
+       status = EXCLUDED.status,
+       branch_name = NULL`,
+    [STAGING_NO_BRANCH_SESSION_ID, appId, owner.id]
+  );
+
+  log.info('db', 'Staging no-branch session fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId: STAGING_NO_BRANCH_SESSION_ID,
     inserted: rowCount,
   });
 }

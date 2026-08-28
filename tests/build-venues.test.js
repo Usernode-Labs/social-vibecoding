@@ -310,6 +310,22 @@ test('webTargetKind is the three-way derivation, moved here intact', () => {
   }
 });
 
+test('an active session with no branch is a REACHABLE state, not a stale row (#1350)', () => {
+  // Branch creation is deferred to the first turn now, so "active, no branch"
+  // is what every freshly created session looks like until somebody sends a
+  // message. The derivation already answered 'new' for it; what changed is
+  // that this row is common rather than a leftover, so the hand-off has to
+  // read as starting work rather than as continuing a branch that is not there.
+  for (const status of ['active', 'paused']) {
+    assert.equal(BV.webTargetKind({ sessionStatus: status, hasBranch: false }), 'new', status);
+    assert.equal(BV.webVerb(BV.webTargetKind({ sessionStatus: status, hasBranch: false })),
+      BV.webVerb('new'), 'and it is offered with the start-new-work verb');
+  }
+  // Promotion is the one status that outranks the missing branch: a promoted
+  // session has a proposal to continue whatever its own branch column says.
+  assert.equal(BV.webTargetKind({ sessionStatus: 'promoted', hasBranch: false }), 'proposal');
+});
+
 test('the hand-off verb follows the target kind', () => {
   assert.equal(BV.webVerb('session'), 'Continue this session with ');
   assert.equal(BV.webVerb('proposal'), 'Continue this proposal with ');

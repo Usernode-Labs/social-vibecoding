@@ -76,6 +76,33 @@
     ];
   }
 
+  // The lead paragraph, in two shapes (#1350).
+  //
+  // "same transcript, same branch, same proposal" was written when a
+  // session had a branch from the moment it was created. It does not now:
+  // the branch is minted on the session's first turn, so a session handed
+  // to the local CLI before anyone has said anything to it has none yet.
+  //
+  // That is not an error and the card still works. `agent run` attaches,
+  // the first turn runs on the user's machine, and the push that follows
+  // is what creates the branch. But promising a branch that does not exist
+  // is the kind of sentence someone checks against GitHub and does not
+  // find, so this says which of the two it is instead.
+  function leadHtml(state) {
+    var s = state || {};
+    if (s.hasBranch === false) {
+      return 'This session stays right here: same transcript, same proposal. '
+        + 'Nothing has run in it yet, so it has no branch on GitHub. Usernode '
+        + 'creates one when the first turn pushes. The turns run through Claude '
+        + 'Code on your machine, on your own Claude plan, and each one asks in '
+        + 'your terminal before it starts.';
+    }
+    return 'This session stays right here: same transcript, same branch, same '
+      + 'proposal. Its turns just run through Claude Code on your machine, on '
+      + 'your own Claude plan, and each one asks in your terminal before it '
+      + 'starts.';
+  }
+
   function instructionsHtml(state) {
     var s = state || {};
     var cmdText = commands(s).join('\n');
@@ -88,7 +115,9 @@
       + '    </button>'
       + '  </div>'
       + '  <div class="px-4 py-3 overflow-y-auto">'
-      + '    <p class="text-xs text-zinc-600 dark:text-zinc-300">This session stays right here: same transcript, same branch, same proposal. Its turns just run through Claude Code on your machine, on your own Claude plan, and each one asks in your terminal before it starts.</p>'
+      + '    <p id="dc-options-lead" class="text-xs text-zinc-600 dark:text-zinc-300">'
+      + escapeHtml(leadHtml(s))
+      + '</p>'
       + '    <pre id="dc-options-commands" class="mt-3 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 p-3 text-[0.7rem] leading-relaxed font-mono whitespace-pre-wrap break-words select-text text-zinc-700 dark:text-zinc-300">'
       + escapeHtml(cmdText)
       + '</pre>'
@@ -173,6 +202,7 @@
     webTargetKind: webTargetKind,
     commands: commands,
     instructionsHtml: instructionsHtml,
+    leadHtml: leadHtml,
     openInstructions: openInstructions,
   };
 

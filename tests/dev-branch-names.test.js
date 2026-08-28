@@ -195,7 +195,14 @@ test('describePushFailure tolerates a missing error object', () => {
 // ── the call sites ──────────────────────────────────────────────────────
 
 test('no route interpolates a raw username into a branch name', () => {
-  for (const rel of ['src/routes/sessions.js', 'src/routes/proposal-handoff.js']) {
+  for (const rel of [
+    'src/routes/sessions.js',
+    'src/routes/proposal-handoff.js',
+    // #1350 moved the dev-session mint out of the creation route and into
+    // ensureSessionBranch, so the sanitizer has to be checked where the
+    // name is actually built now.
+    'src/services/session-lifecycle.js',
+  ]) {
     const src = read(rel);
     assert.equal(
       /`dev\/\$\{[^}]*username[^}]*\}/.test(src), false,
@@ -204,12 +211,28 @@ test('no route interpolates a raw username into a branch name', () => {
   }
 });
 
-test('sessions.js mints every dev branch through devBranchName', () => {
-  const src = read('src/routes/sessions.js');
-  const mints = src.match(/const branchName = [^;]+;/g) || [];
-  assert.ok(mints.length >= 4, 'expected the four session-creation call sites');
-  for (const mint of mints) {
-    assert.match(mint, /branchNames\.devBranchName\(/, `unrouted branch mint: ${mint}`);
+test('every dev-branch mint goes through devBranchName', () => {
+  // #1350 redistributed these. The interactive session route no longer
+  // mints at all — its branch is created on the first turn — so the count
+  // dropped from four to the three headless creation paths that have no
+  // "first message" to defer to (auto-issue, clone, fork), plus the one in
+  // session-lifecycle.js that the deferred path uses.
+  //
+  // The assertion that matters is unchanged and is the second one: a mint
+  // anywhere in these files must route through the sanitizer. The counts
+  // are here so that DELETING a mint is a deliberate act rather than a way
+  // to make this test pass.
+  const expected = {
+    'src/routes/sessions.js': 3,
+    'src/services/session-lifecycle.js': 1,
+  };
+  for (const [rel, count] of Object.entries(expected)) {
+    const src = read(rel);
+    const mints = src.match(/const branchName = [^;]+;/g) || [];
+    assert.equal(mints.length, count, `${rel}: expected ${count} branch mints`);
+    for (const mint of mints) {
+      assert.match(mint, /branchNames\.devBranchName\(/, `unrouted branch mint: ${mint}`);
+    }
   }
 });
 

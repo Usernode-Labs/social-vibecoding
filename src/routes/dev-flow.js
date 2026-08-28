@@ -82,6 +82,11 @@ const STATUS_BY_CODE = {
   branch_moved: 409,
   session_busy: 409,
   fork_branch_not_found: 404,
+  // #1350: the session exists and is the caller's, but no turn has run on
+  // it yet so there is no branch to continue from. A 409 for the same
+  // reason as the three above: the caller's picture of the session is out
+  // of date, and the remedy is an action, not a permission.
+  session_not_started: 409,
   // #1347's two. `already_shared` is a 409 for the same reason the three
   // above are: the caller's picture of the work is out of date — it is already
   // a card in the In-progress area — rather than forbidden. `share_failed`

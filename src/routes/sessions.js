@@ -1779,7 +1779,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   });
 
-  // Create a new session (branch + PR)
+  // Create a new session. No branch and no PR yet (#1350): the branch is
+  // minted on the first chat turn, the PR after the first commit.
   router.post('/api/apps/:slug/sessions', drainGuard, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
@@ -1866,33 +1867,38 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const rawIssue = req.body && req.body.issueNumber;
       const issueNumber = Number.isInteger(rawIssue) && rawIssue > 0 ? rawIssue : null;
 
-      const branchName = branchNames.devBranchName(req.user.username);
-
-      // Create branch on GitHub (PR created later after first commit)
-      if (github.isEnabled() && app.repo_url) {
-        try {
-          const [, repoOwner, repoName] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-          if (repoOwner && repoName) {
-            await github.createBranch(repoOwner, repoName, branchName);
-          }
-        } catch (err) {
-          log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err.message });
-        }
-      }
-
+      // #1350: NO branch is minted here. The row is created with
+      // branch_name NULL and the branch appears the first time something
+      // actually needs it — the first chat turn, via
+      // sessionLifecycle.ensureSessionBranch(). Two reasons:
+      //
+      //   * Most created sessions never run a turn. The start screen, the
+      //     issue panel's "Create PR" and the "+ New chat" button all land
+      //     here, and an abandoned session used to leave an empty ref off
+      //     main behind it forever.
+      //   * A session handed to an off-platform venue (web-claude-code,
+      //     web-codex, own-tools-pr) runs no on-platform turn at all. Its
+      //     agent pushes to its own fork, so a platform branch for it was
+      //     never anything but litter.
+      //
+      // Everything downstream already tolerates the NULL: the venue sheet
+      // reads `hasBranch`, the staging/heal sweeps filter
+      // `branch_name IS NOT NULL`, and the four seams that genuinely
+      // require a ref call ensureSessionBranch() themselves.
+      //
       // Insert the session with its FINAL chosen/default backend and model
       // atomically — never insert-then-patch. An explicit choice was strictly
       // validated above; an omitted choice preserves the saved-default path.
       const { rows } = await pool.query(
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number,
             agent_backend, agent_provider, agent_model, agent_reasoning_effort)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8)
+         VALUES ($1, $2, NULL, 'active', $3, $4, $5, $6, $7)
          RETURNING *`,
-        [app.id, req.user.id, branchName, issueNumber,
+        [app.id, req.user.id, issueNumber,
          pref.backend, pref.provider, pref.model, pref.reasoningEffort]
       );
 
-      log.info('sessions', 'Session created', { sessionId: rows[0].id, branch: branchName });
+      log.info('sessions', 'Session created (branch deferred to first turn)', { sessionId: rows[0].id });
       events.record(pool, {
         type: events.EVENT_TYPES.DEV_SESSION_STARTED,
         userId: req.user.id,
@@ -2037,6 +2043,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       let botUsername = null;
       try { botUsername = await github.getBotUsername(); } catch {}
 
+      // #1350 carve-out: a headless run mints its branch here, up front,
+      // and deliberately does NOT defer. There is no "first message" to
+      // defer to — the route's whole job is to start one unattended turn
+      // immediately, and that turn may push. Deferring would only move the
+      // same mint a few lines down the same request.
       const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`);
       try {
         await github.createBranch(repoOwner, repoName, branchName);
@@ -2168,11 +2179,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // Fork the new branch off the auto session's branch so any commit it
       // pushed carries over. Fall back to main if that branch is missing
       // (e.g. the headless run never pushed and the branch was pruned).
+      //
+      // #1350 carve-out: this mint is NOT deferred. The clone exists to
+      // inherit the headless run's commits, and that inheritance is the
+      // `fromBranch` argument below. Defer it and the first turn would
+      // branch off main instead, silently discarding the work the clone
+      // was created to continue.
       const branchName = branchNames.devBranchName(req.user.username);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (github.isEnabled() && repoOwner && repoName) {
         try {
-          await github.createBranch(repoOwner, repoName, branchName, src.branch_name);
+          await github.createBranch(repoOwner, repoName, branchName, src.branch_name || 'main');
         } catch (err) {
           log.warn('sessions', 'Branch fork off auto session failed — falling back to main', { err: err.message, from: src.branch_name });
           try {
@@ -3436,11 +3453,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       // Fork the branch off the source's branch so any commit it pushed
       // carries over; fall back to main if that branch is gone.
+      //
+      // #1350 carve-out: not deferred, for the same reason as the headless
+      // clone above — the point of a fork is to start from the source's
+      // commits, and `fromBranch` is where that happens. A source that has
+      // not run a turn yet has no branch at all now, so name main
+      // explicitly rather than asking GitHub for `heads/null`.
       const branchName = branchNames.devBranchName(req.user.username);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (github.isEnabled() && repoOwner && repoName) {
         try {
-          await github.createBranch(repoOwner, repoName, branchName, src.branch_name);
+          await github.createBranch(repoOwner, repoName, branchName, src.branch_name || 'main');
         } catch (err) {
           log.warn('sessions', 'Branch fork off shared session failed — falling back to main', { err: err.message, from: src.branch_name });
           try {
@@ -4010,6 +4033,46 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
         turnAttachments = attRows;
       }
+      // #1350: this is where a native session's branch comes from. Sessions
+      // are created branchless, so the first turn is the first thing that
+      // needs a ref, and ensureSessionBranch() is idempotent for every turn
+      // after it.
+      //
+      // Placement is deliberate, on both sides:
+      //
+      //   * AFTER every 4xx gate above (repo, status, billing path,
+      //     attachment ownership) and BEFORE the message insert, so a turn
+      //     that was going to be refused anyway mints nothing, and a mint
+      //     that fails leaves no orphan user message in the transcript.
+      //   * BEFORE res.writeHead() below. Once the SSE stream opens, a 4xx
+      //     reply is no longer possible, and "GitHub would not create your
+      //     branch" is exactly the kind of failure that has to arrive as a
+      //     status code rather than as a chat message.
+      //
+      // It covers the local-agent path too: runLocally turns still push
+      // through the platform, so they need the ref just as much.
+      //
+      // The helper is idempotent on its own, but skip it outright once the
+      // row already carries a name: every turn after the first would
+      // otherwise open a transaction and take a row lock to re-read a value
+      // this handler is already holding.
+      if (!String(session.branch_name || '').trim()) {
+        try {
+          const ensured = await sessionLifecycle.ensureSessionBranch({
+            pool, sessionId: session.id, username: req.user.username,
+          });
+          session.branch_name = ensured.branchName;
+        } catch (err) {
+          log.warn('sessions', 'Could not prepare session branch for first turn', {
+            sessionId: session.id, code: err.code || null, message: err.message,
+          });
+          return res.status(503).json({
+            error: err.userMessage
+              || 'Usernode could not prepare this session\'s branch. Send your message again in a moment.',
+          });
+        }
+      }
+
       const userMeta = turnAttachments.length
         ? {
             attachments: turnAttachments.map((a) => ({
@@ -10693,6 +10756,28 @@ async function finishToolTurnCleanup(sessionId, turnId, { required = false } = {
 // editing anything. Mirrors runClaudeCodeTool's stop / progress / cost-
 // tracking shape so the existing client SSE handlers don't have to
 // special-case scout vs. build.
+// #1350 backstop: no dispatch can run without a branch.
+//
+// The first-turn mint in POST /chat covers every interactive path and
+// headless runs mint their own up front, so by the time a dispatch reaches
+// this the branch is normally already on the row and this is one indexed
+// SELECT. It exists anyway because the consequence of dispatching without
+// one is not a poor error message: worker-run.sh hard-requires BRANCH, and
+// once a worker is warm on a bad value run-cc.sh dies on
+// "branch missing upstream: origin/$BRANCH" for every build and sync turn
+// after it, with no way back. Mint rather than dispatch into that.
+//
+// Deliberately unconditional on runLocally: a local agent commits on the
+// user's machine but pushes through the platform, so it needs the ref too.
+async function ensureBranchForDispatch(pool, session) {
+  if (session.branch_name) return session.branch_name;
+  const ensured = await sessionLifecycle.ensureSessionBranch({
+    pool, sessionId: session.id,
+  });
+  session.branch_name = ensured.branchName;
+  return ensured.branchName;
+}
+
 async function runScoutTool({
   pool, config, req, res, session, selectedModel,
   userMessage, toolPromptArg,
@@ -10920,6 +11005,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   // the first dispatch of a session; subsequent ensures are sub-second.
   // Bootstrap progress (clone/checkout/warm-ready) flows through onProgress
   // to the dev-chat UI just like the legacy single-shot path used to.
+  await ensureBranchForDispatch(pool, session);
   const containerName = runLocally ? null : await worker.ensureWorker(session.id, {
     repoOwner,
     repoName,
@@ -12509,6 +12595,7 @@ ${buildGuidance.testingGuidance}`;
   // credential for it either — the user's own `claude` login on their own
   // machine does the work, so neither their BYOK key nor the platform's proxy
   // JWT is created, sent, or needed on this path.
+  await ensureBranchForDispatch(pool, session);
   const containerName = runLocally ? null : await worker.ensureWorker(session.id, {
     repoOwner,
     repoName,

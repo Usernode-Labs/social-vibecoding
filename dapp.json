@@ -2523,6 +2523,24 @@
       "expectText": "Claude"
     },
     {
+      "name": "A branchless session's launchpad says there is nothing to resume (#1350)",
+      "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990411",
+      "expectSelector": "#dc-launchpad-slot [data-launchpad-resume=\"new\"] .dc-launchpad-resume-title",
+      "expectText": "Starting new work"
+    },
+    {
+      "name": "A session with commits tells the agent to continue its branch (#1350)",
+      "path": "/?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-launchpad-slot [data-launchpad-resume=\"continue\"] code",
+      "expectText": "staging-fixture/start-screen"
+    },
+    {
+      "name": "The web hand-off wizard carries the same resume banner (#1350)",
+      "path": "/?shot=launchpad&venue=web-codex#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-launchpad-slot [data-launchpad-resume=\"continue\"] .dc-launchpad-resume-title",
+      "expectText": "Continuing this session"
+    },
+    {
       "name": "Nearly out of credits: the chat warns before a turn is refused (#593)",
       "path": "/?shot=credits-low#app/usernode-2d5619/dev/sessions/990403",
       "expectSelector": "#dc-credits-low-banner [data-credits-low-lead]",

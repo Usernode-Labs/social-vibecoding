@@ -176,7 +176,13 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
           sessionId: Number(session.id),
           appSlug: session.app_slug,
           repoUrl: session.repo_url,
-          branch: session.branch_name,
+          // #1350: a session gets its branch on its first turn, so a CLI
+          // that attaches to a brand-new one legitimately finds none. Say
+          // so explicitly rather than shipping a null the client has to
+          // guess about: `branchPending` means "there will be one, run a
+          // turn", not "something went wrong".
+          branch: session.branch_name || null,
+          branchPending: !session.branch_name,
           title: session.session_title,
           headSha: session.checks_commit_sha
             || session.handoff_uploaded_sha
