@@ -105,6 +105,7 @@ const CHARTER_SECTIONS = Object.freeze([
     // that prompt, for a reader who followed it here.
     id: 'verify-your-checkout',
     title: 'Verify the checkout you were handed',
+    brief: 'With a checkout, call get_checkout_status before you read its code or edit it: `git fetch origin` cannot tell you a fork is stale.',
     text: 'If this conversation has a checkout of an app\'s repository, do not assume it is current — verify it before you read code from it to answer a question, and before the first edit of a change. The check a checkout can run on itself does not settle this: `git fetch origin` compares it against ITS OWN remote, so a fork whose default branch is far behind the app\'s canonical repository reports zero commits behind and reads as up to date. Nothing inside the checkout says which repository is canonical, and a session started on a ready-made branch inherits whatever commit that branch was cut from. Call get_checkout_status with `headSha` (from `git rev-parse HEAD`) and `remoteUrl` (from `git remote get-url origin`): the platform knows which repository the app is built from and where its default branch points, you know your working copy, and only the two together answer the question. A verdict other than `current` means code you read there may describe a version that no longer exists — say so plainly rather than reporting findings from it as though they described the live app. For work that will be SUBMITTED, the base commit still comes from prepare_work, never from merging a default branch yourself: which commit a change is diffed against decides what the group is voting on, so it is not the agent\'s call to change.',
   },
   {
@@ -205,12 +206,21 @@ const CHARTER_SECTIONS = Object.freeze([
 // NOT the charter's own order, and not the order the workflow happens in.
 // This is ordered by WHAT MUST SURVIVE a truncation that cuts from the end:
 //
-//   1. what-usernode-is    — one line of context, or the rest reads as noise
-//   2. untrusted-content   — safety
-//   3. never-claim-landed  — safety
-//   4. read-this-first     — the pointer at everything below this line
-//   5. setup-tip-relay     — the only channel this server has to the human
-//   6-9.                   — the workflow, in the order it happens
+//   1. what-usernode-is     — one line of context, or the rest reads as noise
+//   2. untrusted-content    — safety
+//   3. never-claim-landed   — safety
+//   4. read-this-first      — the pointer at everything below this line
+//   5. setup-tip-relay      — the only channel this server has to the human
+//   6. no-code-here         — you are the coding agent, when you have the tools
+//   7. verify-your-checkout — …and what you were handed may not be the app
+//   8-10.                   — the workflow, in the order it happens
+//
+// 7 sits where it does because 6 is what implies a checkout exists at all: an
+// agent that has just been told it is the coding agent is the one holding a
+// working copy. It is ABOVE the workflow briefs deliberately — a stale
+// checkout poisons an ANSWER, not just a diff, so it has to survive a
+// truncation that eats where-to-start and work-order-handling. The section's
+// own text carries the rest; the brief only has to get the tool called.
 //
 // A client that truncates gets the safety clauses and the pointer; a client
 // that does not gets all nine. Every id here must name a section that carries
@@ -225,6 +235,7 @@ const BRIEF_ORDER = Object.freeze([
   'read-this-first',
   'setup-tip-relay',
   'no-code-here',
+  'verify-your-checkout',
   'where-to-start',
   'conventions-pointer',
   'work-order-handling',

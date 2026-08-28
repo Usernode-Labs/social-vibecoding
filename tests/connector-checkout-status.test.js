@@ -252,20 +252,55 @@ test('the tool is named so the shipped read-only allow rules cover it', () => {
 
 // ── The budget that shaped the design ──────────────────────────────────
 
-test('the charter section carries no brief, so the instruction budget is untouched', () => {
+test('the checkout rule reaches the server instructions, not just the charter', () => {
   const section = charter.CHARTER_SECTIONS.find((s) => s.id === 'verify-your-checkout');
   assert.ok(section, 'the charter explains the failure mode');
   assert.ok(section.text.includes('get_checkout_status'), 'and names the tool');
 
-  // The reason it is charter-only. SERVER_INSTRUCTIONS was at 1399 of 1400
-  // when this landed: a brief here would have to be paid for by deleting a
-  // safety clause. If that budget is ever raised, this test should be the
-  // thing that makes someone decide deliberately rather than drift into it.
-  assert.equal(section.brief, undefined, 'deliberately charter-only');
+  // THIS TEST USED TO ASSERT THE OPPOSITE, and it was right to.
+  //
+  // #1433 left this section charter-only because SERVER_INSTRUCTIONS was at
+  // 1399 of 1400: a brief would have had to be paid for by deleting a safety
+  // clause. It asked that a raised budget be a deliberate decision rather than
+  // a drift, and this is that decision being recorded.
+  //
+  // What forced it: charter-only was not enough. An agent reads the charter
+  // when it calls get_connector_guidance, and a session that answers a
+  // question about an app never has to call anything — so a fork 76 commits
+  // behind produced a confident answer about code that no longer existed, and
+  // only the user caught it. The instructions are the one text that arrives
+  // before any tool call, which is why the brief has to be there.
+  //
+  // The budget moved 1400 -> 1536, which is the ceiling the >=512 headroom
+  // invariant below already permitted; that invariant is untouched.
+  assert.ok(section.brief, 'the section now carries a brief');
+  assert.ok(section.brief.includes('get_checkout_status'), 'which names the tool');
   assert.ok(
-    !charter.BRIEF_ORDER.includes('verify-your-checkout'),
-    'and therefore absent from BRIEF_ORDER'
+    charter.BRIEF_ORDER.includes('verify-your-checkout'),
+    'and is delivered in the initialize instructions'
   );
+  assert.ok(
+    charter.SERVER_INSTRUCTIONS.includes('get_checkout_status'),
+    'so the resolved instructions name it without any tool call'
+  );
+
+  // Position is load-bearing: the briefs are ordered by what survives a
+  // truncation that cuts from the end, and a stale checkout poisons an ANSWER
+  // rather than only a diff — so it outranks the workflow guidance. It also
+  // sits after no-code-here, which is the clause that implies a checkout
+  // exists at all.
+  const order = charter.BRIEF_ORDER;
+  assert.ok(
+    order.indexOf('verify-your-checkout') === order.indexOf('no-code-here') + 1,
+    'directly after the "you are the coding agent" clause'
+  );
+  for (const later of ['where-to-start', 'conventions-pointer', 'work-order-handling']) {
+    assert.ok(
+      order.indexOf('verify-your-checkout') < order.indexOf(later),
+      `and above ${later}, which it must outlive under truncation`
+    );
+  }
+
   assert.ok(
     charter.SERVER_INSTRUCTIONS.length <= SERVER_INSTRUCTIONS_MAX_CHARS,
     `SERVER_INSTRUCTIONS is ${charter.SERVER_INSTRUCTIONS.length} chars, `

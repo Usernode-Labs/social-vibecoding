@@ -2332,7 +2332,11 @@ test('prepare_work reports the proposals already up for a vote on the request', 
   assert.match(block, /author: p\.author \? untrusted\(p\.author, MAX_TITLE_CHARS\) : null/);
   // It leads nextStep: that string is read BEFORE the work order is pasted,
   // which is the only point at which an hour of an agent's time can be saved.
-  assert.match(block, /nextStep: duplicateWarning\(result\)/);
+  // Still leads the workflow text, but behind the stale-checkout warning
+  // (#1462): a duplicate proposal wastes an agent's hour, while a stale
+  // checkout invalidates what the agent has ALREADY concluded, so that one
+  // goes first. Both still precede everything else in the string.
+  assert.match(block, /nextStep: staleCheckoutWarning\(checkout\)\s*\+ duplicateWarning\(result\)/);
 
   const warning = SRC.slice(
     SRC.indexOf('const duplicateWarning = (result) =>'),

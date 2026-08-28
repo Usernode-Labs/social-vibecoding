@@ -2167,6 +2167,44 @@ function registerTools(server, ctx) {
       + 'If they want the second proposal anyway, carry on below. ';
   };
 
+  // The stale-checkout warning, and it leads even the duplicate one (#1462).
+  //
+  // A duplicate proposal wastes an agent's hour. A stale checkout invalidates
+  // everything the agent has ALREADY concluded — it may have answered a
+  // question about the app from a version that no longer exists before it ever
+  // reached this call. So it goes first, and it is worded as something to say
+  // to the user rather than only something to fix.
+  //
+  // Silence on `current` and on `null`, which are not the same thing and must
+  // not read as the same thing: `null` means no headSha was passed, so nothing
+  // was checked. Only `verdict` values that describe a real divergence speak
+  // up. `ahead` is deliberately NOT one of them — a checkout ahead of the
+  // default branch is the ordinary state of a branch with commits on it.
+  //
+  // `repo_unreachable` DOES speak: a check that could not run is not a pass,
+  // and letting it read as one is the whole failure this is here to prevent.
+  const staleCheckoutWarning = (checkout) => {
+    if (!checkout) return '';
+    const { verdict } = checkout;
+    if (verdict === 'current' || verdict === 'ahead') return '';
+    const where = checkout.remoteIsCanonical === false
+      ? 'Its origin is NOT the app\'s own repository, so it is a fork'
+      : 'It is not at the app\'s current default branch';
+    const distance = Number.isInteger(checkout.behindBy) && checkout.behindBy > 0
+      ? ` — ${checkout.behindBy} commit${checkout.behindBy === 1 ? '' : 's'} behind`
+      : '';
+    if (verdict === 'repo_unreachable') {
+      return 'THE CHECKOUT COULD NOT BE VERIFIED: the app\'s repository could not be read, so '
+        + 'nothing here says the working copy is current. Treat it as unverified rather than as '
+        + 'checked and fine. ';
+    }
+    return `THIS CHECKOUT IS NOT THE APP'S CURRENT CODE (${verdict}). ${where}${distance}. `
+      + 'Anything already read from it may describe a version that no longer exists — if you have '
+      + 'answered a question about this app from it, say so to the user rather than letting the '
+      + 'answer stand. The work order below carries the RIGHT base commit, so start from that '
+      + 'rather than merging a default branch yourself. ';
+  };
+
   // ── prepare_work ─────────────────────────────────────────────────────
   //
   // The hand-off. Returns a self-contained work order — no Usernode
@@ -2184,6 +2222,10 @@ function registerTools(server, ctx) {
         .describe("The id of one of the user's own proposals that is already up for a vote, to REVISE it rather than open a new one — for fixing a failing check or acting on review comments. The work order starts at that proposal's current commit and its submission updates the same proposal, which clears the votes it has collected. Only the proposal's author can do this."),
       restart: z.boolean().optional()
         .describe('Only when the user explicitly wants to start this request over from the app\'s current code. Closes the job already open for it and mints a fresh one, which frees the old work-order slot and takes a new one. Omit it: calling prepare_work twice for the same request already returns the existing job, which is almost always what is wanted.'),
+      headSha: z.string().optional()
+        .describe('Your checkout\'s current commit — the output of `git rev-parse HEAD`. Pass it whenever this conversation has a checkout and the result reports `checkout`: whether what you are holding is the app\'s code at all, and how far it has drifted. Costs nothing when it is fine and catches a stale fork before you write against it rather than at submit_work.'),
+      remoteUrl: z.string().optional()
+        .describe('Your checkout\'s origin remote — the output of `git remote get-url origin`. Only meaningful alongside headSha, and it is what identifies a FORK: without it the check can say the commit is behind but not that origin is a different repository from the app\'s own.'),
     },
     outputSchema: {
       taskId: z.number(),
@@ -2212,6 +2254,18 @@ function registerTools(server, ctx) {
       // where that proposal's head lives.
       proposalId: z.number().nullable(),
       branchHome: z.enum(['app_repo', 'user_fork']).nullable(),
+      // Only when the caller passed headSha. Null otherwise — which means
+      // "not asked", never "fine": a caller that supplies nothing gets the
+      // same silence a stale checkout used to get.
+      checkout: z.object({
+        verdict: z.string(),
+        behindBy: z.number().nullable(),
+        aheadBy: z.number().nullable(),
+        remoteIsCanonical: z.boolean().nullable(),
+        canonicalRepo: z.string().nullable(),
+        baseToUse: z.string().nullable(),
+        note: z.string(),
+      }).nullable(),
       claimedRequest: z.boolean()
         .describe('Whether the request was marked as being worked on. False when this work order names no request, or when the claim did not land — the work order itself is unaffected either way, and claim_request retries it.'),
       // Proposals the group is ALREADY voting on for this same request
@@ -2234,7 +2288,7 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, requestNumber, brief, restart, proposalId }) => {
+  }, async ({ slug, requestNumber, brief, restart, proposalId, headSha, remoteUrl }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -2334,6 +2388,51 @@ function registerTools(server, ctx) {
       }
     }
 
+    // THE CHECKOUT CHECK, MOVED FORWARD (#1462).
+    //
+    // A wrong base used to surface at submit_work, as `base_mismatch` out of
+    // mirrorForkBranch — after the change was written, when the remedy has
+    // become a rebase across everything that moved underneath it. Everything
+    // needed to say it here is already in hand: this call knows the canonical
+    // repository and the base commit, and the caller knows its own HEAD.
+    //
+    // Opt-in on `headSha`, because the connector cannot detect a checkout it
+    // was never told about — an agent that passes nothing gets exactly the
+    // silence it got before, which is why the instructions now name
+    // get_checkout_status rather than relying on this.
+    //
+    // Advisory, never a refusal: the work order carries the RIGHT base, so a
+    // stale checkout is a thing to say loudly, not a reason to withhold the
+    // one artifact that fixes it. A failure inside the check is swallowed for
+    // the same reason the claim above is — the work order is what was asked
+    // for and it has already been minted.
+    let checkout = null;
+    if (typeof headSha === 'string' && headSha.trim()) {
+      try {
+        const { checkoutStatus } = require('./checkout-status');
+        const status = await checkoutStatus({ gh: require('./github') }, {
+          repoUrl: app.repo_url || null,
+          headSha,
+          remoteUrl: remoteUrl || null,
+        });
+        if (!status.code) {
+          checkout = {
+            verdict: status.verdict,
+            behindBy: status.behindBy ?? null,
+            aheadBy: status.aheadBy ?? null,
+            remoteIsCanonical: status.remoteIsCanonical ?? null,
+            canonicalRepo: status.canonicalRepo || null,
+            baseToUse: status.baseToUse || null,
+            note: status.note || '',
+          };
+        }
+      } catch (err) {
+        log.warn('mcp-tools', 'prepare_work checkout check failed (continuing)', {
+          slug, message: err && err.message,
+        });
+      }
+    }
+
     // The fork wording, the one-click link and the "do not open a PR" note
     // all live in `guidance` now, built by the service — nextStep is only
     // the rendering contract plus what to call next. Re-rendering is free:
@@ -2353,6 +2452,7 @@ function registerTools(server, ctx) {
       workOrder: result.workOrder,
       proposalId: result.proposalId || null,
       branchHome: result.branchHome || null,
+      checkout,
       claimedRequest,
       // The title is the proposal's own heading and the author is a username:
       // both are other Usernode users' writing, so both keep the envelope
@@ -2363,7 +2463,8 @@ function registerTools(server, ctx) {
           title: untrusted(p.title, MAX_TITLE_CHARS),
           author: p.author ? untrusted(p.author, MAX_TITLE_CHARS) : null,
         })),
-      nextStep: duplicateWarning(result)
+      nextStep: staleCheckoutWarning(checkout)
+        + duplicateWarning(result)
         + (result.proposalId
         ? `This work order REVISES proposal ${result.proposalId}, and it starts at that proposal's own current `
           + 'commit rather than at the app\'s main branch. Its coding agent submits it with submit_work using '
