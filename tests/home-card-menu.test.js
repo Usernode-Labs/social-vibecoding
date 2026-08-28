@@ -793,7 +793,7 @@ test('menu click: reveals the section and auto-adds when there is room', async (
   await Home._menuAddShortcut(baseApp({ is_favorited: true }));
   assert.equal(Home._widgetSectionVisible, true, 'click reveals the section');
   assert.equal(added.length, 1, 'app auto-added when the widget has room');
-  assert.match(added[0].url, /#app\/demo-app/);
+  assert.equal(added[0].url, 'https://sv.test/app/demo-app');
 });
 
 test('menu click: full widget shakes instead of adding', async () => {
@@ -920,7 +920,7 @@ test('icon heal: has_icon:false entries are silently re-added once', async () =>
   // the foreign shortcut are left alone. The re-add is marked silent so
   // the app skips the add-the-widget walkthrough.
   assert.equal(added.length, 1);
-  assert.match(added[0].url, /#app\/demo-app/);
+  assert.equal(added[0].url, 'https://sv.test/app/demo-app');
   assert.equal(added[0].silent, true);
   // Second refresh: already tried — no repeat even though the mock
   // still reports has_icon:false.
@@ -1161,7 +1161,7 @@ test('icon heal: a system light→dark flip re-sends every canvas tile once', as
   setDark(true);
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(added.length, 1, 'exactly the canvas tile re-sends');
-  assert.match(added[0].url, /#app\/demo-app/);
+  assert.equal(added[0].url, 'https://sv.test/app/demo-app');
   assert.equal(added[0].silent, true, 're-send stays silent — no walkthrough');
   const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
   assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:dark:`, 'dark source recorded');
@@ -1853,7 +1853,7 @@ test('a foreground re-fetches the registry, not just the snapshot', async () => 
   await flushAsync();
   assert.equal(Home._widgetItems.length, 2, 'the registry was re-read');
   assert.equal(added.length, 1, 'and the new entry gets its icon');
-  assert.equal(added[0].url, 'https://sv.test/#app/second');
+  assert.equal(added[0].url, 'https://sv.test/app/second');
 });
 
 // A foreground whose registry read failed learned nothing, so it must

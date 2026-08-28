@@ -1527,7 +1527,7 @@
     {
       "name": "The kanban carries the app's general discussion as a card above its columns",
       "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectSelector": "#dev-forum-scroll:has(#dev-body #dev-kanban-board) a#dev-chat-card[href$=\"/dev/chat\"]",
+      "expectSelector": "#dev-forum-scroll:has(#dev-body #dev-kanban-board) a#dev-chat-card[href^=\"/app/usernode-2d5619/dev/chat\"]",
       "expectText": "General discussion"
     },
     {

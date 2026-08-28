@@ -1,4 +1,4 @@
-// #app/<slug>/board and #app/<slug>/activity are ALIASES onto the existing dev
+// /app/<slug>/board and /app/<slug>/activity are clean names for the existing dev
 // vocabulary, not new screens — and they are aliases onto the SAME one: both
 // resolve to the forum card area, and what tells them apart is the layout it
 // is drawn in. Board is the kanban of work in flight; Activity is the same
@@ -48,7 +48,7 @@ test('restoreFromHash rewrites the aliases onto the dev vocabulary', () => {
 });
 
 test('the route applies the layout, and re-renders when only the layout moved', () => {
-  const fn = body("if (parts[0] === 'app' && parts[1]) {", 7400);
+  const fn = body("if (parts[0] === 'app' && parts[1]) {", 9200);
   // Set BEFORE the dispatch, so a cold entry paints the named layout on the
   // board's first frame instead of flashing the stored one.
   assert.match(fn, /AppView\._setViewMode\(boardView\)/,
@@ -65,16 +65,16 @@ test('the route applies the layout, and re-renders when only the layout moved', 
     'and forces the re-render the tab/sub-tab comparison would skip');
 });
 
-test('updateHash names the card area for the layout it is drawn in', () => {
-  const fn = body('newHash = `#app/${App.currentApp}/dev/sessions/', 1600);
-  assert.match(fn, /App\.currentSubTab === 'chat'[\s\S]{0,320}\/dev\/chat`/,
+test('the clean serializer names the card area for the layout it is drawn in', () => {
+  const fn = body('_appUrl(slug, tab, ref, subTab, options) {', 1800);
+  assert.match(fn, /norm\.subTab === 'chat'[\s\S]{0,120}suffix = '\/dev\/chat'/,
     'the general chat writes its own address, not /activity');
-  assert.match(fn, /AppView\._getViewMode\(\) === 'feed'[\s\S]{0,200}feed \? 'activity' : 'board'/,
+  assert.match(fn, /AppView\._getViewMode\(\) === 'feed'[\s\S]{0,160}feed \? 'activity' : 'board'/,
     'and the card area writes whichever of the two names its layout gives it');
 });
 
 test('updateHash treats the two aliases and the canonical form as one screen', () => {
-  const fn = body('const screenIdOf = (h) => {', 1200);
+  const fn = body('const screenIdOf = (value) => {', 1400);
   // ONE screen for history, deliberately: switching layout is not somewhere to
   // go back FROM, which is also why the retired Kanban|Feed strip pushed no
   // entry. What this pins is that neither alias can produce a spurious push

@@ -180,12 +180,11 @@ function selectCaptureTokens({ captureToken, adminToken }) {
 // testing-notes.js), so the join must pick '?' vs '&'. An empty token
 // returns the URL unchanged (unauthenticated capture — current behaviour).
 //
-// Fragment-safe (#353): a self-app deep link carries a `#app/...` hash
-// (the SPA routes off location.hash), and a query param MUST sit before
-// the fragment or it never reaches the server. So split off any `#...`
-// tail, splice `token=` onto the path+query part, then re-attach the
-// fragment. Plain pathname URLs (no `#`) are byte-identical to the old
-// concat behaviour.
+// Fragment-safe (#353): the self-app's non-app screens still carry hashes,
+// and a query param MUST sit before the fragment or it never reaches the
+// server. Split off any `#...` tail, splice `token=` onto the path+query part,
+// then re-attach the fragment. Clean app pathname URLs (no `#`) are
+// byte-identical to the old concat behaviour.
 function withToken(url, token) {
   if (!token) return url;
   const hashAt = url.indexOf('#');
@@ -194,11 +193,11 @@ function withToken(url, token) {
   return base + (base.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token) + frag;
 }
 
-// The self-app is a hash-routed SPA (#353): App.restoreFromHash() in
-// public/js/app.js reads location.hash, so its internal screens are
-// addressed by fragment (`#app/<slug>/...`, `#leaderboard`, ...), NOT by
-// server pathname. A testing path joined as a pathname loads index.html
-// with an empty hash → the home feed, for both "before" and "after".
+// The self-app uses clean pathname routes for app screens
+// (`/app/<slug>/...`) and keeps the rest of its SPA screens in fragments
+// (`#leaderboard`, `#admin/...`, ...). A non-app testing path joined as a
+// pathname loads index.html with an empty fragment → the home feed, for both
+// "before" and "after".
 //
 // Normalise a self-app testing path into the form the SPA actually
 // routes off: if its first segment is one of the SPA hash routes, move
@@ -221,10 +220,10 @@ function withToken(url, token) {
 // pathname, so before it was listed here a `path: /apps` silently loaded
 // index.html with an empty hash and captured the home screen — the exact
 // failure mode this whole function exists to prevent. It is distinct from
-// the singular 'app' (the app-view route) and must be its own entry: the
-// first path segment is matched exactly, not by prefix.
+// the singular 'app' (the clean app-view route), which deliberately stays in
+// the pathname. The first path segment is matched exactly, not by prefix.
 const SELF_APP_HASH_ROUTES = new Set([
-  'app', 'apps', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin', 'messages',
+  'apps', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin', 'messages',
 ]);
 function selfAppHashPath(p) {
   const path = typeof p === 'string' ? p : '/';

@@ -5734,8 +5734,8 @@
   // there's no visible path from the app back to its in-platform page.
   // The bridge is the one piece of platform code every dapp loads, so it
   // injects a small dismissible pill in the bottom-right corner that
-  // deep-links back to https://<platform-host>/#app/<slug>/app — the
-  // canonical App-tab hash the shell's restoreFromHash understands.
+  // deep-links back to https://<platform-host>/app/<slug> — the clean,
+  // canonical App route the shell restores on a cold visit.
   //
   // Shown ONLY when ALL of these hold:
   //   * top frame         — inside the platform, apps render in iframes
@@ -5776,7 +5776,7 @@
       if (label.indexOf("--") !== -1) return null;
       return {
         slug: label,
-        href: "https://" + platformHost + "/#app/" + label + "/app",
+        href: "https://" + platformHost + "/app/" + label,
       };
     }
 

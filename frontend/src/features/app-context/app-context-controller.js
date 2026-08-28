@@ -31,9 +31,11 @@ export const AppContext = createSheetController({
 if (typeof window !== 'undefined') {
   window.AppContext = AppContext;
   // The sheet is modal over whatever the address bar now names, so ANY
-  // hash-driven navigation dismisses it — rows call dismissForNav
-  // themselves, but browser back/forward and programmatic hash writes
-  // arrive here instead (found in the evidence run: a deep link rendered
-  // Activity underneath a still-open sheet).
+  // client-side navigation dismisses it — rows call dismissForNav themselves,
+  // but browser back/forward and programmatic fragment writes arrive through
+  // these events instead (found in the evidence run: a deep link rendered
+  // Activity underneath a still-open sheet). Clean pushState navigation uses
+  // popstate on traversal; legacy platform routes still use hashchange.
+  window.addEventListener('popstate', () => AppContext.dismissForNav());
   window.addEventListener('hashchange', () => AppContext.dismissForNav());
 }

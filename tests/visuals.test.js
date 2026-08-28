@@ -133,8 +133,8 @@ test('withToken keeps an existing query AND the fragment in order (#353)', () =>
 
 // ── selfAppHashPath (hash-route normalisation, #353) ───────────────────
 
-test('selfAppHashPath moves SPA hash routes into the fragment', () => {
-  assert.equal(visuals.selfAppHashPath('/app/social/dev/proposals/5'), '/#app/social/dev/proposals/5');
+test('selfAppHashPath keeps clean app routes and moves other SPA routes into the fragment', () => {
+  assert.equal(visuals.selfAppHashPath('/app/social/dev/proposals/5'), '/app/social/dev/proposals/5');
   assert.equal(visuals.selfAppHashPath('/leaderboard'), '/#leaderboard');
   assert.equal(visuals.selfAppHashPath('/group-chat'), '/#group-chat');
   assert.equal(visuals.selfAppHashPath('/individual-chat/9'), '/#individual-chat/9');
@@ -151,9 +151,9 @@ test('selfAppHashPath normalises the plural /apps browse routes', () => {
   assert.equal(visuals.selfAppHashPath('/apps'), '/#apps');
   assert.equal(visuals.selfAppHashPath('/apps/staging-demo-puzzle-chain'),
     '/#apps/staging-demo-puzzle-chain');
-  // The singular app-view route is a separate entry and still works — the
-  // match is on the exact first segment, not a prefix.
-  assert.equal(visuals.selfAppHashPath('/app/social'), '/#app/social');
+  // The singular app-view route is a clean pathname — the match is on the
+  // exact first segment, not a prefix.
+  assert.equal(visuals.selfAppHashPath('/app/social'), '/app/social');
 });
 
 test('selfAppHashPath leaves bare /, already-fragment, and server pages alone', () => {

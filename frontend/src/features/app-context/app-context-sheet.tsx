@@ -98,10 +98,11 @@ const SECTION = 'px-5 pt-4 pb-1 text-[0.7rem] font-semibold uppercase tracking-w
   + 'text-zinc-400 dark:text-zinc-500';
 
 /**
- * One destination. An ANCHOR, always — these are hash routes, so cmd/ctrl
- * click, middle-click and "open in new tab" all have to work, the same reason
- * #back-btn is an <a>. `dismissForNav` closes the sheet on a plain activation;
- * a modified click never reaches it because the browser handles it natively.
+ * One destination. An ANCHOR, always — whether clean-path or fragment-routed,
+ * cmd/ctrl click, middle-click and "open in new tab" all have to work, the same
+ * reason #back-btn is an <a>. `dismissForNav` closes the sheet on a plain
+ * activation; a modified click never reaches it because the browser handles
+ * it natively.
  */
 function MenuRow({
   id, href, icon, label, trailing, onClick, elRef, shipsHidden,
@@ -154,11 +155,17 @@ function AppTile({ app, current }: { app: SwitcherApp; current: boolean }) {
   const label = app.name || app.slug;
   return (
     <a
-      href={`#app/${app.slug}/app`}
+      href={`/app/${encodeURIComponent(app.slug)}`}
       data-switcher-app={app.slug}
       aria-current={current ? 'page' : undefined}
       className="shrink-0 w-16 flex flex-col items-center gap-1.5"
-      onClick={() => AppContext.dismissForNav()}
+      onClick={(event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey
+            || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        void AppContext.dismissForNav();
+        if (!current) window.App?.navigateToApp?.(app.slug, 'app');
+      }}
     >
       {/* The ring sits OUTSIDE the tile's own hairline, offset in the sheet's
           ground, so a selected tile reads as one edge rather than two. */}

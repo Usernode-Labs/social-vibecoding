@@ -72,7 +72,9 @@ export function WaitingScreen() {
         const host = w.AuthScreens;
         const target = (host?._pendingHash as string) || '';
         if (host) host._pendingHash = '';
-        history.replaceState(null, '', '/' + target);
+        const targetUrl = typeof host?.deepLinkUrl === 'function'
+          ? host.deepLinkUrl(target) : '/' + target;
+        history.replaceState(null, '', targetUrl);
         fx(() => {
           (host?.hideAll as undefined | (() => void))?.();
           w.App?.enterAuthed?.(user);

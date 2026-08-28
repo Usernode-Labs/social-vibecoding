@@ -249,7 +249,7 @@ test('the dev board card-menu shot is re-asserted, not stopped at the first open
   const fn = appView.slice(from, from + 2600);
   assert.match(fn, /if \(arrived\) return;/,
     'an open menu is left alone for this tick rather than ending the window');
-  assert.match(fn, /if \(!String\(location\.hash \|\| ''\)\.includes\(`app\/\$\{slug\}`\) \|\| \(tries \+= 1\) > \d+\) \{\s*done\(\);/,
+  assert.match(fn, /if \(App\.currentApp !== slug \|\| \(tries \+= 1\) > \d+\) \{\s*done\(\);/,
     'only a route change or the try cap ends it');
   assert.match(fn, /const onUserInput = \(e\) => \{ if \(!e \|\| e\.isTrusted\) done\(\); \};/,
     'a real gesture ends it too — a human never gets a menu put back under them');

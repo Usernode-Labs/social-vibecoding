@@ -413,7 +413,7 @@ test('landing tiles mirror home cards and gate on requires_login', () => {
   assert.match(tsx, /opacity-50 grayscale/);
   assert.match(tsx, /Account required/);
   // Gated tap: remember the app deep link, then the signup flow.
-  assert.match(tsx, /rememberDeepLink[\s\S]{0,160}'#app\/' \+ \(app\.slug \|\| ''\)/);
+  assert.match(tsx, /rememberDeepLink[\s\S]{0,180}'\/app\/' \+ encodeURIComponent\(app\.slug \|\| ''\)/);
   assert.match(tsx, /location\.hash = '#signup'/);
   // Icon priority mirrors home.js iconTileFor: image > emoji > letter.
   assert.match(tsx, /data-icon="image"/);

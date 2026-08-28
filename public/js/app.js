@@ -45,14 +45,14 @@ const App = {
   // Platform-wide direct and group conversations (#488). The screen itself
   // is React-owned; this flag only coordinates the classic shell router.
 
-  // Chromeless full-screen mode (#app/<slug>/full): the App tab with the
+  // Chromeless full-screen mode (/app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
   // viewport. This is where the edge gate sends credential-less direct
   // visits to an app's own subdomain — the shell still injects the
   // iframe token, refreshes it, and hosts the bridge/LLM-consent flows,
   // so a shared link "just works". The only chrome is a floating
   // "Open in Usernode" pill (see _mountChromelessPill) that switches to
-  // the regular #app/<slug>/app view. Driven purely by the hash via
+  // the regular /app/<slug> view. Driven purely by the route via
   // restoreFromHash/setChromeless.
   chromeless: false,
 
@@ -611,7 +611,7 @@ const App = {
   //
   // It WAITS FOR A TARGET rather than firing on a fixed delay. Without one the
   // panel refuses to open — correct behaviour, not something to work around —
-  // and on an #app/<slug> route the target is published by
+  // and on an /app/<slug> route the target is published by
   // App.ImproveStatus.setAppOpen(), which runs after openApp()'s fetch has
   // landed. A single 50ms tick (what ?shot=improve can afford, because the panel
   // needs nothing but a settled shell) fired long before that, so the panel
@@ -2365,8 +2365,8 @@ const App = {
     // The header's App/Dev segmented switch (#app-mode-switch) used to be
     // wired here. THE UI OVERHAUL retired it: an app is just an app now, and
     // "Dev" is a destination the Improve panel links to rather than a mode the
-    // header toggles. Both tabs still exist as ROUTES — #app/<slug>/app and
-    // #app/<slug>/dev — so every deep link, notification target and history
+    // header toggles. Both tabs still exist as ROUTES — /app/<slug> and
+    // /app/<slug>/board — so every deep link, notification target and history
     // entry keeps working; what is gone is the control that flipped between
     // them in place. features/improve/improve-controller.js's openDev() is the
     // caller that takes its place, and it goes through the same switchTab().
@@ -2396,16 +2396,100 @@ const App = {
     App._applyRouteShots();
   },
 
+  // Clean app URLs live in the pathname while the rest of the platform keeps
+  // its established fragment routes. A hash always wins when both exist: a
+  // legacy caller assigning `location.hash = '#settings'` from an app path
+  // means "leave the app for Settings", and restoreFromHash canonicalises the
+  // pathname back to `/` before dispatching it.
+  _appRouteFromPath(pathname) {
+    const raw = String(pathname || '');
+    if (!/^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(raw)) return '';
+    try {
+      return raw.replace(/^\/+/, '').split('/').map(decodeURIComponent).join('/');
+    } catch (_) {
+      return '';
+    }
+  },
+
+  // Preserve every platform query parameter byte-for-byte, except `path`,
+  // which belongs exclusively to the chromeless app route. The inner child
+  // path is encoded as ONE query value so its own `?`, `&`, and `=` survive.
+  _routeSearch(innerPath) {
+    const raw = String(location.search || '').replace(/^\?/, '');
+    const kept = raw ? raw.split('&').filter((part) => {
+      const key = part.split('=', 1)[0].replace(/\+/g, ' ');
+      try { return decodeURIComponent(key) !== 'path'; } catch (_) { return true; }
+    }) : [];
+    if (innerPath) kept.push(`path=${encodeURIComponent(innerPath)}`);
+    return kept.length ? `?${kept.join('&')}` : '';
+  },
+
+  _rootUrl(hash) {
+    return `/${App._routeSearch(null)}${hash || ''}`;
+  },
+
+  // One serializer for cold links, ordinary navigation, Back/Forward, and
+  // legacy-hash normalisation. Keeping all app-route spellings here is what
+  // prevents a copied address and the screen it restores from drifting.
+  _appUrl(slug, tab, ref, subTab, options) {
+    const opts = options || {};
+    const safeSlug = encodeURIComponent(String(slug || ''));
+    const norm = App._normalizeTab(tab, ref, subTab);
+    let suffix = '';
+    if (opts.chromeless) {
+      suffix = '/full';
+    } else if (norm.tab === 'dev') {
+      if (norm.subTab === 'sessions' && norm.ref) {
+        suffix = `/dev/sessions/${norm.ref}`;
+      } else if (norm.subTab === 'chat') {
+        suffix = '/dev/chat';
+      } else if (norm.subTab === 'topic' && norm.ref && norm.ref.id) {
+        const seg = norm.ref.kind === 'issue' ? 'issues'
+          : norm.ref.kind === 'proposal' ? 'proposals'
+          : norm.ref.kind === 'session' ? 'shared' : 'governance';
+        suffix = `/dev/${seg}/${norm.ref.id}`;
+      } else if (opts.boardView === 'feed') {
+        suffix = '/activity';
+      } else if (opts.boardView === 'kanban') {
+        suffix = '/board';
+      } else {
+        const feed = typeof AppView !== 'undefined' && AppView._getViewMode
+          && AppView._getViewMode() === 'feed';
+        suffix = `/${feed ? 'activity' : 'board'}`;
+      }
+    }
+    return `/app/${safeSlug}${suffix}${App._routeSearch(
+      opts.chromeless ? opts.innerPath : null
+    )}`;
+  },
+
+  _deepLinkTarget() {
+    if (location.hash) return location.hash;
+    const appPath = App._appRouteFromPath(location.pathname);
+    return appPath
+      ? `${location.pathname}${location.search || ''}`
+      : '';
+  },
+
   restoreFromHash() {
     App._isRestoring = true;
     try {
       const rawHash = location.hash.replace('#', '');
+      const pathRoute = App._appRouteFromPath(location.pathname);
+      // A fragment names a non-app platform screen, so it outranks the clean
+      // app pathname it was assigned from. Heal the mixed address in place;
+      // all the existing hash-writing modules can stay small and correct.
+      if (rawHash && pathRoute && !rawHash.startsWith('app/')) {
+        try { history.replaceState(null, '', App._rootUrl(`#${rawHash}`)); } catch (_) {}
+      }
       // Fragment-query (#743): a chromeless deep link carries the app's
       // inner path after a `?` INSIDE the fragment
       // (#app/<slug>/full?path=/t/123). Split it off before the segment
       // split so every existing route parses byte-for-byte as before.
       const qIdx = rawHash.indexOf('?');
-      let hash = qIdx === -1 ? rawHash : rawHash.slice(0, qIdx);
+      let hash = rawHash
+        ? (qIdx === -1 ? rawHash : rawHash.slice(0, qIdx))
+        : pathRoute;
       const fragQuery = qIdx === -1 ? '' : rawHash.slice(qIdx + 1);
 
       // ── Anonymous-shell routing (fold-auth-pages-into-SPA) ─────────
@@ -2438,7 +2522,7 @@ const App = {
               AuthScreens.show('landing');
               return;
             }
-            AuthScreens.rememberDeepLink(location.hash);
+            AuthScreens.rememberDeepLink(App._deepLinkTarget());
             AuthScreens.show('login');
             return;
           }
@@ -2466,7 +2550,7 @@ const App = {
                 AuthScreens.show('more', authSeg);
                 return;
               }
-              if (!authRoute && hash) AuthScreens.rememberDeepLink(location.hash);
+              if (!authRoute && hash) AuthScreens.rememberDeepLink(App._deepLinkTarget());
               AuthScreens.showWaiting();
               return;
             }
@@ -2695,7 +2779,7 @@ const App = {
         let tab = parts[2] || 'app';
         let subTab = null;
         let ref = null;
-        // Chromeless full-screen App view (#app/<slug>/full). Old cached
+        // Chromeless full-screen App view (/app/<slug>/full). Old cached
         // clients that predate this route fall into the final `else`
         // below and get the regular App tab — a graceful degrade.
         const chromeless = tab === 'full';
@@ -2711,6 +2795,12 @@ const App = {
         if (chromeless && fragQuery) {
           const pm = fragQuery.match(/(?:^|&)path=(.*)$/);
           if (pm) innerPath = App._validateInnerPath(pm[1]);
+        } else if (chromeless && pathRoute) {
+          try {
+            innerPath = App._validateInnerPath(
+              new URLSearchParams(location.search).get('path') || ''
+            );
+          } catch (_) { /* malformed query — app root is the safe fallback */ }
         }
         // App / Board / Activity are the app's three views, and the last two
         // are ONE SCREEN READ TWO WAYS: `board` is the card area as a kanban
@@ -2784,13 +2874,23 @@ const App = {
         // The Board/Activity layout, applied from the route (see the alias
         // block above). Resolved BEFORE _setViewMode writes it, because the
         // dispatch below only re-renders when something it can see changed —
-        // and between #app/x/board and #app/x/activity nothing it can see
+        // and between /app/x/board and /app/x/activity nothing it can see
         // does.
         const boardViewChanged = !!boardView
           && typeof AppView !== 'undefined' && AppView._getViewMode
           && AppView._getViewMode() !== boardView;
         if (boardView && typeof AppView !== 'undefined' && AppView._setViewMode) {
           AppView._setViewMode(boardView);
+        }
+        // Hash app URLs and older clean aliases are permanent inputs, never
+        // permanent outputs. Replace before dispatch so reload/copy exposes
+        // the clean canonical path without manufacturing a Back entry.
+        const canonicalAppUrl = App._appUrl(slug, tab, ref, subTab, {
+          chromeless, innerPath, boardView,
+        });
+        const currentAppUrl = `${location.pathname}${location.search}${location.hash}`;
+        if (currentAppUrl !== canonicalAppUrl) {
+          try { history.replaceState(null, '', canonicalAppUrl); } catch (_) {}
         }
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, ref, subTab);
@@ -2859,7 +2959,7 @@ const App = {
   // ── Chromeless full-screen mode ──────────────────────────────────────
   // Hide/show the shared header and mount/unmount the floating "Open in
   // Usernode" pill. Idempotent; only ever driven by restoreFromHash (the
-  // mode is hash-addressed, so history back/forward keeps working) plus a
+  // mode is route-addressed, so history back/forward keeps working) plus a
   // defensive clear in navigateHome.
   //
   // The App/Dev switch needs no line of its own any more — it lives
@@ -3556,59 +3656,45 @@ const App = {
   // session inside the individual-chat tab) — otherwise every session
   // click would add an entry the user has to back through.
   //
-  // "Screen" here = `#app/<slug>/<tab>` prefix; the optional 4th
-  // segment (session id) is intentionally NOT part of the screen id.
-  updateHash() {
+  // "Screen" here = the `/app/<slug>/<view>` prefix; the optional final
+  // record id is intentionally NOT part of the screen id.
+  updateHash(options) {
     if (App._isRestoring) return;
+    const opts = options || {};
 
-    let newHash;
+    let newUrl;
     if (App.currentApp) {
+      let ref = opts.ref;
+      let boardView = opts.boardView;
       if (App.currentTab === 'dev') {
-        if (App.currentSubTab === 'sessions' && DevChat.currentSession) {
-          newHash = `#app/${App.currentApp}/dev/sessions/${DevChat.currentSession.id}`;
-        } else if (App.currentSubTab === 'chat') {
-          // The general chat, at the address it has always had. `/activity`
-          // named this screen for one round and names the board's activity
-          // stream now (see the alias block in restoreFromHash).
-          newHash = `#app/${App.currentApp}/dev/chat`;
-        } else if (App.currentSubTab === 'topic'
+        if (ref == null && App.currentSubTab === 'sessions'
+            && typeof DevChat !== 'undefined' && DevChat.currentSession) {
+          ref = DevChat.currentSession.id;
+        } else if (ref == null && App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
-          const t = AppView._devTopic;
-          const seg = t.kind === 'issue' ? 'issues'
-            : t.kind === 'proposal' ? 'proposals'
-            : t.kind === 'session' ? 'shared' : 'governance';
-          newHash = `#app/${App.currentApp}/dev/${seg}/${t.id}`;
-        } else {
-          // The card area, under whichever of its two names the active layout
-          // gives it: kanban is the Board, the recency stream is Activity.
-          // Old /dev links still parse and normalise to one of the two.
-          const feed = typeof AppView !== 'undefined' && AppView._getViewMode
-            && AppView._getViewMode() === 'feed';
-          newHash = `#app/${App.currentApp}/${feed ? 'activity' : 'board'}`;
+          ref = AppView._devTopic;
         }
-      } else {
-        // Chromeless mode round-trips through reloads/history via its
-        // own hash segment; the regular App tab keeps `/app`. An active
-        // inner deep link (#743) rides along as the final fragment param
-        // so the post-load hash rewrite doesn't strip it and
-        // reload/back/forward reproduce the shared screen.
-        const innerPath = (App.chromeless && typeof AppView !== 'undefined'
-          && AppView.pendingInnerPath) || null;
-        newHash = App.chromeless
-          ? `#app/${App.currentApp}/full${innerPath ? `?path=${innerPath}` : ''}`
-          : `#app/${App.currentApp}/app`;
+        if (!boardView && App.currentSubTab === 'forum') {
+          boardView = typeof AppView !== 'undefined' && AppView._getViewMode
+            && AppView._getViewMode() === 'feed' ? 'feed' : 'kanban';
+        }
       }
+      const innerPath = (App.chromeless && typeof AppView !== 'undefined'
+        && AppView.pendingInnerPath) || null;
+      newUrl = App._appUrl(
+        App.currentApp, App.currentTab, ref, App.currentSubTab,
+        { chromeless: App.chromeless, innerPath, boardView }
+      );
     } else {
       // Home: drop the fragment entirely — but keep the query string. In
       // staging previews the shell-injected ?token= lives there, and the
       // WS connects re-read it as an auth fallback (see connectEvents /
       // GroupChat._openSocket).
-      newHash = location.pathname + location.search;
+      newUrl = App._rootUrl();
     }
 
-    const currentFull = location.hash || '';
-    const targetFull = newHash.startsWith('#') ? newHash : '';
-    if (currentFull === targetFull) return;
+    const currentFull = `${location.pathname}${location.search}${location.hash}`;
+    if (currentFull === newUrl) return;
 
     // Screen ids: every full-screen sub-view (chat, topics, sessions)
     // is its own screen — list ↔ sub-view pushes a history entry, so
@@ -3616,11 +3702,15 @@ const App = {
     // session/topic isn't part of the id (moving between two topics of
     // the same kind replaces in place).
     const SUB_SCREENS = new Set(['sessions', 'chat', 'issues', 'proposals', 'governance', 'shared']);
-    const screenIdOf = (h) => {
-      // Strip the fragment-query (#743) so #app/x/full?path=/t/1 and
-      // #app/x/full are the SAME screen (replace, not a spurious push).
-      const segs = String(h || '').replace(/^#/, '').split('?')[0].split('/');
-      // Aliases (see restoreFromHash): #app/x/board and #app/x/activity are
+    const screenIdOf = (value) => {
+      let parsed;
+      try { parsed = new URL(String(value || ''), location.origin); } catch (_) { return ''; }
+      // A legacy hash outranks its pathname, exactly as restoreFromHash does.
+      const route = parsed.hash
+        ? parsed.hash.replace(/^#/, '').split('?')[0]
+        : parsed.pathname.replace(/^\/+/, '');
+      const segs = route.split('/');
+      // Aliases (see restoreFromHash): /app/x/board and /app/x/activity are
       // both the card area, so an alias in the address bar and the canonical
       // form updateHash computes are the SAME screen — replace, never a
       // spurious push. The two are one screen as far as history goes for the
@@ -3636,12 +3726,12 @@ const App = {
       }
       return segs.slice(0, 3).join('/');
     };
-    const sameScreen = screenIdOf(currentFull) === screenIdOf(targetFull);
+    const sameScreen = screenIdOf(currentFull) === screenIdOf(newUrl);
 
-    if (sameScreen) {
-      history.replaceState(null, '', newHash);
+    if (opts.replace || sameScreen) {
+      history.replaceState(null, '', newUrl);
     } else {
-      history.pushState(null, '', newHash);
+      history.pushState(null, '', newUrl);
     }
   },
 
@@ -3786,6 +3876,22 @@ const App = {
       AppView.close();
     }
     App.currentApp = slug;
+    // Commit the destination while the click is still synchronous. App.open
+    // may wait on metadata and the iframe may never load; neither is a reason
+    // for the address bar to keep naming Home. A cached launcher record lets
+    // the self-app choose Board immediately; an uncached cold visit is safely
+    // normalised with replaceState after metadata arrives.
+    let requestedTab = tab;
+    if (!requestedTab) {
+      let launchRecord = null;
+      try { launchRecord = AppView.launchRecordFor?.(slug) || null; } catch (_) {}
+      requestedTab = launchRecord?.self_hosted ? 'dev' : 'app';
+    }
+    const initialRoute = App._normalizeTab(requestedTab, ref, subTab);
+    App.currentTab = initialRoute.tab;
+    App.currentSubTab = initialRoute.tab === 'dev'
+      ? (initialRoute.subTab || 'forum') : null;
+    App.updateHash({ ref: initialRoute.ref });
     // Resolved BEFORE the _exitX flags are cleared — _departingScreen
     // reads them to name whichever screen root is actually on screen.
     const departing = App._departingScreen();
@@ -3885,7 +3991,15 @@ const App = {
     // instead — that's where votes/discussion happen and what users
     // actually want when they open the self-app.
     const defaultTab = AppView.appData?.self_hosted ? 'dev' : 'app';
-    App.switchTab(tab || defaultTab, ref, subTab);
+    const finalTab = tab || defaultTab;
+    const actualFinalTab = finalTab === 'app' && AppView.appData?.self_hosted
+      ? 'dev' : finalTab;
+    App.switchTab(finalTab, ref, subTab, {
+      // A provisional App path becoming the self-hosted Board is one logical
+      // navigation. Replace it so Back returns to the launch origin in one go.
+      replaceRoute: App._normalizeTab(actualFinalTab, ref, subTab).tab
+        !== initialRoute.tab,
+    });
   },
 
   navigateHome() {
@@ -4132,7 +4246,7 @@ const App = {
   // `ref` is the view's deep-link target: a dev-session id for the
   // session view, or { kind: 'issue'|'proposal', id } for a forum card
   // to expand. Ignored on the App tab.
-  async switchTab(tab, ref, subTab) {
+  async switchTab(tab, ref, subTab, options) {
     const norm = App._normalizeTab(tab, ref, subTab);
     tab = norm.tab;
     subTab = norm.subTab;
@@ -4206,7 +4320,7 @@ const App = {
     // rect (and therefore the frame's own insets) may have changed.
     if (AppView.scheduleSafeAreaBroadcast) AppView.scheduleSafeAreaBroadcast();
 
-    App.updateHash();
+    App.updateHash({ replace: !!options?.replaceRoute, ref });
   },
 
   // Explicit navigation entry point for in-app deep links (e.g. clicking
@@ -4218,6 +4332,11 @@ const App = {
   // app/tab dispatch, plus a force-rerender branch for same app+tab.
   openAppTab(slug, tab, opts) {
     if (!slug) return;
+    // This entry point always means the ordinary platform view. In particular,
+    // the chromeless pill calls it while App.chromeless is still true; clear
+    // that flag before switchTab serializes the destination or it would write
+    // `/full` straight back and leave the platform header hidden.
+    App.setChromeless(false);
     const ref = opts && opts.sessionId != null ? opts.sessionId
       : (opts && opts.ref != null ? opts.ref : null);
     const subTab = (opts && opts.subTab) || null;
@@ -4225,7 +4344,7 @@ const App = {
       App.navigateToApp(slug, tab, ref, subTab);
     } else {
       // Same app: switchTab normalizes legacy names, re-renders, and
-      // syncs the hash — idempotent when nothing changed, a forced
+      // syncs the clean route — idempotent when nothing changed, a forced
       // refresh when the target equals the current view.
       App.switchTab(tab, ref, subTab);
     }

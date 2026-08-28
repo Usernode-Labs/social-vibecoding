@@ -1156,7 +1156,8 @@ const Home = {
         if (e.target.closest('.card-add-btn') || e.target.closest('.card-menu-btn')) return null;
         if (card.dataset.demo === 'true') return null;
         if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return null;
-        return card.dataset.slug ? `#app/${encodeURIComponent(card.dataset.slug)}/app` : null;
+        return card.dataset.slug
+          ? App._appUrl(card.dataset.slug, 'app', null, null) : null;
       };
       const activate = (e) => {
         if (e.target.closest('.card-add-btn') || e.target.closest('.card-menu-btn')) return;
@@ -2390,14 +2391,18 @@ const Home = {
       && Array.isArray(Home._widgetItems);
   },
 
-  // Widget entries deep-link `origin/#app/<slug>`; anything else in the
-  // grid was pinned by a different dapp. Returns the SV slug or null.
+  // Widget entries deep-link `origin/app/<slug>`. The old hash form remains
+  // readable so an existing native widget heals in place the next time its
+  // entries are reconciled. Anything else was pinned by another dapp.
   _widgetSlugFor(item) {
     const url = String(item?.url || '');
-    const prefix = `${location.origin}/#app/`;
-    if (!url.startsWith(prefix)) return null;
     try {
-      return decodeURIComponent(url.slice(prefix.length));
+      const parsed = new URL(url, location.origin);
+      if (parsed.origin !== location.origin) return null;
+      const clean = parsed.pathname.match(/^\/app\/([^/]+)\/?$/);
+      if (clean) return decodeURIComponent(clean[1]);
+      const legacy = parsed.hash.match(/^#app\/([^/]+)(?:\/app)?$/);
+      return legacy ? decodeURIComponent(legacy[1]) : null;
     } catch (_) {
       return null;
     }
@@ -2920,7 +2925,7 @@ const Home = {
     const dual = variant ? variant === 'dual' : Home._widgetDarkIcons === true;
     const payload = {
       name: app.name,
-      url: `${location.origin}/#app/${encodeURIComponent(app.slug)}`,
+      url: `${location.origin}/app/${encodeURIComponent(app.slug)}`,
       icon_url: app.icon_url
         ? new URL(app.icon_url, location.origin).href
         : Home._widgetIconDataUrl(app, dual ? 'light' : Home._widgetScheme()),
