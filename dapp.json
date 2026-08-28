@@ -1739,9 +1739,20 @@
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id]"
     },
     {
-      "name": "Improve panel carries the feedback row",
+      "name": "Improve panel leads with Give feedback, a verb like New change beside it",
       "path": "/",
-      "expectSelector": "#improve-panel #improve-row-feedback"
+      "expectSelector": "#improve-panel #improve-quick-actions #improve-row-feedback",
+      "expectText": "Give feedback"
+    },
+    {
+      "name": "All three version fields share one left edge (the mobile row had lost its inset)",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-footer #drawer-row-platform-version.px-4 ~ #drawer-row-native-app-version.px-4"
+    },
+    {
+      "name": "The platform's own panel does not print its version twice",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-footer:not(:has(#improve-row-version)) #drawer-row-platform-version"
     },
     {
       "name": "The Improve panel: quick actions, the app's views, the work in flight, then what the app is (#1443)",

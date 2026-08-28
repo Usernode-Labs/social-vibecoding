@@ -181,7 +181,7 @@ function ImproveRow({
 export function ImprovePanel() {
   const state = useStoreState(improveStore);
   const {
-    open, target, name, slug, sessions, otherSessions,
+    open, target, name, slug, selfHosted, sessions, otherSessions,
   } = state;
 
   const close = useCallback(() => Improve.close(), []);
@@ -266,9 +266,13 @@ export function ImprovePanel() {
 
               Feedback and New change, as two BUTTONS — see the note on
               QuickAction above for why the divided well of three retired.
-              Feedback first: it is the one action that needs nothing of the
-              viewer, no collaborator bit, no session, no repo. New change
-              carries the fill, because starting one is what this panel is for.
+              "Give feedback", not "Feedback": both of these are things you DO,
+              and a bare noun beside the verb phrase "New change" read as a
+              category label sitting next to an action. The two labels are the
+              same part of speech now. It still leads, because it is the one
+              action that needs nothing of the viewer — no collaborator bit, no
+              session, no repo. New change carries the fill, because starting
+              one is what this panel is for.
 
               Share was the third segment and is not here any more: it is a
               fact ABOUT the app rather than something you do to it, so it
@@ -289,7 +293,7 @@ export function ImprovePanel() {
           >
             <QuickAction
               id="improve-row-feedback"
-              label="Feedback"
+              label="Give feedback"
               onClick={() => Improve.giveFeedback()}
             />
             {state.readOnly ? null : (
@@ -489,10 +493,34 @@ export function ImprovePanel() {
                 onClick={() => Improve.share()}
               />
             ) : null}
-            {/* Versions as text rather than rows: they are the things here you
+            {/*
+                Versions as text rather than rows: they are the things here you
                 read instead of act on. `slug` gates the app's own so a
-                target-less panel never renders a dangling label. */}
-            {slug ? (
+                target-less panel never renders a dangling label.
+
+                ── and NOT on the platform's own panel ────────────────
+
+                `!selfHosted` is the second gate, and it removes a genuine
+                duplicate: the self-hosted row IS the platform, so "Version"
+                and "Platform version" directly below it were the same seven
+                characters twice, two lines apart.
+
+                They are not the same FACT — this row is the app's latest
+                merged main, and the row below is the commit the running
+                deployment was built from — but on every app except this one
+                that distinction is invisible, and on this one the two only
+                diverge while a deploy is in flight or a tab has gone stale.
+                Both of those states the Platform version row already names on
+                its own (`.drawer-ver--deploying`, `.drawer-ver--stale`, which
+                is also what ImproveStatus.refreshDeployDot reads — it selects
+                inside #platform-version-pill-slot, never here, so nothing about
+                the deploy dot depends on this row existing).
+
+                So what is lost is one SHA in one state that is already
+                labelled, and what is gained is that the platform's own footer
+                stops repeating itself.
+            */}
+            {slug && !selfHosted ? (
               <div
                 id="improve-row-version"
                 className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400"
