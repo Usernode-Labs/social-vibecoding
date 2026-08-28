@@ -61,11 +61,6 @@ export function DevFeed(): ReactNode {
   if (v.loading) return <CardSkeleton n={4} label="Loading activity" />;
   return (
     <>
-      {v.block.length ? (
-        <div className="space-y-2 mb-2">
-          {v.block.map((row) => <ListRowView key={row.key} row={row} />)}
-        </div>
-      ) : null}
       {/* Two different empty states, and telling them apart matters: an
           unfiltered stream with nothing in it is an invitation to start
           something, while a FILTERED one that came back empty is a statement

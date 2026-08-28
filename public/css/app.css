@@ -978,9 +978,14 @@ html.un-kb .platform-safe-sheet {
   max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem) !important;
 }
 
-/* The app menu stops at 80%, matching its no-kit rule above: it is a short
-   list of destinations, and a menu that climbs to the status bar reads as a
-   screen you have navigated to rather than something laid over the page. */
+/* The app menu stops at 80%, matching the no-kit bottom-sheet rule in the
+   `max-width: 639px` block: it is a short list of destinations, and a menu
+   that climbs to the status bar reads as a screen you have navigated to
+   rather than something laid over the page.
+   Only the sheet. The desktop presentation is a right-edge rail that reaches
+   floor to ceiling and has nothing to take from the page, so it keeps its
+   full height — the cap is about how much of the page a sheet coming UP from
+   the bottom covers. */
 .platform-sheet-adopted#apps-switcher-sheet {
   max-height: min(80dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem)) !important;
 }
@@ -7072,26 +7077,23 @@ a.drawer-ver--fork:hover {
    bottom sheet below it, a real kit sheet on touch — and the same
    always-mounted / data-open mechanics; read that block's comment for
    the reasoning, which transfers wholesale. */
-/* SIZED BY ITS CONTENT, not by the viewport. This was `top:0; bottom:0` — a
-   full-height rail — and #switcher-nav is the column's only `flex-1` child, so
-   with a definite 100dvh to divide up the nav grew to soak up everything the
-   rows did not use. On an account with a handful of destinations that is a
-   panel whose bottom half is empty, which is the "extra blank space at the
-   bottom" this fixes. Hanging it from the top with `bottom:auto` leaves the
-   height indefinite, `flex-1` then resolves against content, and the panel
-   stops where its last row does; the cap keeps a long list scrollable inside
-   its own nav rather than running off-screen. The bottom-left radius is what
-   the old rule had no use for — a rail that reaches the floor has no corner
-   there, and a panel that stops short does. */
+/* A FULL-HEIGHT RAIL, and it stays one. This is the desktop presentation: the
+   panel slides in from the right edge and reaches floor to ceiling, which is
+   what a side rail is and what every other slide-over here does.
+   It was briefly content-height, as part of fixing the blank space under the
+   BOTTOM SHEET. That was the wrong scope: on a phone the sheet rises over the
+   page and its height is a statement about how much of the page it is taking,
+   while on desktop the rail occupies a column that is otherwise empty and has
+   nothing to take. The cap belongs to the presentation that comes up from the
+   bottom — see the media query and the kit-adopted rule for where it lives
+   now. */
 #apps-switcher-sheet {
   top: 0;
   right: 0;
-  bottom: auto;
-  max-height: 100dvh;
+  bottom: 0;
   width: 20rem;
   max-width: 85vw;
   border-left-width: 1px;
-  border-bottom-left-radius: 1rem;
   transform: translateX(100%);
 }
 #apps-switcher-sheet[data-open] {
@@ -7131,8 +7133,6 @@ a.drawer-ver--fork:hover {
     border-top-width: 1px;
     border-top-left-radius: 1rem;
     border-top-right-radius: 1rem;
-    /* Undo the wide rule's corner: this presentation sits ON the floor. */
-    border-bottom-left-radius: 0;
     transform: translateY(100%);
   }
   #apps-switcher-sheet[data-open] {

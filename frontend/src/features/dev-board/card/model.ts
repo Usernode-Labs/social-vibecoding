@@ -276,8 +276,6 @@ export interface DevFeedView {
    * "No activity yet" on a screen that is still loading is worse than slow.
    */
   loading?: boolean;
-  /** The pinned own-sessions block above the stream. Empty draws nothing. */
-  block: ListRow[];
   /** The no-activity note, with its load-failure prefix. */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   entries: ListRow[];

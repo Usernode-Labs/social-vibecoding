@@ -71,7 +71,7 @@ const ROW_REST =
   ' text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800';
 
 /**
- * One primary action, as its own button.
+ * One of the panel's two lead actions, as its own button.
  *
  * ── Why they are not a divided well any more ───────────────────────────
  *
@@ -86,10 +86,18 @@ const ROW_REST =
  * two different kinds of thing.
  *
  * So they are buttons, shaped like the control that opens this panel:
- * `h-9 rounded-full`, the same pill #improve-btn is. "New change" carries the
- * filled violet, because it is the thing this panel is FOR; Feedback takes the
- * tinted rest state, so the pair reads as primary-and-secondary rather than as
- * two equal halves of a switch.
+ * `h-9 rounded-full`, the same pill #improve-btn is.
+ *
+ * ── And they are the SAME button ───────────────────────────────────────
+ *
+ * "New change" carried the filled violet for a while, on the argument that it
+ * is the thing this panel is FOR, with Feedback in the tinted rest state so
+ * the pair read as primary-and-secondary. Neither is more special than the
+ * other: describing a problem and starting a change are two ways into the
+ * same work, and which one a person wants is about what they have to say, not
+ * about which the panel prefers. A filled pill also put a second solid violet
+ * control immediately under #improve-btn's own, which is what made the panel
+ * open with an accent competing with the button that opened it.
  *
  * Every id is the one it has always had: `#improve-row-feedback` is what the
  * outbox dot's writer selects and `#improve-row-new-session` has named
@@ -99,15 +107,12 @@ const ACTION_BASE =
   'inline-flex flex-1 basis-0 min-w-0 items-center justify-center h-9 px-3 '
   + 'rounded-full text-sm font-semibold transition-colors un-touch-target';
 
-const ACTION_PRIMARY = 'bg-violet-600 hover:bg-violet-500 text-white';
-
-const ACTION_SECONDARY =
+const ACTION_FILL =
   'bg-violet-500/10 hover:bg-violet-500/20 text-violet-700 dark:text-violet-400';
 
-function QuickAction({ id, label, primary, onClick }: {
+function QuickAction({ id, label, onClick }: {
   id: string;
   label: string;
-  primary?: boolean;
   onClick: () => void;
 }): ReactNode {
   return (
@@ -115,7 +120,7 @@ function QuickAction({ id, label, primary, onClick }: {
       id={id}
       type="button"
       onClick={onClick}
-      className={ACTION_BASE + ' ' + (primary ? ACTION_PRIMARY : ACTION_SECONDARY)}
+      className={ACTION_BASE + ' ' + ACTION_FILL}
     >
       <span className="min-w-0 truncate">
         {label}
@@ -371,7 +376,6 @@ export function ImprovePanel() {
               <QuickAction
                 id="improve-row-new-session"
                 label="New change"
-                primary
                 onClick={() => Improve.startSession()}
               />
             )}

@@ -4608,14 +4608,11 @@ const AppView = {
         return AppView._devCardMatches(kind, it.item, f);
       });
     }
-    // The viewer's own sessions are pinned above the feed proper, outside
-    // the "Show more" pager, with the visibility dividers + archived toggle.
-    const block = AppView._mySessionsRows();
     // Before the first load, "no activity yet" is a claim about data nobody
     // has seen. Placeholders instead; the flag is checked before the empty
     // note so a slow load never flashes the wrong one.
     if (!AppView._devDataReady) {
-      return { loading: true, block, emptyNote: null, entries: [], footer: null, ...ctx };
+      return { loading: true, emptyNote: null, entries: [], footer: null, ...ctx };
     }
     if (!items.length) {
       // `filtered` distinguishes "there is nothing here" from "nothing here
@@ -4625,7 +4622,6 @@ const AppView = {
       // useful thing.
       return {
         loading: false,
-        block,
         emptyNote: { loadFailed: !!meta.note, filtered: AppView._kanbanFiltersActive() },
         entries: [],
         footer: null,
@@ -4704,7 +4700,7 @@ const AppView = {
     // patch (lib/plain-store.js), so a view model that simply left the key out
     // would inherit the previous publish's `true` and leave the feed on its
     // placeholders for good.
-    return { loading: false, block, emptyNote: null, entries, footer, ...ctx };
+    return { loading: false, emptyNote: null, entries, footer, ...ctx };
   },
 
   // The two completed row types share one dispatcher: the Feed folds
@@ -6049,40 +6045,18 @@ const AppView = {
     };
   },
 
-  // The pinned own-sessions block for the LIST view, above the feed and
-  // outside its pager: the private divider + private session cards, the
-  // archived toggle, then the visible divider + the viewer's shared
-  // session cards. [] when the viewer has nothing to show.
-  _mySessionsRows() {
-    const mine = AppView._mySessions || [];
-    const priv = mine.filter((s) => !s.shared_at);
-    const vis = mine.filter((s) => !!s.shared_at);
-    const archived = AppView._archivedToggleRow();
-    if (!mine.length && !archived) return [];
-    const rows = [];
-    if (priv.length) {
-      rows.push(AppView._privateDividerRow());
-      for (const s of priv) {
-        const card = AppView._mySessionCardModel(s);
-        rows.push({ t: 'card', key: card.key, card });
-      }
-    }
-    if (archived) rows.push(archived);
-    if (vis.length) {
-      rows.push(AppView._visibleDividerRow());
-      for (const s of vis) {
-        const card = AppView._mySessionCardModel(s);
-        rows.push({ t: 'card', key: card.key, card });
-      }
-    }
-    return rows;
-  },
-
-  // The In progress KANBAN column's rows: the filter no-op note, then
-  // pinned PRIVATE own sessions, the archived toggle, the viewer's VISIBLE
-  // own sessions, issue cards, and other users' shared sessions — the
-  // ordering is unchanged. `entries` are the typed {kind, item} entries
-  // from _bucketDevItems.
+  // The feed does NOT pin the viewer's own sessions above it.
+  //
+  // `_mySessionsRows()` built that block — the private divider, the archived
+  // toggle, the visible divider and the viewer's own session cards — and sat
+  // outside the stream's pager. Activity is the app's activity, and a private
+  // draft nobody else can see is not that; it is the viewer's own workspace,
+  // which the Improve panel lists as "Changes in progress" and the board's
+  // Underway column carries in full.
+  //
+  // Nothing was orphaned by removing it: _inProgressRows below builds the
+  // same rows from the same helpers for that column, which is where an own
+  // session is still reached from the board.
   _inProgressRows(entries) {
     const list = entries || [];
     const mine = list.filter((e) => e.kind === 'my-session');
