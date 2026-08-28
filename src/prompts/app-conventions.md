@@ -1888,6 +1888,48 @@ Notes:
   the forwarded properties to work (it is still required for bare `env()`
   to work standalone).
 
+## Browser capabilities in the app frame
+
+Apps run in a cross-origin iframe, and the powerful browser capabilities
+are gated by **Permissions Policy**, which is delegated **downward** by the
+embedding page. An app cannot grant itself one: the grant is the shell's to
+make, through the `allow` attribute on the frame.
+
+The shell delegates these to every app frame (the App tab, the landing
+page's in-page viewer, and the staging preview alike):
+
+| Capability | Use it through |
+|---|---|
+| `geolocation` | `navigator.geolocation.getCurrentPosition()` |
+| `clipboard-write` | `navigator.clipboard.writeText()` |
+| `pointer-lock` | `element.requestPointerLock()` |
+
+Delegation is not a grant. The browser still prompts the user the first
+time your app asks, per origin, and they can refuse. Always handle the
+error path.
+
+**Everything else is not delegated**, `camera`, `microphone`,
+`display-capture`, `midi`, `payment` and `xr-spatial-tracking` among them.
+The failure mode is worth knowing because it is so easy to misread: an
+undelegated capability is not refused with a distinct error and it does not
+prompt. `getCurrentPosition` and friends reject in a couple of
+milliseconds with `PERMISSION_DENIED`, the *same* code the browser uses
+when a person taps "block". So an app that treats code 1 as "the user said
+no" will tell people to check a permission they were never asked for.
+
+Ask the frame before offering the control, and tell the two cases apart:
+
+```js
+const policy = document.permissionsPolicy || document.featurePolicy;
+const allowed = !policy || policy.allowsFeature('geolocation');
+// `allowed` is true where the browser does not expose the API to ask,
+// so treat it as "try it and see" rather than a guarantee.
+```
+
+If your app needs a capability that is not on the list, that is a missing
+platform capability, not something to work around in the app: see
+"Platform-level problems & missing capabilities" below.
+
 ## Native-feel UI kit — centrally hosted (`usernode-native`)
 
 An **opt-in** CSS + JS kit that makes an app's mobile UI feel native on

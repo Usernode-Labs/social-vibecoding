@@ -1181,7 +1181,7 @@ const AppView = {
         id="app-iframe"${srcAttr}${styleAttr}
         class="w-full h-full border-0"
         sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"
-        allow="clipboard-write; pointer-lock"
+        allow="clipboard-write; pointer-lock; geolocation"
       ></iframe>`;
   },
 
