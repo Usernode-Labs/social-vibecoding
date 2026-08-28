@@ -207,8 +207,8 @@ test('hosted bridge injects the back-to-platform pill on share views', () => {
   const bridge = readBridge(versionedBridgePath);
 
   assert.match(bridge, /__un-platform-link/);
-  // Canonical App-tab deep link: https://<platformHost>/#app/<slug>/app.
-  assert.match(bridge, /"\/#app\/" \+ label \+ "\/app"/);
+  // Canonical App-tab deep link: https://<platformHost>/app/<slug>.
+  assert.match(bridge, /"\/app\/" \+ label/);
   // Staging previews (<slug>--s<id>) must not get the pill.
   assert.match(bridge, /label\.indexOf\("--"\) !== -1/);
   // Never inside the platform iframe or the Flutter WebView.

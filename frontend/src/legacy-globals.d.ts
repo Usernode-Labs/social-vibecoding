@@ -77,6 +77,11 @@ declare global {
         [key: string]: unknown;
       } | null;
       eventsWs?: WebSocket | null;
+      navigateToApp?(slug: string, tab?: string, ref?: unknown, subTab?: string | null): Promise<void>;
+      openAppTab?(slug: string, tab?: string, opts?: unknown): void;
+      _appUrl?(slug: string, tab?: string, ref?: unknown, subTab?: string | null,
+        options?: unknown): string;
+      _rootUrl?(hash?: string): string;
       setBackIcon?(mode: 'home' | 'arrow', href?: string): void;
       setHeaderTitle?(title: string): void;
       [key: string]: unknown;

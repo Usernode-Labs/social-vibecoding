@@ -99,9 +99,11 @@ test('absolute() resolves against the SHELL document, never an app iframe', () =
     + 'on a page that is not a usable top-level address — that IS the bug');
 });
 
-test('homeHref() drops the fragment and keeps the query', () => {
+test('homeHref() returns the canonical root and keeps non-route query params', () => {
   const fn = navLinkFn('homeHref() {');
-  assert.match(fn, /window\.location\.pathname \+ window\.location\.search/,
+  assert.match(fn, /window\.App\?\._rootUrl/,
+    'uses the same canonical root serializer as App.updateHash');
+  assert.match(fn, /'\/' \+ window\.location\.search/,
     'mirrors the home branch of App.updateHash — the staging ?token= and '
     + '?demo= must survive into the new tab');
 });
@@ -304,13 +306,14 @@ test('the app-wide dev chat carries no back control any more', () => {
 
 // The dev session's back control is the PLATFORM HEADER's #back-btn now
 // (Streamlined Concept): renderDevView's session branch calls
-// App.setBackIcon('arrow', '#app/<slug>/board'), so the anchor and its
+// App.setBackIcon('arrow', '/app/<slug>/board'), so the anchor and its
 // modified-click guard are app.js's — the same real-anchor contract the
 // loop above pins for every other control. The in-strip #dc-back retired.
 test('"back out of a dev session" rides the header back anchor, with a real target', () => {
   assert.ok(!/dc-back/.test(sessionHeaderTsx),
     'session-header.tsx: the in-strip back control stays retired');
-  assert.match(appViewJs, /setBackIcon\?\.\('arrow', `#app\/\$\{App\.currentApp\}\/board`\)/,
+  assert.match(appViewJs,
+    /setBackIcon\?\.\('arrow', App\._appUrl\([\s\S]{0,140}boardView: 'kanban'/,
     'app-view.js points the header anchor at the Board on the way into a session');
   // The header listener's guard runs before preventDefault (pinned in
   // app.js for every screen the anchor serves), and the plain click walks
@@ -363,8 +366,8 @@ test('the dev sub-views resolve their target through one helper', () => {
   const fn = appViewJs.slice(at, appViewJs.indexOf('\n  },', at));
   assert.match(fn, /AppView\.appData && AppView\.appData\.slug\) \|\| App\.currentApp/,
     'either source of the open app\'s slug is acceptable');
-  assert.match(fn, /return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev` : ''/,
-    'no slug means an EMPTY href, never "#app/undefined/dev"');
+  assert.match(fn, /return slug \? App\._appUrl\(slug, 'dev', null, 'forum'\) : ''/,
+    'no slug means an EMPTY href, never "/app/undefined/board"');
 });
 
 // The Kudos pane's profile back link, JSX in kudos-pane.tsx since #1191 slice
@@ -463,7 +466,7 @@ const ROWS = [
     src: () => homeJs, file: 'home.js',
     anchor: ".querySelectorAll('.app-card')",
     wire: /NavLink\.wireModified\(card, hrefFor, activate\)/,
-    href: /#app\/\$\{encodeURIComponent\(card\.dataset\.slug\)\}\/app/,
+    href: /App\._appUrl\(card\.dataset\.slug, 'app', null, null\)/,
     guards: ['card-add-btn', 'card-menu-btn', "card.dataset.demo === 'true'", 'awaiting_secrets'],
   },
   // The dev chat's cross-app "Active Sessions" rows were the second entry

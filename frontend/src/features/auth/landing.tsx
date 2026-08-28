@@ -588,7 +588,7 @@ export function LandingScreen() {
     (app: PublicApp) => {
       if (app.requires_login) {
         (legacy().AuthScreens?.rememberDeepLink as undefined | ((h: string) => void))?.(
-          '#app/' + (app.slug || ''),
+          '/app/' + encodeURIComponent(app.slug || ''),
         );
         location.hash = '#signup';
         return;

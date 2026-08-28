@@ -235,31 +235,29 @@ iframe token only exists inside the platform shell. The scaffold
 redirects such visits to the platform's chromeless view of the app:
 
 ```
-<PLATFORM_BASE_URL>/#app/<slug>/full?path=<req.originalUrl>
+<PLATFORM_BASE_URL>/app/<slug>/full?path=<encoded req.originalUrl>
 ```
 
 The shell then embeds the app with a real token AND forwards the inner
 path+query into the iframe, so the visitor lands on the shared screen
-instead of the app's home. Contract for the `?path=` param (all inside
-the URL **fragment**):
+instead of the app's home. Contract for the `?path=` query parameter:
 
-- The value is the app-relative path+query **verbatim in wire format**
-  (exactly `req.originalUrl` — already percent-encoded; do NOT
-  `encodeURIComponent` it, the shell does not decode it).
-- `path` must be the **final** fragment param — the shell takes
-  everything after the first `path=` as the value, so an inner query's
-  own `&`/`=`/`?` survive.
-- Relative-only: the value must start with a single literal `/` (a
-  `%2F`-encoded leading slash is rejected), never `//`, no scheme or
+- The value is the app-relative path+query encoded as one query value
+  (`encodeURIComponent(req.originalUrl)`). The shell decodes it once and
+  validates it before use.
+- `path` may contain an inner query after decoding; encoding it as one value
+  ensures that query's own `&`/`=`/`?` survive.
+- Relative-only after decoding: the value must start with a single `/`, never
+  `//`, no scheme or
   host, no whitespace or `` \ ` ' " < > ``, ≤ 512 chars. The shell
   drops anything else and loads the app root.
 
 When redirecting, gate on `req.get('sec-fetch-dest') === 'document'`
 (as the scaffold does) so the platform shell is never loaded inside its
 own app iframe. Apps generated before this convention can adopt it by
-appending `'?path=' + req.originalUrl` to their existing chromeless
-redirect (see the current scaffold's `server.js` for the attribute-safe
-character check used on the landing-page anchor).
+appending `'?path=' + encodeURIComponent(req.originalUrl)` to their clean
+chromeless redirect (see the current scaffold's `server.js` for the
+attribute-safe character check used on the landing-page anchor).
 
 ## Database
 
@@ -556,30 +554,27 @@ Two related notes on `path:` form:
   annotation (`path: /board @mobile`) is still accepted but redundant
   now; just point `path:` at the route where the change is visible.
 
-### Testing `path:` for a hash-routed SPA (the self-app)
+### Testing `path:` for the hybrid-routed self-app
 
 The before/after screenshots and the "Test this change" button visit the
 testing block's `path:` joined onto the staging origin. Most apps are
 path-routed, so a plain pathname (`/board`, `/settings?demo=1`) lands on
 the right screen.
 
-**The self-app (social-vibecoding) is a hash-routed single-page app**:
-its internal screens are addressed by the URL **fragment**
-(`#app/<slug>/dev/proposals/<id>`, `#leaderboard`,
-`#app/<slug>/dev/sessions/<id>`, …), never by server pathname — a
-pathname just loads `index.html`, which boots to the home feed. So when
-your change is to a self-app screen, write the `path:` using the in-app
-route segments exactly as they appear after the `#`, with a leading
-slash:
+**The self-app (social-vibecoding) uses clean path routes for app screens**
+(`/app/<slug>`, `/app/<slug>/dev/proposals/<id>`,
+`/app/<slug>/dev/sessions/<id>`, …). Other platform screens remain fragment
+routes (`#leaderboard`, `#admin/...`). So when your change is to a self-app
+screen, write the `path:` with a leading slash:
 
 - `path: /app/<self-slug>/dev/proposals/<id>`
 - `path: /leaderboard`
 - `path: /admin/analytics`
 
-The platform recognises these self-app routes and moves them into the
-fragment when capturing and when previewing, so the shot shows the
-changed screen instead of the homepage. **The admin surfaces are in-app
-hash routes too**: the former standalone pages (`/dashboard`, `/admin`,
+The platform keeps `/app/...` routes as clean paths when capturing and
+previewing. It moves the other listed self-app routes into the fragment so
+the shot shows the changed screen instead of the homepage. **The admin
+surfaces are in-app hash routes too**: the former standalone pages (`/dashboard`, `/admin`,
 `/status`, `/node-status`, `/debug`, `/gallery`, `/admin-features`) are
 now sections of the single `#admin` console — write them as
 `/admin/analytics`, `/admin/estimator`, `/admin/status`, `/admin/node`,
@@ -626,8 +621,9 @@ Per-test fields:
 
 - `path` — **required.** A relative route within the app (same rules as a
   testing-block `path:`: starts with a single `/`, no scheme/host). For
-  the hash-routed self-app, use the in-app route segments (e.g.
-  `/leaderboard`) — the platform normalises them into the fragment.
+  non-app self-app screens, use the in-app route segments (e.g.
+  `/leaderboard`) — the platform normalises those into the fragment. Clean
+  `/app/<slug>/...` paths remain paths.
 - `name` — short label shown in the checks detail. Defaults to the path.
 - `expectSelector` — optional CSS selector that must be present after the
   page settles.
@@ -2689,8 +2685,8 @@ locally inside the worker the same way a staging container does:
 - Private secrets resolve from the manifest's `staging_default` /
   `default` only, same as a real staging build — never the prod store.
 - Navigate to `http://127.0.0.1:$INLOOP_PORT` joined with the SAME
-  route(s) you put in the TESTING block's `path:` lines. For the
-  hash-routed self-app, put the route after the `#`.
+  route(s) you put in the TESTING block's `path:` lines. Self-app app screens
+  stay under `/app/<slug>/...`; put its other SPA routes after the `#`.
 - **EXPECTED when you added a screenshot-state deep link this turn**
   (see "Make the changed screen URL-reachable"): load the exact `path:`
   URL and confirm the changed UI is actually visible before committing —

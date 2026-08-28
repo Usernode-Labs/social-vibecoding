@@ -128,8 +128,8 @@ test('setChromeless no longer hand-manages the inset, but re-broadcasts', () => 
 
 test('the mode switch re-broadcasts the frame insets', () => {
   const fn = APP_JS.slice(
-    APP_JS.indexOf('async switchTab(tab, ref, subTab) {'),
-    APP_JS.indexOf('App.updateHash();', APP_JS.indexOf('async switchTab('))
+    APP_JS.indexOf('async switchTab(tab, ref, subTab, options) {'),
+    APP_JS.indexOf('App.updateHash({', APP_JS.indexOf('async switchTab('))
   );
   assert.match(fn, /scheduleSafeAreaBroadcast\(\)/,
     'switching surface changes #app-view\'s rect');

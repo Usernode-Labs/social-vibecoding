@@ -124,6 +124,17 @@ const GATE_OPEN_PATHS = [
   '/api/iframe-token',
 ];
 
+// Documents owned by the platform SPA. Clean app URLs deliberately live in
+// the pathname (`/app/<slug>...`) rather than the fragment, so they must reach
+// index.html with or without a session. API access remains authenticated by
+// the routes themselves; this only lets the browser boot the same shell `/`
+// already serves. Keep this narrower than the catch-all so an unrelated typo
+// retains the existing redirect-to-root behaviour.
+function isSpaDocumentPath(pathname) {
+  return pathname === '/' || pathname === '/index.html'
+    || /^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(pathname);
+}
+
 // Returns true when it handled the response (caller must return).
 function enforcePlatformAccessGate(req, res, user) {
   if (user.hasPlatformAccess || user.isAdmin) return false;
@@ -138,7 +149,7 @@ function enforcePlatformAccessGate(req, res, user) {
   // The SPA shell serves for a gated session; app.js routes it to the
   // in-SPA waiting room (#waiting). Any other navigation bounces to the
   // shell for the same client-side routing.
-  if (req.path === '/' || req.path === '/index.html') return false;
+  if (isSpaDocumentPath(req.path)) return false;
   res.redirect('/');
   return true;
 }
@@ -402,10 +413,11 @@ function redirectOrReject(req, res, next) {
   // Anonymous SPA boot (fold-auth-pages-into-SPA): the shell serves
   // without a session and boots into the in-SPA landing/login screens
   // (auth-screens.js); every data read stays behind the /api/* 401
-  // above. Deeper paths bounce to the shell — the URL fragment survives
-  // the redirect, so a shared deep link (e.g. /#app/<slug>/full) still
-  // reaches the login screen with the destination preserved.
-  if (req.path === '/' || req.path === '/index.html') {
+  // above. Clean app paths are shell documents too. Letting them through
+  // preserves the pathname so the client can remember it across login;
+  // redirecting to `/` would erase the app the visitor meant to open.
+  // Legacy fragment links still enter through `/` and keep working.
+  if (isSpaDocumentPath(req.path)) {
     return next();
   }
   return res.redirect('/');

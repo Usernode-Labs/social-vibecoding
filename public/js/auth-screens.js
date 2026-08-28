@@ -118,9 +118,10 @@
 
   const AuthScreens = {
     _current: null,       // route name currently shown, or null
-    // Deep-link fragment (e.g. '#app/<slug>/full' from a shared link) an
-    // anonymous visitor arrived with; restored via history.replaceState
-    // right before the authed boot so restoreFromHash lands on it.
+    // Deep-link target an anonymous visitor arrived with. Legacy links store
+    // a fragment (`#app/...`); clean app links store their pathname
+    // (`/app/...`). Restored right before the authed boot so the router lands
+    // on the exact app instead of the platform home.
     _pendingHash: '',
     _wired: {},           // per-screen one-shot wiring markers
     _waitingTimer: null,
@@ -140,6 +141,13 @@
       AuthScreens._pendingHash = fullHash;
     },
 
+    deepLinkUrl(target) {
+      const value = String(target || '');
+      if (value.startsWith('/app/')) return value;
+      if (value.startsWith('#')) return '/' + value;
+      return '/';
+    },
+
     // Anonymous boot entry (App.enterAnonymous). Routing lives in
     // restoreFromHash — its anonymous branch calls back into show().
     enter() {
@@ -157,7 +165,8 @@
     // Waiting-room entry (App.enterAuthed with hasPlatformAccess=false).
     showWaiting() {
       if (AuthScreens.routeFromHash(location.hash.replace('#', '')) !== 'waiting') {
-        history.replaceState(null, '', '#waiting');
+        const target = window.App?._rootUrl?.('#waiting') || '#waiting';
+        history.replaceState(null, '', target);
       }
       AuthScreens.show('waiting');
     },
@@ -266,7 +275,7 @@
 
         const target = AuthScreens._pendingHash || '';
         AuthScreens._pendingHash = '';
-        history.replaceState(null, '', '/' + target);
+        history.replaceState(null, '', AuthScreens.deepLinkUrl(target));
         fx(() => {
           AuthScreens.hideAll();
           App.enterAuthed(user);
@@ -275,7 +284,7 @@
         // Cookie is set but the in-place boot failed (transient /me
         // hiccup) — a plain reload recovers via the normal boot path.
         console.warn('[auth-screens] in-place boot failed, reloading:', e);
-        window.location.href = '/' + (AuthScreens._pendingHash || '');
+        window.location.href = AuthScreens.deepLinkUrl(AuthScreens._pendingHash || '');
       }
     },
 

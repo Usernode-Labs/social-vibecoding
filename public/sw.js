@@ -370,10 +370,11 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   return 'bypass';
 }
 
-// The two URLs at which the server serves the SPA shell ITSELF, as opposed
-// to a document that merely falls back to it offline. `networkFirstNavigate`
-// caches under the fixed '/index.html' key — one document answers every hash
-// route — so it may only write back a response that really IS that document.
+// The URLs at which the server serves the SPA shell ITSELF, as opposed to a
+// document that merely falls back to it offline. `networkFirstNavigate`
+// caches under the fixed '/index.html' key — one document answers every
+// client route — so it may only write back a response that really IS that
+// document. Clean app paths are first-class shell documents alongside `/`.
 //
 // The distinction matters because `classifyRequest` returns 'navigate' for
 // far more than these two. /login.html, /dashboard.html, /gallery.html and
@@ -392,7 +393,8 @@ function isShellDocumentUrl(url, selfOrigin) {
   try {
     const u = new URL(url, selfOrigin);
     if (u.origin !== selfOrigin) return false;
-    return SHELL_DOCUMENT_PATHS.includes(u.pathname);
+    return SHELL_DOCUMENT_PATHS.includes(u.pathname)
+      || /^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(u.pathname);
   } catch { return false; }
 }
 

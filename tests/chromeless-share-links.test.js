@@ -1,4 +1,4 @@
-// Tests for the chromeless share-link flow (#app/<slug>/full).
+// Tests for the chromeless share-link flow (/app/<slug>/full).
 //
 // Direct visits to an app's own subdomain used to dead-end on the app
 // container's 401 ("Not authenticated") because the iframe token only
@@ -15,7 +15,7 @@
 //      non-auth hash as a deep link and offers login first, and the
 //      reload-free finishLogin restores it before the authed boot.
 //   3. The shell (public/js/app.js + index.html) understands the
-//      #app/<slug>/full route: source guards in the style of
+//      /app/<slug>/full route: source guards in the style of
 //      tests/cc-progress-summary.test.js so the hash routing, the
 //      chrome toggling, and the pill can't silently become dead code.
 //   4. The Caddyfile's wildcard site carries the 401-interception
@@ -43,7 +43,7 @@ test('scaffold server.js redirects unauthenticated document navigations to the c
   );
   assert.match(
     server,
-    /res\.redirect\(302, 'https:\/\/[^']+\/#app\/demo-app-abc123\/full' \+ deepPath\)/,
+    /res\.redirect\(302, 'https:\/\/[^']+\/app\/demo-app-abc123\/full' \+ deepPath\)/,
     'redirects to the platform chromeless deep link for this slug, carrying the inner path'
   );
   // The redirect must live INSIDE the unauthenticated branch, before the
@@ -56,11 +56,11 @@ test('scaffold server.js redirects unauthenticated document navigations to the c
     'redirect sits between the auth check and the landing-page fallback');
 });
 
-test('scaffold server.js derives ?path= from req.originalUrl behind the character gate (#743)', () => {
+test('scaffold server.js encodes ?path= from req.originalUrl behind the character gate (#743)', () => {
   const files = getTemplateFiles('Demo App', 'demo-app-abc123', 'postgres://x', 's');
   const server = files.find((f) => f.path === 'server.js').content;
-  assert.ok(server.includes("'?path=' + req.originalUrl"),
-    'forwards the visited path+query verbatim as the final fragment param');
+  assert.ok(server.includes("'?path=' + encodeURIComponent(req.originalUrl)"),
+    'forwards the visited path+query as one clean-route query value');
   // The gate keeps the value attribute-safe for the landing anchor and
   // relative-only (leading /, no quotes/angle brackets/backslash/space).
   assert.ok(server.includes('/^\\/[A-Za-z0-9\\-._~!$&()*+,;=:@\\/%?]*$/.test(req.originalUrl)'),
@@ -78,7 +78,7 @@ test('scaffold server.js derives ?path= from req.originalUrl behind the characte
 test('scaffold landing page deep-links to the app, not the bare platform origin', () => {
   const files = getTemplateFiles('Demo App', 'demo-app-abc123', 'postgres://x', 's');
   const server = files.find((f) => f.path === 'server.js').content;
-  assert.match(server, /href="https:\/\/[^"]+\/#app\/demo-app-abc123\/full\$\{deepPath\}"/,
+  assert.match(server, /href="https:\/\/[^"]+\/app\/demo-app-abc123\/full\$\{deepPath\}"/,
     'landing anchor carries the gated deep path too');
 });
 
@@ -102,12 +102,12 @@ test('register.html stub forwards an incoming fragment into the SPA', () => {
     'stub redirect carries the fragment through');
 });
 
-test('the anonymous SPA boot remembers a deep-link hash and offers login first', () => {
+test('the anonymous SPA boot remembers either clean or legacy app deep links', () => {
   const src = read('public/js/app.js');
-  // restoreFromHash's anonymous branch: a non-auth hash (e.g.
-  // #app/<slug>/full) is stored for after login, then the login screen
+  // restoreFromHash's anonymous branch: a non-auth route (e.g.
+  // /app/<slug>/full) is stored for after login, then the login screen
   // shows — parity with the old server redirect to login.html.
-  assert.ok(src.includes('AuthScreens.rememberDeepLink(location.hash);'),
+  assert.ok(src.includes('AuthScreens.rememberDeepLink(App._deepLinkTarget());'),
     'anonymous branch stores the deep link');
   assert.ok(src.includes("AuthScreens.show('login');"),
     'anonymous branch then shows the login screen');
@@ -117,13 +117,13 @@ test('finishLogin restores the pending deep link before the authed boot', () => 
   const src = read('public/js/auth-screens.js');
   assert.ok(src.includes('const target = AuthScreens._pendingHash || \'\';'),
     'finishLogin reads the pending deep link');
-  assert.ok(src.includes("history.replaceState(null, '', '/' + target);"),
+  assert.ok(src.includes("history.replaceState(null, '', AuthScreens.deepLinkUrl(target));"),
     'finishLogin restores it onto the URL so restoreFromHash lands there');
 });
 
 // ── 3. Shell wiring (source guards) ─────────────────────────────────────
 
-test('app.js routes #app/<slug>/full onto the App tab in chromeless mode', () => {
+test('app.js routes /app/<slug>/full onto the App tab in chromeless mode', () => {
   const src = read('public/js/app.js');
   assert.ok(src.includes("const chromeless = tab === 'full';"),
     'restoreFromHash recognizes the full segment');
@@ -133,10 +133,12 @@ test('app.js routes #app/<slug>/full onto the App tab in chromeless mode', () =>
     'non-app routes clear the mode');
 });
 
-test('app.js updateHash round-trips the chromeless hash, inner path included', () => {
+test('app.js round-trips the clean chromeless path, inner path included', () => {
   const src = read('public/js/app.js');
-  assert.ok(src.includes('? `#app/${App.currentApp}/full${innerPath ? `?path=${innerPath}` : \'\'}`'),
-    'updateHash emits /full while chromeless and re-emits the ?path deep link');
+  assert.match(src, /if \(opts\.chromeless\) \{[\s\S]{0,80}suffix = '\/full'/,
+    'the serializer emits /full while chromeless');
+  assert.ok(src.includes('opts.chromeless ? opts.innerPath : null'),
+    'the serializer re-emits the encoded ?path deep link');
 });
 
 // ── 5. Inner-path pass-through (#743) ────────────────────────────────────
@@ -147,8 +149,8 @@ test('app.js splits the fragment-query off before segment routing', () => {
     'restoreFromHash finds the fragment-query boundary');
   // `let`, not `const`: the authed branch of the anonymous-shell routing
   // clears a stale auth hash in place (fold-auth-pages-into-SPA).
-  assert.ok(src.includes('let hash = qIdx === -1 ? rawHash : rawHash.slice(0, qIdx);'),
-    'routes on the query-stripped hash — plain #app/<slug>/full is unchanged');
+  assert.match(src, /let hash = rawHash[\s\S]{0,100}: pathRoute;/,
+    'routes on a query-stripped hash, falling back to the clean pathname');
   // The value is everything after the first path= (final-param contract,
   // so an inner query string survives raw & / = / ?).
   assert.ok(src.includes('fragQuery.match(/(?:^|&)path=(.*)$/)'),
@@ -202,10 +204,10 @@ test('app-view.js builds the iframe src via the URL API with origin check and to
     'close() clears the stored inner path');
 });
 
-test('app.js screenIdOf treats ?path= as the same screen and re-dispatches on a changed path', () => {
+test('app.js screen identity handles both clean paths and legacy hashes', () => {
   const src = read('public/js/app.js');
-  assert.ok(src.includes(".replace(/^#/, '').split('?')[0].split('/')"),
-    'screenIdOf strips the fragment-query before splitting');
+  assert.match(src, /parsed\.hash[\s\S]{0,120}parsed\.pathname/,
+    'screenIdOf prefers a legacy hash and otherwise parses the clean pathname');
   assert.ok(src.includes('(chromeless && innerPath !== prevInnerPath)'),
     'a chromeless hash with a different inner path forces a re-render');
 });
@@ -254,9 +256,12 @@ test('app.js setChromeless toggles the header and the pill', () => {
   assert.ok(pill.includes("aria-label=\"Open this app on Usernode\""));
   // The pill's exit target is the regular App-tab view, which clears the
   // mode via restoreFromHash. The slug is read at CLICK time, so the pill
-  // survives app-to-app hash navigation without a remount.
+  // survives app-to-app navigation without a remount.
   assert.ok(pill.includes('const slug = window.App?.currentApp;'));
-  assert.ok(pill.includes('location.hash = `#app/${slug}/app`;'));
+  assert.ok(pill.includes("window.App?.openAppTab?.(slug, 'app');"));
+  const openAppTab = src.slice(src.indexOf('openAppTab(slug, tab, opts) {'));
+  assert.match(openAppTab.slice(0, 700), /App\.setChromeless\(false\)/,
+    'the ordinary App target clears chromeless mode before serializing its URL');
 });
 
 test('index.html carries the ids setChromeless toggles', () => {

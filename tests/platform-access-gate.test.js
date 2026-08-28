@@ -103,6 +103,7 @@ function withApp(fn) {
     // Downstream stand-ins: reaching one of these means the gate let the
     // request through.
     app.get('/', (_req, res) => res.send('SPA'));
+    app.get('/app/*', (_req, res) => res.send('SPA'));
     app.get('/social', (_req, res) => res.send('SPA'));
     app.get('/waiting.html', (_req, res) => res.send('WAITING'));
     app.get('/landing.html', (_req, res) => res.send('LANDING'));
@@ -158,6 +159,12 @@ test('a user WITHOUT access still gets the SPA shell on the front door', async (
     const res = await get(base, '/', 'waiting-session');
     assert.equal(res.status, 200);
     assert.equal(await res.text(), 'SPA');
+
+    // Clean app deep links must reach the same shell so the client can
+    // remember the exact destination before presenting the waiting room.
+    const app = await get(base, '/app/demo-app/dev/issues/7', 'waiting-session');
+    assert.equal(app.status, 200);
+    assert.equal(await app.text(), 'SPA');
   });
 });
 
@@ -218,6 +225,12 @@ test('sessionless / serves the SPA shell; deeper paths bounce to it; APIs 401', 
     const front = await get(base, '/');
     assert.equal(front.status, 200);
     assert.equal(await front.text(), 'SPA');
+
+    // Anonymous clean app links stay in place; restoreFromHash reads the
+    // pathname and preserves it through login rather than losing it to '/'.
+    const app = await get(base, '/app/demo-app');
+    assert.equal(app.status, 200);
+    assert.equal(await app.text(), 'SPA');
 
     // Deeper paths bounce to the shell — the URL fragment survives a
     // redirect, so shared deep links still reach the login screen.

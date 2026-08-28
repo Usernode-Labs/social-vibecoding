@@ -1,13 +1,13 @@
 /**
  * #chromeless-pill — the floating "Open in Usernode" affordance shown while the
- * platform header is hidden (`#app/<slug>/app`). App._mountChromelessPill /
+ * platform header is hidden (`/app/<slug>/full`). App._mountChromelessPill /
  * _unmountChromelessPill in app.js, as a component (#1079 chunk B).
  *
  * Visually matching the bridge's share-view pill (public/usernode-bridge.js
  * __USERNODE_PLATFORM_LINK__) so users see one consistent affordance. Unlike
  * the bridge pill it is NOT dismissible — in chromeless mode it's the only way
  * into the full platform view. The slug is read at CLICK time, not at render,
- * so the pill survives app-to-app hash navigation without a remount — the same
+ * so the pill survives app-to-app navigation without a remount — the same
  * reason the imperative version read App.currentApp inside its handler.
  *
  * The inline styles came across as-is rather than becoming utilities: they use
@@ -59,9 +59,9 @@ export function ChromelessPill() {
         ev.preventDefault();
         const slug = window.App?.currentApp;
         if (slug) {
-          // hashchange → restoreFromHash clears the mode; the already-loaded
-          // iframe stays mounted (same app, same tab).
-          location.hash = `#app/${slug}/app`;
+          // The explicit route entry point clears the mode while keeping the
+          // already-loaded iframe mounted (same app, same tab).
+          window.App?.openAppTab?.(slug, 'app');
         }
       }}
     >

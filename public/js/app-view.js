@@ -21,9 +21,9 @@ const AppView = {
   iframeToken: null,
   // Slug the held iframeToken was minted for (app-scoped RS256 audience).
   iframeTokenSlug: null,
-  // #743: validated inner app path (path+query, wire-encoded) from a
-  // chromeless deep link (#app/<slug>/full?path=/t/123). Written by
-  // App.restoreFromHash on every pass (null when the hash carries none),
+  // #743: validated inner app path (path+query) from a chromeless deep link
+  // (/app/<slug>/full?path=%2Ft%2F123). Written by App.restoreFromHash on
+  // every pass (null when the route carries none),
   // consumed by buildAppIframeSrc, cleared by close().
   pendingInnerPath: null,
 
@@ -2036,7 +2036,7 @@ const AppView = {
     // #1324: both installers are DOCUMENT-level and one-shot, so they belong
     // HERE — above the sub-view branches — not in the card-list branch alone.
     // Every branch below returns early, so installing them down there meant a
-    // direct deep link to a topic page (#app/<slug>/dev/proposals/<id> pasted,
+    // direct deep link to a topic page (/app/<slug>/dev/proposals/<id> pasted,
     // shared, reloaded, or followed from a notification) never ran them: the
     // proposal's ⋯ "More actions" menu, its priority / category / assignee
     // chips and its "How voting works" affordances were all dead on click.
@@ -2094,7 +2094,9 @@ const AppView = {
       // screen's title — the center tab names the app here, same as the app's
       // other screens (the session's own name lives in #dc-session-header).
       if (AppView.appData?.name) App.setHeaderTitle?.(AppView.appData.name);
-      App.setBackIcon?.('arrow', `#app/${App.currentApp}/board`);
+      App.setBackIcon?.('arrow', App._appUrl(
+        App.currentApp, 'dev', null, 'forum', { boardView: 'kanban' }
+      ));
       // <DevSessionShell/> — #dev-section stays the host renderDevChatTab
       // writes into, exactly as when this was a template.
       AppView._reactDevBoard()?.mountSessionShell(content);
@@ -2102,7 +2104,7 @@ const AppView = {
       return;
     }
 
-    // Full-screen general chat, at #app/<slug>/dev/chat.
+    // Full-screen general chat, at /app/<slug>/dev/chat.
     //
     // It was the ACTIVITY destination for one round. Activity is the board's
     // recency stream now (see the alias block in app.js's restoreFromHash), so
@@ -2112,7 +2114,7 @@ const AppView = {
     //
     // The screen, its route and every link into it are untouched: a mention,
     // a reply, a reaction and a shared spec all still land here, and
-    // #app/<slug>/dev/chat (and the legacy #app/<slug>/group-chat) still
+    // /app/<slug>/dev/chat (and the legacy #app/<slug>/group-chat) still
     // resolve. Its browse-to-it door is the chip menu's "Discussion" row
     // (features/app-context/app-context-sheet.tsx) — a destination with its
     // own page, which is what that menu lists, rather than a fourth segment
@@ -2294,11 +2296,11 @@ const AppView = {
   // dev sub-view (topic, general chat) points at as a real anchor, so a
   // cmd-click opens the dev page in a new tab instead of leaving this
   // one. Returns '' when there is no open app to name rather than
-  // minting "#app/undefined/dev": NavLink.bind and the markup both treat
+  // minting "/app/undefined/board": NavLink.bind and the markup both treat
   // an empty href as "inert", which is the honest state.
   _devPageHref() {
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
-    return slug ? `#app/${encodeURIComponent(slug)}/dev` : '';
+    return slug ? App._appUrl(slug, 'dev', null, 'forum') : '';
   },
 
   async _renderTopicSubView(content, ref) {
@@ -4360,7 +4362,7 @@ const AppView = {
     const slug = AppView.appData && AppView.appData.slug;
     const fresh = !!(s && slug && s.slug === slug);
     return {
-      href: slug ? `#app/${slug}/dev/chat` : null,
+      href: slug ? App._appUrl(slug, 'dev', null, 'chat') : null,
       preview: (fresh && s.content)
         ? `${s.username || 'System'}: ${s.content.slice(0, 140)}`
         : 'Talk with everyone building this app',
@@ -6927,7 +6929,10 @@ const AppView = {
     const linked = (Array.isArray(pr.linked_issues) ? pr.linked_issues : [])
       .map((v) => (typeof v === 'number' ? v : Number(v)))
       .filter((n) => Number.isInteger(n) && n > 0)
-      .map((n) => ({ n, href: `#app/${slug}/dev/issues/${n}` }));
+      .map((n) => ({
+        n,
+        href: App._appUrl(slug, 'dev', { kind: 'issue', id: n }, 'topic'),
+      }));
 
     // ORDER IS THE CONTRACT: conflict, then checks, then platform variables
     // — a reader scanning a blocked proposal reads them top to bottom. A
@@ -12335,7 +12340,7 @@ const AppView = {
     }
 
     await DevChat.loadSessions(AppView.appData.slug);
-    // Landing on #app/<slug>/dev/sessions/<id> IS the user opening the
+    // Landing on /app/<slug>/dev/sessions/<id> IS the user opening the
     // session — from the drawer's completion row, the session list, a
     // bookmark or Back. Carries the "user saw it" signal (?opened=1) that
     // dismisses the session's unread completion; the machine refetches in
@@ -12515,16 +12520,12 @@ const AppView = {
     } catch {}
   },
 
-  // #353: the self-app is a hash-routed SPA — its internal screens live in
-  // location.hash (`#app/...`, `#leaderboard`, `#admin/...`), so a testing
-  // path joined as a server pathname just loads the home feed. Mirror the
-  // server-side normalisation (src/services/visuals.js selfAppHashPath):
-  // when the path's first segment is one of the SPA hash routes, move it
-  // into the fragment; leave the bare '/', an already-'/#...' path, and
-  // genuinely standalone server pages (/cli/authorize) untouched. 'admin'
-  // joined the list in #860, when the seven standalone admin pages became
-  // #admin console sections.
-  _SELF_APP_HASH_ROUTES: ['app', 'leaderboard', 'group-chat', 'individual-chat', 'admin', 'messages'],
+  // App screens now use clean `/app/<slug>/...` paths. The self-app's other
+  // SPA screens (`#leaderboard`, `#admin/...`) still live in location.hash,
+  // so testing paths for those screens need the older normalization. Mirror
+  // the server-side helper in src/services/visuals.js; leave app paths, '/',
+  // already-'/#...' paths, and standalone server pages untouched.
+  _SELF_APP_HASH_ROUTES: ['leaderboard', 'group-chat', 'individual-chat', 'admin', 'messages'],
   _selfAppHashPath(p) {
     const path = typeof p === 'string' ? p : null;
     if (!path || !path.startsWith('/') || path.startsWith('/#')) return path;
@@ -12734,8 +12735,8 @@ const AppView = {
 
     // Build iframe URLs with the URL API so a deep link carrying its own
     // query string composes with the token param (no '?token=' concat).
-    // The URL API also keeps a `#app/...` fragment after the token query,
-    // so the self-app deep link below loads correctly (#353).
+    // The URL API also keeps any remaining self-app fragment route after the
+    // token query; clean `/app/...` testing paths stay in the pathname.
     const buildSrc = (path) => {
       const visit = AppView.appData && AppView.appData.self_hosted
         ? AppView._selfAppHashPath(path)
