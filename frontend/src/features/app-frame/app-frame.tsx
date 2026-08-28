@@ -44,7 +44,7 @@ import { appFrameRefs, appFrameStore } from './app-frame-store.js';
  * public/js/app-view.js, which is still the DOM adapter's copy.
  */
 const SANDBOX = 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock';
-const ALLOW = 'clipboard-write; pointer-lock';
+const ALLOW = 'clipboard-write; pointer-lock; geolocation';
 
 function LaunchCover({
   iconKind,

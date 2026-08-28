@@ -589,7 +589,7 @@ test('the rebuilt frame keeps the sandbox/allow contract in one place', () => {
   AppView.renderAppTab();
   assert.match(content.innerHTML,
     /sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"/);
-  assert.match(content.innerHTML, /allow="clipboard-write; pointer-lock"/);
+  assert.match(content.innerHTML, /allow="clipboard-write; pointer-lock; geolocation"/);
 });
 
 test('a non-running render retires the launch generation', () => {

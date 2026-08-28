@@ -125,7 +125,12 @@ function swapViewerFrame(): HTMLIFrameElement | null {
 const ViewerRegion = memo(function ViewerRegion() {
   return (
     <div id="app-viewer" className="hidden flex-1 min-h-0 flex flex-col bg-white dark:bg-zinc-950">
-      <iframe id="app-viewer-frame" className="flex-1 w-full border-0" title="App"></iframe>
+      <iframe
+        id="app-viewer-frame"
+        className="flex-1 w-full border-0"
+        title="App"
+        allow="geolocation"
+      ></iframe>
     </div>
   );
 });
