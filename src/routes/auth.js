@@ -76,6 +76,20 @@ function roleFields(isAdmin, adminReadonly) {
 const SECURE_COOKIE = process.env.NODE_ENV === 'production';
 const SIGNUP_COOKIE = 'usernode_signup';
 
+// Ordinary credential exchanges may only mint a session from a signed-out
+// browser realm. Keeping this at the router boundary makes the hard A -> B
+// rule apply to every session-minting flow before credentials are consumed.
+// Recovery endpoints are deliberately absent: they revoke existing sessions
+// atomically as part of the recovery transaction.
+const SESSION_MINT_PATHS = new Set([
+  '/api/auth/login',
+  '/api/auth/otp/set-password',
+  '/api/auth/register',
+  '/api/auth/wallet-verify',
+  '/api/auth/wallet-register',
+  '/api/auth/wallet-link-login',
+]);
+
 function createSessionCookie(res, token, expiresAt) {
   res.cookie('session', token, {
     httpOnly: true,
@@ -117,6 +131,30 @@ function clearSignupCookie(res) {
 function authRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  router.use(async (req, res, next) => {
+    if (req.method !== 'POST' || !SESSION_MINT_PATHS.has(req.path)) return next();
+    const token = req.cookies?.session;
+    if (!token) return next();
+    try {
+      const { rows } = await pool.query(
+        `SELECT 1 FROM sessions
+          WHERE token = $1 AND expires_at > NOW()
+          LIMIT 1`,
+        [token]
+      );
+      if (rows.length === 0) return next();
+      return res.status(409).json({
+        error: 'Sign out before signing in again.',
+        code: 'logout_required',
+      });
+    } catch (error) {
+      log.error('auth', 'Session-mint boundary check failed', {
+        message: error.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   router.post('/api/auth/login', authLimiter, async (req, res) => {
     const { username, password } = req.body;

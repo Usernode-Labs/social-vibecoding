@@ -101,6 +101,7 @@
     requestNotificationPermission: true,
     requestAlarmPermissions: true,
     openNotificationSettings: true,
+    prepareForLogin: true,
     logout: true,
     establishNativeSession: true,
     markPrivilegedBridgeReady: true,
@@ -5121,6 +5122,16 @@
         "openNotificationSettings", {}, _CHROME_PROBE_TIMEOUT_MS
       );
     });
+  };
+
+  // prepareForLogin() -> true. Root-owned terminal preflight used only by an
+  // anonymous native shell before it asks Social to mint a web session. It is
+  // privileged but deliberately carries no realm-session claim: a recovered
+  // native A may predate this JavaScript document.
+  window.usernode.prepareForLogin = function () {
+    return callNativeChromeAction(
+      "prepareForLogin", {}, _PERMISSION_REQUEST_TIMEOUT_MS
+    );
   };
 
   // logout() → true. Social clears its web session and caches first, then

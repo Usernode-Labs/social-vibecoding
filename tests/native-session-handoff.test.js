@@ -52,16 +52,18 @@ function loadNativeChrome({
   info = {
     version: 5,
     sessionLifecycleProtocol: 2,
-    capabilities: ['establishNativeSession', 'logout'],
+    capabilities: ['establishNativeSession', 'prepareForLogin', 'logout'],
   },
   fetchImpl,
   establishImpl,
+  prepareForLoginImpl,
   sharedAttemptStorage,
 } = {}) {
   const calls = {
     info: 0,
     fetch: [],
     establish: [],
+    prepareForLogin: 0,
     logout: 0,
     admission: [],
     events: [],
@@ -132,6 +134,11 @@ function loadNativeChrome({
         return establishImpl(payload, calls.establish.length);
       }
       return establishResult(payload, sandbox.App.user.id.toString());
+    },
+    async prepareForLogin() {
+      calls.prepareForLogin += 1;
+      if (prepareForLoginImpl) return prepareForLoginImpl();
+      return true;
     },
     async logout() {
       calls.logout += 1;
@@ -301,6 +308,48 @@ test('logout is terminal despite a throwing UI sink and late publication',
     assert.equal(loaded.calls.establish.length, establishments);
     assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
   });
+
+test('anonymous login preflight closes retained A before allowing B',
+  async () => {
+    const native = deferred();
+    const loaded = loadNativeChrome({
+      prepareForLoginImpl: () => native.promise,
+    });
+    loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+    loaded.sandbox.App.user = { id: 41 };
+    assert.ok(await loaded.NativeChrome.establishCurrentSession());
+
+    loaded.sandbox.App.user = null;
+    const first = loaded.NativeChrome.prepareForLogin();
+    const duplicate = loaded.NativeChrome.prepareForLogin();
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), false,
+      'page admission closes before awaiting native drain');
+    assert.equal(loaded.storage.has(
+      loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
+    await settle();
+    assert.equal(loaded.calls.prepareForLogin, 1,
+      'concurrent credential submits share one terminal preflight');
+
+    native.resolve(true);
+    assert.equal(await first, true);
+    assert.equal(await duplicate, true);
+
+    loaded.NativeChrome.prepareIdentityPublication({ id: 42 });
+    loaded.sandbox.App.user = { id: 42 };
+    assert.equal(
+      (await loaded.NativeChrome.establishCurrentSession()).identity.participantId,
+      '42',
+      'preflight does not permanently retire the web realm',
+    );
+  });
+
+test('login preflight never preempts a live web session', async () => {
+  const loaded = loadNativeChrome();
+  loaded.sandbox.App.user = { id: 41 };
+
+  assert.equal(await loaded.NativeChrome.prepareForLogin(), false);
+  assert.equal(loaded.calls.prepareForLogin, 0);
+});
 
 test('a late A result cannot admit or overwrite successor B', async () => {
   const a = deferred();

@@ -59,6 +59,7 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
+  fetchSessionMint,
   finishLogin,
   hiddenFirst,
   hiddenLast,
@@ -350,7 +351,7 @@ export function LoginScreen() {
     setLoginError(null);
     if (blockedOffline(setLoginError)) return;
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetchSessionMint('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -463,7 +464,7 @@ export function LoginScreen() {
     if (blockedOffline(setOtpError)) return;
     setOtpStatus('Setting password...');
     try {
-      const res = await fetch('/api/auth/otp/set-password', {
+      const res = await fetchSessionMint('/api/auth/otp/set-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -514,7 +515,7 @@ export function LoginScreen() {
       }
 
       const sigResult = await legacy().signMessage!(st.cachedChallenge);
-      const verifyRes = await fetch('/api/auth/wallet-verify', {
+      const verifyRes = await fetchSessionMint('/api/auth/wallet-verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

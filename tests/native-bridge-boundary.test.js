@@ -283,6 +283,25 @@ test('exact-session calls carry both closure-only root and realm claims', async 
   assert.equal(Object.isFrozen(status.runtimeStatus), true);
 });
 
+test('login preparation is root-privileged without borrowing session authority',
+  async () => {
+    const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'prepareForLogin'],
+    });
+
+    assert.equal(await loaded.sandbox.usernode.prepareForLogin(), true);
+    assert.deepEqual(
+      loaded.nativePosts.map((post) => post.method),
+      ['getBridgeInfo', 'getPrivilegedBridgeCapability', 'prepareForLogin'],
+    );
+    assert.equal(
+      loaded.nativePosts[2].privilegedCapability,
+      'navigation-capability',
+    );
+    assert.equal('realmSessionClaim' in loaded.nativePosts[2], false,
+      'a recovered native session may predate the current web realm');
+  });
+
 test('native establishment rejects widened or non-canonical receipts', async () => {
   const widenedIdentity = establishResult();
   widenedIdentity.identity.credential = 'must-not-cross';

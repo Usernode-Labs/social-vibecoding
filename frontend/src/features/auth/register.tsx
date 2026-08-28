@@ -23,6 +23,7 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
+  fetchSessionMint,
   finishLogin,
   hiddenLast,
   useAuthScreensPatch,
@@ -71,7 +72,7 @@ export function RegisterScreen() {
     setError(null);
     if (blockedOffline(setError)) return;
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await fetchSessionMint('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

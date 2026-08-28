@@ -146,6 +146,7 @@
     _HANDOFF_ENDPOINT: '/api/v4/mobile/auth/native-establish-handoff',
     _realmGeneration: 0,
     _establishLease: null,
+    _prepareLoginLease: null,
     _logoutRunning: false,
     _sessionAdmitted: false,
     _publicSessionStatus: null,
@@ -404,6 +405,49 @@
         return Promise.resolve(NativeChrome._publicSessionStatus);
       }
       return NativeChrome.establishCurrentSession();
+    },
+
+    // An anonymous native shell may still have a recovered native A after its
+    // HttpOnly web session expired. Close page admission synchronously, then
+    // ask the app's private process root to drain and revoke A before Social
+    // receives any request that could mint B. A live App.user must instead use
+    // the ordinary explicit logout flow; the server enforces that boundary.
+    prepareForLogin() {
+      if (window.App && App.user) return Promise.resolve(false);
+      const bridge = window.usernode;
+      if (!bridge || bridge.isNative !== true) return Promise.resolve(false);
+      if (NativeChrome._prepareLoginLease) {
+        return NativeChrome._prepareLoginLease;
+      }
+
+      NativeChrome._closeRealm({ discardAttempt: true });
+      let run;
+      run = NativeChrome.getInfo().then((info) => {
+        if (window.App && App.user) return false;
+        const capabilities = Array.isArray(info && info.capabilities)
+          ? info.capabilities : [];
+        if (!info || info.degraded === true ||
+            info.sessionLifecycleProtocol !== 2 ||
+            !capabilities.includes('prepareForLogin') ||
+            typeof bridge.prepareForLogin !== 'function') {
+          throw new Error(
+            'This Usernode app version must be updated for secure sign-in'
+          );
+        }
+        return bridge.prepareForLogin().then(() => {
+          NativeChrome._lastSessionFailure = null;
+          return true;
+        });
+      }).catch((error) => {
+        NativeChrome._recordSessionFailure('prepare-login', error);
+        throw error;
+      }).finally(() => {
+        if (NativeChrome._prepareLoginLease === run) {
+          NativeChrome._prepareLoginLease = null;
+        }
+      });
+      NativeChrome._prepareLoginLease = run;
+      return run;
     },
 
     // Close the JS/native realm synchronously before the first logout await.

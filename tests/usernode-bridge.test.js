@@ -81,6 +81,17 @@ test('hosted bridge exposes the realm-bound readiness handshake', () => {
   assert.match(bridge, /markPrivilegedBridgeReady: true/);
 });
 
+test('hosted bridge exposes root-owned login preparation', () => {
+  const bridge = readBridge(versionedBridgePath);
+
+  assert.match(bridge, /window\.usernode\.prepareForLogin/);
+  assert.match(bridge, /prepareForLogin: true/);
+  assert.match(
+    bridge,
+    /callNativeChromeAction\(\s*"prepareForLogin", \{\}, _PERMISSION_REQUEST_TIMEOUT_MS/,
+  );
+});
+
 // Per-appearance widget icons (issue #948) — additive within v1, gated
 // on the shell's `homeScreenShortcutDarkIcon` capability. The wrapper
 // builds an explicit arg object, so a field it doesn't name is dropped

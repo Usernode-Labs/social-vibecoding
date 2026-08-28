@@ -652,6 +652,7 @@ recoverable rather than a dead end.
 | `resetZkChallenge()` | discards in-progress ZK identity registration (confirm web-side first) |
 | `openBatterySettings()` | opens Android battery-optimization settings |
 | `openNotificationSettings()` | opens the OS notification settings page for the app. The only way back from a **determined-denied** iOS notification permission: once the user has answered the OS prompt, `requestPermissions()` resolves immediately and presents no dialog, so a screen offering only "request" is a tap that does nothing forever. Capability-gated, and fails fast (probe timeout, not the 120 s permission timeout) — an *inconclusive* probe still calls through, per issue #978. |
+| `prepareForLogin()` | from an anonymous trusted shell, closes and drains any privately recovered native session before Social receives a session-mint request; no-op when native is already signed out |
 | `logout()` | performs the bounded hard native logout (node stop/drain plus identity and credential cleanup); clear the web session and cache first, then invoke this as the terminal operation |
 
 ### Platform login + node lifecycle (semantic protocol 2)
@@ -711,6 +712,14 @@ and exchange results byte-identically for that attempt; an unused expired
 ticket still fails. Builds lacking `sessionLifecycleProtocol: 2` are web-only
 and update-required. There is no fallback to a multi-call login, node-start,
 or auth-poll sequence.
+
+Before an anonymous native shell submits any ordinary session-mint request,
+it invokes the privileged root-owned `prepareForLogin()` operation. Native
+closes admission, drains admitted work, revokes the exact retained credential,
+and publishes signed-out before acknowledging. The method carries no realm
+session claim because a recovered native session may predate the current web
+document. A live web session is never preempted this way: the API returns
+`409 logout_required`, requiring the ordinary explicit logout flow.
 
 Logout closes the Social realm first, clears the web session and caches, and
 only then invokes the privileged terminal native `logout()` operation. A web
