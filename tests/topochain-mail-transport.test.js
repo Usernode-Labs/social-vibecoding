@@ -157,7 +157,7 @@ test('sendWaitlistJoinMail passes kind:"waitlist_joined"', async () => {
   assert.equal(seen[0].kind, 'waitlist_joined');
 });
 
-test('a first join carries the stage-2 "Want in sooner?" link; a re-join carries none', async () => {
+test('a first join carries the stage-2 profile link; a re-join carries none', async () => {
   const seen = [];
   const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };
   const token = 'a'.repeat(48);
@@ -166,12 +166,17 @@ test('a first join carries the stage-2 "Want in sooner?" link; a re-join carries
   assert.match(seen[0].url, new RegExp(`#more/${token}$`));
   assert.equal(seen[1].url, null);
 
-  // ...and the transport copy actually includes it.
+  // ...and the transport copy actually includes it. The invitation reads
+  // "increase your chances of getting into an earlier group" since Andrea's
+  // 27 Aug 2026 copy pass; it used to say "Want in sooner?".
   const withLink = transport.buildMessage('waitlist_joined', { url: seen[0].url });
   assert.ok(withLink.text.includes(seen[0].url));
-  assert.match(withLink.text, /Want in sooner\?/);
+  assert.match(withLink.text, /increase your chances of getting into an earlier group/i);
   const withoutLink = transport.buildMessage('waitlist_joined', { url: null });
-  assert.equal(withoutLink.text.includes('Want in sooner?'), false);
+  assert.equal(
+    /increase your chances of getting into an earlier group/i.test(withoutLink.text),
+    false,
+  );
 });
 
 test('sendWaitlistReleaseMail passes kind:"waitlist_released" and a signup/login link', async () => {

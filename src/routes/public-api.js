@@ -299,6 +299,15 @@ function publicApiRoutes(config) {
           x: !!(config.waitlistXClientId && config.waitlistXClientSecret),
           linkedin: !!(config.waitlistLinkedinClientId && config.waitlistLinkedinClientSecret),
         },
+        // Where "Follow along" points. A network with no URL configured is
+        // absent from this object and renders no link, the same degradation
+        // the `oauth` flags above get. Nothing here claims verification:
+        // none of the three will tell us whether a follow happened.
+        follow: {
+          x: config.waitlistFollowXUrl || null,
+          linkedin: config.waitlistFollowLinkedinUrl || null,
+          instagram: config.waitlistFollowInstagramUrl || null,
+        },
         invite: {
           url: inviteCode ? `${PRODUCTION_ORIGIN}/#waitlist?ref=${inviteCode}` : null,
           count: invited.count,

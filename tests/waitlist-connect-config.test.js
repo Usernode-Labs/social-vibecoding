@@ -50,6 +50,13 @@ const KEYS = [
   'WAITLIST_LINKEDIN_CLIENT_ID',
   'WAITLIST_LINKEDIN_CLIENT_SECRET',
   'WAITLIST_OAUTH_ORIGIN',
+  // Not credentials — public profile addresses for the stage-2 "Follow
+  // along" links. They are held to the same declaration contract because
+  // the reason for it is the same: an unset variable has to be findable in
+  // the admin panel, or nobody can discover why no link is rendering.
+  'WAITLIST_FOLLOW_X_URL',
+  'WAITLIST_FOLLOW_LINKEDIN_URL',
+  'WAITLIST_FOLLOW_INSTAGRAM_URL',
 ];
 const SECRETS = [
   'WAITLIST_GITHUB_CLIENT_SECRET',

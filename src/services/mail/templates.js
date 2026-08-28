@@ -57,22 +57,43 @@ function otp(payload) {
 // Either may be absent (an idempotent re-join carries neither), and the
 // copy must not grow an empty paragraph or the string "undefined" when
 // that happens.
+//
+// The shape follows Andrea's copy (doc comment, 27 Aug 2026): thank, set
+// the expectation, confirm, and only then offer the optional questions.
+//
+// Two deliberate departures from that draft. It opens "The first early
+// access group opens [September 9]" — the date is a placeholder and no
+// wave has been committed to, so the sentence keeps the rolling-groups
+// promise and drops the date rather than shipping one that slips. And it
+// addresses the reader as [BRAND NAME]; the rename is a separate decision
+// that has to move every surface at once, so this stays "Usernode" and
+// changes with the rest.
 function waitlistJoined(payload) {
   const confirmUrl = payload.confirmUrl || null;
   const surveyUrl = payload.url || null;
 
   let text = 'Thanks for joining the Usernode waitlist.\n\n'
-    + "We'll email you at this address as soon as your access is ready.";
+    + "We'll email you at this address as soon as your access is ready.\n\n"
+    + 'Early access opens in small groups, with more groups opening on a '
+    + 'rolling basis after that.';
   let html = p('Thanks for joining the Usernode waitlist.')
-    + p("We'll email you at this address as soon as your access is ready.");
+    + p("We'll email you at this address as soon as your access is ready.")
+    + p('Early access opens in small groups, with more groups opening on a '
+      + 'rolling basis after that.');
 
   // The code comes first. On a phone, leaving for the mail app and coming
   // back loses the WebView's place, so typing six digits beats following a
   // link; on desktop the link below is still one click. Either confirms
   // the same row.
+  //
+  // Confirming is now what puts somebody ON the list rather than a tidy-up
+  // afterwards, so the copy asks for it plainly instead of mentioning it in
+  // passing.
   if (payload.code) {
-    text += `\n\nYour verification code is ${payload.code}. It works for 15 minutes.`;
-    html += p(`Your verification code is <strong>${payload.code}</strong>. It works for 15 minutes.`);
+    text += '\n\nConfirm your email\n'
+      + `Your verification code is ${payload.code}. It works for 15 minutes.`;
+    html += p('<strong>Confirm your email</strong>')
+      + p(`Your verification code is <strong>${payload.code}</strong>. It works for 15 minutes.`);
   }
   if (confirmUrl) {
     text += '\n\nOr confirm this email address in one click:\n'
@@ -81,13 +102,15 @@ function waitlistJoined(payload) {
       + p(link(confirmUrl));
   }
   if (surveyUrl) {
-    text += '\n\nWant in sooner? A few optional questions move you up the list. '
-      + `Answer (or add to) them any time here: ${surveyUrl}`;
-    html += p('Want in sooner? A few optional questions move you up the list. '
-      + `Answer (or add to) them any time here: ${link(surveyUrl)}`);
+    text += '\n\nWant to increase your chances of getting into an earlier group? '
+      + 'Answer a few optional questions, invite someone you would build with, '
+      + `and follow along: ${surveyUrl}`;
+    html += p('Want to increase your chances of getting into an earlier group? '
+      + 'Answer a few optional questions, invite someone you would build with, '
+      + `and follow along: ${link(surveyUrl)}`);
   }
 
-  return { subject: "You're on the Usernode waitlist", text, html };
+  return { subject: "You're on the Usernode waitlist 🎉", text, html };
 }
 
 function waitlistReleased(payload) {

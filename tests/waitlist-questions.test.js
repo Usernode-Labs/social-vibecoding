@@ -56,21 +56,48 @@ test('stage 1 cleans optional fields and rejects unknown countries', () => {
   const full = q.validateStage1({
     ...base,
     country: 'de',
-    city: 'Berlin',
-    discovery_detail: 'alice',
-    referrer_handle: '@bob',
     evil_extra: 'nope',
   });
   assert.equal(full.ok, true);
   assert.equal(full.value.country, 'DE'); // normalized upper-case
-  assert.equal(full.value.city, 'Berlin');
-  assert.equal(full.value.discovery.detail, 'alice');
-  assert.equal(full.value.referrer_handle, '@bob');
+  assert.equal(full.value.discovery.source, 'friend');
   assert.equal('evil_extra' in full.value, false);
 
   assert.equal(q.validateStage1({ ...base, country: 'ZZ' }).ok, false);
   // Region pseudo-codes are valid countries.
   assert.equal(q.validateStage1({ ...base, country: 'EU' }).ok, true);
+});
+
+// Andrea's 27 Aug 2026 review cut three stage-1 fields. A stale client
+// still sending them must SAVE normally with the keys dropped — the same
+// contract the retired `invites` array got — because a cached SPA is not a
+// reason to refuse somebody's signup.
+test('stage 1 drops the three retired fields instead of refusing them', () => {
+  const r = q.validateStage1({
+    discovery_source: 'friend',
+    city: 'Berlin',
+    discovery_detail: 'alice',
+    referrer_handle: '@bob',
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.city, undefined);
+  assert.equal(r.value.discovery.detail, undefined);
+  assert.deepEqual(r.value.discovery, { source: 'friend' });
+  assert.equal(r.value.referrer_handle, undefined);
+});
+
+// The eight options Andrea settled on, and the five keys that went with
+// the old ten. Retired keys must be REJECTED on new submissions (they are
+// not offered any more) while rows that already stored one keep it — the
+// admin screen renders the stored key directly and nothing rewrites it.
+test('stage 1 offers exactly the eight agreed discovery sources', () => {
+  assert.deepEqual(Object.keys(q.DISCOVERY_SOURCES), [
+    'x', 'linkedin', 'instagram', 'reddit', 'friend', 'podcast', 'event', 'other',
+  ]);
+  for (const retired of ['farcaster', 'chat', 'video', 'reading', 'search']) {
+    assert.equal(q.validateStage1({ discovery_source: retired }).ok, false,
+      `${retired} is no longer offered, so it cannot be submitted`);
+  }
 });
 
 // ─── 2. Stage 2 ───────────────────────────────────────────────────────
@@ -131,7 +158,27 @@ test('stage 2 shapes handles and no longer accepts typed invites', () => {
   // validation error somebody would have to debug.
   assert.equal(r.value.invites, undefined);
   assert.equal(r.value.admit_together, true);
-  assert.equal(r.value.referrer_handle, '@ref');
+  // `referrer_handle` went the same way on 27 Aug 2026, and for the same
+  // reason the stage-1 copy did: the invite link records the relationship
+  // as a row reference, so a typed handle was a claim nobody could resolve.
+  assert.equal(r.value.referrer_handle, undefined);
+});
+
+// "Follow along" is a SELF-REPORT. It is stored under its own key and must
+// never reach `answers.verified`, which OAuth actually proves: no network
+// exposes an API that confirms a follow (LinkedIn returns aggregate
+// statistics, Instagram a bare count, and X retired its boolean endpoint).
+test('stage 2 stores the follow claim as a claim, not as a verification', () => {
+  const on = q.validateStage2({ followed_claim: 1 });
+  assert.equal(on.ok, true);
+  assert.equal(on.value.followed_claim, true);
+  assert.equal(on.value.verified, undefined);
+
+  const off = q.validateStage2({ followed_claim: 0 });
+  assert.equal(off.value.followed_claim, false);
+
+  // Absent stays absent: a save that never mentions it must not invent one.
+  assert.equal('followed_claim' in q.validateStage2({}).value, false);
 });
 
 test('stage 2 output contains only known keys', () => {
@@ -153,8 +200,8 @@ test('publicOptions exposes exactly the option sets the validators accept', () =
   assert.deepEqual(opts.countries, q.COUNTRIES);
   // max_invites went with the typed invite rows.
   assert.equal('max_invites' in opts, false);
-  // Every detail label points at a real source.
-  for (const key of Object.keys(q.DISCOVERY_DETAIL_LABELS)) {
-    assert.ok(key in q.DISCOVERY_SOURCES, `label for unknown source: ${key}`);
-  }
+  // The per-source "Which one?" labels went with the detail field they
+  // labelled, so the module must not still be publishing them.
+  assert.equal('discovery_detail_labels' in opts, false);
+  assert.equal(q.DISCOVERY_DETAIL_LABELS, undefined);
 });

@@ -324,11 +324,16 @@ const App = {
     // anonymous boot so the capture session can't strip #login to the feed.
     // `password-recovery-sent` is the same view with the post-submit
     // confirmation painted (the green "link is on its way" success box).
-    if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'anon-back' &&
+    // `waitlist-confirmed` is the state AFTER the six-digit code lands:
+    // confirming is what puts somebody on the list now, so the list place
+    // and the stage-2 offer live there rather than on `waitlist-joined`,
+    // which stops at the confirm step.
+    if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
+        shot !== 'anon-back' &&
         shot !== 'password-recovery' && shot !== 'password-recovery-sent') {
       return false;
     }
-    if (shot === 'waitlist-joined' &&
+    if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed') &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }

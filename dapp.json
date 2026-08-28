@@ -454,6 +454,24 @@
       "description": "Client secret paired with WAITLIST_LINKEDIN_CLIENT_ID. The token exchange authenticates with the secret in the form body, so a LinkedIn app with no secret can never work here. Private: encrypted at rest and never returned by any API. Both halves must be set together or the Connect LinkedIn button stays hidden."
     },
     {
+      "key": "WAITLIST_FOLLOW_X_URL",
+      "group": "Waitlist",
+      "required": false,
+      "description": "Public profile URL the stage-2 \"Follow along\" link points at for X, e.g. https://x.com/<handle>. Unset it renders no X link at all, because a follow prompt to a page that does not exist is worse than none. It is a profile address only: nothing here verifies that a follow happened, and no network exposes an API that would."
+    },
+    {
+      "key": "WAITLIST_FOLLOW_LINKEDIN_URL",
+      "group": "Waitlist",
+      "required": false,
+      "description": "Public page URL the stage-2 \"Follow along\" link points at for LinkedIn, e.g. https://www.linkedin.com/company/<slug>. Unset it renders no LinkedIn link. LinkedIn's Follower Statistics API returns aggregate counts and never an identity, so a follow through this link cannot be confirmed and is stored only as a self-report."
+    },
+    {
+      "key": "WAITLIST_FOLLOW_INSTAGRAM_URL",
+      "group": "Waitlist",
+      "required": false,
+      "description": "Public profile URL the stage-2 \"Follow along\" link points at for Instagram, e.g. https://www.instagram.com/<handle>. Unset it renders no Instagram link. Instagram's Graph API exposes a follower COUNT and no relationship lookup at any tier, so a follow through this link is a self-report and is labelled as one."
+    },
+    {
       "key": "WAITLIST_OAUTH_ORIGIN",
       "group": "Waitlist",
       "required": false,
@@ -1159,7 +1177,7 @@
     },
     {
       "name": "Waitlist joined state renders the stage-2 offer",
-      "path": "/?shot=waitlist-joined",
+      "path": "/?shot=waitlist-confirmed",
       "expectText": "Want in sooner?",
       "allowConsoleErrors": true
     },
@@ -1173,6 +1191,18 @@
       "name": "Waitlist joined state shows the confirm-your-email step",
       "path": "/?shot=waitlist-joined",
       "expectSelector": "#waitlist-confirm:not(.hidden) #waitlist-code",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist withholds the stage-2 offer until the email is confirmed",
+      "path": "/?shot=waitlist-joined",
+      "expectSelector": "#waitlist-more-offer.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist confirmed state gives the list place",
+      "path": "/?shot=waitlist-confirmed",
+      "expectSelector": "#waitlist-confirmed:not(.hidden)",
       "allowConsoleErrors": true
     },
     {

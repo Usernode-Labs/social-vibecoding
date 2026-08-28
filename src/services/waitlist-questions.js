@@ -9,34 +9,29 @@
 // (validateStage1 / validateStage2 below), so the two can never drift.
 'use strict';
 
-const ANSWERS_VERSION = 2;
+const ANSWERS_VERSION = 3;
 
 // ── Stage 1: "how did you find us?" ─────────────────────────────────────
+// The eight options Andrea settled on (doc comment, 27 Aug 2026). The list
+// used to run to ten and carry a free-text follow-up ("Which account?",
+// "Which subreddit?"); both are gone. The follow-up asked people to type a
+// second answer to a question they had already answered with a tap, and
+// nothing read it back.
+//
+// Five keys survive the change unaltered (`x`, `friend`, `reddit`, `event`,
+// `other`) and five are retired (`farcaster`, `chat`, `video`, `reading`,
+// `search`). Retired keys are NOT remapped: rows that stored one keep it,
+// the admin screen renders the stored key directly, and inventing a
+// migration would rewrite what somebody actually answered.
 const DISCOVERY_SOURCES = {
-  x: 'On X',
-  farcaster: 'On Farcaster',
-  friend: "A friend or someone in a group I'm in",
-  chat: 'A Discord or Telegram server',
-  video: 'A podcast or video',
-  reading: 'A newsletter, blog, or article',
+  x: 'X',
+  linkedin: 'LinkedIn',
+  instagram: 'Instagram',
   reddit: 'Reddit or a forum',
-  search: 'Search',
-  event: 'An event or meetup',
-  other: 'Somewhere else',
-};
-
-// Source-specific follow-up labels for the optional detail field.
-const DISCOVERY_DETAIL_LABELS = {
-  x: 'Which account?',
-  farcaster: 'Which cast or channel?',
-  friend: "Who? We'll thank them",
-  chat: 'Which server?',
-  video: 'Which show or channel?',
-  reading: 'Which one?',
-  reddit: 'Which subreddit or forum?',
-  search: 'What were you searching for?',
-  event: 'Which event?',
-  other: 'Where?',
+  friend: 'Friend or colleague',
+  podcast: 'Podcast',
+  event: 'Event',
+  other: 'Other',
 };
 
 // ── Stage 2: the group ──────────────────────────────────────────────────
@@ -193,6 +188,11 @@ function str(v, max) {
 // stage 2, where it is one of the things that helps you move up rather
 // than a gate on joining at all.
 //
+// Two questions were dropped outright (doc comment, 27 Aug 2026): the
+// free-text city beside the country select, and "did someone refer
+// you?". Country stays because cohorts are balanced across regions;
+// city was never read by anything.
+//
 // Unknown enum values are still rejected rather than stored: optional
 // means "may be absent", never "may be anything".
 function validateStage1(body) {
@@ -206,15 +206,19 @@ function validateStage1(body) {
     return { ok: false, error: 'Unknown discovery source.' };
   }
 
-  const detail = str(body?.discovery_detail, 255);
-  const city = str(body?.city, 120);
-  const referrer = str(body?.referrer_handle, 255);
-
+  // `discovery_detail`, `city` and `referrer_handle` are deliberately NOT
+  // read any more. A stale client still sending one gets a normal signup
+  // with the key dropped, which is the same contract the retired stage-2
+  // `invites` array got.
+  //
+  // The referral question went for a reason rather than for brevity: a
+  // typed handle is a claim nobody can resolve, and the invite link on the
+  // stage-2 form already attributes the same relationship through
+  // `invite_code` / `invited_by`, where it is a row reference instead of a
+  // string.
   const value = {};
-  if (source) value.discovery = detail ? { source, detail } : { source };
+  if (source) value.discovery = { source };
   if (country) value.country = country.toUpperCase();
-  if (city) value.city = city;
-  if (referrer) value.referrer_handle = referrer;
   return { ok: true, value };
 }
 
@@ -308,8 +312,18 @@ function validateStage2(body) {
 
   if (body?.admit_together != null) value.admit_together = !!body.admit_together;
 
-  const referrer = str(body?.referrer_handle, 255);
-  if (referrer) value.referrer_handle = referrer;
+  // "Follow along" (doc comment, 27 Aug 2026). This is a CLAIM, not a
+  // verification, and the name says so wherever it is read.
+  //
+  // None of the three networks will confirm a follow for us. LinkedIn's
+  // Follower Statistics returns aggregate counts and never an identity;
+  // Instagram's Graph API exposes `followers_count` and no relationship
+  // lookup at any tier; X retired the v1.1 `friendships/show` boolean and
+  // its v2 replacement means paginating a member's entire following list
+  // under metered per-resource pricing. So the honest thing to store is
+  // that somebody said they did it, kept separate from `answers.verified`,
+  // which OAuth actually proves.
+  if (body?.followed_claim != null) value.followed_claim = !!body.followed_claim;
 
   return { ok: true, value };
 }
@@ -319,7 +333,6 @@ function validateStage2(body) {
 function publicOptions() {
   return {
     discovery_sources: DISCOVERY_SOURCES,
-    discovery_detail_labels: DISCOVERY_DETAIL_LABELS,
     group_sizes: GROUP_SIZES,
     group_roles: GROUP_ROLES,
     group_tools: GROUP_TOOLS,
@@ -332,7 +345,6 @@ function publicOptions() {
 module.exports = {
   ANSWERS_VERSION,
   DISCOVERY_SOURCES,
-  DISCOVERY_DETAIL_LABELS,
   GROUP_SIZES,
   GROUP_ROLES,
   GROUP_TOOLS,

@@ -46,6 +46,14 @@
  * token never reaches a server log. The outcome is read on show and painted into
  * the same status line the submit uses. It proves the account is THEIRS; no
  * provider here can tell us whether they followed anything.
+ *
+ * ── Follow along ─────────────────────────────────────────────────────
+ *
+ * Which is why `#more-follow-row` is links plus a checkbox rather than a
+ * second verification. The links come from WAITLIST_FOLLOW_<NETWORK>_URL,
+ * so an unconfigured network renders nothing instead of a dead profile
+ * link, and the tick is stored as `answers.followed_claim` — a claim,
+ * beside `answers.verified` and never inside it.
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -75,13 +83,15 @@ interface MoreAnswers {
   handles?: { farcaster?: string; discord?: string; telegram?: string; other?: string };
   verified?: Record<string, string>;
   admit_together?: boolean;
-  referrer_handle?: string;
+  followed_claim?: boolean;
 }
 
 interface MorePayload {
   ok?: boolean;
   answers?: MoreAnswers;
   oauth?: Record<string, boolean>;
+  /** Public profile URLs for "Follow along". A network with none is absent. */
+  follow?: Record<string, string | null>;
   /** The signup's own share link, and who has joined through it so far. */
   invite?: { url?: string | null; count?: number; emails?: string[] };
 }
@@ -103,6 +113,12 @@ export function MoreScreen() {
     verified: Record<string, string>;
     oauth: Record<string, boolean>;
   }>({ verified: {}, oauth: {} });
+  /**
+   * "Follow along" targets. Empty at first render, which is also the
+   * prerendered state: the row emits no links until the load effect fills
+   * it, so the initial markup stays what the hand-written shell shipped.
+   */
+  const [follow, setFollow] = useState<Record<string, string | null>>({});
   const [inviteUrl, setInviteUrl] = useState('');
   const [inviteCount, setInviteCount] = useState(0);
   const [inviteEmails, setInviteEmails] = useState<string[]>([]);
@@ -125,7 +141,7 @@ export function MoreScreen() {
   const telegram = useRef<HTMLInputElement>(null);
   const other = useRef<HTMLInputElement>(null);
   const admitTogether = useRef<HTMLInputElement>(null);
-  const referrer = useRef<HTMLInputElement>(null);
+  const followed = useRef<HTMLInputElement>(null);
 
   // The token from `#more/<token>`.
   const token = useRef<string | null>(null);
@@ -179,6 +195,7 @@ export function MoreScreen() {
       if (other.current) other.current.value = handles.other || '';
 
       setConnect({ verified: a.verified || {}, oauth: payload.oauth || {} });
+      setFollow(payload.follow || {});
 
       if (madeUrl.current) madeUrl.current.value = a.made_url || '';
       if (madeNote.current) madeNote.current.value = a.made_note || '';
@@ -191,7 +208,7 @@ export function MoreScreen() {
       setInviteEmails(Array.isArray(payload.invite?.emails) ? payload.invite.emails : []);
 
       if (admitTogether.current) admitTogether.current.checked = !!a.admit_together;
-      if (referrer.current) referrer.current.value = a.referrer_handle || '';
+      if (followed.current) followed.current.checked = !!a.followed_claim;
 
       setMsg(connectMsg());
     },
@@ -310,7 +327,7 @@ export function MoreScreen() {
             telegram: telegram.current?.value.trim() || undefined,
             other_handle: other.current?.value.trim() || undefined,
             admit_together: !!admitTogether.current?.checked,
-            referrer_handle: referrer.current?.value.trim() || undefined,
+            followed_claim: !!followed.current?.checked,
           }),
         });
         const data = await res.json().catch(() => null);
@@ -352,6 +369,11 @@ export function MoreScreen() {
   // A "no" (or nothing picked) hides the follow-up, exactly as the chip row's
   // onChange used to toggle it.
   const lossDetailHidden = !lossHad || lossHad === 'no';
+
+  // Which networks actually have a link to offer. Drives whether the
+  // self-report checkbox is shown at all: "I followed along" with nothing
+  // to follow is a question with no answer.
+  const followTargets = ['x', 'linkedin', 'instagram'].filter((k) => follow[k]);
 
   return (
     <main
@@ -640,6 +662,55 @@ export function MoreScreen() {
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
               />
             </div>
+            {/*
+                Follow along. The links come from WAITLIST_FOLLOW_*_URL, so a
+                network nobody has configured renders nothing rather than a
+                dead profile link — the same degradation the connect row
+                above gets when a provider has no OAuth credentials. The row
+                is empty at first render, which is what the prerender pass
+                has to reproduce.
+
+                The checkbox is a SELF-REPORT and the copy says so. None of
+                the three will confirm a follow: LinkedIn's follower
+                statistics are aggregate-only, Instagram exposes a count and
+                no relationship lookup, and X retired its boolean friendship
+                endpoint. Saying "verified" here would be a claim we cannot
+                stand behind, and `answers.followed_claim` is kept out of
+                `answers.verified` for the same reason.
+            */}
+            <div id="more-follow-row" className="mt-3 flex flex-wrap gap-2">
+              {[
+                ['x', 'X'],
+                ['linkedin', 'LinkedIn'],
+                ['instagram', 'Instagram'],
+              ].map(([key, label]) =>
+                follow[key] ? (
+                  <a
+                    key={key}
+                    href={follow[key] as string}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:border-zinc-400 dark:hover:border-zinc-500"
+                  >
+                    {'Follow on ' + label}
+                  </a>
+                ) : null,
+              )}
+            </div>
+            <label
+              className={hiddenFirst(
+                !followTargets.length,
+                'mt-3 flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-300 cursor-pointer',
+              )}
+            >
+              <input
+                ref={followed}
+                id="more-followed"
+                type="checkbox"
+                className="mt-0.5 size-4 shrink-0 rounded accent-violet-600"
+              />
+              I followed along
+            </label>
           </div>
           {/* 8 · Friends. The typed-address rows that used to live here sent
               nothing and attributed nothing; this is a real link, and a join
@@ -697,14 +768,6 @@ export function MoreScreen() {
               />
               Only let me in when at least one person from my link gets in too
             </label>
-            <input
-              ref={referrer}
-              id="more-referrer"
-              type="text"
-              maxLength={255}
-              placeholder="Did someone here refer you? Their handle (optional)"
-              className="mt-3 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-            />
           </div>
           <div className="border-t border-zinc-200 dark:border-zinc-800 pt-5">
             <Button
