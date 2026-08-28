@@ -124,6 +124,7 @@
     setSocialPushEnabled: true,
     claimPendingSocialNotification: true,
     ackPendingSocialNotification: true,
+    setSocialBadgeCount: true,
   };
   var _privilegedCapability = null;
   var _privilegedCapabilityPromise = null;

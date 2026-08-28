@@ -559,16 +559,22 @@ test('Social push state and tap methods stay behind the top-frame capability',
     assert.deepEqual(loaded.nativePosts[6].args, { notificationId: 42 });
   });
 
-test('the homescreen badge count is a privileged top-frame action', async () => {
+test('the homescreen badge count requires the exact native session realm', async () => {
   // #1445: setSocialBadgeCount carries the unread total the OS icon badge
   // shows. Same per-realm capability as the other social-push methods.
   const loaded = loadBridge({
     capabilities: [
       'privilegedBridgeCapability',
+      'establishNativeSession',
       'setSocialBadgeCount',
     ],
   });
 
+  await assert.rejects(
+    loaded.sandbox.usernode.setSocialBadgeCount(7),
+    (error) => error.usernodeKind === 'native-session-closed'
+  );
+  await establishRealm(loaded);
   await loaded.sandbox.usernode.setSocialBadgeCount(7);
 
   assert.deepEqual(
@@ -576,14 +582,16 @@ test('the homescreen badge count is a privileged top-frame action', async () => 
     [
       'getBridgeInfo',
       'getPrivilegedBridgeCapability',
+      'establishNativeSession',
       'setSocialBadgeCount',
     ]
   );
   assert.equal(
-    loaded.nativePosts[2].privilegedCapability,
+    loaded.nativePosts[3].privilegedCapability,
     'navigation-capability'
   );
-  assert.deepEqual(loaded.nativePosts[2].args, { count: 7 });
+  assert.equal(loaded.nativePosts[3].realmSessionClaim, 'realm-41');
+  assert.deepEqual(loaded.nativePosts[3].args, { count: 7 });
 });
 
 test('notification permission actions require the top-frame capability',
