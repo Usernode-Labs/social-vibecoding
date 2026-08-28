@@ -43,6 +43,7 @@ import { IssueComments } from './issue-comments';
 import { issueCommentsStore, type IssueCommentsState } from './issue-comments-store';
 import { KanbanFilters } from './kanban-filters';
 import { lockedNoticeStore } from './locked-notice-store';
+import { discussionStore, type DiscussionState } from './discussion-store';
 import { kanbanFiltersStore, type KanbanFiltersState } from './kanban-filters-store';
 import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
@@ -91,6 +92,7 @@ export interface DevBoardBridge {
   mountCardMenu(host: Element | null): void;
   publishCardMenu(rows: CardMenuRowView[]): void;
   publishLockedNotice(locked: boolean): void;
+  publishDiscussion(state: DiscussionState): void;
   mountIssueComments(host: Element | null): void;
   publishIssueComments(state: IssueCommentsState): void;
   mountKanbanFilters(host: Element | null): void;
@@ -230,6 +232,14 @@ export const devBoardBridge: DevBoardBridge = {
   // swept as detached.
   publishLockedNotice(locked) {
     lockedNoticeStore.set({ locked });
+  },
+
+  // Where the app's general chat is, and the last thing said in it — see
+  // ./discussion-store.ts. Published on every card-list paint (so the card's
+  // href follows an app-to-app hop immediately) and again when the one
+  // request for the newest message lands.
+  publishDiscussion(state) {
+    discussionStore.set(state);
   },
 
   mountIssueComments(host) {

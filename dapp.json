@@ -1495,10 +1495,20 @@
       "expectSelector": "#apps-switcher-sheet #switcher-views [data-context-row=\"board\"]"
     },
     {
-      "name": "The app's general chat keeps a door, as a Discussion row beside the views",
-      "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#apps-switcher-sheet #switcher-views ~ #switcher-row-discussion[href$=\"/dev/chat\"]",
-      "expectText": "Discussion"
+      "name": "The kanban carries the app's general discussion as a card above its columns",
+      "path": "/?demo=1#app/usernode-2d5619/board",
+      "expectSelector": "#dev-forum-scroll:has(#dev-body #dev-kanban-board) a#dev-chat-card[href$=\"/dev/chat\"]",
+      "expectText": "General discussion"
+    },
+    {
+      "name": "...and the Feed carries the same discussion as an activity row instead",
+      "path": "/?demo=1#app/usernode-2d5619/activity",
+      "expectSelector": "#dev-body #dev-feed [data-discussion-row]"
+    },
+    {
+      "name": "The Feed does not draw the discussion card too — one fact, one shape per view",
+      "path": "/?demo=1#app/usernode-2d5619/activity",
+      "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-feed"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",

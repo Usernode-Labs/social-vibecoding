@@ -18,7 +18,9 @@
  *     under the Improve panel's Board row now (see improve-panel.tsx), because
  *     a strip whose first tab restated the destination the header chip had
  *     just named was navigation drawn twice;
- *   * `#dev-forum-scroll` and the General-chat card.
+ *   * `#dev-forum-scroll` and, on the kanban only, the General-discussion
+ *     card. See ./discussion-store.ts for why the board carries it and why the
+ *     Feed draws the same fact as an activity row instead.
  *
  * Legacy-owned hosts, rendered by React but never reconciled into:
  *   * `#dev-body` — `AppView._repaintDevBody()` replaces its `innerHTML` on
@@ -56,7 +58,11 @@
  * exists on the Dev route. Chunk H (#1085) folds it into the main tree.
  */
 
+import { ChatIcon, ChevronRightIcon } from '@/components/ui/icons';
+
 import { useStoreState } from '../../lib/use-store-state';
+import { useDevViewMode } from './view-mode-store';
+import { discussionStore, type DiscussionState } from './discussion-store';
 import { skeletonListHtml } from './card/skeleton';
 import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store';
 
@@ -145,11 +151,78 @@ const DEV_BODY_INITIAL_HTML =
 
 const DEV_BODY_INITIAL = { __html: DEV_BODY_INITIAL_HTML };
 
+/**
+ * The General-discussion card — the kanban's door to the app's general chat.
+ *
+ * ── Why it is here and only on the kanban ──────────────────────────────
+ *
+ * The card shipped, was retired when Activity became a first-class hash for
+ * the general chat, and is back because Activity stopped meaning the general
+ * chat: the board's recency stream took the name, and the screen it displaced
+ * was left reachable only from a notification.
+ *
+ * It draws on the KANBAN only, because the Feed draws the same fact better.
+ * A feed is a stream of what just happened and a conversation is one of the
+ * things that just happened, so there it is an ordinary activity row sorted by
+ * its latest message (`AppView._discussionCardModel`); a pinned tile above
+ * that stream would be saying the discussion is not activity, immediately
+ * above the row proving it is. The kanban is a prioritised worklist with no
+ * such slot, so there the card is chrome above the columns — which is exactly
+ * what it always was.
+ *
+ * ── An anchor ──────────────────────────────────────────────────────────
+ *
+ * `#app/<slug>/dev/chat` is a real address, so cmd/ctrl-click and "open in new
+ * tab" work on it — the rule tests/nav-new-tab.test.js pins across the shell,
+ * and the reason the card it replaces (a `<button>` with a delegated handler)
+ * is not simply restored as it was.
+ *
+ * `href: null` — no app open — renders nothing rather than a dead card.
+ */
+function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverCls: string }) {
+  const mode = useDevViewMode();
+  const { href, preview } = useStoreState<DiscussionState>(discussionStore);
+  if (mode !== 'kanban' || !href) return null;
+  return (
+    <div className="px-3 pt-2">
+      <a
+        id="dev-chat-card"
+        href={href}
+        className={`${cardCls} ${cardHoverCls}`}
+        title="Open the app's general chat"
+      >
+        <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-700 flex items-center justify-center shrink-0 dark:text-violet-400">
+          <ChatIcon className="w-5 h-5" aria-hidden="true" />
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+            General discussion
+          </span>
+          {/* The last thing said in it, or the standing description until the
+              one request for it lands. RENDERED, not an innerHTML host: the
+              card it replaces had `#dev-chat-card-preview` written into by
+              `_loadChatCardPreview`, which is two owners of one node. The
+              module publishes the line now (./discussion-store.ts). */}
+          <span
+            id="dev-chat-card-preview"
+            className="block text-xs text-zinc-500 dark:text-zinc-400 truncate"
+          >
+            {preview}
+          </span>
+        </span>
+        <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" />
+      </a>
+    </div>
+  );
+}
+
 export function DevBoardFrame({
   selfHosted,
   readOnly,
   canCollaborate,
   showsMembers,
+  cardCls,
+  cardHoverCls,
 }: DevBoardFrameProps) {
   const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
   return (
@@ -325,6 +398,7 @@ export function DevBoardFrame({
             </div>
           ) : null}
         </div>
+        <DiscussionCard cardCls={cardCls} cardHoverCls={cardHoverCls} />
         {/* Body region: the Feed mounts #dev-feed here; Kanban mounts
             #dev-kanban-filterbar + #dev-kanban-board. _repaintDevBody() owns
             the swap. The wrapper node is stable across tab switches so the
