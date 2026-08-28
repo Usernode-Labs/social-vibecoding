@@ -23,14 +23,22 @@
  * `!!slug` gate went with the chip's — a menu you can only open inside an app
  * is not a way to get to an app.
  *
- * ── What is NOT here: the app's own views ──────────────────────────────
+ * ── The app's own views ARE here, and so is the exception they make ────
  *
- * App / Board / Activity sat here for one round of #1443, on the argument
- * that they are destinations and destinations belong in the menu. They are
- * back in the Improve panel (`#improve-views`), because the sharper line is
- * not destination-vs-not: this menu answers WHICH APP, and those three answer
- * WHICH PART OF IT. The panel you open from inside an app is where you look
- * for the second question.
+ * App / Board / Activity sat here for one round of #1443, moved out to the
+ * Improve panel on the argument that this menu answers WHICH APP and those
+ * three answer WHICH PART OF IT, and are back — in BOTH places, which is what
+ * neither round tried. The second question is a fair one to ask from the
+ * control that names where you are, and the strip is one module
+ * (../improve/view-tabs.tsx) rendered twice rather than two implementations
+ * of one decision.
+ *
+ * The strip is the one thing in this sheet drawn as a CONTROL rather than as a
+ * row, deliberately: a segmented control is visibly a different kind of object
+ * from the destinations, which keeps "everything in the list has its own page"
+ * true of the list while the app's own views sit above it. The app's
+ * Discussion, directly under it, is a row like every other — it is a
+ * destination with its own page, not a third reading of the board.
  *
  * ── Why the strip is horizontal, and why that is the scroll fix ────────
  *
@@ -54,6 +62,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import {
   ChatBubbleTailIcon,
+  ChatIcon,
   ChevronRightIcon,
   CogIcon,
   HomeIcon,
@@ -68,6 +77,7 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { improveStore } from '../improve/improve-store.js';
+import { AppViewTabs, SWITCHER_VIEW_IDS } from '../improve/view-tabs';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 
@@ -280,6 +290,46 @@ export function AppsSwitcherSheet(): ReactNode {
             </span>
           ) : null}
         </div>
+        {/* The open app's own three views, and its discussion. Both gated on
+            there BEING an app: a target-less sheet would otherwise draw three
+            segments and a row that go nowhere. See ../improve/view-tabs.tsx.
+
+            ONE shrink-0 block, not three loose flex items: the nav below opens
+            with a hairline, and without a couple of points of clearance the
+            Discussion row sat flush against it and read as the first platform
+            destination rather than as the last app-scoped one. */}
+        {slug ? (
+          <div className="shrink-0 pb-2">
+            <div className={SECTION}>In this app</div>
+            <AppViewTabs
+              ids={SWITCHER_VIEW_IDS}
+              onNavigate={() => AppContext.dismissForNav()}
+              className="mx-5 mb-1"
+            />
+            {/*
+                THE APP'S GENERAL CHAT, and the reason it is a row here rather
+                than a fourth segment above.
+
+                It was the Activity destination until Activity became the
+                board's recency stream, and that left it reachable only from a
+                notification — a screen with a composer that you cannot browse
+                to. It is not one of the app's three VIEWS (those are three
+                readings of the same work), so it does not belong in the strip;
+                it is a destination with its own page, which is exactly what
+                every other row in this menu is.
+
+                `dev/chat` is the address it has always had, and the label
+                is what it is: the place the app talks, as opposed to the
+                board, where the app's work is.
+            */}
+            <MenuRow
+              id="switcher-row-discussion"
+              href={`#app/${slug}/dev/chat`}
+              icon={<ChatIcon />}
+              label="Discussion"
+            />
+          </div>
+        ) : null}
         {/* THE ONLY VERTICAL SCROLLER. Everything above is `shrink-0`. */}
         <nav
           id="switcher-nav"

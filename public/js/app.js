@@ -2537,14 +2537,26 @@ const App = {
           const pm = fragQuery.match(/(?:^|&)path=(.*)$/);
           if (pm) innerPath = App._validateInnerPath(pm[1]);
         }
-        // Streamlined Concept aliases: the app-context sheet's two
-        // destinations get first-class hashes. `activity` IS the general
-        // chat stream (same screen dev/chat always was) and `board` IS the
-        // forum card area (feed and kanban are both board modes now), so
-        // both rewrite onto the vocabulary the switch below already
-        // handles — old `dev` / `dev/chat` links keep working unchanged.
-        if (tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = 'chat'; }
-        else if (tab === 'board') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; }
+        // App / Board / Activity are the app's three views, and the last two
+        // are ONE SCREEN READ TWO WAYS: `board` is the card area as a kanban
+        // of work in flight, `activity` is the same cards newest-first.
+        //
+        // They used to be a destination plus a layout preference underneath it
+        // — the Improve panel's Kanban|Feed pair, stored in localStorage — and
+        // `activity` meant the app's general chat instead. A preference that
+        // changes what the screen is CALLED is a destination, so the layout
+        // rides the hash now and the pair is retired. The general chat keeps
+        // `dev/chat`, which is the address it always had; it is simply no
+        // longer what "Activity" names.
+        //
+        // `boardView` is applied below rather than here because the mode has
+        // to be set BEFORE the dispatch (so a cold entry paints the right
+        // layout on the board's first frame) and because switching between
+        // the two leaves `tab` and `subTab` identical, which nothing else
+        // would notice.
+        let boardView = null;
+        if (tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'feed'; }
+        else if (tab === 'board') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'kanban'; }
         if (tab === 'dev') {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {
@@ -2594,6 +2606,17 @@ const App = {
         const prevInnerPath = typeof AppView !== 'undefined'
           ? (AppView.pendingInnerPath || null) : null;
         if (typeof AppView !== 'undefined') AppView.pendingInnerPath = innerPath;
+        // The Board/Activity layout, applied from the route (see the alias
+        // block above). Resolved BEFORE _setViewMode writes it, because the
+        // dispatch below only re-renders when something it can see changed —
+        // and between #app/x/board and #app/x/activity nothing it can see
+        // does.
+        const boardViewChanged = !!boardView
+          && typeof AppView !== 'undefined' && AppView._getViewMode
+          && AppView._getViewMode() !== boardView;
+        if (boardView && typeof AppView !== 'undefined' && AppView._setViewMode) {
+          AppView._setViewMode(boardView);
+        }
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, ref, subTab);
           // navigateToApp's synchronous prefix runs AppView.close() when
@@ -2609,7 +2632,9 @@ const App = {
             || (tab === 'dev' && ref != null)
             // A chromeless hash carrying a DIFFERENT inner path than the
             // one already applied — re-render so the iframe moves (#743).
-            || (chromeless && innerPath !== prevInnerPath)) {
+            || (chromeless && innerPath !== prevInnerPath)
+            // Board ⇄ Activity: same tab, same sub-tab, different layout.
+            || boardViewChanged) {
           App.switchTab(tab, ref, subTab);
         }
       } else {
@@ -3367,9 +3392,10 @@ const App = {
         if (App.currentSubTab === 'sessions' && DevChat.currentSession) {
           newHash = `#app/${App.currentApp}/dev/sessions/${DevChat.currentSession.id}`;
         } else if (App.currentSubTab === 'chat') {
-          // Streamlined Concept: the general chat is the ACTIVITY screen and
-          // its canonical address; old /dev/chat links still parse.
-          newHash = `#app/${App.currentApp}/activity`;
+          // The general chat, at the address it has always had. `/activity`
+          // named this screen for one round and names the board's activity
+          // stream now (see the alias block in restoreFromHash).
+          newHash = `#app/${App.currentApp}/dev/chat`;
         } else if (App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           const t = AppView._devTopic;
@@ -3378,9 +3404,12 @@ const App = {
             : t.kind === 'session' ? 'shared' : 'governance';
           newHash = `#app/${App.currentApp}/dev/${seg}/${t.id}`;
         } else {
-          // The card area is the BOARD (Streamlined Concept); old /dev links
-          // still parse.
-          newHash = `#app/${App.currentApp}/board`;
+          // The card area, under whichever of its two names the active layout
+          // gives it: kanban is the Board, the recency stream is Activity.
+          // Old /dev links still parse and normalise to one of the two.
+          const feed = typeof AppView !== 'undefined' && AppView._getViewMode
+            && AppView._getViewMode() === 'feed';
+          newHash = `#app/${App.currentApp}/${feed ? 'activity' : 'board'}`;
         }
       } else {
         // Chromeless mode round-trips through reloads/history via its
@@ -3416,13 +3445,14 @@ const App = {
       // Strip the fragment-query (#743) so #app/x/full?path=/t/1 and
       // #app/x/full are the SAME screen (replace, not a spurious push).
       const segs = String(h || '').replace(/^#/, '').split('?')[0].split('/');
-      // Streamlined Concept aliases (see restoreFromHash): #app/x/activity
-      // is dev/chat and #app/x/board is dev, so an alias in the address bar
-      // and the canonical form updateHash computes are the SAME screen —
-      // replace, never a spurious push.
-      if (segs[0] === 'app') {
-        if (segs[2] === 'activity') segs.splice(2, 1, 'dev', 'chat');
-        else if (segs[2] === 'board') segs.splice(2, 1, 'dev');
+      // Aliases (see restoreFromHash): #app/x/board and #app/x/activity are
+      // both the card area, so an alias in the address bar and the canonical
+      // form updateHash computes are the SAME screen — replace, never a
+      // spurious push. The two are one screen as far as history goes for the
+      // same reason Kanban|Feed never pushed an entry: switching layout is
+      // not somewhere to go BACK from.
+      if (segs[0] === 'app' && (segs[2] === 'activity' || segs[2] === 'board')) {
+        segs.splice(2, 1, 'dev');
       }
       if (segs[0] === 'app' && segs[2] === 'dev') {
         return SUB_SCREENS.has(segs[3])

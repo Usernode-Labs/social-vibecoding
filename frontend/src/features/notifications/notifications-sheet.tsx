@@ -1,9 +1,24 @@
 /**
  * The Notifications SHEET (#notifications-sheet) — Streamlined Concept.
  *
- * All | Unread | Messages tabs, TODAY / EARLIER sections, one row per
+ * Unread | All | Messages tabs, TODAY / EARLIER sections, one row per
  * notification with an avatar-initial chip, the source app + relative time as
  * the subtitle, an unread dot and a trailing chevron.
+ *
+ * ── UNREAD LEADS, and it is where the sheet opens ──────────────────────
+ *
+ * All led for one round. Opening an inbox on everything you have already read
+ * is opening it on the answer to a question nobody asked: you tapped the bell
+ * BECAUSE it had a count, and the count is the unread. So Unread is first in
+ * the strip and is the initial tab, and All is the archive you step sideways
+ * into — which is what the footer link at the bottom of a filtered tab now
+ * does, rather than paging more rows into a filter you are trying to empty.
+ *
+ * "Mark all read" went with it. It sat at the far right of the same row as
+ * the tabs, in the same ink, and read as a fourth tab you could not select —
+ * a destructive-ish action a tap away from three navigation controls. It is
+ * an action ON the unread list, so it lives under the Unread tab with the
+ * list it acts on, and exists nowhere else.
  *
  * ── Messages, and why it has a tab of its own ──────────────────────────
  *
@@ -62,6 +77,13 @@ type ScreenRowView = NotificationRowView & {
   createdAtMs: number;
   who: string;
   appLine: string;
+  /**
+   * The meta line's attribution — a username, or null. Set only where the
+   * source user is the one who DID this; see the note on `rowView` in
+   * ./notifications.js for the two kinds that name a person who is the
+   * subject rather than the actor.
+   */
+  by?: string | null;
   /** Set on a conversation row — what the Messages tab filters on. */
   conversation?: boolean;
   conversationId?: number | null;
@@ -135,8 +157,14 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
             </span>
           ))}
         </span>
+        {/* WHERE · WHO · WHEN. Everything the headline used to repeat inside
+            a sentence lives on this line instead, which is what let the
+            headline become "<label>: <subject>" — see rowView in
+            ./notifications.js. `by` is absent on a system row (nobody did it)
+            and on the two key rows (the name there is the subject). */}
         <span className="block text-xs text-zinc-500 truncate">
-          {`${view.appLine} · ${view.time}`}
+          {[view.appLine, view.by ? `by @${view.by}` : null, view.time]
+            .filter(Boolean).join(' · ')}
         </span>
       </span>
       {/*
@@ -177,7 +205,8 @@ export function NotificationsSheetView() {
     screenCanLoadMore?: boolean;
     loadingMore: boolean;
   };
-  const [tab, setTab] = useState<Tab>('all');
+  // Unread, not All: the bell is tapped because it has a count.
+  const [tab, setTab] = useState<Tab>('unread');
 
   // `?shot=notifications-messages` lands on the Messages tab, so the capture
   // pipeline and the declared checks can reach a view that is otherwise only
@@ -208,8 +237,12 @@ export function NotificationsSheetView() {
   const today = rows.filter((view) => view.createdAtMs >= boundary);
   const earlier = rows.filter((view) => view.createdAtMs < boundary);
 
+  // `whitespace-nowrap`: "Unread (12)" is two words and the strip is a flex
+  // row inside a phone-width sheet, so the count wrapped onto a second line
+  // and the tab grew a line taller than its neighbours. The label is a label —
+  // it does not wrap, it just takes the width it needs.
   const tabCls = (active: boolean) =>
-    'px-1 pb-2 text-sm font-medium border-b-2 transition-colors '
+    'shrink-0 whitespace-nowrap px-1 pb-2 text-sm font-medium border-b-2 transition-colors '
     + (active
       ? 'border-violet-500 text-zinc-900 dark:text-zinc-100'
       : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300');
@@ -241,20 +274,22 @@ export function NotificationsSheetView() {
         aria-label="Notification filters"
       >
         <button
-          role="tab"
-          aria-selected={tab === 'all'}
-          className={tabCls(tab === 'all')}
-          onClick={() => setTab('all')}
-        >
-          All
-        </button>
-        <button
+          id="notifications-tab-unread"
           role="tab"
           aria-selected={tab === 'unread'}
           className={tabCls(tab === 'unread')}
           onClick={() => setTab('unread')}
         >
           {unreadCount ? `Unread (${unreadCount})` : 'Unread'}
+        </button>
+        <button
+          id="notifications-tab-all"
+          role="tab"
+          aria-selected={tab === 'all'}
+          className={tabCls(tab === 'all')}
+          onClick={() => setTab('all')}
+        >
+          All
         </button>
         {/*
             Messages. One place to catch up on conversations regardless of how
@@ -274,15 +309,6 @@ export function NotificationsSheetView() {
         </button>
         <span className="flex-1">
         </span>
-        <button
-          id="notifications-screen-mark-all"
-          className={'pb-2 text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 '
-            + 'dark:hover:text-zinc-200 disabled:opacity-40'}
-          disabled={!unread.length}
-          onClick={() => controller()?.markAllRead()}
-        >
-          Mark all read
-        </button>
         <button
           id="notifications-sheet-close"
           type="button"
@@ -318,6 +344,34 @@ export function NotificationsSheetView() {
           cover the screen it just sent you to (the contract _onItemClick
           follows for every row that routes).
       */}
+      {/*
+          "Mark all read", under the tab whose list it empties.
+
+          It used to sit at the far right of the tab row, in tab-sized ink on
+          the same baseline as All / Unread / Messages, which made a control
+          that CHANGES data look like a fourth place to go. Here it is
+          unmistakably an action on the list below it — and it exists only on
+          Unread, because "mark all read" while looking at All or at Messages
+          is an offer to act on rows you are not being shown.
+
+          Rendered even with nothing unread (disabled), so the strip does not
+          reflow the first time you clear the list.
+      */}
+      {tab === 'unread' ? (
+        <div className="flex justify-end px-4 pt-2">
+          <button
+            id="notifications-screen-mark-all"
+            type="button"
+            className={'inline-flex items-center h-7 px-3 rounded-full text-xs font-medium '
+              + 'text-violet-600 hover:bg-violet-500/10 dark:text-violet-400 '
+              + 'disabled:opacity-40 disabled:hover:bg-transparent un-touch-target'}
+            disabled={!unread.length}
+            onClick={() => controller()?.markAllRead()}
+          >
+            Mark all read
+          </button>
+        </div>
+      ) : null}
       {tab === 'messages' ? (
         <button
           id="notifications-all-messages"
@@ -363,9 +417,40 @@ export function NotificationsSheetView() {
           {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
         </p>
       ) : null}
-      {snap.screenCanLoadMore ? (
+      {/*
+          THE WAY ON, and it depends on which tab you are standing on.
+    
+          On a FILTERED tab it is the All tab. "See older notifications" used
+          to page another server batch into whichever filter was showing,
+          which on Unread meant asking for more of the thing you are trying to
+          get to zero — and the older rows it fetched were mostly read, so the
+          usual result of pressing it was a spinner and no new rows. What you
+          actually want from the bottom of a filtered list is the unfiltered
+          one, so that is where it goes; All then offers the real pagination.
+    
+          On ALL it is the loader it always was.
+
+          Either way it renders only when there IS something more: rows this
+          filter is hiding, or another page on the server. An empty Unread tab
+          on a quiet account would otherwise offer a link to an equally empty
+          All, which is a dead end dressed as a way forward.
+      */}
+      {tab !== 'all' && (all.length > rows.length || snap.screenCanLoadMore) ? (
         <div className="px-4 py-3">
           <button
+            id="notifications-see-older"
+            type="button"
+            className="w-full text-center text-xs text-violet-500 hover:underline"
+            onClick={() => setTab('all')}
+          >
+            See older notifications
+          </button>
+        </div>
+      ) : tab === 'all' && snap.screenCanLoadMore ? (
+        <div className="px-4 py-3">
+          <button
+            id="notifications-load-older"
+            type="button"
             className="w-full text-center text-xs text-violet-500 hover:underline disabled:opacity-40"
             disabled={snap.loadingMore}
             onClick={() => controller()?.loadOlder()}

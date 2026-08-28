@@ -581,6 +581,27 @@ const Notifications = {
       }
       return;
     }
+    // #1405 path A: your agent submitted or shared work. Both are about ONE
+    // change, and both used to fall through to the app's general chat with
+    // everything else that had a slug — a screen that says nothing about the
+    // thing the notification is announcing. A submission is a proposal up for
+    // a vote; a share is a session on the Dev board with its own public
+    // discussion. Each lands on its own topic.
+    if (item.kind === 'connector_submitted' && item.appSlug && item.sessionId) {
+      Notifications._dismissSheetForNav();
+      const kind = item.detail === 'shared' ? 'session' : 'proposal';
+      const id = parseInt(item.sessionId, 10);
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        App.openAppTab(item.appSlug, 'dev', {
+          subTab: 'topic',
+          ref: { kind, id },
+        });
+      } else {
+        const seg = kind === 'session' ? 'shared' : 'proposals';
+        window.location.hash = `#app/${item.appSlug}/dev/${seg}/${id}`;
+      }
+      return;
+    }
     if (item.kind === 'auto_solve_done' && item.appSlug) {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
@@ -630,8 +651,15 @@ const Notifications = {
           return;
         }
       }
-      const voteKinds = new Set(['pr_proposed', 'stale_pr', 'kudos', 'check_failed']);
-      const toProposals = voteKinds.has(item.kind);
+      // Every kind that is ABOUT A PROPOSAL opens that proposal — the vote
+      // nudge, the going-stale warning, the blocked check and the kudos.
+      // `subTab: 'proposals'` plus the session id is the legacy spelling of a
+      // typed topic ref; _normalizeTab turns it into { kind: 'proposal', id }
+      // and the topic view opens full-screen. Without an id there is no
+      // proposal to open and it falls back to the board, which is where the
+      // card is.
+      const proposalKinds = new Set(['pr_proposed', 'stale_pr', 'kudos', 'check_failed']);
+      const toProposals = proposalKinds.has(item.kind);
       if (typeof App !== 'undefined' && App.openAppTab) {
         App.openAppTab(item.appSlug, 'dev', toProposals
           ? { subTab: 'proposals', ref: item.sessionId || null }
@@ -1342,19 +1370,51 @@ function screenViews(items) {
   ));
 }
 
-// One notification row, as data. It has ONE renderer again — NotificationRow in
-// ./notifications-list.tsx — which both drawers use: the bell's own list, and
-// the cog drawer's pinned "Needs attention" section, which reaches this builder
-// through `Notifications._rowView` (see the publication at the bottom). Until
-// #1191 slice 6's fourth conversion there was a second, HTML-string renderer
-// here for the cog, because that host was still built by `innerHTML`.
+// One notification row, as data. It has ONE renderer — ScreenRow in
+// ./notifications-sheet.tsx — which draws exactly two lines:
 //
-// `segments` is the meta line after the leading unread dot, in order:
+//     <headline>                                    ← `segments`
+//     <where> · by @<who> · <when>                  ← `appLine` / `by` / `time`
+//
+// ── THE HEADLINE IS `<label>: <subject>`, and nothing else ────────────
+//
+// Every kind used to write a SENTENCE about itself: "@evan proposed a PR to
+// vote on in Notes", "Your dev session in Notes finished", "Proposal for issue
+// #12 in Notes is ready". Three problems, and they compound:
+//
+//   1. The app's name was in the sentence AND in the meta line directly under
+//      it. Every row said where it came from twice.
+//   2. The actor was in the sentence, so the row led with a username rather
+//      than with what happened — and a list of them all started the same way.
+//   3. The SUBJECT (the PR's title, the session's name) was in `body`, a
+//      third line this renderer does not draw. So the one thing that told two
+//      proposal notifications apart was not on screen at all.
+//
+// So the sentence is gone. The headline is a short label for the KIND and then
+// the thing itself — "New proposal: Fix the header spacing" — and everything
+// that was being repeated moves to the meta line under it, which was already
+// carrying the app and the time. `body` went with the sentence: nothing
+// rendered it, and its content is what the headline's subject now is.
+//
+// `segments` is that headline, in order:
 //   { t: 'who' }    → @username, in the strong ink
-//   { t: 'strong' } → an app name / issue label, in the slightly softer strong
-//   { t: 'text' }   → ordinary copy
+//   { t: 'strong' } → the SUBJECT — a title, a conversation, an issue ref
+//   { t: 'text' }   → the label and any connecting words
 // Every value is RAW text. Escaping is the renderer's job, and React does it
 // by construction — which is the point of moving the rows there.
+//
+// `by` is the meta line's attribution and is set ONLY where the source user is
+// the ACTOR. The two OpenRouter-key rows carry a `sourceUsername` that is the
+// SUBJECT instead — it names whose key it is — and "by @them" would be a false
+// claim about who did something, so those keep the name in the headline and
+// set no `by` at all. A system row — a stale PR, a failed check, a finished
+// session — has no actor and no `by` either.
+function headline(label, subject) {
+  return subject
+    ? [{ t: 'text', v: `${label}:` }, { t: 'strong', v: String(subject) }]
+    : [{ t: 'text', v: label }];
+}
+
 function rowView(n) {
   // #103: keep the violet left line on every row, read or unread, so a
   // notification never "loses its line" when read. Only the background
@@ -1362,20 +1422,26 @@ function rowView(n) {
   const unreadCls = n.readAt
     ? 'border-l-2 border-violet-500'
     : 'bg-violet-500/5 border-l-2 border-violet-500';
-  const appLine = n.appName ? n.appName : 'app';
+  // WHERE this came from, for the meta line — and EMPTY when there is no
+  // app, not the literal string 'app'. Plenty of kinds have no app at all (a
+  // conversation, an account-level key, an agent question the platform cannot
+  // place), and every one of them used to render "app · 4m ago" under itself.
+  // The renderer drops a falsy part, so an app-less row simply says less.
+  const appLine = n.appName ? n.appName : '';
   const who = n.sourceUsername ? n.sourceUsername : 'someone';
   const base = {
     id: n.id,
     unread: !n.readAt,
     unreadCls,
     time: relativeTime(n.createdAt),
-    // Streamlined Concept: the full-screen Notifications view buckets rows
-    // into Today/Earlier and leads each with an avatar-initial chip, so the
-    // raw timestamp and the resolved names ride along as data. The drawer's
-    // renderer ignores all three.
+    // The sheet buckets rows into Today/Earlier and leads each with an
+    // avatar-initial chip, so the raw timestamp and the resolved names ride
+    // along as data.
     createdAtMs: Date.parse(n.createdAt) || 0,
     who,
     appLine,
+    // Meta-line attribution. Null unless the source user actually DID this.
+    by: null,
     // The meta line's own layout. `mb` and `wrap` differ per kind, and the
     // plain mention/reply row is the only one that is not a flex row at all.
     mb: true,
@@ -1383,27 +1449,40 @@ function rowView(n) {
     wrap: false,
     icon: null,
     segments: [],
-    body: null,
   };
 
   if (CONVERSATION_NOTIF_KINDS.has(n.kind)) {
     const conversation = n.conversationTitle || 'Messages';
     const snippet = (n.messageContent || '').slice(0, 140);
-    const labels = {
-      conversation_invite: ['✉️', 'invited you to'],
-      conversation_message: ['💬', 'sent a message in'],
-      conversation_mention: ['@', 'mentioned you in'],
-      conversation_reply: ['↩️', 'replied to you in'],
-      conversation_reaction: [n.detail || '❤️', 'reacted to your message in'],
+    // The conversation is the SUBJECT of every one of these, so it leads —
+    // and for a plain message the snippet follows it, which is the only part
+    // of a message notification anybody reads. The other four say what
+    // happened in it instead, because "@you" is the whole news there.
+    const segments = {
+      conversation_invite: headline('Invite', conversation),
+      conversation_message: headline(conversation, snippet),
+      conversation_mention: [
+        { t: 'text', v: 'Mentioned you in' }, { t: 'strong', v: conversation },
+      ],
+      conversation_reply: [
+        { t: 'text', v: 'Replied in' }, { t: 'strong', v: conversation },
+      ],
+      conversation_reaction: [
+        { t: 'text', v: 'Reacted in' }, { t: 'strong', v: conversation },
+      ],
+    }[n.kind];
+    const icons = {
+      conversation_invite: '✉️',
+      conversation_message: '💬',
+      conversation_mention: '@',
+      conversation_reply: '↩️',
+      conversation_reaction: n.detail || '❤️',
     };
-    const [icon, verb] = labels[n.kind];
-    const body = n.kind === 'conversation_invite'
-      ? { text: 'Open Messages to accept or decline', medium: false, mention: false }
-      : (snippet ? { text: snippet, medium: false, mention: true } : null);
     return {
       ...base,
       wrap: true,
-      icon,
+      icon: icons[n.kind],
+      by: n.sourceUsername || null,
       // What the sheet's Messages tab filters on. Carried as a flag rather
       // than re-deriving it there from `kind`: CONVERSATION_NOTIF_KINDS lives
       // in this module and the tab must never drift from the set the rest of
@@ -1412,151 +1491,94 @@ function rowView(n) {
       conversationId: n.conversationId != null ? Number(n.conversationId) : null,
       // A conversation row names MESSAGES as its source, not "app".
       //
-      // `appLine` is the sheet's secondary line — "<where this came from> ·
-      // <when>" — and it falls back to the literal string 'app' when a
-      // notification has no app, which every conversation row is by
-      // construction (serialize nulls the app fields on one). So the sheet
-      // rendered "app · 4m ago" under every message. That was easy to miss
-      // while the bell subtracted messages from its count and nobody was
-      // being sent here to read them; it is the first thing you see now.
+      // `appLine` is the sheet's secondary line and falls back to the literal
+      // string 'app' when a notification has no app, which every conversation
+      // row is by construction (serialize nulls the app fields on one). So the
+      // sheet rendered "app · 4m ago" under every message.
       //
       // Deliberately the SURFACE and not the conversation's title: the title
-      // is already the last segment of the line above, and repeating it under
-      // itself reads as a rendering fault rather than as attribution.
+      // is the headline's own subject, and repeating it under itself reads as
+      // a rendering fault rather than as attribution.
       appLine: 'Messages',
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: verb },
-        { t: 'strong', v: conversation },
-      ],
-      body,
+      segments,
     };
   }
 
+  // The two OpenRouter-key rows: `who` is WHOSE KEY it is, not who acted, so
+  // the name stays in the headline and `by` stays null. They carry no app —
+  // a company key is an account-level fact — and clicking one opens Admin →
+  // Users, so that is what the meta line names as their source.
   if (n.kind === 'openrouter_key_created' || n.kind === 'openrouter_key_review') {
     const review = n.kind === 'openrouter_key_review';
     return {
       ...base,
+      appLine: 'Admin',
       wrap: true,
       icon: review ? '⚠️' : '🔑',
       segments: [
-        { t: 'strong', v: who },
-        { t: 'text', v: review
-          ? 'has a company OpenRouter key that needs manual review'
-          : 'received a company OpenRouter key' },
+        { t: 'text', v: review ? 'Company key needs review:' : 'Company key issued:' },
+        { t: 'who', v: who },
       ],
-      body: {
-        text: review
-          ? 'Open Admin → Users to block or remove it if needed.'
-          : 'Ownership, daily limit, status, and controls are in Admin → Users.',
-        medium: false,
-        mention: false,
-      },
     };
   }
 
-  // Kudos rows have no chat-message body; they show the PR title (or
-  // "PR #N" if the PR has no LLM-generated title yet) and a small 👏
-  // icon to distinguish from mention rows at a glance.
+  const prLabel = n.prTitle || (n.prNumber ? `PR #${n.prNumber}` : null);
+
   if (n.kind === 'kudos') {
     return {
       ...base,
       icon: '\u{1F44F}',
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: 'gave kudos to your PR in' },
-        { t: 'strong', v: appLine },
-      ],
-      body: {
-        text: n.prTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your PR'),
-        medium: true,
-        mention: false,
-      },
+      by: n.sourceUsername || null,
+      segments: headline('Kudos', prLabel || 'your PR'),
     };
   }
 
-  // Reaction rows lead with the emoji someone reacted with, then preview
-  // the message they reacted to.
   if (n.kind === 'reaction') {
     return {
       ...base,
       icon: n.detail || '❤️',
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: 'reacted to your message in' },
-        { t: 'strong', v: appLine },
-      ],
-      body: { text: (n.messageContent || '').slice(0, 140), medium: false, mention: true },
+      by: n.sourceUsername || null,
+      segments: headline('Reacted', (n.messageContent || '').slice(0, 140)),
     };
   }
 
-  // Stale-PR rows are system warnings (no source user): the author's
-  // promoted PR has gone quiet and is heading for auto-archive. Lead with
-  // a ⏳ and show the PR title so it's actionable at a glance. #971: these
-  // rows are about a PROPOSAL, so the PR title still leads; the session
-  // title is only a fallback ahead of the bare "PR #N".
+  // A system warning, no actor: the author's promoted PR has gone quiet and is
+  // heading for auto-archive. The old copy spelled the whole mechanism out
+  // ("is going stale, it'll auto-archive soon without votes"); what the row
+  // has to say is that it needs votes, and the rest is on the proposal.
   if (n.kind === 'stale_pr') {
     return {
       ...base,
       icon: '⏳',
-      segments: [
-        { t: 'text', v: 'Your PR in' },
-        { t: 'strong', v: appLine },
-        { t: 'text', v: "is going stale, it'll auto-archive soon without votes" },
-      ],
-      body: {
-        text: n.prTitle || n.sessionTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your PR'),
-        medium: true,
-        mention: false,
-      },
+      segments: headline('Needs votes', prLabel || n.sessionTitle || 'your PR'),
     };
   }
 
-  // Check-failed rows are system warnings (no source user): the owner's
-  // promoted proposal can't merge because its staging preview failed to
-  // boot, so automated checks never ran. Lead with ⚠️ and show the PR
-  // title; clicking lands on the proposal so they can push a fix. #971: PR
-  // title leads (this is a proposal row); the session title is a fallback
-  // ahead of the bare "PR #N".
+  // Also a system warning: the staging preview would not boot, so the checks
+  // that gate merge never ran.
   if (n.kind === 'check_failed') {
     return {
       ...base,
       icon: '⚠️',
-      segments: [
-        { t: 'text', v: 'Your proposal in' },
-        { t: 'strong', v: appLine },
-        { t: 'text', v: "can't merge, because its preview won't boot, so checks can't run" },
-      ],
-      body: {
-        text: n.prTitle || n.sessionTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your proposal'),
-        medium: true,
-        mention: false,
-      },
+      segments: headline('Checks blocked', prLabel || n.sessionTitle || 'your proposal'),
     };
   }
 
-  // PR-proposed (vote-request) rows: someone promoted a PR and we're
-  // nudging this user to come vote. Lead with a ballot box and show the
-  // PR title; clicking lands on the app's group-chat vote panel.
+  // Someone promoted a PR and this is the nudge to come and vote. THE row this
+  // whole rewrite is measured against: it read "@evan proposed a PR to vote on
+  // in Notes" with the PR's own title on an unrendered third line, so the one
+  // thing that distinguished two of them was invisible.
   if (n.kind === 'pr_proposed') {
     return {
       ...base,
       icon: '\u{1F5F3}️',
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: 'proposed a PR to vote on in' },
-        { t: 'strong', v: appLine },
-      ],
-      body: {
-        text: n.prTitle || (n.prNumber ? `PR #${n.prNumber}` : 'a PR'),
-        medium: true,
-        mention: false,
-      },
+      by: n.sourceUsername || null,
+      segments: headline('New proposal', prLabel || 'a PR'),
     };
   }
 
-  // #1405 path A: your agent put work somewhere while you were away. The row
-  // leads with the DESTINATION, because that is the part you cannot infer —
+  // #1405 path A: your agent put work somewhere while you were away. The label
+  // carries the DESTINATION, because that is the part you cannot infer —
   // "submitted" is at a vote with checks running, "shared" is visible on the
   // Dev board with nobody being asked to decide anything.
   if (n.kind === 'connector_submitted') {
@@ -1564,24 +1586,18 @@ function rowView(n) {
     return {
       ...base,
       wrap: true,
-      icon: shared ? '\u{1F441}\uFE0F' : '\u{1F4E4}',
-      segments: [
-        { t: 'text', v: 'Your agent' },
-        { t: 'text', v: shared ? 'shared work in progress in' : 'submitted work in' },
-        { t: 'strong', v: appLine },
-      ],
-      body: {
-        text: n.sessionTitle || n.prTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your change'),
-        medium: true,
-        mention: false,
-      },
+      icon: shared ? '\u{1F441}️' : '\u{1F4E4}',
+      segments: headline(
+        shared ? 'Shared by your agent' : 'Submitted by your agent',
+        n.sessionTitle || prLabel || 'your change',
+      ),
     };
   }
 
   // #1405 path B: the agent asked you something and you have not answered.
   //
-  // The copy says WHEN it was asked, never that you are currently being waited
-  // on. Clearing depends on the agent calling back and it may forget, so "is
+  // The copy says it was ASKED, never that you are currently being waited on.
+  // Clearing depends on the agent calling back and it may forget, so "is
   // waiting on you" would be FALSE on the row you see after already replying —
   // and a notification making a false claim reads as broken. This phrasing
   // stays true either way, which is what makes a stale one merely redundant.
@@ -1590,135 +1606,96 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon: '\u{1F4AC}',
-      segments: [
-        { t: 'text', v: 'Claude asked you something' },
-        ...(n.appName ? [{ t: 'text', v: 'in' }, { t: 'strong', v: appLine }] : []),
-      ],
-      body: { text: 'It is holding for your answer', medium: false, mention: false },
+      segments: headline('Claude asked you something', n.sessionTitle || null),
     };
   }
 
-  // #161: dev-session completion — the owner left mid-turn and it
-  // finished. Clicking deep-links straight into the dev session.
-  // #971: label precedence is sessionTitle → prTitle → branchName. The
-  // session title is the canonical display name (schema.sql #249) and is
-  // mirrored from pr_title once a PR exists, so a promoted session reads
-  // exactly as it did before; a pre-PR session now shows its real title
-  // instead of `dev/<user>-<epoch>`.
+  // #161: dev-session completion — the owner left mid-turn and it finished.
+  // #971: label precedence is sessionTitle → prTitle → branchName. The session
+  // title is the canonical display name (schema.sql #249) and is mirrored from
+  // pr_title once a PR exists, so a promoted session reads exactly as it did
+  // before; a pre-PR session shows its real title instead of
+  // `dev/<user>-<epoch>`.
   if (n.kind === 'session_done') {
     return {
       ...base,
       wrap: true,
       icon: '✅',
-      segments: [
-        { t: 'text', v: 'Your dev session in' },
-        { t: 'strong', v: appLine },
-        { t: 'text', v: 'finished' },
-      ],
-      body: {
-        text: n.sessionTitle || n.prTitle || n.branchName || 'your session',
-        medium: true,
-        mention: false,
-      },
+      segments: headline(
+        'Session finished',
+        n.sessionTitle || prLabel || n.branchName || 'your session',
+      ),
     };
   }
 
-  // #161: headless proposal-run completion. Clicking lands on the app's
-  // group chat and reveals the issue row (where "Start session from
-  // proposal" lives).
+  // #161: headless proposal-run completion. #150: a question outcome isn't
+  // "ready" work product — it is the run asking the reporter for input, so the
+  // label says so.
   if (n.kind === 'auto_solve_done') {
     const failed = n.detail === 'failed';
-    // #150: a question outcome isn't "ready" work product — it's the run
-    // asking the reporter for input, so say so in the headline.
-    const verb = failed ? 'failed'
-      : (n.detail === 'question' ? 'has questions for you' : 'is ready');
-    const outcomeText = {
-      spec: 'drafted a spec',
-      code: 'pushed code',
-      spec_code: 'drafted a spec and pushed code',
-      question: 'replied with a question',
-      failed: 'failed, you can retry',
-    }[n.detail] || 'finished';
+    const label = failed ? 'Proposal failed'
+      : (n.detail === 'question' ? 'Proposal has a question' : 'Proposal ready');
     return {
       ...base,
       wrap: true,
       icon: failed ? '⚠️' : '\u{1F916}',
-      segments: [
-        { t: 'text', v: 'Proposal for' },
-        { t: 'strong', v: n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue' },
-        { t: 'text', v: 'in' },
-        { t: 'strong', v: appLine },
-        { t: 'text', v: verb },
-      ],
-      body: { text: outcomeText, medium: true, mention: false },
+      segments: headline(
+        label,
+        n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue',
+      ),
     };
   }
 
-  // (#86) Private spec share: someone sent this user a spec version.
-  // Clicking opens the app's group chat with the read-only spec panel
-  // showing that exact version (see _onItemClick). Second line prefers
-  // the session's title / PR title / branch name (already joined
-  // server-side); the spec's own H1 appears as soon as the panel loads.
+  // (#86) Private spec share: someone sent this user a spec version. Clicking
+  // opens the app's general chat with the read-only spec panel showing that
+  // exact version (see _onItemClick).
   if (n.kind === 'spec_shared') {
     return {
       ...base,
       wrap: true,
       icon: '\u{1F4CB}',
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: 'shared a spec with you in' },
-        { t: 'strong', v: appLine },
-      ],
-      body: {
-        text: n.sessionTitle || n.prTitle || n.branchName || `Spec v${n.detail || '?'}`,
-        medium: true,
-        mention: false,
-      },
+      by: n.sourceUsername || null,
+      segments: headline(
+        'Spec shared',
+        n.sessionTitle || prLabel || n.branchName || `v${n.detail || '?'}`,
+      ),
     };
   }
 
-  // Collab-invite history rows (the actionable Accept/Decline buttons
-  // live ONLY in the pinned Invites section, driven by pendingInvites —
-  // once resolved this is just a plain history row).
+  // Collab-invite history rows (the actionable Accept/Decline buttons live
+  // ONLY in the pinned Invites section, driven by pendingInvites — once
+  // resolved this is just a plain history row). The app's name is the meta
+  // line's job, so the label is the whole headline.
   if (n.kind === 'collab_invite' || n.kind === 'collab_invite_accepted'
     || n.kind === 'approver_invite' || n.kind === 'approver_invite_accepted') {
-    const verb = n.kind === 'collab_invite'
-      ? 'invited you to collaborate on'
+    const label = n.kind === 'collab_invite'
+      ? 'Invited you to collaborate'
       : n.kind === 'collab_invite_accepted'
-        ? 'accepted your invite to collaborate on'
+        ? 'Accepted your collaborator invite'
         : n.kind === 'approver_invite'
-          ? 'invited you to be an approver on'
-          : 'accepted your approver invite on';
+          ? 'Invited you to be an approver'
+          : 'Accepted your approver invite';
     return {
       ...base,
       mb: false,
       wrap: true,
       icon: n.kind === 'collab_invite' ? '✉️'
         : n.kind === 'approver_invite' ? '🗳️' : '✅',
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: verb },
-        { t: 'strong', v: appLine },
-      ],
-      body: null,
+      by: n.sourceUsername || null,
+      segments: headline(label, null),
     };
   }
 
-  // Mentions and replies. The only row whose meta line is NOT a flex row,
-  // so its copy sits inline between the spans rather than in one.
+  // Mentions and replies, and anything else that carries a chat message.
   return {
     ...base,
     metaFlex: false,
-    segments: [
-      { t: 'who', v: who },
-      {
-        t: 'text',
-        v: n.kind === 'mention' ? 'mentioned you in'
-          : (n.kind === 'reply' ? 'replied to you in' : 'in'),
-      },
-      { t: 'strong', v: appLine },
-    ],
-    body: { text: (n.messageContent || '').slice(0, 140), medium: false, mention: true },
+    by: n.sourceUsername || null,
+    segments: headline(
+      n.kind === 'mention' ? 'Mentioned you'
+        : (n.kind === 'reply' ? 'Replied to you' : 'Posted'),
+      (n.messageContent || '').slice(0, 140),
+    ),
   };
 }
 

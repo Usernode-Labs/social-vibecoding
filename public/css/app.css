@@ -457,13 +457,54 @@ html.un-kb .platform-safe-sheet {
   font-size: 13px;
 }
 .messages-message-actions button:hover { background: var(--bg-secondary); color: var(--text-primary); }
-/* A saved message's star, filled and in the accent — the state lives in the
-   glyph's FILL, the same way the app-chat bookmark's does, so the two
+/* The tray's glyphs are text (↩ ☺ ✎ !) except the bookmark, which is the
+   shared SVG the app chat draws. Size only — each icon carries its own
+   fill/stroke as presentation attributes, and a blanket `fill: none` here
+   would erase BookmarkSolidIcon, which is the whole saved state. */
+.messages-message-actions button svg { display: block; width: 15px; height: 15px; }
+
+/* A saved message's bookmark, solid and in the accent — the state lives in
+   the glyph's SHAPE, the same way the app-chat bookmark's does, so the two
    surfaces read as one feature. It keeps the accent on hover rather than
    stepping to --text-primary with its neighbours: the others are actions you
    might take, this one is a state that is currently true. */
 .messages-message-actions button.messages-action-saved,
 .messages-message-actions button.messages-action-saved:hover { color: var(--accent); }
+
+/* ── A saved message says so without being hovered ──────────────────────
+
+   The tray is hover-revealed, so the one piece of PERSISTENT state it
+   carried was visible only while the pointer was on the row: a saved message
+   and an unsaved one were identical until you went looking. Saving is a note
+   to yourself about something worth finding again — a mark you cannot see is
+   not one.
+
+   Two cues, and they are the same two the app chat's bookmark uses
+   (.gc-msg-save below): the mark STAYS, and it is solid and accented. The
+   accent rule sits on the row itself as an inset bar rather than a
+   background, so it composes with `.messages-message-self`, the hover tint
+   and the failed-send wash instead of racing them. */
+.messages-message-saved { box-shadow: inset 3px 0 0 var(--accent); }
+
+/* Only where the tray is hover-revealed in the first place. On touch it is
+   always laid out (see the `hover: none` block below), and collapsing it to
+   the bookmark there would take reply, react and edit away from phones —
+   `:hover` never matches, so the collapsed state would be the only state. */
+@media (hover: hover) {
+  .messages-message-saved .messages-message-actions { display: flex; }
+  /* At rest it is a MARK, not a toolbar: the card chrome goes and the other
+     actions stand down, so the row carries one small solid bookmark. The
+     full tray is one hover away, exactly as on any other message. */
+  .messages-message-saved:not(:hover):not(:focus-within) .messages-message-actions {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+  }
+  .messages-message-saved:not(:hover):not(:focus-within)
+    .messages-message-actions > button:not(.messages-action-saved) {
+    display: none;
+  }
+}
 
 .messages-quote,
 .messages-reply-draft {
@@ -684,24 +725,81 @@ html.un-kb .platform-safe-sheet {
   .messages-message-actions { display: flex; position: static; float: right; margin: 2px 0 0 6px; box-shadow: none; }
 }
 
-/* The two-pane rule that lived here (a 19rem list beside the thread at
-   `min-width: 768px`) is gone with the SCREEN. Messages is a sheet now — at
-   most 24rem on a desktop slide-over, full width on a phone — so the panes
-   were being sized against a viewport the surface does not span, and the
-   thread pane got a few squeezed characters of its own. One pane at every
-   width: the list until a row is picked, the thread after, and the thread's
-   own back button between them. */
+/* ── The two panes, and the width they are actually drawn at ────────────
 
-/* Unconditional, where these were `max-width: 767px`. Messages renders only
-   inside a sheet that is 24rem at its widest, so a VIEWPORT query is the
-   wrong instrument — on a desktop it simply never fired, and the invitation
-   row laid itself out for a width the surface does not have. */
-.messages-invitation { align-items: flex-start; flex-direction: column; }
-.messages-invitation > div:last-child { align-self: stretch; }
-.messages-invite-actions { justify-content: stretch; }
-.messages-invite-decline, .messages-invite-block, .messages-invite-accept { flex: 1 1 auto; }
-.messages-message { padding-right: 8px; padding-left: 8px; }
-.messages-attachment img { width: 88px; }
+   These rules were dropped when Messages became a slide-over sheet, on the
+   sound reasoning that a 24rem surface has no business sizing panes against
+   the VIEWPORT. Messages is a full screen again (App.SCREEN_IDS carries
+   `messages-screen`, and App.navigateToMessages calls _showOnlyScreen on it)
+   and index.tsx still renders both panes with Tailwind's `md:` breakpoint —
+   so from 768px up the browser was being handed two `width: 100%` flex items
+   with nothing to arbitrate between them, and settled on an even split with
+   no divider. A 470px-wide conversation LIST beside a 470px thread is what
+   "the messages page looks unformatted" was.
+
+   So the split is back, at the 768px the markup's own `md:` classes assume.
+   Below it exactly one pane is rendered at a time (the list until a row is
+   picked, the thread after, the thread's own back button between them) and
+   both stay full width. */
+@media (min-width: 768px) {
+  .messages-list-pane {
+    flex: 0 0 21rem;
+    width: 21rem;
+    border-right: 1px solid var(--border-light);
+  }
+  .messages-thread-pane { flex: 1 1 auto; }
+}
+
+/* The list's own head: the screen's name, what it holds, and New. Sized to
+   MATCH .messages-thread-header opposite it — same 58px floor, same padding,
+   same hairline — because the two sit side by side from 768px up and a
+   half-pixel of disagreement between them reads as a broken rule. */
+.messages-list-toolbar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  min-height: 58px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-light);
+  background: var(--bg-primary);
+}
+.messages-list-title { min-width: 0; flex: 1 1 auto; }
+/* Preflight resets headings to inherit, so the size is this rule's to give. */
+.messages-list-title h2 { font-size: 15px; line-height: 1.25; }
+
+/* "Choose a conversation" — the thread pane with nothing in it, which only
+   exists from 768px up (below that the list IS the screen until you pick a
+   row). It is the same centred empty state .messages-empty draws in the list,
+   because they are the same kind of thing said about the two panes. */
+.messages-no-selection {
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.messages-no-selection > span { color: var(--accent); font-size: 32px; }
+.messages-no-selection h2 {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 700;
+}
+.messages-no-selection p { max-width: 22rem; }
+
+/* Phone-width only, where the sheet made them unconditional. Each of these
+   exists because a narrow column cannot lay the row out sideways; the thread
+   pane on a desktop is up to ~59rem and can. */
+@media (max-width: 767px) {
+  .messages-invitation { align-items: flex-start; flex-direction: column; }
+  .messages-invitation > div:last-child { align-self: stretch; }
+  .messages-invite-actions { justify-content: stretch; }
+  .messages-invite-decline, .messages-invite-block, .messages-invite-accept { flex: 1 1 auto; }
+  .messages-message { padding-right: 8px; padding-left: 8px; }
+  .messages-attachment img { width: 88px; }
+}
 
 .dark {
   --bg-primary: #0b0b0c;

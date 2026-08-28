@@ -175,7 +175,12 @@ test('a URL reaches the tab, because a declared check cannot click', () => {
   const effect = SHEET_SRC.slice(SHEET_SRC.indexOf("const [tab, setTab]"),
     SHEET_SRC.indexOf('const all = snap.screenList'));
   assert.match(effect, /useIsomorphicLayoutEffect/);
-  assert.match(effect, /useState<Tab>\('all'\)/, 'the prerendered tab is All');
+  // The prerendered tab is UNREAD, which is also where the sheet opens: the
+  // bell is tapped because it has a count, and the count is the unread. What
+  // this line is really pinning is that the initial tab is a CONSTANT — the
+  // SSG pass and the client's first render must agree on it, whatever it is,
+  // or hydration mismatches and console.errors.
+  assert.match(effect, /useState<Tab>\('unread'\)/, 'the prerendered tab is Unread');
   assert.doesNotMatch(HTML, /id="notifications-all-messages"/,
     'so the button is absent from the static markup, and is not an ADDED_IDS entry');
 });

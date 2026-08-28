@@ -74,7 +74,6 @@ export type NotificationRowView = {
   wrap: boolean;
   icon: string | null;
   segments: Segment[];
-  body: { text: string; medium: boolean; mention: boolean } | null;
 };
 
 type SavedView = {
