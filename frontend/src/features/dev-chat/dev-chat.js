@@ -9426,25 +9426,34 @@ const DevChat = {
     }
   },
 
-  // POST the private share; returns the parsed response (or an {ok:false,
-  // error} shape) so the popover can surface server-side 4xx messages
-  // ("User not found", "That user doesn't have access…") inline.
-  async _shareSpecToUser(version, username) {
-    if (!DevChat.currentSession || version == null) return { ok: false, error: 'No session' };
-    const sid = DevChat.currentSession.id;
-    try {
-      const resp = await fetch(`/api/sessions/${sid}/specs/${version}/share-user`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username }),
-      });
-      let data = {};
-      try { data = await resp.json(); } catch {}
-      if (!resp.ok) return { ok: false, error: data.error || `HTTP ${resp.status}` };
-      return data;
-    } catch {
-      return { ok: false, error: 'Network error' };
+  // (#1343) Hand the selected spec version to the Messages screen. The
+  // composer attaches it as a shared-object card; nothing is shared until
+  // the user actually sends the message, at which point the server writes
+  // the conversation-scoped access grant
+  // (chat_session_spec_conversation_shares) alongside the message row.
+  _shareSpecInMessages(version) {
+    if (!DevChat.currentSession || version === 'draft' || version === 'latest' || version == null) return;
+    const numericVersion = Number(version);
+    if (!Number.isInteger(numericVersion) || numericVersion <= 0) return;
+    const messages = (typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.messages) || null;
+    const appData = (typeof AppView !== 'undefined' && AppView.appData) || null;
+    if (!messages || typeof messages.share !== 'function' || !appData || !appData.slug) {
+      // The Messages bundle mounts with the shell, so this is a transient
+      // boot-order state, not a supported configuration.
+      PlatformUI.toast('Messages is not available right now. Try again in a moment.');
+      return;
     }
+    const reference = {
+      type: 'spec',
+      appId: appData.id || undefined,
+      appSlug: appData.slug,
+      sessionId: DevChat.currentSession.id,
+      version: numericVersion,
+    };
+    // Close the viewer before navigating so the dev screen is not left
+    // mid-panel underneath the Messages route when the user comes back.
+    DevChat.closeSpecViewer();
+    void messages.share(reference);
   },
 };
 

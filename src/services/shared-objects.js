@@ -247,7 +247,11 @@ async function hydrateOne(pool, user, ref) {
         ...base, sessionId: row.session_id, version: row.version,
         title: row.session_title || row.pr_title || `Spec v${row.version}`,
         state: `v${row.version}`, author: row.username,
-        href: `#app/${encodeURIComponent(app.slug)}/dev/sessions/${row.session_id}`,
+        // The read-only spec-panel deep link (#1343). Never the owner-only
+        // dev-session route — GET /api/sessions/:id 404s for recipients,
+        // while the /dev/spec route fetches through the share-widened
+        // GET /api/sessions/:id/specs/:version gate.
+        href: `#app/${encodeURIComponent(app.slug)}/dev/spec/${row.session_id}/${row.version}`,
       };
     }
     return unavailable(ref);

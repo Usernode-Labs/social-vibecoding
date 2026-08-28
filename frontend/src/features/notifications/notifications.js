@@ -557,15 +557,16 @@ const Notifications = {
       }
       return;
     }
-    // (#86) Private spec share: persist the spec-panel open state for
-    // the app, then land on Dev → Chat — GroupChat's mount path
-    // (_restoreSpecPanelIfSaved) opens the read-only panel and fetches
-    // the version through the share-widened access check. GroupChat is
+    // (#86, historical rows) Private spec share: persist the spec-panel
+    // open state (the title hand-off paints the panel header instantly),
+    // then take the SAME /dev/spec deep link a Messages spec card
+    // carries (#1343) — one way into the read-only panel. GroupChat is
     // a same-script-scope global (const-declared, so not on window) —
     // hence the bare reference behind a typeof guard.
     if (item.kind === 'spec_shared' && item.appSlug && item.sessionId) {
       const version = parseInt(item.detail, 10);
-      if (Number.isInteger(version) && version > 0
+      const validVersion = Number.isInteger(version) && version > 0;
+      if (validVersion
           && typeof GroupChat !== 'undefined' && GroupChat._writeSpecPanelOpen) {
         GroupChat._writeSpecPanelOpen(item.appSlug, {
           sessionId: item.sessionId,
@@ -574,10 +575,15 @@ const Notifications = {
         });
       }
       Notifications._dismissSheetForNav();
+      const specRef = validVersion
+        ? { kind: 'spec', sessionId: item.sessionId, version }
+        : null;
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'dev', { subTab: 'chat' });
+        App.openAppTab(item.appSlug, 'dev', { subTab: 'chat', ref: specRef });
       } else {
-        window.location.hash = `#app/${item.appSlug}/dev/chat`;
+        window.location.hash = specRef
+          ? `#app/${item.appSlug}/dev/spec/${item.sessionId}/${version}`
+          : `#app/${item.appSlug}/dev/chat`;
       }
       return;
     }

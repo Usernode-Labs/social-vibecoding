@@ -3,7 +3,7 @@
 const { decrypt } = require('./secrets');
 const { ALLOWED_KINDS, buildMessage } = require('./mobile-push-policy');
 const { classifyError } = require('./mobile-push-provider');
-const { countUnread } = require('./notifications');
+const { countUnread, conversationMessageSummarySql } = require('./notifications');
 const log = require('./logger');
 
 const CONVERSATION_NOTIFICATION_KINDS = new Set([
@@ -248,7 +248,7 @@ class MobilePushWorker {
               c.status AS conversation_status,
               su.username AS source_username,
               cm.content AS message_content,
-              conversation_message.content AS conversation_message_content,
+              ${conversationMessageSummarySql('conversation_message')} AS conversation_message_content,
               conversation_member.status AS conversation_member_status,
               EXISTS (
                 SELECT 1

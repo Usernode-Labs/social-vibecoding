@@ -330,25 +330,6 @@ async function createAutoSolveDoneNotification(pool, { userId, appId, sessionId,
   return rows;
 }
 
-// #86: private spec share (kind='spec_shared'). Fired by the
-// share-user endpoint after a NEW chat_session_spec_user_shares row is
-// inserted (the endpoint skips this entirely on a duplicate share, so
-// a recipient is pinged at most once per spec version). `session_id`
-// points at the dev session — listForUser/hydrateAndPush already join
-// chat_sessions, so prTitle/branchName ride along for the row label.
-// `detail` carries the spec version as a string (same generic-detail
-// pattern as 'reaction') so the click handler can open the exact
-// version in the read-only spec panel.
-async function createSpecSharedNotification(pool, { recipientId, appId, sessionId, sharerId, version }) {
-  if (!recipientId || !sessionId || version == null) return [];
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-     VALUES ($1, $2, $3, $4, 'spec_shared', $5)
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
-    [recipientId, appId, sessionId, sharerId || null, String(version).slice(0, 32)]
-  );
-  return rows;
-}
 
 // Company-funded OpenRouter keys are security/billing objects, so every
 // platform admin receives an ownership record when one is created and a
@@ -388,6 +369,34 @@ async function notifyManagedOpenRouterAdmins(pool, args) {
   return rows;
 }
 
+// #1343: a conversation message that carries only a shared-object card (or
+// only attachments) has empty content, which used to surface as a blank
+// notification snippet, list-row summary, and mobile-push body. Resolve the
+// display summary at the SQL boundary so every consumer (dropdown list,
+// single-row fetch, WS hydrate, mobile-push worker) gets the same fallback
+// label. The label keys on the stored object_type only, never the hydrated
+// title — these queries run outside any viewer's per-object access check,
+// so a title must not leak here. `alias` is the conversation_messages alias
+// in the caller's query.
+function conversationMessageSummarySql(alias) {
+  return `COALESCE(
+            NULLIF(${alias}.content, ''),
+            CASE (SELECT o.object_type FROM conversation_message_objects o
+                   WHERE o.message_id = ${alias}.id
+                   ORDER BY o.position, o.id LIMIT 1)
+              WHEN 'spec' THEN 'Shared a spec version'
+              WHEN 'app' THEN 'Shared an app'
+              WHEN 'github_issue' THEN 'Shared an issue'
+              WHEN 'code_proposal' THEN 'Shared a code proposal'
+              WHEN 'governance_proposal' THEN 'Shared a governance proposal'
+              ELSE CASE WHEN EXISTS (
+                SELECT 1 FROM conversation_message_attachments att
+                 WHERE att.message_id = ${alias}.id
+              ) THEN 'Shared an attachment' END
+            END
+          )`;
+}
+
 // Hydrate one freshly-inserted notification row with the same joins
 // listForUser performs and push it to its recipient over WS as a
 // notification_new. Best-effort: completion notifications ride inside
@@ -406,7 +415,7 @@ async function hydrateAndPush(pool, row) {
               n.conversation_id, c.kind AS conversation_kind,
               c.title AS conversation_title,
               n.conversation_message_id,
-              conversation_message.content AS conversation_message_content,
+              ${conversationMessageSummarySql('conversation_message')} AS conversation_message_content,
               su.username AS source_username,
               n.detail
        FROM notifications n
@@ -657,7 +666,7 @@ async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
             n.conversation_message_id,
-            conversation_message.content AS conversation_message_content,
+            ${conversationMessageSummarySql('conversation_message')} AS conversation_message_content,
             su.username AS source_username,
             n.detail
      FROM notifications n
@@ -692,7 +701,7 @@ async function getForUser(pool, userId, id) {
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
             n.conversation_message_id,
-            conversation_message.content AS conversation_message_content,
+            ${conversationMessageSummarySql('conversation_message')} AS conversation_message_content,
             su.username AS source_username,
             n.detail
        FROM notifications n
@@ -948,6 +957,7 @@ function serialize(row) {
 }
 
 module.exports = {
+  conversationMessageSummarySql,
   parseMentions,
   resolveUsers,
   createMentionNotifications,
@@ -959,7 +969,6 @@ module.exports = {
   createAutoSolveDoneNotification,
   createConnectorSubmittedNotification,
   createAgentAwaitingInputNotification,
-  createSpecSharedNotification,
   createManagedOpenRouterAdminNotifications,
   notifyManagedOpenRouterAdmins,
   hydrateAndPush,

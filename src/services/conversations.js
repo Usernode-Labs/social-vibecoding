@@ -390,6 +390,31 @@ async function conversationRow(db, user, conversationId) {
   return rows[0] || null;
 }
 
+// #1343: mirror of conversationMessageSummarySql (src/services/notifications.js)
+// for already-hydrated message rows. A message that carries only a shared
+// object card or only attachments has empty content; without a fallback the
+// conversation list row reads as "No messages yet" for a thread whose latest
+// message is a shared spec. Keys on the card's public type; keep the labels
+// in sync with the SQL fragment.
+const OBJECT_SUMMARY_LABELS = Object.freeze({
+  spec: 'Shared a spec version',
+  app: 'Shared an app',
+  issue: 'Shared an issue',
+  proposal: 'Shared a code proposal',
+  governance: 'Shared a governance proposal',
+});
+
+function messageSummary(message) {
+  if (!message) return '';
+  if (message.content) return message.content;
+  const objectType = Array.isArray(message.objects) && message.objects[0]
+    ? message.objects[0].type
+    : null;
+  if (objectType && OBJECT_SUMMARY_LABELS[objectType]) return OBJECT_SUMMARY_LABELS[objectType];
+  if (Array.isArray(message.attachments) && message.attachments.length) return 'Shared an attachment';
+  return '';
+}
+
 async function serializeConversation(db, user, row, { includeMembers = true } = {}) {
   const accepted = row.membership_status === 'member';
   const members = accepted && includeMembers ? await loadMembers(db, row.id) : [];
@@ -433,7 +458,7 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
     requester,
     peer,
     latestMessage: latest,
-    latestSummary: accepted ? (latest?.content || '') : '',
+    latestSummary: accepted ? messageSummary(latest) : '',
     lastActivityAt: latest?.createdAt || row.updated_at || row.created_at,
     unreadCount: unread,
     canSend: row.membership_status === 'member' && row.status === 'active',
@@ -1277,6 +1302,7 @@ module.exports = {
   leave,
   removeMember,
   mentionsUsername,
+  messageSummary,
   sendMessage,
   editMessage,
   toggleReaction,

@@ -2119,11 +2119,13 @@ const AppView = {
     // (features/app-context/app-context-sheet.tsx) — a destination with its
     // own page, which is what that menu lists, rather than a fourth segment
     // in a strip whose three entries are three readings of the same work.
+    // The optional ref is a spec deep link (#1343) that opens the read-only
+    // spec side panel on one frozen version.
     if (subTab === 'chat') {
       // The app's name stays the chip's label and the subtitle qualifies it —
       // replacing the name here was the chip forgetting which app it was in.
       App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Discussion');
-      AppView._renderChatSubView(content);
+      AppView._renderChatSubView(content, ref);
       return;
     }
 
@@ -3496,7 +3498,33 @@ const AppView = {
   // into #dev-chat-body exactly as it used to mount into the pinned pane —
   // spec side-panel, autocomplete, drafts, and scroll restore all unchanged.
   // No in-frame back bar: the ways out are the header's eye and title tab.
-  _renderChatSubView(content) {
+  _renderChatSubView(content, ref) {
+    // A spec deep link (#1343): persist the panel-open state BEFORE the
+    // chat mounts, so GroupChat._restoreSpecPanelIfSaved — which runs on
+    // every chat render — opens the read-only panel and fetches the
+    // version through the share-widened spec read gate. _devSpecLink is
+    // what App.updateHash serializes back into /dev/spec/:id/:version;
+    // it is cleared here on a plain chat render and by
+    // GroupChat._closeSpecPanel when the user dismisses the panel.
+    const specRef = ref && typeof ref === 'object' && ref.kind === 'spec'
+      && ref.sessionId && ref.version ? ref : null;
+    AppView._devSpecLink = specRef
+      ? { sessionId: specRef.sessionId, version: specRef.version }
+      : null;
+    if (specRef && typeof GroupChat !== 'undefined' && GroupChat._writeSpecPanelOpen
+        && AppView.appData && AppView.appData.slug) {
+      const saved = GroupChat._readSpecPanelOpen
+        ? GroupChat._readSpecPanelOpen(AppView.appData.slug) : null;
+      // Keep a previously saved title (a notification hand-off writes
+      // one); the restore falls back to "Spec vN" otherwise.
+      const title = saved && saved.sessionId === specRef.sessionId
+        && saved.version === specRef.version ? saved.title : null;
+      GroupChat._writeSpecPanelOpen(AppView.appData.slug, {
+        sessionId: specRef.sessionId,
+        version: specRef.version,
+        title: title || null,
+      });
+    }
     // <DevChatSubView/> — #dev-chat-body stays the host renderGroupChatTab
     // writes into.
     AppView._reactDevBoard()?.mountChatSubView(content);

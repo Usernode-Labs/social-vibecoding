@@ -2371,6 +2371,9 @@ const GroupChat = {
     const handle = document.getElementById('gc-spec-resizer');
     if (handle) handle.classList.remove('gc-spec-resizer-open');
     GroupChat._writeSpecPanelOpen(GroupChat.appSlug, null);
+    // #1343: stop serializing the spec deep link once the panel is
+    // dismissed — the next hash write reverts to /dev/chat.
+    if (typeof AppView !== 'undefined') AppView._devSpecLink = null;
   },
 
   // ===== Spec panel: draggable divider + open/width persistence =====

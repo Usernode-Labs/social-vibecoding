@@ -425,6 +425,21 @@ export async function send(input: { content: string; attachmentIds?: string[]; o
     await loadConversations(true);
   } catch (error) {
     const offline = typeof navigator !== 'undefined' && !navigator.onLine;
+    // A direct conversation the other person hasn't accepted yet takes
+    // exactly one opening message; the server answers 404 for a second
+    // one. Explain the consent gate, restore the draft, and rethrow so
+    // the composer keeps its text and attached card for a later retry.
+    const pendingRequest = !offline
+      && error instanceof api.MessagesApiError && error.status === 404
+      && state.active?.id === conversationId
+      && state.active.kind === 'direct'
+      && (state.active.memberCount ?? 0) < 2;
+    if (pendingRequest) {
+      setDraft(conversationId, content);
+      publish({ messages: state.messages.filter((item) => item.id !== optimisticId) });
+      throw new api.MessagesApiError(404,
+        "Your message request is still pending. They'll see this once they accept.");
+    }
     if (offline) {
       const queue = pendingByConversation.get(conversationId) || [];
       queue.push(pending);

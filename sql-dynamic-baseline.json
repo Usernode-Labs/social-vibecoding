@@ -906,18 +906,18 @@
       "preview": "dailySql"
     },
     {
-      "source": "src/services/notifications.js",
+      "source": "src/services/mobile-push-worker.js",
       "kind": "structural-template",
-      "fingerprint": "072b7bda222bacb9f37e",
+      "fingerprint": "da5dcc4923afcc5d3a84",
       "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
+      "preview": "`SELECT d.id, d.attempts, d.expires_at, d.created_at AS delivery_created_at, n.id AS notification_id, n.user_id AS notification_user_id, n.kind, n.read_at, n.de"
     },
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "4823252a1dc346965ea1",
+      "fingerprint": "06bfb8dcd2f9414711b7",
       "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
+      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
     },
     {
       "source": "src/services/notifications.js",
@@ -929,7 +929,7 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "5d008acef858a3fdc990",
+      "fingerprint": "5f23213e0c44061fba21",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
     },
@@ -939,6 +939,13 @@
       "fingerprint": "a058fc859cf0f89a4abd",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND ${CONVERSATION_ACCESS_SQL}`"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "a51ca12168e985636f48",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
     },
     {
       "source": "src/services/notifications.js",

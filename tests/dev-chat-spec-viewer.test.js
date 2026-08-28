@@ -272,7 +272,7 @@ test('a closed model draws nothing at all', () => {
   assert.equal(html({ kind: 'closed' }), '');
 });
 
-test('the header keeps its order: version, copy, share to user, share to group, close', () => {
+test('the header keeps its order: version, copy, share in Messages, share to group, close', () => {
   const out = html(OPEN);
   const at = (needle) => {
     const i = out.indexOf(needle);
@@ -283,9 +283,8 @@ test('the header keeps its order: version, copy, share to user, share to group, 
     at('id="dc-spec-viewer-version"') < at('id="dc-spec-viewer-copy"')
       && at('id="dc-spec-viewer-copy"') < at('id="dc-spec-viewer-share-user"')
       && at('id="dc-spec-viewer-share-user"') < at('id="dc-spec-viewer-share"')
-      && at('id="dc-spec-viewer-share"') < at('id="dc-spec-viewer-close"')
-      && at('id="dc-spec-viewer-close"') < at('id="dc-spec-share-pop"'),
-    'the popover stays last, where the template put it',
+      && at('id="dc-spec-viewer-share"') < at('id="dc-spec-viewer-close"'),
+    'close stays last — #1343 retired the popover that used to trail it',
   );
   assert.match(out, /class="dc-spec-viewer-header"/);
   assert.match(out, /class="dc-spec-viewer-body-wrap"/);
@@ -321,8 +320,9 @@ test('a disabled action renders WITHOUT the id its handler bound to', () => {
   assert.equal(blank.includes('id="dc-spec-viewer-share-user"'), false);
   assert.equal((blank.match(/disabled="" title="No spec version to share yet"/g) || []).length, 2,
     'both share buttons keep their placeholder');
-  // A blank button is still the OWNER's, so the popover is still there.
-  assert.ok(blank.includes('id="dc-spec-share-pop"'));
+  // #1343: private sharing is a hand-off to Messages, so a blank owner
+  // button no longer drags a popover along with it.
+  assert.equal(blank.includes('id="dc-spec-share-pop"'), false);
 });
 
 test('an already-shared version says so and stops', () => {
@@ -336,32 +336,17 @@ test('an already-shared version says so and stops', () => {
   assert.ok(fresh.includes('>Share to group</button>'));
 });
 
-test('a non-owner sees neither share button nor the popover', () => {
+test('a non-owner sees neither share button', () => {
   const out = html({
     ...OPEN,
     userShare: { kind: 'absent' },
     groupShare: { kind: 'absent' },
     buildHint: false,
   });
-  assert.equal(out.includes('dc-spec-share-pop'), false, 'the card is the owner’s affordance');
   assert.equal(out.includes('Share to group'), false);
-  assert.equal(out.includes('Share to user'), false);
+  assert.equal(out.includes('Share in Messages'), false);
   // Copy survives: reading the panel is what earns it.
   assert.ok(out.includes('id="dc-spec-viewer-copy"'));
-});
-
-test('the popover ships closed, with the hidden class on its two dismissable parts', () => {
-  const out = html(OPEN);
-  assert.match(out, /id="dc-spec-share-pop" class="dc-spec-share-pop hidden"/);
-  assert.match(out, /id="dc-spec-share-error" class="dc-spec-share-error hidden"/);
-  assert.match(out, /id="dc-spec-share-input" class="dc-spec-share-input" type="text" placeholder="Username/);
-  // Spelled as React's props here; an HTML parser lowercases an attribute
-  // name, so the rendered document carries the same three the template did.
-  assert.match(out, /autoComplete="off"/i);
-  assert.match(out, /spellCheck="false"/i);
-  assert.match(out, /maxLength="32"/i);
-  assert.match(out, /id="dc-spec-share-suggestions" class="dc-spec-share-suggestions"/);
-  assert.match(out, /id="dc-spec-share-send" class="dc-spec-action-btn dc-spec-share-send">Send</);
 });
 
 test('the two halves render as tabs, and an empty half keeps its own', () => {
@@ -408,7 +393,7 @@ test('the module writes no markup for this pane any more', () => {
     'the renderer is a view builder plus a publisher');
   assert.doesNotMatch(DEV_CHAT_SRC, /\n {2}_bindSpecSharePopover\(/,
     'the popover is the component’s, state and listeners both');
-  for (const gone of ['dc-spec-viewer-header', 'dc-spec-share-pop', 'dc-spec-viewer-tab']) {
+  for (const gone of ['dc-spec-viewer-header', 'dc-spec-viewer-tab']) {
     assert.equal(DEV_CHAT_SRC.includes(gone), false, `${gone} is spelled in the component`);
   }
   assert.match(MOUNT_TS, /publishSpecViewer\(state\)/);
@@ -505,7 +490,7 @@ test('the reader reaches the module by name, never by import', () => {
   assert.doesNotMatch(VIEWER_TSX, /from '\.\/dev-chat/);
   for (const fn of [
     '_switchSpecViewerVersion', 'closeSpecViewer', '_setSpecTab',
-    '_shareSpecVersion', '_shareSpecToUser', '_loadSpecMentionSuggestions',
+    '_shareSpecVersion', '_shareSpecInMessages',
   ]) {
     assert.ok(VIEWER_TSX.includes(`?.${fn}?.(`), `${fn} is called through the controller`);
     assert.ok(DEV_CHAT_SRC.includes(`  ${fn}(`) || DEV_CHAT_SRC.includes(`  async ${fn}(`),

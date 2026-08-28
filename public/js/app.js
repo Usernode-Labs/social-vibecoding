@@ -2442,7 +2442,12 @@ const App = {
       if (norm.subTab === 'sessions' && norm.ref) {
         suffix = `/dev/sessions/${norm.ref}`;
       } else if (norm.subTab === 'chat') {
-        suffix = '/dev/chat';
+        // A spec deep link (#1343) addresses the chat screen with the
+        // read-only panel open on one frozen version; _normalizeTab has
+        // already validated the ref, so a non-spec ref is plain chat.
+        suffix = norm.ref && norm.ref.kind === 'spec'
+          ? `/dev/spec/${norm.ref.sessionId}/${norm.ref.version}`
+          : '/dev/chat';
       } else if (norm.subTab === 'topic' && norm.ref && norm.ref.id) {
         const seg = norm.ref.kind === 'issue' ? 'issues'
           : norm.ref.kind === 'proposal' ? 'proposals'
@@ -2845,6 +2850,18 @@ const App = {
             // from dev/sessions/{id}, which is the OWNER's dev chat).
             subTab = 'topic';
             ref = { kind: 'session', id: parseInt(parts[4]) || null };
+          } else if (sec === 'spec' && parts[4] && parts[5]) {
+            // A frozen spec version (#1343) — the deep link a Messages
+            // spec card carries. Lands on Dev → Chat with the read-only
+            // spec side panel restored to that exact version; the fetch
+            // behind the panel goes through the share-widened
+            // GET /api/sessions/:id/specs/:version gate.
+            subTab = 'chat';
+            ref = {
+              kind: 'spec',
+              sessionId: parseInt(parts[4]) || null,
+              version: parseInt(parts[5]) || null,
+            };
           } else {
             // dev, dev/issues, dev/proposals, dev/sessions (no id) —
             // all land on the plain card list.
@@ -3670,6 +3687,15 @@ const App = {
         if (ref == null && App.currentSubTab === 'sessions'
             && typeof DevChat !== 'undefined' && DevChat.currentSession) {
           ref = DevChat.currentSession.id;
+        } else if (ref == null && App.currentSubTab === 'chat'
+            && typeof AppView !== 'undefined' && AppView._devSpecLink) {
+          // A chat screen entered through a spec deep link (#1343) keeps
+          // that address so reload/back reproduce the open panel —
+          // matching the localStorage restore, which reopens the saved
+          // panel on any chat mount anyway. Closing the panel clears
+          // _devSpecLink, so the next hash write reverts to /dev/chat.
+          const specLink = AppView._devSpecLink;
+          ref = { kind: 'spec', sessionId: specLink.sessionId, version: specLink.version };
         } else if (ref == null && App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           ref = AppView._devTopic;
@@ -3701,7 +3727,7 @@ const App = {
     // device/browser back mirrors the in-page back buttons — but which
     // session/topic isn't part of the id (moving between two topics of
     // the same kind replaces in place).
-    const SUB_SCREENS = new Set(['sessions', 'chat', 'issues', 'proposals', 'governance', 'shared']);
+    const SUB_SCREENS = new Set(['sessions', 'chat', 'issues', 'proposals', 'governance', 'shared', 'spec']);
     const screenIdOf = (value) => {
       let parsed;
       try { parsed = new URL(String(value || ''), location.origin); } catch (_) { return ''; }
@@ -4220,10 +4246,19 @@ const App = {
         : { tab: 'dev', subTab: 'forum', ref: null };
     }
 
-    // Full-screen sub-views with no deep-link payload. (The 'settings'
-    // sub-page is gone — #645 — so old dev/settings requests fall
-    // through to the card list below.)
-    if (subTab === 'chat') return { tab: 'dev', subTab: 'chat', ref: null };
+    // Full-screen general chat. (The 'settings' sub-page is gone — #645
+    // — so old dev/settings requests fall through to the card list
+    // below.) The one payload chat accepts is a spec deep link (#1343):
+    // a well-formed { kind:'spec', sessionId, version } ref opens the
+    // read-only spec side panel; anything else is dropped as before.
+    if (subTab === 'chat') {
+      const spec = ref && typeof ref === 'object' && ref.kind === 'spec'
+        && Number.isInteger(ref.sessionId) && ref.sessionId > 0
+        && Number.isInteger(ref.version) && ref.version > 0
+        ? { kind: 'spec', sessionId: ref.sessionId, version: ref.version }
+        : null;
+      return { tab: 'dev', subTab: 'chat', ref: spec };
+    }
 
     // A typed topic ref — from the 'topic' sub-view itself or the
     // legacy issues/proposals sub-tab vocabulary — opens that topic

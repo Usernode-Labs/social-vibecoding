@@ -148,9 +148,13 @@ Kind-specific notes:
   must be clicked; a plain message does not fire them.
 - `check_failed` fires only on a staging **boot** failure (crash-loop), not
   on failing dapp tests, and lands ~4 minutes after the crash.
-- `spec_shared` is de-duplicated: re-sharing the same
-  `(session, version, recipient)` returns `alreadyShared: true` and creates
-  **no** notification. Use a fresh session for a repeat test.
+- `spec_shared` is a **historical-only** kind since #1343: the share-user
+  endpoint that minted it is retired, so no product flow creates new rows.
+  New private spec shares travel through Messages — send a conversation
+  message carrying a spec card and verify the `conversation_message` /
+  `conversation_invite` push instead. Rendering/click-through for existing
+  `spec_shared` rows can still be tested by inserting a row directly (see
+  `seedStagingLegacySpecShareFixtures` in `src/db/migrate.js` for the shape).
 - `stale_pr` is a days-scale sweeper — not force-testable; leave it to its
   unit coverage.
 - Invite kinds land on the **invitee's** device, so testing them needs a

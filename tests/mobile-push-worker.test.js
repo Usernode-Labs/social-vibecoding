@@ -311,7 +311,12 @@ test('delivery reload includes the current deployment state and activation times
   assert.match(seen.sql, /su\.username AS source_username/);
   assert.match(seen.sql, /cm\.content AS message_content/);
   assert.match(seen.sql, /c\.title AS conversation_title/);
-  assert.match(seen.sql, /conversation_message\.content AS conversation_message_content/);
+  // #1343: the summary rides the shared fallback fragment, so an
+  // object-only message pushes "Shared a spec version" instead of an
+  // empty body. See conversationMessageSummarySql in
+  // src/services/notifications.js.
+  assert.match(seen.sql, /NULLIF\(conversation_message\.content, ''\)[\s\S]*AS conversation_message_content/);
+  assert.match(seen.sql, /'Shared a spec version'/);
   assert.match(seen.sql, /cs\.session_title, cs\.pr_title, cs\.branch_name/);
   assert.match(seen.sql, /n\.detail/);
   assert.deepEqual(seen.params, [JOB.id]);

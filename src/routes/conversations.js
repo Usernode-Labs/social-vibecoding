@@ -93,6 +93,21 @@ function demoConversations(user) {
       lastActivityAt: '2026-08-13T11:00:00Z', unreadCount: 0,
       canSend: false, canInvite: false, canManage: false,
     },
+    // #1343: a thread whose latest message carries ONLY a spec card — the
+    // list row must show the object-summary fallback, never "No messages
+    // yet". Keep this latestSummary in sync with messageSummary()
+    // (src/services/conversations.js).
+    {
+      id: 910004, kind: 'group', title: 'Spec share fixture', status: 'active', archived: false,
+      members: [
+        { ...self, role: 'member', status: 'member', joinedAt: '2026-08-12T09:00:00Z' },
+        { ...ada, role: 'owner', status: 'member', joinedAt: '2026-08-12T09:01:00Z' },
+      ],
+      memberCount: 2, membershipStatus: 'member', myRole: 'member', requester: null, peer: null,
+      latestMessage: null, latestSummary: 'Shared a spec version',
+      lastActivityAt: '2026-08-13T14:10:00Z', unreadCount: 1,
+      canSend: true, canInvite: true, canManage: false,
+    },
   ];
 }
 
@@ -136,12 +151,37 @@ function demoMessages(user, conversationId) {
       reply: null, reactions: [], attachments: [], objects: [{
         type: 'spec', appId: 1, appSlug: 'usernode', sessionId: 3327, version: 1,
         available: true, title: 'Platform Messages spec v1', subtitle: 'Usernode',
-        state: 'v1', author: 'ada', href: '#app/usernode/dev/sessions/3327',
+        state: 'v1', author: 'ada', href: '#app/usernode/dev/spec/3327/1',
       }, {
         type: 'governance', appId: 1, appSlug: 'usernode', proposalId: 701,
         available: true, title: 'Enable Messages rollout', subtitle: 'Usernode governance',
         state: 'open', author: 'ada', href: '#app/usernode/dev/governance/701',
       }, { type: 'spec', available: false }],
+    },
+  ];
+  // #1343: the Messages spec-share fixture. One message with a note and
+  // the card, one card-only message (the shape the Share in Messages
+  // button produces when no note is typed). The card's href is the
+  // /dev/spec deep link, which the ?demo=1 spec mock keeps renderable
+  // against an empty staging database.
+  if (conversationId === 910004) return [
+    {
+      id: 9100401, conversationId, sender: ada,
+      content: 'Here is the spec version with a note attached.', createdAt: '2026-08-13T14:05:00Z', editedAt: null,
+      reply: null, reactions: [], attachments: [], objects: [{
+        type: 'spec', appId: 1, appSlug: 'usernode', sessionId: 3327, version: 1,
+        available: true, title: 'Platform Messages spec v1', subtitle: 'Usernode',
+        state: 'v1', author: 'ada', href: '#app/usernode/dev/spec/3327/1',
+      }],
+    },
+    {
+      id: 9100402, conversationId, sender: ada,
+      content: '', createdAt: '2026-08-13T14:10:00Z', editedAt: null,
+      reply: null, reactions: [], attachments: [], objects: [{
+        type: 'spec', appId: 1, appSlug: 'usernode', sessionId: 3327, version: 1,
+        available: true, title: 'Platform Messages spec v1', subtitle: 'Usernode',
+        state: 'v1', author: 'ada', href: '#app/usernode/dev/spec/3327/1',
+      }],
     },
   ];
   if (conversationId === 910002) return [{
@@ -450,6 +490,13 @@ function conversationRoutes(config) {
       return res.json({ ok: true, demo: true });
     }
     try {
+      // Demo threads are request-time fixtures with nothing to persist;
+      // answer the client's read-marker POST instead of 404ing, so the
+      // baseline no-console-errors check holds on demo thread routes.
+      if (isDemo(req)) {
+        if (!demoConversations(req.user).some((row) => row.id === id && row.membershipStatus === 'member')) return sendNotFound(res);
+        return res.json({ ok: true, messageId, demo: true });
+      }
       const result = await conversations.markRead(pool, req.user, id, messageId);
       if (!result) return sendNotFound(res);
       await conversations.withLockedAudience(pool, req.user, id, (memberIds) => {

@@ -2955,6 +2955,22 @@
       "path": "/?demo=1&sort=active#apps",
       "expectSelector": "#browse-list[data-sort=\"active\"] .browse-row",
       "expectText": "merged in 30d"
+    },
+    {
+      "name": "Messages: a spec card deep-links to the read-only spec panel (#1343)",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": ".messages-object-card[href=\"#app/usernode/dev/spec/3327/1\"]"
+    },
+    {
+      "name": "Messages: a card-only thread summarizes the shared spec in the list (#1343)",
+      "path": "/?demo=1#messages",
+      "expectText": "Shared a spec version"
+    },
+    {
+      "name": "The /dev/spec deep link opens the read-only spec panel (#1343)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/spec/3327/1",
+      "expectSelector": "#gc-spec-side-panel.gc-spec-side-panel-open",
+      "expectText": "[Mock] Readable cards on narrow screens"
     }
   ],
   "governance": {

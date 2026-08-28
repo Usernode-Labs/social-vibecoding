@@ -110,7 +110,7 @@ async function migrate(config) {
   // the demo user so the check viewer exercises the NON-owner spec panel.
   await seedStagingSharedSpecPanelSession(pool, config);
   await seedStagingDemoProposal(pool, config);
-  await seedStagingSpecUserShareFixtures(pool, config);
+  await seedStagingLegacySpecShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await seedStagingSyncActivity(pool, config);
   await seedStagingChatEditFixtures(pool, config);
@@ -8126,21 +8126,25 @@ async function seedStagingDemoProposal(pool, config) {
   });
 }
 
-// (#86) Staging fixtures for the private "Share to user" spec flow.
-// chat_sessions, chat_session_specs, chat_session_spec_user_shares and
-// notifications are all staging:private (schema-only in clones), so
-// without seeding the recipient-side path — the 'spec_shared' drawer
-// row and its click-through into the read-only spec panel — would be
-// unreachable in a staging preview. Must run AFTER
-// seedStagingSpecViewerSessions (shares the admin-first "staging login
-// user" convention with seedStagingNotifications).
+// (#86, historical / #1343) Staging fixtures for the RETIRED share-to-user
+// spec flow. New private spec shares go through Messages (a conversation
+// message carrying a spec card writes chat_session_spec_conversation_shares),
+// but production still holds chat_session_spec_user_shares rows and
+// 'spec_shared' notifications from the old endpoint, and both read paths —
+// the notification drawer row, its click-through into the read-only spec
+// panel, and the share-widened GET /specs/:version gate — must keep working
+// for them. chat_sessions, chat_session_specs, chat_session_spec_user_shares
+// and notifications are all staging:private (schema-only in clones), so this
+// seed is what keeps the historical path reachable in a staging preview.
+// Must run AFTER seedStagingSpecViewerSessions (shares the admin-first
+// "staging login user" convention with seedStagingNotifications).
 //
-// The fixture session is owned by the SECOND user (when one exists) so
-// the recipient genuinely exercises the share-widened read gate rather
-// than the owner fast-path. Idempotent: session keyed off its fixture
-// branch, the share row off its UNIQUE constraint + ON CONFLICT, the
-// notification off an existence check.
-async function seedStagingSpecUserShareFixtures(pool, config) {
+// The fixture session is owned by the SECOND user (when one exists) so the
+// recipient genuinely exercises the share-widened read gate rather than the
+// owner fast-path. Idempotent: session keyed off its fixture branch, the
+// share row off its UNIQUE constraint + ON CONFLICT, the notification off an
+// existence check.
+async function seedStagingLegacySpecShareFixtures(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
   const { rows: appRows } = await pool.query(
@@ -8149,7 +8153,7 @@ async function seedStagingSpecUserShareFixtures(pool, config) {
   );
   const appId = appRows[0]?.id;
   if (!appId) {
-    log.warn('db', 'Staging spec-user-share fixtures skipped: self-app row missing', {
+    log.warn('db', 'Staging legacy spec-share fixtures skipped: self-app row missing', {
       slug: config.selfAppSlug,
     });
     return;
@@ -8162,7 +8166,7 @@ async function seedStagingSpecUserShareFixtures(pool, config) {
       LIMIT 2`
   );
   if (!userRows.length) {
-    log.warn('db', 'Staging spec-user-share fixtures skipped: no users');
+    log.warn('db', 'Staging legacy spec-share fixtures skipped: no users');
     return;
   }
   const recipient = userRows.find((u) => u.is_admin) || userRows[0];
@@ -8171,18 +8175,22 @@ async function seedStagingSpecUserShareFixtures(pool, config) {
   const specContent = [
     '# Staging demo spec: privately shared',
     '',
-    'This spec was shared privately with you via the "Share to user"',
-    'button — nobody else can see it, and nothing was posted to the',
-    'group chat.',
+    'This spec was shared privately with you before spec sharing moved',
+    'into Messages. Nobody else can see it, and nothing was posted to',
+    'the group chat.',
     '',
     '## User-facing changes',
     '',
-    '- A "Share to user" button appears in the dev-session spec viewer.',
-    '- The recipient gets a notification that opens this read-only panel.',
+    '- Old "shared a spec with you" notifications still open this',
+    '  read-only panel.',
+    '- New private shares arrive as a spec card in a Messages',
+    '  conversation instead.',
     '',
     '## Technical implementation',
     '',
-    '- chat_session_spec_user_shares rows gate the private read access.',
+    '- chat_session_spec_user_shares rows gate the historical private',
+    '  read access; conversation shares use',
+    '  chat_session_spec_conversation_shares.',
   ].join('\n');
 
   const fixtureBranch = 'staging-fixture/spec-user-share';
@@ -8235,7 +8243,7 @@ async function seedStagingSpecUserShareFixtures(pool, config) {
     );
   }
 
-  log.info('db', 'Staging spec-user-share fixtures seeded', {
+  log.info('db', 'Staging legacy spec-share fixtures seeded', {
     appId,
     sessionId,
     recipient: recipient.username,

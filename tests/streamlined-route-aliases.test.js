@@ -67,7 +67,9 @@ test('the route applies the layout, and re-renders when only the layout moved', 
 
 test('the clean serializer names the card area for the layout it is drawn in', () => {
   const fn = body('_appUrl(slug, tab, ref, subTab, options) {', 1800);
-  assert.match(fn, /norm\.subTab === 'chat'[\s\S]{0,120}suffix = '\/dev\/chat'/,
+  // #1343 put a spec deep link in this branch, so plain chat is now the
+  // fallback arm of a ternary rather than the branch's only statement.
+  assert.match(fn, /norm\.subTab === 'chat'[\s\S]{0,400}: '\/dev\/chat'/,
     'the general chat writes its own address, not /activity');
   assert.match(fn, /AppView\._getViewMode\(\) === 'feed'[\s\S]{0,160}feed \? 'activity' : 'board'/,
     'and the card area writes whichever of the two names its layout gives it');
