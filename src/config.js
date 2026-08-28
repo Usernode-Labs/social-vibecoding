@@ -299,6 +299,14 @@ function load() {
     waitlistXClientSecret: process.env.WAITLIST_X_CLIENT_SECRET || '',
     waitlistLinkedinClientId: process.env.WAITLIST_LINKEDIN_CLIENT_ID || '',
     waitlistLinkedinClientSecret: process.env.WAITLIST_LINKEDIN_CLIENT_SECRET || '',
+    // "Follow along" targets for the stage-2 form. Profile addresses,
+    // not credentials: they render a link and nothing more. Unset means
+    // that network's link is not rendered, which is the only honest
+    // default — see the platform_env descriptions for why a follow
+    // through one of them cannot be verified.
+    waitlistFollowXUrl: process.env.WAITLIST_FOLLOW_X_URL || '',
+    waitlistFollowLinkedinUrl: process.env.WAITLIST_FOLLOW_LINKEDIN_URL || '',
+    waitlistFollowInstagramUrl: process.env.WAITLIST_FOLLOW_INSTAGRAM_URL || '',
     // Account-linking OAuth is separate from the waitlist. GitHub requires
     // a dedicated OAuth app because an OAuth app has one callback URL. X can
     // reuse the waitlist client when its app has both callbacks registered.

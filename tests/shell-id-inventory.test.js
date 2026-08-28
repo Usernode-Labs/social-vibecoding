@@ -40,6 +40,13 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Andrea's 27 Aug 2026 waitlist review ────────────────────────
+  // Three stage-1 fields and one stage-2 field, all removed for the same
+  // reason: each asked for something nothing read back.
+  'waitlist-city': 'The free-text city beside #waitlist-country. Cohorts are balanced by REGION, which the country select already answers; the city was stored and never queried. Rows that hold one keep it, and waitlist-signals.js still reads `a.city` so a signup that answered it does not lose the section.',
+  'waitlist-discovery-detail': 'The "Which one?" follow-up under the discovery chips. It asked people to type a second answer to a question they had just answered with a tap, and no screen or export read the free text.',
+  'waitlist-referrer': 'The "did someone refer you?" handle on the join form. A typed handle is a claim nobody can resolve; the stage-2 invite link records the same relationship as a row reference (`invite_code` / `invited_by`), which is what the admin screen actually counts.',
+  'more-referrer': 'The same question on the stage-2 form, retired for the same reason and doubly redundant there — it sat directly beneath the invite link that attributes the relationship properly.',
   // ── #1443: one control names where you are ──────────────────────
   // The chip's menu lists every destination with its own page, so the header
   // stopped needing a second, third and fourth way to say the same thing.
@@ -204,6 +211,9 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── Andrea's 27 Aug 2026 waitlist review: "Follow along" ────────
+  'more-follow-row': 'Holds the "Follow on X / LinkedIn / Instagram" links on the stage-2 form. Empty in this document by design: each link renders only when WAITLIST_FOLLOW_<NETWORK>_URL is set, so an unconfigured network shows nothing rather than a dead profile link.',
+  'more-followed': 'The "I followed along" checkbox, stored as `answers.followed_claim`. It is a SELF-REPORT and is deliberately kept out of `answers.verified`: LinkedIn returns aggregate follower statistics with no identity, Instagram exposes a count and no relationship lookup, and X retired its boolean friendship endpoint, so no network will confirm a follow for us. Hidden here because its label is shown only once at least one follow URL is configured.',
   // ── #1443: what came back ───────────────────────────────────────
   'messages-screen': 'The Messages screen root, restored. #1431 made it #messages-sheet because a header chat bubble on every route left a full-screen Messages with no honest answer to "back to where?" — the bubble is gone and Messages is a menu row now, so the screen is both the honest shape and the one every messaging product uses for reading past conversations.',
   'improve-footer': 'The panel\'s reference block, restored. #1431 dissolved it and rehomed each fact separately; every move was defensible alone and the sum meant leaving the app to read facts about the app you were standing in.',

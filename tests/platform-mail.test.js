@@ -357,7 +357,12 @@ test('the join mail carries the CODE, the confirm link AND the survey link', asy
   assert.match(msg.text, /verification code is 123456/);
   assert.ok(msg.text.includes(seen[0].confirmUrl), 'the confirm CTA must be in the copy');
   assert.match(msg.text, /confirm this email address in one click/i);
-  assert.match(msg.text, /Want in sooner\?/);
+  // Andrea's copy for the optional questions, and the rolling-groups
+  // promise that replaced the placeholder "[September 9]" date — no wave
+  // has been committed to, and a date that slips is worse than none.
+  assert.match(msg.text, /increase your chances of getting into an earlier group/i);
+  assert.match(msg.text, /rolling basis/i);
+  assert.doesNotMatch(msg.text, /September/i);
   assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
   assert.match(msg.html, /<strong>123456<\/strong>/);
 });

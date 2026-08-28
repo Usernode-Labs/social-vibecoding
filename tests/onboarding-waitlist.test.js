@@ -191,9 +191,11 @@ test('first join returns the stage-2 token; a re-join never does', async () => {
     answers: { made_url: 'https://example.com/thing' },
   });
   assert.match(first.moreToken, /^[a-f0-9]{48}$/);
-  // Stage-1 answers land versioned.
+  // Stage-1 answers land versioned. v3 is Andrea's 27 Aug 2026 review:
+  // the discovery list was replaced and three fields were dropped, so a
+  // row written after it does not mean the same thing as a v2 row.
   const row = state.signups.get('survey@example.com');
-  assert.equal(row.answers._version, 2);
+  assert.equal(row.answers._version, 3);
   assert.equal(row.answers.made_url, 'https://example.com/thing');
 
   // A second join with the same email must NOT hand out the capability —

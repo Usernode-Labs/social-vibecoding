@@ -69,10 +69,21 @@ test('every section is recognised, and the list is sorted', () => {
     group: { name: 'Chess club' },
     loss: { had: 'yes' },
     handles: { discord: 'someone#1' },
+    followed_claim: true,
   };
   assert.deepEqual(signalsFor({ answers }).sections,
-    ['found', 'group', 'handles', 'loss', 'made', 'where']);
+    ['follow', 'found', 'group', 'handles', 'loss', 'made', 'where']);
   assert.equal(signalsFor({ answers }).sections.length, SECTIONS.length);
+});
+
+// The follow claim counts as an answered section but is NOT a verification:
+// `verified` is what OAuth proved, and no network will confirm a follow for
+// us. A reader that merged the two would report a check we never made.
+test('the follow claim is a section, never a verification', () => {
+  const s = signalsFor({ answers: { followed_claim: true } });
+  assert.deepEqual(s.sections, ['follow']);
+  assert.deepEqual(s.verified, []);
+  assert.deepEqual(signalsFor({ answers: { followed_claim: false } }).sections, []);
 });
 
 test('a city with no country still counts as a "where"', () => {

@@ -2,11 +2,17 @@
  * `#auth-waitlist-screen` — the stage-1 waitlist survey (#1080, step 2 chunk C,
  * screen 5 of 6).
  *
- * Four questions on their own screen (`#waitlist`), reached from the landing
+ * Two questions on their own screen (`#waitlist`), reached from the landing
  * CTA link and the persistent header's "Join waitlist" button. The chips and
  * the country list come from `GET /api/public/waitlist/options` so the form and
  * the server's validation share one definition — see waitlist-shared.tsx, which
  * stage 2 reads too.
+ *
+ * It asked four until 27 Aug 2026. The free-text city beside the country
+ * select, the "which one?" follow-up under the discovery chips and the
+ * "did someone refer you?" handle are gone: none was read back, and the
+ * referral one asked for a claim the invite link already records as a row
+ * reference (`invite_code` / `invited_by`).
  *
  * ── What the initial render must be ───────────────────────────────────
  *
@@ -33,12 +39,26 @@
  * steps you are on. Two steps, not three — the stage-2 survey is offered after
  * both and counting it would make an optional thing look required.
  *
+ * ── Confirming is what puts you on the list ──────────────────────────
+ *
+ * Submitting the form used to say "You're on the list 🎉" and offer the
+ * stage-2 questions immediately, with confirmation an afterthought below
+ * them. It read as done, so the address never had to prove it could receive
+ * mail — and an unconfirmed row is one we cannot release to.
+ *
+ * Now the POST buys a code and nothing else: `joined` says "check your
+ * email", and both the list-place copy and the offer live behind
+ * `confirmed`. The row is still written on the POST — it has to be, to hold
+ * the code and to keep the address unique — so this is a change in what the
+ * screen CLAIMS and what it unlocks, not in the write model.
+ *
  * ── Screenshot state ─────────────────────────────────────────────────
  *
- * `?shot=waitlist-joined` paints the post-submit success state with the stage-2
- * offer, so the captures and dapp.json's check have a URL for it. Pure UI
- * state: it never POSTs, never writes, and the stage-2 link keeps its inert
- * prerendered href.
+ * Two, because there are two settled states to paint. `?shot=waitlist-joined`
+ * stops at the confirm step, where a real join now stops;
+ * `?shot=waitlist-confirmed` carries the list place and the stage-2 offer.
+ * Both are pure UI state: neither POSTs, neither writes, and the stage-2 link
+ * keeps its inert prerendered href.
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -68,7 +88,7 @@ export function WaitlistScreen() {
 
   const [hasSession, setHasSession] = useState(false);
   const [joined, setJoined] = useState(false);
-  // The stage-2 offer and its token are separate: `?shot=waitlist-joined`
+  // The stage-2 offer and its token are separate: `?shot=waitlist-confirmed`
   // shows the offer with no token at all, and its link keeps the inert
   // prerendered href.
   const [offer, setOffer] = useState(false);
@@ -103,9 +123,6 @@ export function WaitlistScreen() {
    * screen stays mounted across navigations.
    */
   const inviteRef = useRef<string | null>(null);
-  const city = useRef<HTMLInputElement>(null);
-  const discoveryDetail = useRef<HTMLInputElement>(null);
-  const referrer = useRef<HTMLInputElement>(null);
 
   /**
    * Form vs "you're already on the list", plus the screen title. A
@@ -119,11 +136,17 @@ export function WaitlistScreen() {
     } catch {
       shot = null;
     }
-    // The success state, painted without a submit.
+    // The two settled states, painted without a submit. `waitlist-joined`
+    // stops at the confirm step, because that is now where a real join
+    // stops; `waitlist-confirmed` is the one that carries the offer.
     const shotJoined = shot === 'waitlist-joined';
-    if (shotJoined) {
+    const shotConfirmed = shot === 'waitlist-confirmed';
+    if (shotJoined || shotConfirmed) {
       setMsg(null);
       setJoined(true);
+    }
+    if (shotConfirmed) {
+      setConfirmed(true);
       setOffer(true);
     }
 
@@ -141,7 +164,7 @@ export function WaitlistScreen() {
     setHasSession(session);
     // Never resurrect the form over the success state (a re-show after a join,
     // e.g. back-then-forward).
-    if (!session && !joined && !shotJoined) {
+    if (!session && !joined && !shotJoined && !shotConfirmed) {
       email.current?.focus({ preventScroll: true });
     }
     // Mirror into the tab title so the Flutter WebView's AppBar follows the
@@ -170,10 +193,7 @@ export function WaitlistScreen() {
           body: JSON.stringify({
             email: emailVal,
             country: country.current?.value || undefined,
-            city: city.current?.value.trim() || undefined,
             discovery_source: discovery || undefined,
-            discovery_detail: discoveryDetail.current?.value.trim() || undefined,
-            referrer_handle: referrer.current?.value.trim() || undefined,
             invite_code: inviteRef.current || undefined,
           }),
         });
@@ -186,14 +206,14 @@ export function WaitlistScreen() {
           setJoined(true);
           setSentTo(emailVal);
           // Six digits is the whole of what is left to do, so put the caret
-          // there. On a REAL join only: `?shot=waitlist-joined` has to paint a
-          // settled state for the declared check, and a focus ring is not one.
+          // there. On a REAL join only: the `?shot=` states have to paint a
+          // settled state for the declared checks, and a focus ring is not one.
           window.setTimeout(() => code.current?.focus({ preventScroll: true }), 0);
+          // The token is kept but the offer stays down: nothing is offered
+          // until the address is confirmed, because until then there is no
+          // list place to move up.
           const token = (data && data.more_token) || null;
-          if (token) {
-            setMoreToken(token);
-            setOffer(true);
-          }
+          if (token) setMoreToken(token);
         } else {
           setMsg({
             text: (data && data.error) || 'Something went wrong. Try again.',
@@ -233,11 +253,13 @@ export function WaitlistScreen() {
       if (res.ok) {
         setMsg(null);
         setConfirmed(true);
+        // Confirming is what puts somebody on the list, so it is also what
+        // unlocks the questions that move them up it. The token may have
+        // arrived on the join response instead of this one, so raise the
+        // offer either way.
         const token = (data && data.more_token) || null;
-        if (token) {
-          setMoreToken(token);
-          setOffer(true);
-        }
+        if (token) setMoreToken(token);
+        setOffer(true);
       } else {
         setMsg({ text: (data && data.error) || 'That code did not work.', tone: 'error' });
       }
@@ -278,8 +300,6 @@ export function WaitlistScreen() {
     _wireWaitlist: () => {},
     _waitlistOnShow: () => live.current.waitlistOnShow(),
   });
-
-  const detailLabel = (options?.discovery_detail_labels || {})[discovery || ''] || 'Which one?';
 
   return (
     <main
@@ -371,42 +391,32 @@ export function WaitlistScreen() {
           </div>
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
-              Where are you?
+              Country
               <span className="text-zinc-500 font-normal dark:text-zinc-400">
                 Optional
               </span>
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
-              We balance each group across regions. It&rsquo;s never used to reject anyone, so leave it blank if you&rsquo;d rather not say.
+              We&rsquo;re building early groups across different regions.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <select
-                ref={country}
-                id="waitlist-country"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-              >
-                <option value="">
-                  Select a country&hellip;
-                </option>
-                {Object.entries(options?.countries || {}).map(([region, codes]) => (
-                  <optgroup key={region} label={region}>
-                    {Object.entries(codes).map(([code, name]) => (
-                      <option key={code} value={code}>
-                        {name}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-              <input
-                ref={city}
-                id="waitlist-city"
-                type="text"
-                maxLength={120}
-                placeholder="City"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-              />
-            </div>
+            <select
+              ref={country}
+              id="waitlist-country"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+            >
+              <option value="">
+                Select a country&hellip;
+              </option>
+              {Object.entries(options?.countries || {}).map(([region, codes]) => (
+                <optgroup key={region} label={region}>
+                  {Object.entries(codes).map(([code, name]) => (
+                    <option key={code} value={code}>
+                      {name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
@@ -423,22 +433,6 @@ export function WaitlistScreen() {
               options={options?.discovery_sources || {}}
               value={discovery}
               onChange={setDiscovery}
-            />
-            <input
-              ref={discoveryDetail}
-              id="waitlist-discovery-detail"
-              type="text"
-              maxLength={255}
-              placeholder={detailLabel + ' (optional)'}
-              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-            />
-            <input
-              ref={referrer}
-              id="waitlist-referrer"
-              type="text"
-              maxLength={255}
-              placeholder="Did someone refer you? Their handle (optional)"
-              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
           </div>
           <Button
@@ -461,11 +455,11 @@ export function WaitlistScreen() {
             stops here.
         */}
         <div id="waitlist-joined" className={hiddenFirst(!joined, 'mt-8')}>
-          <p className="text-sm text-emerald-700 dark:text-emerald-400 font-medium">
-            You&rsquo;re on the list 🎉
+          <p className={hiddenLast(confirmed, 'text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
+            Check your email
           </p>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            We&rsquo;re opening access in small groups. We&rsquo;ll email you when yours comes up.
+          <p className={hiddenLast(confirmed, 'mt-1 text-sm text-zinc-500 dark:text-zinc-400')}>
+            One more step. Confirm your address and you&rsquo;re on the list.
           </p>
           {/*
               Confirming by code, for the phone: leaving for the mail app and
@@ -523,10 +517,10 @@ export function WaitlistScreen() {
             )}
           >
             <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
-              Thanks. Your email is confirmed &#9989;
+              You&rsquo;re on the list 🎉
             </p>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-              That&rsquo;s everything we need from you. We&rsquo;ll email you when your spot opens.
+              We&rsquo;re opening access in small groups. We&rsquo;ll email you when yours comes up.
             </p>
           </div>
           <div

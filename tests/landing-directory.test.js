@@ -210,16 +210,20 @@ test('the anonymous screens are reachable to shots via ?shot=anon', () => {
   assert.ok(fn, '_anonShot exists');
   assert.match(fn[0], /'anon'/);
   assert.match(fn[0], /'waitlist-joined'/);
+  // The confirmed state needs the same anonymous boot: it is the one that
+  // now carries the list place and the stage-2 offer.
+  assert.match(fn[0], /'waitlist-confirmed'/);
   // Pure UI state: no env gate, and no request of its own.
   assert.doesNotMatch(fn[0], /USERNODE_ENV|fetch\(/);
-  // The joined shot paints the success state client-side — it never POSTs.
+  // Both shots paint their state client-side — neither POSTs.
   const tsx1 = read(WAITLIST_TSX);
-  const shot = tsx1.match(/const shotJoined = shot === 'waitlist-joined';[\s\S]*?\n    \}/);
-  assert.ok(shot, 'the waitlist-joined shot branch exists');
+  const shot = tsx1.match(/const shotJoined = shot === 'waitlist-joined';[\s\S]*?\n    \}\n\n/);
+  assert.ok(shot, 'the waitlist shot branch exists');
   assert.doesNotMatch(shot[0], /fetch\(/);
-  // It shows the stage-2 offer with no token, so the link keeps the inert
-  // prerendered href.
-  assert.match(shot[0], /setOffer\(true\)/);
+  // The offer rides on `waitlist-confirmed`, with no token, so the link
+  // keeps the inert prerendered href. `waitlist-joined` must NOT raise it:
+  // nothing is offered until the address is confirmed.
+  assert.match(shot[0], /shotConfirmed\)\s*\{[\s\S]*?setOffer\(true\)/);
   assert.doesNotMatch(shot[0], /setMoreToken/);
   assert.match(tsx1, /id="waitlist-more-offer"[\s\S]{0,200}hiddenFirst\(\s*!offer/);
 });

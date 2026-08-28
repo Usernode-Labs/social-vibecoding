@@ -18,6 +18,15 @@
 // The survey sections, mapped to the answers keys that carry them. A
 // section counts only when it holds real content: a partial save can leave
 // an empty object behind, and an empty object is not a signal.
+//
+// `where` still reads `a.city` even though the form stopped collecting it:
+// rows that answered it before 27 Aug 2026 kept the key, and dropping the
+// read would retroactively un-answer a section somebody did fill in.
+//
+// `follow` is a SELF-REPORT and is kept out of `verified` on purpose — see
+// the note on `followed_claim` in waitlist-questions.js for why no network
+// will confirm a follow for us. A reader that conflates the two would
+// claim we checked something we did not.
 const SECTIONS = [
   ['made', (a) => !!a.made_url],
   ['where', (a) => !!(a.country || a.city)],
@@ -25,6 +34,7 @@ const SECTIONS = [
   ['group', (a) => !!(a.group && Object.keys(a.group).length)],
   ['loss', (a) => !!(a.loss && Object.keys(a.loss).length)],
   ['handles', (a) => !!(a.handles && Object.keys(a.handles).length)],
+  ['follow', (a) => !!a.followed_claim],
 ];
 
 // Arrays and strings both pass a bare `typeof x === 'object'` check (well,
