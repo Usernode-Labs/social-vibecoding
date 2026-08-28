@@ -24,10 +24,21 @@ import { type ReactNode } from 'react';
 import { useStoreState } from '../../lib/use-store-state';
 import { nativeAppVersionStore } from './native-app-version-store';
 
-/** The two class runs, as complete literals — Tailwind's extractor is a regex. */
+/**
+ * The two class runs, as complete literals — Tailwind's extractor is a regex.
+ *
+ * `px-4` is not decoration: it is what LINES THIS ROW UP with the two version
+ * fields above it. #improve-row-version and #drawer-row-platform-version both
+ * carry it, and this row did not — so the panel's last line started at the
+ * panel edge while the two identical rows above it were inset 16px, and the
+ * block read as two version fields plus something that had fallen out of them.
+ * The row lost its padding when it moved between footers; the class travels
+ * with it now, because a row that only lines up in one parent lines up by
+ * luck.
+ */
 const ROW = {
-  hidden: 'hidden drawer-ver-row flex items-center gap-2',
-  shown: 'drawer-ver-row flex items-center gap-2',
+  hidden: 'hidden drawer-ver-row flex items-center gap-2 px-4',
+  shown: 'drawer-ver-row flex items-center gap-2 px-4',
 } as const;
 
 export function NativeAppVersionRow(): ReactNode {
