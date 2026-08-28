@@ -10,6 +10,7 @@ const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const appSource = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
+const appViewSource = fs.readFileSync(path.join(root, 'public/js/app-view.js'), 'utf8');
 const authSource = fs.readFileSync(path.join(root, 'src/middleware/auth.js'), 'utf8');
 const { isShellDocumentUrl } = require('../public/sw.js');
 
@@ -148,6 +149,15 @@ test('clean pathname parsing is narrow and legacy hashes remain router inputs', 
     'legacy app hashes normalize without a new history entry');
 });
 
+test('interaction-gated app shots survive legacy-hash normalization', () => {
+  assert.doesNotMatch(appViewSource, /location\.hash[^\n]*includes\(`app\/\$\{slug\}`\)/,
+    'shot hooks must not depend on the legacy app fragment after it self-heals');
+  assert.match(appViewSource, /if \(App\.currentApp !== slug\) return;[\s\S]*?dev-plus-btn/,
+    'the plus-menu shot follows the routed app state');
+  assert.match(appViewSource, /if \(App\.currentApp === slug\) \{\s*AppView\.showPreviewLoaderShot/,
+    'preview shots follow the routed app state');
+});
+
 test('authentication and the service worker admit clean app documents', () => {
   const uses = authSource.match(/isSpaDocumentPath\(req\.path\)/g) || [];
   assert.equal(uses.length, 2,
@@ -161,4 +171,3 @@ test('authentication and the service worker admit clean app documents', () => {
     'https://social-vibecoding.test'
   ), false);
 });
-

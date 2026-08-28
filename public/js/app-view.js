@@ -535,7 +535,7 @@ const AppView = {
       // a check sees. Pure UI state, no writes, not env-gated.
       if (shot === 'plus-menu') {
         setTimeout(() => {
-          if (!String(location.hash || '').includes(`app/${slug}`)) return;
+          if (App.currentApp !== slug) return;
           document.getElementById('dev-plus-btn')?.click();
         }, 300);
       }
@@ -611,7 +611,7 @@ const AppView = {
           // Stop on route change too, and cap the window so a link left open
           // in a real tab can't keep polling.
           const arrived = wantRow ? !!document.getElementById('attr-popover') : !!AppView._openCardMenu;
-          if (!String(location.hash || '').includes(`app/${slug}`) || (tries += 1) > 40) {
+          if (App.currentApp !== slug || (tries += 1) > 40) {
             done();
             return;
           }
@@ -668,7 +668,7 @@ const AppView = {
           // as it mounts, so an appData check here would race the render.
           // A fast navigate-away must not pop the overlay onto whatever
           // screen the user actually landed on.
-          if (String(location.hash || '').includes(`app/${slug}`)) {
+          if (App.currentApp === slug) {
             AppView.showPreviewLoaderShot(shot);
           }
         }, 300);
