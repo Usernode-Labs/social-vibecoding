@@ -158,10 +158,22 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   const shipped = new Set(HTML.match(/\sd="[^"]*"/g).map((s) => s.slice(4, -1)));
   const absent = [...modulePaths()].filter((d) => !shipped.has(d));
   const expected = [
-    // AppWindowIcon, BoardIcon and NewspaperIcon are NOT on this list: App /
-    // Board / Activity spent one round of #1443 as menu rows — which renders
-    // only inside an app, so they left the cold document — and came back to
-    // the Improve panel, which ships in every document. They prerender.
+    // ── AppWindowIcon, BoardIcon and NewspaperIcon are BACK on this list ──
+    //
+    // They are App / Board / Activity, and they have moved twice. One round of
+    // #1443 made them menu rows, which render only inside an app, so they left
+    // the cold document; they came back as the Improve panel's three view
+    // rows, which ship in every document. The three views are a SEGMENTED
+    // CONTROL now (features/improve/view-tabs.tsx) and it draws no glyphs at
+    // all — three verbs in a divided track are unambiguous, and a 320pt panel
+    // gives each segment ~100px, which a 16px glyph plus its gap eats a fifth
+    // of. Same argument that took the quick actions' glyphs away one step
+    // further. Nothing else in the cold document draws any of the three.
+    'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
+    'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
+    // AppWindowIcon is two paths — the window and its title bar rule.
+    'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
+    'M4 9.5h16',
     //
     // ── The chip's menu brought four back (#1443) ──────────────────
     // CogIcon, ShieldCheckIcon, UserIcon and ChevronDownIcon were absent
@@ -200,9 +212,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // which is behind the same iOS-only gate as InfoCircleIcon below.
     'M5 13l4 4L19 7',
     'M13 7l5 5m0 0l-5 5m5-5H6',
-    // DiscussionIcon / BoardIcon / AppWindowIcon left this list with the
-    // Streamlined Concept: the always-mounted app-context sheet draws all
-    // three, so they prerender now.
+    // DiscussionIcon left this list with the Streamlined Concept: the
+    // always-mounted app-context sheet draws it, so it prerenders now.
+    // (BoardIcon and AppWindowIcon came back — see the head of this list.)
     //
     // The home panels' three glyphs, all behind the same gate: Discover,
     // Challenges and Create app render from the /api/home-panels cache, which

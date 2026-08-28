@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react';
 
+import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
+
 import * as api from './api';
 import { edit, react, setReply, toggleSaved } from './store';
 import type { ConversationMessage } from './types';
@@ -78,7 +80,7 @@ export function MessageRow({ message, conversationId }: { message: ConversationM
   }
 
   return (
-    <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${mine ? 'messages-message-self' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''}`} onPointerDown={startLongPress} onPointerUp={cancelLongPress} onPointerCancel={cancelLongPress} onPointerMove={cancelLongPress}>
+    <article id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${mine ? 'messages-message-self' : ''} ${message.saved ? 'messages-message-saved' : ''} ${message.pending ? 'messages-message-pending' : ''} ${message.failed ? 'messages-message-failed' : ''}`} onPointerDown={startLongPress} onPointerUp={cancelLongPress} onPointerCancel={cancelLongPress} onPointerMove={cancelLongPress}>
       <UserAvatar user={message.sender} size="sm" />
       <div className="min-w-0 flex-1">
         <div className="messages-message-head"><span className={mine ? 'text-violet-700 dark:text-violet-300' : ''}>@{message.sender.username}</span><time title={fullTime(message.createdAt)}>{new Date(message.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</time>{message.editedAt ? <span title={fullTime(message.editedAt)}>edited</span> : null}{message.pending ? <span>sending…</span> : null}{message.failed ? <span className="text-red-700 dark:text-red-400">not sent</span> : null}</div>
@@ -106,9 +108,18 @@ export function MessageRow({ message, conversationId }: { message: ConversationM
             of act as reacting — personal, one tap, instantly reversible — and
             it is available on your OWN messages too: saving is a private note
             to yourself about anything worth finding again, not a judgement on
-            someone else's message. The mark carries the state in its FILL,
-            same as the app-chat button, and `aria-pressed` says so for anyone
-            who cannot see the difference. */}
+            someone else's message.
+
+            THE BOOKMARK, not a star. This drew ☆/★ — two text glyphs — while
+            the app chat's identical control drew @/components/ui/icons.tsx's
+            BookmarkIcon / BookmarkSolidIcon (see ../group-chat/transcript.tsx),
+            and the saved list they BOTH feed is headed by the solid bookmark
+            in ../notifications/notifications-list.tsx. One feature drawn as
+            two different objects on the two surfaces that offer it. The
+            glyph is now the same on both, and the state still lives in the
+            SHAPE — solid when saved, outline when not, which survives being
+            read at 13px and in a screenshot — with `aria-pressed` saying so
+            for anyone who cannot see the difference. */}
         <button
           type="button"
           onClick={() => void save()}
@@ -116,7 +127,7 @@ export function MessageRow({ message, conversationId }: { message: ConversationM
           className={message.saved ? 'messages-action-saved' : undefined}
           title={message.saved ? 'Saved. Click to unsave' : 'Save to your notifications'}
           aria-label={message.saved ? 'Unsave message' : 'Save message'}
-        >{message.saved ? '★' : '☆'}</button>
+        >{message.saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}</button>
         {mine && message.content ? <button type="button" onClick={() => { setEditValue(message.content); setEditing(true); }} title="Edit" aria-label="Edit">✎</button> : null}
         {!mine ? <button type="button" onClick={() => { setReporting((open) => !open); setNotice(''); }} title="Report" aria-label="Report">!</button> : null}
       </div> : null}

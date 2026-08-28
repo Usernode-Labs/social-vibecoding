@@ -442,9 +442,17 @@ const ADDED_IDS = {
   'notifications-sheet': 'The Notifications SHEET root. It was #notifications-screen, a screen root in App.SCREEN_IDS — but the bell is in the header on every route, so a full-screen view had to answer "back to where?" and answered "home", wrong every time it was opened from anywhere else. A sheet presents over the current screen and dismisses back to it.',
   'notifications-sheet-overlay': 'Its backdrop.',
   'notifications-sheet-close': 'Its close control — the desktop slide-over needs a visible dismiss, as the Apps sheet has.',
-  'notifications-screen-tabs': 'The sheet\'s sticky All | Unread tab row, with its own Mark-all-read control. Keeps the `-screen-` id it was born with: the declared checks select on it, and renaming a node that did not move would be churn.',
+  'notifications-screen-tabs': 'The sheet\'s sticky Unread | All | Messages tab row. Keeps the `-screen-` id it was born with: the declared checks select on it, and renaming a node that did not move would be churn. It no longer carries Mark-all-read — see #notifications-screen-mark-all below.',
+  'notifications-tab-unread': 'The sheet\'s FIRST tab, and the one it opens on. All led for a round, which meant opening an inbox on everything you had already read: the bell is tapped because it has a count, and the count is the unread.',
+  // (#notifications-see-older, the footer link that takes a filtered tab to
+  // All rather than paging another batch into the filter, is NOT here: it
+  // renders only when there is something more to see — rows the filter is
+  // hiding, or another server page — and the prerendered sheet has no rows at
+  // all. Same reason #notifications-all-messages is absent. Its counterpart
+  // #notifications-load-older, the real pager, renders only on All.)
+  'notifications-tab-all': 'The whole archive, second. It is where the footer link at the bottom of a filtered tab goes — see #notifications-see-older — and the only tab that pages more rows in.',
   'notifications-tab-messages': 'The sheet\'s third tab, beside All and Unread. A message notification is one row in a flat chronological feed that also carries every session, proposal and kudos row, so it sinks fast on a busy account; this is the one place to catch up on conversations regardless. Its own \'All messages\' entry (#notifications-all-messages, rendered only while the tab is active and so not in the static markup) leads to the #messages screen the app chip\'s Messages row also opens.',
-  'notifications-screen-mark-all': 'Mark-all-read on the sheet — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound. Same naming note as the tab row above.',
+  'notifications-screen-mark-all': 'Mark-all-read on the sheet — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound. Same naming note as the tab row above. It sat at the far RIGHT END of that tab row, in tab-sized ink on the same baseline as the three tabs, so a control that changes data read as a fourth place to go; it is a row UNDER the Unread tab now, with the list it empties, and renders nowhere else.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

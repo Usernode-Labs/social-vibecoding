@@ -205,6 +205,13 @@ export function PlatformHeader() {
           upgrades to centered after measurement, so first paint is safe
           even if the JS is slow to run.
           
+          `gap-4` between the three groups, not `gap-3`: the chip is the one
+          control on this bar that carries a NAME, and at 12px it sat tight
+          against the back chevron on its left and the right group's discs on
+          its right, reading as part of a run of controls rather than as the
+          thing the bar is about. The gap is horizontal only, so the height
+          invariant below is untouched.
+
           HEADER HEIGHT INVARIANT (see the matching block in
           public/css/app.css): this bar is `py-3` around a 28px content
           row, so it is 52px + safe-area on EVERY screen. The row height
@@ -223,7 +230,7 @@ export function PlatformHeader() {
       <header
         ref={headerRef}
         id="platform-header"
-        className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 shrink-0"
+        className="un-safe-top-extend relative flex items-center gap-4 px-4 py-3 shrink-0"
       >
         {/*
             The LEFT group: the back chevron when there is somewhere to go
@@ -302,7 +309,13 @@ export function PlatformHeader() {
             slot go. See app-switcher-chip.tsx.
         */}
         <AppSwitcherChip titleRef={titleRef} />
-        <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center gap-1">
+        {/* `gap-2.5`, not `gap-1`. The bell and Improve are an ALERT and an
+            ACTION — one tells you something happened, the other starts work —
+            and at 4px they read as two halves of one segmented control, which
+            is what "they look joined together" was. 10px is the smallest gap
+            that separates them without the right group growing enough to
+            change the title's centred-vs-flow decision on a 390pt screen. */}
+        <div ref={rightGroupRef} className="ml-auto shrink-0 flex items-center gap-2.5">
           {/*
               HEADER SLIM-DOWN: the fork label, the platform + app build pills
               and the kudos-budget badge used to live here as four inline

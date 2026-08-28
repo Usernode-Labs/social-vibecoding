@@ -441,24 +441,49 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
 
 // ── #1367: the App/Feed/Kanban toggle, and what it replaced ──────────
 
-test('the Improve panel leads with three quick actions', () => {
+test('the Improve panel leads with its two actions, shaped like the button that opens it', () => {
   const panel = read('frontend/src/features/improve/improve-panel.tsx');
+  const button = read('frontend/src/features/improve/improve-button.tsx');
 
-  // Feedback / New change / Share, as ONE recessed group rather than three
-  // stacked <Button> rows: they are peers, and a group says so in less than
-  // half the height. Each keeps its id — the outbox dot's writer and the
-  // declared checks select on them — and each keeps its handler.
-  assert.match(panel, /id="improve-quick-actions"/, 'the group exists');
-  assert.match(panel, /divide-x divide-zinc-950\/5/,
-    'and is one well with hairlines, not three separate surfaces');
+  // Feedback and New change, as TWO BUTTONS. They shipped as three equal
+  // thirds of one recessed well with hairline dividers — Share was the third
+  // — and two things undid that. Share left for the footer (it is a fact
+  // ABOUT the app, so it belongs with "View on GitHub"), and a divided well
+  // of two is not a group, it is a control with a seam down the middle. The
+  // well also read as a SEGMENTED CONTROL, which is exactly what the view
+  // strip immediately below it now is, so the panel opened with two identical
+  // shapes meaning two different kinds of thing.
+  assert.match(panel, /id="improve-quick-actions"/, 'the band exists');
+  assert.ok(!/divide-x divide-zinc-950\/5/.test(panel),
+    'and is no longer one divided well');
   assert.match(panel, /id="improve-row-feedback"/, 'Feedback survives');
   assert.match(panel, /Improve\.giveFeedback\(\)/, 'with the same handler');
   assert.match(panel, /id="improve-row-new-session"/, 'New change survives');
   assert.match(panel, /Improve\.startSession\(\)/, 'with the same handler');
-  assert.match(panel, /id="improve-row-share"/, 'Share is the third');
-  assert.match(panel, /Improve\.share\(\)/, 'with the same handler');
 
-  // Everything else left: the view toggle is the Board's own control now.
+  // They are shaped like #improve-btn, the control that opens this panel: a
+  // rounded-full pill with the violet fill on the primary one. New change
+  // carries the fill because starting one is what the panel is FOR; Feedback
+  // takes the tinted rest state, so the pair reads primary-and-secondary
+  // rather than as two halves of a switch.
+  assert.match(button, /rounded-full[\s\S]{0,80}bg-violet-600 hover:bg-violet-500/,
+    'the header button is a filled violet pill');
+  assert.match(panel, /const ACTION_PRIMARY = 'bg-violet-600 hover:bg-violet-500 text-white';/,
+    'and New change wears the same fill');
+  assert.match(panel, /rounded-full text-sm font-semibold/,
+    'in the same pill shape');
+  assert.match(panel, /primary\n\s+onClick=\{\(\) => Improve\.startSession\(\)\}/,
+    'New change is the primary of the two');
+
+  // Share moved to the footer beside the repository link, keeping its id, its
+  // canShare gate and its dialog.
+  assert.match(panel, /id="improve-row-share"/, 'Share survives');
+  assert.match(panel, /Improve\.share\(\)/, 'with the same handler');
+  assert.ok(panel.indexOf('id="improve-row-github"') < panel.indexOf('id="improve-row-share"'),
+    'and sits next to View on GitHub in the reference footer');
+  assert.match(panel, /\{state\.canShare \? \(/, 'still gated on canShare');
+
+  // Everything else left: the view toggle is the view STRIP now.
   assert.ok(!/id="improve-row-kanban"/.test(panel), 'the Kanban ROW is retired');
   assert.ok(!/id="improve-row-feed"/.test(panel), 'the Feed ROW is retired');
   assert.ok(!/ImproveViewToggle/.test(panel), 'no view-toggle copy survives');
@@ -484,18 +509,32 @@ test("the Board owns the view control; the header's label is the chip", () => {
   assert.ok(!/matchMedia|innerWidth/.test(frameCode),
     'the frame must not measure the viewport');
 
-  // A destination names where it GOES, and the "use the app" row's label
-  // follows the target: the platform's reads "Home", an app's reads its own
-  // name. The rows spent one round of #1443 in the chip's menu and came back
-  // here — the menu answers WHICH APP, these three answer WHICH PART OF IT.
-  const sheet = read('frontend/src/features/improve/improve-panel.tsx');
-  assert.match(sheet, /label=\{selfHosted \? 'Home' : name \|\| 'App'\}/,
-    "the platform's row is labelled Home, an app's by its name");
-  assert.match(sheet, /const AppRowIcon = selfHosted \? HomeIcon : AppWindowIcon;/,
-    'and the icon follows the destination with it');
-  // The ATTRIBUTE names the row's role, not its destination — the selector
-  // contract dapp.json's checks are written against.
-  assert.match(sheet, /row="app"/, 'data-context-row stays "app" on both rows');
+  // The three views are a SEGMENTED CONTROL now, in ../improve/view-tabs.tsx,
+  // rendered by the Improve panel AND the chip's menu. They spent one round of
+  // #1443 in the menu and one back in the panel; the menu answers WHICH APP
+  // and these three answer WHICH PART OF IT, and either is a fair place to ask
+  // the second question, so the strip is one module drawn on both surfaces.
+  //
+  // Three rows with muted detail lines plus an indented Kanban|Feed pair under
+  // the middle one became three equal segments, because Kanban and Feed WERE
+  // Board and Activity — the same cards, one by column and one newest-first.
+  const viewTabs = read('frontend/src/features/improve/view-tabs.tsx');
+  const panel = read('frontend/src/features/improve/improve-panel.tsx');
+  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(panel, /<AppViewTabs\n\s+ids=\{IMPROVE_VIEW_IDS\}/,
+    'the panel renders the strip under the panel ids');
+  assert.match(menu, /<AppViewTabs\n\s+ids=\{SWITCHER_VIEW_IDS\}/,
+    'and the chip menu renders the same component under its own');
+  // The first segment still names where it GOES: the platform's reads "Home",
+  // an app's reads "App". (It read the app's NAME as a row; a segment one
+  // third of a 320pt panel wide cannot, and the name is already on the chip
+  // directly above.)
+  assert.match(viewTabs, /const appLabel = selfHosted \? 'Home' : 'App';/,
+    "the platform's segment is labelled Home, an app's App");
+  // The ATTRIBUTE names the segment's role, not its destination — the
+  // selector contract dapp.json's checks are written against.
+  assert.match(viewTabs, /data-context-row="app"/,
+    'data-context-row stays "app" on both');
   const controller = read('frontend/src/features/improve/improve-controller.js');
   // #1406 widened where this segment is reachable from. It used to be true
   // that "no app open" meant "already home", because every other screen
@@ -561,8 +600,11 @@ test('the Improve panel is navigation, work and reference — one scroller', () 
   // The bands above and below are held at their natural height. The
   // quick-action WELL is wrapped by the band that carries it, so look just
   // upstream of the id for the class.
+  // The quick-action band IS the well now (the wrapper it used to sit inside
+  // went with the divided-well treatment), so `shrink-0` is on the element
+  // itself — which in the rendered markup comes after the id, not before it.
   const actionsAt = html.indexOf('id="improve-quick-actions"');
-  assert.match(html.slice(Math.max(0, actionsAt - 160), actionsAt), /\bshrink-0\b/,
+  assert.match(html.slice(actionsAt, html.indexOf('>', actionsAt)), /\bshrink-0\b/,
     'the quick-action band keeps its height');
   const viewsAt = html.indexOf('id="improve-views"');
   assert.match(html.slice(viewsAt, html.indexOf('>', viewsAt)), /\bshrink-0\b/,

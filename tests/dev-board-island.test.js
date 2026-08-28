@@ -48,6 +48,10 @@ const SESSION_FRAME = read('frontend/src/features/dev-board/session-frame.tsx');
 const STORE = read('frontend/src/features/dev-board/view-mode-store.ts');
 // The Kanban|Feed control lives here now, not in the board frame.
 const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
+// The App | Board | Activity strip, rendered by BOTH the Improve panel and the
+// header chip's menu — and the store's only reader now that Kanban|Feed is
+// retired. See the note in that file: the two layouts WERE Board and Activity.
+const VIEW_TABS = read('frontend/src/features/improve/view-tabs.tsx');
 // Streamlined Concept: the Board draws its own Kanban|Feed control now,
 // inside the frame itself — there is no separate toggle module to read.
 const MAIN = read('frontend/src/main.tsx');
@@ -330,11 +334,24 @@ test('the view toggle is real React state, and the className writer is gone', ()
     '_setViewMode publishes the new mode');
   assert.match(STORE, /useSyncExternalStore\(subscribe, getSnapshot/,
     'the frame subscribes through useSyncExternalStore');
-  // The control moved to the Improve panel's Board row, so the PANEL is the
-  // store's reader now and the frame draws no view control at all. The store
-  // itself is unchanged — which is the point of asserting both halves here.
-  assert.match(PANEL, /useDevViewMode\(\)/, 'the layout control reads the store');
+  // The control moved out of the frame, so the frame draws no view control at
+  // all and the store's reader is ../improve/view-tabs.tsx — the App | Board |
+  // Activity strip. The store itself is unchanged, which is the point of
+  // asserting both halves here.
+  //
+  // It reached the strip via the Improve panel's own Kanban|Feed sub-strip,
+  // which is gone: those two layouts ARE Board and Activity (same cards, one
+  // by column and one newest-first), so a destination row with a layout pair
+  // indented under it was one choice drawn on two levels. The layout is the
+  // ROUTE now — #app/<slug>/board and #app/<slug>/activity, see the alias
+  // block in public/js/app.js — and this store is what tells the strip which
+  // of the two segments to mark.
+  assert.match(VIEW_TABS, /useDevViewMode\(\)/, 'the view strip reads the store');
   assert.ok(!/useDevViewMode\(\)/.test(FRAME), 'the frame reads no view mode');
+  assert.ok(!/useDevViewMode\(\)/.test(PANEL),
+    'and the panel reads it only through the strip');
+  assert.ok(!PANEL.includes('id="improve-board-layouts"'),
+    'the Kanban|Feed sub-strip under the Board row is retired');
   assert.ok(!FRAME.includes('id="dev-view-toggle"'),
     'the Board draws no view tab strip above its cards');
   // The click still runs the module's behaviour, unchanged.
@@ -350,14 +367,26 @@ test('the view toggle is real React state, and the className writer is gone', ()
     assert.ok(!FRAME.includes(`id: '${id}'`) && !FRAME.includes(`id="${id}"`),
       `${id} was retired with the dev-screen tab strip`);
   }
-  // The control still reports the live mode to the a11y tree. It is a pair of
-  // toggle buttons rather than a tablist now, because it no longer selects
-  // between panels of content — it restates one panel in another layout, and
-  // `aria-pressed` is what that means.
-  assert.match(PANEL, /aria-pressed=\{active \? 'true' : 'false'\}/,
-    'aria-pressed reflects the active layout');
-  assert.match(PANEL, /data-view-segment=\{key\}/,
-    'each layout still names itself with data-view-segment');
+  // The control still reports the live mode to the a11y tree, and it says
+  // `aria-current="page"` rather than `aria-pressed` now: these are three
+  // DESTINATIONS with three addresses, not a pair of toggles restating one
+  // panel in another layout. `data-view-segment` went with the sub-strip; the
+  // segments name themselves with `data-context-row`, the key the Board and
+  // Activity rows already carried and the one dapp.json's checks select on.
+  assert.match(VIEW_TABS, /aria-current=\{active === 'board' \? 'page' : 'false'\}/,
+    'the Board segment reports whether it is the one you are on');
+  assert.match(VIEW_TABS, /data-context-row="activity"/,
+    'each view still names itself with data-context-row');
+  assert.ok(!PANEL.includes('data-view-segment') && !FRAME.includes('data-view-segment'),
+    'the retired sub-strip left no data-view-segment behind');
+  // Board and Activity are hash routes, so they have to be anchors —
+  // cmd/ctrl-click and "open in new tab" work on them, the rule
+  // tests/nav-new-tab.test.js pins across the shell. The App segment is a
+  // button because it is not a hash (on the self-hosted row it goes home).
+  assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/board` : '#'\}/,
+    'the Board segment is an anchor at the board route');
+  assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/activity` : '#'\}/,
+    'and Activity at the activity route');
   // Seeded from the module before the first paint, so ?view=kanban does not
   // flash list first.
   assert.match(MOUNT, /publishViewMode\(options\.viewMode\);/, 'the store is seeded at mount');

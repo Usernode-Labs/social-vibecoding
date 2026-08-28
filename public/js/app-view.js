@@ -2102,13 +2102,25 @@ const AppView = {
       return;
     }
 
-    // Full-screen general chat — the ACTIVITY screen (Streamlined Concept):
-    // a first-class destination (#app/<slug>/activity) reached from the
-    // app-context sheet, so the header names it.
+    // Full-screen general chat, at #app/<slug>/dev/chat.
+    //
+    // It was the ACTIVITY destination for one round. Activity is the board's
+    // recency stream now (see the alias block in app.js's restoreFromHash), so
+    // this screen has NO ENTRY IN THE APP'S VIEW TABS — the request that made
+    // the change asked for the old Activity feed to be removed and replaced by
+    // the board's stream, and the three views are exactly three.
+    //
+    // The screen, its route and every link into it are untouched: a mention,
+    // a reply, a reaction and a shared spec all still land here, and
+    // #app/<slug>/dev/chat (and the legacy #app/<slug>/group-chat) still
+    // resolve. Its browse-to-it door is the chip menu's "Discussion" row
+    // (features/app-context/app-context-sheet.tsx) — a destination with its
+    // own page, which is what that menu lists, rather than a fourth segment
+    // in a strip whose three entries are three readings of the same work.
     if (subTab === 'chat') {
-      // The app's name stays the chip's label and "Activity" qualifies it —
+      // The app's name stays the chip's label and the subtitle qualifies it —
       // replacing the name here was the chip forgetting which app it was in.
-      App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Activity');
+      App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Discussion');
       AppView._renderChatSubView(content);
       return;
     }
@@ -2146,10 +2158,12 @@ const AppView = {
       viewMode: AppView._getViewMode(),
     });
 
-    // The card area is the BOARD (Streamlined Concept) — kanban and feed are
-    // its two display modes — and the header names it AS A SUBTITLE under the
-    // app's own name, so the chip never stops saying which app you are in.
-    App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Board');
+    // The card area under whichever of its two names the active layout gives
+    // it — the kanban of work in flight is the Board, the recency stream is
+    // Activity — carried AS A SUBTITLE beside the app's own name, so the chip
+    // never stops saying which app you are in.
+    App.setHeaderTitle?.(AppView.appData?.name || 'App',
+      AppView._getViewMode() === 'feed' ? 'Activity' : 'Board');
     AppView._wirePlusMenu(content);
     // Pull down on the dev feed to re-pull it (touch only; the scroller
     // is re-created on every render so this re-attaches each time).

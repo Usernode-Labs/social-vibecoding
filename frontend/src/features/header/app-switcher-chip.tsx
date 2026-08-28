@@ -54,7 +54,7 @@
  * chip names the APP you are in, and a picture of you inside it was answering
  * a different question. Profile is a row of the menu behind it.
  *
- * ── The subtitle, and the 28px it has to live inside ───────────────────
+ * ── The subtitle rides BESIDE the name, not under it ───────────────────
  *
  * A destination INSIDE an app (the Board, Activity) publishes a subtitle
  * rather than overwriting the title: the chip keeps naming the app and the
@@ -63,22 +63,23 @@
  * you are stopped saying the largest part of it — and the app's name was then
  * available nowhere on the screen.
  *
- * Stacking two lines inside the 28px content row is the whole constraint. The
- * row is pinned from both directions by tests/header-height-parity.test.js,
- * and growing it is the #909 regression that file exists to catch: the bar
- * would jump every time you entered or left a board. So the two lines are
- * sized to fit rather than the box grown to hold them —
- * `text-sm` (14px) + `mt-0.5` (2px) + `text-[0.625rem]` (10px) = 26px inside
- * the 28px chip. `leading-none` is on EACH line, not just the column: the
- * Tailwind text-* scale ships a line-height with every step (`text-sm` is
- * 14px/20px), and a line-height on the child wins over one inherited from the
- * column — with it left to inherit, the two lines measured 32px and spilled
- * out of the pill they are supposed to sit inside.
+ * It shipped STACKED — name over subtitle, two lines squeezed into the 28px
+ * content row at 14px + 2px + 10px, with `leading-none` on each line because
+ * anything inherited spilled the pill. That fit, and it read as a two-line
+ * label on a control that is one line everywhere else: the chip changed SHAPE
+ * on the two screens that have a subtitle, and 10px stacked under 14px is
+ * below the size at which either line is comfortably readable.
  *
- * The name drops 16px → 14px ONLY when there is a subtitle. Unsubtitled — Home,
- * Discover, Messages, Settings, an app's own screen — it inherits the h1's
- * `text-base` exactly as it always has, so the four screens out of five that
- * have no subtitle are pixel-for-pixel what #1443 shipped.
+ * So the two sit on ONE line, `items-baseline`, with the subtitle trailing the
+ * name as a subscript — smaller and muted, sharing the name's baseline. That
+ * buys back the whole 28px for a single line, which is why the name keeps the
+ * h1's `text-base` whether or not there is a subtitle (it used to drop to
+ * `text-sm` to make room) and why the subtitle can go up to 11px from 10px.
+ * The chip is now the same shape on every screen, subtitled or not.
+ *
+ * The NAME is what truncates: it is `min-w-0 truncate` and the subtitle is
+ * `shrink-0`, so a long app name shortens rather than evicting the word that
+ * says which part of it you are looking at.
  *
  * ── A session has no chip ──────────────────────────────────────────────
  *
@@ -119,7 +120,7 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
           id="app-switcher-btn"
           type="button"
           className={'pointer-events-auto inline-flex items-center gap-1 max-w-full h-7 '
-            + 'pl-3 pr-2 rounded-full align-middle un-touch-target '
+            + 'pl-3.5 pr-2.5 rounded-full align-middle un-touch-target '
             + 'bg-zinc-50 text-zinc-900 hover:bg-white '
             + 'dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700'}
           aria-haspopup="dialog"
@@ -129,17 +130,17 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
             AppContext?: { toggle?: () => void };
           }).AppContext?.toggle?.()}
         >
-          <span className="min-w-0 flex flex-col items-start justify-center leading-none">
+          <span className="min-w-0 flex items-baseline gap-1.5">
             <span
               id="app-switcher-name"
-              className={'max-w-full truncate' + (subtitle ? ' text-sm leading-none' : '')}
+              className="min-w-0 truncate"
             >
               {text}
             </span>
             {subtitle ? (
               <span
                 id="app-switcher-subtitle"
-                className="max-w-full truncate mt-0.5 text-[0.625rem] leading-none font-medium
+                className="shrink-0 text-[0.6875rem] leading-none font-medium
                            text-zinc-500 dark:text-zinc-400"
               >
                 {subtitle}
