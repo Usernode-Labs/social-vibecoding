@@ -2164,6 +2164,11 @@ const AppView = {
     // never stops saying which app you are in.
     App.setHeaderTitle?.(AppView.appData?.name || 'App',
       AppView._getViewMode() === 'feed' ? 'Activity' : 'Board');
+    // The discussion card's href follows the open app immediately; its preview
+    // line arrives with the request below. Both are the same publish, so the
+    // card never renders pointing at the previous app.
+    AppView._reactDevBoard()?.publishDiscussion(AppView._discussionView());
+    AppView._loadDiscussionSummary();
     AppView._wirePlusMenu(content);
     // Pull down on the dev feed to re-pull it (touch only; the scroller
     // is re-created on every render so this re-attaches each time).
@@ -2219,6 +2224,13 @@ const AppView = {
         // Someone else's shared session → its public discussion topic
         // (never their dev chat — that stays owner-scoped server-side).
         AppView.openTopic('session', parseInt(sharedRow.dataset.sharedSessionRow, 10));
+        return;
+      }
+      // The general discussion's feed row. It is not a topic — the chat is a
+      // full-screen sub-view with its own sub-tab — so it switches rather
+      // than calling openTopic.
+      if (e.target.closest('[data-discussion-row]')) {
+        App.switchTab('dev', null, 'chat');
         return;
       }
       const issueRow = e.target.closest('[data-issue-row]');
@@ -4281,6 +4293,114 @@ const AppView = {
       !!(AppView._proposalsCtx && AppView._proposalsCtx.locked));
   },
 
+  // ── The app's general discussion, as a board citizen ────────────────
+  //
+  // The general chat is a first-class thing that happens in an app, and for
+  // one round it was reachable only from a notification: it had been the
+  // Activity destination, and Activity became the board's recency stream.
+  // Rather than give it a menu row, it appears in both of the board's views —
+  // as a card ABOVE the kanban columns (features/dev-board/board-frame.tsx,
+  // which is where a "here is the other place to go" affordance belongs on a
+  // prioritised worklist) and, in the Feed, as an ordinary ACTIVITY ROW sorted
+  // by its latest message like every other card. That is the honest answer in
+  // a stream of what just happened: a conversation is one of the things that
+  // just happened.
+  //
+  // `_discussionSummary` is the latest general-chat message, keyed by slug so
+  // an app-to-app hop never shows the previous app's line — a summary whose
+  // slug is not the open app's reads as absent, which is what makes both
+  // surfaces fall back to their standing description mid-navigation.
+  _discussionSummary: null,
+  _discussionInFlight: false,
+
+  // GET the newest general-chat message (thread_type IS NULL — the endpoint's
+  // default), which is view-gated, so a read-only viewer gets the row too.
+  //
+  // Re-renders the feed when it lands rather than blocking the paint: the
+  // board is useful without this line and the request is one row. It cannot
+  // loop — _rerenderFeed does not call back into here.
+  //
+  // Called from renderDevView's card-list branch — i.e. on entering the board
+  // and on each Board <-> Activity switch — and NOT from _repaintDevBody, so a
+  // WS-driven repaint does not spend a request. A warm cache for the same app
+  // still paints instantly; this only refreshes what it says.
+  async _loadDiscussionSummary() {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || AppView._discussionInFlight) return;
+    AppView._discussionInFlight = true;
+    try {
+      const res = await fetch(`/api/apps/${slug}/messages?limit=1`);
+      if (!res.ok) return;
+      const { messages } = await res.json();
+      const m = messages && messages[messages.length - 1];
+      // Still the same app? An app-to-app hop mid-flight must not paint this
+      // one's line onto the next one's board.
+      if (!AppView.appData || AppView.appData.slug !== slug) return;
+      AppView._discussionSummary = {
+        slug,
+        content: m && m.content ? String(m.content) : '',
+        username: (m && m.username) || '',
+        createdAt: (m && m.created_at) || null,
+      };
+      AppView._reactDevBoard()?.publishDiscussion(AppView._discussionView());
+      AppView._rerenderFeed();
+    } catch {
+      // Offline is a state, not a failure: the row falls back to its
+      // standing description and the card still opens the chat.
+    } finally {
+      AppView._discussionInFlight = false;
+    }
+  },
+
+  // What both surfaces draw from: the one line under "General discussion".
+  // Null slug or a summary for another app → the standing description, which
+  // is also what the card ships with before the fetch lands.
+  _discussionView() {
+    const s = AppView._discussionSummary;
+    const slug = AppView.appData && AppView.appData.slug;
+    const fresh = !!(s && slug && s.slug === slug);
+    return {
+      href: slug ? `#app/${slug}/dev/chat` : null,
+      preview: (fresh && s.content)
+        ? `${s.username || 'System'}: ${s.content.slice(0, 140)}`
+        : 'Talk with everyone building this app',
+    };
+  },
+
+  // The discussion as a FEED CARD — the same four-band model every other row
+  // is built from, so it sorts, renders and de-cards exactly like the rest of
+  // the stream rather than being a special tile bolted on top of it.
+  _discussionCardModel() {
+    const s = AppView._discussionSummary;
+    const fresh = !!(s && AppView.appData && s.slug === AppView.appData.slug);
+    const meta = [{ t: 'text', s: 'General discussion' }];
+    if (fresh && s.username) meta.push({ t: 'text', s: s.username });
+    if (fresh && s.createdAt) meta.push({ t: 'text', s: relTime(s.createdAt) });
+    return {
+      key: 'discussion',
+      cls: `${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}`,
+      // The delegated #dev-body handler opens it; see the branch beside
+      // data-issue-row. A `1` rather than an id because there is exactly one.
+      attrs: { 'data-discussion-row': '1', title: "Open the app's general chat" },
+      icon: AppView._devCardIcon('chat'),
+      title: {
+        text: (fresh && s.content) ? s.content.slice(0, 200) : 'Talk with everyone building this app',
+        title: 'General discussion',
+      },
+      meta,
+      pill: null,
+      linked: [],
+      badges: [],
+      chatCount: 0,
+      actions: [],
+      actionPreview: null,
+      rail: { menuKey: null, chevron: true },
+      extra: [],
+      dense: true,
+      uncapped: false,
+    };
+  },
+
   // The Feed's display order: STRICTLY most-recent-activity-first, across
   // every kind of card at once.
   //
@@ -4346,6 +4466,20 @@ const AppView = {
         t: Math.max(ts(s.shared_at), ts(s.last_message_at)),
       });
     }
+    // The app's general discussion, sorted on its latest message like
+    // everything else — see _discussionCardModel.
+    //
+    // ONLY when something has been said in it. A conversation nobody has had
+    // is not activity, and a row for it would be the one entry in this stream
+    // that is not about something that happened. Reachability does not depend
+    // on it either way: the kanban's card is the door, and it draws whether or
+    // not the chat has a word in it.
+    {
+      const d = AppView._discussionSummary;
+      const fresh = !!(d && AppView.appData && d.slug === AppView.appData.slug);
+      const t = fresh ? ts(d.createdAt) : 0;
+      if (t) items.push({ kind: 'discussion', id: 0, item: null, t });
+    }
     // Completed work — merged proposals and closed issues — from the stream
     // that used to render as a separate "Completed" block below the feed.
     // `row_type` is what tells the two apart; the renderer already switches
@@ -4384,10 +4518,29 @@ const AppView = {
       return { loading: false, block, emptyNote: { loadFailed: !!meta.note }, entries: [], footer: null };
     }
 
-    const shown = Math.min(AppView._feedShown || 20, items.length);
+    // ── The page, and the one row that does not compete for it ──────
+    //
+    // `_feedShown` caps how much of a long stream renders behind "Show more".
+    // The discussion is AT MOST ONE row — the app has exactly one general chat
+    // — rather than one of N cards arriving over time, so it does not compete
+    // for the page: it is lifted out before the cap and put back at its own
+    // sorted position inside it. On a busy board with a quiet
+    // chat that lands it last — which is not a lie about when it happened, it
+    // says the conversation is older than everything shown, and it is. Left in
+    // the cap it would simply vanish behind "Show more", and the Activity view
+    // would have no discussion at all on exactly the apps that have the most
+    // going on.
+    const disc = items.find((it) => it.kind === 'discussion') || null;
+    const rest = disc ? items.filter((it) => it !== disc) : items;
+    const shown = Math.min(AppView._feedShown || 20, rest.length);
+    const page = rest.slice(0, shown);
+    if (disc) {
+      const at = page.findIndex((it) => it.t < disc.t);
+      page.splice(at === -1 ? page.length : at, 0, disc);
+    }
     const entries = [];
-    for (let i = 0; i < shown; i++) {
-      const it = items[i];
+    for (let i = 0; i < page.length; i++) {
+      const it = page[i];
       if (it.kind === 'issue') {
         const card = AppView._issueCardModel(it.item);
         entries.push({ t: 'card', key: card.key, card, commentsFor: it.item && it.item.number });
@@ -4396,6 +4549,9 @@ const AppView = {
         entries.push({ t: 'card', key: card.key, card });
       } else if (it.kind === 'shared-session') {
         const card = AppView._sharedSessionCardModel(it.item);
+        entries.push({ t: 'card', key: card.key, card });
+      } else if (it.kind === 'discussion') {
+        const card = AppView._discussionCardModel();
         entries.push({ t: 'card', key: card.key, card });
       // Completed work, folded into the stream by _feedItems rather than
       // parked in a block below it.
@@ -4413,9 +4569,11 @@ const AppView = {
     // to be paged by the Completed block's own "Load more"; folding them into
     // the stream means folding their pager in too, or the feed would silently
     // stop at whatever the first page happened to contain.
+    // Counted against `rest`, not `items`: the discussion is never behind the
+    // pager, so it must not inflate what "Show more" promises.
     let footer = null;
-    if (shown < items.length) {
-      footer = { kind: 'showMore', n: Math.min(10, items.length - shown) };
+    if (shown < rest.length) {
+      footer = { kind: 'showMore', n: Math.min(10, rest.length - shown) };
     } else if (AppView._mergedHasMore) {
       footer = { kind: 'loadMerged', loading: !!AppView._mergedLoadingMore, n: null };
     } else if (meta.truncatedList && meta.repoUrl) {

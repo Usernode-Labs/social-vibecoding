@@ -347,9 +347,18 @@ test('the view toggle is real React state, and the className writer is gone', ()
   // block in public/js/app.js — and this store is what tells the strip which
   // of the two segments to mark.
   assert.match(VIEW_TABS, /useDevViewMode\(\)/, 'the view strip reads the store');
-  assert.ok(!/useDevViewMode\(\)/.test(FRAME), 'the frame reads no view mode');
   assert.ok(!/useDevViewMode\(\)/.test(PANEL),
     'and the panel reads it only through the strip');
+  // The FRAME reads the mode too, and for something that is not a control:
+  // the General-discussion card draws on the kanban only, because the Feed
+  // draws the same fact as an activity row (see ./discussion-store.ts). What
+  // must stay true of the frame is that it renders no view SWITCH — asserted
+  // by the retired ids and the absent data-view-segment below — not that it
+  // never asks which view is on screen.
+  assert.match(FRAME, /const mode = useDevViewMode\(\);[\s\S]{0,220}mode !== 'kanban'/,
+    'the frame reads the mode only to decide whether the discussion card draws');
+  assert.equal((FRAME.match(/useDevViewMode\(\)/g) || []).length, 1,
+    'and reads it in exactly that one place');
   assert.ok(!PANEL.includes('id="improve-board-layouts"'),
     'the Kanban|Feed sub-strip under the Board row is retired');
   assert.ok(!FRAME.includes('id="dev-view-toggle"'),

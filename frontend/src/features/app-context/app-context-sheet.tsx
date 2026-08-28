@@ -36,9 +36,15 @@
  * The strip is the one thing in this sheet drawn as a CONTROL rather than as a
  * row, deliberately: a segmented control is visibly a different kind of object
  * from the destinations, which keeps "everything in the list has its own page"
- * true of the list while the app's own views sit above it. The app's
- * Discussion, directly under it, is a row like every other — it is a
- * destination with its own page, not a third reading of the board.
+ * true of the list while the app's own views sit above it.
+ *
+ * The app's general chat spent one round here as a fourth row, because
+ * Activity had taken its name and it was otherwise reachable only from a
+ * notification. It is not here now: it belongs to the board, which carries it
+ * as a card on the kanban and as an activity row in the Feed (see
+ * ../dev-board/discussion-store.ts). A menu that lists the app's chat beside
+ * Home and Settings is answering the WHICH-PART-OF-THIS-APP question in the
+ * one place that exists to answer WHICH APP.
  *
  * ── Why the strip is horizontal, and why that is the scroll fix ────────
  *
@@ -62,7 +68,6 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import {
   ChatBubbleTailIcon,
-  ChatIcon,
   ChevronRightIcon,
   CogIcon,
   HomeIcon,
@@ -290,43 +295,19 @@ export function AppsSwitcherSheet(): ReactNode {
             </span>
           ) : null}
         </div>
-        {/* The open app's own three views, and its discussion. Both gated on
-            there BEING an app: a target-less sheet would otherwise draw three
-            segments and a row that go nowhere. See ../improve/view-tabs.tsx.
+        {/* The open app's own three views. Gated on there BEING an app: a
+            target-less sheet would otherwise draw three segments that go
+            nowhere. See ../improve/view-tabs.tsx.
 
-            ONE shrink-0 block, not three loose flex items: the nav below opens
-            with a hairline, and without a couple of points of clearance the
-            Discussion row sat flush against it and read as the first platform
-            destination rather than as the last app-scoped one. */}
+            ONE shrink-0 block, not two loose flex items, so the caption and
+            the strip keep their spacing above the nav's opening hairline. */}
         {slug ? (
           <div className="shrink-0 pb-2">
             <div className={SECTION}>In this app</div>
             <AppViewTabs
               ids={SWITCHER_VIEW_IDS}
               onNavigate={() => AppContext.dismissForNav()}
-              className="mx-5 mb-1"
-            />
-            {/*
-                THE APP'S GENERAL CHAT, and the reason it is a row here rather
-                than a fourth segment above.
-
-                It was the Activity destination until Activity became the
-                board's recency stream, and that left it reachable only from a
-                notification — a screen with a composer that you cannot browse
-                to. It is not one of the app's three VIEWS (those are three
-                readings of the same work), so it does not belong in the strip;
-                it is a destination with its own page, which is exactly what
-                every other row in this menu is.
-
-                `dev/chat` is the address it has always had, and the label
-                is what it is: the place the app talks, as opposed to the
-                board, where the app's work is.
-            */}
-            <MenuRow
-              id="switcher-row-discussion"
-              href={`#app/${slug}/dev/chat`}
-              icon={<ChatIcon />}
-              label="Discussion"
+              className="mx-5"
             />
           </div>
         ) : null}

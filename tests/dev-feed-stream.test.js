@@ -50,10 +50,16 @@ test('the feed wraps each entry, and the card builders stay shared', () => {
   for (const builder of [
     '_issueCardModel', '_proposalCardModel', '_sharedSessionCardModel',
     '_mergedRowModel', '_govCardModel',
+    // The app's general discussion. It is drawn as a CARD here and as chrome
+    // above the kanban's columns, and the split is the point: in a stream of
+    // what just happened, a conversation is one of the things that happened,
+    // so it goes through the same builder-to-wrapper path as everything else
+    // rather than being pinned on top of it.
+    '_discussionCardModel',
   ]) {
     assert.ok(loop.includes(`AppView.${builder}(`), `${builder} feeds the stream`);
   }
-  assert.equal((loop.match(/entries\.push\(\{ t: 'card'/g) || []).length, 5,
+  assert.equal((loop.match(/entries\.push\(\{ t: 'card'/g) || []).length, 6,
     'and every one of them is pushed as an ordinary card row');
 });
 
