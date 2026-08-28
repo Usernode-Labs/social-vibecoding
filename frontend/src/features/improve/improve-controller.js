@@ -44,6 +44,7 @@
 
 import { adoptKitSurface } from '../../lib/kit-surface';
 import { improveStore } from './improve-store.js';
+import { saveShellSnapshot } from '../../lib/shell-snapshot';
 
 /** Sessions whose state means "an AI turn is in flight right now". */
 const BUSY_STATES = new Set(['running', 'starting', 'queued']);
@@ -193,6 +194,10 @@ const Improve = {
         // not inherit the last one's half.
         tab: 'app',
       });
+      // Remembered for the next cold paint, so the button is drawn (or not)
+      // at hydration rather than a network round trip later — see
+      // lib/shell-snapshot.ts.
+      saveShellSnapshot({ improveTarget: '' });
       return;
     }
     const prev = improveStore.get();
@@ -216,6 +221,7 @@ const Improve = {
       // DevConsole owns that fact — a target change alone never turns it on.
       showTerminal: slugChanged ? false : prev.showTerminal,
     });
+    saveShellSnapshot({ improveTarget: target.kind === 'platform' ? 'platform' : 'app' });
     if (slugChanged) Improve._rebucket();
   },
 

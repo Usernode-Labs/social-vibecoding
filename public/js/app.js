@@ -129,6 +129,13 @@ const App = {
   // been cleared, so a worker that never answers changes nothing.
   _dropCachedSession() {
     App.clearSessionSnapshot();
+    // The remembered top-bar state goes with it, for the same reason and on
+    // the same event: it is display-only (frontend/src/lib/shell-snapshot.ts),
+    // but the next cold paint reading back the previous account's app name is
+    // exactly the residue this function exists to clear.
+    try {
+      window.UsernodeReact?.shellSnapshot?.clear?.();
+    } catch (err) { /* nothing stored, or no storage at all */ }
     try {
       navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     } catch (err) { /* no SW — nothing cached to drop */ }

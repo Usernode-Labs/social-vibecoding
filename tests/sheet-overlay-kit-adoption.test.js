@@ -151,6 +151,11 @@ function loadImprove(kitSurface) {
         ? kitSurface(store, log)
         : kitSurface,
       './improve-store.js': { improveStore: store },
+      // The controller remembers the panel's target for the next cold paint
+      // (frontend/src/lib/shell-snapshot.ts). Irrelevant to adoption, and a
+      // no-op here rather than a localStorage stub: what this file tests is
+      // when `platform-sheet-adopted` rises and falls.
+      '../../lib/shell-snapshot': { saveShellSnapshot() {} },
     },
   });
   return { Improve: sandbox.Improve, store, log };

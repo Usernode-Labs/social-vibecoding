@@ -14,6 +14,7 @@ import { flushSync } from 'react-dom';
 
 import { backButtonStore } from './back-button-store.js';
 import { headerTitleStore } from './header-title-store.js';
+import { clearShellSnapshot, saveShellSnapshot } from '../../lib/shell-snapshot';
 
 headerTitleStore.setFlush(flushSync);
 // Same reason as the title's: App.setBackIcon's callers read the header back
@@ -36,12 +37,19 @@ if (typeof window !== 'undefined') {
      *   under the Home title is exactly the bug the second argument invites.
      */
     set(text: string, subtitle?: string) {
-      headerTitleStore.set({
-        text: String(text ?? ''),
-        subtitle: String(subtitle ?? ''),
-      });
+      const title = String(text ?? '');
+      const sub = String(subtitle ?? '');
+      headerTitleStore.set({ text: title, subtitle: sub });
+      // Remembered for the next cold paint. The prerendered document has no
+      // idea which app or route the viewer was on, so without this the chip
+      // reads "dApps" (the store's INITIAL) until auth and routing have both
+      // answered — see lib/shell-snapshot.ts.
+      saveShellSnapshot({ title, subtitle: sub });
     },
   };
+  // Published for public/js/app.js's _dropCachedSession, which clears every
+  // other piece of this device's display-only session residue in one place.
+  bridge.shellSnapshot = { clear: clearShellSnapshot };
   bridge.backButton = {
     /**
      * @param mode 'arrow' shows the anchor, anything else hides it.
