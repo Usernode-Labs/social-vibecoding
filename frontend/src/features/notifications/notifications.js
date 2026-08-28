@@ -1371,12 +1371,13 @@ function screenViews(items) {
 }
 
 // One notification row, as data. It has ONE renderer — ScreenRow in
-// ./notifications-sheet.tsx — which draws exactly two lines:
+// ./notifications-sheet.tsx — which draws THREE lines:
 //
-//     <headline>                                    ← `segments`
+//     <kind>                                        ← `label`
+//     <subject>                                     ← `segments`
 //     <where> · by @<who> · <when>                  ← `appLine` / `by` / `time`
 //
-// ── THE HEADLINE IS `<label>: <subject>`, and nothing else ────────────
+// ── WHAT KIND, THEN WHICH ONE, THEN WHERE FROM ───────────────────────
 //
 // Every kind used to write a SENTENCE about itself: "@evan proposed a PR to
 // vote on in Notes", "Your dev session in Notes finished", "Proposal for issue
@@ -1390,18 +1391,38 @@ function screenViews(items) {
 //      third line this renderer does not draw. So the one thing that told two
 //      proposal notifications apart was not on screen at all.
 //
-// So the sentence is gone. The headline is a short label for the KIND and then
-// the thing itself — "New proposal: Fix the header spacing" — and everything
-// that was being repeated moves to the meta line under it, which was already
-// carrying the app and the time. `body` went with the sentence: nothing
-// rendered it, and its content is what the headline's subject now is.
+// So the sentence is gone. What is left are three FACTS, and the row now gives
+// each of them its own line instead of packing two into a headline:
 //
-// `segments` is that headline, in order:
+//   `label`     what KIND of thing this is: "New proposal", "Submitted by
+//               your agent", "Session finished". A short category, and the
+//               same words for every row of that kind, so a list of them
+//               scans down the left edge.
+//   `segments`  WHICH one: the PR's title, the session's name, the message.
+//               This used to be `body`, a third field nothing rendered, so
+//               the one thing telling two proposal rows apart was invisible.
+//   the meta    WHERE it came from and who did it — everything the old
+//               sentence was repeating out of the line under itself.
+//
+// They were one line for a round, joined by a colon ("New proposal: Fix the
+// header spacing"), and that line is where a row runs out of width first: the
+// subject is the part that varies and the part that truncates, and it was
+// paying for a label of fixed length in front of it on every row. Split, the
+// label sits in the kind's own smaller ink and the subject gets the full
+// width — the same three facts, in falling order of how much of the row's
+// width they deserve.
+//
+// `segments` is the subject, as parts:
 //   { t: 'who' }    → @username, in the strong ink
-//   { t: 'strong' } → the SUBJECT — a title, a conversation, an issue ref
-//   { t: 'text' }   → the label and any connecting words
+//   { t: 'strong' } → a title, a conversation, an issue ref
+//   { t: 'text' }   → connecting words
 // Every value is RAW text. Escaping is the renderer's job, and React does it
 // by construction — which is the point of moving the rows there.
+//
+// A kind with nothing to name — a collaborator invite is entirely its own
+// label — leaves `segments` EMPTY, and the renderer then draws the label on
+// the subject's line and no kind line at all. Two lines when there are two
+// things to say; a category heading over nothing would be worse than either.
 //
 // `by` is the meta line's attribution and is set ONLY where the source user is
 // the ACTOR. The two OpenRouter-key rows carry a `sourceUsername` that is the
@@ -1409,10 +1430,13 @@ function screenViews(items) {
 // claim about who did something, so those keep the name in the headline and
 // set no `by` at all. A system row — a stale PR, a failed check, a finished
 // session — has no actor and no `by` either.
+// The two lines of a row's own copy. Spread into the view — `...headline(…)`
+// — rather than assigned to one field, because it fills two.
 function headline(label, subject) {
-  return subject
-    ? [{ t: 'text', v: `${label}:` }, { t: 'strong', v: String(subject) }]
-    : [{ t: 'text', v: label }];
+  return {
+    label,
+    segments: subject ? [{ t: 'strong', v: String(subject) }] : [],
+  };
 }
 
 function rowView(n) {
@@ -1442,6 +1466,10 @@ function rowView(n) {
     appLine,
     // Meta-line attribution. Null unless the source user actually DID this.
     by: null,
+    // The kind line. Every branch below overwrites it; '' would render a
+    // blank first line, which is why nothing is allowed to fall through
+    // with the default.
+    label: '',
     // The meta line's own layout. `mb` and `wrap` differ per kind, and the
     // plain mention/reply row is the only one that is not a flex row at all.
     mb: true,
@@ -1458,18 +1486,20 @@ function rowView(n) {
     // and for a plain message the snippet follows it, which is the only part
     // of a message notification anybody reads. The other four say what
     // happened in it instead, because "@you" is the whole news there.
-    const segments = {
+    //
+    // The three that used to read "Mentioned you in <conversation>" lost the
+    // trailing preposition when the line broke under them: "Mentioned you in"
+    // alone above its object is a sentence cut in half, and the line below is
+    // plainly what it is in.
+    const copy = {
       conversation_invite: headline('Invite', conversation),
+      // The only kind whose label is not a fixed category. A message's kind
+      // IS its thread — "Message" over the snippet would name the surface,
+      // which the meta line already does.
       conversation_message: headline(conversation, snippet),
-      conversation_mention: [
-        { t: 'text', v: 'Mentioned you in' }, { t: 'strong', v: conversation },
-      ],
-      conversation_reply: [
-        { t: 'text', v: 'Replied in' }, { t: 'strong', v: conversation },
-      ],
-      conversation_reaction: [
-        { t: 'text', v: 'Reacted in' }, { t: 'strong', v: conversation },
-      ],
+      conversation_mention: headline('Mentioned you', conversation),
+      conversation_reply: headline('Replied', conversation),
+      conversation_reaction: headline('Reacted', conversation),
     }[n.kind];
     const icons = {
       conversation_invite: '✉️',
@@ -1500,7 +1530,7 @@ function rowView(n) {
       // is the headline's own subject, and repeating it under itself reads as
       // a rendering fault rather than as attribution.
       appLine: 'Messages',
-      segments,
+      ...copy,
     };
   }
 
@@ -1515,10 +1545,8 @@ function rowView(n) {
       appLine: 'Admin',
       wrap: true,
       icon: review ? '⚠️' : '🔑',
-      segments: [
-        { t: 'text', v: review ? 'Company key needs review:' : 'Company key issued:' },
-        { t: 'who', v: who },
-      ],
+      label: review ? 'Company key needs review' : 'Company key issued',
+      segments: [{ t: 'who', v: who }],
     };
   }
 
@@ -1529,7 +1557,7 @@ function rowView(n) {
       ...base,
       icon: '\u{1F44F}',
       by: n.sourceUsername || null,
-      segments: headline('Kudos', prLabel || 'your PR'),
+      ...headline('Kudos', prLabel || 'your PR'),
     };
   }
 
@@ -1538,7 +1566,7 @@ function rowView(n) {
       ...base,
       icon: n.detail || '❤️',
       by: n.sourceUsername || null,
-      segments: headline('Reacted', (n.messageContent || '').slice(0, 140)),
+      ...headline('Reacted', (n.messageContent || '').slice(0, 140)),
     };
   }
 
@@ -1550,7 +1578,7 @@ function rowView(n) {
     return {
       ...base,
       icon: '⏳',
-      segments: headline('Needs votes', prLabel || n.sessionTitle || 'your PR'),
+      ...headline('Needs votes', prLabel || n.sessionTitle || 'your PR'),
     };
   }
 
@@ -1560,7 +1588,7 @@ function rowView(n) {
     return {
       ...base,
       icon: '⚠️',
-      segments: headline('Checks blocked', prLabel || n.sessionTitle || 'your proposal'),
+      ...headline('Checks blocked', prLabel || n.sessionTitle || 'your proposal'),
     };
   }
 
@@ -1573,7 +1601,7 @@ function rowView(n) {
       ...base,
       icon: '\u{1F5F3}️',
       by: n.sourceUsername || null,
-      segments: headline('New proposal', prLabel || 'a PR'),
+      ...headline('New proposal', prLabel || 'a PR'),
     };
   }
 
@@ -1587,7 +1615,7 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon: shared ? '\u{1F441}️' : '\u{1F4E4}',
-      segments: headline(
+      ...headline(
         shared ? 'Shared by your agent' : 'Submitted by your agent',
         n.sessionTitle || prLabel || 'your change',
       ),
@@ -1606,7 +1634,7 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon: '\u{1F4AC}',
-      segments: headline('Claude asked you something', n.sessionTitle || null),
+      ...headline('Claude asked you something', n.sessionTitle || null),
     };
   }
 
@@ -1621,7 +1649,7 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon: '✅',
-      segments: headline(
+      ...headline(
         'Session finished',
         n.sessionTitle || prLabel || n.branchName || 'your session',
       ),
@@ -1639,7 +1667,7 @@ function rowView(n) {
       ...base,
       wrap: true,
       icon: failed ? '⚠️' : '\u{1F916}',
-      segments: headline(
+      ...headline(
         label,
         n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue',
       ),
@@ -1655,7 +1683,7 @@ function rowView(n) {
       wrap: true,
       icon: '\u{1F4CB}',
       by: n.sourceUsername || null,
-      segments: headline(
+      ...headline(
         'Spec shared',
         n.sessionTitle || prLabel || n.branchName || `v${n.detail || '?'}`,
       ),
@@ -1682,7 +1710,7 @@ function rowView(n) {
       icon: n.kind === 'collab_invite' ? '✉️'
         : n.kind === 'approver_invite' ? '🗳️' : '✅',
       by: n.sourceUsername || null,
-      segments: headline(label, null),
+      ...headline(label, null),
     };
   }
 
@@ -1691,7 +1719,7 @@ function rowView(n) {
     ...base,
     metaFlex: false,
     by: n.sourceUsername || null,
-    segments: headline(
+    ...headline(
       n.kind === 'mention' ? 'Mentioned you'
         : (n.kind === 'reply' ? 'Replied to you' : 'Posted'),
       (n.messageContent || '').slice(0, 140),
