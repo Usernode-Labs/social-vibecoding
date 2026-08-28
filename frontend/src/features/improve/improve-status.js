@@ -109,8 +109,14 @@ const ImproveStatus = {
   refreshDeployDot() {
     const deploying = !!document.querySelector(
       '#improve-footer .drawer-ver--deploying');
+    // `.drawer-ver--stale`, not `button.drawer-ver--stale`: the row has two
+    // shapes now. It is a BUTTON once the new build is cached and a reload
+    // will land on it, and a SPAN while that build is still downloading (see
+    // App.renderPlatformVersionPill). Both mean the platform has moved past
+    // this tab, which is the only thing this dot claims — qualifying by tag
+    // would have blinked it off for the seconds the download takes.
     const stale = !deploying && !!document.querySelector(
-      '#improve-footer button.drawer-ver--stale');
+      '#improve-footer .drawer-ver--stale');
     const state = deploying ? 'deploying' : (stale ? 'stale' : 'idle');
     if (typeof window !== 'undefined') window.Improve?.setVersionState?.(state);
   },

@@ -183,6 +183,12 @@ test('loadVersion still records the boot SHA and paints the drawer row', () => {
     'the boot baseline is still captured — platformMovedOn compares against it');
   assert.match(fn, /App\.renderPlatformVersionPill\(info\)/,
     'the drawer row is still painted on every poll');
+  // The one thing that suppresses that repaint is a `?shot=` deep link
+  // holding the row in a state no real answer can produce on demand
+  // (tests/shell-update-prefetch.test.js covers the states themselves).
+  // Anything broader would be the nudge silently going missing.
+  assert.match(fn, /if \(!App\._platformUpdateShot\) App\.renderPlatformVersionPill\(info\);/,
+    'and the only guard on it is the screenshot deep link');
 });
 
 test('the drawer row still offers a reload when this tab is behind', () => {
@@ -193,8 +199,17 @@ test('the drawer row still offers a reload when this tab is behind', () => {
   assert.match(fn, /runningSha !== 'dev'/);
   // …rendered as a tappable reload. This is the whole replacement for
   // the banner's forced reload.
+  //
+  // It is now the SECOND of two shapes this branch can take: the new build
+  // is pulled into the shell cache first, and for those seconds the row is a
+  // <span> saying so rather than a button that would reload onto the cached
+  // OLD document. What must not regress is that every path out of the
+  // download — success, refusal, silence — still reaches this button; that is
+  // pinned behaviourally in tests/shell-update-prefetch.test.js.
   assert.match(fn, /drawer-ver--stale/);
   assert.match(fn, /onclick="location\.reload\(\)"/);
+  assert.match(fn, /App\._ensureShellPrefetch\(runningSha\)/,
+    'and the reload is only offered once there is something to reload onto');
   // The deploying spinner (driven by /api/version deployProgress) stays
   // too — a deploy in flight is still worth showing, it just no longer
   // means the platform is going away.
