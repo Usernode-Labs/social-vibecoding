@@ -636,13 +636,28 @@ async function markApproverInviteNotificationsRead(pool, userId, appId) {
 // skipped or repeated across page boundaries — the id is a stable
 // tiebreak. Ordering + the keyset comparison ride the existing
 // idx_notifications_user_recent index on (user_id, created_at DESC).
-async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
+// `kinds` narrows the page to a set of notification kinds. It exists for the
+// bell's Messages tab: that tab is a client-side filter over the same feed, so
+// paging it through the unfiltered cursor fetched 100 rows that were mostly
+// something else and typically surfaced no new message at all. Filtering in
+// SQL means one page of "older messages" IS a page of older messages.
+//
+// The filter is applied after the index, not by it: the ordering and the
+// keyset comparison still ride idx_notifications_user_recent on
+// (user_id, created_at DESC), and `kind` is a cheap equality check on the rows
+// that index already produced.
+async function listForUser(pool, userId, { limit = 100, before = null, kinds = null } = {}) {
   const params = [userId];
   let cursorClause = '';
   if (before && before.createdAt && before.id != null) {
     params.push(before.createdAt, before.id);
     // $2 = cursor created_at, $3 = cursor id.
     cursorClause = `AND (n.created_at, n.id) < ($2, $3)`;
+  }
+  let kindClause = '';
+  if (Array.isArray(kinds) && kinds.length) {
+    params.push(kinds);
+    kindClause = `AND n.kind = ANY($${params.length})`;
   }
   params.push(limit);
   const limitIdx = params.length; // last param is the limit
@@ -670,6 +685,7 @@ async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
      LEFT JOIN users su ON su.id = n.source_user_id
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL}
      ${cursorClause}
+     ${kindClause}
      ORDER BY n.created_at DESC, n.id DESC
      LIMIT $${limitIdx}`,
     params

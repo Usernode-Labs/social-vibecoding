@@ -178,11 +178,6 @@ const ALLOW = [
     reason: "quotes an OAuth provider's own error screen verbatim, so a user can match it",
   },
   {
-    file: 'public/js/app-view.js',
-    contains: 'label: `— ${node.textContent',
-    reason: 'a menu separator row: the dashes are the rule, and the label is its text',
-  },
-  {
     file: 'src/services/github.js',
     contains: '[truncated —',
     reason: 'a marker inside an issue body handed to a coding agent, not shown to anyone',

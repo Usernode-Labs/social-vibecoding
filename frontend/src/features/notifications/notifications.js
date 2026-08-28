@@ -90,6 +90,15 @@ const Notifications = {
   nextBefore: null,  // { createdAt, id } | null
   hasMore: false,
   loading: false,
+  // The Messages tab's own cursor, walked by loadOlderMessages() over
+  // `?kind=conversation`. Deliberately separate from the three above: the two
+  // queries skip different rows, so sharing a cursor would let one tab's
+  // paging strand rows the other can then never reach. `msgHasMore` starts
+  // true because the tab has not asked yet — the first press is what
+  // discovers whether there is anything older.
+  msgNextBefore: null,  // { createdAt, id } | null
+  msgHasMore: true,
+  msgLoading: false,
   // Only the newest first-page refresh may replace the authoritative feed.
   // This prevents an older boot/bell request from completing after a native
   // network-only invalidation and overwriting its fresher result.
@@ -276,6 +285,65 @@ const Notifications = {
       console.warn('[notifications] loadMore failed', err);
     } finally {
       Notifications.loading = false;
+    }
+  },
+
+  /**
+   * Page the CONVERSATION kinds specifically, on their own cursor.
+   *
+   * The Messages tab is a client-side filter over the shared feed, so it
+   * cannot page on the shared cursor: a page of 100 older rows is 100 older
+   * rows of everything, and on a busy account it routinely contains no message
+   * at all. That is why the tab's footer link used to be a jump to All rather
+   * than a pager — it was the honest thing to offer while the only page
+   * available was the unfiltered one.
+   *
+   * `?kind=conversation` (src/routes/notifications.js) makes a filtered page
+   * possible, and this walks it on `msgNextBefore` — kept SEPARATE from
+   * `nextBefore` on purpose. Advancing the shared cursor past rows this query
+   * skipped would strand every non-message notification between the two
+   * positions, so the All tab could never reach them. Rows still land in the
+   * one shared `items` array, deduped, because both tabs render from it.
+   */
+  async loadOlderMessages() {
+    if (Notifications.msgLoading || !Notifications.msgHasMore) return;
+    Notifications.msgLoading = true;
+    Notifications._renderList();
+    try {
+      const params = new URLSearchParams({ limit: '100', kind: 'conversation' });
+      // First press has no cursor: it starts from the newest message and pages
+      // back, and the dedup below drops everything already on screen.
+      if (Notifications.msgNextBefore) {
+        params.set('before', String(Notifications.msgNextBefore.createdAt));
+        params.set('before_id', String(Notifications.msgNextBefore.id));
+      }
+      const res = await fetch(`/api/notifications?${params.toString()}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      const seen = new Set(Notifications.items.map((n) => n.id));
+      for (const n of incoming) {
+        if (!seen.has(n.id)) {
+          Notifications.items.push(n);
+          seen.add(n.id);
+        }
+      }
+      // Re-sort: a filtered page reaches further back than the shared cursor
+      // has, so its rows do not simply append in feed order the way loadMore's
+      // do. The list is created_at DESC with id as the tiebreak, matching the
+      // server's ORDER BY.
+      Notifications.items.sort((a, b) => {
+        const at = new Date(a.createdAt || a.created_at || 0).getTime();
+        const bt = new Date(b.createdAt || b.created_at || 0).getTime();
+        return (bt - at) || (Number(b.id) - Number(a.id));
+      });
+      Notifications.msgHasMore = !!data.hasMore;
+      Notifications.msgNextBefore = data.nextBefore || null;
+    } catch (err) {
+      console.warn('[notifications] loadOlderMessages failed', err);
+    } finally {
+      Notifications.msgLoading = false;
+      Notifications._renderList();
     }
   },
 
@@ -1131,6 +1199,8 @@ const Notifications = {
         // pager follows the server cursor even while the drawer's is off.
         screenCanLoadMore: Notifications.hasMore,
         loadingMore: Notifications.loading,
+        messagesCanLoadMore: Notifications.msgHasMore,
+        loadingOlderMessages: Notifications.msgLoading,
         touch,
       });
       return;
@@ -1154,6 +1224,9 @@ const Notifications = {
       canLoadMore: Notifications.hasMore,
       screenCanLoadMore: Notifications.hasMore,
       loadingMore: Notifications.loading,
+      // The Messages tab's pager, on its own cursor — see loadOlderMessages().
+      messagesCanLoadMore: Notifications.msgHasMore,
+      loadingOlderMessages: Notifications.msgLoading,
       touch,
     });
   },

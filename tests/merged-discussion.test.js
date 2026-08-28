@@ -90,6 +90,12 @@ function makeAppView({ els = {}, thread = null } = {}) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener() {},
     localStorage: { getItem: () => null, setItem() {} },
+    // renderDevView and _wirePlusMenu each abort the previous render's
+    // listeners before binding this one's, so that Board ⇄ Activity (one
+    // screen, two view modes, and React reconciles the nodes between them)
+    // does not leave two handlers on the same button. The real global, not a
+    // stub: the code passes `signal` straight to addEventListener.
+    AbortController,
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;

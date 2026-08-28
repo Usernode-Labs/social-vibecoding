@@ -2191,6 +2191,15 @@ const AppView = {
     // the list feed, merged rows in the Completed block, and every card
     // in the kanban columns — they all carry the same
     // data-issue-row / data-proposal-row / data-gov-row hooks.
+    // Same re-entrancy problem, same remedy as _wirePlusMenu: #dev-body's
+    // "the node itself survives until the next renderDevView" is now a reason
+    // to abort rather than a reason not to guard — Board and Activity are two
+    // view modes of one screen, so renderDevView runs again against the
+    // surviving node and every delegated handler here would be bound twice.
+    AppView._devBodyAbort?.abort();
+    const devBodyAc = new AbortController();
+    AppView._devBodyAbort = devBodyAc;
+    const devBodySignal = devBodyAc.signal;
     const bodyEl = document.getElementById('dev-body');
     bodyEl.addEventListener('click', (e) => {
       // #313/#827: the card-level "Explore in dev chat" button is a
@@ -2247,7 +2256,7 @@ const AppView = {
       }
       const govRow = e.target.closest('[data-gov-row]');
       if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
-    });
+    }, { signal: devBodySignal });
     // Keyboard access for the session rows (role="button" divs): Enter /
     // Space activate, mirroring the old strip's per-row keydown wiring.
     bodyEl.addEventListener('keydown', (ev) => {
@@ -2261,7 +2270,7 @@ const AppView = {
       } else {
         AppView.openTopic('session', parseInt(el.dataset.sharedSessionRow, 10));
       }
-    });
+    }, { signal: devBodySignal });
 
     await AppView._loadDevFeed();
 
@@ -3584,10 +3593,34 @@ const AppView = {
   // row that does nothing. Nothing called this after the conversion, so it went
   // with the template rather than staying behind as dead code.
 
+  // Every listener this binds carries `_plusMenuAbort.signal`, and the
+  // controller is replaced on entry. That is what makes the function safe to
+  // call more than once against the SAME nodes.
+  //
+  // It used to bind unguarded, on the reasoning stated below at the
+  // outside-click listener: "the listener dies with the content innerHTML on
+  // the next render". That was true when the dev frame was an innerHTML
+  // template and stopped being true when it became a React island —
+  // mountLegacyPortal reuses the existing entry, so React RECONCILES and
+  // #dev-plus-btn survives. Board and Activity are the same screen in two view
+  // modes, so switching between them re-runs renderDevView against the
+  // surviving button: a second click listener, whose `classList.toggle` undid
+  // the first one's, and the menu stopped opening. Every further hop added
+  // another listener, which is why it alternated dead and alive.
+  //
+  // An init-once guard would fix the duplicate and introduce a worse bug: the
+  // menu's rows are conditional (members on _plusMenuShowsMembers, import-pr
+  // and fork on collaborator state), so a row that mounts later would never be
+  // wired. Aborting and re-binding gets both — exactly one handler per node,
+  // and newly arrived rows always have one.
   _wirePlusMenu(content) {
     const btn = document.getElementById('dev-plus-btn');
     const menu = document.getElementById('dev-plus-menu');
     if (!btn || !menu) return;
+    AppView._plusMenuAbort?.abort();
+    const ac = new AbortController();
+    AppView._plusMenuAbort = ac;
+    const { signal } = ac;
     const close = () => {
       menu.classList.add('hidden');
       btn.setAttribute('aria-expanded', 'false');
@@ -3601,18 +3634,21 @@ const AppView = {
       if (PlatformUI.isTouch()) {
         AppView.refreshDevChatSecretsState();
         // In DOM order, so the two group headings arrive between the rows
-        // they head rather than being dropped on the touch path — the
-        // sheet has no heading primitive, so a heading is a row whose
-        // handler does nothing. Gated by omission everywhere else in this
-        // codebase; `disabled: true` is not used because the kit drops
-        // disabled rows entirely.
+        // they head rather than being dropped on the touch path.
+        //
+        // The sheet HAS a heading primitive now (`{ heading: true }`, see
+        // usernode-native/v1/native.js), so a group label is a real header
+        // with a rule above it. It used to be a row whose handler did
+        // nothing, labelled `— Build a change —`: same weight and ink as the
+        // actions around it, and tappable, so the dashes were the only thing
+        // saying it was not a choice.
         const nodes = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'));
         PlatformUI.actionSheet({
           actions: nodes.map((node) => {
             if (!node.hasAttribute('data-plus')) {
               return {
-                label: `— ${node.textContent.replace(/\s+/g, ' ').trim()} —`,
-                handler: () => {},
+                heading: true,
+                label: node.textContent.replace(/\s+/g, ' ').trim(),
               };
             }
             return {
@@ -3628,12 +3664,12 @@ const AppView = {
       // Refresh the App secrets item's "N required missing" state only
       // when the menu actually opens — no fetch on every card-list mount.
       if (open) AppView.refreshDevChatSecretsState();
-    });
-    // Outside-click dismiss, scoped to the dev view's lifetime (the
-    // listener dies with the content innerHTML on the next render).
+    }, { signal });
+    // Outside-click dismiss. Scoped to the signal above, NOT to the content
+    // node's lifetime — see the note on this method.
     content.addEventListener('click', (e) => {
       if (!e.target.closest('#dev-plus-menu, #dev-plus-btn')) close();
-    });
+    }, { signal });
     // proposal/issue/rename/secrets render together in the non-read-only
     // block; members is conditional within it (see _plusMenuShowsMembers),
     // so its handler needs an existence check like fork's.
@@ -3642,7 +3678,7 @@ const AppView = {
       proposalBtn.addEventListener('click', () => {
         close();
         AppView.createProposal();
-      });
+      }, { signal });
     }
     // "Propose with Claude Code or Codex" USED to be a second row here
     // (#1049), opening the same session straight onto the flow picker. It
@@ -3659,7 +3695,7 @@ const AppView = {
       importPrBtn.addEventListener('click', () => {
         close();
         AppView.openImportPrModal();
-      });
+      }, { signal });
     }
     const issueBtn = menu.querySelector('[data-plus="issue"]');
     if (issueBtn) {
@@ -3669,35 +3705,35 @@ const AppView = {
         // the open app is preselected as the target (Platform for the
         // self-hosted app or while the repo doesn't exist yet) — #226.
         App.openFeedbackModal({ fromDev: true });
-      });
+      }, { signal });
     }
     const membersBtn = menu.querySelector('[data-plus="members"]');
     if (membersBtn) {
       membersBtn.addEventListener('click', () => {
         close();
         AppView.openMembersModal();
-      });
+      }, { signal });
     }
     const renameBtn = menu.querySelector('[data-plus="rename"]');
     if (renameBtn) {
       renameBtn.addEventListener('click', () => {
         close();
         AppView.promptRename();
-      });
+      }, { signal });
     }
     const secretsBtn = menu.querySelector('[data-plus="secrets"]');
     if (secretsBtn) {
       secretsBtn.addEventListener('click', () => {
         close();
         if (window.Secrets) Secrets.openForCurrentApp();
-      });
+      }, { signal });
     }
     const forkBtn = menu.querySelector('[data-plus="fork"]');
     if (forkBtn) {
       forkBtn.addEventListener('click', () => {
         close();
         AppView.promptFork();
-      });
+      }, { signal });
     }
   },
 

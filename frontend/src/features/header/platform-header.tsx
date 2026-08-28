@@ -227,10 +227,44 @@ export function PlatformHeader() {
           from this bar and from #landing-header together. Parity is the
           invariant, not the number: both bars lost the same pixel.
       */}
+      {/*
+          THE BAR'S OWN SURFACE, and why it is zinc-200 rather than the
+          zinc-50 every control on it uses.
+
+          The bar was transparent until now: the body ground (zinc-100
+          #eaeaea light, zinc-950 #0b0b0c dark — frontend/scripts/build-shell.mjs)
+          ran straight through it. Giving it a surface has to clear the trap
+          the BACK_BTN_CLASS comment above describes from the other side: the
+          discs on this bar are zinc-50, so painting the bar zinc-50 would
+          make all three of them vanish into it, which is the #eaeaea bug
+          again with the operands swapped. zinc-200 (#e3e3e6) goes the other
+          way — a shade DARKER than the page ground, so the bar reads as its
+          own surface, and the zinc-50 discs still lift off it. Dark mode is
+          the same relationship every sheet already uses (zinc-900 on
+          zinc-950; cf. notifications-sheet.tsx, anchored-panel.tsx).
+
+          `rounded-b-lg` + `-mb-1` is the "eats into the app area" corner: an
+          8px radius curves the bar's bottom corners away so the page ground
+          shows through the two notches, and a 4px overlap onto the next
+          sibling puts that curve slightly INSIDE the area below, which is
+          what makes the content read as having rounded top corners. The
+          overlap is deliberately half the radius: every screen root below
+          opens with its own padding, so 4px comes out of that padding rather
+          than off the top of a card, and nothing is clipped at rest.
+          `z-10` is load-bearing — #home-screen and #messages-screen set
+          `position:relative` with z-index:auto, so without it two positioned
+          siblings paint in DOM order and the screen wins.
+
+          No `overflow-hidden` here, ever: see the badge rule in app.css and
+          tests/header-height-parity.test.js. Height is untouched — the radius
+          and the negative margin are both outside the border-box padding
+          contract that tests/header-height-parity.test.js pins.
+      */}
       <header
         ref={headerRef}
         id="platform-header"
-        className="un-safe-top-extend relative flex items-center gap-4 px-4 py-3 shrink-0"
+        className={'un-safe-top-extend relative z-10 flex items-center gap-4 px-4 py-3 shrink-0'
+          + ' bg-zinc-200 dark:bg-zinc-900 rounded-b-lg -mb-1'}
       >
         {/*
             The LEFT group: the back chevron when there is somewhere to go

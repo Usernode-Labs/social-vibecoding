@@ -974,10 +974,35 @@ html.un-kb .platform-safe-sheet {
    and the signal bars, which is the one place the gap exists to prevent. The
    fallback keeps desktop and any browser without the env() unchanged. */
 .platform-sheet-adopted#improve-panel,
-.platform-sheet-adopted#apps-switcher-sheet,
-.platform-sheet-adopted#notifications-sheet,
 .platform-sheet-adopted#messages-sheet {
   max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem) !important;
+}
+
+/* The app menu stops at 80%, matching its no-kit rule above: it is a short
+   list of destinations, and a menu that climbs to the status bar reads as a
+   screen you have navigated to rather than something laid over the page. */
+.platform-sheet-adopted#apps-switcher-sheet {
+  max-height: min(80dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem)) !important;
+}
+
+/* THE BELL IS A FIXED TWO THIRDS, and that is the whole point of it.
+   Every other surface here is `height:auto` under a cap, so it is as tall as
+   whatever it happens to contain. On the notifications sheet that content
+   changes under the viewer's feet: Unread, All and Messages are three filters
+   over one list, so switching tabs re-sized the sheet — a two-row Unread tab
+   was a short sheet and All was a tall one, and the kit seeds its slide-up
+   spring from a single measurement at present time (lib/sheet-controller.js),
+   so the panel jumped rather than resized. A definite height takes the
+   content out of the decision entirely: the sheet is the same object on all
+   three tabs and only the rows inside it change. The inner scroller
+   (`flex-1 min-h-0` on the row list) already handles the overflow this
+   creates on a full All tab.
+   `height` has to beat `height: auto !important` above, hence the
+   !important, and the min() keeps the safe-area ceiling for a short viewport
+   where two thirds would still reach the status bar. */
+.platform-sheet-adopted#notifications-sheet {
+  height: min(66dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem)) !important;
+  max-height: none !important;
 }
 
 /* THE KIT'S DRAG WOULD OTHERWISE EAT THE SCROLL.
@@ -1098,6 +1123,35 @@ html.un-ios.in-native-webview[data-un-vt="pop"]::view-transition-new(root) {
   html.un-ios.in-native-webview[data-un-vt]::view-transition-new(root) {
     animation: none;
   }
+}
+
+/* ── The top bar does not travel with the page ────────────────────────────
+   Switching apps from the header chip animates `::view-transition-*(root)`,
+   and the root snapshot is the WHOLE document — the header included. So the
+   bar slid out to the left and a second copy slid in from the right, while
+   every control on it stayed in exactly the same place before and after. The
+   only thing that actually changed was the app window underneath.
+
+   Naming the header hoists it out of the root snapshot into a group of its
+   own, and killing that group's animation pins it. The bar stays put and the
+   push/pop cue is left to the content, which is the thing that moved.
+
+   Two details this depends on:
+     - #platform-header paints an opaque background (see platform-header.tsx).
+       A named group is composited ABOVE ::view-transition-group(root), so a
+       transparent bar would have the sliding page showing through it.
+     - The name has to be unique per capture. #platform-header is a single
+       element in the shell and #landing-header is a different id on a shell
+       that never coexists with it, so there is exactly one at any capture.
+
+   Reduce Motion needs no branch here: this rule REMOVES animation, and the
+   kit's own `animation: none` under prefers-reduced-motion still governs the
+   root group. */
+#platform-header {
+  view-transition-name: platform-header;
+}
+html[data-un-vt]::view-transition-group(platform-header) {
+  animation: none;
 }
 
 /* Infinite decorative effects keep compositing even when the user is idle.
@@ -7018,13 +7072,26 @@ a.drawer-ver--fork:hover {
    bottom sheet below it, a real kit sheet on touch — and the same
    always-mounted / data-open mechanics; read that block's comment for
    the reasoning, which transfers wholesale. */
+/* SIZED BY ITS CONTENT, not by the viewport. This was `top:0; bottom:0` — a
+   full-height rail — and #switcher-nav is the column's only `flex-1` child, so
+   with a definite 100dvh to divide up the nav grew to soak up everything the
+   rows did not use. On an account with a handful of destinations that is a
+   panel whose bottom half is empty, which is the "extra blank space at the
+   bottom" this fixes. Hanging it from the top with `bottom:auto` leaves the
+   height indefinite, `flex-1` then resolves against content, and the panel
+   stops where its last row does; the cap keeps a long list scrollable inside
+   its own nav rather than running off-screen. The bottom-left radius is what
+   the old rule had no use for — a rail that reaches the floor has no corner
+   there, and a panel that stops short does. */
 #apps-switcher-sheet {
   top: 0;
   right: 0;
-  bottom: 0;
+  bottom: auto;
+  max-height: 100dvh;
   width: 20rem;
   max-width: 85vw;
   border-left-width: 1px;
+  border-bottom-left-radius: 1rem;
   transform: translateX(100%);
 }
 #apps-switcher-sheet[data-open] {
@@ -7050,17 +7117,22 @@ a.drawer-ver--fork:hover {
     bottom: 0;
     width: auto;
     max-width: none;
-    /* GROWS WITH ITS CONTENT, up to nearly the whole screen. A short sheet is
-       short; a long one climbs to this cap and then its own scroller takes
-       over (see .nav-sheet-scroll below). 3rem of ground stays visible so the
-       thing still reads as an overlay rather than a screen. `dvh`, not `vh`:
-       a mobile browser's collapsing toolbar must not push the foot of the
-       sheet under itself. */
-    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
+    /* GROWS WITH ITS CONTENT, up to a cap. A short sheet is short; a long one
+       climbs to this cap and then its own scroller takes over (see
+       .nav-sheet-scroll below). `dvh`, not `vh`: a mobile browser's collapsing
+       toolbar must not push the foot of the sheet under itself.
+       The cap used to be "nearly the whole screen" (3rem of ground showing),
+       and a full app strip plus the destination rows reached it — a menu that
+       comes up far enough to read as a screen rather than as an overlay. The
+       `min()` keeps that safe-area subtraction as a ceiling while holding the
+       sheet to 80% of the viewport, so the page behind it stays visible. */
+    max-height: min(80dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem));
     border-left-width: 0;
     border-top-width: 1px;
     border-top-left-radius: 1rem;
     border-top-right-radius: 1rem;
+    /* Undo the wide rule's corner: this presentation sits ON the floor. */
+    border-bottom-left-radius: 0;
     transform: translateY(100%);
   }
   #apps-switcher-sheet[data-open] {
@@ -7118,9 +7190,14 @@ a.drawer-ver--fork:hover {
     width: auto;
     max-width: none;
     /* `dvh`, not `vh`: a mobile browser's collapsing toolbar must not push
-       the foot of the sheet under itself. 3rem of ground stays visible so
-       the thing still reads as an overlay rather than a screen. */
-    height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
+       the foot of the sheet under itself.
+       Two thirds, matching the kit-adopted rule near the top of this file —
+       see the note there for why the bell in particular gets a DEFINITE
+       height rather than a cap. This was very nearly full-screen (3rem of
+       ground), which made the sheet a de-facto screen; the same number on
+       both paths is what keeps the surface one object at every width. The
+       min() preserves the old safe-area ceiling on a short viewport. */
+    height: min(66dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem));
     border-left-width: 0;
     border-top-width: 1px;
     border-top-left-radius: 1rem;

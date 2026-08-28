@@ -1903,6 +1903,12 @@
       "expectText": "See older notifications"
     },
     {
+      "name": "The Messages tab pages older MESSAGES in place rather than jumping to All",
+      "path": "/?shot=notifications-messages&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] #notifications-see-older-messages",
+      "expectText": "See older message notifications"
+    },
+    {
       "name": "A proposal notification names the proposal, not a sentence about it",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990204\"]",

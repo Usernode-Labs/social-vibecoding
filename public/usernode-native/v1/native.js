@@ -3465,6 +3465,20 @@
       }
       var sheetAligned = menuHasIcons(actions);
       actions.forEach(function (action) {
+        // A SECTION HEADING, not an action. Callers whose menu is grouped —
+        // the dev board's "+" is the first — used to have nowhere to put a
+        // group label, so they passed it as an ordinary action with a no-op
+        // handler and dashes around the text to signal it was not tappable.
+        // It still looked and behaved like a row: same weight, same ink, and
+        // it took taps. This renders it as what it is, so the sheet can carry
+        // structure without every caller inventing its own punctuation.
+        if (action.heading) {
+          var head = document.createElement('div');
+          head.className = 'un-action-title un-action-section';
+          head.textContent = action.label || '';
+          card.appendChild(head);
+          return;
+        }
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'un-action-btn' + (action.destructive ? ' un-destructive' : '');
