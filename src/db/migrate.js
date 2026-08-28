@@ -8742,7 +8742,18 @@ async function seedStagingMyOpenPr(pool, config) {
             conflict_files = '["src/app.js","public/index.html"]'::jsonb,
             behind_main = 2,
             conflict_checked_at = NOW(),
-            pr_body = $2
+            pr_body = $2,
+            -- #1442: this fixture's conflict is an ATTEMPTED merge that
+            -- failed, so the predicted-conflict note must stand down for it.
+            -- Measured and clean says so; leaving it null would not.
+            mergeability = 'clean',
+            mergeability_files = '[]'::jsonb,
+            mergeability_files_complete = TRUE,
+            freshness_behind_by = 2,
+            freshness_ahead_by = 1,
+            checks_base_verdict = 'current',
+            checks_base_behind_by = 0,
+            freshness_checked_at = NOW() - INTERVAL '2 minutes'
       WHERE id = $1`,
     [sessionId, prBody]
   );
@@ -8766,6 +8777,74 @@ async function seedStagingMyOpenPr(pool, config) {
       state: 'behind',
       files: '[]',
       behind: 2,
+    },
+    // #1442 — the false-clean proposal, which is the whole issue in one
+    // card. `state: null` is load-bearing: NO merge has been attempted, so
+    // merge_conflict_state is empty and the only thing that knows this
+    // cannot merge is the freshness measurement. Before this shipped the
+    // card read "In vote · all checks passed" and nothing else. The seven
+    // paths are the real ones `git merge-tree` reported for PR #1431.
+    {
+      branch: 'staging-fixture/false-clean-conflict',
+      pr: 9203,
+      title: '[staging fixture] All checks passed, conflicts with main',
+      state: null,
+      files: '[]',
+      behind: 8,
+      fresh: {
+        mergeability: 'conflict',
+        files: JSON.stringify([
+          'dapp.json', 'public/js/app-view.js', 'public/js/merge-status.js',
+          'src/db/schema.sql', 'src/routes/votes.js', 'src/services/mcp-tools.js',
+          'src/services/visuals.js',
+        ]),
+        filesComplete: true,
+        behindBy: 8,
+        baseVerdict: 'superseded',
+        baseBehindBy: 12,
+        checkState: 'passing',
+      },
+    },
+    // #1442 — green checks earned against a main that has since moved. This
+    // one still merges, so it is the SOFT case: a sentence under the verdict
+    // and an "attention" pill, never a block.
+    {
+      branch: 'staging-fixture/checks-superseded-base',
+      pr: 9204,
+      title: '[staging fixture] Checks passed on an older main',
+      state: null,
+      files: '[]',
+      behind: 3,
+      fresh: {
+        mergeability: 'clean',
+        files: '[]',
+        filesComplete: true,
+        behindBy: 3,
+        baseVerdict: 'superseded',
+        baseBehindBy: 5,
+        checkState: 'passing',
+      },
+    },
+    // #1442 — GitHub could not be reached, so nothing is measured. 'unknown'
+    // is a real answer and must never read as clean; this fixture is how
+    // that renders.
+    {
+      branch: 'staging-fixture/freshness-unmeasured',
+      pr: 9205,
+      title: '[staging fixture] Freshness not measured yet',
+      state: null,
+      files: '[]',
+      behind: 0,
+      fresh: {
+        mergeability: 'unknown',
+        files: '[]',
+        filesComplete: null,
+        behindBy: null,
+        baseVerdict: 'unknown',
+        baseBehindBy: null,
+        checkState: 'passing',
+        error: 'GitHub API unreachable (staging fixture)',
+      },
     },
   ];
   for (const s of siblings) {
@@ -8798,6 +8877,36 @@ async function seedStagingMyOpenPr(pool, config) {
         [sibId, s.behind, s.state, s.files]
       );
     }
+    // #1442 — the freshness block, written in its own statement so the two
+    // pre-existing siblings above keep their INSERT verbatim. Every fixture
+    // gets a measurement: an unmeasured row is indistinguishable from a
+    // healthy one on the screen, which is exactly the bug, so "clean and
+    // current" is stated rather than left null.
+    const f = s.fresh || {
+      mergeability: 'clean', files: '[]', filesComplete: true,
+      behindBy: s.behind, baseVerdict: 'current', baseBehindBy: 0, checkState: null,
+    };
+    await pool.query(
+      `UPDATE chat_sessions
+          SET mergeability = $2,
+              mergeability_files = $3::jsonb,
+              mergeability_files_complete = $4,
+              freshness_behind_by = $5,
+              freshness_ahead_by = 1,
+              freshness_main_sha = 'f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1',
+              freshness_merge_base_sha = 'ba5eba5eba5eba5eba5eba5eba5eba5eba5eba5e',
+              checks_base_sha = 'ba5eba5eba5eba5eba5eba5eba5eba5eba5eba5e',
+              checks_base_verdict = $6,
+              checks_base_behind_by = $7,
+              freshness_checked_at = NOW() - INTERVAL '2 minutes',
+              freshness_error = $8,
+              check_state = COALESCE($9, check_state),
+              checks_checked_at = CASE WHEN $9 IS NULL THEN checks_checked_at
+                                       ELSE NOW() - INTERVAL '10 minutes' END
+        WHERE id = $1`,
+      [sibId, f.mergeability, f.files, f.filesComplete, f.behindBy,
+       f.baseVerdict, f.baseBehindBy, f.error || null, f.checkState || null]
+    );
     await pool.query(
       `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
        VALUES ($1, $2, 'yes', NOW() - INTERVAL '18 minutes')

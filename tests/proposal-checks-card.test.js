@@ -409,3 +409,77 @@ test('the board pins failing/error proposals above ordinary ones', () => {
   });
   assert.deepEqual(Array.from(calm.inReview, (e) => e.item.id), [11, 12, 10]);
 });
+
+// ── #1442: a green verdict earned against a base main has moved past ─────
+//
+// PR #1431 showed 412 of 412 checks passing. It was true, and it was
+// worthless: main had moved eight commits since the base those checks ran
+// against, and the proposal conflicted in seven files. Nothing on the screen
+// said so, because the only staleness the checks block could express was
+// "has this proposal's own head moved?" — and it had not.
+
+test('#1442 — a superseded base annotates the verdict without contradicting it', () => {
+  const AppView = makeAppView(ME);
+  const html = checksHtml(AppView, baseProposal({
+    check_state: 'passing',
+    test_results: [{ name: 'Home', path: '/', status: 'pass' }],
+    freshness: { checksBaseVerdict: 'superseded', checksBaseBehindBy: 8 },
+  }));
+  // The count is still the truth about the run.
+  assert.match(html, /1/);
+  assert.match(html, /8 commits ago/);
+  assert.match(html, /would no longer merge into/);
+  assert.match(html, /Syncing with main re-runs them/);
+});
+
+test('#1442 — the base note reads singular for one commit, and says nothing for none', () => {
+  const AppView = makeAppView(ME);
+  assert.match(
+    AppView._checksBaseNote({ freshness: { checksBaseVerdict: 'superseded', checksBaseBehindBy: 1 } }),
+    /1 commit ago/
+  );
+  // Superseded but by an unmeasured amount: still worth saying, without a
+  // number that would be a guess.
+  const vague = AppView._checksBaseNote({ freshness: { checksBaseVerdict: 'superseded' } });
+  assert.match(vague, /has since moved on/);
+  assert.doesNotMatch(vague, /commit/);
+});
+
+test('#1442 — a current base, an unknown one, and a legacy row stay silent', () => {
+  const AppView = makeAppView(ME);
+  for (const fresh of [
+    { checksBaseVerdict: 'current', checksBaseBehindBy: 0 },
+    { checksBaseVerdict: 'unknown', checksBaseBehindBy: null },
+    {},
+    null,
+  ]) {
+    assert.equal(AppView._checksBaseNote({ freshness: fresh }), null);
+  }
+  assert.equal(AppView._checksBaseNote({}), null, 'a row from before the column');
+
+  const html = checksHtml(AppView, baseProposal({
+    check_state: 'passing',
+    test_results: [{ name: 'Home', path: '/', status: 'pass' }],
+  }));
+  assert.doesNotMatch(html, /would no longer merge into/);
+});
+
+test('#1442 — the note reads flat columns too, not only the nested block', () => {
+  const AppView = makeAppView(ME);
+  // The serializers attach `freshness`, but a row that came from a SELECT
+  // straight off chat_sessions carries the columns. Both must answer.
+  assert.match(
+    AppView._checksBaseNote({ checks_base_verdict: 'superseded', checks_base_behind_by: 3 }),
+    /3 commits ago/
+  );
+});
+
+test('#1442 — the base note has no em dashes (it is copy a voter reads)', () => {
+  const AppView = makeAppView(ME);
+  const note = AppView._checksBaseNote({
+    freshness: { checksBaseVerdict: 'superseded', checksBaseBehindBy: 8 },
+  });
+  for (const dash of ['—', '&mdash;', '&#8212;']) {
+    assert.ok(!note.includes(dash), `no em dash (${dash})`);
+  }
+});

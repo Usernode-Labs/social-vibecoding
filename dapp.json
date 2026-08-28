@@ -2271,6 +2271,42 @@
       "expectText": "Preview unavailable"
     },
     {
+      "name": "Freshness (#1442): a proposal that conflicts with main says so on its detail screen",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
+      "expectSelector": "#gc-thread-head [data-note=\"mergeability\"]",
+      "expectText": "This proposal no longer merges into main on its own."
+    },
+    {
+      "name": "Freshness (#1442): the predicted conflict names the files changed on both sides",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
+      "expectSelector": "[data-note=\"mergeability\"] li.font-mono",
+      "expectText": "Changed on both sides:"
+    },
+    {
+      "name": "Freshness (#1442): a conflicting proposal shows a blocked pill, not a plain tally",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
+      "expectSelector": ".gc-vote-count-blocked",
+      "expectText": "Conflicts with main"
+    },
+    {
+      "name": "Freshness (#1442): checks that passed on a superseded base are annotated, not contradicted",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000035",
+      "expectSelector": "[data-checks-base=\"superseded\"]",
+      "expectText": "would no longer merge into"
+    },
+    {
+      "name": "Freshness (#1442): an unmeasured proposal renders with no conflict claim",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000036",
+      "expectSelector": "#gc-thread-head .gc-vote-count",
+      "expectText": "freshness not measured yet"
+    },
+    {
+      "name": "Freshness (#1442): behind-but-clean stays a caption and keeps the vote tally visible",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000033",
+      "expectSelector": "#gc-thread-head .gc-vote-count-attention",
+      "expectText": "Behind main \u00b7 8 \u00b7 2/3"
+    },
+    {
       "name": "A failed imported preview offers Retry preview (#866)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/dev",
       "expectText": "Retry preview",

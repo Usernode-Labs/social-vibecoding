@@ -23,6 +23,33 @@
     return Number.isFinite(n) ? n : 0;
   }
 
+  // #1442 — the freshness measurement, read out of whichever shape the
+  // caller's row carries: the flat columns /promoted sends, or the nested
+  // camelCase block the API clients get. Kept local rather than borrowing
+  // AppView._freshnessOf because this module loads BEFORE app-view.js and is
+  // unit-tested on its own under Node.
+  function freshOf(p) {
+    var f = (p && p.freshness && typeof p.freshness === 'object') ? p.freshness : {};
+    var mergeability = (p && p.mergeability) || f.mergeability || null;
+    // The measured count beats the column frozen at submission. That column
+    // reading 0 while a proposal was eight commits behind is the failure
+    // #1442 reported.
+    var behind = null;
+    var cands = [p && p.freshness_behind_by, f.behindBy, p && p.behind_main];
+    for (var i = 0; i < cands.length; i++) {
+      var v = cands[i];
+      if (v === null || v === undefined || v === '') continue;
+      var n = parseInt(v, 10);
+      if (Number.isFinite(n)) { behind = n; break; }
+    }
+    return {
+      mergeability: mergeability,
+      behind: behind || 0,
+      files: Array.isArray(f.mergeabilityFiles) ? f.mergeabilityFiles
+        : (Array.isArray(p && p.mergeability_files) ? p.mergeability_files : []),
+    };
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -58,7 +85,8 @@
 
     var status = p.status;
     var mcs = p.merge_conflict_state;
-    var behind = num(p.behind_main);
+    var fresh = freshOf(p);
+    var behind = fresh.behind;
     var check = p.check_state;
 
     // #695: the per-row votes_required — the governed gate's
@@ -125,6 +153,23 @@
         title: 'A merge was attempted but this proposal conflicts with main. '
           + 'The proposal\u2019s creator needs to finish the merge from their dev session ("Sync with main").',
       });
+    }
+    // 4c (#1442) — GitHub predicts the NEXT merge will conflict. States 4/4b
+    // above are both records of an attempt that already happened, and a
+    // proposal collecting votes has had no attempt yet: proposal 3590 sat
+    // here for its whole life reading "In vote · checks passing" while it
+    // conflicted with main in seven files. Ranked under the attempted states
+    // (an attempt is a fact, this is a prediction) and over the checks
+    // states, because green checks on a proposal that cannot merge are
+    // exactly the reassurance the issue was about.
+    if (fresh.mergeability === 'conflict') {
+      var nf = fresh.files.length;
+      return descriptor('mergeability_conflict',
+        nf ? 'Conflicts with main · ' + nf : 'Conflicts with main', 'red', false, {
+          glyph: '⚠', votes: votes,
+          title: 'Main has moved on and this proposal no longer merges on its own. '
+            + 'The proposal\u2019s creator needs to bring it up to date from their dev session ("Sync with main").',
+        });
     }
     // 5a — the staging preview itself couldn't boot, so checks never ran
     // (#237). Distinct from a test failure: nothing was even exercised. Red,

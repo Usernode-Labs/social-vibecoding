@@ -79,9 +79,14 @@ test('the block is rendered next to the checks block', () => {
   // The head builds an ORDERED list of detail blocks now (see
   // `_proposalDetailsView`) instead of concatenating three strings; the
   // ordering contract it encodes is the same one this pinned.
+  // #1442 added a fourth block to the run — the PREDICTED conflict, which
+  // sits between the attempted one and the checks because it answers the
+  // same question earlier. The contract this pins is the grouping, not the
+  // exact count, so the merge-blocking notes are allowed to grow between
+  // the two anchors as long as they stay contiguous.
   assert.match(
     appViewJs,
-    /_mergeConflictNote\(pr\),\s*\n[^\n]*checks[^\n]*\n\s*AppView\._platformEnvNote\(pr\),/,
+    /_mergeConflictNote\(pr\),\s*\n(?:\s*AppView\._\w+\(pr\),\s*\n)*[^\n]*checks[^\n]*\n\s*AppView\._platformEnvNote\(pr\),/,
     'one place to look for "why can this not merge yet"'
   );
 });

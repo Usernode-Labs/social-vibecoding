@@ -3995,6 +3995,23 @@ const IMPORTED_HEAD_SYNC_COOLDOWN_MS = Math.max(
   30 * 1000
 );
 
+// #1442: the same shape again for the proposal-freshness pass (Pass 9). A
+// promoted proposal waiting on votes has no event that re-measures how far
+// behind main it is, whether it still merges cleanly, or whether the base its
+// checks passed against is still on main — so the numbers voters read were
+// whatever they had been at submission. This sweeper is the trigger that
+// keeps them true; the read-path refresh in services/proposal-freshness.js
+// only covers proposals somebody is actually looking at.
+//
+// Two GitHub calls per refreshed proposal (plus two more only when a conflict
+// needs locating), bounded by MAX_FRESHNESS_REFRESH_PER_SWEEP and this
+// cooldown rather than by the tick.
+const freshnessRefreshAttempts = new Map();
+const FRESHNESS_REFRESH_COOLDOWN_MS = Math.max(
+  parseInt(process.env.PROPOSAL_FRESHNESS_REFRESH_MS || String(5 * 60 * 1000), 10) || (5 * 60 * 1000),
+  60 * 1000
+);
+
 function startSessionAutoPauseSweeper(config) {
   if (sessionSweeperHandle) return;
   if (!config.sessionAutopauseIdleMs || config.sessionAutopauseIdleMs <= 0) {
@@ -4446,6 +4463,53 @@ function startSessionAutoPauseSweeper(config) {
       }
     } catch (err) {
       log.warn('server', 'Imported-PR head-sync sweep failed', { err: err.message });
+    }
+
+    // Pass 9: proposal freshness (#1442). Re-measure each promoted proposal
+    // against main so the three numbers on its card — behind-by, whether it
+    // still merges cleanly, and whether its checks' base is still current —
+    // stop being frozen at submission time. Everything the service writes is
+    // advisory except behind_main, which it writes through so the merge gate
+    // reads a current number instead of a stale one.
+    //
+    // Candidate order puts never-checked rows first, then the least recently
+    // checked. Rows whose recorded main sha no longer matches the app's are
+    // pulled to the front of that: main moving is exactly the event that
+    // invalidates all three answers, so a proposal that has demonstrably gone
+    // stale is measured before one that has merely aged.
+    try {
+      const freshness = require('./src/services/proposal-freshness');
+      const gh = require('./src/services/github');
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.main_sha AS app_main_sha
+           FROM chat_sessions cs
+           JOIN apps a ON cs.app_id = a.id
+          WHERE cs.status = 'promoted'
+            AND a.repo_url IS NOT NULL
+            AND cs.pr_number IS NOT NULL
+          ORDER BY (a.main_sha IS NOT NULL AND a.main_sha IS DISTINCT FROM cs.freshness_main_sha) DESC,
+                   cs.freshness_checked_at ASC NULLS FIRST
+          LIMIT 50`
+      );
+      const MAX_FRESHNESS_REFRESH_PER_SWEEP = 10;
+      let refreshed = 0;
+      for (const session of rows) {
+        if (refreshed >= MAX_FRESHNESS_REFRESH_PER_SWEEP) break;
+        // A session mid-turn is about to move its own head; measuring it now
+        // would record an answer that is wrong by the time it is written.
+        if (worker.isInFlight(session.id)) continue;
+        const last = freshnessRefreshAttempts.get(session.id) || 0;
+        if (Date.now() - last < FRESHNESS_REFRESH_COOLDOWN_MS) continue;
+        // Stamp before the work, exactly as Pass 6 does, so a tick landing
+        // during a slow GitHub round trip cannot start a duplicate.
+        freshnessRefreshAttempts.set(session.id, Date.now());
+        refreshed++;
+        // refreshFreshness never throws; the try is for the require/lookup.
+        await freshness.refreshFreshness({ gh, pool }, session, { force: true });
+      }
+      if (refreshed) log.info('server', 'Refreshed proposal freshness', { count: refreshed });
+    } catch (err) {
+      log.warn('server', 'Proposal-freshness sweep failed', { err: err.message });
     }
 
     // Pass 7: stale-env preview teardown (#851). The counterpart to Pass 3:

@@ -6933,9 +6933,14 @@ const AppView = {
     // — a reader scanning a blocked proposal reads them top to bottom. A
     // proposal has EITHER a checks verdict or a checks status note, never
     // both, so the middle slot is one entry either way.
+    //
+    // #1442 adds the predicted conflict directly under the attempted one:
+    // same class of problem, same remedy, and at most one of the two ever
+    // renders (_mergeabilityNote stands down for a real attempt).
     const verdict = AppView._checksVerdictView(pr);
     const blocks = [
       AppView._mergeConflictNote(pr),
+      AppView._mergeabilityNote(pr),
       ...(verdict ? [{ t: 'checks', v: verdict }] : AppView._checksStatusNotes(pr)),
       AppView._platformEnvNote(pr),
     ].filter(Boolean).map((b) => (b.t === 'checks' ? b : { t: 'note', box: b }));
@@ -7033,13 +7038,19 @@ const AppView = {
       blocker = 'automatic conflict resolution failed, so the proposer must resolve it before it can merge';
     } else if (mcs === 'resolving' || pr.resolving === true) {
       blocker = 'conflicts with the main app are being reconciled automatically before it can merge';
+    // #1442 — above the checks clause on purpose. A proposal that conflicts
+    // with main cannot merge whatever its checks say, and the whole point of
+    // the issue is that passing checks were the loudest thing on the screen
+    // while this was true and invisible.
+    } else if (AppView._freshnessOf(pr).mergeability === 'conflict') {
+      blocker = 'it conflicts with the main app, so its creator has to sync with main and resolve them before it can merge';
     } else if (check === 'failing') {
       blocker = 'its automated checks are failing, so it can’t merge until they pass';
     } else if (check === 'pending') {
       blocker = 'its automated checks are still running, so it can’t merge until they finish';
     } else if (check === 'error') {
       blocker = 'its automated checks couldn’t run, so it can’t merge until they pass';
-    } else if ((parseInt(pr.behind_main, 10) || 0) > 0 || mcs === 'behind' || mcs === 'conflict') {
+    } else if ((AppView._freshnessOf(pr).behindBy || 0) > 0 || mcs === 'behind' || mcs === 'conflict') {
       blocker = 'it’s behind the main app and will sync automatically before merging';
     } else if (reached && ctx.locked) {
       blocker = 'the app is locked, so it also needs an admin’s Yes';
@@ -7272,6 +7283,60 @@ const AppView = {
       heading: mcs === 'failed'
         ? 'Automatic conflict resolution failed.'
         : 'A merge was attempted, but this proposal conflicts with main.',
+      rows,
+    };
+  },
+
+  // #1442 — the conflict nobody has hit yet. _mergeConflictNote above is a
+  // record of an ATTEMPTED merge that failed; this is GitHub's prediction
+  // that the next one will, made while the proposal is still collecting
+  // votes. That gap is the whole issue: proposal 3590 showed every check
+  // green and no conflict note for the entire time it was unmergeable,
+  // because nothing had tried to merge it yet.
+  //
+  // The real attempt outranks the prediction, so this returns null whenever
+  // _mergeConflictNote is rendering. 'unknown' is not rendered at all: GitHub
+  // computes mergeability lazily and reports nothing meanwhile, so a note
+  // saying so would fire on ordinary healthy proposals for a few seconds.
+  _mergeabilityNote(pr) {
+    if (!pr) return null;
+    const fresh = AppView._freshnessOf(pr);
+    if (fresh.mergeability !== 'conflict') return null;
+    const mcs = pr.merge_conflict_state;
+    if (mcs === 'failed' || mcs === 'conflict' || pr.resolving) return null;
+
+    const creator = pr.username || 'the proposal’s creator';
+    const rows = [{
+      t: 'line',
+      parts: ['Main has moved on since this was written, and the two changes touch the same lines. It cannot merge until somebody reconciles them.'],
+    }];
+    if (fresh.files.length) {
+      rows.push({ t: 'line', parts: ['Changed on both sides:'] });
+      rows.push({
+        t: 'list', cls: 'mt-0.5 ml-3 list-disc space-y-0.5',
+        items: fresh.files.slice(0, 20).map((f) => ({ mono: true, text: String(f) })),
+      });
+      // Both-sides-changed is an upper bound on the conflict, not the
+      // conflict: two edits at opposite ends of one file land here and
+      // merge fine. Saying so keeps the list from reading as a verdict.
+      rows.push({
+        t: 'line', weight: 'foot',
+        parts: [fresh.filesComplete === false
+          ? 'That is a sample of the files, and some of them may merge cleanly.'
+          : 'Some of those may still merge cleanly. They are where to look first.'],
+      });
+    }
+    if (fresh.checkedAt) {
+      rows.push({ t: 'line', parts: [`Checked ${relTime(fresh.checkedAt)}.`], weight: 'foot' });
+    }
+    rows.push({
+      t: 'line', weight: 'foot',
+      parts: [{ b: creator }, ' needs to bring it up to date: open the session’s dev-chat and run "Sync with main".'],
+    });
+    return {
+      key: 'mergeability',
+      tone: 'error',
+      heading: 'This proposal no longer merges into main on its own.',
       rows,
     };
   },
@@ -7549,11 +7614,30 @@ const AppView = {
         ? 'Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.'
         : null,
       checkedNote: pr.checks_checked_at ? `Last checked ${relTime(pr.checks_checked_at)}.` : null,
+      // #1442 — WHICH main the verdict is a statement about. `stale` above
+      // answers the other axis (has the proposal's own head moved since);
+      // this one answers "green against what?", and green against a main
+      // that has since moved is how a proposal reads mergeable while it
+      // conflicts. Only rendered when it is actually superseded: 'current'
+      // is the ordinary case and needs no sentence.
+      baseNote: AppView._checksBaseNote(pr),
       fixNote: failing
         ? 'Pushing a fix rebuilds the preview and re-runs the checks. The block clears when they pass.'
         : null,
       action: failing ? AppView._recheckAction(pr) : null,
     };
+  },
+
+  // #1442 — one sentence for a verdict earned against a superseded base.
+  // Shared by the verdict view and the status notes so the two can never
+  // word it differently.
+  _checksBaseNote(pr) {
+    const fresh = AppView._freshnessOf(pr);
+    if (fresh.baseVerdict !== 'superseded') return null;
+    const n = fresh.baseBehindBy || 0;
+    return n
+      ? `These ran against main as it was ${n} commit${n === 1 ? '' : 's'} ago, so they describe code this proposal would no longer merge into. Syncing with main re-runs them against the current one.`
+      : 'These ran against a version of main that has since moved on, so they describe code this proposal would no longer merge into. Syncing with main re-runs them against the current one.';
   },
 
   PASS_FOLD_AT: 8,
@@ -10590,9 +10674,47 @@ const AppView = {
   // single label from. Each entry is { key, label, detail } — `label` is the
   // pill wording, `detail` the sentence the detail view spells out. Empty
   // array = nothing is blocking. Pure; no DOM, no state reads.
+  // #1442 — one reader for the freshness block, because the same numbers
+  // arrive in two shapes: the flat snake_case columns /promoted has always
+  // sent (app-view.js reads those directly), and the nested camelCase
+  // `freshness` object the same route now nests beside them for the API
+  // clients. Neither is authoritative over the other; a row is simply
+  // whichever the caller had. Everything is nullable, and null means NOT
+  // MEASURED, which is never the same as measured-and-fine.
+  _freshnessOf(pr) {
+    const p = pr || {};
+    const f = (p.freshness && typeof p.freshness === 'object') ? p.freshness : {};
+    const num = (a, b) => {
+      for (const v of [a, b]) {
+        if (v === null || v === undefined || v === '') continue;
+        const n = parseInt(v, 10);
+        if (!Number.isNaN(n)) return n;
+      }
+      return null;
+    };
+    const files = Array.isArray(f.mergeabilityFiles) ? f.mergeabilityFiles
+      : (Array.isArray(p.mergeability_files) ? p.mergeability_files : []);
+    const complete = f.mergeabilityFilesComplete !== undefined && f.mergeabilityFilesComplete !== null
+      ? f.mergeabilityFilesComplete : p.mergeability_files_complete;
+    return {
+      checkedAt: f.checkedAt || p.freshness_checked_at || null,
+      mergeability: p.mergeability || f.mergeability || null,
+      files: files.filter((x) => typeof x === 'string'),
+      filesComplete: complete === undefined ? null : complete,
+      baseVerdict: p.checks_base_verdict || f.checksBaseVerdict || null,
+      baseBehindBy: num(p.checks_base_behind_by, f.checksBaseBehindBy),
+      // The measured count wins over the column frozen at submission, which
+      // is the whole point of #1442. `behind_main` is the last fallback, and
+      // it is still what the merge gate reads.
+      behindBy: num(num(p.freshness_behind_by, f.behindBy), p.behind_main),
+      error: f.error || p.freshness_error || null,
+    };
+  },
+
   blockReasons(pr) {
     const p = pr || {};
     const out = [];
+    const fresh = AppView._freshnessOf(p);
     // Merge-pipeline conflicts: a real attempt failed and a human is needed.
     if (p.merge_conflict_state === 'failed') {
       out.push({
@@ -10605,6 +10727,27 @@ const AppView = {
         key: 'merge_conflict',
         label: 'Merge conflict',
         detail: 'A merge was attempted but this proposal conflicts with main. Its creator needs to finish the merge from their dev session ("Sync with main").',
+      });
+    }
+    // #1442 — GitHub's PREDICTION that this proposal no longer merges, made
+    // before any merge is attempted, so it fires while merge_conflict_state
+    // is still null. That is the case this exists for: proposal 3590 sat at
+    // 412 of 412 checks passing and conflicted with main in seven files, and
+    // nothing on the screen said so. Ranked with the pipeline conflicts
+    // above because it is the same problem for the reader (a human has to
+    // resolve something), and skipped when one of those already fired: an
+    // attempted merge that failed beats a prediction about one.
+    if (fresh.mergeability === 'conflict'
+        && p.merge_conflict_state !== 'failed' && p.merge_conflict_state !== 'conflict') {
+      const n = fresh.files.length;
+      const shown = fresh.files.slice(0, 6);
+      const more = n > shown.length ? ` and ${n - shown.length} more` : '';
+      out.push({
+        key: 'mergeability_conflict',
+        label: n ? `Conflicts with main · ${n}` : 'Conflicts with main',
+        detail: n
+          ? `This proposal no longer merges into main on its own. Its creator needs to sync with main and resolve the conflicts from their dev session ("Sync with main"). Changed on both sides: ${shown.join(', ')}${more}.${fresh.filesComplete === false ? ' That list is a sample, not the whole set.' : ''}`
+          : 'This proposal no longer merges into main on its own. Its creator needs to sync with main and resolve the conflicts from their dev session ("Sync with main").',
       });
     }
     // Checks: the real merge gate.
@@ -10630,7 +10773,11 @@ const AppView = {
     }
     // Behind main resolves itself, so it is the mildest blocking reason —
     // last in the list and rendered `attention` rather than `blocked`.
-    const behind = parseInt(p.behind_main, 10) || 0;
+    //
+    // #1442: the count comes from the freshness measurement now, not from
+    // the `behind_main` column frozen when the proposal was submitted. A
+    // proposal that read "0" for eight commits is what this fixes.
+    const behind = fresh.behindBy || 0;
     if (behind > 0 || p.merge_conflict_state === 'behind') {
       out.push({
         key: 'behind',
@@ -10638,6 +10785,22 @@ const AppView = {
         detail: behind
           ? `This proposal is ${behind} commit${behind === 1 ? '' : 's'} behind main. Syncing automatically, then it retries the merge.`
           : 'This proposal is behind main. Syncing automatically, then it retries the merge.',
+        soft: true,
+      });
+    }
+    // #1442 — the checks passed, but against a main that has since moved, so
+    // the verdict describes code this proposal would no longer merge into.
+    // Soft on purpose: it does not block the merge and it does not mean the
+    // checks were wrong. It is the sentence that explains how a proposal can
+    // be green and conflicting at the same time.
+    if (fresh.baseVerdict === 'superseded' && p.check_state !== 'failing' && p.check_state !== 'error') {
+      const n = fresh.baseBehindBy || 0;
+      out.push({
+        key: 'checks_base_superseded',
+        label: n ? `Checks ran on older main · ${n}` : 'Checks ran on older main',
+        detail: n
+          ? `The checks passed, but they ran against main as it was ${n} commit${n === 1 ? '' : 's'} ago. They describe code this proposal would no longer merge into. Syncing with main re-runs them against the current one.`
+          : 'The checks passed, but they ran against a version of main that has since moved on. Syncing with main re-runs them against the current one.',
         soft: true,
       });
     }

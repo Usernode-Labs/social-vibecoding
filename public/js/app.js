@@ -1524,6 +1524,17 @@ const App = {
       }
       return;
     }
+    // #1442: freshness re-measurements. Same scoping argument as
+    // behind_main above (per-session, no list refetch), and it carries a
+    // behind_main of its own because the two numbers are now measured
+    // together — a proposal reading "0 behind" for eight commits was the
+    // failure the issue reported.
+    if (data.action === 'freshness') {
+      if (typeof DevChat !== 'undefined' && DevChat.applyFreshnessUpdate) {
+        DevChat.applyFreshnessUpdate(data);
+      }
+      return;
+    }
     // #252: sync-with-main lifecycle events drive the dev-chat sync
     // banner's spinner/phase text and terminal feedback. Scoped
     // per-session like behind_main — no list refetch needed.

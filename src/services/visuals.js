@@ -880,6 +880,19 @@ async function storeChecksSkipped(
 // `trigger` records WHY the run started (see CHECK_TRIGGERS). Written on
 // every stamp, including as NULL when the caller does not name one, so a
 // label can never outlive the run it described.
+//
+// #1442: this is also where checks_base_sha is stamped — the commit on main
+// that this run's verdict is a statement ABOUT. Nothing recorded it before,
+// which is why checks staleness could only ever be branch-scoped: "did the
+// branch move since the tests ran?" was answerable, "is what they ran
+// against still what this would merge into?" was not, and a proposal whose
+// 412 checks had passed against a long-superseded base read as ready.
+//
+// It comes from apps.main_sha (kept current by main-drift-poller) via a
+// subquery, so this stays one round trip and spends no GitHub call — every
+// existing caller gets it for free, which matters because there are a dozen
+// of them across six modules. COALESCE keeps the previous value when the app
+// row has no main_sha yet rather than blanking a good one.
 async function setChecksPending(pool, sessionId, commitSha, phase = null, trigger = null) {
   // $2 is spliced into both an assignment to checks_commit_sha (varchar) and
   // IS DISTINCT FROM comparisons (inferred text). Without the explicit ::text
@@ -896,6 +909,9 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null, trigge
            check_phase = $3::text,
            check_trigger = $4::text,
            check_next_retry_at = NULL,
+           checks_base_sha = COALESCE(
+             (SELECT a.main_sha FROM apps a WHERE a.id = chat_sessions.app_id),
+             checks_base_sha),
            consecutive_check_failures = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                              THEN 0 ELSE consecutive_check_failures END,
            first_check_failure_at  = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text

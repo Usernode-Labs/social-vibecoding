@@ -182,3 +182,90 @@ test('compact proposal cards do not render the full body', () => {
   assert.doesNotMatch(html, /Full proposal details/);
   assert.doesNotMatch(html, /UNIQUE FULL BODY COPY/);
 });
+
+// ── #1442: the freshness fixtures the proposal screens are reviewed from ──
+//
+// The screens this issue changes are only reachable when a proposal is in a
+// state production rarely holds still in: green checks against a superseded
+// base, a predicted conflict with no merge attempted, an unmeasured row. A
+// staging preview starts from an empty database for the new columns, so each
+// of those states is seeded rather than waited for.
+
+const FRESH_FIXTURE = (() => {
+  const start = MIGRATE_SRC.indexOf('async function seedStagingMyOpenPr');
+  return MIGRATE_SRC.slice(start, MIGRATE_SRC.indexOf('\nasync function ', start + 1));
+})();
+
+test('#1442 — the fixtures cover a false-clean conflict, a superseded base and an unmeasured row', () => {
+  assert.match(FRESH_FIXTURE, /staging-fixture\/false-clean-conflict/);
+  assert.match(FRESH_FIXTURE, /staging-fixture\/checks-superseded-base/);
+  assert.match(FRESH_FIXTURE, /staging-fixture\/freshness-unmeasured/);
+  // Every fixture row is labelled, so nothing seeded can be mistaken for a
+  // real proposal by a reviewer looking at the preview.
+  for (const m of FRESH_FIXTURE.matchAll(/title: '([^']+)'/g)) {
+    assert.match(m[1], /^\[staging fixture\]/, `${m[1]} names itself a fixture`);
+  }
+});
+
+test('#1442 — the false-clean fixture is a PREDICTION, with no merge attempted', () => {
+  const block = FRESH_FIXTURE.slice(
+    FRESH_FIXTURE.indexOf("staging-fixture/false-clean-conflict"),
+    FRESH_FIXTURE.indexOf('},', FRESH_FIXTURE.indexOf("baseVerdict: 'superseded'")) + 2
+  );
+  // The load-bearing part: merge_conflict_state stays null. Setting it would
+  // seed the OTHER box (a merge that was tried and failed), which is the box
+  // that already existed and is not what this issue is about.
+  assert.match(block, /state: null/);
+  assert.match(block, /files: '\[\]'/, 'and no attempted-conflict file list');
+  assert.match(block, /mergeability: 'conflict'/);
+  assert.match(block, /checkState: 'passing'/,
+    'green checks are the point: that is what made the stale proposal look ready');
+  assert.match(block, /behindBy: 8/);
+});
+
+test('#1442 — the unmeasured fixture reports its reason rather than a verdict', () => {
+  const block = FRESH_FIXTURE.slice(FRESH_FIXTURE.indexOf('staging-fixture/freshness-unmeasured'));
+  assert.match(block, /mergeability: 'unknown'/);
+  assert.match(block, /error: 'GitHub API unreachable \(staging fixture\)'/);
+});
+
+test('#1442 — pre-existing siblings default to measured and clean', () => {
+  // Without a default every older fixture row would render the new
+  // "conflicts with main" box, because null mergeability and a conflict are
+  // indistinguishable to a reviewer reading the screen.
+  assert.match(FRESH_FIXTURE, /const f = s\.fresh \|\| \{[\s\S]*?mergeability: 'clean'/);
+  assert.match(FRESH_FIXTURE, /baseVerdict: 'current', baseBehindBy: 0/);
+  // And the freshness snapshot is stamped recently enough that the on-demand
+  // TTL refresh does not immediately overwrite it with a GitHub call that
+  // cannot succeed against a fixture branch.
+  assert.match(FRESH_FIXTURE, /freshness_checked_at = NOW\(\) - INTERVAL '2 minutes'/);
+});
+
+test('#1442 — the main fixture is clean on purpose, so the two boxes stay distinct', () => {
+  const main = FRESH_FIXTURE.slice(0, FRESH_FIXTURE.indexOf('const siblings'));
+  assert.match(main, /mergeability = 'clean'/);
+  assert.match(main, /mergeability_files = '\[\]'::jsonb/);
+  assert.match(main, /checks_base_verdict = 'current'/);
+});
+
+test('#1442 — the ?demo=1 proposals cover the same four states', () => {
+  const mocks = VOTES_SRC.slice(VOTES_SRC.indexOf('function stagingMockProposals'));
+  for (const id of ['9000033', '9000034', '9000035', '9000036']) {
+    assert.ok(mocks.includes(id), `demo proposal ${id} is seeded`);
+  }
+  assert.match(mocks, /mergeability: 'conflict'/);
+  assert.match(mocks, /mergeability: 'unknown'/);
+  assert.match(mocks, /checks_base_verdict: 'superseded'/);
+});
+
+test('#1442 — every promoted row is serialized with its freshness snapshot', () => {
+  assert.match(
+    VOTES_SRC,
+    /for \(const row of rows\) row\.freshness = freshnessSvc\.readFreshness\(row\);/,
+    'the client reads one nested block, not twelve loose columns'
+  );
+  // Both list routes select the columns that block reads.
+  for (const col of ['cs.mergeability', 'cs.freshness_behind_by', 'cs.checks_base_verdict']) {
+    assert.ok(VOTES_SRC.includes(col), `${col} is selected`);
+  }
+});

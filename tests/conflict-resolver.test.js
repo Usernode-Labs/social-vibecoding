@@ -1319,3 +1319,30 @@ test('#391 regression: an all-blocked queue still resolves every PR, highest-vot
     restore();
   }
 });
+
+// ── #1442: the predicted verdict must not leak into the attempted one ────
+//
+// #1442 added `mergeability` — GitHub's PREDICTION about whether a proposal
+// would merge — alongside `merge_conflict_state`, which records that a merge
+// was actually attempted and failed. It was tempting to reuse the existing
+// column and save twelve new ones. This test is why that would have been
+// wrong: the resolver's `unblocked` SQL and the merge gate both read
+// merge_conflict_state as "we tried", and a prediction written into it would
+// have queued paid worker sync turns against every proposal GitHub happened
+// to be pessimistic about.
+test('#1442 — the resolver reads the attempted-merge column, never the prediction', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  for (const rel of [
+    '../src/services/conflict-resolver.js',
+    '../src/services/active-users.js',
+  ]) {
+    const src = fs.readFileSync(path.join(__dirname, rel), 'utf8');
+    // The COLUMN, not the word: both files discuss GitHub's mergeability at
+    // length in prose, and rightly so.
+    assert.ok(!/(?:cs|session|row|s)\.mergeability\b|mergeability(?:_files)?\s*=|mergeability_files/.test(src),
+      `${rel} must not consume the predicted verdict`);
+    assert.ok(!/freshness_behind_by/.test(src),
+      `${rel} reads behind_main, which the freshness pass writes through to`);
+  }
+});

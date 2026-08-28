@@ -77,7 +77,7 @@ function Spinner(): ReactNode {
 /** The shared bordered note — see ./model.ts's header for what it replaced. */
 export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
   return (
-    <div className={`mt-2 rounded border px-2 py-1.5 ${TONE[box.tone]}`}>
+    <div className={`mt-2 rounded border px-2 py-1.5 ${TONE[box.tone]}`} data-note={box.key}>
       <div className="font-medium">{box.spinner ? <Spinner /> : null}{box.heading}</div>
       {box.rows.map((r, i) => (r.t === 'list'
         ? (
@@ -157,6 +157,7 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
       ) : passList}
       {v.advisoryNote ? <div className="mt-1 opacity-80">{v.advisoryNote}</div> : null}
       {v.checkedNote ? <div className="mt-1 opacity-80">{v.checkedNote}</div> : null}
+      {v.baseNote ? <div className="mt-1 opacity-80" data-checks-base="superseded">{v.baseNote}</div> : null}
       {v.fixNote ? <div className="mt-1 opacity-80">{v.fixNote}</div> : null}
       {v.action ? <ActionButton a={v.action} /> : null}
     </div>
