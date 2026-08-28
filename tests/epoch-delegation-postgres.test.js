@@ -46,6 +46,10 @@ const POLICY_DDL = [
   extractTable('native_epoch_delegation_fences'),
   extractTable('native_epoch_delegation_policies'),
   extractTrigger(
+    'validate_native_epoch_policy_bindings',
+    'native_epoch_delegation_policy_bindings',
+  ),
+  extractTrigger(
     'prevent_native_delegation_cutover_change',
     'native_delegation_cutover_immutable',
   ),
@@ -60,10 +64,9 @@ const POLICY_DDL = [
 ];
 const STUB_DDL = `
   CREATE TABLE onchain_accounts (
-    id BIGINT NOT NULL,
-    user_id BIGINT NOT NULL,
+    id BIGINT PRIMARY KEY,
+    user_id BIGINT,
     address VARCHAR(255) NOT NULL,
-    PRIMARY KEY (id, user_id),
     UNIQUE (id, user_id, address)
   );
   CREATE TABLE mobile_auth_tokens (
@@ -353,5 +356,20 @@ test('real PostgreSQL enforces epoch policy ordering, constraints, and replay', 
       (error) => error instanceof EpochDelegationError
         && error.code === 'invalid_native_delegation_credential',
     );
+
+    const policyCount = (await pool.query(
+      'SELECT COUNT(*)::int AS count FROM native_epoch_delegation_policies',
+    )).rows[0].count;
+    await pool.query(
+      'DELETE FROM native_session_credentials WHERE credential_reference = $1',
+      [CREDENTIAL],
+    );
+    await pool.query(
+      'UPDATE onchain_accounts SET user_id = NULL WHERE id = 9001',
+    );
+    assert.equal((await pool.query(
+      'SELECT COUNT(*)::int AS count FROM native_epoch_delegation_policies',
+    )).rows[0].count, policyCount,
+    'credential revocation and user deletion preserve append-only policy history');
   });
 });

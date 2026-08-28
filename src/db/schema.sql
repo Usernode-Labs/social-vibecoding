@@ -4937,17 +4937,6 @@ CREATE TABLE IF NOT EXISTS native_epoch_delegation_policies (
   UNIQUE (request_id),
   FOREIGN KEY (network_id, chain_id)
     REFERENCES native_epoch_delegation_fences(network_id, chain_id),
-  CONSTRAINT native_epoch_delegation_policies_credential_binding_fkey
-    FOREIGN KEY (
-      credential_reference, credential_generation, user_id, account_id,
-      network_id, chain_id
-    ) REFERENCES native_session_credentials (
-      credential_reference, credential_generation, user_id, account_id,
-      network_id, chain_id
-    ),
-  CONSTRAINT native_epoch_delegation_policies_account_binding_fkey
-    FOREIGN KEY (account_id, user_id, account_address)
-    REFERENCES onchain_accounts(id, user_id, address) ON DELETE RESTRICT,
   CONSTRAINT native_epoch_delegation_policies_source_fields_check CHECK (
     (source = 'native'
       AND request_id ~ '^ndp_[A-Za-z0-9_-]{43}$'
@@ -5024,40 +5013,54 @@ ALTER TABLE native_epoch_delegation_policies
         AND effective_epoch = accepted_epoch)
     );
 
--- Existing databases converge on the same identity bindings. These are the
--- database-owned half of credential-derived delegation identity: application
--- code cannot insert a policy for a different user, account, address, or
--- network even if a caller or future code path supplies inconsistent fields.
-DO $$
+-- Policies are permanent audit facts, while credentials are revocable and an
+-- account's user binding is cleared when that user is deleted. Validate the
+-- parent bindings at INSERT time under key-share locks instead of retaining
+-- foreign keys that would make those ordinary lifecycle deletes impossible.
+ALTER TABLE native_epoch_delegation_policies
+  DROP CONSTRAINT IF EXISTS native_epoch_delegation_policies_credential_binding_fkey;
+ALTER TABLE native_epoch_delegation_policies
+  DROP CONSTRAINT IF EXISTS native_epoch_delegation_policies_account_binding_fkey;
+
+CREATE OR REPLACE FUNCTION validate_native_epoch_policy_bindings()
+RETURNS TRIGGER AS $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'native_epoch_delegation_policies'::regclass
-       AND conname = 'native_epoch_delegation_policies_credential_binding_fkey'
-  ) THEN
-    ALTER TABLE native_epoch_delegation_policies
-      ADD CONSTRAINT native_epoch_delegation_policies_credential_binding_fkey
-      FOREIGN KEY (
-        credential_reference, credential_generation, user_id, account_id,
-        network_id, chain_id
-      ) REFERENCES native_session_credentials (
-        credential_reference, credential_generation, user_id, account_id,
-        network_id, chain_id
-      );
+  IF NEW.source = 'native' THEN
+    PERFORM 1
+      FROM native_session_credentials
+     WHERE credential_reference = NEW.credential_reference
+       AND credential_generation = NEW.credential_generation
+       AND user_id = NEW.user_id
+       AND account_id = NEW.account_id
+       AND network_id = NEW.network_id
+       AND chain_id = NEW.chain_id
+     FOR KEY SHARE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'native epoch policy credential binding is invalid'
+        USING ERRCODE = '23503',
+              CONSTRAINT = 'native_epoch_delegation_policies_credential_binding';
+    END IF;
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-     WHERE conrelid = 'native_epoch_delegation_policies'::regclass
-       AND conname = 'native_epoch_delegation_policies_account_binding_fkey'
-  ) THEN
-    ALTER TABLE native_epoch_delegation_policies
-      ADD CONSTRAINT native_epoch_delegation_policies_account_binding_fkey
-      FOREIGN KEY (account_id, user_id, account_address)
-      REFERENCES onchain_accounts(id, user_id, address) ON DELETE RESTRICT;
+  PERFORM 1
+    FROM onchain_accounts
+   WHERE id = NEW.account_id
+     AND user_id = NEW.user_id
+     AND address = NEW.account_address
+   FOR KEY SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'native epoch policy account binding is invalid'
+      USING ERRCODE = '23503',
+            CONSTRAINT = 'native_epoch_delegation_policies_account_binding';
   END IF;
+  RETURN NEW;
 END;
-$$;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS native_epoch_delegation_policy_bindings
+  ON native_epoch_delegation_policies;
+CREATE TRIGGER native_epoch_delegation_policy_bindings
+  BEFORE INSERT ON native_epoch_delegation_policies
+  FOR EACH ROW EXECUTE FUNCTION validate_native_epoch_policy_bindings();
 
 CREATE OR REPLACE FUNCTION prevent_native_delegation_cutover_change()
 RETURNS TRIGGER AS $$
