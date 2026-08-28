@@ -10989,22 +10989,19 @@ async function seedStagingTopochain(pool, config) {
       [USERS.bpReleased]
     );
 
-    // ─── Account delegation periods (2) — one OPEN on the season-wide,
-    // claimed account (900500, participant-1) and one ENDED on the
-    // unclaimed event account (900503). Two rows on purpose, one per
-    // state the admin Delegations screen renders: the open one resolves
-    // a delegator identity (avatar/username/user id), the ended one
-    // exercises the Ended badge plus the "Unclaimed account" delegator
-    // fallback — with only the first, neither could be looked at in a
-    // preview. ──────────────────────────────────────────────────────────
+    // The epoch-policy cutover cannot carry these two historical staging
+    // catalogue rows: one is an open delegation for an account that is not a
+    // real managed producer. Retire only the exact reserved fixtures before
+    // cutover. Once any canonical cutover exists the predicate matches no
+    // rows, so the legacy-table freeze trigger is never invoked on reboot.
     await pool.query(
-      `INSERT INTO account_delegation_periods (id, account, started_at, ended_at, created_at, updated_at)
-       VALUES
-         (900500, 'ut1stagingdemotopochainacct000001', NOW() - INTERVAL '20 days',
-          NULL, NOW(), NOW()),
-         (900501, 'ut1stagingdemotopochainacct000004', NOW() - INTERVAL '15 days',
-          NOW() - INTERVAL '8 days', NOW(), NOW())
-       ON CONFLICT (id) DO NOTHING`
+      `DELETE FROM account_delegation_periods
+        WHERE ((id = 900500 AND account = 'ut1stagingdemotopochainacct000001')
+            OR (id = 900501 AND account = 'ut1stagingdemotopochainacct000004'))
+          AND NOT EXISTS (
+            SELECT 1 FROM native_epoch_delegation_fences
+             WHERE cutover_epoch IS NOT NULL
+          )`
     );
 
     // ─── Token allocation (3 users, matching the later leaderboard totals) ──
