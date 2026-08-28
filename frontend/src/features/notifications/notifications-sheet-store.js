@@ -14,4 +14,10 @@ import { createStore } from '../../lib/plain-store.js';
 export const notificationsSheetStore = createStore({
   /** Whether the sheet is presented. `data-open` on the root derives from it. */
   open: false,
+  /**
+   * Whether the presentation is a KIT sheet (touch) rather than the CSS
+   * slide-over. The kit brings its own backdrop, so the web overlay only
+   * raises when this is false — see lib/sheet-controller.js.
+   */
+  adopted: false,
 });
