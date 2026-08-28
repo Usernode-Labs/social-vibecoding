@@ -42,13 +42,13 @@
 import { useCallback, type ReactNode } from 'react';
 
 import {
+  ArrowPathIcon,
   GitHubIcon,
   ShareIcon,
+  SpinnerArcIcon,
   TerminalIcon,
   XIcon,
 } from '@/components/ui/icons';
-
-import { NativeAppVersionRow } from '../header/native-app-version-row';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -132,6 +132,72 @@ function QuickAction({ id, label, primary, onClick }: {
  * — hence target=_blank, and hence NOT a hash route the sheet controller
  * would want to dismiss for.
  */
+/**
+ * What is happening to the build, in the panel that offers to change it.
+ *
+ * Three states, and each is a different kind of thing to say:
+ *
+ *   - BUILDING. A note, not an offer. Either this app is deploying a merged
+ *     change or the platform is rolling one out; there is nothing to press,
+ *     so pressing is not offered.
+ *   - READY. The one case with an action: the new build is downloaded and a
+ *     reload will land on it. `failed` gets the same button with a warier
+ *     line, because a reload that might need two tries still beats a tab with
+ *     no way forward.
+ *   - IDLE. Nothing. A row saying "up to date" is a row that is right almost
+ *     always and therefore never read.
+ *
+ * `versionState` is the platform's, published from
+ * App.renderPlatformVersionPill; `deploying` is this app's own. They are
+ * separate facts with one presentation here, because "something is being
+ * built" is what the viewer is asking, and which of the two it is shows in
+ * the wording.
+ */
+function UpdateStatus(): ReactNode {
+  const { versionState, deploying } = useStoreState(improveStore);
+  const platformBusy = versionState === 'deploying' || versionState === 'downloading';
+  const ready = versionState === 'ready' || versionState === 'failed';
+
+  if (ready) {
+    return (
+      <button
+        id="improve-update-ready"
+        type="button"
+        className={'flex w-full items-center gap-3 px-4 py-3 text-left '
+          + 'text-sm font-medium text-violet-600 dark:text-violet-400 '
+          + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 un-touch-target'}
+        onClick={() => window.location.reload()}
+      >
+        <ArrowPathIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
+        <span className="min-w-0 flex-1">
+          There is a new version available. Click here to get the new version.
+        </span>
+      </button>
+    );
+  }
+
+  if (platformBusy || deploying) {
+    // Which one is building decides the wording. Both at once is possible and
+    // says the more surprising of the two.
+    const line = platformBusy
+      ? (versionState === 'downloading'
+        ? 'A new version of the platform is downloading. The reload appears once it is ready.'
+        : 'A new version of the platform is being built.')
+      : 'A new version of this app is being built.';
+    return (
+      <div
+        id="improve-update-note"
+        className="flex items-center gap-3 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400"
+      >
+        <SpinnerArcIcon className="w-4 h-4 shrink-0 animate-spin" aria-hidden="true" />
+        <span className="min-w-0 flex-1">{line}</span>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 function ImproveRow({
   id,
   icon,
@@ -440,34 +506,30 @@ export function ImprovePanel() {
           </div>
 
           {/*
-              ── Zone 4: what this app IS ───────────────────────────────
+              ── Zone 4: what is happening to this app ──────────────────
 
-              #1431 dissolved this block and rehomed its contents: the GitHub
-              link to Home's per-app menu, the app's version deleted as a
-              duplicate of the chip on the app's own page, and the two build
-              lines to a new About block in Settings. Each move was defensible
-              on its own and the sum was not — you are INSIDE the app when this
-              panel is open, and every one of those facts had become something
-              you leave the app to read.
+              THE VERSIONS ARE IN SETTINGS. This footer used to carry all
+              three of them — the app's merged main, the platform's deployed
+              commit, the installed mobile release. They moved to Settings'
+              About block, came back here in #1443 on the argument that you
+              are INSIDE the app when this panel is open and should not have
+              to leave it to read them, and have gone back to Settings now
+              that this footer answers the question those rows were actually
+              being read for.
 
-              So they are back, as CONSTANT markup with empty slots: the
-              modules that fill them (App.loadVersion,
-              features/header/native-app-version.js) resolve their slot by
-              getElementById and toggle `hidden` on the row, so only the parent
-              changed. `.drawer-ver-row` keeps its name because app.css draws
-              both rows off it and renaming would be a restyle rather than a
-              move.
+              That question was never "which SHA". Nobody opens this panel to
+              compare commit hashes; they open it because something looked
+              like it was happening, or because the app told them a new build
+              existed. Three static rows answered that only by implication —
+              you had to notice that one of them had turned into a spinner.
+              So the footer states it instead, and the raw revisions go back
+              to the screen you consult rather than the one you act from.
 
-              Fork lineage did NOT come back. #1431 put it on the app's detail
-              page (#browse-detail-fork) and that is the better home — lineage
-              is a fact about an app, not about the panel you have open.
-
-              DrawerStatus.refreshDeployDot() reads the deploying pill out of
-              whichever of these is painted, which is why #improve-version-dot
-              lights amber while a deploy is in flight. #1431 rescoped that
-              query to #settings-about; it is scoped back here, and
-              tests/improve-panel-versions.test.js pins it rather than trusting
-              the selector.
+              Nothing is lost by the move: the state is published by
+              App.renderPlatformVersionPill (see App.platformUpdateState), not
+              inferred from whatever is rendered here, so this block and the
+              Settings rows are two readers of one fact rather than one
+              reading the other.
           */}
           <div
             id="improve-footer"
@@ -498,62 +560,7 @@ export function ImprovePanel() {
                 onClick={() => Improve.share()}
               />
             ) : null}
-            {/*
-                Versions as text rather than rows: they are the things here you
-                read instead of act on. `slug` gates the app's own so a
-                target-less panel never renders a dangling label.
-
-                ── and NOT on the platform's own panel ────────────────
-
-                `!selfHosted` is the second gate, and it removes a genuine
-                duplicate: the self-hosted row IS the platform, so "Version"
-                and "Platform version" directly below it were the same seven
-                characters twice, two lines apart.
-
-                They are not the same FACT — this row is the app's latest
-                merged main, and the row below is the commit the running
-                deployment was built from — but on every app except this one
-                that distinction is invisible, and on this one the two only
-                diverge while a deploy is in flight or a tab has gone stale.
-                Both of those states the Platform version row already names on
-                its own (`.drawer-ver--deploying`, `.drawer-ver--stale`, which
-                is also what ImproveStatus.refreshDeployDot reads — it selects
-                inside #platform-version-pill-slot, never here, so nothing about
-                the deploy dot depends on this row existing).
-
-                So what is lost is one SHA in one state that is already
-                labelled, and what is gained is that the platform's own footer
-                stops repeating itself.
-            */}
-            {slug && !selfHosted ? (
-              <div
-                id="improve-row-version"
-                className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-zinc-400"
-              >
-                <span>Version</span>
-                <span
-                  id="improve-version-value"
-                  className="ml-auto font-mono truncate"
-                >
-                  {state.deploying ? 'deploying…' : state.version || 'unknown'}
-                </span>
-              </div>
-            ) : null}
-            <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
-              <span className="drawer-ver-label">
-                Platform version
-              </span>
-              <span
-                id="platform-version-pill-slot"
-                className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
-              >
-              </span>
-            </div>
-            {/* Installed Flutter app release (#1101) — version/build, e.g.
-                0.4.0/1223. Deliberately independent of the platform version
-                above and never the open app's commit. Hidden outside the
-                mobile app. */}
-            <NativeAppVersionRow />
+            <UpdateStatus />
           </div>
         </div>
       </div>

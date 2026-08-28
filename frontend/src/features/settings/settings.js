@@ -160,6 +160,13 @@
 
       { key: 'usernode', label: 'Usernode app', group: 'Usernode app', gate: 'settings-usernode-section' },
 
+      // Reference, not configuration: which build of the app, the platform
+      // and the mobile shell you are on. Ungated and last — it is the pane you
+      // come to Settings to READ, and the Improve panel is where the same
+      // facts turn into something to act on (a build in flight, a reload
+      // waiting). See sections/about.tsx.
+      { key: 'about', label: 'About', group: 'About' },
+
       { key: 'admin-preview', label: 'Admin preview', group: 'Admin', gate: 'settings-admin-section' },
     ],
 

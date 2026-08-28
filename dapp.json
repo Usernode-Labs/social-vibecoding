@@ -2717,9 +2717,9 @@
       "expectSelector": "#platform-header #header-status-pill"
     },
     {
-      "name": "A session bar carries no chip — the change's name is the strip's (#1443)",
+      "name": "A session bar names the app in the chip, with the lifecycle as its subtitle",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
-      "expectSelector": "#platform-header:not(:has(#app-switcher-btn)) #back-btn:not(.hidden)"
+      "expectSelector": "#platform-header #app-switcher-btn #app-switcher-subtitle #header-status-pill .ms-pill"
     },
     {
       "name": "Inside an app's detail page the header arrow links back to the list (#1036)",

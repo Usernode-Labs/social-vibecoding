@@ -597,14 +597,28 @@ const Improve = {
   },
 
   /**
-   * The platform version dot's state, from ImproveStatus.refreshDeployDot().
+   * Where the PLATFORM's build has got to, from
+   * ImproveStatus.refreshDeployDot(), which takes it from
+   * App.renderPlatformVersionPill rather than from any rendered markup.
    *
-   * 'deploying' | 'stale' | 'idle' — read off the version rows this panel's
-   * own footer renders, which is why the dot moved here from the hamburger.
+   *   'deploying'   — a new build is rolling out
+   *   'downloading' — it rolled out, and this tab is pulling it down
+   *   'ready'       — it is cached; a reload lands on it
+   *   'failed'      — it could not be pre-downloaded; a reload may need two
+   *                   tries, but withholding the offer entirely is worse
+   *   'idle'        — this tab is on the current build
+   *
+   * 'stale' was the single value that used to cover downloading, ready and
+   * failed together. It is still accepted, as ready: nothing in the tree
+   * publishes it any more, but it was the vocabulary of a global the shell
+   * exposes, and mapping it beats a silent fall to 'idle' that would hide a
+   * real update from anyone still sending it.
    */
   setVersionState(versionState) {
-    const next = versionState === 'deploying' || versionState === 'stale'
-      ? versionState : 'idle';
+    const KNOWN = ['deploying', 'downloading', 'ready', 'failed'];
+    const next = versionState === 'stale'
+      ? 'ready'
+      : (KNOWN.includes(versionState) ? versionState : 'idle');
     if (improveStore.get().versionState !== next) improveStore.set({ versionState: next });
   },
 

@@ -31,11 +31,22 @@ const header = html.slice(0, html.indexOf('</header>'));
 // notifications. These four slots are the load-bearing survivors, and where
 // each one now lives is the thing this file pins:
 //
-//   #platform-version-pill-slot  → Settings' About block (#improve-footer).
-//   #native-app-version-slot        Both describe the PLATFORM — the deployed
-//                                   web build and the installed mobile app —
-//                                   so they outlived the app-scoped footer
-//                                   they were passing through.
+//   #platform-version-pill-slot  → Settings' About pane
+//   #native-app-version-slot        ([data-settings-section="about"]). Both
+//                                   describe the PLATFORM — the deployed web
+//                                   build and the installed mobile app — so
+//                                   they outlived the app-scoped footer they
+//                                   were passing through.
+//
+//                                   They spent a while IN that footer: the
+//                                   anchor here used to be #improve-footer
+//                                   while the comment already said "Settings'
+//                                   About block", which is the tell. The
+//                                   Improve panel says what is HAPPENING to
+//                                   the build now — a note while one is being
+//                                   made, a reload when one is ready — and the
+//                                   revisions themselves are back on the
+//                                   screen you consult.
 //   #app-fork-badge-slot         → RETIRED with the drawer's reference footer.
 //                                  Fork lineage is a fact about an app, and it
 //                                  renders on the app's own page from the
@@ -58,14 +69,20 @@ const ABOUT_SLOTS = [
 ];
 
 test('each surviving slot exists exactly once, in its new region', () => {
-  const aboutStart = html.indexOf('id="improve-footer"');
-  assert.ok(aboutStart > -1, '#improve-footer is missing from the shell');
+  const aboutStart = html.indexOf('data-settings-section="about"');
+  assert.ok(aboutStart > -1, "Settings' About pane is missing from the shell");
   for (const id of ABOUT_SLOTS) {
     const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
     assert.equal(hits.length, 1, `exactly one #${id} in the shell`);
     assert.ok(html.indexOf(`id="${id}"`) > aboutStart,
-      `#${id} lives inside Settings' About block`);
+      `#${id} lives inside Settings' About pane`);
   }
+  // The app's own version is the third row of that pane, and the Improve
+  // panel's copy of it is gone — one row per fact.
+  assert.ok(html.indexOf('id="about-row-app-version"') > aboutStart,
+    'the app version row is in the About pane too');
+  assert.equal(html.indexOf('id="improve-row-version"'), -1,
+    'and the Improve panel no longer carries a duplicate');
   // The fork slot is gone outright, writer included.
   assert.ok(!html.includes('id="app-fork-badge-slot"'),
     'the fork slot is retired — the app page renders lineage from its descriptor');
@@ -188,7 +205,7 @@ test('the version dot rides the Improve button, hidden by default', () => {
 });
 
 
-test('the deploy dot is derived from the rendered pills, not a duplicate flag', () => {
+test('the deploy dot is derived from a named state, not sniffed out of the DOM', () => {
   // #1079 chunk B moved it into the React bundle; app.js keeps a forwarder for
   // its call sites. It is ImproveStatus now, in the improve feature — its two
   // publishers are both about the Improve button, and the drawer it was named
@@ -197,29 +214,36 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
     path.join(root, 'frontend/src/features/improve/improve-status.js'), 'utf8');
   assert.match(headerMenuJs, /refreshDeployDot\(\)\s*\{/, 'ImproveStatus.refreshDeployDot is defined');
   const fn = headerMenuJs.slice(headerMenuJs.indexOf('  refreshDeployDot() {'));
-  // Post-#913 the version rows signalled a rolling deploy with
-  // .drawer-ver--deploying instead of the pill class. The SCOPE has followed
-  // those rows through every move: #drawer-footer → the Improve panel's
-  // footer → Settings' About block, which is where they finally stopped.
-  assert.match(fn.slice(0, 1400), /#improve-footer \.drawer-ver--deploying/,
-    'reads the deploying state off the rendered pills — the single source of truth');
-  // The second state the old single-colour dot could not show: the violet
-  // "platform rolled past the SHA this tab loaded against" row.
+
+  // IT READS A STATE, IT NO LONGER READS THE ROWS.
   //
-  // Selected by CLASS ALONE, not `button.drawer-ver--stale` as it was: that
-  // row has two shapes since the update is pre-downloaded
-  // (tests/shell-update-prefetch.test.js). It is a <button> once the new
-  // build is in the shell cache and a reload will actually land on it, and a
-  // <span> for the seconds it takes to get there. Both mean the platform has
-  // moved past this tab, which is the only thing this dot claims — qualifying
-  // by tag blinked it off for the whole download.
-  assert.match(fn.slice(0, 1400), /#improve-footer \.drawer-ver--stale/,
-    'and the stale state, which is the other thing those rows say');
-  // Comment-stripped: the code comment beside that selector legitimately
-  // names the old `button.`-qualified form to say why it is gone.
-  assert.ok(!/button\.drawer-ver--stale/.test(
-    fn.slice(0, 1400).replace(/^\s*\/\/.*$/gm, '')),
-    'and does not qualify it by tag');
+  // This used to select `#improve-footer .drawer-ver--deploying` / `--stale`:
+  // the classes App.renderPlatformVersionPill had just written, read back out
+  // of the DOM to recover what that function already knew. The scope had
+  // followed the version rows through every move they made
+  // (#drawer-footer → the Improve panel's footer → Settings' About block),
+  // which is the tell — an indicator on the header button should not care
+  // where a row is rendered, and the last of those moves would have killed it
+  // silently.
+  //
+  // The renderer names its state on App.platformUpdateState instead. That is
+  // also FINER than the classes were: `--stale` deliberately covered both
+  // "downloading the new build" and "the new build is ready", so the dot would
+  // not blink off mid-download, and nothing downstream could tell a progress
+  // note from a reload offer. They are separate states now, and the dot simply
+  // gives both the same colour.
+  assert.match(fn.slice(0, 1400), /window\.App\?\.platformUpdateState/,
+    'reads the state the renderer named');
+  // Comment-stripped: the note beside this code legitimately names both the
+  // old scope and the old classes, to say what stopped being an input and
+  // why. That history is the useful half of it — the same distinction
+  // AGENTS.md draws for the AdminUI registry.
+  const code = headerMenuJs.replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/#improve-footer/.test(code),
+    'and is not scoped to wherever the version rows currently live');
+  assert.ok(!/drawer-ver--/.test(code),
+    'no rendered class is an input to it any more');
+
   // It PUBLISHES: #improve-btn is React-owned, so an id lookup plus a
   // classList write would be a mismatch React patches straight back out.
   assert.match(fn.slice(0, 1400), /setVersionState/,

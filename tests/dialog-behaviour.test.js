@@ -104,8 +104,13 @@ test('the lift is reversible: the card goes home before the root re-hides', () =
   // kit anything, which is what separates it from dismiss().
   assert.match(KIT_SURFACE, /if \(undone\) return;/);
   assert.match(KIT_SURFACE, /restore: undo/);
-  assert.match(STATIC_MODAL, /adoption\.restore\(\);\n\s*adoption\.dismiss\(\);/,
-    'the card comes home BEFORE the kit is told, or the exit animation runs over an empty shell');
+  // On UNMOUNT the card comes home before the kit is told, because there is no
+  // longer a component to animate an exit for and React is about to remove the
+  // subtree the placeholder sits in. An ordinary close does the opposite now —
+  // see 'the card rides the kit exit' below, which is the close flicker fix.
+  const unmount = STATIC_MODAL.slice(STATIC_MODAL.indexOf('() => () => {'));
+  assert.match(unmount, /adoption\.restore\(\);\n\s*adoption\.dismiss\(\);/,
+    'an unmount re-homes the card synchronously, exit animation or not');
 });
 
 test('the guard window is the one app-view.js used, and is read by useDialog', () => {
@@ -153,7 +158,23 @@ test('presentation is gated on kit presence, never on isTouch()', () => {
 
 test('open/close run the island’s populate and reset halves', () => {
   assert.match(USE_DIALOG, /if \(isOpen\) opts\.current\.onOpen\?\.\(payloadRef\.current\);/);
-  assert.match(USE_DIALOG, /else opts\.current\.onClose\?\.\(\);/);
+  // The reset half moved OUT of this effect and onto the exit.
+  //
+  // It used to be the `else` of the same layout effect, which was invisible
+  // only because the card was yanked out of sight on that same tick. The card
+  // rides the kit's exit animation now, so emptying it there would blank the
+  // dialog's contents in front of the viewer mid-close — the same flicker,
+  // moved. It runs from onExited instead: after the animation, once the
+  // surface is actually gone.
+  assert.doesNotMatch(USE_DIALOG, /else opts\.current\.onClose\?\.\(\);/,
+    'the reset is no longer the close tick’s');
+  assert.match(USE_DIALOG, /onExited: \(\) => \{[\s\S]*?opts\.current\.onClose\?\.\(\);/,
+    'it runs once the exit animation has finished');
+  // Two ways a pending exit's teardown must NOT run: the dialog is open again
+  // (a reopen inside the exit window already repopulated it), or the close was
+  // a suspend()'s bookkeeping and the draft is coming back.
+  assert.match(USE_DIALOG, /if \(openRef\.current\) return;/);
+  assert.match(USE_DIALOG, /if \(suspended\.current\) return;/);
   // Not on mount: the prerendered document is already hidden, so a mount-time
   // onClose would reset fields the user could not have filled yet — and, for
   // the controller-backed dialogs, would call into a module that has not run
@@ -163,13 +184,41 @@ test('open/close run the island’s populate and reset halves', () => {
   assert.match(USE_DIALOG, /useIsomorphicLayoutEffect\(\(\) => \{\n\s*if \(!mounted\.current\)/);
 });
 
+test('the card rides the kit exit rather than being pulled out before it', () => {
+  // The close flicker: restore() before dismiss() put the card back in its
+  // (immediately hidden) root and left the kit animating an empty shell —
+  // which is not nothing on screen, it is the shell collapsed to its own
+  // padding, a small blank rounded box fading out where the dialog was.
+  const closeBranch = STATIC_MODAL.slice(
+    STATIC_MODAL.indexOf('} else {'),
+    STATIC_MODAL.indexOf('// Legacy-compatibility bridge'),
+  );
+  assert.match(closeBranch, /pendingExitRef\.current = adoption;\s*\n\s*adoption\.dismiss\(\);/,
+    'the close asks the kit to animate and holds the adoption');
+  assert.doesNotMatch(closeBranch, /adoption\.restore\(\);/,
+    'and does not re-home the card before that animation runs');
+  // The re-home happens in the kit's own callback, at the end of the exit.
+  assert.match(STATIC_MODAL, /if \(adoption\) adoption\.restore\(\);\s*\n\s*opts\.current\.onExited\?\.\(\);/);
+});
+
 test('suspend/resume move the dialog without running the lifecycle', () => {
   // The feedback screenshot capture's round trip. If this regressed to
   // close()/open(), taking a screenshot would wipe the draft it is being
   // attached to — the bug the flag exists to prevent.
   assert.match(USE_DIALOG, /const bookkeeping = useRef\(false\)/);
-  assert.match(USE_DIALOG, /const suspend = useCallback\(\(\) => \{\n\s*bookkeeping\.current = true;\n\s*setIsOpen\(false\);/);
-  assert.match(USE_DIALOG, /const resume = useCallback\(\(\) => \{\n\s*bookkeeping\.current = true;\n\s*setIsOpen\(true\);/);
+  assert.match(USE_DIALOG, /const suspend = useCallback\(\(\) => \{\n\s*bookkeeping\.current = true;\n\s*suspended\.current = true;\n\s*setIsOpen\(false\);/);
+  assert.match(USE_DIALOG, /const resume = useCallback\(\(\) => \{\n\s*bookkeeping\.current = true;\n\s*suspended\.current = false;\n\s*setIsOpen\(true\);/);
+  // A SECOND flag, and it has to be a second one.
+  //
+  // `bookkeeping` is consumed by the one layout-effect pass the setIsOpen
+  // schedules, which was the whole of the story while the teardown ran on that
+  // same tick. The teardown waits for the kit's exit animation now, and a
+  // capture round trip outlasts it comfortably — so by the time the exit lands,
+  // `bookkeeping` is long since spent and the close would look ordinary. This
+  // one is held until resume() (or an ordinary open()) clears it.
+  assert.match(USE_DIALOG, /const suspended = useRef\(false\)/);
+  assert.match(USE_DIALOG, /if \(suspended\.current\) return;/,
+    'a suspended close runs no teardown when its exit finally lands');
   // Consumed by exactly one effect pass, so an ordinary open or close on
   // either side of the round trip still runs its half.
   assert.match(USE_DIALOG, /if \(bookkeeping\.current\) \{\n\s*bookkeeping\.current = false;\n\s*return;\n\s*\}/);
@@ -193,14 +242,28 @@ test('a late kit dismissal cannot tear down a newer presentation (#1284)', () =>
   assert.match(STATIC_MODAL, /const generation = \(generationRef\.current \+= 1\);/);
   assert.match(STATIC_MODAL, /stillOwns,/, 'and hands the guard to the shared lift');
   assert.match(STATIC_MODAL, /const stillOwns = \(\) => generationRef\.current === generation;/);
-  // ...and the close branch retires it, which is what makes the callback a
-  // no-op when a reopen has already installed a newer one.
-  const closeBranch = STATIC_MODAL.slice(
+  // ...and the REOPEN retires it, which is what makes the old callback a
+  // no-op once a newer presentation is installed.
+  //
+  // This assertion used to look in the close branch, because the close branch
+  // was where the card came out of the kit shell. It is not any more: the card
+  // now rides the kit's exit animation and is re-homed by the callback at the
+  // end of it (the close flicker fix), so retiring the generation at close
+  // time would have made every ordinary close's callback a no-op and stranded
+  // the card in a torn-down shell. The reopen is the event that actually means
+  // "a newer presentation owns this node", so that is where the bump belongs —
+  // and the scenario below is unchanged, because a reopen is exactly what
+  // suspend()/resume() does inside the exit window.
+  const openBranch = STATIC_MODAL.slice(
+    STATIC_MODAL.indexOf('if (open) {'),
     STATIC_MODAL.indexOf('} else {'),
-    STATIC_MODAL.indexOf("root.classList.add('hidden')"),
   );
-  assert.match(closeBranch, /generationRef\.current \+= 1;/,
-    'the generation must be retired where the dismissal is requested');
+  assert.match(openBranch, /const generation = \(generationRef\.current \+= 1\);/,
+    'the generation is retired by the reopen that supersedes it');
+  // And the superseded exit is completed rather than abandoned, so its
+  // placeholder cannot be stranded in the root by the new lift.
+  assert.match(openBranch, /pendingExitRef\.current = null;\s*\n\s*pending\.restore\(\);/,
+    'a reopen finishes the outgoing presentation before presenting over it');
   // adoptKitSurface checks it after onDismissStart and before undo(), so a
   // stale teardown leaves the DOM completely alone — the hamburger drawer's
   // guard from #977, now the dialogs' too.

@@ -131,6 +131,18 @@ export interface StaticModalOptions {
    */
   onKitDismiss?: () => void;
   /**
+   * Called once the surface is fully gone: after the kit's exit animation has
+   * finished and the card is home, or synchronously on a close with no kit
+   * presentation to animate.
+   *
+   * This is where teardown that CHANGES WHAT THE CARD SHOWS belongs — clearing
+   * fields, resetting status lines. Now that the card stays visible through
+   * the exit (see the close branch below), doing that on the close tick would
+   * blank the dialog's contents in front of the viewer mid-animation, which is
+   * the same flicker moved rather than fixed.
+   */
+  onExited?: () => void;
+  /**
    * Called when something OUTSIDE React toggled `hidden` on the root.
    *
    * This is the legacy-compatibility bridge, and it is deliberately narrow:
@@ -169,12 +181,18 @@ export function useStaticModal(
   const opts = useRef(options);
   opts.current = options;
 
+  // An adoption whose kit shell is mid-exit: dismissed, animating, and not yet
+  // re-homed. See the close branch below for why the restore waits.
+  const pendingExitRef = useRef<KitAdoption | null>(null);
+
   const dismissFromKit = useCallback(() => {
-    const adoption = adoptionRef.current;
+    const adoption = adoptionRef.current || pendingExitRef.current;
     adoptionRef.current = null;
+    pendingExitRef.current = null;
     // `adoptKitSurface` has already restored the DOM by the time it calls us;
     // this is the idempotent second call that covers the paths that have not.
     if (adoption) adoption.restore();
+    opts.current.onExited?.();
     opts.current.onKitDismiss?.();
   }, []);
 
@@ -184,8 +202,19 @@ export function useStaticModal(
 
     if (open) {
       root.dataset.openedAt = String(Date.now());
+      // Reopened while the last exit was still animating. Finish that exit NOW
+      // rather than presenting on top of it: the card is currently a child of
+      // the outgoing kit shell, and lifting it again from there would strand
+      // the first presentation's placeholder comment in this root forever.
+      const pending = pendingExitRef.current;
+      if (pending) {
+        pendingExitRef.current = null;
+        pending.restore();
+      }
       if (root.classList.contains('hidden')) root.classList.remove('hidden');
       if (!adoptionRef.current) {
+        // Bumping here also retires any generation still owned by that
+        // outgoing presentation, so its late callback lands as a no-op.
         const generation = (generationRef.current += 1);
         const stillOwns = () => generationRef.current === generation;
         adoptionRef.current = present(root, dismissFromKit, stillOwns);
@@ -194,13 +223,29 @@ export function useStaticModal(
       const adoption = adoptionRef.current;
       adoptionRef.current = null;
       if (adoption) {
-        adoption.restore();
+        // THE CARD RIDES THE EXIT, and the order here is the whole reason it
+        // does. This used to restore() before dismiss(), on the reasoning
+        // recorded on KitAdoption.restore — that a caller closing the surface
+        // wants its node back before the kit animates an empty shell. The
+        // visible result was the trade in reverse: the dialog's contents
+        // vanished on the spot, and what played the 260ms exit was the kit's
+        // shell collapsed to its own padding — a small blank rounded box
+        // fading out where the dialog had been. That is the close flicker.
+        //
+        // So only dismiss() here. The kit removes the card at the END of its
+        // animation and calls onDismiss, which is what runs undo() and puts
+        // the node home (see adoptKitSurface). Holding the adoption in
+        // pendingExitRef keeps that callback's `stillOwns` generation valid
+        // until it lands — which is why the generation bump moved into the
+        // open branch above, where a reopen is what should retire it.
+        pendingExitRef.current = adoption;
         adoption.dismiss();
+      } else {
+        // No kit: nothing animates, so the surface is already gone.
+        opts.current.onExited?.();
       }
-      // The dismissal we just asked for calls back asynchronously. Retiring
-      // the generation here is what makes that callback a no-op if a reopen
-      // has already installed a newer presentation.
-      generationRef.current += 1;
+      // Safe to hide immediately either way: the card is not in this root
+      // while it is adopted, it is in the kit's shell.
       if (!root.classList.contains('hidden')) root.classList.add('hidden');
     }
   }, [rootRef, open, dismissFromKit]);
@@ -221,10 +266,17 @@ export function useStaticModal(
 
   // A dialog that unmounts while presented would otherwise leave the kit
   // shell on screen with a detached card in it.
+  //
+  // Unlike an ordinary close, this one restores EAGERLY and retires the
+  // generation on the spot: there is no longer a component to animate an exit
+  // for, and the node has to be back under its placeholder before React
+  // removes the subtree around it. A pending exit is finished the same way,
+  // for the same reason.
   useEffect(
     () => () => {
-      const adoption = adoptionRef.current;
+      const adoption = adoptionRef.current || pendingExitRef.current;
       adoptionRef.current = null;
+      pendingExitRef.current = null;
       if (adoption) {
         adoption.restore();
         adoption.dismiss();

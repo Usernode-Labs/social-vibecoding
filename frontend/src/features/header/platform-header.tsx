@@ -43,8 +43,6 @@ import { ChromelessPill } from './chromeless-pill';
 import { AppSwitcherChip } from './app-switcher-chip';
 import { ImproveButton } from '../improve/improve-button';
 import { improveStore } from '../improve/improve-store.js';
-import { MergeStatusPill } from '../dev-chat/session-header';
-import { sessionHeaderStore } from '../dev-chat/session-header-store';
 import { useHeaderLayout } from './use-header-layout';
 // ── The bundle's boot seam ────────────────────────────────────────────
 //
@@ -72,31 +70,18 @@ import '../improve/improve-status.js';
 // publishes the controller; this pulls both in.
 import '../notifications/mount';
 
-/**
- * The session lifecycle pill, IN THE TOP BAR (Streamlined Concept): the
- * Figma session bar leads with ← and a `Checks run…` status pill, so the
- * MergeStatus lifecycle renders here — beside the back arrow — while a
- * session is on screen, instead of in the in-content strip it used to
- * share with the title. Same descriptor, same component, new seat: it
- * reads the session-header store dev-chat.js already publishes on every
- * lifecycle transition, so nothing new keeps it live.
- *
- * Renders nothing off the session screen (and at SSG, where no target
- * exists), so hydration matches the shipped bar byte for byte. ON the
- * session screen the HOST span always renders — the same always-there
- * contract the strip's #dc-status-pill kept — with the pill inside only
- * while the session has a lifecycle worth drawing.
- */
-function SessionStatusPill() {
-  const { tab, subTab } = useStoreState(improveStore);
-  const { life } = useStoreState(sessionHeaderStore);
-  if (tab !== 'dev' || subTab !== 'sessions') return null;
-  return (
-    <span id="header-status-pill" className="min-w-0 truncate">
-      {life ? <MergeStatusPill life={life} /> : null}
-    </span>
-  );
-}
+// THE SESSION LIFECYCLE PILL MOVED INTO THE CHIP.
+//
+// It used to render here, in the bar's left seat beside the back arrow, as
+// `function SessionStatusPill()` wrapping a #header-status-pill span. On a new
+// change that left the top of the screen reading as one grey word — "Draft" —
+// with nothing naming the app being changed, because #1431 also left the chip
+// empty on this route.
+//
+// Both halves are fixed in one place instead: the chip renders on session
+// routes now, and the pill is its subtitle. Same store, same component, same
+// #header-status-pill id and still inside #platform-header — see
+// ./app-switcher-chip.tsx.
 
 // LIGHT-MODE SURFACES ARE zinc-50, NOT zinc-100. tailwind.config.js overrides
 // the ramp, and `zinc-100` there is #eaeaea — byte-identical to the light page
@@ -133,15 +118,14 @@ export function PlatformHeader() {
   // publishes here rather than writing `hidden` into React-owned DOM.
   const { mode: backMode, href: backHref } = useStoreState(backButtonStore);
   // …and ON A DEV SESSION the slot is derived from the ROUTE, not from the
-  // imperative call. <SessionStatusPill/> and <AppSwitcherChip/> already gate
-  // on exactly this condition — the pill renders, the centre tab does not —
-  // so leaving the third member of that trio to an ordering-dependent
-  // setBackIcon() call was the odd one out, and it is the one that kept
-  // coming up hidden on staging while the other two were right. Three
-  // components agreeing by construction beats three call sites agreeing by
-  // convention: a session bar is `←` + status on the left, the doing/seeing
-  // pair on the right, and no centre tab, and that is now true wherever the
-  // route says session.
+  // imperative call. <AppSwitcherChip/> already gates on exactly this
+  // condition — it is what swaps the chip's subtitle for the lifecycle pill —
+  // so leaving the back slot to an ordering-dependent setBackIcon() call was
+  // the odd one out, and it is the one that kept coming up hidden on staging
+  // while the rest were right. Components agreeing by construction beats call
+  // sites agreeing by convention: a session bar is `←` on the left, the app
+  // chip carrying the lifecycle in the middle, and the doing/seeing pair on
+  // the right, wherever the route says session.
   const { slug: backSlug, tab: backTab, subTab: backSubTab } = useStoreState(improveStore);
   const onSession = backTab === 'dev' && backSubTab === 'sessions';
   const backArrow = backMode === 'arrow' || onSession;
@@ -315,7 +299,7 @@ export function PlatformHeader() {
                 RENDERED FROM A STORE, not written by classList from outside.
                 setBackIcon used to toggle `hidden` on these nodes directly,
                 which held only while this island never re-rendered. It does
-                now — the bar carries <SessionStatusPill/> — and React
+                now — the chip re-renders on every lifecycle change — and React
                 rewrites a rendered className from its own props on every
                 render, so the legacy write was being undone. The store is
                 ./back-button-store.js; setBackIcon publishes into it.
@@ -333,7 +317,6 @@ export function PlatformHeader() {
           >
             <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5" />
           </a>
-          <SessionStatusPill />
         </div>
         {/*
             The chip: the screen's only h1, and on every screen but a dev

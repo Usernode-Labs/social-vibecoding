@@ -63,6 +63,8 @@
 
 import { useRef } from 'react';
 
+import { ArrowPathIcon, LightBulbIcon, SpinnerArcIcon } from '@/components/ui/icons';
+
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
@@ -116,11 +118,49 @@ const IMPROVE_BTN_CLASS =
   + 'bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold '
   + 'un-touch-target';
 
-/** Amber while a deploy runs, violet once the platform has rolled past us. */
+/** Amber while a build is on its way, violet once it is here to switch to. */
 const VERSION_DOT: Record<string, string> = {
   deploying: 'bg-amber-500',
-  stale: 'bg-violet-400',
+  downloading: 'bg-amber-500',
+  ready: 'bg-violet-400',
+  failed: 'bg-violet-400',
 };
+
+// The glyph on the button's leading edge, and the reason the button has one.
+//
+// "Improve" alone said what the control was FOR and nothing about whether
+// anything was happening. The three states it can be in are all things the
+// viewer wants at a glance, from a control that is on screen everywhere:
+//
+//   lightbulb — nothing in flight; the button is an invitation
+//   spinner   — this app or the platform is building or downloading a build
+//   refresh   — a new build is here, and the panel offers the reload
+//
+// `w-4 h-4` inside the 28px content row, so the header height contract
+// (tests/header-height-parity.test.js) is untouched — no taller than the text
+// beside it. `animate-spin` is the caller's, per the note on SpinnerArcIcon.
+const BUSY_STATES = ['deploying', 'downloading'];
+const READY_STATES = ['ready', 'failed'];
+
+function ImproveGlyph({ versionState, appDeploying }: {
+  versionState: string;
+  appDeploying: boolean;
+}) {
+  const cls = 'w-4 h-4 shrink-0';
+  if (appDeploying || BUSY_STATES.includes(versionState)) {
+    return <span id="improve-btn-glyph" data-state="busy" className="contents">
+      <SpinnerArcIcon className={`${cls} animate-spin`} aria-hidden="true" />
+    </span>;
+  }
+  if (READY_STATES.includes(versionState)) {
+    return <span id="improve-btn-glyph" data-state="ready" className="contents">
+      <ArrowPathIcon className={cls} aria-hidden="true" />
+    </span>;
+  }
+  return <span id="improve-btn-glyph" data-state="idle" className="contents">
+    <LightBulbIcon className={cls} aria-hidden="true" />
+  </span>;
+}
 
 // Byte-identical to the bell's own badge run, which is the point: the two are
 // twins at different corners of different controls, and a contrast/geometry
@@ -181,7 +221,7 @@ function ImproveIndicators() {
 }
 
 export function ImproveButton() {
-  const { target, open } = useStoreState(improveStore);
+  const { target, open, versionState, deploying } = useStoreState(improveStore);
   // "this app" is wrong on home, where the target is the platform itself
   // (#1367). The visible label stays the single word "Improve" at both — what
   // is being improved is named in the panel's own header.
@@ -232,6 +272,7 @@ export function ImproveButton() {
       aria-expanded={open ? 'true' : 'false'}
       onClick={() => Improve.toggle()}
     >
+      <ImproveGlyph versionState={versionState} appDeploying={deploying} />
       Improve
       {/* Bottom-LEFT, where it landed when #1412's green count took the
           top-right corner. All three indicators are on this control again

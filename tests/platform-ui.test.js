@@ -623,15 +623,27 @@ test('the Improve panel is navigation, work and reference — one scroller', () 
   // separately; every move was defensible alone and the sum meant leaving the
   // app to read facts about the app you were standing in.
   assert.match(panel, /id="improve-row-github"/, 'the GitHub link is back');
-  // Rendered, but gated on `!selfHosted`: the platform's own row IS the
-  // platform, so this row and "Platform version" under it printed the same
-  // seven characters twice. See the note at the call site for what that costs
-  // (one SHA, in a state the Platform version row already names) and what the
-  // deploy dot reads (never this row).
-  assert.match(panel, /\{slug && !selfHosted \? \([\s\S]{0,120}id="improve-row-version"/,
-    "the app's version is back, and off the platform's own panel");
-  assert.match(panel, /id="drawer-row-platform-version"/, 'the platform build is back');
-  assert.match(panel, /<NativeAppVersionRow \/>/, 'and the native app version');
+  // THE VERSION ROWS ARE NOT IN IT. They were, and the question they were
+  // being read for was never "which SHA" — it was "is something happening,
+  // and is there a new version yet". Three static rows answered that only by
+  // implication, and you had to notice one of them had become a spinner.
+  //
+  // The footer states it instead: a note while a build is in flight, a reload
+  // button once one is ready. The revisions themselves went back to Settings'
+  // About pane, which is the screen you consult rather than act from
+  // (tests/header-status-pane.test.js pins where they landed).
+  assert.match(panel, /id="improve-update-note"/, 'the footer says when a build is in flight');
+  assert.match(panel, /id="improve-update-ready"/, 'and offers the reload when one is ready');
+  assert.ok(!panel.includes('id="improve-row-version"'),
+    "the app's version row is Settings' now");
+  assert.ok(!panel.includes('id="drawer-row-platform-version"'),
+    'and so is the platform build');
+  assert.ok(!panel.includes('<NativeAppVersionRow />'),
+    'and the native app version');
+  // The state behind all three is NAMED, not read back out of a rendered row,
+  // which is what let them move at all — see improve-status.js.
+  assert.match(panel, /versionState === 'downloading'/,
+    'the note distinguishes the download from the build that preceded it');
   // Fork lineage did NOT come back: #browse-detail-fork on the app's own page
   // is the better home, because lineage is a fact about an app.
   assert.ok(!panel.includes('id="drawer-row-app-fork"'),
