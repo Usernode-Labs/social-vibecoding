@@ -116,12 +116,6 @@ const IMPROVE_BTN_CLASS =
   + 'bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold '
   + 'un-touch-target';
 
-/** Amber while a deploy runs, violet once the platform has rolled past us. */
-const VERSION_DOT: Record<string, string> = {
-  deploying: 'bg-amber-500',
-  stale: 'bg-violet-400',
-};
-
 // Byte-identical to the bell's own badge run, which is the point: the two are
 // twins at different corners of different controls, and a contrast/geometry
 // test diffs them as such.
@@ -130,53 +124,70 @@ const AI_BADGE_CLS =
   + 'bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center';
 
 /**
- * What changed while you were not looking — three corners of one control.
+ * WHAT THIS BUTTON IS ALLOWED TO SAY, AND HOW IT SAYS IT.
  *
- * #1412 built these for the Improve button and the Streamlined header then
- * parked them on the hamburger, because that was the control whose drawer
- * held the sessions. It does not any more: this panel is the sessions
- * surface, so the cue that says "go and look" belongs on the control that
- * opens it. Everything #1412 built is kept whole — the writers publish
- * through improveStore (Improve.setSessionBadge / setVersionState, never a
- * classList write by id), the count carries `data-session-done` for the
- * declared checks, the dot knows the violet "platform rolled past this tab"
- * state, and a running turn shows as a pulse on the emerald badge, which also
- * appears dot-sized and empty when a turn runs with nothing unread yet.
+ * Two indicators. Not three, and never a fourth without retiring one — the
+ * rule is the point of this comment, because the third one is what broke it.
  *
- * Three corners, one rule: the outbox dot is bottom-left, the session count
- * top-right, the version dot bottom-right — so a deploy rolling out during an
- * unread finish cannot hide underneath the count.
+ *   BADGE, top-right, emerald   #notifications-badge-ai
+ *       Your sessions. A count when there is unread activity, dot-sized and
+ *       empty when a turn is running with nothing unread yet, PULSING while
+ *       it runs. The only indicator in the header that may carry a number.
  *
- * At rest everything is `hidden` with the exact class runs the prerender
- * ships, so hydration matches.
+ *   DOT, bottom-left, amber     #feedback-queue-dot
+ *       Feedback you wrote that has not sent. Never a number — it is one
+ *       fact. It stays ambient rather than moving into the panel precisely
+ *       because an unsent draft with no visible cue is the failure it exists
+ *       to prevent (#1054).
+ *
+ * ── The vocabulary the header shares ───────────────────────────────────
+ *
+ *   red      someone else needs you        the bell, and only the bell
+ *   emerald  your own work produced this   this button, and only this button
+ *   amber    you have something unsent     this button, and only this button
+ *   pulse    it is happening right now     a modifier, never a meaning
+ *   number   countable                     badges only; dots never count
+ *
+ * The bell's badge and this one are byte-identical runs on purpose, at
+ * matching corners of two controls, and a contrast/geometry test diffs them
+ * as such.
+ *
+ * ── The third corner, and why it is gone ───────────────────────────────
+ *
+ * #improve-version-dot sat bottom-right and said the platform was deploying
+ * (amber) or had rolled past this tab (violet). It failed three ways at once
+ * and is worth remembering as a shape of mistake:
+ *
+ *   1. `violet-400` on this button's own `violet-600` fill is one hue two
+ *      steps apart, so the state anybody was most likely to meet read as a
+ *      rendering artefact rather than as news.
+ *   2. It made AMBER mean two unrelated things on ONE control, eight pixels
+ *      apart, told apart only by which corner they were in. A vocabulary
+ *      that needs a position to disambiguate a colour is not a vocabulary.
+ *   3. It was not about your app or your work at all. "This tab is behind
+ *      the platform" is something to READ, so it is words now, on the
+ *      panel's own Platform version row — see improve-panel.tsx's
+ *      <ImprovePlatformVersionState/>.
+ *
+ * The writers are untouched: both publish through improveStore
+ * (Improve.setSessionBadge / setVersionState) and the visibility store, never
+ * a classList write by id, and the count keeps `data-session-done` for the
+ * declared checks. At rest everything is `hidden` with the exact class runs
+ * the prerender ships, so hydration matches.
  */
-function ImproveIndicators() {
-  const { working, sessionUnread, sessionDone, versionState } = useStoreState(improveStore);
+function ImproveSessionBadge() {
+  const { working, sessionUnread, sessionDone } = useStoreState(improveStore);
   const showAi = working || sessionUnread > 0;
   return (
-    <>
-      <span
-        id="notifications-badge-ai"
-        data-session-done={String(sessionDone)}
-        className={showAi
-          ? `${AI_BADGE_CLS}${working ? ' animate-pulse' : ''}`
-          : `hidden ${AI_BADGE_CLS}`}
-      >
-        {sessionUnread > 0 ? (sessionUnread > 99 ? '99+' : String(sessionUnread)) : ''}
-      </span>
-      {/* Renamed with the move. It was #header-menu-deploy-dot, from when the
-          version rows lived in that drawer's footer — a `header-menu-*` id on
-          the Improve button would be a lie that outlives everyone who
-          remembers it. */}
-      <span
-        id="improve-version-dot"
-        className={VERSION_DOT[versionState]
-          ? `absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full ${VERSION_DOT[versionState]}`
-          : 'hidden absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500'}
-        aria-hidden="true"
-      >
-      </span>
-    </>
+    <span
+      id="notifications-badge-ai"
+      data-session-done={String(sessionDone)}
+      className={showAi
+        ? `${AI_BADGE_CLS}${working ? ' animate-pulse' : ''}`
+        : `hidden ${AI_BADGE_CLS}`}
+    >
+      {sessionUnread > 0 ? (sessionUnread > 99 ? '99+' : String(sessionUnread)) : ''}
+    </span>
   );
 }
 
@@ -233,15 +244,15 @@ export function ImproveButton() {
       onClick={() => Improve.toggle()}
     >
       Improve
-      {/* Bottom-LEFT, where it landed when #1412's green count took the
-          top-right corner. All three indicators are on this control again
-          now, one per corner, so nothing needs to move. */}
+      {/* Bottom-LEFT, opposite the badge — the two indicators this button is
+          allowed to carry, at the two corners furthest apart. See
+          <ImproveSessionBadge/> above for the whole vocabulary. */}
       <span
         ref={dotRef}
         id="feedback-queue-dot"
         className="hidden absolute -bottom-0.5 -left-0.5 w-2 h-2 rounded-full bg-amber-400"
       />
-      <ImproveIndicators />
+      <ImproveSessionBadge />
     </button>
   );
 }

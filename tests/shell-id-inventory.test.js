@@ -169,6 +169,7 @@ const RETIRED_IDS = {
   'notifications-screen': 'The Notifications screen ROOT. It is #notifications-sheet now — an overlay over the current screen, out of App.SCREEN_IDS entirely, so there is no back arrow to point anywhere. Its children kept their ids.',
   'header-menu-btn': 'The hamburger. Its slot is the app-glyph/back-arrow pair (features/header/header-app-icon.tsx + #back-btn), and its badge cluster moved to #improve-btn — the control whose panel actually holds the work those badges report.',
   'header-menu-deploy-dot': 'Renamed #improve-version-dot with that move. A `header-menu-*` id on the Improve button would be a lie that outlives everyone who remembers it.',
+  'improve-version-dot': 'The platform deploy/stale dot, RETIRED — not moved again. It failed three ways at once: `stale` drew violet-400 on #improve-btn\'s own violet-600 fill (one hue two steps apart, so it read as a rendering artefact); it made amber mean two unrelated things on one control eight pixels apart, told apart only by which corner they were in; and "this tab is behind the platform" is not about your app or your work at all. It is words on the Improve panel\'s Platform version row now — <ImprovePlatformVersionState/> in improve-panel.tsx, which renders nothing at rest and so has no id in the prerender.',
   'drawer-app-rows': 'The app rows\' scroller in the drawer. The Improve panel renders them now, and #improve-sessions is the scroller.',
   'app-context-new-change': 'Merged INTO #improve-row-new-session, the panel\'s middle quick action. Two ids calling one Improve.startSession() was the duplication the merge exists to remove.',
   'improve-row-share': 'Share app is the Improve panel\'s third action (features/improve/improve-panel.tsx) — the one line in that footer that was an action rather than a reference. Same id, same `canShare` gate.',
@@ -320,7 +321,6 @@ const ADDED_IDS = {
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
   'improve-quick-actions': 'The panel\'s three circular actions — Feedback, New change, Share — captioned beneath so three fit across a phone.',
   'improve-sessions': 'The changes in flight, here and on the viewer\'s other apps — and the panel\'s ONE scroller, which is what keeps the actions and the views on screen at any height.',
-  'improve-version-dot': 'The platform deploy/stale dot, renamed from #header-menu-deploy-dot when it followed the badge cluster onto #improve-btn.',
   'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────

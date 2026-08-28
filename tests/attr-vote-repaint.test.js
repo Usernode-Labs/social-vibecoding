@@ -104,9 +104,10 @@ test('_refreshAttrCards repaints the topic head only in the topic sub-view', () 
   assert.equal(topicRepaints, 1);
 });
 
-test('kanban mode: a vote repaint reaches _repaintKanbanBoard', () => {
+test('columns: a vote repaint reaches _repaintKanbanBoard', () => {
   const { AppView, sandbox } = makeSandbox();
-  sandbox.localStorage = { getItem: () => 'kanban', setItem: () => {} };
+  // `All` on a wide viewport IS the columns — there is no stored mode to set.
+  sandbox.matchMedia = () => ({ matches: true });
   sandbox.document = fakeDoc({
     'dev-body': fakeEl(),
     'dev-kanban-filterbar': fakeEl(),
@@ -120,14 +121,15 @@ test('kanban mode: a vote repaint reaches _repaintKanbanBoard', () => {
   assert.equal(boardRepaints, 1);
 });
 
-test('a stored PM preference resolves to the board, and repaints it', () => {
-  // THE UI OVERHAUL retired the PM view. A viewer who last left the board in
-  // that mode still has 'pm' in localStorage, and the migration table
-  // (AppView.RETIRED_VIEW_MODES) is what stops them landing on the width
-  // default instead of the nearest surviving surface. The repaint has to
-  // follow the MIGRATED mode, not the stored string.
+test('a column tab draws the columns even on a narrow viewport', () => {
+  // The stored `pm` / `report` migration this replaces is gone with the
+  // preference itself. What is load-bearing now is the other direction: a
+  // named column is ALWAYS the columns, because there is no single-column
+  // stream to fall back to — so the repaint must reach the board even where
+  // `All` would have drawn the stream.
   const { AppView, sandbox } = makeSandbox();
-  sandbox.localStorage = { getItem: () => 'pm', setItem: () => {} };
+  sandbox.matchMedia = () => ({ matches: false });
+  AppView._boardTab = 'inreview';
   sandbox.document = fakeDoc({
     'dev-body': fakeEl(),
     'dev-kanban-filterbar': fakeEl(),
@@ -137,7 +139,7 @@ test('a stored PM preference resolves to the board, and repaints it', () => {
   AppView._repaintKanbanBoard = () => { boardRepaints += 1; };
   AppView._reanchorAttrPopover = () => {};
 
-  assert.equal(AppView._getViewMode(), 'kanban');
+  assert.equal(AppView._boardLayout(), 'columns');
   AppView._refreshAttrCards();
   assert.equal(boardRepaints, 1);
 });

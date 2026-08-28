@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { renderComponent } = require('./lib/render-tsx');
-const { kanbanHtml } = require('./lib/dev-card-html');
+const { kanbanHtml, boardTabsHtml, feedHtml } = require('./lib/dev-card-html');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -664,13 +664,16 @@ test('the second column reads "Underway" but keeps its inprogress key and id', (
 
   assert.match(html, /Underway <span[^>]*>· 1<\/span>/, 'column head retitled');
   assert.ok(!/In progress <span/.test(html), 'the old title is gone');
-  // Load-bearing and unchanged: the key, the id and the tab wiring.
+  // Load-bearing and unchanged: the key and the id.
   assert.match(html, /id="dev-kanban-col-inprogress"/);
   assert.match(html, /data-kanban-col="inprogress"/);
-  assert.match(html, /aria-controls="dev-kanban-col-inprogress"/);
-  // The tab strip reads the same title, so the two surfaces cannot drift.
-  const tab = html.match(/id="dev-kanban-tab-inprogress"[\s\S]*?<\/button>/);
-  assert.ok(tab && /Underway/.test(tab[0]), 'the mobile tab is retitled too');
+  // The tab strip reads the same title from the same view model, so the two
+  // surfaces cannot drift — it is a separate RENDER now (a row of the frame,
+  // above #dev-body) but not a separate source.
+  const tabs = boardTabsHtml(AppView);
+  assert.match(tabs, /aria-controls="dev-kanban-col-inprogress"/);
+  const tab = tabs.match(/id="dev-kanban-tab-inprogress"[\s\S]*?<\/button>/);
+  assert.ok(tab && /Underway/.test(tab[0]), 'the tab is retitled too');
   // One-line hover explanation on the column head — the column name alone
   // still cannot say what the five underway states have in common.
   const head = html.match(/id="dev-kanban-col-inprogress"[\s\S]*?dev-kanban-col-head[^>]*title="([^"]+)"/);
@@ -745,4 +748,96 @@ test('a repaint republishes the whole strip: count and chips track the filters',
       { key: 'needsVote', label: 'Needs my vote' },
     ],
   );
+});
+
+// ── The filters are the BOARD's, so the stream honours them ────────────────
+//
+// The bar used to be built only where the columns were, and `_feedItems()`
+// ignored `_kanbanFilters` outright — defensible while the other layout was a
+// "Feed" you had chosen INSTEAD of the board. `All` IS the board now, drawn as
+// a stream where four columns will not fit, so a search that narrowed the
+// columns and did nothing to the stream would be the worse half of that
+// bargain.
+
+function seedStream(AppView) {
+  AppView._devDataReady = true;
+  AppView._ghIssues = [
+    issue({ number: 1, title: 'Dark mode toggle resets' }),
+    issue({ number: 2, title: 'Ripple effect on Press' }),
+  ];
+  AppView._envIssueNumbers = new Set();
+  AppView._proposals = [];
+  AppView._govProposals = [];
+  AppView._merged = [];
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedTotal = 0;
+  AppView._mergedHasMore = false;
+  AppView._mySessions = [];
+  AppView._sharedSessions = [];
+  AppView._archivedSessions = [];
+  AppView._kanbanFilters = { q: '', priority: null, category: null, assignee: null, needsVote: false };
+}
+
+test('the stream applies the same filters the columns do', () => {
+  const AppView = makeAppView();
+  seedStream(AppView);
+  assert.equal(AppView._feedItems().length, 2, 'unfiltered: both issues');
+  AppView._kanbanFilters.q = 'ripple';
+  const items = AppView._feedItems();
+  assert.equal(items.length, 1);
+  assert.equal(items[0].item.number, 2);
+});
+
+test('a session in the stream matches through the predicate\'s `session` kind', () => {
+  // `_feedItems` calls a shared session `shared-session`; `_devCardMatches`
+  // knows it as `session`. The feed's kind names are its own, so the mapping
+  // has to happen at the call site or every session survives every filter.
+  const AppView = makeAppView();
+  seedStream(AppView);
+  AppView._sharedSessions = [{
+    id: 7, session_title: 'Ripple polish', branch_name: 'b', username: 'ada',
+    shared_at: '2026-06-01T10:00:00Z', last_message_at: '2026-06-01T10:00:00Z',
+    linked_issues: [],
+  }];
+  AppView._kanbanFilters.q = 'ripple';
+  // `.join`, not deepEqual: _feedItems builds its array inside the vm realm,
+  // so its prototype is not the test's Array and deepStrictEqual compares
+  // those. The chip assertions above sidestep it with Array.from for the same
+  // reason.
+  const kinds = Array.from(AppView._feedItems(), (e) => e.kind).sort();
+  assert.equal(kinds.join(','), 'issue,shared-session');
+  AppView._kanbanFilters.q = 'nothing-matches-this';
+  assert.equal(AppView._feedItems().length, 0, 'and it is filtered OUT when it should be');
+});
+
+test('the strip counts what the stream is showing, not the whole board', () => {
+  // An earlier cut published UNFILTERED counts on the stream, because the
+  // filters were genuinely unreachable there and subtracting by them would
+  // have been arithmetic nobody could explain. The bar is on screen in both
+  // layouts now, so the counts follow it.
+  const AppView = makeAppView();
+  seedStream(AppView);
+  AppView._kanbanFilters.q = 'ripple';
+  const tabs = boardTabsHtml(AppView);
+  const issues = tabs.slice(tabs.indexOf('data-kanban-tab="issues"'));
+  assert.match(issues.slice(0, issues.indexOf('</button>')), />1</);
+});
+
+test('a filtered-empty stream says so, instead of advising you to file an issue', () => {
+  const AppView = makeAppView();
+  seedStream(AppView);
+  AppView._kanbanFilters.q = 'zzz-no-match';
+  const view = AppView._feedView();
+  assert.equal(view.emptyNote.filtered, true);
+  assert.match(feedHtml(AppView), /No matching cards\./);
+  assert.doesNotMatch(feedHtml(AppView), /No activity yet/);
+});
+
+test('an unfiltered-empty stream still gives the "press +" advice', () => {
+  const AppView = makeAppView();
+  seedStream(AppView);
+  AppView._ghIssues = [];
+  const view = AppView._feedView();
+  assert.equal(view.emptyNote.filtered, false);
+  assert.match(feedHtml(AppView), /No activity yet/);
 });

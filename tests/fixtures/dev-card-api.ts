@@ -12,6 +12,10 @@
 export { ActionButton, DevCard, StatusPill, Badge, Preview, CardIcon, fmtCountdown, BADGE_MAX, ACTION_PRIMARY_MAX } from '../../frontend/src/features/dev-board/card/dev-card';
 export { DevFeed, FooterView } from '../../frontend/src/features/dev-board/card/dev-feed';
 export { DevKanban } from '../../frontend/src/features/dev-board/card/dev-kanban';
+// The strip is a row of the FRAME now, not of the board — but it reads the
+// same store, so it belongs in this one bundle for the same reason the rest
+// of this file exists.
+export { BoardTabs } from '../../frontend/src/features/dev-board/board-tabs';
 export { TopicHead, NoteBoxView, ChecksVerdictView, ProposalBody } from '../../frontend/src/features/dev-board/topic/topic-head';
 export { topicHeadStore } from '../../frontend/src/features/dev-board/topic/topic-store';
 export { ListRowView } from '../../frontend/src/features/dev-board/card/list-rows';

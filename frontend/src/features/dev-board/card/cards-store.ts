@@ -5,8 +5,10 @@
  *
  * - `devFeedStore` — the list feed (`#dev-feed`): the pinned own-sessions
  *   block, the stream's entries, the pager footer.
- * - `devKanbanStore` — the board (`#dev-kanban-board`): the four columns
- *   plus the mobile tab strip's active key.
+ * - `devKanbanStore` — the board: the four columns plus the active tab.
+ *   Read by BOTH the columns (`#dev-kanban-board`) and the strip above the
+ *   body (../board-tabs.tsx), which is why app-view.js publishes it from
+ *   either layout — the strip is on screen while the stream is.
  * - `cardNowStore` / `aiEnabledStore` — the two cross-cutting facts that
  *   used to be applied by in-place DOM passes: the 30s countdown tick
  *   (`_startMergeCountdownTimer` rewrote pill labels) and `/api/budget`'s
@@ -36,7 +38,7 @@ export const devFeedStore = createStore<DevFeedView>({
 });
 
 export const devKanbanStore = createStore<DevKanbanView>({
-  activeTab: 'issues',
+  activeTab: 'all',
   cols: [],
   loading: true,
 });

@@ -38,6 +38,10 @@ const browseDetailTsx = read('frontend/src/features/apps/browse-detail.tsx');
 const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
 const topicFrameTsx = read('frontend/src/features/dev-board/topic-frame.tsx');
+// The anchor itself moved into the shared second bar; the topic frame passes
+// it an id, an href and a handler. Both halves are read here so the rule is
+// still asserted end to end.
+const screenBarTsx = read('frontend/src/features/shell/screen-bar.tsx');
 const sessionHeaderTsx = read('frontend/src/features/dev-chat/session-header.tsx');
 const { HOME_SRC: homeJs } = require('./helpers/home-modules');
 const leaderboardJs = read('frontend/src/features/leaderboard/leaderboard.js');
@@ -323,18 +327,26 @@ test('"back out of a dev session" rides the header back anchor, with a real targ
   assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,900}?App\.switchTab\('dev'\)/);
 });
 
-// The topic back link, split the same way by #1191: the anchor is JSX in
-// frontend/src/features/dev-board/topic-frame.tsx, and the plain-click handler
-// is the onBackClick prop AppView._renderTopicSubView passes in. Both
-// assertions are anchored on the mount call rather than on the bare
-// `onBackClick`, because app-view.js now passes two of them.
+// The topic back link, split the same way by #1191: the anchor is JSX and the
+// plain-click handler is the onBackClick prop AppView._renderTopicSubView
+// passes in. Both assertions are anchored on the mount call rather than on the
+// bare `onBackClick`, because app-view.js now passes two of them.
+//
+// The anchor lives in features/shell/screen-bar.tsx now rather than in the
+// topic frame: the topic drew its own back strip, and it is the shell's second
+// bar like every other screen's. The rule is unchanged and so is the id — only
+// which file holds the tag.
 test('"back out of an issue / proposal / governance topic" is a real anchor with a real target', () => {
-  assert.match(topicFrameTsx, /<a\s+id="dev-topic-back"/,
-    'topic-frame.tsx: the control must be an <a>');
-  assert.ok(!/<button[^>]*id="dev-topic-back"/.test(topicFrameTsx + appViewJs),
-    'the old <button> tag is gone from both the component and app-view.js');
-  assert.match(topicFrameTsx, /href=\{backHref\}/,
-    'topic-frame.tsx: the anchor must carry the href prop, not a bare "#"');
+  assert.match(screenBarTsx, /<a\n?\s*id=\{backId\}/,
+    'screen-bar.tsx: the back control must be an <a>');
+  assert.match(topicFrameTsx, /backId="dev-topic-back"/,
+    'topic-frame.tsx: and the topic still hands it that id');
+  assert.ok(!/<button[^>]*id="dev-topic-back"/.test(topicFrameTsx + screenBarTsx + appViewJs),
+    'the old <button> tag is gone from the components and app-view.js');
+  assert.match(screenBarTsx, /href=\{backHref\}/,
+    'screen-bar.tsx: the anchor must carry the href prop, not a bare "#"');
+  assert.match(topicFrameTsx, /backHref=\{backHref\}/,
+    'topic-frame.tsx: and it forwards the resolved href through');
   assert.match(appViewJs, /mountTopicSubView\(content, \{\s*\n\s*backHref: AppView\._devPageHref\(\),/,
     'app-view.js must resolve that href through the same shared helper as before');
 });

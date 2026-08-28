@@ -195,8 +195,16 @@ const OWNED = [
     sel: '#dev-kanban-board',
     except: ['[data-kudos-host]'],
   },
+  // The board's tab strip (features/dev-board/board-tabs.tsx). It was the
+  // kanban's own markup, INSIDE #dev-kanban-board and so already covered by
+  // that entry; it is a row of the frame now — above #dev-body, on screen in
+  // both layouts — so it needs an entry of its own. React reconciles every
+  // node in it (the active marker and the counts re-render on every publish)
+  // and nothing in public/js writes there: app-view.js publishes the view
+  // model and the strip renders it.
+  { sel: '#dev-kanban-tabs' },
   // The kanban board's filter strip (features/dev-board/kanban-filters.tsx).
-  // Swept on #app/recipebot/dev whenever the board is in kanban mode.
+  // Swept on #app/recipebot/dev whenever the board shows columns.
   { sel: '#dev-kanban-filterbar' },
   // An issue topic page's GitHub thread
   // (features/dev-board/issue-comments.tsx), inside the topic card that

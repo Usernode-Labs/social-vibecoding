@@ -3,12 +3,18 @@
  * converted from `AppView._renderTopicSubView()`'s `innerHTML` template.
  *
  * It is the sibling of ./chat-frame.tsx and reads almost the same, which is
- * the point: both are a slim back-button header over a host something else
- * mounts into. The differences are the ones the two pages actually have — this
- * bar carries a hairline and a wider `← Back` label, and its host is
- * `#dev-topic-thread`, which `GroupChat.mountThread` fills with the thread
- * panel (and, inside that, the topic card app-view.js paints into
- * `#gc-thread-head`).
+ * the point: both are the shell's SECOND BAR over a host something else
+ * mounts into. The bar is features/shell/screen-bar.tsx in both — this one
+ * drew its own `← Back` strip at `py-1.5`, which made the topic the one
+ * screen in the app with a bar of its own shape and its own height, sitting
+ * under a chip that was meanwhile still saying "Board".
+ *
+ * The bar names the KIND of thing you opened rather than repeating its title:
+ * the card immediately below carries the title, the number and the author,
+ * and a heading that restates them is the subtitle problem again one level
+ * down. Its host is `#dev-topic-thread`, which `GroupChat.mountThread` fills
+ * with the thread panel (and, inside that, the topic card app-view.js paints
+ * into `#gc-thread-head`).
  *
  * ── Why this was the LAST hand-written #app-content in Dev ────────────
  *
@@ -25,6 +31,7 @@
  * self-app's hash-routing rules, which are the router's business.
  */
 
+import { ScreenBar } from '../shell/screen-bar';
 import { skeletonListHtml } from './card/skeleton';
 
 /**
@@ -46,26 +53,31 @@ export interface DevTopicSubViewProps {
   /** `AppView._devPageHref()`. */
   backHref: string;
   /**
+   * What kind of thing is open — "Issue" or "Change". From
+   * `AppView._devTopic.kind`, which is resolved before the frame mounts, so
+   * the bar is never briefly blank on a cold deep link.
+   */
+  title: string;
+  /**
    * Plain-click handler. The caller keeps the `NavLink.isNativeClick(e)` guard
    * and the `App.switchTab('dev')` call, so the behaviour is the template's.
    */
   onBackClick: (event: React.MouseEvent<HTMLAnchorElement>) => void;
 }
 
-export function DevTopicSubView({ backHref, onBackClick }: DevTopicSubViewProps) {
+export function DevTopicSubView({ backHref, title, onBackClick }: DevTopicSubViewProps) {
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-        <a
-          id="dev-topic-back"
-          className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0 dark:text-zinc-400"
-          title="Back to the dev page"
-          href={backHref}
-          onClick={onBackClick}
-        >
-          ← Back
-        </a>
-      </div>
+      {/* `#dev-topic-back` keeps its id and its `<a href>` (#1036) — only the
+          bar around it changed, from this screen's own strip to the one every
+          screen uses. */}
+      <ScreenBar
+        title={title}
+        backId="dev-topic-back"
+        backHref={backHref}
+        backTitle="Back to the board"
+        onBackClick={onBackClick}
+      />
       {/*
           The thread panel's host. `GroupChat.mountThread` mounts
           features/group-chat/thread-shell.tsx into it, so React renders it as

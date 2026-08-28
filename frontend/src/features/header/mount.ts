@@ -28,17 +28,17 @@ if (typeof window !== 'undefined') {
   const bridge = (host.UsernodeReact ||= {});
   bridge.headerTitle = {
     /**
-     * @param text The visible title — forwarded from App.setHeaderTitle.
-     * @param subtitle The destination within it ('Board', 'Activity'), or ''
-     *   at the root of a screen. Omitted by every caller that has none, and
-     *   defaulted here rather than left undefined so a root screen actively
-     *   CLEARS a subtitle the previous screen published — a stale "Board"
-     *   under the Home title is exactly the bug the second argument invites.
+     * @param text The app's name — the chip's text.
+     * @param screen The screen within it ('Board', 'Activity'), or '' at the
+     *   root. Nothing RENDERS it (the screen bar takes its heading as a prop
+     *   from the frame that draws it); it is here because `document.title`
+     *   still joins both halves. Defaulted rather than left undefined so a
+     *   root screen actively CLEARS what the previous one published.
      */
-    set(text: string, subtitle?: string) {
+    set(text: string, screen?: string) {
       headerTitleStore.set({
         text: String(text ?? ''),
-        subtitle: String(subtitle ?? ''),
+        screen: String(screen ?? ''),
       });
     },
   };

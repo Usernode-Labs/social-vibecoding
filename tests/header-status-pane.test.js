@@ -157,29 +157,39 @@ test("the work badge sits exactly where the bell's unread one does", () => {
   assert.match(bellBadge[0], /bg-red-500/, 'the bell badge stays red');
 });
 
-test('the version dot rides the Improve button, hidden by default', () => {
-  // #1412 built it as #improve-version-dot on the Improve button; the
-  // Streamlined Concept parked it on the hamburger's badge cluster as
-  // #header-menu-deploy-dot; and with the hamburger gone it is back where
-  // #1412 put it, under its original name. A `header-menu-*` id on the
-  // Improve button would be a lie that outlives everyone who remembers it.
-  // It renders from improveStore (<ImproveIndicators/>), never from a
-  // classList write by id.
-  const dot = header.match(/<span id="improve-version-dot"[^>]*>/);
-  assert.ok(dot, '#improve-version-dot exists on the Improve button');
-  assert.match(dot[0], /class="hidden /, 'ships hidden');
-  assert.match(dot[0], /bg-amber-/, 'renders amber at rest, matching the deploying pill');
+test('the Improve button carries TWO indicators, and the third is retired', () => {
+  // #1412 built #improve-version-dot on this button; the Streamlined Concept
+  // parked it on the hamburger as #header-menu-deploy-dot; with the hamburger
+  // gone it came back here — and it is retired outright now. Three reasons,
+  // and the second is the one that generalises:
+  //
+  //   * `stale` drew `violet-400` on this button's own `violet-600` fill,
+  //     one hue two steps apart, so it read as a rendering artefact;
+  //   * it made AMBER mean two unrelated things on ONE control eight pixels
+  //     apart, told apart only by which corner they were in;
+  //   * "this tab is behind the platform" is not about your app or your
+  //     work. It is words on the panel's Platform version row now
+  //     (<ImprovePlatformVersionState/> in improve-panel.tsx).
+  assert.ok(!html.includes('id="improve-version-dot"'),
+    'the deploy/stale dot is gone from the header entirely');
   assert.ok(!html.includes('id="header-menu-deploy-dot"'),
-    'and the hamburger-era copy is gone, not duplicated');
+    'and so is the hamburger-era copy, not merely duplicated');
 
   const improve = header.match(/<button id="improve-btn"[^>]*>[\s\S]*?<\/button>/)[0];
   assert.match(header.match(/<button id="improve-btn"[^>]*>/)[0], /relative/,
-    'the Improve button is a positioning context for its three corners');
-  // The work indicators cluster on the control whose panel holds the work.
+    'the Improve button is a positioning context for its two corners');
+  // ONE BADGE, top-right: your sessions, the only thing here that counts.
   assert.ok(improve.includes('id="notifications-badge-ai"'),
     'the green session count sits on the Improve button');
-  assert.ok(improve.includes('id="feedback-queue-dot"'),
-    'beside its own outbox dot');
+  // ONE DOT, bottom-left: something of yours has not sent. Amber means
+  // exactly this and nothing else now.
+  const outbox = improve.match(/<span[^>]*id="feedback-queue-dot"[^>]*>/);
+  assert.ok(outbox, 'beside its own outbox dot');
+  assert.match(outbox[0], /class="hidden /, 'which ships hidden');
+  assert.match(outbox[0], /bg-amber-/, 'and is the only amber thing on this control');
+  assert.equal((improve.match(/bg-amber-/g) || []).length, 1,
+    'a colour that needs a corner to disambiguate it is not a vocabulary');
+
   const bell = header.match(/<a id="notifications-btn"[^>]*>[\s\S]*?<\/a>/)[0];
   assert.ok(bell.includes('id="notifications-badge"'),
     'the bell\'s red unread badge rides the bell itself');

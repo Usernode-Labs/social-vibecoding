@@ -47,7 +47,6 @@ import { kanbanFiltersStore, type KanbanFiltersState } from './kanban-filters-st
 import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
-import { publishViewMode } from './view-mode-store';
 import {
   aiEnabledStore,
   cardNowStore,
@@ -75,8 +74,12 @@ import type {
 
 /** What app-view.js passes for the card list. */
 export interface MountBoardOptions extends DevBoardFrameProps {
-  /** `AppView._getViewMode()`, used to seed the store before the first render. */
-  viewMode: string;
+  /**
+   * `AppView._boardTab` for this app, used to seed the store before the
+   * first render so a cold `?col=` deep link paints its tab immediately
+   * rather than flashing `All` first.
+   */
+  boardTab: string;
 }
 
 export interface DevBoardBridge {
@@ -84,7 +87,7 @@ export interface DevBoardBridge {
   mountChatSubView(host: Element | null): void;
   mountTopicSubView(
     host: Element | null,
-    options: { backHref: string; onBackClick: (event: MouseEvent) => void },
+    options: { backHref: string; title: string; onBackClick: (event: MouseEvent) => void },
   ): void;
   mountAttrPopover(host: Element | null): void;
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
@@ -108,7 +111,6 @@ export interface DevBoardBridge {
   mountLlmConsentModal(host: Element | null, view: LlmConsentModalView): void;
   publishCardNow(now: number): void;
   publishAiEnabled(enabled: boolean): void;
-  publishViewMode(mode: string): void;
   unmount(host: Element | null): void;
   unmountAll(): void;
   /** Live portal count — the leak assertion in tests reads this. */
@@ -172,13 +174,14 @@ llmConsentModalStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
   mountBoard(host, options) {
-    // Seed before the first render so a cold `?view=kanban` deep link paints
-    // kanban immediately rather than list-then-kanban.
-    publishViewMode(options.viewMode);
-    // `viewMode` seeds the store and is not a frame prop — the frame draws no
-    // Kanban|Feed control any more (the choice lives under the Improve panel's
-    // Board row), so it is dropped here rather than forwarded.
-    const { viewMode: _viewMode, ...rest } = options;
+    // Seed before the first render so a cold `?col=done` deep link paints
+    // that tab immediately rather than flashing `All` first. `cols` stays
+    // empty until the first publish, which is what keeps <BoardTabs/> from
+    // rendering a strip of five tabs with nothing behind them.
+    devKanbanStore.set((s) => ({ ...s, activeTab: options.boardTab }));
+    // `boardTab` seeds the store and is not a frame prop — the strip reads
+    // it from there — so it is dropped rather than forwarded.
+    const { boardTab: _boardTab, ...rest } = options;
     mountLegacyPortal(host, createElement(DevBoardFrame, rest));
   },
 
@@ -193,6 +196,7 @@ export const devBoardBridge: DevBoardBridge = {
       host,
       createElement(DevTopicSubView, {
         backHref: options.backHref,
+        title: options.title,
         onBackClick: (event) => options.onBackClick(event as unknown as MouseEvent),
       }),
     );
@@ -321,7 +325,6 @@ export const devBoardBridge: DevBoardBridge = {
     aiEnabledStore.set({ enabled });
   },
 
-  publishViewMode,
   unmount: unmountLegacyPortal,
   unmountAll: unmountAllLegacyPortals,
   rootCount: legacyPortalCount,

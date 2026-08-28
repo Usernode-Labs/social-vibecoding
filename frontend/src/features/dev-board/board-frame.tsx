@@ -12,12 +12,15 @@
  * attribute and `hidden` semantic is the one the template emitted.
  *
  * React-owned, and now stateful:
- *   * the header bar — the "+" button and its dropdown, including every
- *     `data-plus` row and the two `data-plus-group` headings. The Feed/Kanban
- *     tab strip is NOT here any more: the Board's two layouts are a choice
- *     under the Improve panel's Board row now (see improve-panel.tsx), because
- *     a strip whose first tab restated the destination the header chip had
- *     just named was navigation drawn twice;
+ *   * the SCREEN BAR (features/shell/screen-bar.tsx) — the shell's second
+ *     line, naming this screen and carrying the "+" button and its dropdown,
+ *     including every `data-plus` row and the two `data-plus-group` headings;
+ *   * `#dev-kanban-tabs` — the board's ONE display control (./board-tabs.tsx).
+ *     It was the kanban's own markup, inside `#dev-body`; it is a row of this
+ *     frame because `All` renders the stream on a narrow viewport, and a
+ *     control that lived inside the host it repaints would delete itself the
+ *     first time you used it. The Improve panel's Kanban|Feed pills are gone
+ *     with the mode they set;
  *   * `#dev-forum-scroll` and the General-chat card.
  *
  * Legacy-owned hosts, rendered by React but never reconciled into:
@@ -49,7 +52,7 @@
  * mutations the migration explicitly sanctions on React-rendered nodes. Moving
  * them would be a rewrite, and this chunk is a conversion. The one exception is
  * `_updateViewToggleUI()`, which assigned `btn.className` outright; that is
- * retired in favour of ./view-mode-store.ts.
+ * retired along with the Kanban|Feed mode it painted — see ./board-tabs.tsx.
  *
  * The frame is mounted by an interim root (../../lib/interim-root.ts) rather
  * than by `<Shell/>`, because `#app-content` ships empty and this surface only
@@ -57,6 +60,8 @@
  */
 
 import { useStoreState } from '../../lib/use-store-state';
+import { ScreenBar } from '../shell/screen-bar';
+import { BoardTabs } from './board-tabs';
 import { skeletonListHtml } from './card/skeleton';
 import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store';
 
@@ -155,52 +160,24 @@ export function DevBoardFrame({
   return (
     <div className="flex flex-col h-full min-h-0">
       {/*
-          THE "DEV" SUB-HEADER ROW IS GONE (#1367 follow-up).
-
-          It carried three things: a "Dev" caption, the Feed/Kanban tabs, and
-          the "+" menu. The caption named an area the header already names, the
-          tabs are the header's App/Feed/Kanban toggle now (see the note above),
-          and with both gone the row was a full-height strip of chrome holding
-          one button — so the button moved down to sit with the filter controls
-          and the row went.
-
-          `#dev-actions` is that new row, and the "+" sits at its right end with
-          the filter controls to its left. The controls are legacy-rendered, so
-          the row carries an innerHTML HOST for them rather than the markup —
-          the same seam `#dev-body` below already is.
-
-          THE HOST IS OUTSIDE `#dev-body` ON PURPOSE, and it is the whole reason
-          this row is shaped this way. `_repaintDevBody()` assigns
-          `body.innerHTML` on every view switch; anything living in there is
-          destroyed and rebuilt. The "+" is React's — button, menu, listeners —
-          so it can never be a child of that node, and moving it in and out
-          around each repaint would be a race waiting to happen. Keeping BOTH
-          the filter host and the button up here means the row is stable, React
-          never reconciles inside the host, and the module never writes outside
-          it. `_renderKanbanFilterBar()` fills it on kanban and
-          `_clearKanbanFilterBar()` empties it on the feed, which has no filters.
+          THE SCREEN'S OWN BAR — the shell's second line. It names the screen
+          ("Board") and carries the screen's one action; the top bar above it
+          names the APP. Until this existed the screen's name was a 10px
+          SUBTITLE crammed into the header chip's 28px pill, and this row was
+          a bare "+" floating on an empty band with nothing to its left.
+          See features/shell/screen-bar.tsx.
       */}
-      <div id="dev-actions" className="flex items-center gap-2 px-3 pt-2 shrink-0">
-        {/*
-            Legacy innerHTML host for the filter chips. Ships EMPTY and is
-            filled by AppView._renderKanbanFilterBar(); `empty:hidden` keeps it
-            from claiming the row's width on the feed, where it stays empty.
-        */}
-        <div id="dev-kanban-filterbar" className="flex-1 min-w-0 empty:hidden" />
-        {/*
-            `ml-auto` is load-bearing on the FEED: the filter host above is
-            `empty:hidden` there, so it stops claiming the row's width and
-            without the margin the "+" (the row's only remaining item) would
-            collapse to the LEFT edge — where its `right-0` dropdown then
-            opens off the left side of the viewport. On kanban the host's
-            `flex-1` already fills the row, so the auto margin is a no-op.
-        */}
-        <div className={`relative ml-auto ${readOnly && selfHosted ? 'hidden' : ''}`}>
+      <ScreenBar title="Board">
+        {/* `rounded-full`, not `rounded-lg`: the board draws this as a disc,
+            and in a bar whose only other content is a word it is the one
+            filled thing — the same argument that makes Improve a pill in the
+            bar above. */}
+        <div className={`relative ${readOnly && selfHosted ? 'hidden' : ''}`}>
           <button
             id="dev-plus-btn"
             aria-haspopup="true"
             aria-expanded="false"
-            className="un-touch-target rounded-lg bg-violet-600 hover:bg-violet-500 w-9 h-9 flex items-center justify-center text-lg font-bold leading-none text-white transition-colors"
+            className="un-touch-target rounded-full bg-violet-600 hover:bg-violet-500 w-9 h-9 flex items-center justify-center text-lg font-bold leading-none text-white transition-colors"
             title={
               readOnly
                 ? 'Fork this app'
@@ -302,7 +279,40 @@ export function DevBoardFrame({
             )}
           </div>
         </div>
+      </ScreenBar>
+
+      {/*
+          `#dev-actions` is the search + Filters row now, and ONLY that. The
+          "+" moved up into the bar above, where an action belongs beside the
+          name of the screen it acts on.
+
+          THE HOST IS OUTSIDE `#dev-body` ON PURPOSE, and it is the whole
+          reason this row exists separately. `_repaintDevBody()` assigns
+          `body.innerHTML` on every layout flip; anything living in there is
+          destroyed and rebuilt. Keeping the filter host up here means the row
+          is stable, React never reconciles inside it, and the module never
+          writes outside it — which is also what lets a typed search survive a
+          flip between the columns and the stream with its caret.
+
+          `_renderKanbanFilterBar()` fills it once per board mount, in BOTH
+          layouts. It used to fill it only for the columns and empty it for
+          the stream, on the reasoning that the feed had no filters; `All` IS
+          the board now, so the bar that narrows it belongs with it.
+      */}
+      <div id="dev-actions" className="flex items-center gap-2 px-3 pt-2 shrink-0">
+        {/*
+            Legacy innerHTML host for the search box and the filter chips.
+            Ships EMPTY and is filled by AppView._renderKanbanFilterBar();
+            `empty:hidden` collapses the row before the first fill.
+        */}
+        <div id="dev-kanban-filterbar" className="flex-1 min-w-0 empty:hidden" />
       </div>
+
+      {/* The board's one display control, PINNED above the scroller rather
+          than scrolling away with the cards — the board draws it as chrome,
+          and it is the only thing on screen that says which part of the
+          board you are reading. See ./board-tabs.tsx. */}
+      <BoardTabs />
 
       {/* The card list: locked notice, general-chat card, session rows, the
           intermixed feed, and the Completed section. */}

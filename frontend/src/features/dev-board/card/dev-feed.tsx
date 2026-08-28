@@ -65,12 +65,22 @@ export function DevFeed(): ReactNode {
           {v.block.map((row) => <ListRowView key={row.key} row={row} />)}
         </div>
       ) : null}
+      {/* A FILTERED empty is a claim about the filter, not about the app.
+          "No activity yet. Press + to propose a change" is actively wrong
+          advice when three cards are one search away, and the columns have
+          always drawn the other sentence ("No matching cards") — the stream
+          only ever avoided the question because the filter bar was not on
+          screen with it. Same distinction, same words, both layouts. */}
       {v.emptyNote ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-          {v.emptyNote.loadFailed ? "Couldn't load open issues right now. " : ''}
-          {'No activity yet. Press '}
-          <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
-          {' to propose a change or file an issue.'}
+          {v.emptyNote.filtered ? 'No matching cards.' : (
+            <>
+              {v.emptyNote.loadFailed ? "Couldn't load open issues right now. " : ''}
+              {'No activity yet. Press '}
+              <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
+              {' to propose a change or file an issue.'}
+            </>
+          )}
         </div>
       ) : null}
       {v.entries.length ? (

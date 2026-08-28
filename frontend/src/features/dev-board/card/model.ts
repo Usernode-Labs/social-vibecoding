@@ -260,7 +260,7 @@ export interface DevFeedView {
   /** The pinned own-sessions block above the stream. Empty draws nothing. */
   block: ListRow[];
   /** The no-activity note, with its load-failure prefix. */
-  emptyNote: { loadFailed: boolean } | null;
+  emptyNote: { loadFailed: boolean; filtered: boolean } | null;
   entries: ListRow[];
   footer: FooterSpec | null;
 }

@@ -32,32 +32,36 @@
 import { createStore } from '../../lib/plain-store.js';
 
 /**
- * ── The subtitle, and why the chip keeps the app's name ────────────────
+ * ── `screen`, and why the chip does not draw it ────────────────────────
  *
  * The Board and the Activity screens used to SET the title: you opened
  * Notes, tapped through to its board, and the chip read "Board". That threw
- * away the one fact the chip exists to carry — which app you are in — to say
- * something the screen underneath was already saying. A control that names
- * where you are should not stop naming the biggest part of where you are.
+ * away the one fact the chip exists to carry — which app you are in — so it
+ * became a SUBTITLE instead, a 10px second line stacked inside the chip's
+ * 28px pill.
  *
- * So a destination inside an app publishes a SUBTITLE instead: the chip's
- * primary text stays the app's name and `subtitle` qualifies it. Root screens
- * (Home, Discover, Messages, Settings, a profile) publish no subtitle and the
- * chip renders exactly as before.
+ * That was the right fix to the wrong problem. The chip is one line of type
+ * wide and the row it sits in is pinned from both directions
+ * (tests/header-height-parity.test.js), so the screen's name was being
+ * shrunk into the gaps of the app's name rather than given a place to live.
+ * It has one now — the shell's second bar, features/shell/screen-bar.tsx —
+ * and the frames render it as a heading with their own actions beside it.
  *
- * It is a separate field rather than a formatted string because the two are
- * rendered at different sizes and colours, and because `document.title` wants
- * them joined the other way round — see App.setHeaderTitle.
+ * So NOTHING RENDERS THIS FIELD any more. It survives because
+ * `document.title` still wants both halves, joined the other way round
+ * ("Notes · Board", widest scope first, because a browser tab and the native
+ * AppBar truncate from the RIGHT). Publishing it stays the one call that
+ * says "you are in app X, on screen Y"; what reads it is App.setHeaderTitle.
  *
  * @typedef {object} HeaderTitleState
- * @property {string} text      The visible title — the screen's only h1.
- * @property {string} subtitle  The destination within it, or '' at the root.
+ * @property {string} text    The app's name — the chip's text, the screen's only h1.
+ * @property {string} screen  The screen within it, or '' at the root. document.title only.
  */
 
 /** @type {HeaderTitleState} */
 const INITIAL = {
   text: 'dApps',
-  subtitle: '',
+  screen: '',
 };
 
 export const headerTitleStore = createStore(INITIAL);

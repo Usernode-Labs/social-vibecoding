@@ -53,7 +53,6 @@ import {
 } from '@/components/ui/icons';
 
 import { NativeAppVersionRow } from '../header/native-app-version-row';
-import { useDevViewMode } from '../dev-board/view-mode-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
@@ -75,16 +74,6 @@ const ROW_REST =
   ' text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800';
 const ROW_SELECTED =
   ' bg-violet-500/10 text-violet-700 dark:text-violet-400';
-
-/**
- * The Board's two layouts, in the order the retired tab strip listed them.
- * Kanban leads: it is the view of work IN FLIGHT, which is what the Board is
- * for; the feed is the same cards read newest-first.
- */
-const BOARD_LAYOUTS = [
-  { key: 'kanban', label: 'Kanban' },
-  { key: 'feed', label: 'Feed' },
-] as const;
 
 /**
  * One quick action — a segment of the action group, not a control of its own.
@@ -141,63 +130,43 @@ function QuickAction({ id, label, onClick }: {
 }
 
 /**
- * The Board's two layouts, under the Board row — and ONLY while you are on it.
+ * The platform's deploy state, as words on the row that names its version.
  *
- * ── Why it is here and not on the board ────────────────────────────────
+ * ── Why it is here and not on #improve-btn ─────────────────────────────
  *
- * It was a full-width Kanban|Feed tab strip at the top of the board itself.
- * With the header chip naming "Board" the strip's first tab restated the
- * destination you had just arrived at, so the page opened with two rows of
- * navigation saying the same word — and the strip read as a choice of PLACE
- * when it is a choice of LAYOUT over one place's contents.
+ * It was an 8px dot in that button's bottom-right corner, and it failed on
+ * three counts at once. `stale` drew `violet-400` on the button's own
+ * `violet-600` fill — the same hue two steps apart, so the state anybody was
+ * most likely to meet read as a rendering artefact. `deploying` drew AMBER,
+ * which the same button already used bottom-left for an unsent feedback
+ * draft, so one colour meant two unrelated things eight pixels apart. And
+ * neither is about your app or your work: this says THIS TAB IS BEHIND THE
+ * PLATFORM, which is a thing to read, not a thing to act on.
  *
- * Kanban and Feed are not destinations: both render `#dev-body` from the same
- * cached issue / proposal / governance / merged cards, one by column and one
- * newest-first. They are not Board and Activity either, which is the tempting
- * reading — Activity is the app's chat stream (`renderGroupChatTab`), a
- * different screen over different data. So they belong subordinate to the
- * Board row rather than beside it, which is what indenting them here says.
+ * So it says it in words, on the row whose whole job is to name the version.
+ * The dot is retired (see tests/shell-id-inventory.test.js) and #improve-btn
+ * keeps one badge with one meaning.
  *
- * ── Only while on the Board ────────────────────────────────────────────
- *
- * Rendering them from any other screen would put a layout control in front of
- * people who cannot see its effect, and would cost this panel two rows of the
- * vertical space the sessions list below is always short of. Off the Board the
- * Board row still navigates, landing in whichever layout `_getViewMode()`
- * resolves — the persisted preference, exactly as the strip left it.
- *
- * ── The seam ───────────────────────────────────────────────────────────
- *
- * `useDevViewMode()` is the same store the retired strip read, and
- * `AppView._selectViewMode` is the same entry point its buttons called, so
- * persistence, the `?view=` override clear and the repaint all still run in
- * app-view.js. Nothing about the mechanism moved — only where you reach it.
+ * `idle` renders NOTHING — not an empty span. A row that reserves space for
+ * a state it does not have is the same mistake in a quieter register, and
+ * the label + value pair sits correctly on its own.
  */
-function BoardLayoutChoice(): ReactNode {
-  const mode = useDevViewMode();
+function ImprovePlatformVersionState({ state }: { state: string }): ReactNode {
+  if (state !== 'deploying' && state !== 'stale') return null;
+  const deploying = state === 'deploying';
   return (
-    <div id="improve-board-layouts" className="flex items-center gap-1 pl-14 pr-4 pb-2">
-      {BOARD_LAYOUTS.map(({ key, label }) => {
-        const active = mode === key;
-        return (
-          <button
-            key={key}
-            type="button"
-            data-view-segment={key}
-            aria-pressed={active ? 'true' : 'false'}
-            className={'px-2.5 py-1 rounded-full text-xs font-medium un-touch-target '
-              + (active
-                ? 'bg-violet-500/10 text-violet-700 dark:text-violet-400'
-                : 'text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800')}
-            onClick={() => (window as unknown as {
-              AppView?: { _selectViewMode?: (mode: string) => void };
-            }).AppView?._selectViewMode?.(key)}
-          >
-            {label}
-          </button>
-        );
-      })}
-    </div>
+    <span
+      id="improve-platform-version-state"
+      className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400"
+    >
+      <span
+        className={'w-1.5 h-1.5 rounded-full shrink-0 '
+          + (deploying ? 'bg-amber-500' : 'bg-violet-500')}
+        aria-hidden="true"
+      >
+      </span>
+      {deploying ? 'Deploying' : 'Update available'}
+    </span>
   );
 }
 
@@ -474,6 +443,16 @@ export function ImprovePanel() {
               one: these three are the app's OWN views, and the panel you open
               from inside an app is where you look for them. The menu answers
               "which app"; this answers "which part of it".
+
+              A KANBAN|FEED PAIR SAT UNDER THE BOARD ROW and does not any
+              more. It was a LAYOUT control filed among DESTINATIONS, shown
+              only while you were already on the Board — rendering it anywhere
+              else would have put a control in front of people who could not
+              see its effect — and it cost this panel two rows of the vertical
+              space the session list below is always short of. The Board has
+              one strip of its own now, All plus one tab per column at every
+              width, so there is no layout left to pick. See
+              ../dev-board/board-tabs.tsx.
           */}
           <div id="improve-views" className="shrink-0">
             <ContextRow
@@ -494,7 +473,6 @@ export function ImprovePanel() {
               selected={onBoard}
               href={slug ? `#app/${slug}/board` : undefined}
             />
-            {onBoard ? <BoardLayoutChoice /> : null}
             <ContextRow
               id="app-context-row-activity"
               row="activity"
@@ -632,11 +610,12 @@ export function ImprovePanel() {
               is a fact about an app, not about the panel you have open.
 
               DrawerStatus.refreshDeployDot() reads the deploying pill out of
-              whichever of these is painted, which is why #improve-version-dot
-              lights amber while a deploy is in flight. #1431 rescoped that
-              query to #settings-about; it is scoped back here, and
-              tests/improve-panel-versions.test.js pins it rather than trusting
-              the selector.
+              whichever of these is painted, which is what publishes
+              `versionState`. #1431 rescoped that query to #settings-about; it
+              is scoped back here, and tests/improve-panel-versions.test.js
+              pins it rather than trusting the selector. What CONSUMES the
+              answer moved: it was #improve-version-dot on the button, it is
+              <ImprovePlatformVersionState/> on the row below now.
           */}
           <div
             id="improve-footer"
@@ -672,6 +651,7 @@ export function ImprovePanel() {
               <span className="drawer-ver-label">
                 Platform version
               </span>
+              <ImprovePlatformVersionState state={state.versionState} />
               <span
                 id="platform-version-pill-slot"
                 className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"
