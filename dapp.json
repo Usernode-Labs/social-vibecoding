@@ -1769,6 +1769,12 @@
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id]"
     },
     {
+      "name": "A notification row says what kind it is, then which one, then where it came from",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990201\"] > span:nth-child(2) > span:nth-child(3)",
+      "expectText": "Session finished"
+    },
+    {
       "name": "Improve panel leads with Give feedback, a verb like New change beside it",
       "path": "/",
       "expectSelector": "#improve-panel #improve-quick-actions #improve-row-feedback",
