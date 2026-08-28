@@ -59,7 +59,11 @@ test('the feed wraps each entry, and the card builders stay shared', () => {
   ]) {
     assert.ok(loop.includes(`AppView.${builder}(`), `${builder} feeds the stream`);
   }
-  assert.equal((loop.match(/entries\.push\(\{ t: 'card'/g) || []).length, 6,
+  // Whitespace-tolerant: the issue branch pushes a multi-line object now that
+  // its row carries a thread ref as well as a comments ref. What is being
+  // counted is that there are six card pushes, one per kind — not how any one
+  // of them happens to be wrapped.
+  assert.equal((loop.match(/entries\.push\(\{\s*t: 'card'/g) || []).length, 6,
     'and every one of them is pushed as an ordinary card row');
 });
 

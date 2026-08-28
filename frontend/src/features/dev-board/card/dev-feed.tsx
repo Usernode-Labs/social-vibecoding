@@ -20,6 +20,7 @@ import type { ReactNode } from 'react';
 
 import { useStoreState } from '../../../lib/use-store-state';
 import { devFeedStore } from './cards-store';
+import { FeedThread } from './feed-thread';
 import { ListRowView } from './list-rows';
 import type { FooterSpec } from './model';
 import { CardSkeleton } from './skeleton';
@@ -65,12 +66,25 @@ export function DevFeed(): ReactNode {
           {v.block.map((row) => <ListRowView key={row.key} row={row} />)}
         </div>
       ) : null}
+      {/* Two different empty states, and telling them apart matters: an
+          unfiltered stream with nothing in it is an invitation to start
+          something, while a FILTERED one that came back empty is a statement
+          about the filter. Offering "press + to propose a change" to someone
+          who has just searched for a word answers a question they did not
+          ask, and hides the one thing that would help — that the filter is
+          what is hiding the rest. */}
       {v.emptyNote ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-          {v.emptyNote.loadFailed ? "Couldn't load open issues right now. " : ''}
-          {'No activity yet. Press '}
-          <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
-          {' to propose a change or file an issue.'}
+          {v.emptyNote.filtered ? (
+            'Nothing here matches the current search and filters.'
+          ) : (
+            <>
+              {v.emptyNote.loadFailed ? "Couldn't load open issues right now. " : ''}
+              {'No activity yet. Press '}
+              <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
+              {' to propose a change or file an issue.'}
+            </>
+          )}
         </div>
       ) : null}
       {v.entries.length ? (
@@ -78,8 +92,21 @@ export function DevFeed(): ReactNode {
           {v.entries.map((row) => (
             <div key={row.key} className="dev-feed-entry">
               <ListRowView row={row} />
+              {/* The GITHUB thread, read-only, filled by
+                  AppView._fillFeedComments through this host. Issues only —
+                  it is the only kind with a repository conversation. */}
               {row.t === 'card' && row.commentsFor != null ? (
                 <div className="dev-feed-comments" data-comments-for={String(row.commentsFor)}></div>
+              ) : null}
+              {/* …and the APP's own thread for the same item, which is the one
+                  a reply from here can join. See ./feed-thread.tsx. */}
+              {row.t === 'card' && row.thread && v.slug ? (
+                <FeedThread
+                  slug={v.slug}
+                  type={row.thread.type}
+                  refId={row.thread.ref}
+                  canPost={!!v.canPost}
+                />
               ) : null}
             </div>
           ))}

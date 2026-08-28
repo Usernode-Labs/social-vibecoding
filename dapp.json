@@ -1510,6 +1510,16 @@
       "expectSelector": "#dev-body #dev-feed"
     },
     {
+      "name": "Activity carries the board's search and filter bar, not just the +",
+      "path": "/?demo=1#app/usernode-2d5619/activity",
+      "expectSelector": "#dev-actions #dev-kanban-filterbar #dev-kanban-search"
+    },
+    {
+      "name": "An Activity row can be replied to without opening it",
+      "path": "/?demo=1#app/usernode-2d5619/activity",
+      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-thread input[aria-label=\"Reply to this item\"]"
+    },
+    {
       "name": "The view strip marks Activity as the one you are on",
       "path": "/?demo=1#app/usernode-2d5619/activity",
       "expectSelector": "#improve-views [data-context-row=\"activity\"][aria-current=\"page\"]"

@@ -4312,11 +4312,18 @@ const AppView = {
     if (!document.getElementById('dev-feed')) {
       body.innerHTML = '<div id="dev-feed"></div>';
     }
-    // The feed has no filters, so the shared action row shows the "+" alone.
-    // Emptying the host rather than hiding it lets `empty:hidden` collapse it,
-    // and means a switch back to kanban rebuilds the chips from the surviving
-    // _kanbanFilters exactly as a fresh mount does.
-    AppView._clearKanbanFilterBar();
+    // Activity carries the SAME filter bar as the board, over the same
+    // `_kanbanFilters` model — one set of controls and one set of chips, so
+    // switching view modes keeps whatever you had narrowed the board down to
+    // rather than silently widening it back out. The bar used to be emptied
+    // here on the grounds that "the feed has no filters", which was true of
+    // the feed and not of the question people were asking it.
+    //
+    // Restored per slug on entry for the same reason the kanban branch above
+    // does it: the controls and the stream have to come back as the viewer
+    // left them, and the two branches share the persisted model.
+    AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
+    AppView._renderKanbanFilterBar();
     AppView._rerenderFeed();
     AppView._reanchorCardMenu();
   },
@@ -4540,9 +4547,67 @@ const AppView = {
   // what carries the inline-comment slot and what the de-carding CSS is
   // scoped through, so the same model draws a bordered tile on the board and
   // a full-bleed row in the feed with no branch here.
+  // The feed's kinds, mapped onto the vocabulary _devCardMatches speaks.
+  //
+  // Only one of the six differs by name (`shared-session` is a `session`
+  // there). `discussion` has no counterpart on purpose: it is the app's one
+  // general chat, and it carries no title, author or number to match on — so
+  // rather than inventing an attribute for it, it is dropped whenever a filter
+  // is active. A filtered stream is "the activity matching this", and the
+  // general chat is not one of the things being matched.
+  _FEED_FILTER_KIND: {
+    issue: 'issue',
+    proposal: 'proposal',
+    'shared-session': 'session',
+    merged: 'merged',
+    gov: 'gov',
+  },
+
+  // A feed row's own discussion thread, addressed exactly as _renderTopicThread
+  // addresses it — same namespaces, same ids, so a reply typed in the feed and
+  // the thread under the opened topic are one conversation.
+  //
+  // `merged` and `discussion` get none. A merged row is a completed thing
+  // whose conversation lives on the proposal it came from, and the discussion
+  // row IS the app's general chat — a reply box under a row that opens a chat
+  // would be a second way to post into the same stream, two lines apart.
+  _feedThreadRef(it) {
+    const item = it && it.item;
+    if (!item) return null;
+    if (it.kind === 'issue') {
+      return item.number != null ? { type: 'issue', ref: item.number } : null;
+    }
+    if (it.kind === 'proposal' || it.kind === 'shared-session') {
+      return item.id != null ? { type: 'session', ref: item.id } : null;
+    }
+    if (it.kind === 'gov') {
+      return item.id != null ? { type: 'governance', ref: item.id } : null;
+    }
+    return null;
+  },
+
   _feedView() {
     const meta = AppView._ghIssuesMeta || {};
-    const items = AppView._feedItems();
+    // Published on every branch, placeholders included: `set` merges a patch,
+    // so a model that omitted these would inherit the last app's slug and
+    // offer a reply box that posts somewhere else.
+    const ctx = {
+      slug: App.currentApp || '',
+      canPost: !!AppView.appData?.can_collaborate,
+    };
+    let items = AppView._feedItems();
+    // Applied AFTER the merge that orders the stream and BEFORE the "Show
+    // more" cap, so the cap counts matches rather than counting rows it is
+    // about to hide — the same order the kanban applies them in, where the
+    // filter runs per column after bucketing.
+    if (AppView._kanbanFiltersActive()) {
+      const f = AppView._kanbanFilters;
+      items = items.filter((it) => {
+        const kind = AppView._FEED_FILTER_KIND[it.kind];
+        if (!kind) return false;
+        return AppView._devCardMatches(kind, it.item, f);
+      });
+    }
     // The viewer's own sessions are pinned above the feed proper, outside
     // the "Show more" pager, with the visibility dividers + archived toggle.
     const block = AppView._mySessionsRows();
@@ -4550,10 +4615,22 @@ const AppView = {
     // has seen. Placeholders instead; the flag is checked before the empty
     // note so a slow load never flashes the wrong one.
     if (!AppView._devDataReady) {
-      return { loading: true, block, emptyNote: null, entries: [], footer: null };
+      return { loading: true, block, emptyNote: null, entries: [], footer: null, ...ctx };
     }
     if (!items.length) {
-      return { loading: false, block, emptyNote: { loadFailed: !!meta.note }, entries: [], footer: null };
+      // `filtered` distinguishes "there is nothing here" from "nothing here
+      // matches" — see the note in card/dev-feed.tsx. Read from the filter
+      // model rather than from whether anything was dropped above, so a
+      // filter that happens to match nothing on an empty board still says the
+      // useful thing.
+      return {
+        loading: false,
+        block,
+        emptyNote: { loadFailed: !!meta.note, filtered: AppView._kanbanFiltersActive() },
+        entries: [],
+        footer: null,
+        ...ctx,
+      };
     }
 
     // ── The page, and the one row that does not compete for it ──────
@@ -4581,13 +4658,19 @@ const AppView = {
       const it = page[i];
       if (it.kind === 'issue') {
         const card = AppView._issueCardModel(it.item);
-        entries.push({ t: 'card', key: card.key, card, commentsFor: it.item && it.item.number });
+        entries.push({
+          t: 'card',
+          key: card.key,
+          card,
+          commentsFor: it.item && it.item.number,
+          thread: AppView._feedThreadRef(it),
+        });
       } else if (it.kind === 'proposal') {
         const card = AppView._proposalCardModel(it.item);
-        entries.push({ t: 'card', key: card.key, card });
+        entries.push({ t: 'card', key: card.key, card, thread: AppView._feedThreadRef(it) });
       } else if (it.kind === 'shared-session') {
         const card = AppView._sharedSessionCardModel(it.item);
-        entries.push({ t: 'card', key: card.key, card });
+        entries.push({ t: 'card', key: card.key, card, thread: AppView._feedThreadRef(it) });
       } else if (it.kind === 'discussion') {
         const card = AppView._discussionCardModel();
         entries.push({ t: 'card', key: card.key, card });
@@ -4598,7 +4681,7 @@ const AppView = {
         if (card) entries.push({ t: 'card', key: card.key, card });
       } else {
         const card = AppView._govCardModel(it.item);
-        entries.push({ t: 'card', key: card.key, card });
+        entries.push({ t: 'card', key: card.key, card, thread: AppView._feedThreadRef(it) });
       }
     }
 
@@ -4621,7 +4704,7 @@ const AppView = {
     // patch (lib/plain-store.js), so a view model that simply left the key out
     // would inherit the previous publish's `true` and leave the feed on its
     // placeholders for good.
-    return { loading: false, block, emptyNote: null, entries, footer };
+    return { loading: false, block, emptyNote: null, entries, footer, ...ctx };
   },
 
   // The two completed row types share one dispatcher: the Feed folds
@@ -5210,12 +5293,29 @@ const AppView = {
   // no filter bar, so there is exactly one surface left — but the indirection
   // stays: it is the single point every control already calls, and inlining it
   // would be twelve edits to say the same thing.
+  // Repaint whichever surface the board is currently showing.
+  //
+  // The filter controls call this, and they used to be a kanban-only concern,
+  // so it was a one-line forward to the kanban repaint. Activity has the same
+  // bar now (see the feed branch of _repaintDevBody), and a search typed there
+  // has to repaint the feed or the box would take input and change nothing.
   _repaintBoardSurface() {
+    if (AppView._getViewMode() === 'feed') {
+      AppView._rerenderFeed();
+      return;
+    }
     AppView._repaintKanbanBoard();
   },
 
-  // The filter bar is features/dev-board/kanban-filters.tsx's. Mounted once
-  // per kanban entry; every control below publishes and repaints.
+  // The filter bar is features/dev-board/kanban-filters.tsx's. Mounted on entry
+  // to EITHER surface — the board and the feed share one model and one set of
+  // controls — and every control below publishes and repaints through
+  // _repaintBoardSurface, which picks the surface.
+  //
+  // `_clearKanbanFilterBar()` lived here and emptied the host on the way into
+  // the feed, back when the feed had no filters. It has them now, so the bar
+  // is never torn down between the two modes and the last caller went with the
+  // reason for it.
   //
   // `_renderKanbanFilterBar` used to build the markup and re-bind six
   // listeners, and Clear worked by rebuilding the whole thing so the controls
@@ -5223,13 +5323,6 @@ const AppView = {
   // needed care in the conversion: the search box must NOT be re-rendered from
   // the model on an ordinary repaint, or it would take the caret with it — so
   // it is uncontrolled, and Clear bumps `seq`, which is the field's React key.
-
-  // Empty the shared action row's filter host. Called on the way into the
-  // feed, which has no filters; `empty:hidden` on the host then collapses it
-  // so the "+" sits alone at the right of the row.
-  _clearKanbanFilterBar() {
-    AppView._publishKanbanFilters({ mounted: false });
-  },
 
   _publishKanbanFilters(patch) {
     AppView._reactDevBoard()?.publishKanbanFilters(patch);

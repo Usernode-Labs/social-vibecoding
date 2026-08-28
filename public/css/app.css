@@ -8439,3 +8439,21 @@ body.is-offline [data-offline-disabled] {
   color: rgb(161 161 170); /* zinc-400 */
   padding: 0.15rem 0;
 }
+
+/* ── The Activity feed's inline discussion ─────────────────────────────
+   Indented to the same 2.75rem as #dev-feed .dev-feed-comments above it, so
+   the GitHub preview and the app's own thread read as one comment area under
+   the row rather than as two separate blocks at different depths. The reply
+   box is the last line of it. */
+#dev-feed .dev-feed-thread {
+  margin-left: 2.75rem;
+  margin-top: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+/* Nothing loaded and no box to draw (a viewer who cannot post) — collapse
+   rather than leaving a gap under every row. */
+#dev-feed .dev-feed-thread:empty {
+  display: none;
+}
