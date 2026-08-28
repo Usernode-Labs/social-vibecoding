@@ -184,6 +184,16 @@ export function useStaticModal(
   // An adoption whose kit shell is mid-exit: dismissed, animating, and not yet
   // re-homed. See the close branch below for why the restore waits.
   const pendingExitRef = useRef<KitAdoption | null>(null);
+  // Whether this surface has ever actually been presented.
+  //
+  // THE MOUNT PASS IS NOT AN EXIT. `open` starts false, so the layout effect
+  // below runs its close branch once on mount for a dialog that has never been
+  // on screen — and firing `onExited` there ran the dialogs' teardown against
+  // a controller module whose init() has not run yet, which threw on every
+  // route in the shell. (The old arrangement was immune by accident: the
+  // teardown lived behind use-dialog's own mount guard. Moving it onto the
+  // exit moved it out from behind that guard.)
+  const everOpenRef = useRef(false);
 
   const dismissFromKit = useCallback(() => {
     const adoption = adoptionRef.current || pendingExitRef.current;
@@ -211,6 +221,7 @@ export function useStaticModal(
         pendingExitRef.current = null;
         pending.restore();
       }
+      everOpenRef.current = true;
       if (root.classList.contains('hidden')) root.classList.remove('hidden');
       if (!adoptionRef.current) {
         // Bumping here also retires any generation still owned by that
@@ -240,8 +251,10 @@ export function useStaticModal(
         // open branch above, where a reopen is what should retire it.
         pendingExitRef.current = adoption;
         adoption.dismiss();
-      } else {
-        // No kit: nothing animates, so the surface is already gone.
+      } else if (everOpenRef.current) {
+        // No kit: nothing animates, so the surface is already gone. Gated on
+        // having been open, or the mount pass would report an exit for a
+        // dialog that has never been presented — see everOpenRef above.
         opts.current.onExited?.();
       }
       // Safe to hide immediately either way: the card is not in this root

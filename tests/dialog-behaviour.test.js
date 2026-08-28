@@ -184,6 +184,45 @@ test('open/close run the island’s populate and reset halves', () => {
   assert.match(USE_DIALOG, /useIsomorphicLayoutEffect\(\(\) => \{\n\s*if \(!mounted\.current\)/);
 });
 
+test('the MOUNT pass is not an exit', () => {
+  // This shipped broken to a staging preview and failed 435 of 459 checks with
+  // "1 console error on load" on essentially every route, so it is pinned hard.
+  //
+  // `open` starts false, so the layout effect runs its CLOSE branch once on
+  // mount, for a dialog that has never been on screen. Firing onExited there
+  // ran the dialogs' teardown — Feedback._reset() and friends — against
+  // controller modules whose init() had not run yet, and the resulting
+  // TypeError came from the dialogs island, which every route mounts.
+  //
+  // The old arrangement was immune BY ACCIDENT: the teardown sat behind
+  // use-dialog's own mount guard. Moving it onto the exit (so the card could
+  // stay visible through the animation) moved it out from behind that guard,
+  // and nothing in the local suite renders React, so only the declared checks
+  // saw it.
+  assert.match(STATIC_MODAL, /const everOpenRef = useRef\(false\)/,
+    'the hook tracks whether it has ever presented');
+  assert.match(STATIC_MODAL, /everOpenRef\.current = true;/,
+    'set when it opens');
+  // The no-kit exit lives in the `else if`, so the gate cannot be skipped by
+  // rearranging the branch: read that branch and assert the call is inside it.
+  const gated = STATIC_MODAL.slice(STATIC_MODAL.indexOf('} else if (everOpenRef.current) {'));
+  assert.ok(gated.startsWith('} else if (everOpenRef.current) {'),
+    'the no-kit exit branch is gated on having been open');
+  assert.match(gated.slice(0, 500), /opts\.current\.onExited\?\.\(\);/,
+    'and that is where onExited is called from on the no-kit path');
+  // The kit path needs no gate: it only fires from the dismissal callback of
+  // an adoption, and an adoption only exists once the surface was presented.
+  const dismissFromKitAt = STATIC_MODAL.indexOf('const dismissFromKit');
+  const dismissFromKit = STATIC_MODAL.slice(
+    dismissFromKitAt,
+    // Searched FROM the callback, not from the top: the first
+    // `useIsomorphicLayoutEffect` in this file is its own import.
+    STATIC_MODAL.indexOf('useIsomorphicLayoutEffect(', dismissFromKitAt),
+  );
+  assert.ok(dismissFromKit.length > 0, 'the kit dismissal callback is findable');
+  assert.match(dismissFromKit, /opts\.current\.onExited\?\.\(\);/);
+});
+
 test('the card rides the kit exit rather than being pulled out before it', () => {
   // The close flicker: restore() before dismiss() put the card back in its
   // (immediately hidden) root and left the kit animating an empty shell —
