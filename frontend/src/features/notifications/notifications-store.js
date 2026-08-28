@@ -82,6 +82,16 @@ export const notificationsStore = createStore({
   canLoadMore: false,
   /** A page is in flight — the pager says so and stops taking clicks. */
   loadingMore: false,
+  /**
+   * The same pair for the Messages tab, which pages the conversation kinds on
+   * a cursor of its own (Notifications.loadOlderMessages). Two pairs rather
+   * than one because the two queries skip different rows: sharing a cursor
+   * would let paging on one tab strand rows the other could never reach.
+   * `messagesCanLoadMore` starts true — nothing has asked yet, and the first
+   * press is what finds out.
+   */
+  messagesCanLoadMore: true,
+  loadingOlderMessages: false,
   /** PlatformUI.isTouch() at render time — gates the swipe-action wiring. */
   touch: false,
   /**

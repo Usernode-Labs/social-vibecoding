@@ -106,18 +106,23 @@ const ImproveStatus = {
   // state exist at all — `button.drawer-ver--stale`, the violet "the platform
   // rolled past the SHA this tab loaded against" reload affordance, which the
   // old dot could not show because it had exactly one colour.
+  // IT READS THE STATE, IT NO LONGER GUESSES IT.
+  //
+  // This used to query `#improve-footer .drawer-ver--deploying` / `--stale`:
+  // the classes App.renderPlatformVersionPill had just painted, read back out
+  // of the DOM to recover what that function already knew. Two things were
+  // wrong with it. It tied the header button's indicator to WHERE the version
+  // rows were rendered, so moving them to Settings would have silently killed
+  // the dot; and `--stale` deliberately conflated "downloading the new build"
+  // with "the new build is ready", so nothing downstream could tell a note
+  // from a reload offer.
+  //
+  // The renderer names its state on App.platformUpdateState instead. This
+  // stays the one publisher into the store, and stays the function every
+  // lifecycle path calls, so all of its callers are unchanged.
   refreshDeployDot() {
-    const deploying = !!document.querySelector(
-      '#improve-footer .drawer-ver--deploying');
-    // `.drawer-ver--stale`, not `button.drawer-ver--stale`: the row has two
-    // shapes now. It is a BUTTON once the new build is cached and a reload
-    // will land on it, and a SPAN while that build is still downloading (see
-    // App.renderPlatformVersionPill). Both mean the platform has moved past
-    // this tab, which is the only thing this dot claims — qualifying by tag
-    // would have blinked it off for the seconds the download takes.
-    const stale = !deploying && !!document.querySelector(
-      '#improve-footer .drawer-ver--stale');
-    const state = deploying ? 'deploying' : (stale ? 'stale' : 'idle');
+    const state = (typeof window !== 'undefined' && window.App?.platformUpdateState)
+      || 'idle';
     if (typeof window !== 'undefined') window.Improve?.setVersionState?.(state);
   },
 };

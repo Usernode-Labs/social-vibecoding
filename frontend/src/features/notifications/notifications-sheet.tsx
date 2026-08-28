@@ -441,15 +441,21 @@ export function NotificationsSheetView() {
       ) : null}
       {/*
           THE WAY ON, and it depends on which tab you are standing on.
-    
-          On a FILTERED tab it is the All tab. "See older notifications" used
-          to page another server batch into whichever filter was showing,
-          which on Unread meant asking for more of the thing you are trying to
-          get to zero — and the older rows it fetched were mostly read, so the
-          usual result of pressing it was a spinner and no new rows. What you
-          actually want from the bottom of a filtered list is the unfiltered
-          one, so that is where it goes; All then offers the real pagination.
-    
+
+          On MESSAGES it is a real pager, and it stays on this tab. The reason
+          a filtered tab could not page used to be that only one page existed —
+          the unfiltered one — so pressing it fetched 100 older rows of
+          everything and typically surfaced no new message at all: a spinner,
+          and nothing. `?kind=conversation` (src/routes/notifications.js) makes
+          a page of older MESSAGES a thing the server can return, so the tab
+          now pages itself on its own cursor. See
+          Notifications.loadOlderMessages for why that cursor is separate.
+
+          On UNREAD it is still the All tab, and for the reason above that has
+          not changed: paging Unread means asking for more of the thing you are
+          trying to get to zero, and the older rows are mostly read. What you
+          want from the bottom of that list is the unfiltered one.
+
           On ALL it is the loader it always was.
 
           Either way it renders only when there IS something more: rows this
@@ -457,7 +463,19 @@ export function NotificationsSheetView() {
           on a quiet account would otherwise offer a link to an equally empty
           All, which is a dead end dressed as a way forward.
       */}
-      {tab !== 'all' && (all.length > rows.length || snap.screenCanLoadMore) ? (
+      {tab === 'messages' && snap.messagesCanLoadMore ? (
+        <div className="px-4 py-3">
+          <button
+            id="notifications-see-older-messages"
+            type="button"
+            className="w-full text-center text-xs text-violet-500 hover:underline disabled:opacity-40"
+            disabled={snap.loadingOlderMessages}
+            onClick={() => controller()?.loadOlderMessages()}
+          >
+            {snap.loadingOlderMessages ? 'Loading…' : 'See older message notifications'}
+          </button>
+        </div>
+      ) : tab !== 'all' && (all.length > rows.length || snap.screenCanLoadMore) ? (
         <div className="px-4 py-3">
           <button
             id="notifications-see-older"

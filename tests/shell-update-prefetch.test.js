@@ -201,20 +201,48 @@ test('while the build is coming down the row is a span, not a reload button', ()
   assert.match(h.slot.innerHTML, /updating…/);
 });
 
-test('it still carries drawer-ver--stale, so the Improve dot stays lit', () => {
-  // The platform HAS moved past this tab; only the offer to switch is
-  // waiting. ImproveStatus.refreshDeployDot selects on the class alone for
-  // exactly this reason — see tests/header-status-pane.test.js.
+test('it reports `downloading`, so the Improve indicator stays lit', () => {
+  // The platform HAS moved past this tab; only the offer to switch is waiting.
+  //
+  // This used to be asserted through the row's CLASS: `--stale` covered both
+  // downloading and ready, and refreshDeployDot selected it tag-agnostically
+  // so the dot would not blink off for the seconds a download takes. The state
+  // is named at its source now (App.platformUpdateState), which keeps the dot
+  // lit across both AND lets the button tell them apart — a spinner while the
+  // build comes down, a refresh glyph once it is here.
   const h = harness();
   h.App.loadedPlatformSha = BOOTED;
   h.App.renderPlatformVersionPill(STALE);
-  assert.match(h.slot.innerHTML, /drawer-ver--stale/);
+  assert.match(h.slot.innerHTML, /drawer-ver--stale/, 'the row still styles itself as stale');
+  assert.equal(h.App.platformUpdateState, 'downloading',
+    'and the state it publishes distinguishes the download from the offer');
 
   const improveStatus = read('frontend/src/features/improve/improve-status.js');
-  assert.match(improveStatus, /'#improve-footer \.drawer-ver--stale'/,
-    'the dot selector is tag-agnostic, or it would blink off mid-download');
+  assert.match(improveStatus, /window\.App\?\.platformUpdateState/,
+    'the indicator reads the named state rather than sniffing the rendered row');
+  // Comment-stripped: the note there names the old selector to say what it
+  // stopped reading and why.
+  assert.doesNotMatch(improveStatus.replace(/^\s*\/\/.*$/gm, ''), /#improve-footer/,
+    'and no longer depends on where the version rows are rendered');
   assert.match(appCss, /\.drawer-ver--fetching \{/,
     'and the downloading row has a style of its own');
+});
+
+test('every branch of the version row names the update state it represents', () => {
+  // The button's glyph is derived from this, so a branch that forgot to name
+  // its state would leave a spinner or a refresh arrow up after the thing it
+  // described had finished.
+  const h = harness();
+  h.App.loadedPlatformSha = BOOTED;
+
+  h.App.renderPlatformVersionPill({ ...STALE, sha: BOOTED });
+  assert.equal(h.App.platformUpdateState, 'idle', 'on the current build');
+
+  h.App.renderPlatformVersionPill({ ...STALE, deployProgress: { deploying: true, sha: 'abc' } });
+  assert.equal(h.App.platformUpdateState, 'deploying', 'while a build rolls out');
+
+  h.App.renderPlatformVersionPill({ ...STALE, sha: null });
+  assert.equal(h.App.platformUpdateState, 'idle', 'with no SHA to compare against');
 });
 
 // ─── 3. Ready: the reload is real now ───────────────────────────────────

@@ -95,6 +95,17 @@ export interface ListRowProps
   chevron?: boolean;
   /** Anything else on the trailing edge (a count pill, a switch, a state circle). */
   trailing?: React.ReactNode;
+  /**
+   * Extra classes for the title line, merged over its defaults.
+   *
+   * The default is `font-bold`, which is right for the rows this primitive was
+   * built for — a conversation, an app, a notification — where the title is
+   * the row's subject and a subtitle sits under it. A settings MENU is the
+   * other kind of grouped list: every row is one word, there are no subtitles,
+   * and bolding all of them makes a page of headings with nothing under them.
+   * Rather than fork the primitive, such a caller passes a weight here.
+   */
+  titleClassName?: string;
 }
 
 /**
@@ -105,7 +116,8 @@ export interface ListRowProps
  * exists to provide in the first place.
  */
 export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function ListRow({
-  className, leading, title, subtitle, dot, chevron = true, trailing, inset, as = 'div', ...props
+  className, leading, title, subtitle, dot, chevron = true, trailing, inset, as = 'div',
+  titleClassName, ...props
 }, ref) {
   const Tag = as;
   // A row with no tile has nothing to inset the hairline PAST, so it falls back
@@ -129,7 +141,10 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
     >
       {leading}
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{title}</div>
+        <div className={cn(
+          'truncate text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100',
+          titleClassName,
+        )}>{title}</div>
         {subtitle ? (
           <div className="truncate text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{subtitle}</div>
         ) : null}

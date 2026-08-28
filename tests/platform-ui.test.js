@@ -466,18 +466,26 @@ test('the Improve panel leads with its two actions, shaped like the button that 
   assert.match(panel, /Improve\.startSession\(\)/, 'with the same handler');
 
   // They are shaped like #improve-btn, the control that opens this panel: a
-  // rounded-full pill with the violet fill on the primary one. New change
-  // carries the fill because starting one is what the panel is FOR; Feedback
-  // takes the tinted rest state, so the pair reads primary-and-secondary
-  // rather than as two halves of a switch.
+  // rounded-full pill.
+  //
+  // BOTH TAKE THE SAME FILL, and that is the change. "New change" wore the
+  // solid violet for a while, on the argument that starting one is what the
+  // panel is FOR, with Feedback tinted so the pair read
+  // primary-and-secondary. Neither is more special than the other —
+  // describing a problem and starting a change are two ways into the same
+  // work, and which one somebody wants is about what they have to say. The
+  // solid pill also sat directly under #improve-btn's own, so the panel
+  // opened with an accent competing with the button that opened it.
   assert.match(button, /rounded-full[\s\S]{0,80}bg-violet-600 hover:bg-violet-500/,
     'the header button is a filled violet pill');
-  assert.match(panel, /const ACTION_PRIMARY = 'bg-violet-600 hover:bg-violet-500 text-white';/,
-    'and New change wears the same fill');
   assert.match(panel, /rounded-full text-sm font-semibold/,
-    'in the same pill shape');
-  assert.match(panel, /primary\n\s+onClick=\{\(\) => Improve\.startSession\(\)\}/,
-    'New change is the primary of the two');
+    'and the two actions are the same pill shape');
+  assert.match(panel, /const ACTION_FILL =\n\s+'bg-violet-500\/10 hover:bg-violet-500\/20/,
+    'both wearing the tinted fill');
+  assert.ok(!/ACTION_PRIMARY/.test(panel),
+    'there is no primary-and-secondary pair here any more');
+  assert.ok(!/\bprimary\b/.test(panel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
+    'and no call site marks one of them as the primary');
 
   // Share moved to the footer beside the repository link, keeping its id, its
   // canShare gate and its dialog.
@@ -623,15 +631,27 @@ test('the Improve panel is navigation, work and reference — one scroller', () 
   // separately; every move was defensible alone and the sum meant leaving the
   // app to read facts about the app you were standing in.
   assert.match(panel, /id="improve-row-github"/, 'the GitHub link is back');
-  // Rendered, but gated on `!selfHosted`: the platform's own row IS the
-  // platform, so this row and "Platform version" under it printed the same
-  // seven characters twice. See the note at the call site for what that costs
-  // (one SHA, in a state the Platform version row already names) and what the
-  // deploy dot reads (never this row).
-  assert.match(panel, /\{slug && !selfHosted \? \([\s\S]{0,120}id="improve-row-version"/,
-    "the app's version is back, and off the platform's own panel");
-  assert.match(panel, /id="drawer-row-platform-version"/, 'the platform build is back');
-  assert.match(panel, /<NativeAppVersionRow \/>/, 'and the native app version');
+  // THE VERSION ROWS ARE NOT IN IT. They were, and the question they were
+  // being read for was never "which SHA" — it was "is something happening,
+  // and is there a new version yet". Three static rows answered that only by
+  // implication, and you had to notice one of them had become a spinner.
+  //
+  // The footer states it instead: a note while a build is in flight, a reload
+  // button once one is ready. The revisions themselves went back to Settings'
+  // About pane, which is the screen you consult rather than act from
+  // (tests/header-status-pane.test.js pins where they landed).
+  assert.match(panel, /id="improve-update-note"/, 'the footer says when a build is in flight');
+  assert.match(panel, /id="improve-update-ready"/, 'and offers the reload when one is ready');
+  assert.ok(!panel.includes('id="improve-row-version"'),
+    "the app's version row is Settings' now");
+  assert.ok(!panel.includes('id="drawer-row-platform-version"'),
+    'and so is the platform build');
+  assert.ok(!panel.includes('<NativeAppVersionRow />'),
+    'and the native app version');
+  // The state behind all three is NAMED, not read back out of a rendered row,
+  // which is what let them move at all — see improve-status.js.
+  assert.match(panel, /versionState === 'downloading'/,
+    'the note distinguishes the download from the build that preceded it');
   // Fork lineage did NOT come back: #browse-detail-fork on the app's own page
   // is the better home, because lineage is a fact about an app.
   assert.ok(!panel.includes('id="drawer-row-app-fork"'),

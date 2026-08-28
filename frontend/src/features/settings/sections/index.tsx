@@ -32,6 +32,7 @@
  *    would make an ungated section unreachable the moment its wrapper hid.
  */
 
+import { AboutSection } from './about';
 import { AdminPreviewSection } from './admin-preview';
 import { AgentFilesSection } from './agent-files';
 import { AlertsSection } from './alerts';
@@ -73,6 +74,10 @@ export function SettingsSections() {
       <DevConsoleSection />
       <ExperimentalSection />
       <UsernodeSection />
+      {/* The three version rows. Last, because it is the only pane here you
+          read rather than change — see ./about.tsx for why they are back from
+          the Improve panel's footer. */}
+      <AboutSection />
       <AdminPreviewSection />
     </>
   );

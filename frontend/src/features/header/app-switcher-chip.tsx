@@ -81,12 +81,25 @@
  * `shrink-0`, so a long app name shortens rather than evicting the word that
  * says which part of it you are looking at.
  *
- * ── A session has no chip ──────────────────────────────────────────────
+ * ── A session HAS a chip, and its subtitle is the lifecycle ────────────
  *
- * On a dev session the bar is ← + status on the left and the doing/seeing
- * pair on the right; the change's own name is in the strip below. The <h1>
- * still renders — it is what use-header-layout measures — but it stays empty
- * there, which is #1431's behaviour kept as-is.
+ * It did not until now. #1431 left the <h1> empty on a dev session and put
+ * the lifecycle pill in the bar's left seat on its own, so the top of a new
+ * change read as one grey word — "Draft" — and nothing on the screen said
+ * which app was being changed. The change's own name is in the strip below,
+ * but the APP's name was available nowhere.
+ *
+ * So the session route gets the same chip as everywhere else, and the pill
+ * moved into it as the subtitle. That is the arrangement this file already
+ * describes two sections up — the chip keeps naming the app, the subtitle
+ * says which part of it you are in — with the lifecycle as the part. It also
+ * means the answer to "which app is this" is the same control on every route,
+ * rather than a control that disappears on the one screen where the question
+ * is least obvious.
+ *
+ * The pill rides in whole rather than as plain text: it carries the tone
+ * colour, the check glyph, the in-vote tally and the mid-turn spinner, and a
+ * flattened `life.label` would have dropped all four.
  */
 
 import type { RefObject } from 'react';
@@ -97,6 +110,8 @@ import { useStoreState } from '../../lib/use-store-state';
 import { headerTitleStore } from './header-title-store.js';
 import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from '../app-context/app-context-store.js';
+import { sessionHeaderStore } from '../dev-chat/session-header-store';
+import { MergeStatusPill } from '../dev-chat/session-header';
 
 export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
   const { text, subtitle } = useStoreState(headerTitleStore);
@@ -107,7 +122,15 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
   // ways to close (backdrop, Escape) and a trigger that only hears about the
   // ones routed through itself goes stale on both.
   const { open } = useStoreState(appContextStore);
+  const { life } = useStoreState(sessionHeaderStore);
   const onSession = tab === 'dev' && subTab === 'sessions';
+  // On a session the subtitle is the lifecycle pill; everywhere else it is the
+  // plain word the title store published (Board, Activity).
+  const sessionPill = onSession && life ? <MergeStatusPill life={life} /> : null;
+  const showSubtitle = onSession ? !!sessionPill : !!subtitle;
+  // The accessible name says the lifecycle in words either way — the pill's
+  // tone and glyph are decoration, and `life.label` is the text under them.
+  const spokenSubtitle = onSession ? (life?.label || '') : subtitle;
 
   return (
     <h1
@@ -115,41 +138,45 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
       id="header-title"
       className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-left"}
     >
-      {onSession ? null : (
-        <button
-          id="app-switcher-btn"
-          type="button"
-          className={'pointer-events-auto inline-flex items-center gap-1 max-w-full h-7 '
-            + 'pl-3.5 pr-2.5 rounded-full align-middle un-touch-target '
-            + 'bg-zinc-50 text-zinc-900 hover:bg-white '
-            + 'dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700'}
-          aria-haspopup="dialog"
-          aria-expanded={open ? 'true' : 'false'}
-          aria-label={subtitle ? `${text}, ${subtitle}: open the menu` : `${text}: open the menu`}
-          onClick={() => (window as unknown as {
-            AppContext?: { toggle?: () => void };
-          }).AppContext?.toggle?.()}
-        >
-          <span className="min-w-0 flex items-baseline gap-1.5">
-            <span
-              id="app-switcher-name"
-              className="min-w-0 truncate"
-            >
-              {text}
-            </span>
-            {subtitle ? (
-              <span
-                id="app-switcher-subtitle"
-                className="shrink-0 text-[0.6875rem] leading-none font-medium
-                           text-zinc-500 dark:text-zinc-400"
-              >
-                {subtitle}
-              </span>
-            ) : null}
+      <button
+        id="app-switcher-btn"
+        type="button"
+        className={'pointer-events-auto inline-flex items-center gap-1 max-w-full h-7 '
+          + 'pl-3.5 pr-2.5 rounded-full align-middle un-touch-target '
+          + 'bg-zinc-50 text-zinc-900 hover:bg-white '
+          + 'dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700'}
+        aria-haspopup="dialog"
+        aria-expanded={open ? 'true' : 'false'}
+        aria-label={spokenSubtitle ? `${text}, ${spokenSubtitle}: open the menu` : `${text}: open the menu`}
+        onClick={() => (window as unknown as {
+          AppContext?: { toggle?: () => void };
+        }).AppContext?.toggle?.()}
+      >
+        <span className="min-w-0 flex items-baseline gap-1.5">
+          <span
+            id="app-switcher-name"
+            className="min-w-0 truncate"
+          >
+            {text}
           </span>
-          <ChevronDownIcon className="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
-        </button>
-      )}
+          {showSubtitle ? (
+            <span
+              id="app-switcher-subtitle"
+              className="shrink-0 text-[0.6875rem] leading-none font-medium
+                         text-zinc-500 dark:text-zinc-400"
+            >
+              {/* `#header-status-pill` keeps its id here: it is still the
+                  lifecycle pill's seat, it is still inside #platform-header,
+                  and the declared check that looks for it by that path does
+                  not care which descendant holds it. */}
+              {onSession
+                ? <span id="header-status-pill" className="min-w-0 truncate">{sessionPill}</span>
+                : subtitle}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDownIcon className="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+      </button>
     </h1>
   );
 }

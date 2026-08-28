@@ -271,7 +271,18 @@ function notificationsRoutes(config) {
         };
       }
 
-      const rows = await notifications.listForUser(pool, req.user.id, { limit, before });
+      // `?kind=conversation` narrows the page to the conversation kinds — the
+      // bell's Messages tab. That tab filters the shared feed client-side, so
+      // its pager used to walk the WHOLE feed 100 rows at a time looking for
+      // messages, which is why it did not page in place at all. A named group
+      // rather than a free list of kinds: the client does not get to select
+      // arbitrary rows out of its own feed, and the grouping stays defined in
+      // one place (services/notifications.js).
+      const kinds = req.query.kind === 'conversation'
+        ? [...notifications.CONVERSATION_NOTIFICATION_KINDS]
+        : null;
+
+      const rows = await notifications.listForUser(pool, req.user.id, { limit, before, kinds });
       const serialized = rows.map(notifications.serialize);
 
       const hasMore = rows.length === limit;

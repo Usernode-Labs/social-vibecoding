@@ -427,6 +427,14 @@ export const LightBulbIcon = stroked(
   'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
 );
 
+// Heroicons' arrow-path: the "there is a new build, reload onto it" glyph on
+// the Improve button, and the only rotational arrow in the set — ArrowRightIcon
+// and its short twin are directional, not cyclic.
+export const ArrowPathIcon = stroked(
+  'ArrowPathIcon',
+  'M16.023 9.348h4.992V4.356m-4.992 4.992l3.181-3.183a8.25 8.25 0 00-13.803 3.7M4.031 9.865v4.99m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7',
+);
+
 export const CameraIcon = stroked('CameraIcon', [
   'M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z',
   'M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z',

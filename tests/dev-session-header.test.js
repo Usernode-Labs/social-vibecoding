@@ -237,17 +237,28 @@ test('an in-vote session carries its tally, and its advisory surplus separately'
   assert.match(html, / · 1\/3/, 'the header has no vote pill of its own, so the tally rides in the label');
 });
 
-test('the strip hosts no lifecycle pill — the platform header does', () => {
+test('the strip hosts no lifecycle pill — the header chip does', () => {
   const { view } = makeDevChat();
   const html = headerHtml(view({ ...SESSION, check_state: 'passing' }));
   assert.doesNotMatch(html, /dc-status-pill/);
   assert.doesNotMatch(html, /ms-pill/);
-  // The bar renders it from the SAME store, gated on the session sub-view.
+  // The pill's seat moved from the bar's left slot INTO the chip, as its
+  // subtitle. On a new change the old arrangement drew the lifecycle alone —
+  // the chip was empty on this route — so the top of the screen said "Draft"
+  // and never said which app was being changed. Same store, same component,
+  // same id, one control.
+  const chipTsx = read('frontend', 'src', 'features', 'header', 'app-switcher-chip.tsx');
+  assert.match(chipTsx, /id="header-status-pill"/);
+  assert.match(chipTsx, /sessionHeaderStore/);
+  assert.match(chipTsx, /MergeStatusPill/);
+  assert.match(chipTsx, /subTab === 'sessions'/, 'the lifecycle subtitle is the session route’s');
+  // And it is gone from the bar, so there is exactly one seat for it.
   const headerTsx = read('frontend', 'src', 'features', 'header', 'platform-header.tsx');
-  assert.match(headerTsx, /id="header-status-pill"/);
-  assert.match(headerTsx, /sessionHeaderStore/);
-  assert.match(headerTsx, /MergeStatusPill/);
-  assert.match(headerTsx, /subTab !== 'sessions'/, 'only a session screen shows it');
+  assert.doesNotMatch(
+    headerTsx.replace(/\/\/.*$/gm, ''),
+    /id="header-status-pill"/,
+    'the bar no longer hosts a second lifecycle seat',
+  );
 });
 
 test('with no preview built yet the strip is the bare Building chip', () => {

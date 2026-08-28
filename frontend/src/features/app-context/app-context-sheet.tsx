@@ -64,7 +64,7 @@
  * First render is the prerender: closed, no apps, no app-scoped rows.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import {
   ChatBubbleTailIcon,
@@ -85,6 +85,7 @@ import { improveStore } from '../improve/improve-store.js';
 import { AppViewTabs, SWITCHER_VIEW_IDS } from '../improve/view-tabs';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
+import { recordAppUse, sortByRecency } from './app-recency';
 
 type SwitcherApp = {
   slug: string; name?: string; icon_url?: string | null; icon_emoji?: string | null;
@@ -233,7 +234,19 @@ export function AppsSwitcherSheet(): ReactNode {
     return () => { live = false; };
   }, [open, apps]);
 
-  const rows = apps || [];
+  // Every way into an app funnels through improveStore.slug, so recording
+  // recency here rather than in AppTile's click handler counts a home tile, an
+  // /app/<slug> deep link and a notification tap as uses too — not just the
+  // two entries that happen to go through this menu.
+  useEffect(() => {
+    if (slug) recordAppUse(slug);
+  }, [slug]);
+
+  // Most-recently-used first, which on a horizontal strip is left-to-right.
+  // Safe to read storage during render here and nowhere else in this island:
+  // `apps` is null until the sheet's first open, so this only ever runs on a
+  // client render, never in the prerender that would mismatch on hydration.
+  const rows = useMemo(() => sortByRecency(apps || []), [apps]);
 
   return (
     <>
@@ -263,9 +276,30 @@ export function AppsSwitcherSheet(): ReactNode {
             id="apps-switcher-create"
             type="button"
             className="inline-flex items-center gap-1 text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline un-touch-target"
+            // `Home.openCreateApp` never existed — the optional call swallowed
+            // it, so this button closed the sheet and did nothing else. The
+            // create dialog is reached through App.showCreateModal(), which
+            // forwards to the `create` entry of the UsernodeReact.dialogs
+            // bridge (../dialogs/create-app.tsx).
+            //
+            // The await is load-bearing on touch: dismissForNav() resolves
+            // when the kit sheet has actually torn down (up to
+            // DISMISS_SAFETY_MS in lib/sheet-controller.js), and presenting a
+            // modal into a kit that is still dismissing a sheet loses the
+            // modal. Same ordering AppTile uses for navigation.
+            //
+            // The gate matches the home grid's create tile: without it this
+            // was the one create affordance offered to viewers the server
+            // would refuse, whose only feedback would have been the failure.
             onClick={() => {
-              AppContext.dismissForNav();
-              (window as any).Home?.openCreateApp?.();
+              const win = window as any;
+              void AppContext.dismissForNav().then(() => {
+                if (win.Home?.canCreate && !win.Home.canCreate()) {
+                  win.PlatformUI?.toast?.(win.Home?.CREATE_DISABLED_HINT || '');
+                  return;
+                }
+                win.App?.showCreateModal?.();
+              });
             }}
           >
             <PlusWideIcon className="w-3.5 h-3.5 shrink-0" strokeWidth="2.5" aria-hidden="true" />

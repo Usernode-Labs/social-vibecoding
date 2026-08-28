@@ -136,12 +136,19 @@ test('the drawer island imports and initializes the native version renderer afte
     'layout-effect init prevents a pre-hydration class/text mutation');
 });
 
-test("the Improve panel's footer separates the mobile app version from the platform version", () => {
-  // Settings' About block, not a drawer footer: the two rows that describe the
-  // PLATFORM outlived the app-scoped block they were passing through, and the
-  // fork line that used to follow them went to the app's own page instead.
-  const aboutAt = html.indexOf('id="improve-footer"');
-  assert.ok(aboutAt > -1, 'the Improve panel has its reference footer');
+test("Settings' About pane separates the mobile app version from the platform version", () => {
+  // Settings' About pane, not a drawer footer and not the Improve panel's
+  // either: the two rows that describe the PLATFORM outlived the app-scoped
+  // block they were passing through, and the fork line that used to follow
+  // them went to the app's own page instead.
+  //
+  // They passed through #improve-footer for a while, which is what this
+  // anchor used to be while the comment already said "Settings' About block".
+  // That footer states what is HAPPENING to the build now — a note while one
+  // is being made, a reload once one is ready — and the revisions live on the
+  // screen you read rather than the one you act from.
+  const aboutAt = html.indexOf('data-settings-section="about"');
+  assert.ok(aboutAt > -1, "Settings has its About pane");
   const revisionAt = html.indexOf('id="drawer-row-platform-version"');
   assert.ok(revisionAt > aboutAt, 'the version rows live inside it');
   const versionAt = html.indexOf('id="drawer-row-native-app-version"');

@@ -504,6 +504,7 @@ function UsersSection() {
   const [denied, setDenied] = useState(false);
   const [bulk, setBulk] = useState('');
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [filter, setFilter] = useState('');
   // One open overflow menu at a time, and ONE document-level listener pair,
   // installed only while one is open. The old shape bound its pair once for
   // the module's lifetime behind a `_menusWired` flag and never removed them.
@@ -569,13 +570,39 @@ function UsersSection() {
     }
   };
 
+  // Counted over the WHOLE list, never the filtered one. This is what guards
+  // "you cannot demote the last full admin", so a search box that happens to
+  // hide the other admins must not make the guard think there is one left.
   const fullAdminCount = (users || []).filter((u) => u.is_admin && !u.admin_readonly).length;
+
+  // Client-side, because /api/admin/users returns every user in one shot with
+  // no query parameter — the same shape admin-e2e.tsx filters, and the reason
+  // this is a controlled AdminUI input rather than the topochain sections'
+  // commit-on-blur box (those re-fetch per keystroke-commit; this does not).
+  const query = filter.trim().toLowerCase();
+  const shown = query
+    ? (users || []).filter((u) => (u.username || '').toLowerCase().includes(query))
+    : (users || []);
 
   return (
     <>
       <div className={AdminUI.card}>
         <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className={AdminUI.cardTitle}>Users</h2>
+          {/* Named for what it searches. The Programme users card below this
+              one carries its own search box, so two unlabelled fields would
+              sit on the same screen filtering different lists. */}
+          <input
+            id="admin-users-filter"
+            type="search"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Filter by username…"
+            aria-label="Filter users by username"
+            className={`${AdminUI.input} max-w-xs`}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
           {canWrite ? (
             <div id="admin-bulk-quota-control" className="flex items-center gap-2"
               title="Set every user's app quota to this number.">
@@ -591,7 +618,12 @@ function UsersSection() {
         <div id="admin-user-list" className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {denied ? <p className="p-4 text-sm text-zinc-500 dark:text-zinc-400">Admin access required.</p> : null}
           {!denied && users == null ? <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">Loading…</p> : null}
-          {(users || []).map((u) => (
+          {!denied && users != null && !shown.length && query ? (
+            <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">
+              No user matches “{filter.trim()}”.
+            </p>
+          ) : null}
+          {shown.map((u) => (
             <UserRow key={u.id} user={u} fullAdminCount={fullAdminCount} canWrite={canWrite}
               menuOpen={openMenu === u.id} onMenu={(v) => setOpenMenu(v ? u.id : null)}
               onReload={load} />

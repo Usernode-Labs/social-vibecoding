@@ -62,6 +62,7 @@ import { hydrateRoot } from 'react-dom/client';
 import { Shell } from './Shell';
 import { initOffline } from './lib/offline';
 import { registerServiceWorker } from './lib/service-worker';
+import { applyShellSnapshot } from './lib/shell-snapshot-apply';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and
@@ -115,3 +116,26 @@ initOffline();
 flushSync(() => {
   hydrateRoot(document.body, <Shell />);
 });
+
+// ── The bar catches up here, and not one line earlier ──────────────────
+//
+// The document that just hydrated is almost always the CACHED prerender
+// (public/sw.js races every navigation against it on a 200ms deadline), and
+// the prerender is state-free: every island rendered from its store's INITIAL
+// in Node. So the chip says "dApps" and the Improve button is missing, and
+// both stay that way until App.init() has run, /api/auth/me has answered and
+// the route has resolved — a network round trip after a paint that came from
+// cache in milliseconds.
+//
+// Applying the last-known values AFTER hydrateRoot returns is what closes
+// that without breaking the thing the prerender exists for. Before hydration
+// — as a store INITIAL, or from an inline <head> script — the first client
+// render would disagree with the prerendered markup, and that mismatch is a
+// console.error, and a console error on any route fails proposal checks. Here,
+// hydration has already matched byte for byte and this is an ordinary update
+// in the same task.
+//
+// Everything real still overwrites it moments later; this only decides what is
+// on screen in between. See ./lib/shell-snapshot.ts for the storage contract
+// and why it is display-only.
+applyShellSnapshot();

@@ -221,13 +221,17 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // is FETCHED, so the prerendered sections are empty by contract (see
     // panels-store.ts's `painted`).
     //
+    // ArrowPathIcon — the "a new version is here, reload onto it" glyph. It
+    // draws on the Improve button and in that panel's footer button, and BOTH
+    // are behind the ready state: a cold document is by definition running the
+    // build it was served, so there is nothing to reload onto. Its two
+    // siblings in that state machine go the other way and DO prerender — the
+    // lightbulb because idle is the cold document's state, the spinner arc
+    // because other surfaces draw it.
+    'M16.023 9.348h4.992V4.356m-4.992 4.992l3.181-3.183a8.25 8.25 0 00-13.803 3.7M4.031 9.865v4.99m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7',
     // TrophyOutlineIcon — the Challenges bar's leaderboard link and its
     // standings footer.
     'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
-    // LightBulbIcon — it left the prerender when the Improve pill dropped its
-    // glyph (owner review: the Figma bar is text-only) and nothing draws the
-    // bulb today.
-    'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
     // ChatIcon — and it is BACK on this list, one round after leaving it. It
     // prerendered while the Improve panel's quick actions were icon-led; the
     // labels did not fit beside a glyph in the 320px DESKTOP panel ("New

@@ -3,8 +3,10 @@
  *
  * app-view.js computes and publishes; the components render. Three stores:
  *
- * - `devFeedStore` — the list feed (`#dev-feed`): the pinned own-sessions
- *   block, the stream's entries, the pager footer.
+ * - `devFeedStore` — the list feed (`#dev-feed`): the stream's entries and
+ *   the pager footer. It used to carry a pinned own-sessions block above
+ *   them; the board's Underway column is where an own session is reached
+ *   from now (see AppView._inProgressRows).
  * - `devKanbanStore` — the board (`#dev-kanban-board`): the four columns
  *   plus the mobile tab strip's active key.
  * - `cardNowStore` / `aiEnabledStore` — the two cross-cutting facts that
@@ -29,7 +31,6 @@ import type { DevFeedView, DevKanbanView } from './model';
 // on its placeholders.
 export const devFeedStore = createStore<DevFeedView>({
   loading: true,
-  block: [],
   emptyNote: null,
   entries: [],
   footer: null,

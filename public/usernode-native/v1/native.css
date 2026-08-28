@@ -753,6 +753,20 @@ html.un-kb .un-action-sheet {
 .un-action-btn + .un-action-btn {
   border-top: 1px solid var(--un-hairline);
 }
+/* A group label inside the stack, as opposed to .un-action-title on its own,
+   which is the sheet's one centred caption. Left-aligned and heavier so it
+   reads as a heading over the rows beneath it rather than as another caption,
+   and it takes a hairline above when it follows a row — the rule the rows
+   already draw between themselves, carried over the boundary so a group
+   visibly starts. */
+.un-action-title.un-action-section {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 8px;
+}
+.un-action-btn + .un-action-title.un-action-section {
+  border-top: 1px solid var(--un-hairline);
+}
 .un-action-btn.un-destructive {
   color: var(--un-action-danger);
 }

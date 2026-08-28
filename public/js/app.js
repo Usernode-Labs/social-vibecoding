@@ -129,6 +129,13 @@ const App = {
   // been cleared, so a worker that never answers changes nothing.
   _dropCachedSession() {
     App.clearSessionSnapshot();
+    // The remembered top-bar state goes with it, for the same reason and on
+    // the same event: it is display-only (frontend/src/lib/shell-snapshot.ts),
+    // but the next cold paint reading back the previous account's app name is
+    // exactly the residue this function exists to clear.
+    try {
+      window.UsernodeReact?.shellSnapshot?.clear?.();
+    } catch (err) { /* nothing stored, or no storage at all */ }
     try {
       navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     } catch (err) { /* no SW — nothing cached to drop */ }
@@ -1220,10 +1227,29 @@ const App = {
   // visible now without opening the menu).
   renderPlatformVersionPill(info) {
     const slot = document.getElementById('platform-version-pill-slot');
-    if (!slot) return;
-    // Every path below ends by painting `slot` and syncing the dot.
-    const paint = (html) => {
-      slot.innerHTML = html;
+    // Every path below ends by naming the update state and painting `slot`.
+    //
+    // THE STATE IS NAMED, NOT INFERRED. refreshDeployDot used to recover it by
+    // querying `#improve-footer .drawer-ver--deploying` / `--stale`, i.e. by
+    // reading back the classes this function had just written. That coupled
+    // the Improve button's indicator to where the version rows happened to be
+    // rendered, and the rows are in Settings now. This function already knows
+    // the answer exactly — it is the one computing isDeploying/isStale and
+    // reading App.shellUpdate — so it says so, and the pill is left as pure
+    // presentation.
+    //
+    // It is also finer than the classes were: `--stale` covered both "the new
+    // build is downloading" and "the new build is here", deliberately, so the
+    // dot would not blink off mid-download. Those are different offers to make
+    // (a note vs. a reload button), so they are different states, and the dot
+    // simply treats both as the same colour.
+    //
+    // Published even when the slot is absent: the button's icon must not
+    // depend on whether the Settings screen's markup happens to be in the
+    // document.
+    const paint = (html, state) => {
+      App.platformUpdateState = state;
+      if (slot) slot.innerHTML = html;
       App.ImproveStatus.refreshDeployDot();
     };
 
@@ -1257,7 +1283,7 @@ const App = {
         ? 'Staging preview of the platform, built without a commit SHA, so there is no revision to link'
         : 'Running outside of a deploy (no GIT_SHA set)';
       paint(`
-        <span class="drawer-ver drawer-ver--dev" title="${tip}">${label}</span>`);
+        <span class="drawer-ver drawer-ver--dev" title="${tip}">${label}</span>`, 'idle');
       return;
     }
 
@@ -1274,7 +1300,7 @@ const App = {
       paint(`
         <span class="drawer-ver drawer-ver--deploying" title="${tipParts.join(' · ')}">
           <span class="drawer-ver-spinner" aria-hidden="true"></span>${shaLabel}
-        </span>`);
+        </span>`, 'deploying');
       return;
     }
 
@@ -1298,7 +1324,7 @@ const App = {
           <span class="drawer-ver drawer-ver--stale drawer-ver--fetching"
                 title="Platform updated from ${oldShort} to ${newShort}. Downloading it now; the reload appears once there is something to switch to.">
             <span class="drawer-ver-spinner" aria-hidden="true"></span>${newShort} · updating…
-          </span>`);
+          </span>`, 'downloading');
         return;
       }
       // 'ready' — the worker holds the new build, so a reload lands on it
@@ -1313,14 +1339,14 @@ const App = {
         <button type="button"
                 class="drawer-ver drawer-ver--stale"
                 title="${tip}"
-                onclick="location.reload()">${newShort} · reload</button>`);
+                onclick="location.reload()">${newShort} · reload</button>`, failed ? 'failed' : 'ready');
       return;
     }
 
     const shortSha = runningSha.slice(0, 7);
     const href = `${repoUrl.replace(/\/$/, '')}/commit/${runningSha}`;
     paint(`
-      <a href="${href}" target="_blank" rel="noopener" class="drawer-ver" title="Platform commit ${shortSha}">${shortSha}</a>`);
+      <a href="${href}" target="_blank" rel="noopener" class="drawer-ver" title="Platform commit ${shortSha}">${shortSha}</a>`, 'idle');
   },
 
   // Tiny local HTML-escaper for server-sourced strings interpolated into

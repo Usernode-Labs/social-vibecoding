@@ -1510,6 +1510,16 @@
       "expectSelector": "#dev-body #dev-feed"
     },
     {
+      "name": "Activity carries the board's search and filter bar, not just the +",
+      "path": "/?demo=1#app/usernode-2d5619/activity",
+      "expectSelector": "#dev-actions #dev-kanban-filterbar #dev-kanban-search"
+    },
+    {
+      "name": "An Activity row can be replied to without opening it",
+      "path": "/?demo=1#app/usernode-2d5619/activity",
+      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-thread input[aria-label=\"Reply to this item\"]"
+    },
+    {
       "name": "The view strip marks Activity as the one you are on",
       "path": "/?demo=1#app/usernode-2d5619/activity",
       "expectSelector": "#improve-views [data-context-row=\"activity\"][aria-current=\"page\"]"
@@ -1781,26 +1791,26 @@
       "expectText": "Give feedback"
     },
     {
-      "name": "All three version fields share one left edge (the mobile row had lost its inset)",
-      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-footer #drawer-row-platform-version.px-4 ~ #drawer-row-native-app-version.px-4"
+      "name": "Settings' About pane: all three version rows share one left edge",
+      "path": "/#settings/about",
+      "expectSelector": "#settings-about-section #about-row-app-version.px-4 ~ #drawer-row-platform-version.px-4 ~ #drawer-row-native-app-version.px-4"
     },
     {
-      "name": "The platform's own panel does not print its version twice",
-      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-footer:not(:has(#improve-row-version)) #drawer-row-platform-version"
+      "name": "The About pane hides the app version row when there is no app to speak for",
+      "path": "/#settings/about",
+      "expectSelector": "#settings-about-section #about-row-app-version.hidden ~ #drawer-row-platform-version"
     },
     {
       "name": "A tab behind a deploy says the new build is downloading, and offers no reload yet",
       "path": "/?shot=platform-updating&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-footer:not(:has(button.drawer-ver--stale)) span.drawer-ver--stale.drawer-ver--fetching",
-      "expectText": "1111111 \u00b7 updating\u2026"
+      "expectSelector": "#improve-footer:not(:has(#improve-update-ready)) #improve-update-note",
+      "expectText": "downloading"
     },
     {
-      "name": "Once the new build is cached, the same row becomes the reload button",
+      "name": "Once the new build is cached, the Improve panel offers the reload",
       "path": "/?shot=platform-update-ready&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-footer button.drawer-ver--stale:not(.drawer-ver--fetching)",
-      "expectText": "1111111 \u00b7 reload"
+      "expectSelector": "#improve-footer:not(:has(#improve-update-note)) button#improve-update-ready",
+      "expectText": "new version available"
     },
     {
       "name": "The Improve panel: quick actions, the app's views, the work in flight, then what the app is (#1443)",
@@ -1828,9 +1838,9 @@
       "expectSelector": "#switcher-nav #switcher-row-admin:not(.hidden)"
     },
     {
-      "name": "The Improve panel renders the platform build as plain text, not a pill (#1443)",
-      "path": "/?demo=1",
-      "expectSelector": "#improve-footer #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
+      "name": "Settings renders the platform build as plain text, not a pill",
+      "path": "/#settings/about",
+      "expectSelector": "#settings-about-section #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
     },
     {
       "name": "Settings renders the AI-credit allowance as inline text",
@@ -1849,9 +1859,9 @@
       "expectText": "Theme"
     },
     {
-      "name": "Settings' About block distinguishes the mobile app version from the platform version",
-      "path": "/#settings",
-      "expectText": "Platform version"
+      "name": "Settings' About pane keeps the mobile app version and the platform version as separate rows",
+      "path": "/#settings/about",
+      "expectSelector": "#settings-about-section #drawer-row-platform-version ~ #drawer-row-native-app-version"
     },
     {
       "name": "View on GitHub is an action on the app's own page, not a drawer row",
@@ -1901,6 +1911,12 @@
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-sheet[data-open] #notifications-see-older",
       "expectText": "See older notifications"
+    },
+    {
+      "name": "The Messages tab pages older MESSAGES in place rather than jumping to All",
+      "path": "/?shot=notifications-messages&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] #notifications-see-older-messages",
+      "expectText": "See older message notifications"
     },
     {
       "name": "A proposal notification names the proposal, not a sentence about it",
@@ -2363,7 +2379,7 @@
       "name": "Freshness (#1442): behind-but-clean stays a caption and keeps the vote tally visible",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000033",
       "expectSelector": "#gc-thread-head .gc-vote-count-attention",
-      "expectText": "Behind main \u00b7 8 \u00b7 2/3"
+      "expectText": "Behind main · 8 · 2/3"
     },
     {
       "name": "A failed imported preview offers Retry preview (#866)",
@@ -2711,9 +2727,9 @@
       "expectSelector": "#platform-header #header-status-pill"
     },
     {
-      "name": "A session bar carries no chip — the change's name is the strip's (#1443)",
+      "name": "A session bar names the app in the chip, with the lifecycle as its subtitle",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
-      "expectSelector": "#platform-header:not(:has(#app-switcher-btn)) #back-btn:not(.hidden)"
+      "expectSelector": "#platform-header #app-switcher-btn #app-switcher-subtitle #header-status-pill .ms-pill"
     },
     {
       "name": "Inside an app's detail page the header arrow links back to the list (#1036)",
@@ -2895,9 +2911,9 @@
       "expectSelector": "#dev-actions > div.ml-auto > #dev-plus-btn"
     },
     {
-      "name": "The feed shows the + button with no filter chips beside it",
+      "name": "Activity shows the filter bar beside the +, not the + alone",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-actions > #dev-kanban-filterbar:empty + div > #dev-plus-btn"
+      "expectSelector": "#dev-actions > #dev-kanban-filterbar:not(:empty) + div > #dev-plus-btn"
     },
     {
       "name": "The Notifications sheet shows read rows on the All tab (Streamlined Concept)",

@@ -237,8 +237,27 @@ export interface DividerSpec {
  * One row of a card column — the feed's pinned-sessions block and the
  * kanban In-progress column share the shape.
  */
+/**
+ * The app's own discussion thread for a feed row, addressed the way
+ * `GroupChat.mountThread` addresses it — see ./feed-thread.tsx.
+ *
+ * Separate from `commentsFor`, which names an issue's GITHUB thread and is
+ * read-only. A row can carry both: the GitHub conversation above, the app's
+ * own (with the reply box) below.
+ */
+export interface FeedThreadRef {
+  type: 'issue' | 'session' | 'governance';
+  ref: number;
+}
+
 export type ListRow =
-  | { t: 'card'; key: string; card: DevCardModel; commentsFor?: number | null }
+  | {
+    t: 'card';
+    key: string;
+    card: DevCardModel;
+    commentsFor?: number | null;
+    thread?: FeedThreadRef | null;
+  }
   | { t: 'divider'; key: string; d: DividerSpec }
   | { t: 'note'; key: string; text: string }
   | { t: 'archived'; key: string; rows: ArchivedRow[] };
@@ -257,12 +276,19 @@ export interface DevFeedView {
    * "No activity yet" on a screen that is still loading is worse than slow.
    */
   loading?: boolean;
-  /** The pinned own-sessions block above the stream. Empty draws nothing. */
-  block: ListRow[];
   /** The no-activity note, with its load-failure prefix. */
-  emptyNote: { loadFailed: boolean } | null;
+  emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   entries: ListRow[];
   footer: FooterSpec | null;
+  /**
+   * Whether the viewer may post into a row's thread. Posting is collab-gated
+   * server-side (a 404 on deny, so private slugs stay unenumerable), so a
+   * reply box offered to a viewer who cannot post would be a control whose
+   * only feedback is a failure.
+   */
+  canPost?: boolean;
+  /** The open app, which the inline composer posts to. */
+  slug?: string;
 }
 
 export interface KanbanColView {

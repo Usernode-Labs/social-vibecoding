@@ -90,8 +90,23 @@ export function useDialog<T = void>(
   const opts = useRef(options);
   opts.current = options;
 
+  // The same distinction, but held until the kit's EXIT lands rather than
+  // being consumed by the next effect pass.
+  //
+  // `bookkeeping` is read by a layout effect on the close tick, which was
+  // enough while onClose ran there too. It no longer does — the teardown waits
+  // for the exit animation now — and a suspend's exit callback arrives long
+  // after that pass, with the screenshot round trip still in progress. Without
+  // this the feedback dialog's draft would be reset out from under the
+  // screenshot it is being attached to, which is the exact bug suspend/resume
+  // exists to prevent.
+  const suspended = useRef(false);
+
   const open = useCallback((payload?: T) => {
     payloadRef.current = payload;
+    // An ordinary open ends any suspension: whatever the round trip was, this
+    // presentation is a fresh one and owns its own teardown.
+    suspended.current = false;
     setIsOpen(true);
   }, []);
 
@@ -107,28 +122,53 @@ export function useDialog<T = void>(
   const bookkeeping = useRef(false);
   const suspend = useCallback(() => {
     bookkeeping.current = true;
+    suspended.current = true;
     setIsOpen(false);
   }, []);
   const resume = useCallback(() => {
     bookkeeping.current = true;
+    suspended.current = false;
     setIsOpen(true);
   }, []);
 
+  // The live open state, readable from a callback that fires outside React's
+  // render cycle — the kit's exit lands up to 300ms after the close.
+  const openRef = useRef(false);
+  openRef.current = isOpen;
+
   useStaticModal(rootRef, isOpen, {
     onKitDismiss: close,
+    // The card stays on screen for the whole exit animation now, so teardown
+    // that empties it has to wait for the end of that animation rather than
+    // running on the close tick — otherwise the dialog visibly blanks while it
+    // is still sliding away. See StaticModalOptions.onExited.
+    onExited: () => {
+      // Reopened while the exit was still playing: onOpen has already
+      // repopulated the card, and this teardown belongs to the presentation it
+      // replaced. Running it would wipe what the viewer is now looking at.
+      if (openRef.current) return;
+      // Mid-round-trip (a screenshot capture): the dialog is coming back with
+      // its draft intact, so this close is bookkeeping and has no teardown.
+      if (suspended.current) return;
+      opts.current.onClose?.();
+    },
     // A `public/js/**` straggler wrote `hidden` directly. Mirror it into
     // state so React, the kit and the DOM cannot disagree — see
     // StaticModalOptions.onExternalToggle.
     onExternalToggle: (nowOpen) => setIsOpen(nowOpen),
   });
 
-  // Populate on the way in, clean up on the way out. Skips the mount pass:
-  // `isOpen` starts false and the prerendered markup is already hidden, so
-  // there is nothing to reset and no stale open to close.
+  // Populate on the way in. Skips the mount pass: `isOpen` starts false and
+  // the prerendered markup is already hidden, so there is no stale open.
   //
   // Layout, and declared after `useStaticModal` above, so the order within a
   // single pass is: reveal → lift into the kit shell → populate. A passive
   // effect would paint the previous open's values for a frame first.
+  //
+  // The matching `onClose` is NOT here any more: it emptied the card on the
+  // close tick, which was invisible only for as long as the card was yanked
+  // out of sight on that same tick. It rides the exit now, so its teardown
+  // runs from `onExited` above.
   const mounted = useRef(false);
   useIsomorphicLayoutEffect(() => {
     if (!mounted.current) {
@@ -140,7 +180,6 @@ export function useDialog<T = void>(
       return;
     }
     if (isOpen) opts.current.onOpen?.(payloadRef.current);
-    else opts.current.onClose?.();
   }, [isOpen]);
 
   const backdropProps = useMemo(

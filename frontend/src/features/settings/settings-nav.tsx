@@ -132,6 +132,11 @@ export function SettingsMobileMenu() {
                 inset="text"
                 data-settings-nav={item.key}
                 className={MENU_ROW}
+                // ListRow bolds its title for the rows it was built for, where
+                // the title is a subject with a subtitle under it. These are
+                // one-word menu entries with no second line, so bold made the
+                // whole menu read as a stack of headings.
+                titleClassName="font-normal"
                 title={item.label}
                 onClick={() => navClick(item.key)}
               />
