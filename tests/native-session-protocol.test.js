@@ -235,6 +235,7 @@ class TicketPool {
     this.now = now;
     this.session = { token: 'cookie-A', user_id: 41, native_session_incarnation_id: null };
     this.attempts = new Map();
+    this.handoffs = new Map();
     this.tickets = new Map();
     this.lockTail = Promise.resolve();
   }
@@ -242,6 +243,11 @@ class TicketPool {
   async connect() {
     const pool = this;
     let releaseLock = null;
+    const acquireLock = async () => {
+      const previous = pool.lockTail;
+      pool.lockTail = new Promise((resolve) => { releaseLock = resolve; });
+      await previous;
+    };
     return {
       async query(rawSql, params = []) {
         const sql = collapse(rawSql);
@@ -252,9 +258,7 @@ class TicketPool {
           return { rows: [] };
         }
         if (sql.startsWith('SELECT token, user_id, native_session_incarnation_id FROM sessions')) {
-          const previous = pool.lockTail;
-          pool.lockTail = new Promise((resolve) => { releaseLock = resolve; });
-          await previous;
+          await acquireLock();
           return params[0] === pool.session.token
             ? { rows: [{ ...pool.session }] }
             : { rows: [] };
@@ -273,6 +277,27 @@ class TicketPool {
               state: 'ticketed',
             });
           }
+          return { rows: [] };
+        }
+        if (sql.startsWith('INSERT INTO native_session_handoffs')) {
+          pool.handoffs.set(params[0], {
+            handoff_hash: params[1], issued_at: params[2],
+            expires_at: params[3], redeemed_at: null,
+          });
+          return { rows: [] };
+        }
+        if (sql.startsWith('SELECT a.attempt_id, a.protocol, a.desired_runtime,')) {
+          await acquireLock();
+          const found = [...pool.handoffs.entries()]
+            .find(([, handoff]) => handoff.handoff_hash === params[0]);
+          if (!found) return { rows: [] };
+          const [attemptId, handoff] = found;
+          const attempt = pool.attempts.get(attemptId);
+          return { rows: attempt ? [{ ...attempt, ...handoff }] : [] };
+        }
+        if (sql.startsWith('UPDATE native_session_handoffs')) {
+          const handoff = pool.handoffs.get(params[0]);
+          if (handoff && !handoff.redeemed_at) handoff.redeemed_at = params[1];
           return { rows: [] };
         }
         if (sql.startsWith('SELECT attempt_id, protocol, user_id, web_session_incarnation_id')) {
@@ -297,7 +322,7 @@ class TicketPool {
   }
 }
 
-test('concurrent exact ticket requests mint once and replay byte-identically', async () => {
+test('native handoff hides ticket authority and exact redemption replays byte-identically', async () => {
   const now = new Date('2026-08-26T12:00:00.000Z');
   const pool = new TicketPool(now);
   const protocol = new NativeSessionProtocol({
@@ -306,9 +331,16 @@ test('concurrent exact ticket requests mint once and replay byte-identically', a
     now: () => now,
   });
   const body = { protocol: 2, attemptId: opaque('nsa_', 7), desiredRuntime: 'running' };
+  const handoff = await protocol.createHandoff({ sessionToken: 'cookie-A', body });
+  assert.deepEqual(JSON.parse(handoff.rawJson), {
+    success: true,
+    data: { protocol: 2, attemptId: body.attemptId, desiredRuntime: 'running' },
+  });
+  assert.equal(handoff.rawJson.includes(handoff.handoffToken), false);
+  assert.equal(handoff.rawJson.includes('nst_'), false);
   const [first, second] = await Promise.all([
-    protocol.createTicket({ sessionToken: 'cookie-A', body }),
-    protocol.createTicket({ sessionToken: 'cookie-A', body }),
+    protocol.createTicket({ handoffToken: handoff.handoffToken, body }),
+    protocol.createTicket({ handoffToken: handoff.handoffToken, body }),
   ]);
   assert.equal(first, second);
   assert.equal(pool.tickets.size, 1);
@@ -329,15 +361,15 @@ test('an exchanged exact attempt replays its ticket after issuance expiry', asyn
     attemptId: opaque('nsa_', 8),
     desiredRuntime: 'running',
   };
-  const first = await protocol.createTicket({
-    sessionToken: 'cookie-A', body,
-  });
+  const firstHandoff = await protocol.createHandoff({ sessionToken: 'cookie-A', body });
+  const first = await protocol.createTicket({ handoffToken: firstHandoff.handoffToken, body });
   pool.attempts.get(body.attemptId).state = 'exchanged';
   pool.tickets.get(body.attemptId).state = 'exchanged';
   now = new Date('2026-08-26T13:00:00.000Z');
+  const replayHandoff = await protocol.createHandoff({ sessionToken: 'cookie-A', body });
 
   assert.equal(await protocol.createTicket({
-    sessionToken: 'cookie-A', body,
+    handoffToken: replayHandoff.handoffToken, body,
   }), first);
 });
 
@@ -513,7 +545,7 @@ async function withNativeRoute(config, fn) {
 
 test('API rejects invalid config and non-closed DTOs before DB access', async () => {
   await withNativeRoute({ dataEncryptionKey: DATA_KEY, nativeSessionV2Network: null }, async (base) => {
-    const res = await fetch(`${base}/api/v4/mobile/auth/native-establish-ticket`, {
+    const res = await fetch(`${base}/api/v4/mobile/auth/native-establish-handoff`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie: 'session=test-session' },
       body: JSON.stringify({
@@ -526,6 +558,19 @@ test('API rejects invalid config and non-closed DTOs before DB access', async ()
     assert.equal((await res.json()).code, 'native_session_configuration_invalid');
   });
   await withNativeRoute({ dataEncryptionKey: DATA_KEY, nativeSessionV2Network: NETWORK }, async (base) => {
+    const ticket = await fetch(`${base}/api/v4/mobile/auth/native-establish-ticket`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: 'session=test-session' },
+      body: JSON.stringify({
+        protocol: 2,
+        attemptId: opaque('nsa_', 9),
+        desiredRuntime: 'running',
+      }),
+    });
+    assert.equal(ticket.status, 401,
+      'a browser cookie cannot redeem the native-only handoff header');
+    assert.equal((await ticket.json()).code, 'invalid_native_session_handoff');
+
     const res = await fetch(`${base}/api/v4/mobile/auth/native-establish-exchange`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ protocol: 2, extra: true }),

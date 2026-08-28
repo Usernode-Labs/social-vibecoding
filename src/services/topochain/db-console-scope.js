@@ -184,6 +184,7 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // on the row — attempts, expires_at, consumed_at — is exactly what
   // debugging "my code did not work" needs, so only the hash is masked.
   waitlist_verification_codes: ['code_hash'],
+  native_session_handoffs: ['handoff_hash'],
   native_session_tickets: ['ticket_hash', 'encrypted_response'],
   native_session_credentials: [
     'credential_reference', 'credential_generation', 'mobile_auth_token_id',

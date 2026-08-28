@@ -63,7 +63,8 @@ const STUB_DDL = `
     id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
     address VARCHAR(255) NOT NULL,
-    PRIMARY KEY (id, user_id)
+    PRIMARY KEY (id, user_id),
+    UNIQUE (id, user_id, address)
   );
   CREATE TABLE mobile_auth_tokens (
     id BIGINT PRIMARY KEY,
@@ -81,7 +82,11 @@ const STUB_DDL = `
     chain_id VARCHAR(100) NOT NULL,
     mobile_auth_token_id BIGINT UNIQUE,
     state VARCHAR(16) NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL
+    expires_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (
+      credential_reference, credential_generation, user_id, account_id,
+      network_id, chain_id
+    )
   );`;
 
 async function withDatabase(t, run) {
@@ -263,6 +268,34 @@ test('real PostgreSQL enforces epoch policy ordering, constraints, and replay', 
          FROM native_epoch_delegation_policies WHERE request_id = $1`,
       [requestId(1), requestId(4)],
     ), (error) => error.code === '23514');
+    await pool.query(
+      `INSERT INTO onchain_accounts (id, user_id, address)
+       VALUES (9002, 42, 'ut1-other-account')`,
+    );
+    await assert.rejects(pool.query(
+      `INSERT INTO native_epoch_delegation_policies
+         (request_id, source, credential_reference, credential_generation,
+          user_id, account_id, account_address, network_id, chain_id,
+          delegated, changed, accepted_epoch, effective_epoch)
+       SELECT $2, source, credential_reference, credential_generation,
+              42, 9002, 'ut1-other-account', network_id, chain_id,
+              delegated, changed, accepted_epoch, effective_epoch
+         FROM native_epoch_delegation_policies WHERE request_id = $1`,
+      [requestId(1), requestId(5)],
+    ), (error) => error.code === '23503',
+    'a policy cannot rebind one credential to a different user/account');
+    await assert.rejects(pool.query(
+      `INSERT INTO native_epoch_delegation_policies
+         (request_id, source, credential_reference, credential_generation,
+          user_id, account_id, account_address, network_id, chain_id,
+          delegated, changed, accepted_epoch, effective_epoch)
+       SELECT $2, source, credential_reference, credential_generation,
+              user_id, account_id, 'ut1-forged-address', network_id, chain_id,
+              delegated, changed, accepted_epoch, effective_epoch
+         FROM native_epoch_delegation_policies WHERE request_id = $1`,
+      [requestId(1), requestId(6)],
+    ), (error) => error.code === '23503',
+    'a policy cannot replace the credential account address');
     await assert.rejects(pool.query(
       `UPDATE native_epoch_delegation_policies SET delegated = NOT delegated
         WHERE request_id = $1`,

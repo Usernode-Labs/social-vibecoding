@@ -3677,6 +3677,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_user_season_unique
   WHERE user_id IS NOT NULL AND season_event_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_id_user_uidx
   ON onchain_accounts (id, user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_id_user_address_uidx
+  ON onchain_accounts (id, user_id, address);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_user ON onchain_accounts (user_id);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season ON onchain_accounts (season_id);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season_event_address ON onchain_accounts (season_event_id, address);
@@ -4673,6 +4675,25 @@ CREATE INDEX IF NOT EXISTS native_session_attempts_user_idx
 CREATE INDEX IF NOT EXISTS native_session_attempts_incarnation_idx
   ON native_session_attempts (web_session_incarnation_id, state);
 
+-- The browser may mint only this short-lived, attempt-bound handoff. Its raw
+-- value lives in a path-scoped HttpOnly cookie and is never returned to
+-- JavaScript; native code reads the WebView cookie store and echoes the value
+-- in a purpose-specific header to redeem the exact ticket. Repeated delivery
+-- of one redemption is an idempotent retry of the same logical use.
+CREATE TABLE IF NOT EXISTS native_session_handoffs (
+  attempt_id    VARCHAR(47) PRIMARY KEY
+    REFERENCES native_session_attempts(attempt_id) ON DELETE CASCADE,
+  handoff_hash  CHAR(64) NOT NULL UNIQUE
+    CHECK (handoff_hash ~ '^[0-9a-f]{64}$'),
+  issued_at     TIMESTAMPTZ NOT NULL,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  redeemed_at   TIMESTAMPTZ,
+  CHECK (expires_at = issued_at + INTERVAL '5 minutes'),
+  CHECK (redeemed_at IS NULL OR redeemed_at >= issued_at)
+);
+CREATE INDEX IF NOT EXISTS native_session_handoffs_expiry_idx
+  ON native_session_handoffs (expires_at);
+
 -- Raw tickets never reach storage. Their SHA-256 digest is the lookup key;
 -- the one successful JSON response is encrypted at rest so ticket issuance
 -- can replay the byte-identical body without minting a second capability.
@@ -4824,6 +4845,11 @@ END;
 $$;
 CREATE UNIQUE INDEX IF NOT EXISTS native_session_credentials_reference_user_uidx
   ON native_session_credentials (credential_reference, user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS native_session_credentials_policy_binding_uidx
+  ON native_session_credentials (
+    credential_reference, credential_generation, user_id, account_id,
+    network_id, chain_id
+  );
 -- Replace the earlier reference-only draft constraint, if this uncommitted
 -- migration was exercised locally, with the final exact subject binding.
 ALTER TABLE mobile_push_registrations
@@ -4911,6 +4937,17 @@ CREATE TABLE IF NOT EXISTS native_epoch_delegation_policies (
   UNIQUE (request_id),
   FOREIGN KEY (network_id, chain_id)
     REFERENCES native_epoch_delegation_fences(network_id, chain_id),
+  CONSTRAINT native_epoch_delegation_policies_credential_binding_fkey
+    FOREIGN KEY (
+      credential_reference, credential_generation, user_id, account_id,
+      network_id, chain_id
+    ) REFERENCES native_session_credentials (
+      credential_reference, credential_generation, user_id, account_id,
+      network_id, chain_id
+    ),
+  CONSTRAINT native_epoch_delegation_policies_account_binding_fkey
+    FOREIGN KEY (account_id, user_id, account_address)
+    REFERENCES onchain_accounts(id, user_id, address) ON DELETE RESTRICT,
   CONSTRAINT native_epoch_delegation_policies_source_fields_check CHECK (
     (source = 'native'
       AND request_id ~ '^ndp_[A-Za-z0-9_-]{43}$'
@@ -4987,6 +5024,41 @@ ALTER TABLE native_epoch_delegation_policies
         AND effective_epoch = accepted_epoch)
     );
 
+-- Existing databases converge on the same identity bindings. These are the
+-- database-owned half of credential-derived delegation identity: application
+-- code cannot insert a policy for a different user, account, address, or
+-- network even if a caller or future code path supplies inconsistent fields.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'native_epoch_delegation_policies'::regclass
+       AND conname = 'native_epoch_delegation_policies_credential_binding_fkey'
+  ) THEN
+    ALTER TABLE native_epoch_delegation_policies
+      ADD CONSTRAINT native_epoch_delegation_policies_credential_binding_fkey
+      FOREIGN KEY (
+        credential_reference, credential_generation, user_id, account_id,
+        network_id, chain_id
+      ) REFERENCES native_session_credentials (
+        credential_reference, credential_generation, user_id, account_id,
+        network_id, chain_id
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'native_epoch_delegation_policies'::regclass
+       AND conname = 'native_epoch_delegation_policies_account_binding_fkey'
+  ) THEN
+    ALTER TABLE native_epoch_delegation_policies
+      ADD CONSTRAINT native_epoch_delegation_policies_account_binding_fkey
+      FOREIGN KEY (account_id, user_id, account_address)
+      REFERENCES onchain_accounts(id, user_id, address) ON DELETE RESTRICT;
+  END IF;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION prevent_native_delegation_cutover_change()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -5048,6 +5120,7 @@ CREATE TRIGGER native_epoch_delegation_policy_append_only
 
 COMMENT ON TABLE native_session_web_incarnations IS 'staging:private';
 COMMENT ON TABLE native_session_attempts IS 'staging:private';
+COMMENT ON TABLE native_session_handoffs IS 'staging:private';
 COMMENT ON TABLE native_session_tickets IS 'staging:private';
 COMMENT ON TABLE native_installation_key_generations IS 'staging:private';
 COMMENT ON TABLE native_session_credentials IS 'staging:private';

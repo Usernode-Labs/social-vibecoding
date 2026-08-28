@@ -5138,9 +5138,6 @@
   // bound calls carry the claim automatically.
   var _NATIVE_ESTABLISH_TIMEOUT_MS = 120000;
   var _OPAQUE_ATTEMPT_RE = /^nsa_[A-Za-z0-9_-]{43}$/;
-  var _OPAQUE_TICKET_RE = /^nst_[A-Za-z0-9_-]{43}$/;
-  var _B64URL_32_RE = /^[A-Za-z0-9_-]{43}$/;
-  var _HEX_64_RE = /^[0-9a-f]{64}$/;
   var _CANONICAL_U64_RE = /^(0|[1-9][0-9]*)$/;
   var _MAX_U64 = "18446744073709551615";
   var _VALIDATED_CODE_RE = /^[a-z0-9_]{1,64}$/;
@@ -5167,48 +5164,6 @@
       throw new Error(label + " must be a non-empty canonical string");
     }
     return value;
-  }
-
-  function requireNativeEstablishTicket(value) {
-    requireExactObject(value, [
-      "protocol", "attemptId", "desiredRuntime", "ticket",
-      "requestDigest", "exchangeChallenge", "network", "issuedAt",
-      "expiresAt",
-    ], "nativeEstablishTicket");
-    if (value.protocol !== 2 || value.desiredRuntime !== "running" ||
-        !_OPAQUE_ATTEMPT_RE.test(value.attemptId) ||
-        !_OPAQUE_TICKET_RE.test(value.ticket) ||
-        !_HEX_64_RE.test(value.requestDigest) ||
-        !_B64URL_32_RE.test(value.exchangeChallenge)) {
-      throw new Error("nativeEstablishTicket is invalid");
-    }
-    requireExactObject(value.network, ["id", "chainId"],
-      "nativeEstablishTicket.network");
-    if (value.network.id !== "testnet") {
-      throw new Error("nativeEstablishTicket.network is invalid");
-    }
-    requireCanonicalString(value.network.chainId,
-      "nativeEstablishTicket.network.chainId");
-    if (typeof value.issuedAt !== "string" ||
-        !Number.isFinite(Date.parse(value.issuedAt)) ||
-        typeof value.expiresAt !== "string" ||
-        !Number.isFinite(Date.parse(value.expiresAt))) {
-      throw new Error("nativeEstablishTicket timestamps are invalid");
-    }
-    return Object.freeze({
-      protocol: 2,
-      attemptId: value.attemptId,
-      desiredRuntime: "running",
-      ticket: value.ticket,
-      requestDigest: value.requestDigest,
-      exchangeChallenge: value.exchangeChallenge,
-      network: Object.freeze({
-        id: "testnet",
-        chainId: value.network.chainId,
-      }),
-      issuedAt: value.issuedAt,
-      expiresAt: value.expiresAt,
-    });
   }
 
   function requireNativeIdentity(value) {
@@ -5283,24 +5238,19 @@
   }
 
   window.usernode.establishNativeSession = function (payload) {
-    var ticket;
     try {
       requireExactObject(payload, [
-        "attemptId", "nativeEstablishTicket", "desiredRuntime",
+        "attemptId", "desiredRuntime",
       ], "native establishment request");
-      ticket = requireNativeEstablishTicket(payload.nativeEstablishTicket);
     } catch (err) {
       return Promise.reject(err);
     }
     if (payload.desiredRuntime !== "running" ||
-        payload.attemptId !== ticket.attemptId) {
-      return Promise.reject(new Error(
-        "native establishment request does not match its ticket"
-      ));
+        !_OPAQUE_ATTEMPT_RE.test(payload.attemptId)) {
+      return Promise.reject(new Error("native establishment request is invalid"));
     }
     var request = Object.freeze({
-      attemptId: ticket.attemptId,
-      nativeEstablishTicket: ticket,
+      attemptId: payload.attemptId,
       desiredRuntime: "running",
     });
     var requestKey = JSON.stringify(request);

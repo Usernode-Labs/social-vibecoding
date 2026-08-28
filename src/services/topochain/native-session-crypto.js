@@ -7,6 +7,7 @@ const secrets = require('../secrets');
 const PROTOCOL = 2;
 const AUDIENCE = 'usernode-native-session-v2';
 const DESIRED_RUNTIME = 'running';
+const HANDOFF_TTL_MS = 5 * 60 * 1000;
 const TICKET_TTL_MS = 5 * 60 * 1000;
 // Protocol 2 deliberately preserves the product's existing 7-day cookie
 // session and 90-day mobile bearer lifetime. TODO(native-session-v3): move to
@@ -16,6 +17,7 @@ const CREDENTIAL_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const B64URL_32_RE = /^[A-Za-z0-9_-]{43}$/;
 const HEX_64_RE = /^[0-9a-f]{64}$/;
 const ATTEMPT_RE = /^nsa_[A-Za-z0-9_-]{43}$/;
+const HANDOFF_RE = /^nsh_[A-Za-z0-9_-]{43}$/;
 const TICKET_RE = /^nst_[A-Za-z0-9_-]{43}$/;
 const INSTALLATION_RE = /^nsi_[A-Za-z0-9_-]{43}$/;
 
@@ -59,6 +61,8 @@ const ticketRequestSchema = z.object({
   attemptId: canonicalOpaque('nsa_', ATTEMPT_RE),
   desiredRuntime: z.literal(DESIRED_RUNTIME),
 }).strict();
+
+const handoffTokenSchema = canonicalOpaque('nsh_', HANDOFF_RE);
 
 const exchangeRequestSchema = z.object({
   protocol: z.literal(PROTOCOL),
@@ -264,9 +268,11 @@ module.exports = {
   PROTOCOL,
   AUDIENCE,
   DESIRED_RUNTIME,
+  HANDOFF_TTL_MS,
   TICKET_TTL_MS,
   CREDENTIAL_TTL_MS,
   ticketRequestSchema,
+  handoffTokenSchema,
   exchangeRequestSchema,
   sha256Hex,
   makeOpaque,

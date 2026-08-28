@@ -32,20 +32,6 @@ function response(data, { ok = true, status = 200 } = {}) {
   return { ok, status, async json() { return data; } };
 }
 
-function ticket(attemptId) {
-  return {
-    protocol: 2,
-    attemptId,
-    desiredRuntime: 'running',
-    ticket: `nst_${'B'.repeat(43)}`,
-    requestDigest: 'a'.repeat(64),
-    exchangeChallenge: 'C'.repeat(43),
-    network: { id: 'testnet', chainId: 'utc1testnet' },
-    issuedAt: '2026-08-26T12:00:00.000+00:00',
-    expiresAt: '2026-08-26T12:05:00.000+00:00',
-  };
-}
-
 function establishResult(payload, participantId) {
   return {
     protocol: 2,
@@ -156,7 +142,14 @@ function loadNativeChrome({
     calls.fetch.push({ url, options });
     if (fetchImpl) return fetchImpl(url, options, calls.fetch.length);
     const request = JSON.parse(options.body);
-    return response({ success: true, data: ticket(request.attemptId) });
+    return response({
+      success: true,
+      data: {
+        protocol: 2,
+        attemptId: request.attemptId,
+        desiredRuntime: 'running',
+      },
+    });
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -182,7 +175,7 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-test('protocol 2 sends one exact ticket-backed establishment transaction',
+test('protocol 2 sends one exact native-only handoff transaction',
   async () => {
     const loaded = loadNativeChrome();
     loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
@@ -202,7 +195,6 @@ test('protocol 2 sends one exact ticket-backed establishment transaction',
     assert.match(request.attemptId, /^nsa_[A-Za-z0-9_-]{43}$/);
     assert.deepEqual(JSON.parse(JSON.stringify(loaded.calls.establish[0])), {
       attemptId: request.attemptId,
-      nativeEstablishTicket: ticket(request.attemptId),
       desiredRuntime: 'running',
     });
     assert.deepEqual(
@@ -244,26 +236,23 @@ test('concurrent calls share one lease and a recreated WebView replays its attem
     replacement.sandbox.App.user = { id: 41 };
     await replacement.NativeChrome.recoverSessionAdmission();
     assert.equal(replacement.calls.fetch.length, 1,
-      'the server, not web storage, replays the exact ticket');
+      'the server prepares a fresh native-only handoff for the exact attempt');
     assert.equal(replacement.calls.establish[0].attemptId, attemptId);
     assert.equal(replacement.NativeChrome.isSessionAdmitted(), true);
   });
 
-test('a terminal ticket drops only attempt metadata for a later fresh recovery',
+test('a terminal native redemption drops only attempt metadata for a later fresh recovery',
   async () => {
     let expiredAttemptId = null;
     const loaded = loadNativeChrome({
-      fetchImpl: (_url, options, count) => {
-        const request = JSON.parse(options.body);
+      establishImpl: (payload, count) => {
         if (count === 1) {
-          expiredAttemptId = request.attemptId;
-          return response({
-            success: false,
-            error: 'The native session ticket has expired.',
-            code: 'native_session_ticket_expired',
-          }, { ok: false, status: 410 });
+          expiredAttemptId = payload.attemptId;
+          const error = new Error('The native session ticket has expired.');
+          error.usernodeCode = 'native_session_ticket_expired';
+          return Promise.reject(error);
         }
-        return response({ success: true, data: ticket(request.attemptId) });
+        return establishResult(payload, '41');
       },
     });
     loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
@@ -272,13 +261,13 @@ test('a terminal ticket drops only attempt metadata for a later fresh recovery',
     assert.equal(await loaded.NativeChrome.establishCurrentSession(), null);
     assert.equal(loaded.calls.fetch.length, 1,
       'the terminal failure does not create an internal retry loop');
-    assert.equal(loaded.calls.establish.length, 0);
+    assert.equal(loaded.calls.establish.length, 1);
     assert.equal(loaded.storage.has(
       loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
 
     const recovered = await loaded.NativeChrome.recoverSessionAdmission();
     assert.equal(recovered.identity.participantId, '41');
-    assert.notEqual(loaded.calls.establish[0].attemptId, expiredAttemptId);
+    assert.notEqual(loaded.calls.establish[1].attemptId, expiredAttemptId);
   });
 
 test('logout is terminal despite a throwing UI sink and late publication',

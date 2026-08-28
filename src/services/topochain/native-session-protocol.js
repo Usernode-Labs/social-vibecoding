@@ -6,9 +6,11 @@ const {
   PROTOCOL,
   AUDIENCE,
   DESIRED_RUNTIME,
+  HANDOFF_TTL_MS,
   TICKET_TTL_MS,
   CREDENTIAL_TTL_MS,
   ticketRequestSchema,
+  handoffTokenSchema,
   exchangeRequestSchema,
   sha256Hex,
   makeOpaque,
@@ -282,10 +284,10 @@ class NativeSessionProtocol {
     return network;
   }
 
-  async createTicket({ sessionToken, body }) {
+  async createHandoff({ sessionToken, body }) {
     const parsed = ticketRequestSchema.safeParse(body);
     if (!parsed.success) {
-      protocolError(422, 'invalid_native_session_ticket_request', 'The native session ticket request is invalid.');
+      protocolError(422, 'invalid_native_session_handoff_request', 'The native session handoff request is invalid.');
     }
     if (!sessionToken) protocolError(401, 'unauthenticated', 'Unauthenticated.');
     const request = parsed.data;
@@ -354,6 +356,80 @@ class NativeSessionProtocol {
         protocolError(409, 'native_session_attempt_revoked', 'The native session attempt is no longer valid.');
       }
 
+      const handoffToken = makeOpaque('nsh_');
+      const expiresAt = new Date(now.getTime() + HANDOFF_TTL_MS);
+      await client.query(
+        `INSERT INTO native_session_handoffs
+           (attempt_id, handoff_hash, issued_at, expires_at, redeemed_at)
+         VALUES ($1, $2, $3, $4, NULL)
+         ON CONFLICT (attempt_id) DO UPDATE
+           SET handoff_hash = EXCLUDED.handoff_hash,
+               issued_at = EXCLUDED.issued_at,
+               expires_at = EXCLUDED.expires_at,
+               redeemed_at = NULL`,
+        [request.attemptId, sha256Hex(handoffToken), now, expiresAt]
+      );
+      return {
+        handoffToken,
+        rawJson: JSON.stringify({
+          success: true,
+          data: {
+            protocol: PROTOCOL,
+            attemptId: request.attemptId,
+            desiredRuntime: DESIRED_RUNTIME,
+          },
+        }),
+      };
+    });
+  }
+
+  async createTicket({ handoffToken, body }) {
+    const parsed = ticketRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      protocolError(422, 'invalid_native_session_ticket_request', 'The native session ticket request is invalid.');
+    }
+    const parsedHandoff = handoffTokenSchema.safeParse(handoffToken);
+    if (!parsedHandoff.success) {
+      protocolError(401, 'invalid_native_session_handoff', 'Invalid native session handoff.');
+    }
+    const request = parsed.data;
+    const network = this._network();
+
+    return withTransaction(this.pool, async (client) => {
+      const now = this.now();
+      const handoffHash = sha256Hex(parsedHandoff.data);
+      const { rows: handoffRows } = await client.query(
+        `SELECT a.attempt_id, a.protocol, a.desired_runtime,
+                a.network_id, a.chain_id, a.state, a.request_digest,
+                h.expires_at
+           FROM native_session_handoffs h
+           JOIN native_session_attempts a ON a.attempt_id = h.attempt_id
+          WHERE h.handoff_hash = $1
+          FOR UPDATE OF a, h`,
+        [handoffHash]
+      );
+      const attempt = handoffRows[0];
+      if (!attempt
+          || attempt.attempt_id !== request.attemptId
+          || Number(attempt.protocol) !== PROTOCOL
+          || attempt.desired_runtime !== DESIRED_RUNTIME
+          || attempt.network_id !== network.id
+          || attempt.chain_id !== network.chainId) {
+        protocolError(401, 'invalid_native_session_handoff', 'Invalid native session handoff.');
+      }
+      if (attempt.state === 'revoked') {
+        protocolError(409, 'native_session_attempt_revoked', 'The native session attempt is no longer valid.');
+      }
+      if (new Date(attempt.expires_at) <= now) {
+        protocolError(410, 'native_session_handoff_expired', 'The native session handoff has expired.');
+      }
+      await client.query(
+        `UPDATE native_session_handoffs
+            SET redeemed_at = COALESCE(redeemed_at, $2)
+          WHERE attempt_id = $1`,
+        [request.attemptId, now]
+      );
+
       const { rows: ticketRows } = await client.query(
         `SELECT ticket_hash, encrypted_response, response_digest, state, expires_at
            FROM native_session_tickets WHERE attempt_id = $1 FOR UPDATE`,
@@ -393,7 +469,7 @@ class NativeSessionProtocol {
           attemptId: request.attemptId,
           desiredRuntime: DESIRED_RUNTIME,
           ticket,
-          requestDigest,
+          requestDigest: attempt.request_digest,
           exchangeChallenge,
           network,
           issuedAt: iso(now),

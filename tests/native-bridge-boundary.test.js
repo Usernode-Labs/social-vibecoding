@@ -19,17 +19,6 @@ const SETTINGS_SNAPSHOT = {
   permissions: { platform: 'android', exactAlarmGranted: true },
 };
 const ESTABLISH_ATTEMPT = `nsa_${'A'.repeat(43)}`;
-const ESTABLISH_TICKET = Object.freeze({
-  protocol: 2,
-  attemptId: ESTABLISH_ATTEMPT,
-  desiredRuntime: 'running',
-  ticket: `nst_${'B'.repeat(43)}`,
-  requestDigest: 'a'.repeat(64),
-  exchangeChallenge: 'C'.repeat(43),
-  network: Object.freeze({ id: 'testnet', chainId: 'utc1testnet' }),
-  issuedAt: '2026-08-26T12:00:00.000+00:00',
-  expiresAt: '2026-08-26T12:05:00.000+00:00',
-});
 
 function establishResult(participantId = '41') {
   return {
@@ -50,7 +39,6 @@ function establishResult(participantId = '41') {
 async function establishRealm(loaded) {
   return loaded.sandbox.usernode.establishNativeSession({
     attemptId: ESTABLISH_ATTEMPT,
-    nativeEstablishTicket: ESTABLISH_TICKET,
     desiredRuntime: 'running',
   });
 }

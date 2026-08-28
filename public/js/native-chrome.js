@@ -12,9 +12,9 @@
 //     native-push Profile / App Settings rows are gone
 //     (profile-and-settings-to-web migration): App Settings is now
 //     capability-gated sections inside the Settings modal (settings.js);
-//   - the protocol-2 native-session realm gate. Social obtains one opaque
-//     server ticket and asks native to establish the whole session atomically;
-//     the bridge keeps the resulting realm claim private.
+//   - the protocol-2 native-session realm gate. Social prepares one exact
+//     HttpOnly handoff and asks native to establish the whole session
+//     atomically; ticket and credential authority stay outside JavaScript.
 //
 // Everything here is capability-gated: on desktop, in child-app iframes,
 // and on old app builds the probe resolves { version: 0, capabilities: [] }
@@ -143,7 +143,7 @@
 
     // ── Protocol-2 native-session realm ──────────────────────────────
     _ATTEMPT_STORAGE_KEY: 'usernode.native-session-v2.attempt',
-    _TICKET_ENDPOINT: '/api/v4/mobile/auth/native-establish-ticket',
+    _HANDOFF_ENDPOINT: '/api/v4/mobile/auth/native-establish-handoff',
     _realmGeneration: 0,
     _establishLease: null,
     _logoutRunning: false,
@@ -289,8 +289,8 @@
       return Promise.resolve(false);
     },
 
-    async _ticketFor(attempt, userId, generation) {
-      const response = await fetch(NativeChrome._TICKET_ENDPOINT, {
+    async _prepareNativeHandoff(attempt, userId, generation) {
+      const response = await fetch(NativeChrome._HANDOFF_ENDPOINT, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -303,7 +303,7 @@
       const body = await response.json().catch(() => ({}));
       if (!response.ok || body.success !== true || !body.data) {
         const error = new Error(
-          (body && body.error) || 'Native session ticket request failed'
+          (body && body.error) || 'Native session handoff request failed'
         );
         if (body && typeof body.code === 'string') {
           error.usernodeCode = body.code;
@@ -314,9 +314,8 @@
           body.data.protocol !== 2 ||
           body.data.attemptId !== attempt.attemptId ||
           body.data.desiredRuntime !== 'running') {
-        throw new Error('Native session ticket was stale or mismatched');
+        throw new Error('Native session handoff was stale or mismatched');
       }
-      return body.data;
     },
 
     establishCurrentSession() {
@@ -352,13 +351,12 @@
 
         const attempt = NativeChrome._attemptFor(userId);
         lease.attemptId = attempt.attemptId;
-        const ticket = await NativeChrome._ticketFor(
+        await NativeChrome._prepareNativeHandoff(
           attempt, userId, generation
         );
         if (!NativeChrome._isCurrentRealm(userId, generation)) return null;
         const result = await bridge.establishNativeSession({
           attemptId: attempt.attemptId,
-          nativeEstablishTicket: ticket,
           desiredRuntime: 'running',
         });
         if (!NativeChrome._isCurrentRealm(userId, generation)) return null;

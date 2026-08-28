@@ -58,6 +58,7 @@ const DENIED_TABLES = new Set([
   'mobile_auth_tokens', // protocol-2 native bearer hashes
   'native_session_web_incarnations', // protocol-2 web-session security lineage
   'native_session_attempts', // protocol-2 subject/network binding
+  'native_session_handoffs', // short-lived native redemption lineage
   'native_session_tickets', // hashed tickets + encrypted exact replay
   'native_installation_key_generations', // installation continuity keys
   'native_session_credentials', // native credential/revocation lineage

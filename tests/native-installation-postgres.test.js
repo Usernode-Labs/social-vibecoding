@@ -29,6 +29,7 @@ function extractTable(name) {
 const PRODUCTION_DDL = [
   'native_session_web_incarnations',
   'native_session_attempts',
+  'native_session_handoffs',
   'native_session_tickets',
   'native_installation_key_generations',
   'native_session_credentials',
@@ -49,7 +50,9 @@ const STUB_DDL = `
   CREATE TABLE onchain_accounts (
     id BIGINT PRIMARY KEY,
     user_id BIGINT NOT NULL,
-    UNIQUE (id, user_id)
+    address VARCHAR(255) NOT NULL,
+    UNIQUE (id, user_id),
+    UNIQUE (id, user_id, address)
   );
   CREATE TABLE mobile_push_registrations (
     id BIGSERIAL PRIMARY KEY,
@@ -110,8 +113,8 @@ async function insertSubject(pool, { userId, incarnation, attempt, tokenId, acco
     [tokenId, userId, Number(tokenId).toString(16).padStart(64, '0')],
   );
   await pool.query(
-    'INSERT INTO onchain_accounts (id, user_id) VALUES ($1, $2)',
-    [accountId, userId],
+    'INSERT INTO onchain_accounts (id, user_id, address) VALUES ($1, $2, $3)',
+    [accountId, userId, `ut1-account-${accountId}`],
   );
 }
 

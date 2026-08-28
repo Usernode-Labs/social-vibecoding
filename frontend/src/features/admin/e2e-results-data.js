@@ -149,7 +149,7 @@ export const E2E_CASES = Object.freeze([
     "flow": "#signup with released email → request code → code visible in Gmail list preview → verify → shell boots",
     "gate": "guest",
     "method": "browser",
-    "notes": "Full pass 2026-08-18: code → verify → set password → auto web login → waiting room. Finding: an expired set-password token (10min TTL, mobile-auth.js:46) surfaces raw “Unauthenticated.” instead of offering a new code",
+    "notes": "Full pass 2026-08-18: code → verify → set password → auto web login → waiting room. Finding: an expired set-password token (10min TTL) surfaces raw “Unauthenticated.” instead of offering a new code",
     "status": "pass",
     "area": "A"
   },
@@ -1246,10 +1246,10 @@ export const E2E_CASES = Object.freeze([
   {
     "id": "J5",
     "name": "Node & metrics",
-    "flow": "Node feature screens, perf/metrics reporting, mobile logs POST",
+    "flow": "Node feature screens and perf/metrics reporting",
     "gate": "device",
     "method": "phone",
-    "notes": "Node screen confirmed on device - node synced. NOTE: there is no user-facing metrics screen - MetricsCollectorService is a background mobile-context snapshot collector, not a screen. FINDING: /api/v4/mobile/logs looks effectively unused (only 2 rows in the whole table, both June, other users) despite accept_logs=true - either a niche diagnostic path or a dead endpoint",
+    "notes": "Node screen confirmed on device - node synced. NOTE: there is no user-facing metrics screen; metrics reporting is a background mobile-context snapshot, not a screen.",
     "status": "pass",
     "area": "J"
   },
