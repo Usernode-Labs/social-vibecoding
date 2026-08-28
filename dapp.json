@@ -1769,6 +1769,12 @@
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id]"
     },
     {
+      "name": "A notification row says what kind it is, then which one, then where it came from",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990201\"] > span:nth-child(2) > span:nth-child(3)",
+      "expectText": "Session finished"
+    },
+    {
       "name": "Improve panel leads with Give feedback, a verb like New change beside it",
       "path": "/",
       "expectSelector": "#improve-panel #improve-quick-actions #improve-row-feedback",
@@ -1783,6 +1789,18 @@
       "name": "The platform's own panel does not print its version twice",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#improve-footer:not(:has(#improve-row-version)) #drawer-row-platform-version"
+    },
+    {
+      "name": "A tab behind a deploy says the new build is downloading, and offers no reload yet",
+      "path": "/?shot=platform-updating&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-footer:not(:has(button.drawer-ver--stale)) span.drawer-ver--stale.drawer-ver--fetching",
+      "expectText": "1111111 \u00b7 updating\u2026"
+    },
+    {
+      "name": "Once the new build is cached, the same row becomes the reload button",
+      "path": "/?shot=platform-update-ready&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-footer button.drawer-ver--stale:not(.drawer-ver--fetching)",
+      "expectText": "1111111 \u00b7 reload"
     },
     {
       "name": "The Improve panel: quick actions, the app's views, the work in flight, then what the app is (#1443)",

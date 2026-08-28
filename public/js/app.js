@@ -589,6 +589,7 @@ const App = {
     if (App._shotHash === location.hash) return;
     App._shotHash = location.hash;
     App._applyImproveShot();
+    App._applyPlatformUpdateShot();
     App._applyLaunchShot();
     App._applyOfflineAppShot();
     App._applyFeedbackShot();
@@ -640,6 +641,52 @@ const App = {
         window.AppContext?.open();
         const panel = document.getElementById('apps-switcher-sheet');
         if (panel && panel.hasAttribute('data-open')) return;
+      } catch (err) { /* ignore */ }
+      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+    };
+    setTimeout(attempt, 50);
+  },
+
+  // Screenshot-state deep links `?shot=platform-updating` and
+  // `?shot=platform-update-ready`: the two shapes of the "this tab is behind
+  // a deploy" row, with the Improve panel open around them.
+  //
+  // Neither is otherwise reachable: both need the platform to have deployed
+  // SINCE this document loaded, which no route and no still frame can
+  // arrange. That is precisely the state the reload button exists for and the
+  // one nobody could look at — which is how it shipped for so long doing the
+  // wrong thing.
+  //
+  // Pure paint: this fakes the two client-side fields the row reads and
+  // repaints it. No fetch, no worker message, nothing written — ungated for
+  // the same reason as ?shot=improve above. It reuses that applier by
+  // running the same open loop, because the row lives inside the panel.
+  _applyPlatformUpdateShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'platform-updating' && shot !== 'platform-update-ready') return;
+    const ready = shot === 'platform-update-ready';
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      try {
+        window.Improve?.open();
+        const panel = document.getElementById('improve-panel');
+        if (panel && panel.hasAttribute('data-open')) {
+          // A boot baseline that differs from what the row is handed is the
+          // whole of `isStale`; the prefetch state is what picks the shape.
+          App.loadedPlatformSha = '0000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+          const sha = '1111111bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+          App.shellUpdate = { sha, state: ready ? 'ready' : 'fetching' };
+          const info = { sha, repoUrl: 'https://github.com/Usernode-Labs/social-vibecoding' };
+          App._lastVersionInfo = info;
+          // The 10s poll would repaint this row out from under the shot with
+          // the real answer, which for a local or staging build is `dev` — an
+          // entirely different branch. Pin the row for as long as the shot is
+          // on screen; nothing else reads this flag.
+          App._platformUpdateShot = true;
+          App.renderPlatformVersionPill(info);
+          return;
+        }
       } catch (err) { /* ignore */ }
       if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
     };
@@ -962,6 +1009,87 @@ const App = {
   // platform has moved on but this tab hasn't.
   loadedPlatformSha: null,
 
+  // ── The update the reload button is offering ──────────────────────────
+  //
+  // `{ sha, state }`, where state is 'fetching' | 'ready' | 'failed'.
+  //
+  // The button used to appear the instant /api/version reported a new SHA,
+  // and clicking it ran `location.reload()` — an ordinary navigation, which
+  // the service worker races against the cached document on a deadline it
+  // documents as shorter than a round trip. Losing that race is the DESIGNED
+  // case, and losing it served the old document, latched
+  // shellFromCacheThisLoad, and therefore served all ~38 old assets too,
+  // while the new build landed in the cache for next time. The button
+  // downloaded the update instead of switching to it.
+  //
+  // It was worse than a no-op, because the tab then went quiet about it:
+  // `loadedPlatformSha` is captured from the FIRST /api/version answer this
+  // document sees, so the reloaded-but-still-old document records the NEW sha
+  // as its own baseline, `isStale` goes false and the pill stops offering
+  // anything. The reload looked like it worked.
+  //
+  // So the new build is pulled into the shell cache first (see
+  // public/sw.js's `prefetch-shell`), and only then is a reload offered. Once
+  // the cache holds it, WHO WINS THE RACE STOPS MATTERING: network and cache
+  // both answer with the new build.
+  shellUpdate: null,
+
+  /**
+   * Ask the worker for the build at `sha`, once.
+   *
+   * Idempotent per SHA — renderPlatformVersionPill calls this from the stale
+   * branch, which runs on every 10s poll for as long as the tab stays behind.
+   */
+  _ensureShellPrefetch(sha) {
+    if (!sha) return;
+    if (App.shellUpdate && App.shellUpdate.sha === sha) return;
+    App.shellUpdate = { sha, state: 'fetching' };
+
+    const settle = (state) => {
+      if (!App.shellUpdate || App.shellUpdate.sha !== sha) return;
+      if (App.shellUpdate.state !== 'fetching') return;
+      App.shellUpdate = { sha, state };
+      // Repaint from the last answer rather than re-polling: the pill is the
+      // only thing this changes, and /api/version is already on a 10s timer.
+      if (App._lastVersionInfo) App.renderPlatformVersionPill(App._lastVersionInfo);
+    };
+
+    const controller = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!controller) {
+      // No worker driving this document — an unsupported context, or the
+      // very first load before the registration claims it. Nothing is
+      // serving a cached build either, so a reload already goes to the
+      // network: offer it immediately rather than waiting for a reply that
+      // is never coming.
+      App.shellUpdate = { sha, state: 'ready' };
+      return;
+    }
+
+    try {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = (event) => {
+        settle(event.data && event.data.ok ? 'ready' : 'failed');
+      };
+      controller.postMessage({ type: 'prefetch-shell' }, [channel.port2]);
+    } catch {
+      settle('failed');
+      return;
+    }
+    // A worker that never answers — killed mid-fetch, or a browser that
+    // dropped the port — must not leave the row saying "updating…" forever.
+    // 'failed' still OFFERS the reload: it may serve the old build, which is
+    // exactly today's behaviour and strictly better than no way back.
+    setTimeout(() => settle('failed'), App.SHELL_PREFETCH_TIMEOUT_MS);
+  },
+
+  // Generous on purpose: this is a full re-download of the shell on whatever
+  // connection the tab has, and the only cost of waiting is that the reload
+  // button appears a few seconds later than the SHA changed.
+  SHELL_PREFETCH_TIMEOUT_MS: 30_000,
+
+  /** The last /api/version answer, so a prefetch reply can repaint the row. */
+  _lastVersionInfo: null,
+
   async loadVersion() {
     try {
       const res = await fetch('/api/version');
@@ -970,7 +1098,10 @@ const App = {
       if (!App.loadedPlatformSha && info.sha && info.sha !== 'dev') {
         App.loadedPlatformSha = info.sha;
       }
-      App.renderPlatformVersionPill(info);
+      App._lastVersionInfo = info;
+      // `?shot=platform-updating` / `-ready` pin the row to a state no real
+      // answer can produce on demand; a poll landing on top would erase it.
+      if (!App._platformUpdateShot) App.renderPlatformVersionPill(info);
     } catch {}
   },
 
@@ -1150,10 +1281,38 @@ const App = {
     if (isStale) {
       const oldShort = App.loadedPlatformSha.slice(0, 7);
       const newShort = runningSha.slice(0, 7);
+      // Pull the new build down before offering to switch to it. Idempotent
+      // per SHA, and this branch runs on every 10s poll while the tab is
+      // behind — see _ensureShellPrefetch for why the reload was a lie
+      // without it.
+      App._ensureShellPrefetch(runningSha);
+      const update = App.shellUpdate;
+      if (update && update.sha === runningSha && update.state === 'fetching') {
+        // Downloading. NOT a button: a reload right now is the exact thing
+        // that used to serve the old document back. The row still says the
+        // platform has moved on, and still lights the Improve dot (the
+        // `--stale` class is what refreshDeployDot selects), so nothing is
+        // hidden — only the promise of a working reload is withheld until it
+        // is one.
+        paint(`
+          <span class="drawer-ver drawer-ver--stale drawer-ver--fetching"
+                title="Platform updated from ${oldShort} to ${newShort}. Downloading it now; the reload appears once there is something to switch to.">
+            <span class="drawer-ver-spinner" aria-hidden="true"></span>${newShort} · updating…
+          </span>`);
+        return;
+      }
+      // 'ready' — the worker holds the new build, so a reload lands on it
+      // whichever way the navigation race goes. Or 'failed', where the reload
+      // may still serve the cached old build: that is exactly the behaviour
+      // this row had before, and a tab with no way back would be worse.
+      const failed = !!(update && update.state === 'failed');
+      const tip = failed
+        ? `Platform updated from ${oldShort} to ${newShort}. Click to reload (the update could not be pre-downloaded, so this may take two tries).`
+        : `Platform updated from ${oldShort} to ${newShort}, and the new build is ready. Click to reload.`;
       paint(`
         <button type="button"
                 class="drawer-ver drawer-ver--stale"
-                title="Platform updated from ${oldShort} to ${newShort}. Click to reload."
+                title="${tip}"
                 onclick="location.reload()">${newShort} · reload</button>`);
       return;
     }

@@ -810,6 +810,50 @@ if (typeof module !== 'undefined' && module.exports) {
     })());
   });
 
+  // ── Pulling the NEXT build down before it is asked for ───────────────
+  //
+  // The shell is precached in install(), which re-runs only when THIS FILE's
+  // bytes change. A platform deploy rebuilds /shell/assets/shell.js (an
+  // unhashed path) and index.html without touching sw.js, so nothing ever
+  // refreshed the precache on a deploy — the cache kept the build it was
+  // filled with until some later load happened to win a 200ms race per asset.
+  //
+  // That is what made the drawer's "reload" button a lie. It is
+  // `location.reload()`, which is an ordinary navigation, so it goes through
+  // networkFirstNavigate and races the cached document on a deadline the
+  // header of this file calls DELIBERATELY SHORTER THAN A ROUND TRIP. Lose
+  // that race — which is the common case, by design — and the reload serves
+  // the OLD document, sets shellFromCacheThisLoad, and therefore serves all
+  // ~38 old assets too, while the new build lands in the cache for next time.
+  // You clicked reload and downloaded the update instead of switching to it.
+  //
+  // The page now asks for the new build the moment its /api/version poll sees
+  // a new SHA (App._ensureShellPrefetch), and only offers the reload once this
+  // answers. Then it does not matter who wins the race: network and cache both
+  // hold the new build, and shellFromCacheThisLoad keeps the assets consistent
+  // with whichever document was served.
+  //
+  // `cache: 'reload'` on every request, because the HTTP cache is the other
+  // copy of the old build and a prefetch that revalidated its way to a 304
+  // would report success having stored nothing new.
+  let shellPrefetch = null;
+
+  async function prefetchShellAssets() {
+    const cache = await caches.open(SHELL_CACHE);
+    const results = await Promise.allSettled(SHELL_ASSETS.map(async (path) => {
+      const res = await fetch(path, { cache: 'reload' });
+      if (!res || !res.ok) throw new Error(`HTTP ${res && res.status}`);
+      // '/index.html' is SHELL_ASSETS[0] and is stored under exactly the key
+      // networkFirstNavigate reads, so the document itself is refreshed here
+      // and not only the assets around it.
+      await cache.put(path, res.clone());
+    }));
+    // ALL of them, deliberately. A partial refresh is the split-build state
+    // shellFromCacheThisLoad exists to prevent, and reporting success for one
+    // would put the page's reload button on top of it.
+    return results.every((r) => r.status === 'fulfilled');
+  }
+
   self.addEventListener('message', (event) => {
     const type = event.data && event.data.type;
     if (type === 'clear-api-cache') {
@@ -817,6 +861,22 @@ if (typeof module !== 'undefined' && module.exports) {
         await clearApiCaches();
         const port = event.ports && event.ports[0];
         if (port) port.postMessage({ done: true });
+      })());
+    }
+    if (type === 'prefetch-shell') {
+      event.waitUntil((async () => {
+        // One run at a time: every open tab polls /api/version on its own
+        // 10s timer, so a deploy asks for this once per tab within seconds.
+        // Late callers await the run already in flight rather than starting
+        // a second full refetch of the shell.
+        if (!shellPrefetch) {
+          shellPrefetch = prefetchShellAssets()
+            .finally(() => { shellPrefetch = null; });
+        }
+        let ok = false;
+        try { ok = await shellPrefetch; } catch { ok = false; }
+        const port = event.ports && event.ports[0];
+        if (port) port.postMessage({ ok });
       })());
     }
   });

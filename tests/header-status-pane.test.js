@@ -204,9 +204,22 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
   assert.match(fn.slice(0, 1400), /#improve-footer \.drawer-ver--deploying/,
     'reads the deploying state off the rendered pills — the single source of truth');
   // The second state the old single-colour dot could not show: the violet
-  // "platform rolled past the SHA this tab loaded against" reload button.
-  assert.match(fn.slice(0, 1400), /#improve-footer button\.drawer-ver--stale/,
+  // "platform rolled past the SHA this tab loaded against" row.
+  //
+  // Selected by CLASS ALONE, not `button.drawer-ver--stale` as it was: that
+  // row has two shapes since the update is pre-downloaded
+  // (tests/shell-update-prefetch.test.js). It is a <button> once the new
+  // build is in the shell cache and a reload will actually land on it, and a
+  // <span> for the seconds it takes to get there. Both mean the platform has
+  // moved past this tab, which is the only thing this dot claims — qualifying
+  // by tag blinked it off for the whole download.
+  assert.match(fn.slice(0, 1400), /#improve-footer \.drawer-ver--stale/,
     'and the stale state, which is the other thing those rows say');
+  // Comment-stripped: the code comment beside that selector legitimately
+  // names the old `button.`-qualified form to say why it is gone.
+  assert.ok(!/button\.drawer-ver--stale/.test(
+    fn.slice(0, 1400).replace(/^\s*\/\/.*$/gm, '')),
+    'and does not qualify it by tag');
   // It PUBLISHES: #improve-btn is React-owned, so an id lookup plus a
   // classList write would be a mismatch React patches straight back out.
   assert.match(fn.slice(0, 1400), /setVersionState/,

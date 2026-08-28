@@ -6869,6 +6869,28 @@ button.drawer-ver--stale {
 button.drawer-ver--stale:hover {
   text-decoration: underline;
 }
+/* The same "you are behind" violet, while the new build is still coming
+   down — a SPAN, not a button, because a reload before the shell cache holds
+   the update is the exact click that used to serve the old document back.
+   Same class as the button so ImproveStatus.refreshDeployDot still lights the
+   Improve dot: the platform HAS moved on, only the offer to switch is
+   waiting. */
+.drawer-ver--fetching {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent-light);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.dark .drawer-ver--fetching {
+  color: var(--accent);
+}
+/* The shared spinner rings in amber for the deploying state; here it has to
+   ring in whatever the row's own colour is. */
+.drawer-ver--fetching .drawer-ver-spinner {
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+}
 /* Fork lineage ("⑂ Forked from <name>") — amber, and NOT monospaced:
    it's a name, not a hash. */
 .drawer-ver--fork {

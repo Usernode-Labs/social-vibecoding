@@ -64,6 +64,7 @@ import { createStore } from '../../lib/plain-store.js';
 /**
  * @typedef {object} ImproveState
  * @property {boolean} open
+ * @property {boolean} adopted
  * @property {'app'|'platform'|null} target
  * @property {string|null} slug
  * @property {string} name
@@ -95,6 +96,12 @@ import { createStore } from '../../lib/plain-store.js';
 const INITIAL = {
   /** Whether the panel is presented. `hidden` on the root is derived from it. */
   open: false,
+  /**
+   * Whether the presentation is a KIT sheet (touch) rather than the CSS
+   * slide-over. The kit brings its own backdrop, so #improve-overlay only
+   * raises when this is false — see ./improve-controller.js.
+   */
+  adopted: false,
   /**
    * What the panel is ABOUT.
    *

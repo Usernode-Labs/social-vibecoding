@@ -142,26 +142,44 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
     >
       <AvatarChip view={view} />
       <span className="flex-1 min-w-0">
-        <span className="block text-sm text-zinc-800 dark:text-zinc-200 truncate">
-          {view.segments.map((segment, index) => (
+        {/* WHAT KIND. Its own line since the subject stopped sharing one with
+            it: the label is the same words on every row of a kind, so it
+            scans as a column down the left edge, and the subject below it
+            gets the row's whole width to truncate in. Semibold-small keeps
+            it legible while ranking it under the subject — and tells it
+            apart from the meta line, which is the same size in regular
+            weight. A kind with no subject to name (a collaborator invite is
+            entirely its own label) renders on the SUBJECT's line instead: a
+            heading over nothing is worse than either line alone. */}
+        {view.segments.length ? (
+          <span className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 truncate">
+            {view.label}
+          </span>
+        ) : null}
+        {/* WHICH ONE — the PR's title, the conversation, the message. The
+            row's own content, and the only line whose text differs between
+            two notifications of the same kind, so it carries the strong ink. */}
+        <span className="block text-sm text-zinc-900 dark:text-zinc-100 truncate">
+          {view.segments.length ? view.segments.map((segment, index) => (
             // eslint-disable-next-line react/no-array-index-key
             <span
               key={index}
               className={segment.t === 'who'
-                ? 'font-semibold text-zinc-900 dark:text-zinc-100'
+                ? 'font-semibold'
                 : segment.t === 'strong'
-                  ? 'font-medium text-zinc-700 dark:text-zinc-300'
-                  : undefined}
+                  ? 'font-medium'
+                  : 'text-zinc-700 dark:text-zinc-300'}
             >
               {(index > 0 ? ' ' : '') + (segment.t === 'who' ? `@${segment.v}` : segment.v)}
             </span>
-          ))}
+          )) : view.label}
         </span>
-        {/* WHERE · WHO · WHEN. Everything the headline used to repeat inside
-            a sentence lives on this line instead, which is what let the
-            headline become "<label>: <subject>" — see rowView in
-            ./notifications.js. `by` is absent on a system row (nobody did it)
-            and on the two key rows (the name there is the subject). */}
+        {/* WHERE · WHO · WHEN. Everything the copy used to repeat inside a
+            sentence lives on this line instead, which is what let the row
+            spend its other two lines on the kind and the subject — see
+            rowView in ./notifications.js. `by` is absent on a system row
+            (nobody did it) and on the two key rows (the name there is the
+            subject). */}
         <span className="block text-xs text-zinc-500 truncate">
           {[view.appLine, view.by ? `by @${view.by}` : null, view.time]
             .filter(Boolean).join(' · ')}
@@ -195,7 +213,9 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
 }
 
 export function NotificationsSheetView() {
-  const { open } = useStoreState(notificationsSheetStore) as { open: boolean };
+  const { open, adopted } = useStoreState(notificationsSheetStore) as {
+    open: boolean; adopted: boolean;
+  };
 
   // Pull-to-refresh went with the screen root. A kit sheet owns the vertical
   // drag for its own dismiss gesture, so a pull-down inside one cannot also
@@ -249,10 +269,12 @@ export function NotificationsSheetView() {
 
   return (
     <>
+      {/* The overlay is the WEB presentation's dim. Adopted into a kit sheet
+          the kit's own backdrop owns it — see lib/sheet-controller.js. */}
       <div
         id="notifications-sheet-overlay"
         aria-hidden="true"
-        {...(open ? { 'data-open': '' } : {})}
+        {...(open && !adopted ? { 'data-open': '' } : {})}
         className="fixed inset-0 z-40 bg-black/40"
         onClick={() => NotificationsSheet.close()}
       >

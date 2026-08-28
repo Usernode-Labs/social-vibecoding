@@ -364,7 +364,7 @@ const Improve = {
         gate: 'touch',
         onDismiss: () => {
           Improve._sheet = null;
-          improveStore.set({ open: false });
+          improveStore.set({ open: false, adopted: false });
           // The kit's exit spring has run: anything chained on close() (the
           // Share dialog) may present now.
           Improve._resolveDismissWaiters();
@@ -372,6 +372,14 @@ const Improve = {
       });
       if (sheet) {
         Improve._sheet = sheet;
+        // Adopted: the kit's own backdrop dims the scene and fades with the
+        // exit spring, so the web overlay stays down (see the same publish in
+        // lib/sheet-controller.js). Left up, it held the dim at full strength
+        // through the whole exit and only faded after the teardown, which
+        // read as the background snapping clear. Published AFTER the present:
+        // the store flush is synchronous, so the overlay's `data-open` never
+        // reaches a paint.
+        improveStore.set({ adopted: true });
         Improve.loadSessions();
         return;
       }

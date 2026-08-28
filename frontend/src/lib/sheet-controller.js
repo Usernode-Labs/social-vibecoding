@@ -84,11 +84,20 @@ export function createSheetController({
         store.set({ open: true });
         const sheet = adoptSheet(panel, () => {
           controller._sheet = null;
-          store.set({ open: false });
+          store.set({ open: false, adopted: false });
           controller._resolveDismissWaiters();
         });
         if (sheet) {
           controller._sheet = sheet;
+          // Adopted: the kit's own backdrop dims the scene, and it fades with
+          // the sheet's spring — so the web overlay stays down. Left up, it
+          // held the dim at full strength through the whole exit and only
+          // faded after the teardown, which read as the background snapping
+          // (and while open the two 40% backdrops stacked into an over-dim).
+          // Published AFTER the present on purpose: the store flush is
+          // synchronous, so the overlay's `data-open` never reaches a paint.
+          // The hamburger's kit path has always skipped its overlay this way.
+          store.set({ adopted: true });
           if (onOpen) onOpen();
           return;
         }
