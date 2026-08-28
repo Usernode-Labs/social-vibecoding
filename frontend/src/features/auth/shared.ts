@@ -189,7 +189,7 @@ export async function fetchSessionMint(
   init?: RequestInit,
 ): Promise<Response> {
   const w = legacy();
-  if (!w.App?.user && w.usernode?.isNative === true) {
+  if (w.usernode?.isNative === true) {
     const chrome = w.NativeChrome;
     if (!chrome || typeof chrome.prepareForLogin !== 'function') {
       throw new Error(

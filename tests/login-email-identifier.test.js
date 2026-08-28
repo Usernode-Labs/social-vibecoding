@@ -79,9 +79,15 @@ function startApp() {
   });
 }
 
-function login(server, username, password, sessionToken = null) {
+function login(
+  server,
+  username,
+  password,
+  sessionToken = null,
+  path = '/api/auth/login',
+) {
   const port = server.address().port;
-  return fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+  return fetch(`http://127.0.0.1:${port}${path}`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -102,7 +108,7 @@ function reset() {
 const warned = (msg) => logCalls.some(([, , m]) => m === msg);
 const COST = 4; // low bcrypt cost: this file tests routing, not hashing
 
-test('a live web session must be logged out before another can be minted', async () => {
+test('every spelling and flow enforces logout before another session mint', async () => {
   reset();
   const hash = await bcrypt.hash('new-account-pw', COST);
   users.push({
@@ -114,17 +120,25 @@ test('a live web session must be logged out before another can be minted', async
   liveSessions.add('session-a');
   const server = await startApp();
   try {
-    const r = await login(
-      server,
-      'new-account',
-      'new-account-pw',
-      'session-a',
-    );
-    assert.strictEqual(r.res.status, 409);
-    assert.deepStrictEqual(r.body, {
-      error: 'Sign out before signing in again.',
-      code: 'logout_required',
-    });
+    for (const path of [
+      '/api/auth/login',
+      '/api/auth/login/',
+      '/API/AUTH/LOGIN',
+      '/api/auth/wallet-reset-verify',
+    ]) {
+      const r = await login(
+        server,
+        'new-account',
+        'new-account-pw',
+        'session-a',
+        path,
+      );
+      assert.strictEqual(r.res.status, 409, path);
+      assert.deepStrictEqual(r.body, {
+        error: 'Sign out before signing in again.',
+        code: 'logout_required',
+      });
+    }
     assert.strictEqual(compareCalls, 0,
       'the boundary is enforced before consuming new credentials');
     assert.ok(!capturedQueries.some((q) => /INSERT INTO sessions/.test(q.sql)),

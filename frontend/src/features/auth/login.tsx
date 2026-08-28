@@ -574,7 +574,7 @@ export function LoginScreen() {
       }
 
       const sigResult = await legacy().signMessage!(challenge);
-      const res = await fetch('/api/auth/wallet-reset-verify', {
+      const res = await fetchSessionMint('/api/auth/wallet-reset-verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -347,7 +347,10 @@ test('login preflight never preempts a live web session', async () => {
   const loaded = loadNativeChrome();
   loaded.sandbox.App.user = { id: 41 };
 
-  assert.equal(await loaded.NativeChrome.prepareForLogin(), false);
+  await assert.rejects(
+    loaded.NativeChrome.prepareForLogin(),
+    /Sign out before signing in again/,
+  );
   assert.equal(loaded.calls.prepareForLogin, 0);
 });
 

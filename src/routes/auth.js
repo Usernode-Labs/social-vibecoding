@@ -79,16 +79,18 @@ const SIGNUP_COOKIE = 'usernode_signup';
 // Ordinary credential exchanges may only mint a session from a signed-out
 // browser realm. Keeping this at the router boundary makes the hard A -> B
 // rule apply to every session-minting flow before credentials are consumed.
-// Recovery endpoints are deliberately absent: they revoke existing sessions
-// atomically as part of the recovery transaction.
-const SESSION_MINT_PATHS = new Set([
+// Password-reset confirmation is deliberately absent because it mints no
+// session. Wallet reset does mint one and therefore shares this boundary even
+// though its transaction also revokes the user's older server sessions.
+const SESSION_MINT_PATHS = [
   '/api/auth/login',
   '/api/auth/otp/set-password',
   '/api/auth/register',
   '/api/auth/wallet-verify',
+  '/api/auth/wallet-reset-verify',
   '/api/auth/wallet-register',
   '/api/auth/wallet-link-login',
-]);
+];
 
 function createSessionCookie(res, token, expiresAt) {
   res.cookie('session', token, {
@@ -132,8 +134,10 @@ function authRoutes(config) {
   const router = Router();
   const pool = getPool(config);
 
-  router.use(async (req, res, next) => {
-    if (req.method !== 'POST' || !SESSION_MINT_PATHS.has(req.path)) return next();
+  // Register with the same Express path matcher as the handlers themselves.
+  // This covers its case-insensitive and optional-trailing-slash aliases;
+  // comparing req.path strings would leave equivalent route spellings open.
+  router.post(SESSION_MINT_PATHS, async (req, res, next) => {
     const token = req.cookies?.session;
     if (!token) return next();
     try {

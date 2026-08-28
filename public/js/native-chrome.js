@@ -413,7 +413,9 @@
     // receives any request that could mint B. A live App.user must instead use
     // the ordinary explicit logout flow; the server enforces that boundary.
     prepareForLogin() {
-      if (window.App && App.user) return Promise.resolve(false);
+      if (window.App && App.user) {
+        return Promise.reject(new Error('Sign out before signing in again.'));
+      }
       const bridge = window.usernode;
       if (!bridge || bridge.isNative !== true) return Promise.resolve(false);
       if (NativeChrome._prepareLoginLease) {
@@ -423,7 +425,9 @@
       NativeChrome._closeRealm({ discardAttempt: true });
       let run;
       run = NativeChrome.getInfo().then((info) => {
-        if (window.App && App.user) return false;
+        if (window.App && App.user) {
+          throw new Error('Sign out before signing in again.');
+        }
         const capabilities = Array.isArray(info && info.capabilities)
           ? info.capabilities : [];
         if (!info || info.degraded === true ||
