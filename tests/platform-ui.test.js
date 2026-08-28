@@ -456,7 +456,11 @@ test('the Improve panel leads with its two actions, shaped like the button that 
   assert.match(panel, /id="improve-quick-actions"/, 'the band exists');
   assert.ok(!/divide-x divide-zinc-950\/5/.test(panel),
     'and is no longer one divided well');
-  assert.match(panel, /id="improve-row-feedback"/, 'Feedback survives');
+  // "Give feedback", not "Feedback": both segments are things you DO, and a
+  // bare noun beside the verb phrase "New change" read as a category label
+  // sitting next to an action.
+  assert.match(panel, /id="improve-row-feedback"\n\s+label="Give feedback"/,
+    'Feedback survives, verbized');
   assert.match(panel, /Improve\.giveFeedback\(\)/, 'with the same handler');
   assert.match(panel, /id="improve-row-new-session"/, 'New change survives');
   assert.match(panel, /Improve\.startSession\(\)/, 'with the same handler');
@@ -619,7 +623,13 @@ test('the Improve panel is navigation, work and reference — one scroller', () 
   // separately; every move was defensible alone and the sum meant leaving the
   // app to read facts about the app you were standing in.
   assert.match(panel, /id="improve-row-github"/, 'the GitHub link is back');
-  assert.match(panel, /id="improve-row-version"/, "the app's version is back");
+  // Rendered, but gated on `!selfHosted`: the platform's own row IS the
+  // platform, so this row and "Platform version" under it printed the same
+  // seven characters twice. See the note at the call site for what that costs
+  // (one SHA, in a state the Platform version row already names) and what the
+  // deploy dot reads (never this row).
+  assert.match(panel, /\{slug && !selfHosted \? \([\s\S]{0,120}id="improve-row-version"/,
+    "the app's version is back, and off the platform's own panel");
   assert.match(panel, /id="drawer-row-platform-version"/, 'the platform build is back');
   assert.match(panel, /<NativeAppVersionRow \/>/, 'and the native app version');
   // Fork lineage did NOT come back: #browse-detail-fork on the app's own page
