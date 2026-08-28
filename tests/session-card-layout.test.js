@@ -533,15 +533,25 @@ test('kanban Underway: only the issue row carries the work-state chip', () => {
   }
 });
 
-test('list view pinned block mirrors the split', () => {
+// ── The viewer's own sessions live in the Underway column ───────────────
+//
+// These three read `_inProgressRows` now. They used to read
+// `_mySessionsRows`, the block the FEED pinned above its stream — private
+// divider, archived toggle, visible divider, own cards, outside the pager.
+// That block is gone: Activity is the app's activity, and a private draft
+// nobody else can see is the viewer's own workspace rather than something
+// that happened on the app. The split itself did not go anywhere, because
+// the board's In-progress column always built the same rows from the same
+// four helpers, which is what these assertions are actually about.
+
+test('the Underway column mirrors the private/visible split', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
-  AppView._mySessions = [
-    mySess({ id: 1, session_title: 'Private one' }),
-    mySess({ id: 2, session_title: 'Visible one', shared_at: '2026-06-01T03:00:00Z' }),
-  ];
   AppView._archivedSessions = [mySess({ id: 90, session_title: 'Old one', status: 'archived' })];
-  const html = rowsHtml(AppView._mySessionsRows());
+  const html = rowsHtml(AppView._inProgressRows([
+    { kind: 'my-session', item: mySess({ id: 1, session_title: 'Private one' }) },
+    { kind: 'my-session', item: mySess({ id: 2, session_title: 'Visible one', shared_at: '2026-06-01T03:00:00Z' }) },
+  ]));
   assertOrder(html, [
     'Yours · private',
     'data-session-chip="1"',
@@ -551,22 +561,39 @@ test('list view pinned block mirrors the split', () => {
   ]);
 });
 
-test('list view pinned block: only a visible session still renders (no private caption)', () => {
+test('Underway: only a visible session still renders (no private caption)', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
-  AppView._mySessions = [mySess({ id: 2, shared_at: '2026-06-01T03:00:00Z' })];
   AppView._archivedSessions = [];
-  const html = rowsHtml(AppView._mySessionsRows());
+  const html = rowsHtml(AppView._inProgressRows([
+    { kind: 'my-session', item: mySess({ id: 2, shared_at: '2026-06-01T03:00:00Z' }) },
+  ]));
   assert.notEqual(html, '');
   assert.doesNotMatch(html, /Only you can see your active sessions/);
   assertOrder(html, ['Visible to everyone,', 'data-session-chip="2"']);
 });
 
-test('list view pinned block: nothing to show → empty string', () => {
+test('Underway: nothing to show → empty string', () => {
   const AppView = makeAppView();
   AppView._mySessions = [];
   AppView._archivedSessions = [];
-  assert.equal(rowsHtml(AppView._mySessionsRows()), '');
+  assert.equal(rowsHtml(AppView._inProgressRows([])), '');
+});
+
+test('the feed pins no own-sessions block above its stream', () => {
+  // The removal itself, so it cannot quietly come back: Activity shows what
+  // happened on the app, and the Improve panel and the Underway column are
+  // where the viewer's own changes are reached from.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
+  );
+  // Comment-stripped: the notes in there legitimately name what was removed
+  // and why, and that history is the useful half of them.
+  const strip = (t) => t.replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/_mySessionsRows\s*\(/.test(strip(src)), '_mySessionsRows is gone');
+  const at = src.indexOf('  _feedView()');
+  const feedView = strip(src.slice(at, src.indexOf('\n  },', at)));
+  assert.ok(!/\bblock\b/.test(feedView), 'and the feed view model publishes no block');
 });
 
 // ── #1038: the "working…" tag is driven by live state, not by the row ────
