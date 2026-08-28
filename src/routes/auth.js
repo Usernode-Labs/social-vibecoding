@@ -137,6 +137,11 @@ function authRoutes(config) {
   // Register with the same Express path matcher as the handlers themselves.
   // This covers its case-insensitive and optional-trailing-slash aliases;
   // comparing req.path strings would leave equivalent route spellings open.
+  // TODO(session-lifecycle): Replace the trusted native
+  // prepareForLogin -> fetch ordering with a one-use opaque preparation
+  // receipt consumed here. That requires a coordinated server/Android/iOS
+  // protocol; every current native mint call remains routed through
+  // fetchSessionMint until then.
   router.post(SESSION_MINT_PATHS, async (req, res, next) => {
     const token = req.cookies?.session;
     if (!token) return next();
