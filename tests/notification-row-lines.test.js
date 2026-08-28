@@ -1,0 +1,225 @@
+// A notification row is THREE lines: what kind, which one, where from.
+//
+// ── What it was ────────────────────────────────────────────────────────
+//
+// Every kind used to write a sentence about itself ("@evan proposed a PR to
+// vote on in Notes"), which put the app in the row AND in the meta line under
+// it, led with a username so a list of them all started the same way, and left
+// the SUBJECT — the PR's title, the session's name — in `body`, a field the
+// renderer never drew. The one thing telling two proposal rows apart was not
+// on screen.
+//
+// That became `<label>: <subject>` on one line. Better, but the row runs out
+// of width on exactly that line: the subject is the part that varies and the
+// part that truncates, and it was paying for a fixed-length label in front of
+// it on every row.
+//
+// ── What it is ─────────────────────────────────────────────────────────
+//
+//     New proposal                       ← `label`     the KIND
+//     Tighten the header spacing         ← `segments`  WHICH one
+//     Notes · by @ada · 4m ago           ← the meta    WHERE from
+//
+// Three facts, three lines, in falling order of how much of the row's width
+// they deserve. The label is the same words on every row of a kind, so it
+// scans as a column; the subject gets the full width to truncate in.
+//
+// ── The one exception, and why it is not a fourth shape ────────────────
+//
+// A kind with nothing to name — a collaborator invite is entirely its own
+// label — leaves `segments` EMPTY, and the renderer draws the label on the
+// SUBJECT's line with no kind line above it. A category heading over nothing
+// would read as a rendering fault. So: three lines when there are three
+// things to say, two when there are two, and never a blank one.
+//
+// This runs the real `rowView` over every kind rather than grepping its
+// source: the mapping from a row's fields to its two lines is the whole of
+// what this change is, and a regex over the call sites would pass on a label
+// that says the wrong thing.
+//
+// Run with: node --test tests/notification-row-lines.test.js
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const SHEET = fs.readFileSync(path.join(
+  __dirname, '..', 'frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
+
+// notifications.js is import-free by design (see ./notifications-store.js) and
+// publishes its controller on `window`, so a bare global is the whole harness.
+let rowView = null;
+async function load() {
+  if (rowView) return rowView;
+  if (!globalThis.window) globalThis.window = globalThis;
+  await import(new URL(
+    '../frontend/src/features/notifications/notifications.js', `file://${__filename}`).href);
+  rowView = globalThis.window.Notifications._rowView;
+  assert.equal(typeof rowView, 'function', 'the controller publishes _rowView');
+  return rowView;
+}
+
+const AT = new Date(Date.now() - 4 * 60 * 1000).toISOString();
+const ROW = {
+  id: 1, createdAt: AT, readAt: null,
+  appName: 'Notes', appSlug: 'notes', sourceUsername: 'ada',
+};
+
+/** The row's two copy lines, as plain strings. */
+async function lines(n) {
+  const view = (await load())({ ...ROW, ...n });
+  return {
+    label: view.label,
+    subject: view.segments
+      .map((s) => (s.t === 'who' ? `@${s.v}` : s.v)).join(' '),
+    meta: [view.appLine, view.by ? `by @${view.by}` : null, view.time]
+      .filter(Boolean).join(' · '),
+  };
+}
+
+// ─── 1. Kind, then subject ──────────────────────────────────────────────
+
+test('the kind is its own line, and the subject is the whole of the next', async () => {
+  const l = await lines({ kind: 'pr_proposed', prTitle: 'Tighten the header spacing', prNumber: 42 });
+  assert.equal(l.label, 'New proposal');
+  assert.equal(l.subject, 'Tighten the header spacing');
+  // Nothing punctuates a line that no longer runs into another one.
+  assert.ok(!l.label.endsWith(':'), 'the label lost the colon that joined them');
+  // And the app and the actor stay where they were: under both.
+  assert.equal(l.meta, 'Notes · by @ada · 4m ago');
+});
+
+test('every kind names itself the same way for every row of that kind', async () => {
+  const cases = [
+    [{ kind: 'connector_submitted', sourceUsername: null, sessionTitle: 'Messages layout', detail: null },
+      'Submitted by your agent', 'Messages layout'],
+    [{ kind: 'connector_submitted', sourceUsername: null, sessionTitle: 'Messages layout', detail: 'shared' },
+      'Shared by your agent', 'Messages layout'],
+    [{ kind: 'session_done', sourceUsername: null, sessionTitle: 'Kanban filters' },
+      'Session finished', 'Kanban filters'],
+    [{ kind: 'stale_pr', sourceUsername: null, prTitle: 'Add a dark mode toggle' },
+      'Needs votes', 'Add a dark mode toggle'],
+    [{ kind: 'check_failed', sourceUsername: null, prTitle: 'Rework the board' },
+      'Checks blocked', 'Rework the board'],
+    [{ kind: 'kudos', prTitle: 'Fix the bell badge' }, 'Kudos', 'Fix the bell badge'],
+    [{ kind: 'auto_solve_done', sourceUsername: null, headlessIssueNumber: 91, detail: 'question' },
+      'Proposal has a question', 'issue #91'],
+    [{ kind: 'spec_shared', sessionTitle: 'Notifications overhaul' }, 'Spec shared', 'Notifications overhaul'],
+    [{ kind: 'mention', messageContent: 'can you take a look at the board?' },
+      'Mentioned you', 'can you take a look at the board?'],
+  ];
+  for (const [n, label, subject] of cases) {
+    const l = await lines(n);
+    assert.equal(l.label, label, `${n.kind} names its kind`);
+    assert.equal(l.subject, subject, `${n.kind} names which one`);
+  }
+});
+
+test('a conversation row is named by its thread, not by the surface', async () => {
+  // The only label that is not a fixed category: a message's kind IS its
+  // thread. "Message" over the snippet would name the surface, and the meta
+  // line already says Messages.
+  const msg = await lines({
+    kind: 'conversation_message', appName: null, conversationId: 7,
+    conversationTitle: 'Design chat', messageContent: 'are you around?',
+  });
+  assert.equal(msg.label, 'Design chat');
+  assert.equal(msg.subject, 'are you around?');
+  assert.equal(msg.meta, 'Messages · by @ada · 4m ago');
+  assert.ok(!msg.meta.includes('Design chat'),
+    'and the thread is not repeated under itself');
+});
+
+test('the three conversation verbs lost their trailing preposition', async () => {
+  // They read "Mentioned you in <conversation>" across one line. Broken in
+  // two, "Mentioned you in" sits alone above its object — a sentence cut in
+  // half, when the line below it is plainly what it is in.
+  for (const [kind, label] of [
+    ['conversation_mention', 'Mentioned you'],
+    ['conversation_reply', 'Replied'],
+    ['conversation_reaction', 'Reacted'],
+  ]) {
+    const l = await lines({
+      kind, appName: null, conversationId: 7, conversationTitle: 'Design chat',
+    });
+    assert.equal(l.label, label);
+    assert.equal(l.subject, 'Design chat', 'the thread is the subject');
+  }
+});
+
+// ─── 2. Nothing to name means two lines, not a blank one ────────────────
+
+test('a kind that is entirely its own label carries no subject', async () => {
+  for (const kind of ['collab_invite', 'collab_invite_accepted',
+    'approver_invite', 'approver_invite_accepted']) {
+    const view = (await load())({ ...ROW, kind });
+    assert.equal(view.segments.length, 0, `${kind} has nothing else to name`);
+    assert.ok(view.label, `${kind} still says what it is`);
+  }
+  // Same for an agent question with no session title to point at.
+  const asked = (await load())({ ...ROW, kind: 'agent_awaiting_input', sourceUsername: null });
+  assert.equal(asked.segments.length, 0);
+  assert.equal(asked.label, 'Claude asked you something');
+});
+
+test('no row can reach the renderer with an empty kind line', async () => {
+  // `base.label` is '' and every branch overwrites it; a fall-through would
+  // render a blank first line rather than fail, which is the kind of thing
+  // that ships.
+  const kinds = ['pr_proposed', 'stale_pr', 'check_failed', 'kudos', 'reaction',
+    'session_done', 'auto_solve_done', 'spec_shared', 'connector_submitted',
+    'agent_awaiting_input', 'collab_invite', 'approver_invite', 'mention',
+    'reply', 'openrouter_key_created', 'openrouter_key_review',
+    'conversation_message', 'conversation_invite', 'conversation_mention',
+    'conversation_reply', 'conversation_reaction', 'something_unheard_of'];
+  for (const kind of kinds) {
+    const view = (await load())({ ...ROW, kind });
+    assert.equal(typeof view.label, 'string', `${kind} has a label`);
+    assert.ok(view.label.length > 0, `${kind} has a NON-EMPTY label`);
+  }
+});
+
+test('the two key rows keep the name as their subject and claim no actor', async () => {
+  // `sourceUsername` there is WHOSE key it is, not who did something, so
+  // "by @them" would be a false claim — it stays on the subject line.
+  const l = await lines({ kind: 'openrouter_key_review', sourceUsername: 'grace' });
+  assert.equal(l.label, 'Company key needs review');
+  assert.equal(l.subject, '@grace');
+  assert.equal(l.meta, 'Admin · 4m ago', 'no by-line');
+});
+
+// ─── 3. The renderer draws them in that order ───────────────────────────
+
+test('ScreenRow renders kind, subject, meta — in that order', () => {
+  const row = SHEET.slice(SHEET.indexOf('function ScreenRow('));
+  const body = row.slice(0, row.indexOf('\n}'));
+  const kindAt = body.indexOf('{view.label}');
+  const subjectAt = body.indexOf('view.segments.length ? view.segments.map');
+  const metaAt = body.indexOf('view.appLine');
+  assert.ok(kindAt > -1 && subjectAt > -1 && metaAt > -1, 'all three lines are drawn');
+  assert.ok(kindAt < subjectAt && subjectAt < metaAt,
+    'kind over subject over meta');
+  // The kind line is CONDITIONAL and the subject line falls back to it, which
+  // is the two-line shape above.
+  assert.match(body, /\{view\.segments\.length \? \(\s*<span[^>]*>\s*\{view\.label\}/,
+    'the kind line only renders when there is a subject under it');
+  assert.match(body, /\)\) : view\.label\}/,
+    'and the label takes the subject line when there is not');
+});
+
+test('the three lines are visually ranked, not three of the same thing', () => {
+  const row = SHEET.slice(SHEET.indexOf('function ScreenRow('));
+  const body = row.slice(0, row.indexOf('\n}'));
+  assert.match(body, /text-xs font-semibold text-zinc-500 dark:text-zinc-400 truncate/,
+    'the kind is small and semibold — subordinate, but not the meta line');
+  assert.match(body, /block text-sm text-zinc-900 dark:text-zinc-100 truncate/,
+    'the subject carries the strong ink and the larger size');
+  assert.match(body, /block text-xs text-zinc-500 truncate/,
+    'the meta line stays small and regular');
+  // Each line truncates on its own, so a long subject cannot push the app
+  // name or the time off the row.
+  // Counted on the class strings themselves (`truncate"`), since the prose
+  // beside them says the word too.
+  assert.equal((body.match(/truncate"/g) || []).length, 3, 'all three truncate');
+});

@@ -73,6 +73,9 @@ export type NotificationRowView = {
   metaFlex: boolean;
   wrap: boolean;
   icon: string | null;
+  /** The kind line: "New proposal", "Session finished", a conversation. */
+  label: string;
+  /** The subject line. EMPTY when the label is the whole of the row's copy. */
   segments: Segment[];
 };
 
