@@ -120,12 +120,12 @@ function fmtDate(iso?: string): string {
 // outcomes were persisted — render it as "unknown" rather than mislabelling
 // it as a success or a failure.
 const CHIP: Record<string, { label: string; cls: string }> = {
-  captured: { label: 'Captured', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
-  partial: { label: 'Partial', cls: 'bg-amber-500/15 text-amber-800 dark:text-amber-400' },
-  console_only: { label: 'No visual change expected', cls: 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400' },
-  failed: { label: 'Capture failed', cls: 'bg-rose-500/15 text-rose-600 dark:text-rose-400' },
+  captured: { label: 'Captured', cls: 'bg-meadow-500/15 text-meadow-700 dark:text-meadow-200' },
+  partial: { label: 'Partial', cls: 'bg-amber-500/15 text-amber-800 dark:text-amber-200' },
+  console_only: { label: 'No visual change expected', cls: 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-300' },
+  failed: { label: 'Capture failed', cls: 'bg-red-500/15 text-red-700 dark:text-red-200' },
 };
-const CHIP_UNKNOWN = { label: 'Outcome unknown', cls: 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400' };
+const CHIP_UNKNOWN = { label: 'Outcome unknown', cls: 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-300' };
 
 const SELECT_CLASS = 'mt-1 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 '
   + 'rounded px-2 py-1 text-sm text-zinc-900 dark:text-zinc-100';
@@ -139,18 +139,19 @@ const PROBLEMS: Array<[string, string]> = [
   ['failed_or_skipped', 'Capture failed or skipped'],
 ];
 
-const DOT = <span className="text-zinc-500 dark:text-zinc-500">·</span>;
+const DOT = <span className="text-zinc-500 dark:text-zinc-300">·</span>;
 
 function Chip({ state, reason }: { state?: string; reason?: string }) {
   const chip = (state && CHIP[state]) || CHIP_UNKNOWN;
   return (
-    <span className={`text-[0.65rem] px-1.5 py-0.5 rounded ${chip.cls}`} title={reason || undefined}>
+    <span className={`text-xs px-1.5 py-0.5 rounded ${chip.cls}`} title={reason || undefined}>
       {chip.label}
     </span>
   );
 }
 
-const LINK = 'text-violet-700 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300';
+// Tracks AdminUI.btn.link's ink quadruple: 800/200 base, 900/100 hover.
+const LINK = 'text-azure-800 dark:text-azure-200 hover:text-azure-900 dark:hover:text-azure-100';
 
 function ProposalCard({ p }: { p: Proposal }) {
   const appView = typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -164,10 +165,10 @@ function ProposalCard({ p }: { p: Proposal }) {
   if (p.prUrl && p.prNumber) {
     meta.push(
       <a key="pr" href={p.prUrl} target="_blank" rel="noopener"
-        className="font-mono text-violet-700 dark:text-violet-400 hover:underline">PR#{p.prNumber}</a>,
+        className="font-mono text-azure-800 dark:text-azure-200 hover:underline">PR#{p.prNumber}</a>,
     );
   } else if (p.prNumber) {
-    meta.push(<span key="pr" className="font-mono text-zinc-500 dark:text-zinc-400">PR#{p.prNumber}</span>);
+    meta.push(<span key="pr" className="font-mono text-zinc-500 dark:text-zinc-300">PR#{p.prNumber}</span>);
   }
   if (merged) meta.push(<span key="date">{merged}</span>);
   if (p.appSlug) {
@@ -181,7 +182,7 @@ function ProposalCard({ p }: { p: Proposal }) {
       <div className="flex items-start justify-between gap-3 mb-1">
         <div className="min-w-0">
           <div className="text-sm font-medium truncate">{p.title || `Proposal ${p.id}`}</div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+          <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-0.5">
             {p.appSlug ? <a href={`/#app/${p.appSlug}/dev`} className={LINK}>{appLabel}</a> : appLabel}
             {meta.length ? <> {DOT} </> : null}
             {meta.map((node, i) => (
@@ -198,7 +199,7 @@ function ProposalCard({ p }: { p: Proposal }) {
       {tiles
         ? <div dangerouslySetInnerHTML={{ __html: tiles }} />
         : (
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 py-2">
+          <div className="text-xs text-zinc-500 dark:text-zinc-300 py-2">
             {p.captureReason || 'No screenshots were stored for this proposal.'}
           </div>
         )}
@@ -217,7 +218,7 @@ function StatsStrip({ s }: { s: Stats }) {
   return (
     <section
       id="admin-gallery-stats"
-      className={`flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400 ${AdminUI.card} px-3 py-2`}
+      className={`flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-500 dark:text-zinc-300 ${AdminUI.card} px-3 py-2`}
     >
       {item('matching proposals', s.total, false)}
       {item('complete', s.complete || 0, true)}
@@ -329,11 +330,11 @@ function GallerySection() {
   return (
     <div id="admin-gallery-root">
       <h2 className="text-lg font-semibold mb-4">Screenshot gallery</h2>
-      {gate ? <div id="admin-gallery-gate" className="text-zinc-500 dark:text-zinc-400 text-center py-20">{gate}</div> : null}
+      {gate ? <div id="admin-gallery-gate" className="text-zinc-500 dark:text-zinc-300 text-center py-20">{gate}</div> : null}
 
       {ready ? (
         <main id="admin-gallery-content" className="space-y-4">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="text-sm text-zinc-500 dark:text-zinc-300">
             Before/after screenshots of every merged proposal, newest first. Each row
             shows the screen it was shot at and the frame it was shot in; recordings
             play on click.
@@ -341,21 +342,21 @@ function GallerySection() {
 
           {/* Filter bar */}
           <section className={`${AdminUI.card} p-3 flex flex-wrap items-end gap-3`}>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">App
+            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-300">App
               <select id="admin-gallery-f-app" className={SELECT_CLASS}
                 value={app} onChange={(e) => setApp(e.target.value)}>
                 <option value="">All apps</option>
                 {apps.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
               </select>
             </label>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Problem
+            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-300">Problem
               <select id="admin-gallery-f-problem" className={SELECT_CLASS}
                 value={problem} onChange={(e) => setProblem(e.target.value)}>
                 {PROBLEMS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
               </select>
             </label>
             <button id="admin-gallery-apply" type="button" onClick={commit}
-              className="ml-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-700 text-white text-sm">Apply</button>
+              className="ml-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-black text-sm">Apply</button>
             <button id="admin-gallery-refresh" type="button" onClick={commit}
               className="px-3 py-1.5 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Refresh</button>
           </section>
@@ -365,7 +366,7 @@ function GallerySection() {
 
           <div id="admin-gallery-proposals" className="space-y-4">
             {error
-              ? <div className="text-sm text-rose-500 dark:text-rose-400">Failed to load the gallery: {error}</div>
+              ? <div className="text-sm text-red-700 dark:text-red-200">Failed to load the gallery: {error}</div>
               : items.map((p) => <ProposalCard key={p.id} p={p} />)}
           </div>
 
@@ -376,7 +377,7 @@ function GallerySection() {
                 className="px-4 py-2 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Load older</button>
             ) : null}
             {!error && !items.length ? (
-              <span id="admin-gallery-empty" className="text-zinc-500 dark:text-zinc-400 text-sm">
+              <span id="admin-gallery-empty" className="text-zinc-500 dark:text-zinc-300 text-sm">
                 No merged proposals match these filters yet.
               </span>
             ) : null}

@@ -1396,20 +1396,29 @@ const Home = {
     // when the app is already in "Your apps", a + when it isn't. The
     // added state derives from the same isYours() predicate the home
     // grid partitions on, so the two can never disagree.
+    //
+    // The unadded branch's glyph ink is `text-azure-700 dark:text-azure-300`.
+    // `dark:-400` measured Lc -51.8 on the dark card against its light
+    // partner's 68.0 — a body ink on one side, non-content on the other;
+    // -300 is -66.5, which is that pair at parity. It stays at 700 on the
+    // light side because the glyph sits INSIDE a chip that names its own
+    // white ground; 800/200 is the LINK ink (see ./apps-more.tsx). This
+    // recipe is byte-identical to DiscoverTile's in ./panels/discover.tsx on
+    // purpose — two renderers, one badge — so the two move together.
     const isAdded = Home.isYours(app);
     const addBadgeHtml = `
       <button class="card-add-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
         isAdded
-          ? 'bg-emerald-500 border-emerald-500 text-white'
-          : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
-      }" data-slug="${app.slug}" data-added="${isAdded}" title="${
+          ? 'bg-meadow-700 border-meadow-700 text-white'
+          : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-azure-700 dark:text-azure-300 hover:border-azure-400'
+      } dark:shadow-none" data-slug="${app.slug}" data-added="${isAdded}" title="${
         isAdded ? 'Added. Tap to remove from Your apps' : 'Add to Your apps'
       }" aria-label="${
         isAdded ? `Remove ${escapeHtml(app.name)} from Your apps` : `Add ${escapeHtml(app.name)} to Your apps`
       }" aria-pressed="${isAdded}">${
         isAdded
-          ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
-          : '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>'
+          ? '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>'
+          : '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>'
       }</button>`;
     // The "…" actions menu trigger. One markup, two corners: it owns the
     // icon's top-RIGHT corner on the home grid (where it is the card's only
@@ -1417,7 +1426,7 @@ const Home = {
     // badge keeps the primary right-hand spot and the two never overlap.
     // (The fork tag sits bottom-left, so top-left is free.)
     const hamburgerHtml = (corner) => `
-      <button class="card-menu-btn absolute -top-1.5 ${corner} w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
+      <button class="card-menu-btn absolute -top-1.5 ${corner} w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors dark:shadow-none" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/></svg></button>`;
     // Discovery grids show BOTH: the add/remove badge as the primary
     // affordance, plus the same "…" menu the home cards have, so an app
     // you haven't added still offers Fork / build log / admin actions
@@ -1430,7 +1439,7 @@ const Home = {
       ? `${addBadgeHtml}${wantsMenu ? hamburgerHtml('-left-1.5') : ''}`
       : hamburgerHtml('-right-1.5');
     const retryHtml = showRetry
-      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
+      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-meadow-700 hover:text-meadow-800 dark:text-meadow-200 dark:hover:text-meadow-100 px-2 py-0.5 rounded-md hover:bg-meadow-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
       : '';
 
     // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
@@ -1438,10 +1447,18 @@ const Home = {
     // The full "Forked from <name>" label lives in the app-view header;
     // here it's glyph-only with the resolved live name (or "<deleted>")
     // in the tooltip. `forked_from` is null for non-forks.
+    //
+    // amber-700, not -500, and the reason is that no INK fixes -500: white on
+    // it measures Lc -54.9 (APCA-W3 0.1.9) and near-black on it only 54.2, so
+    // both candidate inks land in the non-content tier and the FILL is what
+    // has to move. -700 carries white at -85.3, the step the product's other
+    // white-on-colour discs settled on (the bell's `bg-red-700`, the Improve
+    // badge's `bg-meadow-700`). Same badge, same change, in ./app-grid.tsx —
+    // move both together.
     const forkName = app.forked_from && typeof app.forked_from === 'object'
       ? (app.forked_from.name || '<deleted>') : null;
     const forkTagHtml = forkName
-      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm" title="Forked from ${escapeHtml(forkName)}" aria-label="Forked from ${escapeHtml(forkName)}">⑂</span>`
+      ? `<span class="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-700 text-white text-xs font-bold shadow-sm dark:shadow-none" title="Forked from ${escapeHtml(forkName)}" aria-label="Forked from ${escapeHtml(forkName)}">⑂</span>`
       : '';
 
     const icon = Home.iconTileFor(app);
@@ -1477,7 +1494,7 @@ const Home = {
       <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
         ${retryHtml}
         <div class="relative w-14 h-14 shrink-0">
-          <div class="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl" data-icon="${icon.kind}">
+          <div class="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl" data-icon="${icon.kind}" data-aura="${AppCard.auraFor(app)}">
             ${icon.html}
           </div>
           ${menuBadgeHtml}
@@ -1893,16 +1910,46 @@ const Home = {
   // `dual` value in the marker's variant segment — which is what
   // actually drives re-sends. (Gen 6 was briefly claimed by an
   // appearance-neutral tile that was reverted before merging, so the
-  // number is free; use 7 if that ever reaches main independently.)
-  WIDGET_ICON_GEN: 5,
+  // number was free — and the subtle-y2k retune below claims it; use 7
+  // for the next rendering change.)
+  //   gen 6: the faces move to the subtle-y2k warm ramp — the palette
+  //          below tracks what .app-icon-tile's tokens resolve to now,
+  //          replacing values that had gone stale against app.css.
+  //   gen 7: subtle-y2k v2 — grey faces, and the single lemon wash becomes
+  //          the per-app AURA (AppCard.auraFor + WIDGET_AURA_STOPS below,
+  //          mirroring `.app-icon-tile[data-aura]` in app.css), drawn
+  //          behind letter AND emoji glyphs alike, as the DOM tile does.
+  WIDGET_ICON_GEN: 7,
   // The two faces the canvas tile can wear, mirroring `.app-icon-tile`
-  // in app.css. Light is the pre-existing treatment, unchanged; dark
-  // uses the same tokens the CSS tile resolves to under `.dark`
-  // (--bg-secondary / --border / --text-faint). Emoji glyphs are never
-  // recoloured — they carry their own colours in both schemes.
+  // in app.css: light is --bg-primary / --border-light / --text-faint,
+  // dark is --bg-secondary / --border / --text-faint (the tile's dark
+  // rule swaps both tokens — see the note beside it in app.css). Emoji
+  // glyphs are never recoloured — they carry their own colours in both
+  // schemes.
   WIDGET_TILE_PALETTE: {
-    light: { face: '#ffffff', hairline: '#e4e4e7', letter: '#a1a1aa' },
-    dark: { face: '#1a1a30', hairline: '#2e2e50', letter: '#9898b0' },
+    light: { face: '#ffffff', hairline: '#e4e4df', letter: '#97968e' },
+    dark: { face: '#1f1f1b', hairline: '#2d2d28', letter: '#97968e' },
+  },
+  // The per-app aura washes, stop-for-stop the `.app-icon-tile[data-aura]`
+  // rules in app.css (light and dark variants both) — one table here, one
+  // there, cross-referenced because CSS cannot import JS. Offsets 0/0.5/1.
+  WIDGET_AURA_STOPS: {
+    sky: {
+      light: [[0, 'rgba(78, 77, 252, 0.16)'], [0.5, 'rgba(27, 186, 253, 0.11)'], [1, 'rgba(2, 240, 253, 0.07)']],
+      dark: [[0, 'rgba(78, 77, 252, 0.28)'], [0.5, 'rgba(27, 186, 253, 0.16)'], [1, 'rgba(2, 240, 253, 0.08)']],
+    },
+    meadow: {
+      light: [[0, 'rgba(65, 178, 74, 0.16)'], [0.5, 'rgba(139, 214, 105, 0.11)'], [1, 'rgba(214, 250, 135, 0.07)']],
+      dark: [[0, 'rgba(65, 178, 74, 0.26)'], [0.5, 'rgba(139, 214, 105, 0.14)'], [1, 'rgba(214, 250, 135, 0.07)']],
+    },
+    sunset: {
+      light: [[0, 'rgba(251, 23, 157, 0.13)'], [0.5, 'rgba(252, 87, 80, 0.10)'], [1, 'rgba(253, 150, 2, 0.07)']],
+      dark: [[0, 'rgba(251, 23, 157, 0.22)'], [0.5, 'rgba(252, 87, 80, 0.13)'], [1, 'rgba(253, 150, 2, 0.08)']],
+    },
+    lemon: {
+      light: [[0, 'rgba(255, 174, 43, 0.20)'], [0.5, 'rgba(255, 206, 77, 0.14)'], [1, 'rgba(255, 238, 111, 0.10)']],
+      dark: [[0, 'rgba(255, 174, 43, 0.24)'], [0.5, 'rgba(255, 206, 77, 0.14)'], [1, 'rgba(255, 238, 111, 0.08)']],
+    },
   },
   // The colour scheme the widget PNG should be painted for.
   //
@@ -2855,15 +2902,37 @@ const Home = {
         ctx.arcTo(inset, inset, inset + box, inset, radius);
         ctx.closePath();
       }
-      // Light: #ffffff face / #e4e4e7 hairline (unchanged).
-      // Dark: #1a1a30 face / #2e2e50 hairline — the tokens `.dark
-      // .app-icon-tile` resolves to. The hairline is what keeps the
-      // tile shape legible against iOS's own dark widget material, so
-      // it must not be dropped in the dark palette.
+      // Light: #ffffff face / #e4e4df hairline. Dark: #1f1f1b face /
+      // #2d2d28 hairline — the tokens `.dark .app-icon-tile` resolves
+      // to. The hairline is what keeps the tile shape legible against
+      // iOS's own dark widget material, so it must not be dropped in
+      // the dark palette.
       const palette = Home.WIDGET_TILE_PALETTE[variant || Home._widgetScheme()]
         || Home.WIDGET_TILE_PALETTE.light;
       ctx.fillStyle = palette.face;
       ctx.fill();
+      // The per-app aura wash the DOM tile draws (`.app-icon-tile[data-aura]`
+      // in app.css) — same stops from WIDGET_AURA_STOPS, behind letter and
+      // emoji glyphs alike (image icons never reach this renderer). Painted
+      // over the face and clipped by the still-current rounded-rect path via
+      // fill(), before the hairline strokes on top. Guarded so a context
+      // without gradients (a test stub) drops the wash, never the whole PNG.
+      if (typeof ctx.createRadialGradient === 'function') {
+        const wash = ctx.createRadialGradient(
+          size / 2, size / 2, 0, size / 2, size / 2, size / 2,
+        );
+        // Derived from the palette already resolved above, not by asking the
+        // scheme question a second time — two independent resolutions of the
+        // same question would drift.
+        const dim = palette === Home.WIDGET_TILE_PALETTE.dark;
+        const aura = Home.WIDGET_AURA_STOPS[AppCard.auraFor(app)]
+          || Home.WIDGET_AURA_STOPS.lemon;
+        for (const [offset, color] of (dim ? aura.dark : aura.light)) {
+          wash.addColorStop(offset, color);
+        }
+        ctx.fillStyle = wash;
+        ctx.fill();
+      }
       ctx.strokeStyle = palette.hairline;
       ctx.lineWidth = stroke;
       ctx.stroke();

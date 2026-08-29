@@ -48,7 +48,7 @@ export interface BoardFiltersPayload {
 }
 
 const FIELD_LABEL_CLS =
-  'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
+  'block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1';
 
 export function BoardFiltersDialog() {
   const [priority, setPriority] = useState('');
@@ -95,7 +95,7 @@ export function BoardFiltersDialog() {
         <h2 className="text-lg font-bold mb-1">
           Filters
         </h2>
-        <p className="text-xs text-zinc-500 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-4">
           All conditions apply together.
         </p>
         <div className="space-y-4">
@@ -171,7 +171,7 @@ export function BoardFiltersDialog() {
               <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
                 Needs my vote
               </span>
-              <span className="block text-xs text-zinc-500">
+              <span className="block text-xs text-zinc-500 dark:text-zinc-300">
                 Only proposals awaiting your vote
               </span>
             </span>

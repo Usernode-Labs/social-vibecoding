@@ -39,7 +39,7 @@ export function AccountPanel() {
       <span className="relative w-9 h-9 shrink-0 flex items-center justify-center">
         <UserCircleIcon
           id="home-account-glyph"
-          className="w-9 h-9 text-zinc-400 dark:text-zinc-500"
+          className="w-9 h-9 text-zinc-400 dark:text-zinc-400"
           aria-hidden="true"
         />
         <img
@@ -52,11 +52,11 @@ export function AccountPanel() {
         <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
           Profile
         </span>
-        <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+        <span className="block text-xs text-zinc-500 dark:text-zinc-300">
           Your points, settings and account
         </span>
       </span>
-      <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
+      <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-400" />
     </a>
   );
 }

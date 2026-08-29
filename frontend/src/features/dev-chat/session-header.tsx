@@ -114,11 +114,27 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
  * ── What the thumb says ───────────────────────────────────────────────
  *
  * The EYE opens the staging preview (seeing); the pencil-sparkles brings the
- * chat back (doing). The thumb is yellow under the eye and accent blue under
- * the pencil, and WHICHEVER segment it is under carries the label — `Preview`
- * one side, `Building` the other. Symmetrical on purpose: the label belongs
- * to the thumb, so a switch that reads `Preview` in one position has to read
- * `Building` in the other, or the control looks like it lost its word.
+ * chat back (doing). WHICHEVER segment the thumb is under carries the label —
+ * `Preview` one side, `Building` the other. Symmetrical on purpose: the label
+ * belongs to the thumb, so a switch that reads `Preview` in one position has
+ * to read `Building` in the other, or the control looks like it lost its word.
+ *
+ * THE THUMB'S TWO FILLS ARE A KNOWN OPEN ITEM — read the code, not this
+ * paragraph. It used to say "yellow under the eye and accent blue under the
+ * pencil", written when `violet-*` WAS the blue accent; `violet-600` is
+ * #FFC93A now, so the pencil side is the CTA YELLOW and the eye side is
+ * `amber-300`. Two problems follow and neither is settled here:
+ *   * The yellow is supposed to be spent on the ONE filled action per screen,
+ *     and this is a SELECTION inside a recessed `bg-zinc-200` track — where
+ *     the house spelling is a raised white pill (@/components/ui/tabs.tsx's
+ *     SECTION_TAB_ACTIVE, and ../improve/view-tabs.tsx). That sweep scoped
+ *     itself to two track-based controls and never reached this third one.
+ *   * Amber now means "non-blocking heads-up" and nothing else, so the eye
+ *     position paints an attention hue at rest — and a thumb that CHANGES
+ *     HUE as it slides is two fills, not the one travelling fill the
+ *     paragraph above is arguing for.
+ * Deciding this is a palette call with its own evidence, so it is recorded
+ * rather than half-fixed.
  *
  * `Building` used to appear only while an AI turn was in flight, on the
  * reasoning that "you are in the chat and nothing is running" is not news.
@@ -169,7 +185,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     return (
       <span
         id="dc-mode-chip"
-        className="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-600 text-white shrink-0"
+        className="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-600 text-black shrink-0"
       >
         Building
       </span>
@@ -223,7 +239,7 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
         id="session-build-btn"
         ref={penRef}
         type="button"
-        className={seeing ? SEG_OFF : `${SEG_ON} text-white`}
+        className={seeing ? SEG_OFF : `${SEG_ON} text-black`}
         aria-label="Back to building"
         aria-pressed={seeing ? 'false' : 'true'}
         title="Back to the session chat"
@@ -260,7 +276,14 @@ export function SessionHeader(): ReactNode {
       {s.pr ? (
         <button
           id="dc-pr-header-link"
-          className="text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
+          // The ruled LINK ink: 800 light, 200 dark, hovering one step
+          // further in each theme's own direction. Byte-identical to the PR
+          // link the session LIST draws (./session-list.tsx) — the same claim
+          // about the same PR, two screens apart. Both halves of what it
+          // replaced were broken: the light hover named the same step as its
+          // own base, so it rendered nothing, and the dark step sat a tier
+          // under the one its light partner pairs with.
+          className="text-xs text-azure-800 hover:text-azure-900 dark:text-azure-200 dark:hover:text-azure-100"
           title={s.prTitle}
           onClick={() => controller()?.revealPrCard?.()}
         >
@@ -273,7 +296,7 @@ export function SessionHeader(): ReactNode {
            row is the name and the switch, nothing else; hiding it below `sm`
            is the nearest thing to that which still shows it where there is
            room. */
-        <span className="max-sm:hidden text-xs text-zinc-500 dark:text-zinc-400" title={s.newChangeTitle}>New change</span>
+        <span className="max-sm:hidden text-xs text-zinc-500 dark:text-zinc-300" title={s.newChangeTitle}>New change</span>
       )}
       {/* #1348: where this session is built. It states the venue and opens the
           sheet that changes it. Here it survives the launchpad swap, and it is

@@ -32,7 +32,7 @@ export function AlertsSection() {
         <SwitchRow id="devchat-alerts-toggle">
           Play a sound, and notify me when the app is in the background
         </SwitchRow>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-2 leading-relaxed">
           When you're in the app a soft chime plays; when the app is backgrounded or closed you get a system notification instead. Your browser or device may ask permission to show notifications the first time.
         </p>
         <button
@@ -46,7 +46,7 @@ export function AlertsSection() {
           as="p"
           id="devchat-alerts-test-status"
           size="xs"
-          className="text-zinc-500 dark:text-zinc-400"
+          className="text-zinc-500 dark:text-zinc-300"
         />
 
         <div
@@ -60,54 +60,54 @@ export function AlertsSection() {
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="messages">
               <span>
                 <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Messages</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Conversation invitations, messages, mentions, replies, and reactions.</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-300 mt-0.5">Conversation invitations, messages, mentions, replies, and reactions.</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="direct_interactions">
               <span>
                 <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Direct interactions</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Mentions and replies to your messages.</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-300 mt-0.5">Mentions and replies to your messages.</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="invitations">
               <span>
                 <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Invitations</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Collaboration and approver invitations, including when yours are accepted.</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-300 mt-0.5">Collaboration and approver invitations, including when yours are accepted.</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="shared_work">
               <span>
                 <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Shared work</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Specs that someone privately shares with you.</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-300 mt-0.5">Specs that someone privately shares with you.</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="developer_sessions">
               <span>
                 <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Developer sessions</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Interactive and unattended coding sessions that finish while you are away.</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-300 mt-0.5">Interactive and unattended coding sessions that finish while you are away.</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="proposal_alerts">
               <span>
                 <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Proposal alerts</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Proposals needing attention, failed previews, and new proposals ready for voting.</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-300 mt-0.5">Proposals needing attention, failed previews, and new proposals ready for voting.</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
             <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="lightweight_activity">
               <span>
                 <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Lightweight activity</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Reactions and kudos on your work.</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-300 mt-0.5">Reactions and kudos on your work.</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
           </div>
-          <p data-mobile-push-status aria-live="polite" className="text-xs mt-3 text-zinc-500 dark:text-zinc-400">
+          <p data-mobile-push-status aria-live="polite" className="text-xs mt-3 text-zinc-500 dark:text-zinc-300">
             Loading mobile push preferences…
           </p>
         </div>

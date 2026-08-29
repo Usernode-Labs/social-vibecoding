@@ -34,7 +34,7 @@ import { WalletRow } from '../header/wallet-row';
 export function AccountPanel() {
   return (
     <section id="profile-account" className="mt-6">
-      <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mb-2">
+      <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-300 mb-2">
         Account
       </div>
       {/*

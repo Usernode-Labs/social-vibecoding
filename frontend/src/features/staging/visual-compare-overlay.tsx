@@ -47,7 +47,7 @@ export function VisualCompareOverlay(): ReactNode {
       <div className="flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
         <button
           id="visual-compare-back"
-          className="text-zinc-500 hover:text-zinc-100 text-sm flex items-center gap-1 dark:text-zinc-400"
+          className="text-zinc-500 hover:text-zinc-100 text-sm flex items-center gap-1 dark:text-zinc-300"
           onClick={() => visualCompareHandlers.onBack?.()}
         >
           <ChevronLeftIcon className="w-4 h-4" />
@@ -55,7 +55,7 @@ export function VisualCompareOverlay(): ReactNode {
         </button>
         <span className="flex-1">
         </span>
-        <span id="visual-compare-label" className="text-xs text-zinc-500 font-mono truncate dark:text-zinc-400">
+        <span id="visual-compare-label" className="text-xs text-zinc-500 font-mono truncate dark:text-zinc-300">
           {state.label}
         </span>
       </div>

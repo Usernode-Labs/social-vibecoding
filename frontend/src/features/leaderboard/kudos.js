@@ -114,7 +114,7 @@ const Kudos = {
         </button>
         <span class="kudos-popover hidden absolute z-30 right-0 top-full mt-1 min-w-[12rem] max-w-[18rem]
                      bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700
-                     rounded-lg shadow-xl text-xs text-zinc-700 dark:text-zinc-200 p-2"
+                     rounded-lg shadow-xl text-xs text-zinc-700 dark:text-zinc-200 p-2 dark:shadow-none"
               data-kudos-popover></span>
       </span>`;
   },
@@ -150,14 +150,14 @@ const Kudos = {
           popover.classList.remove('hidden');
           const entry = Kudos._ensureCache(sid);
           if (entry.count === 0) {
-            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">No kudos yet. Be the first.</span>';
+            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-300">No kudos yet. Be the first.</span>';
             return;
           }
           if (!entry.givers && !loadPromise) {
             loadPromise = Kudos.fetchGivers(sid).then(() => {
               if (!popover.classList.contains('hidden')) Kudos._renderPopover(sid, popover);
             });
-            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">Loading…</span>';
+            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-300">Loading…</span>';
             return;
           }
           Kudos._renderPopover(sid, popover);
@@ -172,7 +172,7 @@ const Kudos = {
   _renderPopover(sid, popover) {
     const entry = Kudos._ensureCache(sid);
     if (!entry.givers || !entry.givers.length) {
-      popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">No kudos yet. Be the first.</span>';
+      popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-300">No kudos yet. Be the first.</span>';
       return;
     }
     const items = entry.givers.map((g) => {
@@ -180,10 +180,10 @@ const Kudos = {
       const when = relativeTime(g.createdAt);
       return `<div class="flex items-center justify-between gap-2 py-0.5">
         <span class="font-medium">@${who}</span>
-        <span class="text-zinc-500 dark:text-zinc-400">${when}</span>
+        <span class="text-zinc-500 dark:text-zinc-300">${when}</span>
       </div>`;
     }).join('');
-    popover.innerHTML = `<div class="mb-1 text-zinc-500 dark:text-zinc-400">Kudos givers (${entry.givers.length})</div>${items}`;
+    popover.innerHTML = `<div class="mb-1 text-zinc-500 dark:text-zinc-300">Kudos givers (${entry.givers.length})</div>${items}`;
   },
 
   async fetchGivers(sessionId) {
@@ -440,9 +440,14 @@ const Kudos = {
       // the primary standings tab, which this meter is not about. Tooltip
       // explains the weekly cap + reset boundary.
       const tip = `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
+      // The spent state is the neutral secondary ink; the live one is the LINK
+      // ink, one step down-ramp from the plain accent (azure-800 / azure-200)
+      // because this really is a link — a real anchor that underlines on
+      // hover, per the comment below — and the link ink is where the accent
+      // has the headroom to be read as body text rather than as a chip tint.
       const tone = remaining === 0
-        ? 'text-zinc-500 dark:text-zinc-400'
-        : 'text-violet-700 dark:text-violet-400';
+        ? 'text-zinc-500 dark:text-zinc-300'
+        : 'text-azure-800 dark:text-azure-200';
       // Plain inline text, NOT a pill: the row already labels itself
       // "Kudos", so the badge chrome was framing a number that needed no
       // frame — and it read as a tappable chip competing with the nav

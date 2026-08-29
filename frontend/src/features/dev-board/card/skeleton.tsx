@@ -25,9 +25,17 @@
  * WHERE the content is going and roughly HOW MUCH of it there is, which is
  * the part that stops a half-drawn screen reading as a finished one. These
  * are drawn at the real card's geometry — same `rounded-2xl`, same white /
- * `zinc-900` ground, same `px-3.5 py-3`, same 32px leading tile — so the
+ * `zinc-900` ground, same `px-3.5 py-3`, same 36px leading tile — so the
  * arriving cards land on top of their own outlines rather than replacing a
  * different-shaped grey block.
+ *
+ * That tile read 32px (`w-8`) for a box the real card has never drawn:
+ * dev-card.tsx's `CardIcon` is `w-9 h-9` (36px) full and `w-7 h-7` (28px)
+ * dense, so a 32px placeholder split the difference and every row's leading
+ * edge — and the title beside it — jumped 4px the moment data arrived. It
+ * matches the FULL box, which is the one this skeleton stands in for: both
+ * callers (the kanban columns and `#dev-body`'s first paint) are replaced by
+ * full-size cards.
  *
  * The bars vary in width by index. Three identical rows read as a graphic;
  * uneven ones read as text that hasn't arrived. The widths are a table of
@@ -44,8 +52,8 @@ import type { ReactNode } from 'react';
 /** The card shell, matching `.gc-vote-item`'s box (see dev-card.tsx). */
 export const SKELETON_CARD_CLS =
   'w-full flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-3.5 py-3';
-/** The leading icon tile, at the real card's 32px `rounded-lg` box. */
-export const SKELETON_TILE_CLS = 'w-8 h-8 rounded-lg bg-zinc-200 dark:bg-zinc-800 shrink-0';
+/** The leading icon tile, at the real card's 36px `rounded-lg` box (`w-9`). */
+export const SKELETON_TILE_CLS = 'w-9 h-9 rounded-lg bg-zinc-200 dark:bg-zinc-800 shrink-0';
 /** Title line. */
 export const SKELETON_LINE_CLS = 'h-3 rounded bg-zinc-200 dark:bg-zinc-800';
 /** Sub-line — dimmer, as the real card's meta row is. */

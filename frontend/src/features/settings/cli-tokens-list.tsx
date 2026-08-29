@@ -38,7 +38,7 @@ export function CliTokensListView({ phase, tokens }: CliTokensState) {
   // A bare text node, as `list.textContent = 'Loading credentials…'` produced.
   if (phase === 'loading') return <>Loading credentials…</>;
   if (!tokens.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">No CLI credentials.</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-300">No CLI credentials.</p>;
   }
   return (
     <>
@@ -53,7 +53,7 @@ export function CliTokensListView({ phase, tokens }: CliTokensState) {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-mono text-zinc-800 dark:text-zinc-200">{token.hint}</div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{token.detail}</div>
+              <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">{token.detail}</div>
             </div>
             {/*
                 Demo rows (staging ?demo=1) are fabricated server-side and have
@@ -63,7 +63,7 @@ export function CliTokensListView({ phase, tokens }: CliTokensState) {
             {token.revocable ? (
               <button
                 type="button"
-                className="shrink-0 rounded border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+                className="shrink-0 rounded border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-200 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
                 onClick={(e) => controller()?._revokeCliToken?.(token.id, e.currentTarget)}
               >
                 Revoke

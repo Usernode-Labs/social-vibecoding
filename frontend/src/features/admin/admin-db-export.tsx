@@ -64,14 +64,20 @@ const DB_EXPORT_REASONS: Record<string, string> = {
   rate_limited: 'Daily export limit reached. Try again later.',
 };
 
+// The two azure badges spell 800/200, not 700/300 — the same call
+// admin-merges.tsx documents for the byte-identical `bg-azure-500/20` wash: on
+// that wash over the white card azure-700 composites to the weakest ink in the
+// set, where every sibling row below reads at the status tier. 800 is the same
+// hue a step deeper, and azure-200 is its dark partner, matching the meadow,
+// red and amber rows' own light-700/dark-200 pairing.
 const DB_EXPORT_STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  completed: { label: 'Completed', cls: 'bg-green-500/20 text-green-800 dark:text-green-400' },
-  streaming: { label: 'Streaming', cls: 'bg-violet-500/20 text-violet-700 dark:text-violet-400' },
-  requested: { label: 'Requested', cls: 'bg-violet-500/20 text-violet-700 dark:text-violet-400' },
-  failed: { label: 'Failed', cls: 'bg-red-500/20 text-red-700 dark:text-red-400' },
-  cancelled: { label: 'Cancelled', cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-400' },
-  interrupted: { label: 'Interrupted', cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-400' },
-  denied: { label: 'Denied', cls: 'bg-red-500/20 text-red-700 dark:text-red-400' },
+  completed: { label: 'Completed', cls: 'bg-meadow-500/20 text-meadow-700 dark:text-meadow-200' },
+  streaming: { label: 'Streaming', cls: 'bg-azure-500/20 text-azure-800 dark:text-azure-200' },
+  requested: { label: 'Requested', cls: 'bg-azure-500/20 text-azure-800 dark:text-azure-200' },
+  failed: { label: 'Failed', cls: 'bg-red-500/20 text-red-700 dark:text-red-200' },
+  cancelled: { label: 'Cancelled', cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-200' },
+  interrupted: { label: 'Interrupted', cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-200' },
+  denied: { label: 'Denied', cls: 'bg-red-500/20 text-red-700 dark:text-red-200' },
 };
 
 function fmtBytes(n: any): string {
@@ -100,7 +106,7 @@ function fmtTime(iso?: string): string {
 }
 
 const FIELD = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm';
-const RED_BTN = 'rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors';
+const RED_BTN = 'rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors';
 
 function HistoryRow({ r }: { r: Row }) {
   const b = (r.status && DB_EXPORT_STATUS_BADGE[r.status])
@@ -111,21 +117,21 @@ function HistoryRow({ r }: { r: Row }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium">{r.username}</span>
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}`}>{b.label}</span>
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded ${b.cls}`}>{b.label}</span>
           </div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>{fmtTime(r.requested_at)}</span>
             <span className="font-mono">{r.db_name}</span>
             <span title="compressed size downloaded">{fmtBytes(r.bytes_sent)}</span>
             <span>{fmtDuration(r.started_at, r.finished_at)}</span>
             <span>{`from ${r.ip || '—'}`}</span>
             {r.denied_reason ? (
-              <span className="text-zinc-500 dark:text-zinc-400">
+              <span className="text-zinc-500 dark:text-zinc-300">
                 {`reason: ${String(r.denied_reason).replace(/_/g, ' ')}`}
               </span>
             ) : null}
           </div>
-          {r.error ? <div className="text-xs text-red-700 dark:text-red-400 mt-1 break-words">{r.error}</div> : null}
+          {r.error ? <div className="text-xs text-red-700 dark:text-red-200 mt-1 break-words">{r.error}</div> : null}
         </div>
       </div>
     </div>
@@ -224,14 +230,23 @@ function DbExportSection() {
 
   return (
     <div id="admin-db-export-panel" className="space-y-4">
-      <div className="rounded-lg border border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/40 p-4">
-        <h2 className="text-lg font-semibold text-red-700 dark:text-red-300">Database export: handle as a credential</h2>
-        <p className="text-sm text-red-800 dark:text-red-200 mt-2">
+      <div className="rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-transparent p-4">
+        {/* Two-level ladder, held in BOTH themes: the sweep moved the h2 to
+            dark:red-200, byte-identical to the body copy, which collapsed
+            this panel's dark ink ladder to one level while light kept two —
+            the exact flatten AGENTS.md's dark-mode section records reverting
+            at 15 sites. The h2 keeps the solved 700/200 parity pair
+            (Lc 80.0 / -80.0); the BODY is the half that differentiates, at
+            800/100 — the ramp solves that pair too (90.0 / -89.9, measured
+            with the APCA-W3 0.1.9 port) — so body sits one tier above the
+            heading in both themes, as it did in light all along. */}
+        <h2 className="text-lg font-semibold text-red-700 dark:text-red-200">Database export: handle as a credential</h2>
+        <p className="text-sm text-red-800 dark:text-red-100 mt-2">
           This downloads an unredacted copy of durable platform data. Ephemeral mobile push registrations and delivery rows are excluded.
           Anyone holding the file can take over accounts and reach every app&apos;s data.
           It contains:
         </p>
-        <ul className="text-sm text-red-800 dark:text-red-200 mt-2 list-disc pl-5 space-y-1">
+        <ul className="text-sm text-red-800 dark:text-red-100 mt-2 list-disc pl-5 space-y-1">
           <li>every user&apos;s password hash and every currently-valid login session token</li>
           <li>every activation code, used and unused</li>
           <li>every app&apos;s database password, LLM proxy token and file-storage token</li>
@@ -239,7 +254,7 @@ function DbExportSection() {
           <li>every chat message, spec, dev-session transcript, uploaded attachment and screenshot</li>
           <li>all analytics, votes, kudos, bounties and moderation history</li>
         </ul>
-        <p className="text-sm text-red-800 dark:text-red-200 mt-3">
+        <p className="text-sm text-red-800 dark:text-red-100 mt-3">
           {'It does '}<span className="font-semibold">not</span>
           {' contain the individual apps’ own databases, uploaded app-file bytes (those live in object storage), the chain node’s data, or the platform’s environment file, which matters because the key that decrypts the API-key and app-secret blobs lives only there.'}
         </p>
@@ -247,14 +262,14 @@ function DbExportSection() {
 
       <div className={`${AdminUI.card} p-4`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p id="admin-db-export-target" className="text-sm text-zinc-500 dark:text-zinc-400">
+          <p id="admin-db-export-target" className="text-sm text-zinc-500 dark:text-zinc-300">
             {statusText || (status ? (
               <>
                 {'Target database '}<code className="font-mono text-zinc-700 dark:text-zinc-200">{status.dbName || 'unknown'}</code>
                 {' · current size '}<span className="font-medium">{fmtBytes(status.dbSizeBytes)}</span>
-                <span className="text-zinc-500 dark:text-zinc-400"> (the .sql.gz download is smaller)</span>
+                <span className="text-zinc-500 dark:text-zinc-300"> (the .sql.gz download is smaller)</span>
                 {' · '}
-                <span className="text-zinc-500 dark:text-zinc-400">
+                <span className="text-zinc-500 dark:text-zinc-300">
                   {`${status.remainingToday} of ${status.maxPerDay} exports left today`}
                 </span>
               </>
@@ -270,13 +285,13 @@ function DbExportSection() {
               // never re-enables the button out from under an open confirm.
               disabled={!status?.available || confirming}
               onClick={() => setConfirming(true)}
-              className="rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:hover:bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors">
+              className="rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:hover:bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors">
               Export database</button>
           ) : (
-            <span className="inline-block rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">
+            <span className="inline-block rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-500 dark:text-zinc-300">
               Exporting the database requires full admin.</span>
           )}
-          <p id="admin-db-export-reason" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+          <p id="admin-db-export-reason" className="text-xs text-zinc-500 dark:text-zinc-300 mt-2">
             {status && !status.available
               ? (DB_EXPORT_REASONS[status.reason] || 'Database export is currently unavailable.')
               : ''}
@@ -288,8 +303,8 @@ function DbExportSection() {
         <div id="admin-db-export-confirm"
           className={`${confirming ? '' : 'hidden '}mt-4 rounded-lg border border-red-300 dark:border-red-900 bg-white dark:bg-zinc-950 p-4`}>
           <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Confirm the export</p>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            {'Type '}<code className="font-mono text-red-700 dark:text-red-400">EXPORT</code>
+          <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">
+            {'Type '}<code className="font-mono text-red-700 dark:text-red-200">EXPORT</code>
             {' and re-enter your own account password.'}
           </p>
           <div className="mt-3 space-y-2">
@@ -301,7 +316,7 @@ function DbExportSection() {
               value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
           <p id="admin-db-export-error"
-            className={`${error ? '' : 'hidden '}text-xs text-red-700 dark:text-red-400 mt-2`}>{error}</p>
+            className={`${error ? '' : 'hidden '}text-xs text-red-700 dark:text-red-200 mt-2`}>{error}</p>
           <div className="flex items-center gap-2 mt-3">
             <button id="admin-db-export-go" type="button" className={RED_BTN} disabled={busy} onClick={start}>
               {busy ? 'Exporting…' : 'Download the .sql.gz'}
@@ -312,7 +327,7 @@ function DbExportSection() {
           </div>
         </div>
 
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-4">
           {'The file is a gzip-compressed plain-SQL dump ('}<code className="font-mono">.sql.gz</code>
           {'), taken with '}<code className="font-mono">--no-owner --no-privileges</code>{'. Restore it with:'}<br />
           <code className="font-mono text-zinc-600 dark:text-zinc-300 break-all">
@@ -324,7 +339,7 @@ function DbExportSection() {
       </div>
 
       <details id="admin-db-export-guidance" open={guidanceOpen} onToggle={(e) => setGuidanceOpen((e.target as HTMLDetailsElement).open)}
-        className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-4">
+        className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-transparent p-4">
         <summary className="text-sm font-semibold text-amber-800 dark:text-amber-200 cursor-pointer">
           After you download it, and what to do if it leaks
         </summary>
@@ -346,14 +361,14 @@ function DbExportSection() {
       <div className={`${AdminUI.card} p-4`}>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
           <h3 className="text-base font-semibold">Export history</h3>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">Append-only: cannot be cleared</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-300">Append-only: cannot be cleared</span>
         </div>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">Every attempt, including refused ones, is recorded here permanently.</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-3">Every attempt, including refused ones, is recorded here permanently.</p>
         <div id="admin-db-export-history" className="space-y-2">
           {(history || []).map((r) => <HistoryRow key={r.id} r={r} />)}
         </div>
         <p id="admin-db-export-history-empty"
-          className={`text-sm text-zinc-500 dark:text-zinc-400${history && !history.length ? '' : ' hidden'}`}>
+          className={`text-sm text-zinc-500 dark:text-zinc-300${history && !history.length ? '' : ' hidden'}`}>
           No exports recorded yet.
         </p>
       </div>

@@ -63,8 +63,9 @@
 
 import { useState, type ReactNode } from 'react';
 
-import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
+import { ChatIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
+import { EmojiTileGlyph } from '../apps/app-card-view';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
@@ -113,17 +114,28 @@ function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
   return (
     <span
       aria-hidden="true"
-      className={'w-8 h-8 shrink-0 rounded-full bg-violet-500/10 text-violet-500 '
+      className={'w-8 h-8 shrink-0 rounded-full bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 '
         + 'flex items-center justify-center text-sm font-semibold'}
     >
-      {view.icon || initial}
+      {view.icon
+        // notifications.js picks these icons as emoji strings — the same
+        // OpenMoji upgrade (and slice-miss / load-failure fallback) every
+        // tile surface gets, one size down for the w-8 disc.
+        ? (
+          <EmojiTileGlyph
+            emoji={view.icon}
+            textClass="text-sm leading-none"
+            imgClass="w-5 h-5 object-contain"
+          />
+        )
+        : initial}
     </span>
   );
 }
 
 function SectionHead({ children }: { children: ReactNode }): ReactNode {
   return (
-    <div className="px-4 pt-4 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+    <div className="px-4 pt-4 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-300">
       {children}
     </div>
   );
@@ -150,9 +162,16 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
             apart from the meta line, which is the same size in regular
             weight. A kind with no subject to name (a collaborator invite is
             entirely its own label) renders on the SUBJECT's line instead: a
-            heading over nothing is worse than either line alone. */}
+            heading over nothing is worse than either line alone.
+
+            Same ink as the meta line below, deliberately — the two are told
+            apart by WEIGHT, which is what the paragraph above says. The dark
+            half is `zinc-300`, not the `zinc-400` this line arrived with: at
+            Lc -43.5 against the light half's 76.8 that pair is two rungs out
+            of parity, and it is the spelling rule 5 of
+            tests/theme-ink-guards.test.js is ratcheting DOWN. */}
         {view.segments.length ? (
-          <span className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 truncate">
+          <span className="block text-xs font-semibold text-zinc-500 dark:text-zinc-300 truncate">
             {view.label}
           </span>
         ) : null}
@@ -179,8 +198,14 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
             spend its other two lines on the kind and the subject — see
             rowView in ./notifications.js. `by` is absent on a system row
             (nobody did it) and on the two key rows (the name there is the
-            subject). */}
-        <span className="block text-xs text-zinc-500 truncate">
+            subject).
+
+            The `dark:` half is not optional: a bare `text-zinc-500` renders
+            Lc -10 on the dark card, which is invisible rather than merely
+            quiet. `dark:text-zinc-300` is the secondary pair's parity partner
+            (76.8 light / 75.2 dark) and it is what the other 800-odd
+            un-backgrounded secondary runs spell. */}
+        <span className="block text-xs text-zinc-500 dark:text-zinc-300 truncate">
           {[view.appLine, view.by ? `by @${view.by}` : null, view.time]
             .filter(Boolean).join(' · ')}
         </span>
@@ -189,25 +214,44 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
           A collapsed conversation run says how many it stands for. Only ever
           rendered above 1, so an ordinary row is unchanged — and it is a
           COUNT, not an alerting badge: it sits in the row's own ink when the
-          run is read, violet only while it is still waiting on you.
+          run is read, blue only while it is still waiting on you. (The word
+          was "violet" when the accent was one; `violet-*` is the YELLOW ramp
+          now and the unread recipe below is `azure`.)
       */}
       {view.count && view.count > 1 ? (
         <span
-          className={'shrink-0 min-w-[1.25rem] px-1.5 h-5 rounded-full text-[0.65rem] font-semibold '
+          className={'shrink-0 min-w-[1.25rem] px-1.5 h-5 rounded-full text-xs font-semibold '
             + 'flex items-center justify-center '
             + (view.unread
-              ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400'
-              : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400')}
+              // A BADGE ON A WASH. Only the INK moves: `azure-700` ->
+              // `azure-800` light, `azure-400` -> `azure-200` dark.
+              //
+              // MEASURE THE INK AGAINST THE WASH, NOT AGAINST THE PAGE. The
+              // 77.8 / -81.4 that 800/200 scores is on plain white and on the
+              // bare dark card; this ink never sits on either. Composited,
+              // `azure-500/15` is #E0EEFB in light and #223039 in dark, and
+              // the real numbers are 66.6 / -78.6 (was 56.8 / -49.0 at
+              // 700/400 — better on both sides, which is the point).
+              //
+              // THE WASH ITSELF STAYS AT /15. A pass took it to /20 reasoning
+              // that a heavier wash "keeps the ink's ground from thinning",
+              // which is backwards: on a light page more azure DARKENS the
+              // ground under a dark ink and closes the gap. /20 measured 63.3
+              // light and -77.3 dark — worse in BOTH themes than the /15 it
+              // replaced. 700 is also the step chips, washes and fills keep,
+              // so the surface had no reason to move with the ink.
+              ? 'bg-azure-500/15 text-azure-800 dark:text-azure-200'
+              : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300')}
           aria-label={`${view.count} notifications`}
         >
           {view.count > 99 ? '99+' : view.count}
         </span>
       ) : null}
       {view.unread ? (
-        <span className="w-2 h-2 shrink-0 rounded-full bg-violet-500" aria-label="Unread">
+        <span className="w-2 h-2 shrink-0 rounded-full bg-azure-500" aria-label="Unread">
         </span>
       ) : null}
-      <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
+      <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-400" />
     </button>
   );
 }
@@ -224,6 +268,12 @@ export function NotificationsSheetView() {
     screenList: ScreenRowView[] | null;
     screenCanLoadMore?: boolean;
     loadingMore: boolean;
+    // The Messages tab's own pager. ./notifications-store.js declares both and
+    // ./notifications.js publishes them from `msgHasMore` / `msgLoading`; this
+    // cast is the only place that had not been widened, so the three reads
+    // below were type errors on the branch that added them.
+    messagesCanLoadMore?: boolean;
+    loadingOlderMessages?: boolean;
   };
   // Unread, not All: the bell is tapped because it has a count.
   const [tab, setTab] = useState<Tab>('unread');
@@ -264,8 +314,8 @@ export function NotificationsSheetView() {
   const tabCls = (active: boolean) =>
     'shrink-0 whitespace-nowrap px-1 pb-2 text-sm font-medium border-b-2 transition-colors '
     + (active
-      ? 'border-violet-500 text-zinc-900 dark:text-zinc-100'
-      : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300');
+      ? 'border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-100'
+      : 'border-transparent text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100');
 
   return (
     <>
@@ -286,11 +336,22 @@ export function NotificationsSheetView() {
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
         className={'fixed z-50 flex flex-col bg-white dark:bg-zinc-900 '
-          + 'border-zinc-200 dark:border-zinc-700 shadow-2xl nav-sheet-transition'}
+          + 'border-zinc-200 dark:border-zinc-700 shadow-2xl nav-sheet-transition dark:shadow-none'}
       >
+      {/*
+          `pt-5`, not `pt-4`: CLEAR THE CORNER ARC. Below 640px this sheet is a
+          bottom sheet with `border-top-*-radius: 1.25rem` (public/css/app.css,
+          the "Notifications and Messages sheets" block), and 20px of arc is
+          still turning at 16px down — the first tab label reads as collided
+          with the top edge rather than merely tight. The two other members of
+          this family already spell the radius as their top inset against the
+          identical 1.25rem corner: ../app-context/app-context-sheet.tsx's
+          header (`px-5 pt-5`) and ../improve/improve-panel.tsx, which carries
+          the full reasoning. One family, one number.
+      */}
       <div
         id="notifications-screen-tabs"
-        className={'sticky top-0 z-10 bg-white dark:bg-zinc-900 flex items-end gap-4 px-5 pt-4 '
+        className={'sticky top-0 z-10 bg-white dark:bg-zinc-900 flex items-end gap-4 px-5 pt-5 '
           + 'border-b border-zinc-200 dark:border-zinc-800 shrink-0'}
         role="tablist"
         aria-label="Notification filters"
@@ -334,7 +395,7 @@ export function NotificationsSheetView() {
         <button
           id="notifications-sheet-close"
           type="button"
-          className={'pb-2 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 '
+          className={'pb-2 text-zinc-500 hover:text-zinc-700 dark:text-zinc-300 '
             + 'dark:hover:text-zinc-200 un-touch-target'}
           aria-label="Close"
           onClick={() => NotificationsSheet.close()}
@@ -384,8 +445,13 @@ export function NotificationsSheetView() {
           <button
             id="notifications-screen-mark-all"
             type="button"
+            // A text button, so it takes the LINK ink: 800 / dark 200
+            // (Lc 77.8 / -81.4, a pair at parity) rather than the 700/400 it
+            // carried, which was 68.0 / -51.8. The hover WASH stays at
+            // `azure-500/10` — 700 is what chip, wash and fill surfaces keep;
+            // only the ink moves.
             className={'inline-flex items-center h-7 px-3 rounded-full text-xs font-medium '
-              + 'text-violet-600 hover:bg-violet-500/10 dark:text-violet-400 '
+              + 'text-azure-800 hover:bg-azure-500/10 dark:text-azure-200 '
               + 'disabled:opacity-40 disabled:hover:bg-transparent un-touch-target'}
             disabled={!unread.length}
             onClick={() => controller()?.markAllRead()}
@@ -400,7 +466,9 @@ export function NotificationsSheetView() {
           type="button"
           className={'w-full text-left px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 '
             + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors flex items-center gap-3 '
-            + 'text-sm font-medium text-violet-600 dark:text-violet-400'}
+            // A navigational row — the same link ink as the two "See older
+            // notifications" buttons below, which were already 800/200.
+            + 'text-sm font-medium text-azure-800 dark:text-azure-200'}
           onClick={(event) => {
             event.stopPropagation();
             NotificationsSheet.close();
@@ -409,11 +477,11 @@ export function NotificationsSheetView() {
             else window.location.hash = '#messages';
           }}
         >
-          <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
+          <ChatIcon className="w-5 h-5 shrink-0" />
           <span className="flex-1 min-w-0">
             All messages
           </span>
-          <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
+          <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-400" />
         </button>
       ) : (
         <NotificationsPinnedSections />
@@ -435,7 +503,7 @@ export function NotificationsSheetView() {
         </>
       ) : null}
       {!rows.length ? (
-        <p className="px-4 py-8 text-sm text-zinc-500 text-center">
+        <p className="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-300 text-center">
           {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
         </p>
       ) : null}
@@ -468,7 +536,14 @@ export function NotificationsSheetView() {
           <button
             id="notifications-see-older-messages"
             type="button"
-            className="w-full text-center text-xs text-violet-500 hover:underline disabled:opacity-40"
+            // The link ink its two siblings below already carry. This button
+            // arrived on the merge from #1469's messages pager and kept the
+            // `text-violet-500` spelling that read as a link on the old
+            // palette; `violet-500` is `#FFD84D` here, so it renders pale
+            // yellow on white — invisible, and yellow is the one filled
+            // action per screen, which a text pager is not.
+            className={'w-full text-center text-xs text-azure-800 dark:text-azure-200 '
+              + 'hover:underline disabled:opacity-40'}
             disabled={snap.loadingOlderMessages}
             onClick={() => controller()?.loadOlderMessages()}
           >
@@ -480,7 +555,7 @@ export function NotificationsSheetView() {
           <button
             id="notifications-see-older"
             type="button"
-            className="w-full text-center text-xs text-violet-500 hover:underline"
+            className="w-full text-center text-xs text-azure-800 dark:text-azure-200 hover:underline"
             onClick={() => setTab('all')}
           >
             See older notifications
@@ -491,7 +566,7 @@ export function NotificationsSheetView() {
           <button
             id="notifications-load-older"
             type="button"
-            className="w-full text-center text-xs text-violet-500 hover:underline disabled:opacity-40"
+            className="w-full text-center text-xs text-azure-800 dark:text-azure-200 hover:underline disabled:opacity-40"
             disabled={snap.loadingMore}
             onClick={() => controller()?.loadOlder()}
           >

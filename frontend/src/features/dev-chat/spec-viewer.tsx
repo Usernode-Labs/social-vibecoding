@@ -71,7 +71,7 @@ const VERSION_SELECT
   = 'text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300'
   + ' dark:border-zinc-700 px-2 py-1';
 
-const MUTED_BLOCK = 'p-4 text-sm text-zinc-500 dark:text-zinc-400';
+const MUTED_BLOCK = 'p-4 text-sm text-zinc-500 dark:text-zinc-300';
 
 const TAB = {
   on: 'dc-spec-viewer-tab dc-spec-viewer-tab-active',

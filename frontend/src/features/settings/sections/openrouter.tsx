@@ -18,13 +18,13 @@ export function OpenRouterSection() {
       <SectionHeading title={<>OpenRouter &amp; Codex</>}>
         OpenRouter is the default coding-agent option after you add or claim a key. GLM 5.3 is preferred when your OpenRouter catalog exposes it, and you can select any other available model. Keys are encrypted at rest and injected only for a turn.
       </SectionHeading>
-      <div id="settings-openrouter-beta-gated" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs text-zinc-600 dark:text-zinc-400 mb-3">
+      <div id="settings-openrouter-beta-gated" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs text-zinc-600 dark:text-zinc-300 mb-3">
         Codex/OpenRouter is being rolled out gradually and isn't available for your account yet.
       </div>
-      <div id="settings-openrouter-managed-card" className="hidden rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/30 px-3 py-3 mb-3">
+      <div id="settings-openrouter-managed-card" className="hidden rounded-lg border border-azure-200 dark:border-azure-900 bg-azure-50 dark:bg-azure-950/30 px-3 py-3 mb-3">
         <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Included OpenRouter key</div>
-        <div id="settings-openrouter-managed-message" className="mt-1 text-xs text-zinc-600 dark:text-zinc-400"></div>
-        <Button id="settings-openrouter-claim" className="hidden mt-3" size="narrow">
+        <div id="settings-openrouter-managed-message" className="mt-1 text-xs text-zinc-600 dark:text-zinc-300"></div>
+        <Button id="settings-openrouter-claim" layout="hiddenGap3" size="narrow">
           Create my included key
         </Button>
       </div>
@@ -40,9 +40,9 @@ export function OpenRouterSection() {
       <div id="settings-openrouter-key-display" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
         sk-or-&hellip;<span id="settings-openrouter-key-last4"></span>
       </div>
-      <div id="settings-openrouter-key-info" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2 text-zinc-600 dark:text-zinc-400"></div>
+      <div id="settings-openrouter-key-info" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2 text-zinc-600 dark:text-zinc-300"></div>
       <div id="settings-openrouter-personal-controls">
-        <Label className="mb-1" htmlFor="settings-openrouter-key">
+        <Label spacing="stacked" htmlFor="settings-openrouter-key">
           Or use your personal OpenRouter API key
         </Label>
         <div className="flex gap-2">
@@ -56,11 +56,11 @@ export function OpenRouterSection() {
         </div>
       </div>
       <div id="settings-openrouter-models-wrap" className="hidden mt-4">
-        <Label className="mb-1" htmlFor="settings-openrouter-model">
+        <Label spacing="stacked" htmlFor="settings-openrouter-model">
           Codex model
         </Label>
         <Select id="settings-openrouter-model"></Select>
-        <Label className="mt-2 mb-1" htmlFor="settings-openrouter-reasoning">
+        <Label spacing="stackedGap" htmlFor="settings-openrouter-reasoning">
           Reasoning effort
         </Label>
         <Select id="settings-openrouter-reasoning">

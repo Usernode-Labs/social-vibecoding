@@ -84,7 +84,7 @@ export function AgentFilesSection() {
         >
           <div id="agent-files-form-title" className="font-medium text-zinc-700 dark:text-zinc-300 mb-2">
           </div>
-          <Field className="mb-2" label="Name">
+          <Field spacing="stacked" label="Name">
             <Input
               id="agent-files-name"
               type="text"
@@ -96,7 +96,7 @@ export function AgentFilesSection() {
               text
             />
           </Field>
-          <Field id="agent-files-desc-wrap" className="mb-2" startHidden label="Description">
+          <Field id="agent-files-desc-wrap" spacing="stacked" startHidden label="Description">
             <Input
               id="agent-files-desc"
               type="text"

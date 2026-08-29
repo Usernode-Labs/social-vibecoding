@@ -129,14 +129,14 @@ export function CloseIssueDialog() {
           </span>
           ?
         </h2>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-4">
           This opens a group vote. If it passes, the issue is closed here and on GitHub.
         </p>
         <form id="close-issue-form" className="space-y-4" onSubmit={submit}>
           <div>
             <label
               htmlFor="close-issue-reason"
-              className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+              className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1"
             >
               Why should this issue be closed?
               <span className="font-normal">
@@ -155,11 +155,11 @@ export function CloseIssueDialog() {
               onKeyDown={onReasonKeyDown}
             >
             </Textarea>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">
               Posted publicly on the GitHub issue when the vote passes.
             </p>
           </div>
-          <div id="close-issue-error" ref={errorRef} className="text-red-400 text-sm hidden">
+          <div id="close-issue-error" ref={errorRef} className="text-red-700 dark:text-red-300 text-sm hidden">
             {error}
           </div>
           <div className="flex gap-3">

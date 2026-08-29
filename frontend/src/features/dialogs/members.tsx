@@ -65,7 +65,7 @@ export function MembersDialog() {
         </h2>
         <div id="members-visibility-section" className="hidden space-y-3 mb-4">
           <div>
-            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
               Who can build it
             </label>
             <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
@@ -86,7 +86,7 @@ export function MembersDialog() {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
               Who can see &amp; use it
             </label>
             <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
@@ -105,17 +105,17 @@ export function MembersDialog() {
                 Collaborators only
               </button>
             </div>
-            <p id="members-vis-hint" className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 hidden">
+            <p id="members-vis-hint" className="text-xs text-zinc-500 dark:text-zinc-300 mt-1 hidden">
               Apps everyone can build are always public to view.
             </p>
           </div>
-          <div id="members-vis-error" className="text-red-400 text-sm hidden">
+          <div id="members-vis-error" className="text-red-700 dark:text-red-300 text-sm hidden">
           </div>
         </div>
         <div id="members-invite-section" className="hidden mb-4">
           <label
             htmlFor="members-invite-input"
-            className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+            className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1"
           >
             Invite a user
           </label>
@@ -133,7 +133,7 @@ export function MembersDialog() {
             {/* Typeahead dropdown (GET /api/users/search) */}
             <div
               id="members-invite-suggestions"
-              className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
+              className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden dark:shadow-none"
             >
             </div>
           </div>
@@ -141,7 +141,7 @@ export function MembersDialog() {
           </div>
         </div>
         <div id="members-list-section" className="hidden mb-4">
-          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
             Collaborators
           </p>
           <div
@@ -163,7 +163,7 @@ export function MembersDialog() {
             Proposal approvals
           </p>
           <div>
-            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
               Who can approve proposals
             </label>
             <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
@@ -184,7 +184,7 @@ export function MembersDialog() {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+            <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
               How many approvals are needed
             </label>
             <div className="flex items-center gap-2">
@@ -223,7 +223,7 @@ export function MembersDialog() {
                 Propose
               </Button>
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">
               Changes open a proposal that is voted on under the current rules.
             </p>
           </div>
@@ -240,7 +240,7 @@ export function MembersDialog() {
             <p className="text-sm font-medium">
               Initial approvers
             </p>
-            <p id="members-initial-approvers-status" className="text-xs text-zinc-500 dark:text-zinc-400">
+            <p id="members-initial-approvers-status" className="text-xs text-zinc-500 dark:text-zinc-300">
             </p>
             <div id="members-initial-approvers-list" className="space-y-1">
             </div>
@@ -257,7 +257,7 @@ export function MembersDialog() {
               />
               <div
                 id="members-initial-approver-suggestions"
-                className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
+                className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden dark:shadow-none"
               >
               </div>
             </div>
@@ -279,7 +279,7 @@ export function MembersDialog() {
               </button>
             </div>
           </div>
-          <div id="members-governance-error" className="text-red-400 text-sm hidden">
+          <div id="members-governance-error" className="text-red-700 dark:text-red-300 text-sm hidden">
           </div>
         </div>
         {/*
@@ -292,7 +292,7 @@ export function MembersDialog() {
             don't apply there, so "No approvers yet" only misled.
         */}
         <div id="members-approvers-section" className="hidden mb-4">
-          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
             Approvers
           </p>
           <div
@@ -300,7 +300,7 @@ export function MembersDialog() {
             className="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"
           >
           </div>
-          <p id="members-approvers-dormant-note" className="hidden text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+          <p id="members-approvers-dormant-note" className="hidden text-xs text-zinc-500 dark:text-zinc-300 mt-1">
             Approvers only take effect when &ldquo;Who can approve proposals&rdquo; is set to Invited approvers.
           </p>
           <div id="members-approver-invite" className="hidden relative mt-2">
@@ -316,7 +316,7 @@ export function MembersDialog() {
             />
             <div
               id="members-approver-suggestions"
-              className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
+              className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden dark:shadow-none"
             >
             </div>
           </div>
@@ -333,7 +333,7 @@ export function MembersDialog() {
             self_hosted apps.
         */}
         <div id="members-appadmins-section" className="hidden mb-4">
-          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+          <p className="text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
             App admins
           </p>
           <div
@@ -355,7 +355,7 @@ export function MembersDialog() {
               />
               <div
                 id="members-appadmins-suggestions"
-                className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"
+                className="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden dark:shadow-none"
               >
               </div>
             </div>
@@ -382,7 +382,7 @@ export function MembersDialog() {
           </div>
           <p id="members-appadmins-status" className="text-sm mt-2 hidden">
           </p>
-          <p id="members-appadmins-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+          <p id="members-appadmins-note" className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">
             Set in
             <code>
               dapp.json

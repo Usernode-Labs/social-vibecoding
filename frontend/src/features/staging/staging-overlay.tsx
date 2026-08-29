@@ -156,7 +156,7 @@ export function StagingOverlay(): ReactNode {
       <div className="staging-chrome-bar flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
         <button
           id="staging-back"
-          className="text-zinc-500 hover:text-zinc-100 text-sm flex items-center gap-1 dark:text-zinc-400"
+          className="text-zinc-500 hover:text-zinc-100 text-sm flex items-center gap-1 dark:text-zinc-300"
           onClick={() => stagingHandlers.onBack?.()}
         >
           <ChevronLeftIcon className="w-4 h-4" />
@@ -171,7 +171,7 @@ export function StagingOverlay(): ReactNode {
         <button
           id="staging-test-btn"
           ref={testBtnRef}
-          className="hidden text-xs font-medium px-2.5 py-1 rounded bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 shrink-0"
+          className="hidden text-xs font-medium px-2.5 py-1 rounded bg-azure-500/15 text-azure-300 hover:bg-azure-500/25 shrink-0"
           title={state.testBtnTitle || undefined}
           onClick={() => stagingHandlers.onTest?.()}
         >
@@ -194,7 +194,7 @@ export function StagingOverlay(): ReactNode {
         >
           {state.fsBtnText}
         </button>
-        <span id="staging-url-label" className="text-xs text-zinc-500 font-mono truncate dark:text-zinc-400">
+        <span id="staging-url-label" className="text-xs text-zinc-500 font-mono truncate dark:text-zinc-300">
           {state.urlLabel}
         </span>
         {/*
@@ -207,13 +207,40 @@ export function StagingOverlay(): ReactNode {
         */}
         <button
           id="staging-dev-console-btn"
-          className="relative text-zinc-500 hover:text-zinc-200 dark:text-zinc-400"
+          className="relative text-zinc-500 hover:text-zinc-200 dark:text-zinc-300"
           aria-label="Open developer console"
         >
           <TerminalIcon className="w-5 h-5" />
+          {/*
+              Two things moved on this badge, and neither is a restyle:
+
+                * `1.1rem` -> `1.125rem`. 17.6px was a spelling nobody chose;
+                  18px is what this same role measures at `.messages-unread`
+                  (public/css/app.css) and in @/components/ui/feed.tsx.
+                * `red-500` -> `red-700`. White ink on -500 measures Lc -72.0
+                  (APCA-W3 0.1.9), under the 75 body minimum, and the ink
+                  cannot fix it — white is already the lightest ink there is,
+                  so the FILL has to move. -700 carries white at -85.2.
+
+              -700 rather than the -600 that would merely clear the floor
+              (-77.4), because this badge is read on the staging dock's own
+              near-black chrome rather than on a page, and the extra rung is
+              cheap there.
+
+              BUT DO NOT READ A SIBLING'S VALUE OUT OF THIS COMMENT. An
+              earlier draft justified -700 by asserting that
+              #notifications-badge in ../header/platform-header.tsx — the same
+              ROLE, a white-on-red count pill in an 18px disc — is also
+              `bg-red-700`. It is not: that badge is `bg-red-600`, white at
+              Lc -77.4, so the two are a step apart and the claim was
+              fabricated, not measured. Whoever settles the pair should read
+              platform-header.tsx and move BOTH, not trust this line.
+              tests/header-status-pane.test.js diffs the bell's class list
+              against the Improve button's, so all three move together.
+          */}
           <span
             id="staging-dev-console-badge"
-            className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
+            className="hidden absolute -top-1 -right-1 min-w-[1.125rem] h-[1.125rem] px-1 rounded-full bg-red-700 text-white text-xs font-bold flex items-center justify-center"
           >
           </span>
         </button>
@@ -224,7 +251,7 @@ export function StagingOverlay(): ReactNode {
         */}
         <button
           id="staging-dock-close"
-          className="staging-dock-only text-zinc-500 hover:text-zinc-100 text-lg leading-none px-1 shrink-0 dark:text-zinc-400"
+          className="staging-dock-only text-zinc-500 hover:text-zinc-100 text-lg leading-none px-1 shrink-0 dark:text-zinc-300"
           aria-label="Close preview"
           onClick={() => stagingHandlers.onDockClose?.()}
         >
@@ -235,7 +262,7 @@ export function StagingOverlay(): ReactNode {
           Explains why this change isn't live yet — a common point of
           confusion the first time someone previews their own PR.
       */}
-      <div className="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-500 shrink-0 dark:text-zinc-400">
+      <div className="px-4 py-1.5 bg-azure-500/10 border-b border-azure-500/20 text-xs text-zinc-500 shrink-0 dark:text-zinc-300">
         Private preview. Only you can see this until the app's users vote your change in.
       </div>
       <div className="relative flex-1">
@@ -262,17 +289,17 @@ export function StagingOverlay(): ReactNode {
         <div
           id="staging-testing-panel"
           ref={panelRef}
-          className="hidden absolute top-2 left-2 right-2 sm:left-auto sm:w-96 z-10 rounded-lg border border-violet-500/30 bg-zinc-900/95 backdrop-blur shadow-xl"
+          className="hidden absolute top-2 left-2 right-2 sm:left-auto sm:w-96 z-10 rounded-lg border border-azure-500/30 bg-zinc-900/95 backdrop-blur shadow-xl dark:shadow-none"
         >
           <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
-            <span className="text-xs font-semibold text-violet-300">
+            <span className="text-xs font-semibold text-azure-300">
               How to test
             </span>
             <span className="flex-1">
             </span>
             <button
               id="staging-testing-close"
-              className="text-zinc-500 hover:text-zinc-200 text-sm leading-none px-1 dark:text-zinc-400"
+              className="text-zinc-500 hover:text-zinc-200 text-sm leading-none px-1 dark:text-zinc-300"
               aria-label="Dismiss testing instructions"
               onClick={() => stagingHandlers.onTestingClose?.()}
             >
@@ -306,7 +333,7 @@ export function StagingOverlay(): ReactNode {
           <div id="staging-loader-title" className="text-sm text-zinc-200 font-medium">
             {state.loaderTitle}
           </div>
-          <div id="staging-loader-sub" className="text-xs text-zinc-500 max-w-xs leading-relaxed dark:text-zinc-400">
+          <div id="staging-loader-sub" className="text-xs text-zinc-500 max-w-xs leading-relaxed dark:text-zinc-300">
             {state.loaderSub}
           </div>
         </div>

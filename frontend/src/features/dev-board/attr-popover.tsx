@@ -62,7 +62,10 @@ export function AttrOptionRow({ option, field }: { option: AttrOptionView; field
       <span className="attr-opt-right">
         {option.count ? <span className="attr-opt-count">{option.count}</span> : null}
         {option.mine ? (
-          <CheckIcon className="w-3.5 h-3.5 text-violet-700 shrink-0 dark:text-violet-400" strokeWidth="3" />
+          /* 700 pairs with 300 on the azure ramp; the -400 this carried is a
+             tier under it. The `strokeWidth="3"` is the w-3 row of the icon
+             compensation table and is not part of that change. */
+          <CheckIcon className="w-3 h-3 text-azure-700 shrink-0 dark:text-azure-300" strokeWidth="3" />
         ) : null}
       </span>
     </button>
@@ -118,10 +121,10 @@ export function AttrPopoverView({
 }: AttrPopoverState) {
   if (phase === 'idle') return null;
   if (phase === 'loading') {
-    return <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">Loading…</div>;
+    return <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-300">Loading…</div>;
   }
   if (phase === 'error') {
-    return <div className="px-3 py-2 text-xs text-red-700 dark:text-red-400">Couldn&#39;t load options.</div>;
+    return <div className="px-3 py-2 text-xs text-red-700 dark:text-red-200">Couldn&#39;t load options.</div>;
   }
   return (
     <>
@@ -142,7 +145,7 @@ export function AttrPopoverView({
         </Fragment>
       ))}
       {emptyNote ? (
-        <div className="px-3 py-1.5 text-xs text-zinc-500 dark:text-zinc-500">{emptyNote}</div>
+        <div className="px-3 py-1.5 text-xs text-zinc-500 dark:text-zinc-300">{emptyNote}</div>
       ) : null}
       {add ? <AddBox add={add} suggestions={suggestions} /> : null}
     </>

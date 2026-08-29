@@ -55,7 +55,7 @@ import { BrowseRows } from './browse-list';
 import { browseStore } from './mount';
 
 const CLEAR_CLASS = 'absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center '
-  + 'justify-center rounded-full text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200  dark:text-zinc-400'
+  + 'justify-center rounded-full text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 dark:text-zinc-300 '
   + 'hover:bg-zinc-500/10 text-base leading-none';
 
 function browse(): any {
@@ -122,7 +122,7 @@ export function BrowseScreen() {
       >
         <div className="relative max-w-xl">
           <SearchIcon
-            className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
+            className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-300"
             aria-hidden="true"
           />
           <input
@@ -132,7 +132,7 @@ export function BrowseScreen() {
             autoComplete="off"
             placeholder="Search all apps…"
             aria-label="Search all apps"
-            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
+            className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-azure-400 dark:focus:border-azure-600"
             onInput={(e) => browse()?.setQuery(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === 'Escape' && e.currentTarget.value) {
@@ -205,14 +205,14 @@ export function BrowseScreen() {
           className="max-md:mx-3 max-md:my-3 max-md:overflow-hidden max-md:rounded-2xl max-md:bg-white max-md:dark:bg-zinc-900 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"
         >
           {state.error
-            ? <div className="p-4 text-red-400 text-sm">Failed to load apps</div>
+            ? <div className="p-4 text-red-700 dark:text-red-200 text-sm">Failed to load apps</div>
             : <BrowseRows rows={state.rows} />}
         </div>
         <div
           id="browse-empty"
           className={state.empty
-            ? 'px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'
-            : 'hidden px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'}
+            ? 'px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-300'
+            : 'hidden px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-300'}
         >{state.empty}</div>
       </div>
       {/*

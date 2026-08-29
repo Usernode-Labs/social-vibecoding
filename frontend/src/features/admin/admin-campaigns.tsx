@@ -127,28 +127,46 @@ function writeSubHash(id: number | null): void {
 }
 
 const APP_BADGE: Record<string, [string, string]> = {
-  pending: ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Pending'],
-  running: ['bg-violet-500/10 text-violet-700 dark:text-violet-400', 'Running'],
-  pr_open: ['bg-sky-500/10 text-sky-700 dark:text-sky-400', 'PR open'],
-  merged: ['bg-green-500/10 text-green-800 dark:text-green-400', 'Merged'],
-  skipped: ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', 'Skipped'],
-  failed: ['bg-red-500/10 text-red-700 dark:text-red-400', 'Failed'],
+  pending: ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-300', 'Pending'],
+  // The ordinal is carried by the PAIR, not by the light half alone. This
+  // table is a pipeline (pending → running → pr_open → merged/failed) and
+  // separating two states by lightness within one hue is what an ordinal
+  // wants — but each state still has to read at the status tier in BOTH
+  // themes, the way `merged`, `failed` and `skipped` below now do. So the two
+  // blues take the ramp's two SOLVED pairs rather than one solved pair and one
+  // half-moved one: 700/300 is Lc 68.0 / -66.5 and 800/200 is 77.8 / -81.4,
+  // which keeps pr_open a step deeper than running on both grounds. It was
+  // 700/400 and 800/300 — a 16.2 and an 11.3 mismatch, leaving `running`, the
+  // state an operator watches longest, at -51.8 on a 12px badge.
+  //
+  // The GROUND is /10 in all six rows and pr_open is not an exception. The
+  // ordinal is the INK's job; a badge's wash is what makes it read as a badge,
+  // and one row at twice the tint is a chip that has lost the set. It also
+  // undid the ordinal it was reached for: measured on the row's own white
+  // ground (APCA-W3 0.1.9), azure-800 reads 70.4 on the /10 wash and only 63.3
+  // on a /20, which put pr_open BELOW every non-blue sibling (merged 76.3,
+  // pending/skipped 74.4, failed 71.1) and 2.8 from `running` instead of 9.9.
+  running: ['bg-azure-500/10 text-azure-700 dark:text-azure-300', 'Running'],
+  pr_open: ['bg-azure-500/10 text-azure-800 dark:text-azure-200', 'PR open'],
+  merged: ['bg-meadow-500/10 text-meadow-700 dark:text-meadow-200', 'Merged'],
+  skipped: ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-300', 'Skipped'],
+  failed: ['bg-red-500/10 text-red-700 dark:text-red-200', 'Failed'],
 };
 
 function AppBadge({ state }: { state?: string }) {
-  const [cls, label] = (state && APP_BADGE[state]) || ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', state || '—'];
+  const [cls, label] = (state && APP_BADGE[state]) || ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-300', state || '—'];
   return (
-    <span className={`text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cls} shrink-0`}>
+    <span className={`text-xs font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cls} shrink-0`}>
       {label}
     </span>
   );
 }
 
-const CHECK_CLASS = (s?: string) => (s === 'passing' ? 'text-green-800 dark:text-green-400'
-  : (s === 'failing' || s === 'error') ? 'text-red-700 dark:text-red-400'
-    : 'text-zinc-500 dark:text-zinc-400');
+const CHECK_CLASS = (s?: string) => (s === 'passing' ? 'text-meadow-700 dark:text-meadow-200'
+  : (s === 'failing' || s === 'error') ? 'text-red-700 dark:text-red-200'
+    : 'text-zinc-500 dark:text-zinc-300');
 
-const ROW_LINK = 'text-xs text-violet-700 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300 shrink-0';
+const ROW_LINK = 'text-xs text-azure-800 dark:text-azure-200 hover:text-azure-900 dark:hover:text-azure-100 shrink-0';
 
 // POST one session recheck; resolves when the server accepted it (including
 // the "already running" coalesce response).
@@ -200,7 +218,7 @@ function AppRow({
         <span className="flex items-center gap-2">
           {app.prUrl ? (
             <a href={app.prUrl} target="_blank" rel="noopener"
-              className="text-violet-700 dark:text-violet-400 hover:underline text-xs">
+              className="text-azure-800 dark:text-azure-200 hover:underline text-xs">
               {`PR #${app.prNumber || '?'}`}
             </a>
           ) : null}
@@ -220,7 +238,7 @@ function AppRow({
           ) : null}
         </span>
       </div>
-      {app.error ? <div className="text-xs text-red-700 dark:text-red-400 mt-0.5 break-words">{app.error}</div> : null}
+      {app.error ? <div className="text-xs text-red-700 dark:text-red-200 mt-0.5 break-words">{app.error}</div> : null}
     </li>
   );
 }
@@ -304,8 +322,12 @@ function CampaignRow({
     onReloadList();
   };
 
-  const statusCls = c.status === 'running' ? 'text-violet-700 dark:text-violet-400'
-    : c.status === 'done' ? 'text-green-800 dark:text-green-400' : 'text-zinc-500 dark:text-zinc-400';
+  // Plain ink on the card, not a badge: 800/200, so the one blue word in this
+  // line reads at the same tier as its meadow-700 and zinc-500 siblings. The
+  // APP_BADGE table above deliberately keeps 700/300 for `running` — that is
+  // an ORDINAL inside one hue on a wash, which is a different job.
+  const statusCls = c.status === 'running' ? 'text-azure-800 dark:text-azure-200'
+    : c.status === 'done' ? 'text-meadow-700 dark:text-meadow-200' : 'text-zinc-500 dark:text-zinc-300';
 
   return (
     <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3" id={`admin-campaign-${c.id}`}>
@@ -313,23 +335,23 @@ function CampaignRow({
         data-campaign-toggle={c.id} onClick={() => onToggle(c.id)}>
         <div className="min-w-0">
           <div className="font-medium truncate">{c.title}</div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400">
+          <div className="text-xs text-zinc-500 dark:text-zinc-300">
             {`#${c.id} · `}<span className={statusCls}>{c.status}</span>
             {` · by ${c.created_by_username || 'platform'} · ${new Date(c.created_at).toLocaleString()}`}
           </div>
         </div>
         <div className="text-xs font-mono shrink-0">
           {`${c.merged_apps}/${c.total_apps} merged`}
-          {c.failed_apps ? <>{' · '}<span className="text-red-700 dark:text-red-400">{`${c.failed_apps} failed`}</span></> : null}
+          {c.failed_apps ? <>{' · '}<span className="text-red-700 dark:text-red-200">{`${c.failed_apps} failed`}</span></> : null}
         </div>
       </div>
       <div className={`mt-2${open ? '' : ' hidden'}`} data-campaign-detail={c.id}>
-        {failed ? <p className="text-xs text-red-700 dark:text-red-400">Failed to load campaign detail.</p> : null}
+        {failed ? <p className="text-xs text-red-700 dark:text-red-200">Failed to load campaign detail.</p> : null}
         {!failed && detail ? (
           <>
             <details className="mb-2">
-              <summary className="text-xs text-zinc-500 dark:text-zinc-400 cursor-pointer">Instructions</summary>
-              <pre className="text-xs text-zinc-500 dark:text-zinc-400 whitespace-pre-wrap mt-1 p-2 rounded bg-white dark:bg-zinc-900 max-h-48 overflow-y-auto">
+              <summary className="text-xs text-zinc-500 dark:text-zinc-300 cursor-pointer">Instructions</summary>
+              <pre className="text-xs text-zinc-500 dark:text-zinc-300 whitespace-pre-wrap mt-1 p-2 rounded bg-white dark:bg-zinc-900 max-h-48 overflow-y-auto">
                 {detail.instructions || ''}
               </pre>
             </details>
@@ -338,10 +360,10 @@ function CampaignRow({
                 ? apps.map((a) => (
                   <AppRow key={a.appId} app={a} campaignId={c.id} write={write} onDone={refresh} />
                 ))
-                : <li className="text-xs text-zinc-500 dark:text-zinc-400">No target apps.</li>}
+                : <li className="text-xs text-zinc-500 dark:text-zinc-300">No target apps.</li>}
             </ul>
             <div className="flex items-center justify-end gap-2 mt-2">
-              <span className="campaign-detail-status text-xs text-zinc-500 dark:text-zinc-400">{status}</span>
+              <span className="campaign-detail-status text-xs text-zinc-500 dark:text-zinc-300">{status}</span>
               {write && failingChecks.length > 0 ? (
                 <button type="button" className={`campaign-recheck-all-btn ${AdminUI.btn.primarySm}`}
                   disabled={recheckingAll} onClick={recheckAll}>
@@ -350,7 +372,10 @@ function CampaignRow({
               ) : null}
               {write && green > 0 ? (
                 <button type="button" disabled={merging} onClick={mergeGreen}
-                  className="campaign-merge-green-btn rounded-lg bg-green-600 hover:bg-green-500 px-3 py-1.5 text-xs font-medium text-white transition-colors">
+                  /* hover DARKENS a filled control under white ink (600 → 700),
+                     the direction AdminUI.btn.destructive documents; the 500
+                     hover dropped white from Lc -80.7 to -60.0 at the pointer. */
+                  className="campaign-merge-green-btn rounded-lg bg-meadow-600 hover:bg-meadow-700 px-3 py-1.5 text-xs font-medium text-white transition-colors">
                   {merging ? 'Merging…' : `Merge all green (${green})`}
                 </button>
               ) : null}
@@ -459,7 +484,7 @@ function CampaignsSection() {
           ) : null}
         </div>
       </div>
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
+      <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-3">
         Fleet-wide platform maintenance. A campaign fans one set of AI instructions out across every app as its own PR;
         this list tracks per-app progress.
       </p>
@@ -475,14 +500,14 @@ function CampaignsSection() {
             placeholder="Optional: comma-separated app slugs to target (blank = every app)"
             value={targets} onChange={(e) => setTargets(e.target.value)} />
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300">
               Submitting opens a governance proposal on the platform app. The campaign starts when the vote passes, or when an admin applies the proposal.
             </p>
             <button id="admin-campaign-submit-btn" type="button" className={`${AdminUI.btn.primary} shrink-0`}
               disabled={submitting} onClick={submit}>Propose campaign</button>
           </div>
           <p id="admin-campaign-form-status"
-            className={formStatus ? `text-xs ${formStatus.ok ? 'text-green-800 dark:text-green-400' : 'text-red-700 dark:text-red-400'}` : 'text-xs hidden'}>
+            className={formStatus ? `text-xs ${formStatus.ok ? 'text-meadow-700 dark:text-meadow-200' : 'text-red-700 dark:text-red-200'}` : 'text-xs hidden'}>
             {formStatus ? formStatus.msg : ''}
           </p>
         </div>
@@ -494,7 +519,7 @@ function CampaignsSection() {
         ))}
       </div>
       <p id="admin-campaign-empty"
-        className={`text-sm text-zinc-500 dark:text-zinc-400${loaded && !campaigns.length ? '' : ' hidden'}`}>
+        className={`text-sm text-zinc-500 dark:text-zinc-300${loaded && !campaigns.length ? '' : ' hidden'}`}>
         No campaigns yet.
       </p>
     </div>

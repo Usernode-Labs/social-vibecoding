@@ -119,7 +119,7 @@ const AppView = {
   DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-3.5 py-3 text-left transition-colors',
   // Trailing chevron marking a card as tappable (same affordance as the
   // General chat card).
-  DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
+  DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-500 dark:text-zinc-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
   // Tappable cards have no border left to tint, so the affordance moves to the
   // surface itself — the same `active:` fill ListRow uses.
   DEV_CARD_HOVER_CLS: 'hover:bg-zinc-50 dark:hover:bg-zinc-800 cursor-pointer',
@@ -135,47 +135,101 @@ const AppView = {
   // to itself is what actually protects it.
   DEV_CARD_MUTED_CLS: 'dev-card-muted',
 
-  // Per-type tinted icon chips — the Dev list's identity system, a mini
-  // version of the home tiles' avatar square. [tint classes, SVG path].
+  // Per-type icon chips — the Dev list's identity system, a mini version of
+  // the home tiles' avatar square. [tint classes, lucide shapes, emoji].
+  //
+  // subtle-y2k v2: each kind wears an OpenMoji illustration on a soft aura
+  // tile (`.dev-icon-aura-*` in app.css — the same four gradients the app
+  // tiles rotate through, assigned here SEMANTICALLY: meadow = work/done,
+  // sky = proposals/discussion, sunset = issues, lemon = governance). The
+  // lucide glyph stays as the FALLBACK for an emoji outside the vendored
+  // OpenMoji slice (card/dev-card.tsx does the lookup at render time), and
+  // the text-* utilities in the tint ink that fallback glyph. It is SHAPES
+  // rather than one path because most of these lucide glyphs are not
+  // path-only; <Glyph> in @/components/ui/icons.tsx renders them.
+  //
+  // TWO NAMES, ONE HUE, and the difference matters when editing these. The
+  // `dev-icon-aura-*` half names a GRADIENT in app.css — those four keep
+  // their brand-kit names (sky, meadow, sunset, lemon) and none of them is a
+  // Tailwind ramp. The `text-*` half is a Tailwind ink, and stock `sky`
+  // ceased to be a product hue at the reskin: these five entries now spell
+  // the platform's own blue. 700 with the 300 partner rather than the -400
+  // the WCAG era left here — measured on the card in each theme with an
+  // APCA-W3 0.1.9 port written for this pass, azure-700 is Lc 68.0 light and
+  // azure-300 is -66.5 dark (1.5 apart, where -400 was -51.8 and 16.2 apart).
+  // The ink is a FALLBACK glyph on a wash, so it keeps the working brand hex
+  // at 700; the 800/200 headroom step is for link ink.
   DEV_CARD_ICONS: {
-    chat: ['bg-violet-600/15 text-violet-700 dark:text-violet-400', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
-    // Pencil (Heroicons outline) — sessions are edits-in-progress, not
-    // terminals (#219). Distinct from the issue icon's pencil-in-bubble.
-    session: ['bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z'],
-    // Comment-bubble-with-pencil: the chat bubble outline (dots removed)
-    // plus the Heroicons pencil-alt tip scaled to sit inside it — issues
-    // are written feedback, not warnings (hence no more exclamation).
-    issue: ['bg-amber-500/15 text-amber-800 dark:text-amber-300', 'M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5zM15.35 6.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H10.2v-1.7l5.15-5.15z'],
-    proposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
-    gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
-    done: ['bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', 'M5 13l4 4L19 7'],
-    // Document-text (Heroicons outline) — an issue with an auto-generated
-    // proposal attached (#250). Sky keeps "blue = proposal" consistent with
-    // the proposal cards, while the page shape stays distinct from their
-    // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
-    issueProposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
-    // "Mine" variants — distinguished from their base by GLYPH ONLY: they keep
-    // the same sky tint as the base issue/PR chips but swap in a self-contained
-    // pencil/edit mark = "your work-in-progress, jump back in." They mark the
-    // two feed rows where the viewer already has a session waiting: a ready
-    // issue they cloned (Go to session) and an open PR they authored (Open
-    // session). No manual coordinate compositing: issueProposalMine is a true
-    // document-with-pencil (page + folded corner + pencil) so it still reads
-    // as a document; proposalMine is a plain pencil "edit" mark.
-    issueProposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
-    proposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3'],
+    chat: [
+      'dev-icon-aura-sky text-azure-700 dark:text-azure-300',
+      [['path', { d: 'M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z' }], ['path', { d: 'M8 11h.01' }], ['path', { d: 'M12 11h.01' }], ['path', { d: 'M16 11h.01' }]],  // lucide/message-square-more
+      '💬',
+    ],
+    // Pencil — sessions are edits-in-progress, not terminals (#219).
+    session: [
+      'dev-icon-aura-meadow text-meadow-700 dark:text-meadow-200',
+      [['path', { d: 'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z' }], ['path', { d: 'm15 5 4 4' }]],  // lucide/pencil
+      '✏️',
+    ],
+    // Issues are written feedback with some urgency — the OpenMoji ❗ on the
+    // sunset aura; the bubble-with-pencil path stays as the fallback glyph.
+    issue: [
+      'dev-icon-aura-sunset text-amber-800 dark:text-amber-300',
+      [['path', { d: 'M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z' }], ['path', { d: 'M12 7v4' }], ['path', { d: 'M12 15h.01' }]],  // lucide/message-square-warning
+      '❗',
+    ],
+    // The tally: a proposal accrues votes. NOT the ballot box (1F5F3) it
+    // replaces — OpenMoji draws that in two greys with a pale outline, so it
+    // was the one glyph in this table that vanished into its own aura wash.
+    proposal: [
+      'dev-icon-aura-sky text-azure-700 dark:text-azure-300',
+      [['path', { d: 'm9 12 2 2 4-4' }], ['path', { d: 'M5 7c0-1.1.9-2 2-2h10a2 2 0 0 1 2 2v12H5V7Z' }], ['path', { d: 'M22 19H2' }]],  // lucide/vote
+      '📊',
+    ],
+    gov: [
+      'dev-icon-aura-lemon text-azure-700 dark:text-azure-300',
+      [['path', { d: 'M12 3v18' }], ['path', { d: 'm19 8 3 8a5 5 0 0 1-6 0zV7' }], ['path', { d: 'M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1' }], ['path', { d: 'm5 8 3 8a5 5 0 0 1-6 0zV7' }], ['path', { d: 'M7 21h10' }]],  // lucide/scale
+      '⚖️',
+    ],
+    done: [
+      'dev-icon-aura-meadow text-meadow-700 dark:text-meadow-200',
+      [['path', { d: 'M20 6 9 17l-5-5' }]],  // lucide/check
+      '✅',
+    ],
+    // An issue with an auto-generated proposal attached (#250): a drafted
+    // spec, so the memo. Sky keeps "proposal" consistent with the PR cards.
+    issueProposal: [
+      'dev-icon-aura-sky text-azure-700 dark:text-azure-300',
+      [['path', { d: 'M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z' }], ['path', { d: 'M14 2v5a1 1 0 0 0 1 1h5' }], ['path', { d: 'M10 9H8' }], ['path', { d: 'M16 13H8' }], ['path', { d: 'M16 17H8' }]],  // lucide/file-text
+      '📝',
+    ],
+    // "Mine" variants — distinguished from their base by GLYPH ONLY, as
+    // before: pens = "your work-in-progress, jump back in." The crayon and
+    // brush rather than the fountain/ballpoint pens: same metaphor, but
+    // OpenMoji draws those two in colour and the pens in grey.
+    issueProposalMine: [
+      'dev-icon-aura-sky text-azure-700 dark:text-azure-300',
+      [['path', { d: 'M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34' }], ['path', { d: 'M14 2v5a1 1 0 0 0 1 1h5' }], ['path', { d: 'M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z' }]],  // lucide/file-pen
+      '🖌️',
+    ],
+    proposalMine: [
+      'dev-icon-aura-sky text-azure-700 dark:text-azure-300',
+      [['path', { d: 'M13 21h8' }], ['path', { d: 'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z' }]],  // lucide/pen-line
+      '🖍️',
+    ],
   },
 
-  // Returns the icon's SPEC — tint classes + SVG path — which
+  // Returns the icon's SPEC — tint classes + SVG path + emoji — which
   // card/dev-card.tsx renders. `pulse` animates the whole chip for
   // in-progress states (#250); `title` is the tooltip naming the state the
   // tint encodes. The class literals stay in DEV_CARD_ICONS above, which is
   // where Tailwind's extractor already scanned them.
   _devCardIcon(type, opts) {
-    const [tint, d] = AppView.DEV_CARD_ICONS[type] || AppView.DEV_CARD_ICONS.issue;
+    const [tint, shapes, emoji] = AppView.DEV_CARD_ICONS[type] || AppView.DEV_CARD_ICONS.issue;
     return {
       tint,
-      path: d,
+      shapes,
+      emoji: emoji || undefined,
       small: (opts && opts.small) ? true : undefined,
       pulse: (opts && opts.pulse) ? true : undefined,
       title: (opts && opts.title) || undefined,
@@ -1198,6 +1252,10 @@ const AppView = {
       : { kind: 'letter', html: escapeHtml(((record && record.name) || '?').charAt(0).toUpperCase()) };
     return {
       iconKind: tile.kind,
+      // The per-app aura (subtle-y2k v2). Guarded: AppCard is a bundle
+      // export republished on window for exactly this kind of legacy read.
+      aura: (window.AppCard && typeof AppCard.auraFor === 'function')
+        ? AppCard.auraFor(record || {}) : '',
       iconHtml: tile.html,
       name: (record && record.name) || '',
       note: 'Opening…',
@@ -1214,7 +1272,7 @@ const AppView = {
   _coverHtml(cover, { id = 'app-launch-cover', pinned = false } = {}) {
     return `
       <div id="${id}" class="app-launch-cover"${pinned ? ' data-pinned="true"' : ''} aria-hidden="true">
-        <div class="app-icon-tile app-launch-cover-icon" data-icon="${cover.iconKind}">${cover.iconHtml}</div>
+        <div class="app-icon-tile app-launch-cover-icon" data-icon="${cover.iconKind}"${cover.aura ? ` data-aura="${cover.aura}"` : ''}>${cover.iconHtml}</div>
         <p class="app-launch-cover-name">${escapeHtml(cover.name)}</p>
         <p class="app-launch-cover-note" id="${id}-note">${escapeHtml(cover.note)}</p>
         <div class="dc-status-spinner-arc app-launch-cover-spinner hidden" id="${id}-spinner"></div>
@@ -4257,7 +4315,7 @@ const AppView = {
     // is how the board came to show an error message during a slow open.
     if (ok === null) return;
     if (!ok) {
-      body.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
+      body.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-300">Couldn&#39;t load the feed right now.</div>';
       return;
     }
     AppView._renderLockedNotice();
@@ -4740,8 +4798,15 @@ const AppView = {
     const rows = tail.map((c) => {
       const isBot = AppView._isBotCommentAuthor(c.author);
       const author = c.author ? escapeHtml(c.author) : 'unknown';
+      // Bare inline text on the comment row, not a chip — no wash under it —
+      // so it takes the LINK ink step rather than the chip one. That also
+      // happens to be what preserves it: stock sky-700 read Lc 79.1 on the
+      // white card and azure-700 reads 68.0, so folding to the chip step
+      // would have cost 11 Lc on a 15px label; azure-800 is 77.8. The dark
+      // half moves off -400 either way (-58.7 -> -81.4). APCA-W3 0.1.9 port
+      // written for this pass.
       const botTag = isBot
-        ? ' <span class="text-[0.9375rem] text-sky-700 dark:text-sky-400">bot</span>'
+        ? ' <span class="text-[0.9375rem] text-azure-800 dark:text-azure-200">bot</span>'
         : '';
       return `<div class="dev-feed-comment">
           <span class="dev-feed-comment-author">${author}</span>${botTag}
@@ -5761,7 +5826,7 @@ const AppView = {
   _sessionStatusTagSpec(s) {
     if (AppView._sessionBusy(s)) {
       return {
-        t: 'chip', key: 'state', cls: 'dev-badge bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+        t: 'chip', key: 'state', cls: 'dev-badge bg-meadow-500/10 text-meadow-700 dark:text-meadow-200',
         label: 'working…', spinner: true,
       };
     }
@@ -5789,13 +5854,13 @@ const AppView = {
       };
     }
     return s && s.status === 'paused'
-      ? { t: 'chip', key: 'state', cls: 'dev-badge bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', label: 'paused' }
+      ? { t: 'chip', key: 'state', cls: 'dev-badge bg-zinc-500/10 text-zinc-500 dark:text-zinc-300', label: 'paused' }
       : null;
   },
 
   _importedSessionBadgeSpec(s) {
     return s && s.source === 'imported'
-      ? { t: 'chip', key: 'imported', cls: 'dev-badge bg-amber-500/10 text-amber-800 dark:text-amber-400', label: 'Imported PR' }
+      ? { t: 'chip', key: 'imported', cls: 'dev-badge bg-amber-500/10 text-amber-800 dark:text-amber-200', label: 'Imported PR' }
       : null;
   },
 
@@ -6682,7 +6747,16 @@ const AppView = {
     // meta words they cost no slot and still read at a glance.
     const meta = [{
       t: 'link', href: pr.pr_url || '#', s: `PR#${pr.pr_number || pr.id}`,
-      cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
+      // A LINK takes the azure headroom step; chip and identity inks stay at
+      // 700/300. (That last figure said 700/400 until the accent-ink pass:
+      // -400 was never anybody's considered dark half, it was the WCAG-era
+      // default, and at Lc -51.8 on the card it is a large-headline ink doing
+      // body work. The chips' parity partner is 300, at -66.5 against 700's
+      // 68.0 — see the table in features/apps/app-card.js.)
+      // azure-800 is Lc 77.8 on white against 700's 68.0, and the
+      // dark partner moves to the 200 step the azure ramp names as its
+      // double-duty dark ink (-81.4, vs -51.8), so the pair lands 3.6 apart.
+      cls: 'font-mono text-azure-800 hover:underline dark:text-azure-200',
     }];
     const provenance = AppView._proposalProvenanceWords(pr);
     if (provenance) meta.push({ t: 'text', s: provenance });
@@ -8544,9 +8618,9 @@ const AppView = {
   // hover the linked-issue pills use, never a brightness filter.
   _priorityMeta(value) {
     switch (value) {
-      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-700 dark:text-red-400', hover: 'hover:bg-red-500/20' };
+      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-700 dark:text-red-200', hover: 'hover:bg-red-500/20' };
       case 'medium': return { label: 'Medium', cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-300', hover: 'hover:bg-amber-500/20' };
-      case 'low': return { label: 'Low', cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400', hover: 'hover:bg-sky-500/20' };
+      case 'low': return { label: 'Low', cls: 'bg-azure-500/10 text-azure-700 dark:text-azure-300', hover: 'hover:bg-azure-500/20' };
       default: return null;
     }
   },
@@ -8577,13 +8651,29 @@ const AppView = {
   //
   // The fifth was `indigo` until the widget-language reskin, and the swap to
   // `purple` is that reskin finishing its own job rather than a taste change.
-  // Indigo was picked when `violet-*` really was violet: purple sat right
-  // beside the accent and indigo was the nearest free hue. `violet-*` is the
-  // BLUE accent now (see tailwind.config.js), which frees the purple end of
-  // the spectrum and leaves indigo stranded between two families that ARE in
-  // use — the accent and `sky` (Improvement). It also removes the last
-  // stock-`indigo-` class in the tree, so the one-palette rule can be
+  // Indigo was picked when the accent scale really was a violet: purple sat
+  // right beside it and indigo was the nearest free hue. It also removed the
+  // last stock-`indigo-` class in the tree, so the one-palette rule could be
   // enforced across every source file instead of two directories.
+  //
+  // That paragraph used to say "`violet-*` is the BLUE accent now", and the
+  // correction is left visible rather than deleted because the key has moved
+  // twice and the stale reading is an active trap: READ THE HEX, NOT THE KEY.
+  // `violet-*` is the YELLOW ramp (violet-600 #FFC93A is the CTA fill); the
+  // blue is its own scale, `azure`. The other half is stale too — the
+  // Improvement chip was `sky` when this was written and folded into `azure`
+  // when sky ceased to be a product hue.
+  //
+  // THIS TABLE IS NOT SWEPT, deliberately. It is a categorical wheel whose
+  // whole job is to be six hues the built-ins do not use; mapping it onto the
+  // seven tuned ramps would collapse every custom chip back into the built-in
+  // vocabulary it exists to stay clear of. Retuning it is a palette decision
+  // with its own evidence, not a token substitution — and it is why `cyan`
+  // and `teal` survived the blue fold (cyan-700 is 24.4 deg / 0.071 from
+  // azure-700 and teal-500 is 66.0 / 0.150, against a 25.5 / 0.086 reference,
+  // so neither is a second blue). Two real defects are recorded rather than
+  // half-fixed: four of the six inks (teal-500, fuchsia-500, lime-600,
+  // purple-400) have no `dark:` partner at all, and purple-400 is a bare -400.
   CATEGORY_CUSTOM_TINTS: [
     { cls: 'bg-teal-500/10 text-teal-500', hover: 'hover:bg-teal-500/20' },
     { cls: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-400', hover: 'hover:bg-cyan-500/20' },
@@ -8617,12 +8707,19 @@ const AppView = {
   // USER INPUT for custom categories — every caller must escapeHtml it.
   _categoryMeta(value) {
     switch (value) {
-      case 'feature': return { label: 'Feature', cls: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', hover: 'hover:bg-emerald-500/20' };
-      case 'bug': return { label: 'Bug', cls: 'bg-red-500/10 text-red-700 dark:text-red-400', hover: 'hover:bg-red-500/20' };
-      case 'improvement': return { label: 'Improvement', cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400', hover: 'hover:bg-sky-500/20' };
-      case 'design': return { label: 'Design', cls: 'bg-violet-500/10 text-violet-700 dark:text-violet-400', hover: 'hover:bg-violet-500/20' };
+      case 'feature': return { label: 'Feature', cls: 'bg-meadow-500/10 text-meadow-700 dark:text-meadow-200', hover: 'hover:bg-meadow-500/20' };
+      case 'bug': return { label: 'Bug', cls: 'bg-red-500/10 text-red-700 dark:text-red-200', hover: 'hover:bg-red-500/20' };
+      // KNOWN COLLAPSE: `improvement` and `design` now share the azure
+      // spelling. Stock `sky` and `azure` were already indistinguishable —
+      // 4.8 deg apart in OKLCH hue at 0.028 chroma, against the 25.5 / 0.086
+      // separation the config certifies for red vs amber — so folding costs
+      // nothing legible and ends a stray untuned hue. Giving one of the two a
+      // new hue is a twelve-slot category-palette decision, not a token swap;
+      // both chips carry text labels in the meantime.
+      case 'improvement': return { label: 'Improvement', cls: 'bg-azure-500/10 text-azure-700 dark:text-azure-300', hover: 'hover:bg-azure-500/20' };
+      case 'design': return { label: 'Design', cls: 'bg-azure-500/10 text-azure-700 dark:text-azure-300', hover: 'hover:bg-azure-500/20' };
       case 'docs': return { label: 'Docs', cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-300', hover: 'hover:bg-amber-500/20' };
-      case 'chore': return { label: 'Chore', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', hover: 'hover:bg-zinc-500/20' };
+      case 'chore': return { label: 'Chore', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-300', hover: 'hover:bg-zinc-500/20' };
       default: break;
     }
     if (!value) return null;
@@ -8665,9 +8762,16 @@ const AppView = {
   // for the assignee initial-avatar, drawn from the same colour family the
   // card badges use so the circles sit consistently in light + dark themes.
   ASSIGNEE_AVATAR_TINTS: [
-    'bg-violet-500/20 text-violet-700 dark:text-violet-300',
-    'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300',
-    'bg-sky-500/20 text-sky-700 dark:text-sky-300',
+    'bg-azure-500/20 text-azure-700 dark:text-azure-300',
+    'bg-meadow-500/20 text-meadow-700 dark:text-meadow-200',
+    // Purple, not sky: slot 1 is already azure, and stock sky is the same hue
+    // at a different lightness, so folding sky into azure would have collapsed
+    // five hash slots to four and rendered two different assignees
+    // identically. This palette carries no semantics — it only needs five
+    // mutually distinct tints — so the replacement is free, and purple is the
+    // one free hue with no sibling here to crowd (there is no fuchsia slot in
+    // this array, unlike CATEGORY_CUSTOM_TINTS).
+    'bg-purple-500/20 text-purple-700 dark:text-purple-300',
     'bg-amber-500/20 text-amber-800 dark:text-amber-300',
     'bg-rose-500/20 text-rose-600 dark:text-rose-300',
   ],
@@ -8711,13 +8815,13 @@ const AppView = {
     if (field === 'priority') {
       const meta = AppView._priorityMeta(s.top);
       if (meta) { label = { kind: 'glyph', glyph: '⚑', text: meta.label }; cls = meta.cls; hover = meta.hover; }
-      else { label = { kind: 'glyph', glyph: '⚑', text: 'Set priority' }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'; hover = 'hover:bg-zinc-500/20'; }
+      else { label = { kind: 'glyph', glyph: '⚑', text: 'Set priority' }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-300'; hover = 'hover:bg-zinc-500/20'; }
     } else if (field === 'category') {
       // #504: lead with the small colour swatch (the same attr-dot used in
       // the popover) so the category reads at a glance, then the label.
       const meta = AppView._categoryMeta(s.top);
       if (meta) { label = { kind: 'dot', cls: meta.cls, text: meta.label }; cls = meta.cls; hover = meta.hover; }
-      else { label = { kind: 'dot', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', text: 'Set category' }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'; hover = 'hover:bg-zinc-500/20'; }
+      else { label = { kind: 'dot', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-300', text: 'Set category' }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-300'; hover = 'hover:bg-zinc-500/20'; }
     } else if (s.top) {
       // #489: the assignee leads with a coloured initial-avatar (an at-a-
       // glance "who owns this"); the empty state reads as an explicit
@@ -8729,11 +8833,11 @@ const AppView = {
         initial: (name.trim().charAt(0) || '?').toUpperCase(),
         text: `@${name}`,
       };
-      cls = 'bg-violet-500/10 text-violet-700 dark:text-violet-400';
-      hover = 'hover:bg-violet-500/20';
+      cls = 'bg-azure-500/10 text-azure-700 dark:text-azure-300';
+      hover = 'hover:bg-azure-500/20';
     } else {
       label = { kind: 'avatarEmpty', text: 'Unassigned' };
-      cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400';
+      cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-300';
       hover = 'hover:bg-zinc-500/20';
     }
     let title;
@@ -9455,7 +9559,8 @@ const AppView = {
     // count and the auto-title marker. Both cost a badge slot each and
     // neither changes what you'd do next, so they read as meta words.
     const meta = [
-      { t: 'link', href, s: `#${n}`, cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400' },
+      // Link ink, not chip ink — see the PR# link in _proposalCardModel.
+      { t: 'link', href, s: `#${n}`, cls: 'font-mono text-azure-800 hover:underline dark:text-azure-200' },
     ];
     if (issue.created_by_username) meta.push({ t: 'text', s: issue.created_by_username });
     if (issue.bounty_count) {
@@ -10021,7 +10126,7 @@ const AppView = {
     // merged card it is a FACT about the change, not something to do.
     const meta = [{
       t: 'link', href: pr.pr_url || '#', s: `PR#${pr.pr_number || pr.id}`,
-      cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400',
+      cls: 'font-mono text-meadow-700 hover:underline dark:text-meadow-200',
     }];
     if (pr.username) meta.push({ t: 'text', s: pr.username });
     meta.push({ t: 'text', s: date });
@@ -10032,7 +10137,11 @@ const AppView = {
       const rpr = pr.revert_pr_number || pr.revert_session_id;
       meta.push({
         t: 'link', href: pr.revert_pr_url || '#',
-        cls: 'text-amber-800 hover:text-amber-400 font-medium dark:text-amber-300',
+        // The hover DARKENS. It used to be amber-400, which measures Lc 40.5
+        // on white against the base's 90.1 — the control got harder to read
+        // exactly as the pointer reached it, and it was the last bare -400
+        // status ink in this file. amber-900 is 100.1.
+        cls: 'text-amber-800 hover:text-amber-900 font-medium dark:text-amber-300',
         s: rs === 'merged'
           ? `Undone by PR#${rpr}`
           : rs === 'merging'
@@ -10119,7 +10228,7 @@ const AppView = {
     const meta = [{ t: 'text', s: 'Issue close' }];
     if (issueN) {
       meta.push(base
-        ? { t: 'link', href: `${base}/issues/${issueN}`, s: `#${issueN}`, cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400' }
+        ? { t: 'link', href: `${base}/issues/${issueN}`, s: `#${issueN}`, cls: 'font-mono text-meadow-700 hover:underline dark:text-meadow-200' }
         : { t: 'span', cls: 'font-mono', s: `#${issueN}` });
     }
     meta.push({ t: 'text', s: date ? `${how} · ${date}` : how });
@@ -10145,7 +10254,7 @@ const AppView = {
         text: titleText,
         title: titleText,
         trail: row.created_by_username
-          ? { s: row.created_by_username, cls: 'text-zinc-500 dark:text-zinc-400' }
+          ? { s: row.created_by_username, cls: 'text-zinc-500 dark:text-zinc-300' }
           : undefined,
       },
       meta,
@@ -11252,7 +11361,7 @@ const AppView = {
     if (!name) return '';
     const label = (value === 'claude-code' || value === 'codex')
       ? `Built with ${name}` : 'Built with a coding agent';
-    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Usernode opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
+    return `<span class="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-azure-500/10 text-azure-700 dark:text-azure-300 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Usernode opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
   },
 
   // #381: advisory "may break the app" warning. Shown alongside (not
@@ -11395,7 +11504,7 @@ const AppView = {
     const tile = (label, side, b, a, path, mobile) => {
       const v = side === 'before' ? b : a;
       if (!v) return '';
-      const mediaStyle = 'display:block;width:100%;max-height:160px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.25);border:1px solid rgba(127,127,127,0.25);border-radius:6px';
+      const mediaStyle = 'display:block;width:100%;max-height:160px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.25);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
       // Gallery mode (preload:'none') makes the clip click-to-play with the
       // still as its poster; the default stays the autoplaying silent loop.
       const media = v.webm
@@ -11407,9 +11516,9 @@ const AppView = {
       // (the whole point of the reliability work) — a still-only tile is
       // marked "no recording" beside its label.
       const marker = (clickToPlay && !v.webm)
-        ? ' <span class="text-zinc-500 dark:text-zinc-500" style="text-transform:none;letter-spacing:0">· no recording</span>'
+        ? ' <span class="text-zinc-500 dark:text-zinc-300" style="text-transform:none;letter-spacing:0">· no recording</span>'
         : '';
-      const labelHtml = `<div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}${marker}</div>`;
+      const labelHtml = `<div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-300" style="margin-bottom:2px">${label}${marker}</div>`;
       // Without the overlay there's nothing to click — render an inert
       // figure so the tile isn't a button that does nothing.
       if (!overlay) {
@@ -11430,7 +11539,7 @@ const AppView = {
         a && a.gif ? `data-after-gif="${a.gif}"` : '',
       ].filter(Boolean).join(' ');
       return `<button type="button" ${dataAttrs} title="${label}: open before/after comparison" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
-        <div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
+        <div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-300" style="margin-bottom:2px">${label}</div>
         ${media}
       </button>`;
     };
@@ -11451,7 +11560,7 @@ const AppView = {
       // frame needs calling out even at the root.
       const label = (single && (path === '/' || !path) && !mobile)
         ? ''
-        : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">Before / after: <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`;
+        : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-300" style="margin:6px 0 2px">Before / after: <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`;
       // Honest-pair captions: explain a missing "before" (route is new —
       // there's no production version to compare) and a fell-back "before"
       // (the deep route 404'd on production, so the tile shows the home
@@ -11463,7 +11572,7 @@ const AppView = {
         note = '"Before" shows the home page. This page didn’t exist in production yet';
       }
       const noteHtml = note
-        ? `<div class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" style="margin:2px 0 0">${esc(note)}</div>`
+        ? `<div class="text-[0.65rem] text-zinc-500 dark:text-zinc-300" style="margin:2px 0 0">${esc(note)}</div>`
         : '';
       rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>${noteHtml}`);
     }
@@ -11511,22 +11620,25 @@ const AppView = {
     const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
     const column = (label, v) => {
       const has = v && (v.png || v.webm || v.gif);
-      const heading = `<div class="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">${label}</div>`;
+      const heading = `<div class="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-300">${label}</div>`;
       if (!has) {
-        return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">No ${label.toLowerCase()} version to compare.</div></div>`;
+        return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500 dark:text-zinc-300" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">No ${label.toLowerCase()} version to compare.</div></div>`;
       }
       const media = v.webm
         ? `<video src="/visuals/${v.webm}"${v.png ? ` poster="/visuals/${v.png}"` : ''} muted loop autoplay playsinline controls style="${mediaStyle}"></video>`
         : `<img src="/visuals/${v.png || v.gif}" alt="${label}" style="${mediaStyle}">`;
       const orig = pick(v.webm, v.gif, v.png);
       const origLink = orig
-        ? `<a href="/visuals/${orig}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">Open original ↗</a>`
+        // Link ink (azure-800 / azure-200). The old hover was byte-identical
+        // to its own base and therefore rendered nothing; both hovers now step
+        // one further out so the state is visible in either theme.
+        ? `<a href="/visuals/${orig}" target="_blank" rel="noopener" class="text-[0.7rem] text-azure-800 hover:text-azure-900 dark:text-azure-200 dark:hover:text-azure-100">Open original ↗</a>`
         : '';
       return `<div style="${colStyle}">${heading}${media}${origLink}</div>`;
     };
 
     const pathLabel = ((path && path !== '/') || mobile)
-      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="margin-bottom:10px">Before / after: <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
+      ? `<div class="text-xs text-zinc-500 dark:text-zinc-300" style="margin-bottom:10px">Before / after: <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
       : '';
     const bodyHtml = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
 
@@ -11827,17 +11939,35 @@ const AppView = {
   // per-viewer) the chip is a button that opens the linked work; otherwise
   // a plain informational span (private work, claims-only, or headless-only
   // — those rows' own buttons navigate).
+  //
+  // THE KEYS ARE STATE NAMES, NOT HUES, and they have been out of step with
+  // their values since the reskin — `violet` has drawn the azure blue and
+  // `emerald` the meadow green for some time. `sky` is the last one, and it
+  // folds into azure here for the same reason the `improvement` / `design`
+  // category chips did: stock sky ceased to be a product hue, and an untuned
+  // ramp beside six tuned ones is the thing that reads wrong. Renaming the
+  // keys is a separate change — `_issueWorkState` writes them and a rename
+  // touches every branch of it — so they stay, mismatched and documented.
+  //
+  // KNOWN COLLAPSE, the same one that comment records: `violet` (in review)
+  // and `sky` (working, idle) are now byte-identical strings. They were
+  // already near-indistinguishable — the two hues sit 4.8 deg apart in OKLCH
+  // at 0.028 chroma, against the 25.5 / 0.086 separation the config certifies
+  // for red vs amber — so nothing legible is lost, and both chips carry text
+  // labels. Giving one of them a hue of its own is a palette decision with
+  // its own evidence, not a token swap. Keep BOTH keys: `_inProgressChipSpec`
+  // falls back to `.sky` by name.
   _WORK_TONE_CLS: {
-    violet: 'bg-violet-500/10 text-violet-700 dark:text-violet-400',
-    sky: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
-    emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
-    zinc: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+    violet: 'bg-azure-500/10 text-azure-700 dark:text-azure-300',
+    sky: 'bg-azure-500/10 text-azure-700 dark:text-azure-300',
+    emerald: 'bg-meadow-500/10 text-meadow-700 dark:text-meadow-200',
+    zinc: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-300',
     amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-300',
   },
   _WORK_TONE_HOVER: {
-    violet: 'hover:bg-violet-500/20',
-    sky: 'hover:bg-sky-500/20',
-    emerald: 'hover:bg-emerald-500/20',
+    violet: 'hover:bg-azure-500/20',
+    sky: 'hover:bg-azure-500/20',
+    emerald: 'hover:bg-meadow-500/20',
     zinc: 'hover:bg-zinc-500/20',
     amber: 'hover:bg-amber-500/20',
   },
@@ -11892,7 +12022,7 @@ const AppView = {
   // proposal card passes 'Closes' to keep its established wording).
   issueChipSpecs(linkedIssues, opts) {
     const prefix = opts && opts.label ? `${opts.label} ` : '';
-    const cls = 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
+    const cls = 'dev-badge font-mono bg-azure-500/10 text-azure-700 hover:bg-azure-500/20 dark:text-azure-300';
     return AppView._sanitizeIssueNumbers(linkedIssues).map((n) => ({
       t: 'issueChip', key: `issue:${n}`, n, prefix, cls,
       title: `Open issue #${n}'s discussion`,
@@ -11921,11 +12051,13 @@ const AppView = {
     if (!pr || !pr.pr_url) return [];
     const merged = pr.status === 'merged';
     const verb = merged ? 'Closed' : 'Closes';
-    // Match the PR-number link tint at each site: emerald for merged,
-    // violet for open.
+    // Match the PR-number link tint at each site: meadow green for merged,
+    // azure for open. (Both hues moved — emerald folded into meadow, the
+    // product's one green, and the `violet` this comment named has been the
+    // azure blue since the reskin.)
     const cls = merged
-      ? 'dev-badge font-mono bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400'
-      : 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
+      ? 'dev-badge font-mono bg-meadow-500/10 text-meadow-700 hover:bg-meadow-500/20 dark:text-meadow-200'
+      : 'dev-badge font-mono bg-azure-500/10 text-azure-700 hover:bg-azure-500/20 dark:text-azure-300';
     const out = [];
     for (const n of AppView._sanitizeIssueNumbers(pr.linked_issues)) {
       const href = AppView.issueUrlFromPrUrl(pr.pr_url, n);
@@ -12510,8 +12642,8 @@ const AppView = {
     const setLabel = (text, tone) => {
       stateEl.textContent = text;
       stateEl.className = 'text-xs ' + (tone === 'err'
-        ? 'font-medium text-red-700 dark:text-red-400'
-        : 'text-zinc-500 dark:text-zinc-500');
+        ? 'font-medium text-red-700 dark:text-red-200'
+        : 'text-zinc-500 dark:text-zinc-300');
     };
 
     try {
@@ -13160,7 +13292,7 @@ const AppView = {
         ? DevChat.renderMarkdown(t.md)
         : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`);
     } else {
-      staging.setTestHtml('<span class="text-zinc-500 dark:text-zinc-400">Use the button above to jump to the changed feature.</span>');
+      staging.setTestHtml('<span class="text-zinc-500 dark:text-zinc-300">Use the button above to jump to the changed feature.</span>');
     }
 
     staging.setTestBtn({

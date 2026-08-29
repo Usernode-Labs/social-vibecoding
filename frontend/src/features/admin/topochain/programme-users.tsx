@@ -70,8 +70,8 @@ function DeleteConfirm({ user, onCancel, onConfirm }: {
   const expected = ident(user);
   const [typed, setTyped] = useState('');
   return (
-    <div className="rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-4">
-      <p className="text-xs text-red-700 dark:text-red-300 mb-3">
+    <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-transparent p-4">
+      <p className="text-xs text-red-700 dark:text-red-200 mb-3">
         {'This permanently deletes '}
         <strong>{expected}</strong>
         {' from the platform users table. This can be ANY platform user, including real logins '}
@@ -308,7 +308,7 @@ function ImportPanel({ events, onClose, onImported }: {
         </FormGrid>
       </div>
       <FormError message={error} />
-      <div id="admin-topo-u-imp-result" className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+      <div id="admin-topo-u-imp-result" className="mt-3 text-xs text-zinc-500 dark:text-zinc-300">
         {result ? (
           <>
             {`Created ${result.created_count}, linked ${result.linked_count}, `
@@ -341,7 +341,7 @@ function ExportPanel({ events, loaded, onClose }: {
   if (!events.length) {
     return (
       <Panel title="Export users as CSV" onClose={onClose} closeLabel="Close the export panel">
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+        <p className="text-sm text-zinc-500 dark:text-zinc-300">
           There is no event to export users for yet.
         </p>
       </Panel>
@@ -457,13 +457,13 @@ function ProgrammeUsers() {
 
   const columns: Column<User>[] = [
     { label: 'User', primary: true, cell: (u) => u.display_name || ident(u) },
-    { label: 'Email', cell: (u) => u.email || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
-    { label: 'Telegram', cell: (u) => u.telegram || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
-    { label: 'Discord', cell: (u) => u.discord || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Email', cell: (u) => u.email || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
+    { label: 'Telegram', cell: (u) => u.telegram || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
+    { label: 'Discord', cell: (u) => u.discord || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
     {
       label: 'Podium',
       cell: (u) => (u.exclude_podium
-        ? <span className="text-amber-800 dark:text-amber-400">excluded</span>
+        ? <span className="text-amber-800 dark:text-amber-200">excluded</span>
         : '—'),
     },
     { label: 'Accept logs', cell: (u) => (u.accept_logs ? 'yes' : 'no') },

@@ -62,29 +62,66 @@ import { useDevViewMode } from '../dev-board/view-mode-store';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
 
-/** The recessed track, the same well the quick actions sit in. */
+/*
+ * The recessed track, the same well the quick actions sit in.
+ *
+ * CAPSULE IN CAPSULE, and it always was — `rounded-full` here only says out
+ * loud what the browser already drew. The track is 36px tall (an `h-8`
+ * segment plus `p-0.5` top and bottom) and carried `rounded-xl`; since the
+ * radius scale moved that is 20px, and CSS scales all four radii by
+ * 36/(20+20) = 0.9 when they overrun a side, so it rendered at 18px — exactly
+ * half the height. A capsule.
+ *
+ * That matters because the concentric inner of an 18px corner at a 2px inset
+ * is 16px, which is half of the segment's own 32px — a capsule too. So the
+ * pill is `rounded-full` rather than the `rounded-lg` (12px) it drifted to:
+ * concentric exactly, at any inset, with no number to keep in sync. It is
+ * also the geometry @/components/ui/tabs.tsx already ships for the identical
+ * strip (SECTION_TABS_LIST / SECTION_TAB_BASE are `rounded-full` on an `h-8`
+ * segment in a `p-0.5` track) — this file borrows that convention everywhere
+ * else, and the radius was the one place it had stopped.
+ */
 const TRACK =
-  'shrink-0 flex items-stretch gap-0.5 rounded-xl p-0.5 bg-zinc-100 dark:bg-white/5';
+  'shrink-0 flex items-stretch gap-0.5 rounded-full p-0.5 bg-zinc-200 dark:bg-white/5';
 
 const SEG =
-  'flex flex-1 basis-0 min-w-0 items-center justify-center h-8 px-1 rounded-[0.625rem] '
+  'flex flex-1 basis-0 min-w-0 items-center justify-center h-8 px-1 rounded-full '
   + 'text-sm font-medium transition-colors un-touch-target';
 
 /*
- * The selected segment is a RAISED surface, not a tint.
+ * The selected segment INVERTS — near-black fill, white ink — like
+ * @/components/ui/tabs.tsx's SECTION_TAB_ACTIVE and chip.tsx's selected chip.
  *
- * @/components/ui/tabs.tsx's SECTION_TAB_ACTIVE inverts to near-black, which
- * is right for a strip floating on the page ground. This one sits inside a
- * white panel, so the same figure/ground move runs the other way: the track
- * is the recess and the selected segment is the page-coloured card lifted out
- * of it. Violet ink carries the accent without a second filled shape next to
- * the quick-action well directly above.
+ * It used to be a raised page-coloured card carrying accent ink, on the
+ * reasoning that a filled segment would be "a second filled shape next to the
+ * quick-action well directly above". That objection was really about a second
+ * filled shape IN THE SAME COLOUR: while the accent was the only fill the
+ * product had, the selected tab and the primary action competed for it.
+ *
+ * They no longer share one. The accent yellow means "this is the action" (the
+ * New change pill above) and selection means "this is where you are" — two
+ * treatments that cannot be mistaken for each other. See the three-tier note
+ * in tailwind.config.js.
+ *
+ * Selection was a near-black FILL until it was measured against the thing it
+ * sits under: the black pill read Lc 93.8 against its track while the yellow
+ * CTA a few pixels above read 79.2, so "where you are" was louder than "the
+ * one action on this screen" — the tier order inverted. It is a raised WHITE
+ * pill on a recessed zinc-200 track now: the type on it is Lc 103.5, and the
+ * pill reads as a shape through elevation (`shadow-sm`) rather than by
+ * out-shouting the accent.
+ *
+ * Dark mode keeps the bright pill. Its track is already dark, so there is no
+ * quieter direction to go — a zinc-700 pill on zinc-900 is invisible. The two
+ * themes carry selection differently on purpose.
  */
 const SEG_ACTIVE =
-  'bg-white text-violet-700 shadow-sm dark:bg-zinc-800 dark:text-violet-400';
+  'bg-white text-zinc-900 shadow-sm dark:bg-zinc-100 dark:text-zinc-900 dark:shadow-none';
 
+// zinc-600, not -500: the track darkened to zinc-200 so the white pill has
+// something to sit on, and the rest label has to keep its footing on it.
 const SEG_REST =
-  'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-100';
+  'text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100';
 
 function segClass(active: boolean): string {
   return SEG + ' ' + (active ? SEG_ACTIVE : SEG_REST);

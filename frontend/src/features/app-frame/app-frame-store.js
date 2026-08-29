@@ -35,7 +35,7 @@ import { createStore } from '../../lib/plain-store.js';
  * each cover field is.
  *
  * @typedef {{
- *   iconKind: string, iconHtml: string, name: string,
+ *   iconKind: string, iconHtml: string, aura: string, name: string,
  *   note: string, spinner: boolean, out: boolean,
  * }} LaunchCoverState
  * @typedef {{
@@ -72,6 +72,8 @@ export const appFrameStore = createStore(/** @type {AppFrameState} */ ({
 export const COVER_DEFAULTS = {
   iconKind: 'letter',
   iconHtml: '',
+  /** The tile's per-app aura (AppCard.auraFor); '' renders no data-aura. */
+  aura: '',
   name: '',
   note: 'Opening…',
   /** The 500ms rung of the reveal ladder. */

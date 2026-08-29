@@ -597,12 +597,12 @@
       confirmBtn.type = 'button';
       confirmBtn.textContent = '✓';
       confirmBtn.setAttribute('aria-label', 'Attach selected area');
-      confirmBtn.style.cssText = 'width:36px;height:36px;border-radius:9999px;border:none;background:#0a7cff;color:#fff;font-size:18px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.5);';
+      confirmBtn.style.cssText = 'width:36px;height:36px;border-radius:9999px;border:none;background:#ffc93a;color:#131311;font-size:18px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.5);';
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
       cancelBtn.textContent = '✕';
       cancelBtn.setAttribute('aria-label', 'Cancel screenshot');
-      cancelBtn.style.cssText = 'width:36px;height:36px;border-radius:9999px;border:none;background:#3f3f46;color:#fff;font-size:16px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.5);';
+      cancelBtn.style.cssText = 'width:36px;height:36px;border-radius:9999px;border:none;background:#3c3c36;color:#fff;font-size:16px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.5);';
       controls.appendChild(confirmBtn);
       controls.appendChild(cancelBtn);
       controls.style.display = 'none';

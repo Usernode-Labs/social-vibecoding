@@ -79,12 +79,12 @@ function Gate({ items }: { items: Config[] }) {
       {missing.map((os) => (
         <div
           key={os}
-          className="mb-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm sm:px-5"
+          className="mb-3 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-transparent px-4 py-3 text-sm sm:px-5"
         >
-          <span className="font-semibold text-amber-800 dark:text-amber-300">
+          <span className="font-semibold text-amber-800 dark:text-amber-200">
             {`No active version rule for ${OS_LABEL[os]}:`}
           </span>
-          <span className="text-amber-800/80 dark:text-amber-300/80">
+          <span className="text-amber-800/80 dark:text-amber-200/80">
             {` every ${OS_LABEL[os]} build is told it is up to date, including old ones. `}
             {`Add an active config for ${os} to turn the update gate on.`}
           </span>
@@ -102,7 +102,7 @@ function ActivityTable({ activity }: { activity: Activity | null }) {
   const days = activity.window_days ?? 7;
   if (!activity.total) {
     return (
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-4">
+      <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-4">
         {`No version checks in the last ${days} days. No app build has asked this platform whether it needs to update.`}
       </p>
     );
@@ -111,13 +111,13 @@ function ActivityTable({ activity }: { activity: Activity | null }) {
     <>
       <h3 className="text-sm font-semibold mt-8 mb-3">
         {`Version checks · last ${days} days `}
-        <span className="font-normal text-zinc-500 dark:text-zinc-400">
+        <span className="font-normal text-zinc-500 dark:text-zinc-300">
           {`(${activity.total} total)`}
         </span>
       </h3>
       <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
         <table className="w-full">
-          <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-300">
             <tr>
               <th className="px-3 py-2 text-left">OS</th>
               <th className="px-3 py-2 text-left">Told</th>
@@ -350,12 +350,12 @@ function AppVersionScreen() {
     {
       label: 'Current version',
       cell: (c) => c.current_version || '—',
-      tdClass: 'text-xs text-zinc-500 dark:text-zinc-400',
+      tdClass: 'text-xs text-zinc-500 dark:text-zinc-300',
     },
     {
       label: 'Active',
       cell: (c) => (c.is_active
-        ? <span className="text-green-800 dark:text-green-400">active</span>
+        ? <span className="text-meadow-700 dark:text-meadow-200">active</span>
         : '—'),
     },
   ];

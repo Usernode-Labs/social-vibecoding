@@ -146,7 +146,7 @@ export function WaitingScreen() {
           <h1 className="text-2xl font-bold mb-1">
             You're in the queue
           </h1>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-8 italic">
+          <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-8 italic">
             Usernode Social Vibecoding
           </p>
           <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 text-left space-y-3">
@@ -157,17 +157,17 @@ export function WaitingScreen() {
               </span>
               {" doesn't have platform access yet. We let people in from the waitlist in batches. You'll get in automatically when your turn comes."}
             </p>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            <p className="text-sm text-zinc-500 dark:text-zinc-300">
               This page checks for you every so often; you can also just come back later.
             </p>
-            <p id="waiting-check-state" className="text-xs text-zinc-500 dark:text-zinc-500">
+            <p id="waiting-check-state" className="text-xs text-zinc-500 dark:text-zinc-300">
               {checkState}
             </p>
           </div>
           <div className="mt-6 space-y-3">
             <a
               href="#landing"
-              className="block w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white"
+              className="block w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-black"
             >
               Browse public apps while you wait
             </a>

@@ -111,7 +111,7 @@ export function ForkAppDialog() {
         <h2 className="text-lg font-bold mb-1">
           Fork this app
         </h2>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-4">
           Forking
           <span id="fork-source-name" className="font-mono text-zinc-300">
             {sourceName}
@@ -122,7 +122,7 @@ export function ForkAppDialog() {
           <div>
             <label
               htmlFor="fork-input"
-              className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+              className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1"
             >
               Name for your fork
             </label>
@@ -140,9 +140,9 @@ export function ForkAppDialog() {
               placeholder="My fork"
             />
           </div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3">
+          <div className="text-xs text-zinc-500 dark:text-zinc-300 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3">
             <p>
-              <span className="text-emerald-700 dark:text-emerald-400">
+              <span className="text-meadow-700 dark:text-meadow-200">
                 ✅ Carries over:
               </span>
               the app's code, its icon, and its current
@@ -152,13 +152,23 @@ export function ForkAppDialog() {
               data (e.g. leaderboards, public posts).
             </p>
             <p>
-              <span className="text-violet-700 dark:text-violet-400">
+              {/*
+                  azure-800/200 rather than the tree's usual azure-700/400:
+                  this is the middle term of a THREE-label legend whose other
+                  two now read 77.8/-81.6 and 85.1/-79.1 on this panel. Left
+                  at 700/400 it measured 63.0/-50.5 — the only label of the
+                  three under the body minimum, at 12px, where the ladder's
+                  floor is higher still. 800 is the same hue with the
+                  headroom to clear it (72.9/-80.1 here, measured with the
+                  APCA port in tests/theme-ink-guards.test.js).
+              */}
+              <span className="text-azure-800 dark:text-azure-200">
                 🔁 Resets to you:
               </span>
               you become the sole owner, and collaborators, group chat, issues, proposals and votes all start empty.
             </p>
             <p>
-              <span className="text-amber-800 dark:text-amber-400">
+              <span className="text-amber-800 dark:text-amber-200">
                 ❌ Not copied:
               </span>
               <strong>
@@ -171,7 +181,7 @@ export function ForkAppDialog() {
               data (DMs, per-user rows). You'll be asked to re-enter required secrets before your fork goes live.
             </p>
           </div>
-          <div id="fork-error" ref={errorRef} className="text-red-400 text-sm hidden">
+          <div id="fork-error" ref={errorRef} className="text-red-700 dark:text-red-200 text-sm hidden">
             {error}
           </div>
           <div className="flex gap-3">

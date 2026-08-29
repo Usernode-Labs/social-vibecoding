@@ -41,10 +41,18 @@ function Tab({ col, active, loading }: { col: KanbanColView; active: boolean; lo
   const cls = 'dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 flex flex-col items-center justify-center '
     + 'border-b-2 transition-colors '
     + (active
-      ? 'border-violet-500 text-violet-700 font-semibold dark:text-violet-400'
-      : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200');
+      ? 'border-zinc-900 text-zinc-900 font-semibold dark:border-zinc-100 dark:text-zinc-100'
+      : 'border-transparent text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-200');
   const countCls = 'font-mono text-[11px] leading-tight '
-    + (active ? 'text-violet-700 dark:text-violet-400' : (col.count ? 'text-zinc-500 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-500'));
+    // The SELECTED tab's count carried a -400 dark step, which sat a tier
+    // under the plain grey of the tabs either side of it — this ramp pairs a
+    // light 700 with a dark 300.
+    //
+    // The zero-count half was zinc-300/zinc-400: Lc 16.2 light on the page
+    // ground vs 41.1 dark (APCA-W3 0.1.9), so a zero read as absent in light
+    // and merely dim in dark. zinc-400/zinc-400 is 46.6/41.1 — still clearly
+    // the de-emphasised state, but the same one in both themes.
+    + (active ? 'text-azure-700 dark:text-azure-300' : (col.count ? 'text-zinc-500 dark:text-zinc-300' : 'text-zinc-400 dark:text-zinc-400'));
   return (
     <button
       type="button"
@@ -70,7 +78,7 @@ function Column({ col, active, loading }: { col: KanbanColView; active: boolean;
     // screen than the one it is standing in for.
     cards = <CardSkeleton n={2} label={`Loading ${col.title}`} />;
   } else if (col.empty) {
-    cards = <div className="text-xs text-zinc-500 dark:text-zinc-500 italic py-2">{col.empty}</div>;
+    cards = <div className="text-xs text-zinc-500 dark:text-zinc-300 italic py-2">{col.empty}</div>;
   } else {
     cards = (
       <div className="space-y-2">
@@ -85,13 +93,13 @@ function Column({ col, active, loading }: { col: KanbanColView; active: boolean;
       className={`dev-kanban-col${active ? ' dev-kanban-col-active' : ''}`}
     >
       <div
-        className="dev-kanban-col-head text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400 mb-2 px-0.5"
+        className="dev-kanban-col-head text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-300 mb-2 px-0.5"
         title={col.hint || undefined}
       >
         {`${col.title} `}
         {loading
-          ? <span className="text-zinc-500 dark:text-zinc-500 font-mono">{'· '}<CountSkeleton /></span>
-          : <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>}
+          ? <span className="text-zinc-500 dark:text-zinc-300 font-mono">{'· '}<CountSkeleton /></span>
+          : <span className="text-zinc-500 dark:text-zinc-300 font-mono">{`· ${col.count}`}</span>}
       </div>
       {cards}
       {col.footer ? <div className="mt-2"><FooterView f={col.footer} /></div> : null}

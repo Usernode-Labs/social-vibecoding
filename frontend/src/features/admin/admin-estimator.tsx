@@ -232,15 +232,15 @@ function estimatorVerdict(w: any, ctx: any): { ready: boolean; reason: string } 
 // Colour only the three decision metrics — green when the threshold is met,
 // amber when it isn't. Sample-size and data-health tiles stay neutral.
 const tone = (ok: boolean | null) => (ok == null
-  ? 'text-zinc-500 dark:text-zinc-400'
-  : ok ? 'text-green-800 dark:text-green-400' : 'text-amber-800 dark:text-amber-400');
+  ? 'text-zinc-500 dark:text-zinc-300'
+  : ok ? 'text-meadow-700 dark:text-meadow-200' : 'text-amber-800 dark:text-amber-200');
 
 function Tile({ label, value, cls, sub }: { label: string; value: string; cls?: string; sub?: string }) {
   return (
     <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-      <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</div>
+      <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-300">{label}</div>
       <div className={`text-2xl font-bold mt-1 ${cls || ''}`}>{value}</div>
-      {sub ? <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">{sub}</div> : null}
+      {sub ? <div className="text-[11px] text-zinc-500 dark:text-zinc-300 mt-0.5">{sub}</div> : null}
     </div>
   );
 }
@@ -248,7 +248,7 @@ function Tile({ label, value, cls, sub }: { label: string; value: string; cls?: 
 const TH_L = 'text-left font-medium py-1';
 const TH_R = 'text-right font-medium py-1';
 const TR = 'border-t border-zinc-200 dark:border-zinc-800';
-const H4 = 'text-sm font-semibold text-zinc-500 dark:text-zinc-400';
+const H4 = 'text-sm font-semibold text-zinc-500 dark:text-zinc-300';
 
 function Breakdown({ title, rows, keyLabel }: { title: string; rows: any[]; keyLabel: string }) {
   return (
@@ -257,7 +257,7 @@ function Breakdown({ title, rows, keyLabel }: { title: string; rows: any[]; keyL
       {rows.length ? (
         <table className="text-xs w-full">
           <thead>
-            <tr className="text-zinc-500 dark:text-zinc-400">
+            <tr className="text-zinc-500 dark:text-zinc-300">
               <th className={TH_L}>{keyLabel}</th>
               <th className={TH_R}>Scored</th>
               <th className={TH_R}>Median err</th>
@@ -276,7 +276,7 @@ function Breakdown({ title, rows, keyLabel }: { title: string; rows: any[]; keyL
             ))}
           </tbody>
         </table>
-      ) : <p className="text-xs text-zinc-500 dark:text-zinc-400">No data yet.</p>}
+      ) : <p className="text-xs text-zinc-500 dark:text-zinc-300">No data yet.</p>}
     </div>
   );
 }
@@ -287,7 +287,7 @@ function BaseRow({ label, b, note }: { label: string; b: any; note: string }) {
     <tr className={TR}>
       <td className="py-1 text-zinc-600 dark:text-zinc-300">
         {label}
-        <div className="text-[10px] text-zinc-500 dark:text-zinc-400">{note}</div>
+        <div className="text-[10px] text-zinc-500 dark:text-zinc-300">{note}</div>
       </td>
       <td className="py-1 text-right">{fmtSecs(b.medianAbsErrS)}</td>
       <td className="py-1 text-right">{fmtPct(b.withinBand)}</td>
@@ -310,12 +310,12 @@ function DailyChart({ daily, errBar }: { daily: any[]; errBar: number }) {
     daily.forEach((d, i) => {
       tipStore[`est-day-${i}`] = `<div class="font-semibold mb-1">${dayLabel(d.day)}</div>
           <div>median error ${fmtSecs(Number(d.medianAbsErrS) || 0)}</div>
-          <div class="text-zinc-500 dark:text-zinc-400">${fmtInt(d.scored)} scored guess${d.scored === 1 ? '' : 'es'}</div>`;
+          <div class="text-zinc-500 dark:text-zinc-300">${fmtInt(d.scored)} scored guess${d.scored === 1 ? '' : 'es'}</div>`;
     });
   }, [daily]);
 
   if (!daily.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">No scored guesses in the last 30 days.</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-300">No scored guesses in the last 30 days.</p>;
   }
   const { W, H, topPad, botPad } = CHART;
   const plot = H - topPad - botPad;
@@ -324,7 +324,7 @@ function DailyChart({ daily, errBar }: { daily: any[]; errBar: number }) {
   const barY = topPad + plot - (errBar / max) * plot;
   return (
     <>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-400"
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-300"
         preserveAspectRatio="none" style={{ height: '140px' }}>
         {/* #892: the dashed line is the ORACLE baseline (the best any
             elapsed-only predictor could do), not the retired fixed 90s bar —
@@ -347,7 +347,7 @@ function DailyChart({ daily, errBar }: { daily: any[]; errBar: number }) {
           );
         })}
       </svg>
-      <div className="flex justify-between text-[10px] text-zinc-500 dark:text-zinc-400 mt-1">
+      <div className="flex justify-between text-[10px] text-zinc-500 dark:text-zinc-300 mt-1">
         <span>{dayLabel(daily[0].day)}</span>
         <span>{`${fmtSecs(errBar)} oracle baseline (dashed)`}</span>
         <span>{dayLabel(daily[daily.length - 1].day)}</span>
@@ -360,7 +360,7 @@ function EstimatorCard({ e }: { e: any }) {
   const w = (e && e.last30d) || null;
   const all = (e && e.allTime) || null;
   if (!e || !all || !all.ticks) {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Not enough data yet.</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-300">Not enough data yet.</p>;
   }
 
   // #892: the headline tiles describe the CANDIDATE prompt version when there
@@ -409,14 +409,14 @@ function EstimatorCard({ e }: { e: any }) {
       {versions.length ? (
         <div className="mb-4">
           <h4 className={`${H4} mb-1`}>Prompt generation</h4>
-          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-300 mb-2">
             v1 told the model to bias toward a 2–10 minute window and it obeyed flatly.
             v2 gives it the measured run-length distribution instead: calibration through the
             prompt, with no multiplier on the model’s output.
           </p>
           <table className="text-xs w-full">
             <thead>
-              <tr className="text-zinc-500 dark:text-zinc-400">
+              <tr className="text-zinc-500 dark:text-zinc-300">
                 <th className={TH_L}>Prompt</th>
                 <th className={TH_R}>Scored</th>
                 <th className={TH_R}>Median err</th>
@@ -430,7 +430,7 @@ function EstimatorCard({ e }: { e: any }) {
                   <td className="py-1 text-zinc-600 dark:text-zinc-300">
                     {`v${fmtInt(v.promptVersion)}`}
                     {v.promptVersion === CANDIDATE_PROMPT_VERSION
-                      ? <> <span className="text-[10px] uppercase tracking-wide text-violet-700 dark:text-violet-400">candidate</span></>
+                      ? <> <span className="text-xs uppercase tracking-wide text-azure-800 dark:text-azure-200">candidate</span></>
                       : null}
                   </td>
                   <td className="py-1 text-right">{fmtInt(v.scored)}</td>
@@ -445,7 +445,7 @@ function EstimatorCard({ e }: { e: any }) {
       ) : null}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Tile label={`Scored guesses (${headLabel})`} value={fmtInt(head.scored)} cls={sampleOk ? '' : 'text-zinc-500 dark:text-zinc-400'}
+        <Tile label={`Scored guesses (${headLabel})`} value={fmtInt(head.scored)} cls={sampleOk ? '' : 'text-zinc-500 dark:text-zinc-300'}
           sub={`${fmtInt(head.runs)} runs · ${fmtInt(head.users)} users · need ${ESTIMATOR_BAR.scored}/${ESTIMATOR_BAR.runs}/${ESTIMATOR_BAR.users}`} />
         <Tile label="Median error" value={fmtSecs(head.medianAbsErrS)} cls={tone(errOk)}
           sub={oracleErr == null ? 'bar: ≤ the oracle baseline' : `bar: ≤ ${fmtSecs(oracleErr)} (oracle)`} />
@@ -472,19 +472,19 @@ function EstimatorCard({ e }: { e: any }) {
       </div>
 
       {verdict ? (
-        <div className={`mt-3 text-sm ${verdict.ready ? 'text-green-800 dark:text-green-400' : 'text-amber-800 dark:text-amber-400'}`}>
+        <div className={`mt-3 text-sm ${verdict.ready ? 'text-meadow-700 dark:text-meadow-200' : 'text-amber-800 dark:text-amber-200'}`}>
           <b>{verdict.ready ? 'Ready to leave experimental' : 'Stays experimental'}</b>
           {`: ${verdict.reason} `}
-          <span className="text-zinc-500 dark:text-zinc-400">(last 30 days)</span>
+          <span className="text-zinc-500 dark:text-zinc-300">(last 30 days)</span>
         </div>
       ) : (
-        <div className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">No scored guesses in the last 30 days yet.</div>
+        <div className="mt-3 text-sm text-zinc-500 dark:text-zinc-300">No scored guesses in the last 30 days yet.</div>
       )}
 
       {/* All-time line, mostly to expose the pre-fix unresolved tail next to
           the recent window — a falling unresolved rate is the
           estimator-teardown fix (#891) working. */}
-      <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+      <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-300">
         {`All time: ${fmtInt(all.scored)} scored of ${fmtInt(all.ticks)} guesses · median error ${
           fmtSecs(all.medianAbsErrS)} · ${fmtPct(all.withinBand)} in band · ${fmtPct(all.unresolvedRate)} unresolved`}
       </div>
@@ -498,7 +498,7 @@ function EstimatorCard({ e }: { e: any }) {
           <h4 className={`${H4} mb-2`}>Baselines to beat</h4>
           <table className="text-xs w-full">
             <thead>
-              <tr className="text-zinc-500 dark:text-zinc-400">
+              <tr className="text-zinc-500 dark:text-zinc-300">
                 <th className={TH_L}>Predictor</th>
                 <th className={TH_R}>Median err</th>
                 <th className={TH_R}>In band</th>
@@ -524,17 +524,17 @@ function EstimatorCard({ e }: { e: any }) {
           RUN_LENGTH_PRIORS in src/services/llm.js and open a small PR. */}
       {priors ? (
         <div className={`mt-4 rounded-lg border ${priors.stale
-          ? 'border-amber-400/50 bg-amber-50 dark:bg-amber-900/10'
+          ? 'border-amber-400/50 bg-amber-50 dark:bg-transparent'
           : 'border-zinc-200 dark:border-zinc-800'} p-3`}>
           <div className="flex items-baseline justify-between flex-wrap gap-2">
             <h4 className="text-sm font-semibold text-zinc-600 dark:text-zinc-300">
               Run-length figures given to the model
             </h4>
-            <span className={`text-xs ${priors.stale ? 'text-amber-800 dark:text-amber-400' : 'text-green-800 dark:text-green-400'}`}>
+            <span className={`text-xs ${priors.stale ? 'text-amber-800 dark:text-amber-200' : 'text-meadow-700 dark:text-meadow-200'}`}>
               {priors.stale ? 'Priors stale: re-run the committed refresh query and update the constant' : 'Priors current'}
             </span>
           </div>
-          <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-300 mt-0.5 mb-2">
             {`Snapshot ${priors.snapshot.generatedOn} from ${fmtInt(priors.snapshot.scoredTicks)} scored guesses across ${
               fmtInt(priors.snapshot.runs)} runs since ${priors.snapshot.windowStart}. They change only when someone approves a change, never on their own.`}
             {priors.staleReasons && priors.staleReasons.length
@@ -543,7 +543,7 @@ function EstimatorCard({ e }: { e: any }) {
           </p>
           <table className="text-xs w-full">
             <thead>
-              <tr className="text-zinc-500 dark:text-zinc-400">
+              <tr className="text-zinc-500 dark:text-zinc-300">
                 <th className={TH_L}>Elapsed bucket</th>
                 <th className={TH_R}>Told the model</th>
                 <th className={TH_R}>Actually now</th>
@@ -557,7 +557,7 @@ function EstimatorCard({ e }: { e: any }) {
                   <td className="py-1 text-right">{fmtSecs(b.committedP50)}</td>
                   <td className="py-1 text-right">{fmtSecs(b.liveP50)}</td>
                   <td className={`py-1 text-right ${b.driftRatio != null && b.driftRatio > 0.25
-                    ? 'text-amber-800 dark:text-amber-400' : ''}`}>{fmtPct(b.driftRatio)}</td>
+                    ? 'text-amber-800 dark:text-amber-200' : ''}`}>{fmtPct(b.driftRatio)}</td>
                 </tr>
               ))}
             </tbody>
@@ -637,7 +637,7 @@ function EstimatorSection() {
   return (
     <div id="admin-estimator-root" ref={rootRef}>
       <h2 className="text-lg font-semibold mb-4">Estimator accuracy</h2>
-      {gate ? <div id="admin-estimator-gate" className="text-zinc-500 dark:text-zinc-400 text-center py-20">{gate}</div> : null}
+      {gate ? <div id="admin-estimator-gate" className="text-zinc-500 dark:text-zinc-300 text-center py-20">{gate}</div> : null}
 
       {gate ? null : (
         <main id="admin-estimator-content" className="space-y-6">
@@ -650,7 +650,7 @@ function EstimatorSection() {
                 onFocus={(ev) => showTipAt(ev.currentTarget, INFO.estimator)}
                 onBlur={() => { ensureTip().style.display = 'none'; }}>?</span>
             </h3>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-4">
               How close the experimental AI progress estimate’s “time remaining” guesses land to the real remaining time. Last 30 days unless noted; always includes admins.
             </p>
             <div id="admin-estimator-card">

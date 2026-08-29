@@ -32,7 +32,7 @@ export function UsernameSection() {
 
         <div className="space-y-2">
           {/* Filled by Settings._syncUsername() from the session user. */}
-          <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
+          <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-300">
             <span>Current:</span>
             <span id="cu-current" className="font-medium text-zinc-800 dark:text-zinc-200">—</span>
           </div>
@@ -56,7 +56,7 @@ export function UsernameSection() {
           Change username
         </Button>
 
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-3">
           Letters, numbers and underscores, 3–32 characters, so people can still
           @mention you. Your old handle is kept reserved for you rather than
           released, so links and mentions that used it keep pointing at you and

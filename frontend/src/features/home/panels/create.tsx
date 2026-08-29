@@ -37,7 +37,7 @@
  * would have left a loaded gun pointed at this block.
  */
 
-import { PlusWideIcon } from '@/components/ui/icons';
+import { PlusIcon } from '@/components/ui/icons';
 
 import type { CreateView } from '../panels-store';
 
@@ -81,13 +81,19 @@ export function CreatePanel({ view }: { view: CreateView }) {
           className="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
           aria-hidden="true"
         >
-          <PlusWideIcon className="w-6 h-6" strokeWidth="2.5" />
+          <PlusIcon className="w-6 h-6" />
         </span>
         <span
           className={`home-create-label text-sm leading-tight max-w-full ${
             view.canCreate
-              ? 'text-violet-700 dark:text-violet-400'
-              : 'text-zinc-500 dark:text-zinc-500'
+              // 700/400 left the ENABLED label two tiers under the DISABLED
+              // one in dark mode: azure-400 is Lc -51.8 on the dark card while
+              // the zinc-300 below it is -75.2, so "Create app" read fainter
+              // when you could press it than when you could not. 800/200 is
+              // the blue text ink (Lc 77.8 / -81.4, parity to 3.6), which puts
+              // the live label a shade ahead of the dead one in both themes.
+              ? 'text-azure-800 dark:text-azure-200'
+              : 'text-zinc-500 dark:text-zinc-300'
           }`}
         >
           Create app

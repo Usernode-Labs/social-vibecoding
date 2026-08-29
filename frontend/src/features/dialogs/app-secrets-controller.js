@@ -135,7 +135,7 @@ const Secrets = {
     Secrets.declareOpen = !!opts.declare;
     const list = document.getElementById('app-secrets-list');
     if (!list) return;
-    list.innerHTML = '<p class="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>';
+    list.innerHTML = '<p class="text-sm text-zinc-500 dark:text-zinc-300">Loading…</p>';
     Secrets.setStatus('', '');
     try {
       const res = await fetch(`/api/apps/${slug}/secrets`);
@@ -151,7 +151,7 @@ const Secrets = {
           ?.scrollIntoView({ block: 'start' });
       }
     } catch (err) {
-      list.innerHTML = `<p class="text-sm text-red-700 dark:text-red-400">Failed to load: ${escapeHtml(err.message)}</p>`;
+      list.innerHTML = `<p class="text-sm text-red-700 dark:text-red-200">Failed to load: ${escapeHtml(err.message)}</p>`;
     }
   },
 
@@ -177,11 +177,31 @@ const Secrets = {
   // falling back to a committed default and "deploy-managed, not yours to
   // set" look identical without it.
   STATE_BADGES: {
-    set: { label: 'Set', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
-    unset: { label: 'Not set', cls: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400' },
-    managed: { label: 'Deploy-managed', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
-    orphan: { label: 'No longer declared', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300' },
-    proposed: { label: 'Up for vote', cls: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' },
+    set: { label: 'Set', cls: 'bg-meadow-100 text-meadow-700 dark:bg-meadow-900/40 dark:text-meadow-200' },
+    unset: { label: 'Not set', cls: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300' },
+    // 'managed' is a locked state ("not yours to set"), not a thing the
+    // product is speaking about, so it takes the neutral ramp rather than the
+    // blue it used to share with 'proposed'. The inset ring is what separates
+    // it from 'unset' above, which has none.
+    //
+    // The dark ground is NOT zinc-900: this badge is drawn on DialogCard,
+    // whose dark fill IS zinc-900 (#1F1F1B), so a zinc-900 chip has no ground
+    // at all there — and a badge keeps its ground, which is the whole reason
+    // the comment above says these states look identical without one.
+    //
+    // It is not zinc-800 either, and that is the correction: 'unset' one line
+    // up is `dark:bg-zinc-800 dark:text-zinc-300`, so a zinc-800 fill made the
+    // two badges byte-identical in dark apart from a hairline, and "falling
+    // back to a default" vs "not yours to set" is exactly the pair this table
+    // exists to separate. A RECESSED zinc-950 chip is the locked state's own
+    // ground, distinct from the raised zinc-800 of 'unset' and from the card
+    // between them, and its ink reads a shade better there (zinc-300 on
+    // zinc-950 is Lc -76.9 against -72.8 on zinc-800; APCA-W3 0.1.9, self-
+    // pinned at #000/#FFF = 106.04). ring-zinc-600 stays: on a near-black fill
+    // it is the visible edge that carries the chip's shape.
+    managed: { label: 'Deploy-managed', cls: 'bg-zinc-100 text-zinc-600 ring-1 ring-inset ring-zinc-300 dark:bg-zinc-950 dark:text-zinc-300 dark:ring-zinc-600' },
+    orphan: { label: 'No longer declared', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200' },
+    proposed: { label: 'Up for vote', cls: 'bg-azure-100 text-azure-700 dark:bg-azure-900/40 dark:text-azure-300' },
   },
 
   // The group heading the server files GitHub-Actions rows under. Kept in
@@ -226,7 +246,7 @@ const Secrets = {
     // it, because a declaration already up for vote is exactly the thing
     // someone opening this panel needs to see (and not open twice).
     const manifestNotice = data.manifestKnown ? '' : `
-        <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
+        <p class="text-sm text-zinc-500 dark:text-zinc-300 mb-3">
           No manifest snapshot yet. Once this app's first deploy completes the
           declared secrets show up here.
         </p>`;
@@ -237,11 +257,11 @@ const Secrets = {
     }
     if (!data.secrets || !data.secrets.length) {
       list.innerHTML = isPlatform
-        ? `<p class="text-sm text-zinc-500 dark:text-zinc-400">
+        ? `<p class="text-sm text-zinc-500 dark:text-zinc-300">
              No platform variables are declared yet. Use “New variable” below to
              declare the first one.
            </p>`
-        : `<p class="text-sm text-zinc-500 dark:text-zinc-400">
+        : `<p class="text-sm text-zinc-500 dark:text-zinc-300">
              This app's <code class="text-xs">dapp.json</code> doesn't declare any
              secrets yet. Use “New secret” below to declare the first one.
            </p>`;
@@ -270,7 +290,7 @@ const Secrets = {
       }
       list.innerHTML = manifestNotice + groups.map((g) => `
         <div class="mb-3">
-          <h3 class="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">${escapeHtml(g)}</h3>
+          <h3 class="text-[0.9375rem] text-zinc-500 dark:text-zinc-300 mb-1">${escapeHtml(g)}</h3>
           ${Secrets.groupNoteHtml(g, data)}
           ${byGroup.get(g).map((s) => Secrets.renderRow(s, canWrite)).join('')}
         </div>`).join('');
@@ -310,13 +330,13 @@ const Secrets = {
       + 'GitHub never returns a secret\'s value to anyone, so only the name and when it last '
       + 'changed can be shown here.';
     if (gh.state === 'unavailable') {
-      return `<p class="text-xs text-amber-800 dark:text-amber-400 mb-2">${
+      return `<p class="text-xs text-amber-800 dark:text-amber-200 mb-2">${
         escapeHtml(gh.reason || 'Couldn\'t read the platform repo\'s Actions secrets.')}</p>`;
     }
     if (gh.state === 'ok' && !gh.count) {
-      return `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">No Actions secrets on this repo. ${where}</p>`;
+      return `<p class="text-xs text-zinc-500 dark:text-zinc-300 mb-2">No Actions secrets on this repo. ${where}</p>`;
     }
-    return `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${where}${
+    return `<p class="text-xs text-zinc-500 dark:text-zinc-300 mb-2">${where}${
       gh.staged ? ' <span class="italic">(Staging preview: this list is demo data.)</span>' : ''}</p>`;
   },
 
@@ -324,20 +344,20 @@ const Secrets = {
     const isGithubRow = s.source === 'github-actions';
     const isProposed = s.state === 'proposed';
     const requiredBadge = s.required
-      ? `<span class="text-[0.65rem] uppercase font-bold text-red-700 dark:text-red-400">required</span>`
+      ? `<span class="text-xs uppercase font-bold text-red-700 dark:text-red-200">required</span>`
       : '';
     const sensitiveBadge = s.sensitive && !isGithubRow
-      ? `<span class="text-[0.65rem] uppercase font-bold text-amber-800 dark:text-amber-300" title="value never shown after save">sensitive</span>`
+      ? `<span class="text-xs uppercase font-bold text-amber-800 dark:text-amber-200" title="value never shown after save">sensitive</span>`
       : '';
     const orphanBadge = s.orphan
-      ? `<span class="text-[0.65rem] uppercase font-bold text-zinc-500 dark:text-zinc-400">orphan</span>`
+      ? `<span class="text-xs uppercase font-bold text-zinc-500 dark:text-zinc-300">orphan</span>`
       : '';
     // Present only on the platform-variables view; ordinary app secrets
     // send no `state` and keep exactly the badges they always had — except
     // a 'proposed' row, which needs its badge in both scopes.
     const badge = s.state && Secrets.STATE_BADGES[s.state];
     const stateBadge = badge
-      ? `<span class="rounded px-1.5 py-0.5 text-[0.6rem] font-medium ${badge.cls}">${badge.label}</span>`
+      ? `<span class="rounded px-1.5 py-0.5 text-xs font-medium ${badge.cls}">${badge.label}</span>`
       : '';
 
     let valueDisplay;
@@ -345,34 +365,34 @@ const Secrets = {
       // Names + timestamps are the entire API surface here (see the header
       // comment), so there is deliberately no value, no last-4, and no
       // "reveal" affordance to offer — not even to an admin.
-      valueDisplay = `<span class="text-xs text-zinc-600 dark:text-zinc-400">Set on GitHub${
+      valueDisplay = `<span class="text-xs text-zinc-600 dark:text-zinc-300">Set on GitHub${
         s.updatedAt ? ` · updated ${escapeHtml(Secrets.formatDate(s.updatedAt))}` : ''}</span>`;
     } else if (isProposed) {
       valueDisplay = s.hasValue
-        ? `<span class="text-xs text-violet-700 dark:text-violet-300">value included${
+        ? `<span class="text-xs text-azure-700 dark:text-azure-300">value included${
           s.valueLast4 ? ` (…${escapeHtml(s.valueLast4)})` : ''}, applied when the proposal merges</span>`
-        : '<span class="text-xs text-zinc-500 dark:text-zinc-400">declaration only, no value proposed</span>';
+        : '<span class="text-xs text-zinc-500 dark:text-zinc-300">declaration only, no value proposed</span>';
     } else if (s.hasValue && s.value != null) {
       // A non-private platform variable whose plaintext the server was
       // willing to return (admins only). Showing it in full is the point of
       // marking a variable non-private.
       valueDisplay = `<code class="text-xs font-mono text-zinc-700 dark:text-zinc-300 break-all">${escapeHtml(s.value)}</code>`;
     } else if (s.hasValue && s.private && s.state) {
-      valueDisplay = '<span class="text-xs text-zinc-500 dark:text-zinc-400 font-mono">•••••••• (private, never displayed)</span>';
+      valueDisplay = '<span class="text-xs text-zinc-500 dark:text-zinc-300 font-mono">•••••••• (private, never displayed)</span>';
     } else if (s.hasValue && s.state === 'set' && !s.private && s.valueLast4 == null) {
       // Stored, but the plaintext couldn't be decrypted (rotated
       // JWT_SECRET, corrupt row). listView() degrades to this rather than
       // erroring the whole panel, so say so instead of rendering "set".
-      valueDisplay = '<span class="text-xs text-amber-800 dark:text-amber-400">set, but the stored value could not be read</span>';
+      valueDisplay = '<span class="text-xs text-amber-800 dark:text-amber-200">set, but the stored value could not be read</span>';
     } else if (s.hasValue) {
       const last4 = s.valueLast4 ? `…${escapeHtml(s.valueLast4)}` : '••••••••';
-      valueDisplay = `<span class="font-mono text-xs text-emerald-700 dark:text-emerald-400">set ${last4}</span>`;
+      valueDisplay = `<span class="font-mono text-xs text-meadow-700 dark:text-meadow-200">set ${last4}</span>`;
     } else if (s.required && !s.unwritable) {
-      valueDisplay = `<span class="text-xs font-medium text-red-700 dark:text-red-400">missing, deploys are blocked</span>`;
+      valueDisplay = `<span class="text-xs font-medium text-red-700 dark:text-red-200">missing, deploys are blocked</span>`;
     } else if (s.default != null) {
-      valueDisplay = `<span class="font-mono text-xs text-zinc-500 dark:text-zinc-400">default: ${escapeHtml(s.default)}</span>`;
+      valueDisplay = `<span class="font-mono text-xs text-zinc-500 dark:text-zinc-300">default: ${escapeHtml(s.default)}</span>`;
     } else {
-      valueDisplay = `<span class="text-xs text-zinc-500 dark:text-zinc-400">not set</span>`;
+      valueDisplay = `<span class="text-xs text-zinc-500 dark:text-zinc-300">not set</span>`;
     }
 
     const setVerb = s.hasValue ? 'replace' : 'set';
@@ -381,24 +401,24 @@ const Secrets = {
     // for clear — these slam the change in via PUT/DELETE.
     const directButtons = `
       <button data-action="set" data-key="${escapeAttr(s.key)}" data-sensitive="${sensitiveAttr}"
-        class="text-xs px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-white">${setVerb}</button>
+        class="text-xs px-2 py-1 rounded bg-violet-600 hover:bg-violet-500 text-black">${setVerb}</button>
       ${s.hasValue ? `<button data-action="clear" data-key="${escapeAttr(s.key)}"
-        class="text-xs px-2 py-1 rounded border border-red-400 text-red-700 hover:bg-red-50 dark:hover:bg-red-950 dark:text-red-400">clear</button>` : ''}
+        class="text-xs px-2 py-1 rounded border border-red-400 text-red-700 hover:bg-red-50 dark:hover:bg-red-950 dark:text-red-200">clear</button>` : ''}
     `;
     // Vote path (everyone): muted outline styling so admins reach for
     // direct first by default, but can opt into the vote flow per row.
     const proposeButtons = `
       <button data-action="propose-set" data-key="${escapeAttr(s.key)}" data-sensitive="${sensitiveAttr}"
-        class="text-xs px-2 py-1 rounded border border-violet-400 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950">propose ${setVerb}</button>
+        class="text-xs px-2 py-1 rounded border border-azure-400 text-azure-700 dark:text-azure-300 hover:bg-azure-50 dark:hover:bg-azure-950">propose ${setVerb}</button>
       ${s.hasValue ? `<button data-action="propose-clear" data-key="${escapeAttr(s.key)}"
-        class="text-xs px-2 py-1 rounded border border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950">propose clear</button>` : ''}
+        class="text-xs px-2 py-1 rounded border border-red-300 text-red-700 dark:text-red-200 hover:bg-red-50 dark:hover:bg-red-950">propose clear</button>` : ''}
     `;
     // A row whose key isn't declared yet gets a link to the declaration
     // proposal and nothing else: there is no manifest entry for a value
     // change to attach to, and the value already rides on that proposal.
     const proposalLink = (p) => (p
       ? `<a href="#/app/${escapeAttr(Secrets.currentSlug || '')}" data-action="view-proposal"
-           class="text-xs px-2 py-1 rounded border border-violet-400 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950">View proposal${
+           class="text-xs px-2 py-1 rounded border border-azure-400 text-azure-700 dark:text-azure-300 hover:bg-azure-50 dark:hover:bg-azure-950">View proposal${
   p.prNumber ? ` #${escapeHtml(String(p.prNumber))}` : ''}</a>`
       : '');
     // An `unwritable` row gets NEITHER path. Its value comes from a GitHub
@@ -428,23 +448,23 @@ const Secrets = {
           ${sensitiveBadge}
           ${orphanBadge}
         </div>
-        ${s.description ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${escapeHtml(s.description)}</p>` : ''}
-        ${isGithubRow ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+        ${s.description ? `<p class="text-xs text-zinc-500 dark:text-zinc-300 mb-2">${escapeHtml(s.description)}</p>` : ''}
+        ${isGithubRow ? `<p class="text-xs text-zinc-500 dark:text-zinc-300 mb-2">
           Stored as an Actions secret on the platform repo. Its value can't be shown, because GitHub's
           API never returns one. Change it in the repo's Settings → Secrets and variables →
           Actions.</p>` : ''}
-        ${!isGithubRow && s.unwritable ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+        ${!isGithubRow && s.unwritable ? `<p class="text-xs text-zinc-500 dark:text-zinc-300 mb-2">
           Set by the deploy from a GitHub secret. It can't be edited here.</p>` : ''}
-        ${!isGithubRow && s.githubSecret ? `<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+        ${!isGithubRow && s.githubSecret ? `<p class="text-xs text-zinc-500 dark:text-zinc-300 mb-2">
           ${alsoGithub(s.githubSecret)}</p>` : ''}
-        ${isProposed ? `<p class="text-xs text-violet-700 dark:text-violet-300 mb-2">
+        ${isProposed ? `<p class="text-xs text-azure-700 dark:text-azure-300 mb-2">
           Not declared yet. A proposal adding it to <code class="text-[0.65rem]">dapp.json</code>
           is up for vote${s.pending && s.pending.proposedBy
     ? ` (opened by ${escapeHtml(s.pending.proposedBy)})` : ''}.</p>` : ''}
-        ${!isProposed && s.pending ? `<p class="text-xs text-violet-700 dark:text-violet-300 mb-2">
+        ${!isProposed && s.pending ? `<p class="text-xs text-azure-700 dark:text-azure-300 mb-2">
           Value set · its declaration is up for vote${s.pending.prNumber
     ? ` (PR #${escapeHtml(String(s.pending.prNumber))})` : ''}.</p>` : ''}
-        ${s.state === 'orphan' ? `<p class="text-xs text-amber-800 dark:text-amber-400 mb-2">
+        ${s.state === 'orphan' ? `<p class="text-xs text-amber-800 dark:text-amber-200 mb-2">
           No longer declared in <code class="text-[0.65rem]">dapp.json</code>. Its value is kept so a
           rollback still works, so clear it once you're sure.</p>` : ''}
         <div class="flex items-center gap-2 flex-wrap">
@@ -496,9 +516,9 @@ const Secrets = {
       host.innerHTML = `
         <div class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
           <button id="app-secrets-declare-open"
-            class="text-xs px-2.5 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-white font-medium">
+            class="text-xs px-2.5 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-black font-medium">
             + New ${noun}</button>
-          <span class="ml-2 text-xs text-zinc-500 dark:text-zinc-400">${blocked
+          <span class="ml-2 text-xs text-zinc-500 dark:text-zinc-300">${blocked
     ? escapeHtml(data.declareDisabledReason || 'Unavailable right now.')
     : (canWrite
       ? 'Declares it in dapp.json (a proposal) and stores your value now.'
@@ -524,15 +544,15 @@ const Secrets = {
       .filter((g) => g !== Secrets.GITHUB_GROUP);
     const input = 'w-full rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 '
       + 'px-2 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400';
-    const lbl = 'block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1';
-    const help = 'text-[0.7rem] text-zinc-500 mt-0.5 dark:text-zinc-400';
+    const lbl = 'block text-xs font-medium text-zinc-600 dark:text-zinc-300 mb-1';
+    const help = 'text-[0.7rem] text-zinc-500 mt-0.5 dark:text-zinc-300';
 
     host.innerHTML = `
       <div class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
         <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-2">
           New ${isPlatform ? 'platform variable' : 'app secret'}</h3>
         ${blocked ? `<p id="app-secrets-declare-blocked"
-          class="text-xs text-amber-800 dark:text-amber-400 mb-2">${
+          class="text-xs text-amber-800 dark:text-amber-200 mb-2">${
   escapeHtml(data.declareDisabledReason || 'New variables can\'t be declared right now.')}</p>` : ''}
         <div class="space-y-2">
           <div>
@@ -586,7 +606,7 @@ const Secrets = {
         </div>
         <div class="flex items-center gap-2 mt-3">
           <button id="app-secrets-declare-submit" ${blocked ? 'disabled' : ''}
-            class="text-xs px-2.5 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-white font-medium ${
+            class="text-xs px-2.5 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-black font-medium ${
   blocked ? 'opacity-50 cursor-not-allowed' : ''}">${
   canWrite ? 'Add &amp; set value' : 'Propose new ' + noun}</button>
           <button id="app-secrets-declare-cancel"
@@ -781,10 +801,12 @@ const Secrets = {
     if (!el) return;
     el.textContent = msg || '';
     el.classList.toggle('hidden', !msg);
-    el.classList.remove('text-zinc-500', 'dark:text-zinc-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-red-700', 'dark:text-red-400');
-    if (level === 'ok') el.classList.add('text-emerald-700', 'dark:text-emerald-400');
-    else if (level === 'err') el.classList.add('text-red-700', 'dark:text-red-400');
-    else el.classList.add('text-zinc-500', 'dark:text-zinc-400');
+    // One class token per argument — classList takes tokens, not class
+    // strings, and a space-joined pair throws InvalidCharacterError.
+    el.classList.remove('text-zinc-500', 'dark:text-zinc-300', 'text-meadow-700', 'dark:text-meadow-200', 'text-red-700', 'dark:text-red-200');
+    if (level === 'ok') el.classList.add('text-meadow-700', 'dark:text-meadow-200');
+    else if (level === 'err') el.classList.add('text-red-700', 'dark:text-red-200');
+    else el.classList.add('text-zinc-500', 'dark:text-zinc-300');
   },
 };
 

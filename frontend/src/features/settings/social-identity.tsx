@@ -66,10 +66,30 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Settings : null) || null;
 }
 
+/*
+ * Each tone carries a COMPLETE ground + border, and the base string below
+ * carries none. It used to be the other way round: the card always spelled
+ * `border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900` and a
+ * tone APPENDED a second border and a second ground to the same class string.
+ * Two `bg-` and two `dark:bg-` utilities on one element are not resolved by
+ * the order they are written in — the compiled stylesheet's order decides,
+ * which is a property of tailwind.config.js's palette key order rather than
+ * of anything visible here — so which ground the "Layer 1 unlocked" card drew
+ * was arbitrary. One tone, one complete answer.
+ *
+ * `ok` HELD on stock emerald while everything else on this screen folded onto
+ * the `meadow` ramp, because tests/settings-screen.test.js asserts a border
+ * spelling against this exact output and folding only the wash would have put
+ * meadow inside an emerald edge — worse than either whole answer. The four
+ * tokens have moved together now, with that assertion re-pinned in the same
+ * commit. Stock emerald is an untuned hue beside the platform's own ramps, and
+ * `meadow` (#A9CF97 at 300) is the brand green the rest of the file already
+ * spells; the `emerald` KEY below stays, because it is the WIRE value.
+ */
 const TIER_TONE = {
-  plain: '',
-  warn: ' border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20',
-  ok: ' border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20',
+  plain: 'border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900',
+  warn: 'border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20',
+  ok: 'border-meadow-300 dark:border-meadow-800 bg-meadow-50 dark:bg-meadow-950/20',
 };
 
 /**
@@ -84,21 +104,23 @@ const TIER_TONE = {
  * One constant instead, and this file is on
  * tests/shell-primitive-adoption.test.js's allow-list for exactly that reason.
  */
-const CONNECT_SURFACE = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white';
+const CONNECT_SURFACE = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-black';
 
+// The `emerald` KEY is the wire value settings.js emits (_socialIdentityRowView)
+// and the Tone union above declares — only its VALUE moves to the meadow ramp.
 const STATE_TONE = {
-  amber: 'text-amber-800 dark:text-amber-400',
-  emerald: 'text-emerald-700 dark:text-emerald-400',
-  muted: 'text-zinc-500 dark:text-zinc-400',
+  amber: 'text-amber-800 dark:text-amber-200',
+  emerald: 'text-meadow-700 dark:text-meadow-200',
+  muted: 'text-zinc-500 dark:text-zinc-300',
 };
 
 function TierCard({ tier }: { tier: TierCardView }) {
   return (
     <div
-      className={`rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 mb-3${TIER_TONE[tier.tone]}`}
+      className={`rounded-lg border px-3 py-2 mb-3 ${TIER_TONE[tier.tone]}`}
     >
       <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{tier.title}</div>
-      <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{tier.detail}</div>
+      <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">{tier.detail}</div>
     </div>
   );
 }
@@ -119,14 +141,14 @@ function AuditNote({ provider }: { provider: 'github' | 'x' }) {
   return (
     <p
       {...(provider === 'github' ? { id: 'github-link-audit-note' } : null)}
-      className="text-xs text-zinc-500 dark:text-zinc-500 mt-2"
+      className="text-xs text-zinc-500 dark:text-zinc-300 mt-2"
     >
       {'Review or revoke this authorization at '}
       <a
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-violet-700 dark:text-violet-400 hover:underline"
+        className="text-azure-800 dark:text-azure-200 hover:underline"
       >
         {label}
       </a>
@@ -153,7 +175,7 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
     >
       <div className="font-medium text-zinc-700 dark:text-zinc-300">{view.source}</div>
       <div className="mt-1 flex items-center gap-2 min-w-0">
-        <span className="text-zinc-500 dark:text-zinc-400 shrink-0">Callback URI:</span>
+        <span className="text-zinc-500 dark:text-zinc-300 shrink-0">Callback URI:</span>
         <code className="truncate text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 rounded px-1 py-0.5">
           {view.callbackUrl}
         </code>
@@ -171,16 +193,16 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <p className="mt-1 text-zinc-500 dark:text-zinc-400">{view.warning}</p>
+      <p className="mt-1 text-zinc-500 dark:text-zinc-300">{view.warning}</p>
       <div className="mt-2 flex items-start gap-2">
         <button
           type="button"
           id={`${view.provider}-link-check`}
           disabled={checking}
-          className="shrink-0 rounded-md border border-violet-400 dark:border-violet-700 px-2 py-1 font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950 disabled:opacity-50 transition-colors"
+          className="shrink-0 rounded-md border border-azure-400 dark:border-azure-700 px-2 py-1 font-medium text-azure-700 dark:text-azure-300 hover:bg-azure-50 dark:hover:bg-azure-950 disabled:opacity-50 transition-colors"
           onClick={async () => {
             setChecking(true);
-            setVerdict({ tone: 'text-zinc-500 dark:text-zinc-400', text: 'Checking…' });
+            setVerdict({ tone: 'text-zinc-500 dark:text-zinc-300', text: 'Checking…' });
             try {
               let answer;
               if (view.demo) {
@@ -196,26 +218,26 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
               }
               if (answer.clientAuth === 'ok') {
                 setVerdict({
-                  tone: 'text-emerald-700 dark:text-emerald-400',
+                  tone: 'text-meadow-700 dark:text-meadow-200',
                   text: `${view.name} accepted the platform’s client credentials. `
                     + `If connecting still fails on ${view.name}’s own page, the callback address above `
                     + `is not registered on the ${view.name} app.`,
                 });
               } else if (answer.clientAuth === 'rejected') {
                 setVerdict({
-                  tone: 'text-red-700 dark:text-red-400',
+                  tone: 'text-red-700 dark:text-red-200',
                   text: `${view.name} rejected the platform’s client ID or secret. `
                     + 'the configured credential pair is wrong.',
                 });
               } else {
                 setVerdict({
-                  tone: 'text-amber-800 dark:text-amber-400',
+                  tone: 'text-amber-800 dark:text-amber-200',
                   text: `Couldn’t reach ${view.name} to verify the credentials. Try again shortly.`,
                 });
               }
             } catch {
               setVerdict({
-                tone: 'text-red-700 dark:text-red-400',
+                tone: 'text-red-700 dark:text-red-200',
                 text: 'The configuration check failed to run. Try again shortly.',
               });
             } finally {
@@ -225,7 +247,7 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
         >
           Run configuration check
         </button>
-        <span className={`${verdict ? verdict.tone : 'text-zinc-500 dark:text-zinc-400'} pt-1`}>
+        <span className={`${verdict ? verdict.tone : 'text-zinc-500 dark:text-zinc-300'} pt-1`}>
           {verdict ? verdict.text : null}
         </span>
       </div>
@@ -243,12 +265,12 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
           </div>
           <div className={`text-xs mt-1 ${STATE_TONE[row.state.tone]}`}>{row.state.text}</div>
           {row.linkedAt ? (
-            <div className="text-xs text-zinc-500 dark:text-zinc-500 mt-1">{row.linkedAt}</div>
+            <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">{row.linkedAt}</div>
           ) : null}
           {row.noToken ? (
             <div
               {...(row.provider === 'github' ? { id: 'github-link-no-token' } : null)}
-              className="text-xs text-zinc-500 dark:text-zinc-400 mt-1"
+              className="text-xs text-zinc-500 dark:text-zinc-300 mt-1"
             >
               {row.noToken}
             </div>
@@ -272,7 +294,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
             <button
               type="button"
               disabled={row.unlink.disabled}
-              className="rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50 transition-colors"
+              className="rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-200 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50 transition-colors"
               onClick={(e) => {
                 if (row.unlink?.disabled) return;
                 controller()?._unlinkGithub?.(e.currentTarget, row.provider);
@@ -292,7 +314,7 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
       {row.strandedNote ? (
         <p
           id={`${row.provider}-link-pending-note`}
-          className="text-xs text-amber-800 dark:text-amber-400 mt-2"
+          className="text-xs text-amber-800 dark:text-amber-200 mt-2"
         >
           {row.strandedNote}
         </p>

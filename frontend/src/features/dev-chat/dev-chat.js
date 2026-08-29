@@ -127,7 +127,7 @@ const DevChat = {
     '<kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to save as draft',
   // Floppy-disk glyph, same inline-SVG style as the attach button.
   _SAVE_ICON_SVG:
-    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>',
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>',
 
   _titleStatus: null, // null | 'thinking'
   // null | 'sessionDone' | 'autoSolveDone' | 'autoSolveFailed' (#161).
@@ -802,32 +802,32 @@ const DevChat = {
     overlay.id = 'dc-agent-choice-modal';
     overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
     overlay.innerHTML = `
-      <div class="w-full max-w-lg rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="dc-agent-choice-title">
+      <div class="w-full max-w-lg rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-2xl dark:shadow-none" role="dialog" aria-modal="true" aria-labelledby="dc-agent-choice-title">
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
             <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${openRouterModelOnly ? 'Choose an OpenRouter model' : (mode === 'switch' ? 'Where should this session build?' : 'Where should this build?')}</h2>
-            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${openRouterModelOnly ? 'Changing the model keeps this branch and conversation, but starts fresh OpenRouter context on the next turn.' : (mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.')}</p>
+            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-300">${openRouterModelOnly ? 'Changing the model keeps this branch and conversation, but starts fresh OpenRouter context on the next turn.' : (mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.')}</p>
           </div>
-          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close">✕</button>
+          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-300" aria-label="Close">✕</button>
         </div>
         <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="Session AI">
           <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · OpenRouter</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Preferred. Use your included daily credits or personal key, with any available model.</span>
-            ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-300">Preferred. Use your included daily credits or personal key, with any available model.</span>
+            ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-azure-500/20 px-1.5 py-0.5 text-xs font-medium text-azure-800 dark:text-azure-200">Saved default</span>' : ''}
           </button>
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · Claude</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Use the platform Claude allowance instead.</span>
-            ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">Saved default</span>' : ''}
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-300">Use the platform Claude allowance instead.</span>
+            ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-azure-500/20 px-1.5 py-0.5 text-xs font-medium text-azure-800 dark:text-azure-200">Saved default</span>' : ''}
           </button>
         </div>
         <div id="dc-agent-choice-codex-options" class="mt-4 hidden rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
           <label for="dc-agent-choice-model" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300">OpenRouter model</label>
-          <select id="dc-agent-choice-model" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></select>
-          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">All models exposed by your OpenRouter key, sorted by average input/output token price. Rates are per 1M tokens; actual spend depends on usage.</p>
+          <select id="dc-agent-choice-model" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100"></select>
+          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-300">All models exposed by your OpenRouter key, sorted by average input/output token price. Rates are per 1M tokens; actual spend depends on usage.</p>
           <label for="dc-agent-choice-effort" class="mt-3 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Reasoning effort</label>
-          <select id="dc-agent-choice-effort" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+          <select id="dc-agent-choice-effort" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100">
             <option value="">Default</option>
             <option value="minimal">Minimal</option>
             <option value="low">Low</option>
@@ -836,11 +836,11 @@ const DevChat = {
             <option value="xhigh">Extra high</option>
           </select>
         </div>
-        <p id="dc-agent-choice-status" class="mt-3 min-h-[1.25rem] text-xs leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
+        <p id="dc-agent-choice-status" class="mt-3 min-h-[1.25rem] text-xs leading-relaxed text-zinc-500 dark:text-zinc-300"></p>
         <div class="mt-4 flex flex-wrap justify-end gap-2">
           <button type="button" id="dc-agent-choice-settings" class="hidden rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">Open OpenRouter settings</button>
           <button type="button" id="dc-agent-choice-cancel" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancel</button>
-          <button type="button" id="dc-agent-choice-apply" class="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"></button>
+          <button type="button" id="dc-agent-choice-apply" class="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-black hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"></button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
@@ -864,8 +864,8 @@ const DevChat = {
     effortSelect.value = selectedEffort;
 
     const cardClass = (selected) => `rounded-lg border p-3 text-left transition-colors ${selected
-      ? 'border-violet-500 bg-violet-500/5 ring-1 ring-violet-500'
-      : 'border-zinc-300 dark:border-zinc-700 hover:border-violet-400'}`;
+      ? 'border-zinc-900 bg-zinc-900/5 ring-1 ring-zinc-900 dark:border-zinc-100 dark:bg-zinc-100/5 dark:ring-zinc-100'
+      : 'border-zinc-300 dark:border-zinc-700 hover:border-zinc-400 dark:hover:border-zinc-500'}`;
 
     const render = () => {
       const codex = selectedBackend === 'codex_openrouter';
@@ -1449,7 +1449,7 @@ const DevChat = {
   // the limit-first billing rule — and the component only draws them.
   _budgetPillView() {
     const NONE = { title: null, parts: [] };
-    const muted = 'text-zinc-500 dark:text-zinc-400';
+    const muted = 'text-zinc-500 dark:text-zinc-300';
     // An OpenRouter session bills the user's own provider key, so the
     // platform meter has nothing to say about it.
     if (DevChat._isOpenRouterSession()) return NONE;
@@ -1467,9 +1467,9 @@ const DevChat = {
         return {
           title: 'Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available.',
           parts: [
-            { text: 'platform credits locked', className: 'text-amber-800 dark:text-amber-400 hover:underline', href: '#settings/connectors' },
+            { text: 'platform credits locked', className: 'text-amber-800 dark:text-amber-200 hover:underline', href: '#settings/connectors' },
             { text: ' · ', className: muted },
-            { text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400' },
+            { text: `your key · ${last4}`, className: 'text-meadow-700 dark:text-meadow-200' },
           ],
         };
       }
@@ -1477,7 +1477,7 @@ const DevChat = {
         title: null,
         parts: [{
           text: 'verify account · unlock $10/day',
-          className: 'text-amber-800 dark:text-amber-400 font-medium hover:underline',
+          className: 'text-amber-800 dark:text-amber-200 font-medium hover:underline',
           href: '#settings/connectors',
           title: 'Connect GitHub or X to unlock $10/day',
         }],
@@ -1485,8 +1485,8 @@ const DevChat = {
     }
     if (state && state.level === 'unavailable') {
       return hasApiKey
-        ? { title: null, parts: [{ text: 'your key available', className: 'text-emerald-700 dark:text-emerald-400', title: 'Platform credit eligibility is temporarily unavailable; your own key remains available.' }] }
-        : { title: null, parts: [{ text: 'credits temporarily unavailable', className: 'text-amber-800 dark:text-amber-400', title: 'Platform credit eligibility could not be verified. Try again shortly.' }] };
+        ? { title: null, parts: [{ text: 'your key available', className: 'text-meadow-700 dark:text-meadow-200', title: 'Platform credit eligibility is temporarily unavailable; your own key remains available.' }] }
+        : { title: null, parts: [{ text: 'credits temporarily unavailable', className: 'text-amber-800 dark:text-amber-200', title: 'Platform credit eligibility could not be verified. Try again shortly.' }] };
     }
 
     // #1353: no "· $X left" alongside the pair. The remainder is $limit
@@ -1499,7 +1499,7 @@ const DevChat = {
     const resetTip = DevChat._creditResetSentence();
     // BYOK (#30/#119/#212): billing is limit-first — the daily platform
     // allowance is consumed before any spend hits the user's own key —
-    // so key-holders see the limit progress first (same red/yellow
+    // so key-holders see the limit progress first (same red/amber
     // thresholds as everyone else) and a "your key $X" figure only once
     // spillover billing to their key has actually started today. The
     // BYOK figure never gets threshold coloring — no cap applies to it.
@@ -1509,7 +1509,7 @@ const DevChat = {
         // Budget fetch hasn't landed yet — static badge until it does.
         return {
           title: null,
-          parts: [{ text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400', title: 'Using your Anthropic API key' }],
+          parts: [{ text: `your key · ${last4}`, className: 'text-meadow-700 dark:text-meadow-200', title: 'Using your Anthropic API key' }],
         };
       }
       const byokCents = DevChat.budget.byokSpentCents || 0;
@@ -1517,7 +1517,7 @@ const DevChat = {
       const spent = (DevChat.budget.spentCents / 100).toFixed(2);
       const limit = (DevChat.budget.limitCents / 100).toFixed(2);
       const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
-      const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
+      const color = pct > 80 ? 'text-red-700 dark:text-red-200' : pct > 50 ? 'text-amber-800 dark:text-amber-200' : 'text-meadow-700 dark:text-meadow-200';
       const parts = [
         { text: 'limit ', className: muted },
         { text: `$${spent}`, className: color },
@@ -1525,7 +1525,7 @@ const DevChat = {
       ];
       if (byokCents > 0) {
         parts.push({ text: ' · ', className: muted });
-        parts.push({ text: `your key $${byok}`, className: 'text-emerald-700 dark:text-emerald-400' });
+        parts.push({ text: `your key $${byok}`, className: 'text-meadow-700 dark:text-meadow-200' });
       }
       return {
         title: `Today: $${spent} of your $${limit} platform daily limit`
@@ -1547,13 +1547,13 @@ const DevChat = {
         title: `Your free daily AI credits are used up. ${
           resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`,
         parts: [
-          { text: `$${spent}`, className: 'text-red-700 font-semibold dark:text-red-400' },
-          { text: `/$${limit}`, className: 'text-red-700 dark:text-red-400' },
+          { text: `$${spent}`, className: 'text-red-700 font-semibold dark:text-red-200' },
+          { text: `/$${limit}`, className: 'text-red-700 dark:text-red-200' },
         ],
       };
     }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
-    const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
+    const color = pct > 80 ? 'text-red-700 dark:text-red-200' : pct > 50 ? 'text-amber-800 dark:text-amber-200' : 'text-meadow-700 dark:text-meadow-200';
     return {
       title: `Today: $${spent} of your $${limit} free daily AI credits. ${
         resetTip || 'Resets at midnight UTC.'}`,

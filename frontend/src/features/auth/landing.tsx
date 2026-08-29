@@ -37,6 +37,8 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
 
+import { auraFor } from '../apps/app-card.js';
+import { EmojiTileGlyph } from '../apps/app-card-view';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
@@ -167,6 +169,7 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
           <div
             className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
             data-icon="image"
+            data-aura={auraFor(app)}
           >
             <img
               src={app.icon_url}
@@ -180,25 +183,25 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
           <div
             className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
             data-icon="emoji"
+            data-aura={auraFor(app)}
           >
-            <span className="text-3xl leading-none" aria-hidden="true">
-              {app.icon_emoji}
-            </span>
+            <EmojiTileGlyph emoji={app.icon_emoji} textClass="text-3xl leading-none" />
           </div>
         ) : (
           <div
             className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
             data-icon="letter"
+            data-aura={auraFor(app)}
           >
             {(app.name || '?').charAt(0).toUpperCase()}
           </div>
         )}
         {gated ? (
           <span
-            className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300"
+            className="absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 dark:shadow-none"
             title="Account required"
           >
-            <LockIcon className="w-3.5 h-3.5" aria-hidden="true" />
+            <LockIcon className="w-4 h-4" aria-hidden="true" />
           </span>
         ) : null}
       </div>
@@ -216,7 +219,7 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
           {label}
         </div>
         {gated ? (
-          <p className="app-card-status text-zinc-500 dark:text-zinc-500">Account required</p>
+          <p className="app-card-status text-zinc-500 dark:text-zinc-300">Account required</p>
         ) : null}
       </div>
     </div>
@@ -678,7 +681,7 @@ export function LandingScreen() {
             <a
               href="#login"
               id="landing-signin-cta"
-              className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
+              className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-black"
               onClick={onLeaveCta}
             >
               Sign in
@@ -697,7 +700,7 @@ export function LandingScreen() {
           <div id="landing-back-to-waiting" className={session ? '' : 'hidden'}>
             <a
               href="#waiting"
-              className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
+              className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-black"
             >
               Your queue status
             </a>
@@ -715,11 +718,14 @@ export function LandingScreen() {
       */}
       <div id="auth-landing-scroll" className="flex-1 min-h-0 overflow-y-auto platform-safe-scroll">
         <div className="max-w-3xl mx-auto px-6 py-12">
-          <div className="text-center mb-10">
+          {/* subtle-y2k: the title floats on one large, whisper-quiet
+              aura-lemon glow — the landing's single gradient moment. A
+              before: pseudo so no new box enters the markup. */}
+          <div className="relative isolate before:content-[''] before:absolute before:-inset-x-10 before:-inset-y-8 before:-z-10 before:rounded-full before:bg-aura-lemon before:opacity-[0.18] before:blur-2xl text-center mb-10">
             <h1 className="text-3xl font-bold mb-2">
               Usernode Social Vibecoding
             </h1>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 italic">
+            <p className="text-sm text-zinc-500 dark:text-zinc-300 italic">
               A place where users own and build apps together
             </p>
           </div>
@@ -730,17 +736,17 @@ export function LandingScreen() {
               complete. Say so once, here.
           */}
           <div className="offline-only mb-10 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
+            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-200">
               You're offline
             </h2>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
               Anything below is the last version this device loaded, and signing in or joining the
           waitlist both need a connection.
             </p>
             <button
               type="button"
               data-offline-retry=""
-              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
+              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-200 hover:bg-amber-500/10 transition-colors"
             >
               Try again
             </button>
@@ -764,14 +770,14 @@ export function LandingScreen() {
             <h2 className="text-lg font-semibold mb-1">
               Build apps together, own them together
             </h2>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
+            <p className="text-sm text-zinc-500 dark:text-zinc-300 mb-3">
               Usernode Social Vibecoding is a place where users describe the app
           they want in chat, an AI builds it, and the community votes the
           changes in. Every app below was built here by the people who use
           it. They run on the Usernode chain, and contributors own a share
           of what they build.
             </p>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+            <p className="text-sm text-zinc-500 dark:text-zinc-300 mb-4">
               Platform access opens in batches. The apps below are open to
           everyone right now.
             </p>
@@ -781,7 +787,7 @@ export function LandingScreen() {
               data-offline-disabled=""
               className={hiddenLast(
                 session,
-                'inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 text-sm font-medium text-white transition-colors',
+                'inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 text-sm font-medium text-black transition-colors',
               )}
               onClick={onLeaveCta}
             >
@@ -796,8 +802,8 @@ export function LandingScreen() {
               id="landing-cta-queued"
               className={
                 session
-                  ? 'text-sm text-zinc-500 dark:text-zinc-400'
-                  : 'hidden text-sm text-zinc-500 dark:text-zinc-400'
+                  ? 'text-sm text-zinc-500 dark:text-zinc-300'
+                  : 'hidden text-sm text-zinc-500 dark:text-zinc-300'
               }
             >
               You're already on the waitlist. We'll email you when your spot opens.
@@ -807,20 +813,20 @@ export function LandingScreen() {
             <h2 className="text-lg font-semibold mb-1">
               Apps built here
             </h2>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+            <p className="text-sm text-zinc-500 dark:text-zinc-300 mb-4">
               Community-built apps on the Usernode chain. Many are open to
           everyone. The grayed-out ones need an account.
             </p>
             {/* Same launcher-grid shape as the authed homescreen (#app-list). */}
             <div id="landing-apps" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
               {apps.kind === 'loading' ? (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                <p className="text-sm text-zinc-500 dark:text-zinc-300">
                   Loading&hellip;
                 </p>
               ) : apps.kind === 'error' ? (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400 col-span-full">Could not load apps right now.</p>
+                <p className="text-sm text-zinc-500 dark:text-zinc-300 col-span-full">Could not load apps right now.</p>
               ) : apps.apps.length === 0 ? (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400 col-span-full">No public apps yet.</p>
+                <p className="text-sm text-zinc-500 dark:text-zinc-300 col-span-full">No public apps yet.</p>
               ) : (
                 apps.apps.map((app, i) => (
                   <LandingTile key={app.slug || i} app={app} onOpen={onTileClick} />

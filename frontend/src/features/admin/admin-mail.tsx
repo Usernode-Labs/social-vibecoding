@@ -112,12 +112,18 @@ async function fetchJson(url: string, opts?: RequestInit): Promise<{ status: num
 // `suppressed_rate_limit` is the throttle working, not a fault, so it reads
 // as informational rather than red.
 function statusClass(status?: string): string {
-  if (status === 'sent') return 'text-emerald-700 dark:text-emerald-400';
-  if (status === 'failed') return 'text-rose-700 dark:text-rose-400';
-  if (status === 'suppressed_rate_limit') return 'text-amber-800 dark:text-amber-400';
-  if (status === 'no_transport') return 'text-amber-800 dark:text-amber-400';
-  if (status === 'skipped_staging') return 'text-sky-700 dark:text-sky-400';
-  return 'text-zinc-500 dark:text-zinc-400';
+  if (status === 'sent') return 'text-meadow-700 dark:text-meadow-200';
+  if (status === 'failed') return 'text-red-700 dark:text-red-200';
+  if (status === 'suppressed_rate_limit') return 'text-amber-800 dark:text-amber-200';
+  if (status === 'no_transport') return 'text-amber-800 dark:text-amber-200';
+  // azure-800, not -700: this label sits in a column with five siblings that
+  // all measure Lc ~80 on the white card (meadow-700 82.8, red-700 80.0,
+  // amber-800 90.1, zinc-500 84.5). azure-700 is Lc 68.0 — deliberately short
+  // of parity to stay near the brand hex, per tailwind.config.js — so the one
+  // blue row would read a rung lighter than every row above it. 800 is the
+  // same hue at 77.8, which is what "when a surface needs to clear it" means.
+  if (status === 'skipped_staging') return 'text-azure-800 dark:text-azure-200';
+  return 'text-zinc-500 dark:text-zinc-300';
 }
 
 // One plain-English sentence per outcome. The raw status is shown too — it is
@@ -142,9 +148,9 @@ function Mono({ children }: { children: React.ReactNode }) {
 /** The sender line, shown under every shape of the status card. */
 function Sender({ s }: { s: MailStatus }) {
   return (
-    <div className="text-zinc-500 dark:text-zinc-400 mt-1">
+    <div className="text-zinc-500 dark:text-zinc-300 mt-1">
       {'Sending as '}<Mono>{s.from || '(unset)'}</Mono>
-      {s.usingDefaultFrom ? <> <span className="text-zinc-500 dark:text-zinc-400">(built-in default)</span></> : null}
+      {s.usingDefaultFrom ? <> <span className="text-zinc-500 dark:text-zinc-300">(built-in default)</span></> : null}
     </div>
   );
 }
@@ -162,19 +168,44 @@ function CodeList({ keys }: { keys?: string[] }) {
 }
 
 function StatusCard({ status, failed }: { status: MailStatus | null; failed: boolean }) {
-  if (failed) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Could not load the mail configuration.</p>;
-  if (!status) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+  if (failed) return <p className="text-sm text-zinc-500 dark:text-zinc-300">Could not load the mail configuration.</p>;
+  if (!status) return <p className="text-sm text-zinc-500 dark:text-zinc-300">Loading…</p>;
 
   // A staging preview is a clone of production data, so it can never reach a
   // real provider — say so plainly rather than letting a tester read a card
   // and wait for an inbox that will never fill.
   if (status.stagingLogOnly) {
     return (
-      <div className="rounded-lg border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 px-4 py-3 text-sm">
-        <div className="font-semibold text-sky-800 dark:text-sky-300">
+      <div className="rounded-lg border border-azure-300 dark:border-azure-800 bg-azure-50 dark:bg-transparent px-4 py-3 text-sm">
+        {/* -200 in dark, matching the two sibling panels below (the amber
+            "not deliverable" card and TransportError's red one) — all three
+            are the same rounded-lg/border/bg-*-50/dark:bg-transparent shape,
+            so their headings must read at the same weight. azure-300 measures
+            Lc 66.5 on the dark card against those two at 80.4 and 80.0, and
+            it is also LOWER than the sky-300 it replaced (71.7). Same
+            spelling as the console's other azure panel, the deploy banner in
+            admin-status.tsx. */}
+        <div className="font-semibold text-azure-800 dark:text-azure-200">
           Staging preview: email is rendered to the log, never delivered
         </div>
-        <p className="text-sky-800/80 dark:text-sky-300/80 mt-1">
+        {/* No /80 on either half. The two sibling panels can carry it — their
+            inks start high enough that four fifths of one still clears the body
+            tier — but azure-800's light reading is the lowest of the three by
+            design (it stays near the brand hex), so thinning it to 80% drops
+            this paragraph BELOW that tier while its amber and red counterparts
+            stay above it. The opacity was buying a heading/body distinction
+            that font-weight already carries. The twin of this panel in
+            topochain/settings.tsx spells it the same way — it was left at /80
+            when this one moved, so the two rendered identical copy at
+            different weights until the sweep's own verifier closed it.
+            KNOWN and left for the owner: the argument above is a LIGHT-ground
+            one. In dark the opacity was harmless — azure-200/80 measures Lc
+            -59.6 against the amber and red siblings' -59.0 and -58.5 — so
+            dropping it there leaves this paragraph at -81.4, about 22 Lc
+            louder than the two panels beside it. Holding both parities needs
+            an asymmetric spelling (full light, /80 dark) in both twins, which
+            is a bigger call than a colour sweep. */}
+        <p className="text-azure-800 dark:text-azure-200 mt-1">
           {'This preview holds a clone of production data, so it must not mail real people. Login codes and links appear in the platform log ('}
           <Mono>platform-mail</Mono>
           {') so you can complete a flow by hand. A test send here checks the plumbing up to the transport and stops there.'}
@@ -187,8 +218,8 @@ function StatusCard({ status, failed }: { status: MailStatus | null; failed: boo
   if (status.configured) {
     return (
       <div className={`${AdminUI.card} px-4 py-3 text-sm`}>
-        <span className="font-semibold text-emerald-700 dark:text-emerald-400">Email is configured:</span>
-        <span className="text-zinc-500 dark:text-zinc-400">
+        <span className="font-semibold text-meadow-700 dark:text-meadow-200">Email is configured:</span>
+        <span className="text-zinc-500 dark:text-zinc-300">
           {' login codes and waitlist confirmations are being sent via '}
           <span className="font-medium">{status.provider || 'unknown'}</span>{'.'}
         </span>
@@ -198,31 +229,31 @@ function StatusCard({ status, failed }: { status: MailStatus | null; failed: boo
   }
 
   return (
-    <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm">
-      <div className="font-semibold text-amber-800 dark:text-amber-300">
+    <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-transparent px-4 py-3 text-sm">
+      <div className="font-semibold text-amber-800 dark:text-amber-200">
         Email is not deliverable: no mail sender configured
       </div>
-      <p className="text-amber-800/80 dark:text-amber-300/80 mt-1">
+      <p className="text-amber-800/80 dark:text-amber-200/80 mt-1">
         These flows still report success to the user but deliver nothing:
       </p>
-      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
+      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-200/80">
         {/* eslint-disable-next-line react/no-array-index-key */}
         {(status.affectedFlows || []).map((f, i) => <li key={i}>{f}</li>)}
       </ul>
-      <p className="text-amber-800/80 dark:text-amber-300/80 mt-2">Providers:</p>
+      <p className="text-amber-800/80 dark:text-amber-200/80 mt-2">Providers:</p>
       {/* Per-provider readiness, so the card says which provider needs what
           instead of a flat "mail is broken". */}
-      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
+      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-200/80">
         {(status.providers || []).map((p) => (
           <li key={p.name}>
             {`${p.label || p.name}: `}
             {p.configured
-              ? <span className="text-emerald-700 dark:text-emerald-400">ready</span>
+              ? <span className="text-meadow-700 dark:text-meadow-200">ready</span>
               : <>{'needs '}<CodeList keys={p.missing} /></>}
           </li>
         ))}
       </ul>
-      <p className="text-amber-800/80 dark:text-amber-300/80 mt-2">
+      <p className="text-amber-800/80 dark:text-amber-200/80 mt-2">
         {'Set '}<CodeList keys={status.missing} />
         {' in the platform’s Platform variables panel, then redeploy. The mailbox behind those credentials must also be authorised to send as '}
         <Mono>{status.from || ''}</Mono>{'.'}
@@ -234,7 +265,7 @@ function StatusCard({ status, failed }: { status: MailStatus | null; failed: boo
 function OutcomeRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex gap-2">
-      <span className="text-zinc-500 dark:text-zinc-400 w-24 shrink-0">{label}</span>
+      <span className="text-zinc-500 dark:text-zinc-300 w-24 shrink-0">{label}</span>
       <span className="min-w-0 break-words">{children}</span>
     </div>
   );
@@ -260,7 +291,7 @@ function OutcomePanel({ outcome }: { outcome: Outcome }) {
           : null}
         {outcome.error ? <OutcomeRow label="Detail">{outcome.error}</OutcomeRow> : null}
       </div>
-      {subject ? <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">{`Subject: ${subject}`}</div> : null}
+      {subject ? <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-2">{`Subject: ${subject}`}</div> : null}
     </div>
   );
 }
@@ -272,9 +303,9 @@ function OutcomePanel({ outcome }: { outcome: Outcome }) {
  */
 function TransportError() {
   return (
-    <div className="rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-4 py-3 text-sm mt-3">
-      <div className="font-semibold text-rose-800 dark:text-rose-300">Could not reach the platform</div>
-      <p className="text-rose-800/80 dark:text-rose-300/80 mt-1">
+    <div className="rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-transparent px-4 py-3 text-sm mt-3">
+      <div className="font-semibold text-red-800 dark:text-red-200">Could not reach the platform</div>
+      <p className="text-red-800/80 dark:text-red-200/80 mt-1">
         The request did not get a reply, so whether the email was attempted is
         unknown. Check the activity table below before sending again.
       </p>
@@ -292,8 +323,8 @@ function ActivityCard({
   failed: boolean; kindFilter: string | null; highlightId: number | null;
   onToggleFilter: () => void; onRefresh: () => void;
 }) {
-  if (failed) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Could not load recent activity.</p>;
-  if (!data) return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+  if (failed) return <p className="text-sm text-zinc-500 dark:text-zinc-300">Could not load recent activity.</p>;
+  if (!data) return <p className="text-sm text-zinc-500 dark:text-zinc-300">Loading…</p>;
   const deliveries = data.deliveries || [];
   const last24h = data.last24h || {};
   const totals = Object.keys(last24h).sort().map((k) => `${k} ${last24h[k]}`).join(' · ');
@@ -302,7 +333,7 @@ function ActivityCard({
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-sm font-semibold">Recent email activity</h3>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          <span className="text-xs text-zinc-500 dark:text-zinc-300">
             {totals ? `last 24h: ${totals}` : 'nothing in the last 24h'}
           </span>
           <button id="admin-mail-filter" type="button" className={CHIP_BTN} onClick={onToggleFilter}>
@@ -314,7 +345,7 @@ function ActivityCard({
       {deliveries.length ? (
         <div className="overflow-x-auto mt-2">
           <table className="w-full text-xs">
-            <thead className="text-zinc-500 dark:text-zinc-400">
+            <thead className="text-zinc-500 dark:text-zinc-300">
               <tr>
                 <th className={TH}>When</th>
                 <th className={TH}>Kind</th>
@@ -328,22 +359,22 @@ function ActivityCard({
               {deliveries.map((r) => (
                 <tr key={r.id}
                   className={`border-t border-zinc-100 dark:border-zinc-800${
-                    highlightId && r.id === highlightId ? ' bg-violet-50 dark:bg-violet-950/40' : ''}`}>
-                  <td className="py-1.5 pr-3 whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                    highlightId && r.id === highlightId ? ' bg-azure-50 dark:bg-azure-950/40' : ''}`}>
+                  <td className="py-1.5 pr-3 whitespace-nowrap text-zinc-500 dark:text-zinc-300">
                     {r.created_at ? String(r.created_at).replace('T', ' ').slice(0, 19) : ''}
                   </td>
                   <td className="py-1.5 pr-3 whitespace-nowrap">{r.kind || ''}</td>
                   <td className="py-1.5 pr-3">{r.recipient || ''}</td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap text-zinc-500 dark:text-zinc-400">{r.provider || '—'}</td>
+                  <td className="py-1.5 pr-3 whitespace-nowrap text-zinc-500 dark:text-zinc-300">{r.provider || '—'}</td>
                   <td className={`py-1.5 pr-3 whitespace-nowrap font-medium ${statusClass(r.status)}`}>{r.status || ''}</td>
-                  <td className="py-1.5 text-zinc-500 dark:text-zinc-400">{r.error || ''}</td>
+                  <td className="py-1.5 text-zinc-500 dark:text-zinc-300">{r.error || ''}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       ) : (
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-2">
+        <p className="text-sm text-zinc-500 dark:text-zinc-300 mt-2">
           {kindFilter ? 'No test emails have been sent yet.' : 'No mail has been attempted yet.'}
         </p>
       )}
@@ -437,7 +468,7 @@ function MailSection() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <h2 className={AdminUI.cardTitle}>Email delivery</h2>
       </div>
-      <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+      <p className="text-sm text-zinc-500 dark:text-zinc-300 mb-4">
         Login codes and waitlist mail are sent on always-200 endpoints, so a user
         is told “check your email” whether or not anything went out.
         This is where that becomes visible.
@@ -451,7 +482,7 @@ function MailSection() {
           <>
             <div className="flex flex-wrap items-end gap-2">
               <label className="block text-xs grow max-w-md">
-                <span className="text-zinc-500 dark:text-zinc-400">Recipient</span>
+                <span className="text-zinc-500 dark:text-zinc-300">Recipient</span>
                 <input id="admin-mail-to" type="email" autoComplete="off" spellCheck={false}
                   placeholder="you@example.com"
                   className="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-1.5 text-sm"
@@ -464,14 +495,14 @@ function MailSection() {
                 {sending ? 'Sending…' : 'Send test email'}
               </button>
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-2">
               Sends one message through the configured provider and reports exactly what
               happened, unlike the flows this checks, which always report success. Up to
               10 per hour, and no more than one to the same address every 30 seconds.
             </p>
           </>
         ) : (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="text-sm text-zinc-500 dark:text-zinc-300">
             Sending a test email needs full admin access. The configuration and the
             delivery history above and below are readable by any admin.
           </p>
@@ -480,7 +511,7 @@ function MailSection() {
           {result.kind === 'outcome' ? <OutcomePanel outcome={result.outcome} /> : null}
           {result.kind === 'transport' ? <TransportError /> : null}
           {result.kind === 'note' ? (
-            <p className={`text-sm mt-3 ${result.bad ? 'text-rose-600 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+            <p className={`text-sm mt-3 ${result.bad ? 'text-red-700 dark:text-red-200' : 'text-zinc-500 dark:text-zinc-300'}`}>
               {result.text}
             </p>
           ) : null}

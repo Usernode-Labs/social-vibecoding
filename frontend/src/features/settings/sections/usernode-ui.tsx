@@ -65,7 +65,7 @@ export function UnSection(
     <div id={id} className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
       <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">{title}</h3>
       {description ? (
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3">{description}</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-3">{description}</p>
       ) : null}
       {children}
     </div>
@@ -73,10 +73,10 @@ export function UnSection(
 }
 
 const NOTE_CLASS = {
-  muted: 'text-xs text-zinc-500 dark:text-zinc-400',
-  mono: 'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-2 break-words',
-  demo: 'text-xs font-medium text-amber-800 dark:text-amber-400 mb-2',
-  warn: 'text-xs text-amber-800 dark:text-amber-400 mt-2',
+  muted: 'text-xs text-zinc-500 dark:text-zinc-300',
+  mono: 'text-xs font-mono text-zinc-500 dark:text-zinc-300 mt-2 break-words',
+  demo: 'text-xs font-medium text-amber-800 dark:text-amber-200 mb-2',
+  warn: 'text-xs text-amber-800 dark:text-amber-200 mt-2',
 } as const;
 
 export function UnP({ note }: { note: UnNote }): ReactNode {
@@ -88,17 +88,17 @@ const ROW_TAP = ' rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-zinc-100
 
 export function UnRow({ row }: { row: UnStatusRow }): ReactNode {
   const { busy, run } = useAction('Action failed');
-  const dot = `w-2 h-2 rounded-full shrink-0 ${row.ok ? 'bg-emerald-500' : 'bg-amber-500'}`;
+  const dot = `w-2 h-2 rounded-full shrink-0 ${row.ok ? 'bg-meadow-500' : 'bg-amber-500'}`;
   const ink = row.ok
-    ? 'ml-auto text-xs text-emerald-700 dark:text-emerald-400'
-    : 'ml-auto text-xs text-amber-800 dark:text-amber-400';
+    ? 'ml-auto text-xs text-meadow-700 dark:text-meadow-200'
+    : 'ml-auto text-xs text-amber-800 dark:text-amber-200';
   const inner = (
     <>
       <span className={dot}></span>
       <span className="text-zinc-800 dark:text-zinc-200">{row.label}</span>
       <span className={ink}>{row.text}</span>
       {row.action ? (
-        <span className="text-xs text-zinc-500 dark:text-zinc-500 shrink-0">›</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-300 shrink-0">›</span>
       ) : null}
     </>
   );
@@ -118,7 +118,7 @@ export function UnRow({ row }: { row: UnStatusRow }): ReactNode {
 
 const BTN_BASE = 'mt-3 mr-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ';
 const BTN_TONE = {
-  danger: 'border-red-400 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950',
+  danger: 'border-red-400 dark:border-red-700 text-red-700 dark:text-red-200 hover:bg-red-50 dark:hover:bg-red-950',
   plain: 'border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800',
 } as const;
 

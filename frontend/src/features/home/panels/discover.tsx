@@ -32,8 +32,10 @@
 
 import { useEffect, useRef } from 'react';
 
-import { CheckIcon, PlusWideIcon, SearchIcon } from '@/components/ui/icons';
+import { CheckIcon, PlusIcon, SearchIcon } from '@/components/ui/icons';
 
+import { auraFor } from '../../apps/app-card.js';
+import { EmojiTileGlyph } from '../../apps/app-card-view';
 import type { IconView } from '../grid-store';
 import type { DiscoverTileView, DiscoverView } from '../panels-store';
 import { PanelShell, PanelTitle } from './ui';
@@ -55,7 +57,15 @@ function TileIcon({ icon }: { icon: IconView }) {
     );
   }
   if (icon.kind === 'emoji') {
-    return <span className="text-xl leading-none" aria-hidden="true">{icon.emoji}</span>;
+    // p-0.5, not the default p-1: these tiles run as small as ~32px in the
+    // narrowest lane, where 8px of padding would shrink the artwork to a dot.
+    return (
+      <EmojiTileGlyph
+        emoji={icon.emoji}
+        textClass="text-xl leading-none"
+        imgClass="w-full h-full object-contain p-0.5"
+      />
+    );
   }
   return <>{icon.letter}</>;
 }
@@ -83,15 +93,23 @@ function DiscoverTile({ tile }: { tile: DiscoverTileView }) {
         <div
           className="app-icon-tile home-discover-icon rounded-lg overflow-hidden flex items-center justify-center font-bold text-base"
           data-icon={tile.icon.kind}
+          data-aura={auraFor(tile.slug)}
         >
           <TileIcon icon={tile.icon} />
         </div>
         <button
           className={`card-add-btn absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
             added
-              ? 'bg-emerald-500 border-emerald-500 text-white'
-              : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
-          }`}
+              ? 'bg-meadow-700 border-meadow-700 text-white'
+              // `dark:text-azure-300`, not -400: on the dark card -400 is
+              // Lc -51.8 against its light partner's 68.0, and -300 is
+              // -66.5 — that pair at parity. 700 stays on the light side
+              // because the glyph sits inside a chip that names its own
+              // white ground; 800/200 is the LINK ink (see ./ui.tsx). This
+              // recipe is byte-identical to Home.renderAppCard's in
+              // ../home.js on purpose, so the two move together.
+              : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-azure-700 dark:text-azure-300 hover:border-azure-400'
+          } dark:shadow-none`}
           data-slug={tile.slug}
           data-added={String(added)}
           title={added ? 'Added. Tap to remove from Your apps' : 'Add to Your apps'}
@@ -100,7 +118,7 @@ function DiscoverTile({ tile }: { tile: DiscoverTileView }) {
         >
           {added
             ? <CheckIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" />
-            : <PlusWideIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" />}
+            : <PlusIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" />}
         </button>
       </div>
       <span className="text-[0.6rem] leading-tight truncate w-full text-center text-zinc-600 dark:text-zinc-300">
@@ -145,7 +163,7 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
           <button
             type="button"
             id="home-browse-btn"
-            className="home-panel-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
+            className="home-panel-browse shrink-0 flex items-center gap-1 text-xs font-medium text-azure-800 dark:text-azure-200 hover:underline whitespace-nowrap"
             title="Browse every app in the directory"
             aria-label="Browse all apps"
             onClick={(e) => {
@@ -155,7 +173,7 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
               window.location.hash = '#apps';
             }}
           >
-            <SearchIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <SearchIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
             <span className="whitespace-nowrap">Browse all apps</span>
           </button>
         </>
@@ -164,7 +182,7 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
       {view.featured.length ? (
         <Lane tiles={view.featured} />
       ) : (
-        <p className="home-panel-rows home-discover-lane home-discover-empty flex items-center justify-center px-2.5 text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
+        <p className="home-panel-rows home-discover-lane home-discover-empty flex items-center justify-center px-2.5 text-center text-xs leading-snug text-zinc-500 dark:text-zinc-300">
           Nothing featured right now. Browse the directory.
         </p>
       )}
@@ -176,7 +194,7 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
       {view.popular.length ? (
         <>
           <div className="home-discover-divider flex-none flex items-center px-2.5">
-            <span className="text-[0.9375rem] text-zinc-500 dark:text-zinc-500">Popular</span>
+            <span className="text-[0.9375rem] text-zinc-500 dark:text-zinc-300">Popular</span>
           </div>
           <Lane tiles={view.popular} extraClass="home-discover-popular" />
         </>

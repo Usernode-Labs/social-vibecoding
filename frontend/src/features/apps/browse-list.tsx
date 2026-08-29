@@ -27,6 +27,7 @@ import type { ReactNode } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
 import { ListRow } from '@/components/ui/grouped-list';
+import { auraFor } from './app-card.js';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
@@ -48,14 +49,19 @@ function controller(): any {
 
 const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded-full '
   + 'border px-3 py-1.5 text-xs font-medium transition-colors ';
-// emerald-700, not -500: white on #10b981 is 2.5:1 — a green you can see and a
-// label you cannot read. -700 takes the same pill to 5.5:1 with the state
+// -700, not -500, and the reason survives the hue change. This line used to
+// argue it in WCAG ratios against emerald (#10b981); the product measures APCA
+// Lc now, and the ramp is meadow — the one green, replacing the emerald/green
+// split that was by author and era rather than by meaning. Measured with an
+// APCA-W3 0.1.9 port written for this pass: white on meadow-500 is Lc -60.0,
+// which is a green you can see and a label you cannot read at 12px. meadow-700
+// takes the same pill to -87.8, past the body-preferred rung, with the state
 // unchanged.
-const ADD_ON = 'bg-emerald-700 border-emerald-700 text-white';
+const ADD_ON = 'bg-meadow-700 border-meadow-700 text-white';
 // Filled neutral, not an accent outline: the row sits on a white card now, and
 // an outlined control on a floating surface is the shape the language never
 // draws (see the `neutral` variant in @/components/ui/button.tsx). ADD_ON stays
-// a filled emerald because "Added" is a STATE, not an action.
+// a filled green because "Added" is a STATE, not an action.
 const ADD_OFF = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
   + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
 
@@ -100,6 +106,7 @@ function Row({ view }: { view: RowView }): ReactNode {
         <div
           className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
           data-icon={appIconKind(view.app)}
+          data-aura={auraFor(view.app)}
           // The same slug-derived identity tint the launcher grid draws. An
           // app that is a lilac tile on Home was a blank white square here,
           // which is the one thing a launcher icon must never be: different
@@ -139,7 +146,7 @@ function Row({ view }: { view: RowView }): ReactNode {
           controller()?.toggleRowAdded(view);
         }}
       >
-        {view.added ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" /> : null}
+        {view.added ? <CheckIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" /> : null}
         {view.added ? 'Added' : 'Add'}
       </button>
         </>

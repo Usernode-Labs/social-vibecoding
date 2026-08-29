@@ -60,6 +60,7 @@
 
 import { ChatIcon, ChevronRightIcon } from '@/components/ui/icons';
 
+import { openmojiSrcFor } from '../../lib/openmoji';
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
@@ -104,7 +105,7 @@ function PlusMenuHeading({
     <div
       data-plus-group={groupKey}
       className={
-        'px-3 pt-2.5 pb-1 text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-500 select-none' +
+        'px-3 pt-2.5 pb-1 text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-300 select-none' +
         (divider ? ' border-t border-zinc-200 dark:border-zinc-800 mt-1' : '')
       }
     >
@@ -118,7 +119,7 @@ const PLUS_ROW_CLS =
   'w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
 const PLUS_ROW_DIVIDER_CLS = ' border-t border-zinc-200 dark:border-zinc-800';
 const PLUS_TITLE_CLS = 'block text-sm font-medium text-zinc-800 dark:text-zinc-200';
-const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
+const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-300';
 
 /**
  * `#dev-body`'s initial content, as a constant string — see the header.
@@ -191,8 +192,31 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
         className={`${cardCls} ${cardHoverCls}`}
         title="Open the app's general chat"
       >
-        <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-700 flex items-center justify-center shrink-0 dark:text-violet-400">
-          <ChatIcon className="w-5 h-5" aria-hidden="true" />
+        <span className="w-9 h-9 rounded-lg dev-icon-aura-sky text-azure-700 flex items-center justify-center shrink-0 dark:text-azure-300">
+          {/* The same chip DEV_CARD_ICONS' `chat` kind wears on the feed —
+              OpenMoji 💬 on the sky aura, ChatIcon as the slice-miss
+              fallback (mirrors card/dev-card.tsx CardIcon).
+
+              `dev-icon-aura-sky` is the AURA's name in app.css and stays; the
+              INK is azure, the platform's own blue ramp. The sky scale is not
+              overridden in tailwind.config.js, so it rendered an untuned stock
+              hue beside the tuned ones — the trap AGENTS.md names, and one no
+              reviewer spots in a diff of class strings. DEV_CARD_ICONS in
+              public/js/app-view.js still spells that stock scale at six
+              entries and has to move with this one, or these two cards — the
+              same chip, drawn twice — stop matching. */}
+          {openmojiSrcFor('💬') ? (
+            <img
+              src={openmojiSrcFor('💬')!}
+              alt=""
+              loading="lazy"
+              draggable="false"
+              aria-hidden="true"
+              className="w-6 h-6 object-contain"
+            />
+          ) : (
+            <ChatIcon className="w-5 h-5" aria-hidden="true" />
+          )}
         </span>
         <span className="flex-1 min-w-0">
           <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
@@ -205,12 +229,12 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
               module publishes the line now (./discussion-store.ts). */}
           <span
             id="dev-chat-card-preview"
-            className="block text-xs text-zinc-500 dark:text-zinc-400 truncate"
+            className="block text-xs text-zinc-500 dark:text-zinc-300 truncate"
           >
             {preview}
           </span>
         </span>
-        <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" />
+        <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-300 shrink-0" />
       </a>
     </div>
   );
@@ -273,7 +297,7 @@ export function DevBoardFrame({
             id="dev-plus-btn"
             aria-haspopup="true"
             aria-expanded="false"
-            className="un-touch-target rounded-lg bg-violet-600 hover:bg-violet-500 w-9 h-9 flex items-center justify-center text-lg font-bold leading-none text-white transition-colors"
+            className="un-touch-target rounded-lg bg-violet-600 hover:bg-violet-500 w-9 h-9 flex items-center justify-center text-lg font-bold leading-none text-black transition-colors"
             title={
               readOnly
                 ? 'Fork this app'
@@ -284,7 +308,7 @@ export function DevBoardFrame({
           </button>
           <div
             id="dev-plus-menu"
-            className="hidden absolute right-0 top-11 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
+            className="hidden absolute right-0 top-11 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden dark:shadow-none"
           >
             {readOnly ? null : (
               <>
@@ -353,7 +377,7 @@ export function DevBoardFrame({
                         writes its text again. */}
                     <span
                       id="dc-secrets-state"
-                      className="text-xs font-normal text-zinc-500 dark:text-zinc-500"
+                      className="text-xs font-normal text-zinc-500 dark:text-zinc-300"
                     ></span>
                   </span>
                   <span className={PLUS_SUB_CLS}>
@@ -393,7 +417,7 @@ export function DevBoardFrame({
         */}
         <div id="dev-locked-notice" className={locked ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
           {locked ? (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-400">
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-200">
               App is locked. An admin must approve any proposal before it applies.
             </div>
           ) : null}

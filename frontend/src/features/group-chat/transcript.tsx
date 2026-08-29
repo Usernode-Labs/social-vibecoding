@@ -330,7 +330,7 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
           {/* Solid when saved, outline when not — the state lives in the SHAPE,
               which is legible at 12px and in a screenshot. Not one path with
               its fill flipped; see the note in @/components/ui/icons.tsx. */}
-          {saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}
+          {saved ? <BookmarkSolidIcon /> : <BookmarkIcon />}
         </button>
       ) : null}
       {msg.showReact ? (
@@ -555,7 +555,7 @@ export function Transcript({ source = 'main' }: { source?: string }) {
         </div>
       ) : null}
       {view.lead.placeholder ? (
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">{view.lead.placeholder}</div>
+        <div className="text-xs text-zinc-500 dark:text-zinc-300 px-2 py-2">{view.lead.placeholder}</div>
       ) : null}
       {view.messages.map((msg, i) => {
         const key = msg.id != null ? `m${msg.id}` : `i${i}`;

@@ -107,11 +107,11 @@
     var s = state || {};
     var cmdText = commands(s).join('\n');
     return ''
-      + '<div class="dc-options-card w-full max-w-xl rounded-2xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shadow-xl flex flex-col max-h-[85vh]">'
+      + '<div class="dc-options-card w-full max-w-xl rounded-2xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shadow-xl dark:shadow-none flex flex-col max-h-[85vh]">'
       + '  <div class="flex items-center justify-between gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">'
       + '    <h2 class="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Run this session on your computer</h2>'
-      + '    <button type="button" id="dc-options-close" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-500/10" aria-label="Close">'
-      + '      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>'
+      + '    <button type="button" id="dc-options-close" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:text-zinc-300 dark:hover:text-zinc-200 hover:bg-zinc-500/10" aria-label="Close">'
+      + '      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>'
       + '    </button>'
       + '  </div>'
       + '  <div class="px-4 py-3 overflow-y-auto">'
@@ -121,7 +121,7 @@
       + '    <pre id="dc-options-commands" class="mt-3 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 p-3 text-[0.7rem] leading-relaxed font-mono whitespace-pre-wrap break-words select-text text-zinc-700 dark:text-zinc-300">'
       + escapeHtml(cmdText)
       + '</pre>'
-      + '    <p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">Usernode still opens the pull request, builds the preview and runs the checks. Hand the turns back to Usernode at any time from the composer’s &#8220;Run on&#8221; selector.</p>'
+      + '    <p class="mt-3 text-xs text-zinc-500 dark:text-zinc-300">Usernode still opens the pull request, builds the preview and runs the checks. Hand the turns back to Usernode at any time from the composer’s &#8220;Run on&#8221; selector.</p>'
       + '  </div>'
       + '  <div class="flex items-center justify-end gap-2 px-4 py-3 border-t border-zinc-200 dark:border-zinc-700">'
       + '    <button type="button" id="dc-options-copy" class="rounded-lg border border-zinc-300 dark:border-zinc-600 px-3 py-1.5 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-500/10">Copy commands</button>'

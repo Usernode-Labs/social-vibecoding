@@ -61,8 +61,8 @@ type Result =
   | { kind: 'response'; ok: boolean; status: number; statusText: string; body: string };
 
 const NOTE_TONES = {
-  error: 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400',
-  busy: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400',
+  error: 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-200',
+  busy: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300',
 };
 
 function ResultBlock({ result }: { result: Result }) {
@@ -75,8 +75,8 @@ function ResultBlock({ result }: { result: Result }) {
     );
   }
   const okTone = result.ok
-    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400'
-    : 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400';
+    ? 'bg-meadow-50 dark:bg-meadow-950/40 text-meadow-700 dark:text-meadow-200'
+    : 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200';
   return (
     <div className={`mt-4 ${PANEL_CLS} overflow-hidden`}>
       <header className="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 sm:px-5">
@@ -237,7 +237,7 @@ function ApiTesterScreen() {
         <div className="min-w-0">
           <label
             htmlFor="admin-topo-api-endpoint"
-            className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1"
+            className="block text-xs font-medium text-zinc-600 dark:text-zinc-300 mb-1"
           >
             Endpoint
           </label>
@@ -250,7 +250,7 @@ function ApiTesterScreen() {
           </Select>
           <p
             id="admin-topo-api-catalog-note"
-            className="mt-1 text-xs text-zinc-500 dark:text-zinc-400"
+            className="mt-1 text-xs text-zinc-500 dark:text-zinc-300"
             role="status"
           >
             {note}
@@ -260,7 +260,7 @@ function ApiTesterScreen() {
           <div className="sm:w-32">
             <label
               htmlFor="admin-topo-api-method"
-              className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1"
+              className="block text-xs font-medium text-zinc-600 dark:text-zinc-300 mb-1"
             >
               Method
             </label>
@@ -277,10 +277,10 @@ function ApiTesterScreen() {
           <div className={showPath ? 'min-w-0' : 'min-w-0 hidden'} id="admin-topo-api-path-row">
             <label
               htmlFor="admin-topo-api-path"
-              className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1"
+              className="block text-xs font-medium text-zinc-600 dark:text-zinc-300 mb-1"
             >
               {'Path '}
-              <span className="font-mono font-normal text-zinc-500 dark:text-zinc-400">(prefixed with /api/v4)</span>
+              <span className="font-mono font-normal text-zinc-500 dark:text-zinc-300">(prefixed with /api/v4)</span>
             </label>
             <Input
               id="admin-topo-api-path"
@@ -292,7 +292,7 @@ function ApiTesterScreen() {
             />
           </div>
         </div>
-        <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+        <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-300">
           {'Target '}
           <span id="admin-topo-api-target" className="font-mono text-zinc-700 dark:text-zinc-300">
             {target}
@@ -301,10 +301,10 @@ function ApiTesterScreen() {
         <div className="mt-4">
           <label
             htmlFor="admin-topo-api-body"
-            className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1"
+            className="block text-xs font-medium text-zinc-600 dark:text-zinc-300 mb-1"
           >
             {'JSON body '}
-            <span className="font-normal text-zinc-500 dark:text-zinc-400">(ignored for GET)</span>
+            <span className="font-normal text-zinc-500 dark:text-zinc-300">(ignored for GET)</span>
           </label>
           <Textarea
             id="admin-topo-api-body"

@@ -51,11 +51,11 @@ function call(fn: string, ...args: unknown[]): void {
 
 export function AppStatusView_({ view }: { view: AppStatusView }): ReactNode {
   return (
-    <div className="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
+    <div className="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-300 gap-2 p-4 text-center">
       {view.dot ? <div className={`status-dot ${view.dot}`}></div> : null}
       <p className="text-sm">{view.message}</p>
       {view.detail ? (
-        <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-400">{view.detail}</p>
+        <p className="text-xs font-mono text-red-700 max-w-md break-words dark:text-red-200">{view.detail}</p>
       ) : null}
       {view.action ? (
         <Button

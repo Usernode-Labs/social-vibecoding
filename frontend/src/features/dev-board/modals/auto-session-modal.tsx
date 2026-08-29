@@ -45,7 +45,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
       <h2 className="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">
         {`Generate proposal for issue #${view.issueNumber}?`}
       </h2>
-      <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">{view.intro}</p>
+      <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-3">{view.intro}</p>
       <p className="text-xs text-amber-800 mb-2 dark:text-amber-300">
         {'Experimental, and not recommended for normal users at the moment. Costs are billed '
           + "to you even if the result isn't useful."}
@@ -53,7 +53,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
       {/* WHERE it builds, named before you confirm — the pot the costs above
           land in depends on it. Absent when build-venues.js has not loaded,
           which leaves the dialog as it was. */}
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+      <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-4">
         {view.venue ? (
           <>
             {'Building in '}
@@ -62,7 +62,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
           </>
         ) : null}
       </p>
-      <Label htmlFor="auto-session-model" className="mb-1">{view.pickerLabel}</Label>
+      <Label htmlFor="auto-session-model" spacing="stacked">{view.pickerLabel}</Label>
       <Select
         id="auto-session-model"
         defaultValue={view.preselect}
@@ -73,7 +73,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
       {/* #800: the caption for whichever model is selected. */}
       <p
         id="auto-session-model-note"
-        className="mt-1 mb-5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400"
+        className="mt-1 mb-5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-300"
         title={(option && option.noteTitle) || undefined}
       >
         {option ? option.note : ''}

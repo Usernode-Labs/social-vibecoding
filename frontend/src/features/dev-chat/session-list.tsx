@@ -36,16 +36,30 @@ import type { SessionAction, SessionListState, SessionRow } from './session-list
  * other direction.
  */
 const STATUS_TONE: Record<SessionRow['statusTone'], string> = {
-  active: 'text-emerald-700 dark:text-emerald-400',
-  promoted: 'text-violet-700 dark:text-violet-400',
-  paused: 'text-zinc-500 dark:text-zinc-400',
-  other: 'text-zinc-500 dark:text-zinc-400',
+  active: 'text-meadow-700 dark:text-meadow-200',
+  // dark:azure-300, not -400: these four values render in ONE aligned status
+  // column, and after `active` moved to meadow-200 (Lc -82.9) a -400 promoted
+  // (-51.8) sat two tiers under both its green sibling and the plain grey
+  // `paused` (-75.2). 300 (-66.5) is the non-link azure ink the merges and
+  // db-export status tables settled on; azure deliberately runs short of the
+  // status ramps' parity to stay near the brand hex.
+  promoted: 'text-azure-700 dark:text-azure-300',
+  paused: 'text-zinc-500 dark:text-zinc-300',
+  other: 'text-zinc-500 dark:text-zinc-300',
 };
 
 const ACTION_TONE: Record<SessionAction['tone'], string> = {
-  quiet: 'text-zinc-500 dark:text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400',
-  go: 'text-emerald-700 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300',
-  danger: 'text-zinc-500 dark:text-zinc-400 hover:text-red-500 dark:hover:text-red-400',
+  // quiet hovers one step SHORT of go's resting ink in BOTH themes (600 vs
+  // 700 light, 300 vs 200 dark), the same relationship the emerald spelling
+  // had — the sweep landed both on 700, which made a hovered quiet action
+  // byte-identical to a resting go one, and the first fix restored only the
+  // light half (a dark hover of meadow-200 was still go's dark base).
+  quiet: 'text-zinc-500 dark:text-zinc-300 hover:text-meadow-600 dark:hover:text-meadow-300',
+  // The light hover was byte-identical to its own base (a hover that renders
+  // nothing — the defect AdminUI.btn.link documents fixing); 800 darkens, the
+  // direction the home retry-btn already spells for this exact pattern.
+  go: 'text-meadow-700 dark:text-meadow-200 hover:text-meadow-800 dark:hover:text-meadow-100',
+  danger: 'text-zinc-500 dark:text-zinc-300 hover:text-red-700 dark:hover:text-red-200',
 };
 
 /** The class each action carried, by key — kept so the hooks stay stable. */
@@ -93,9 +107,9 @@ function Row({ row }: { row: SessionRow }): ReactNode {
       onClick={() => { void call('openSessionFromList', [row.id]); }}
     >
       <span className={`text-xs ${STATUS_TONE[row.statusTone]} font-mono`}>{row.status}</span>
-      <span className="text-sm text-zinc-800 dark:text-zinc-300 flex-1 truncate" title={row.branch}>{row.title}</span>
+      <span className="text-sm text-zinc-800 dark:text-zinc-200 flex-1 truncate" title={row.branch}>{row.title}</span>
       {row.busy ? (
-        <span className="inline-flex items-center gap-1 text-xs text-emerald-700 shrink-0 dark:text-emerald-400">
+        <span className="inline-flex items-center gap-1 text-xs text-meadow-700 shrink-0 dark:text-meadow-200">
           <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>
           {'working…'}
         </span>
@@ -105,12 +119,12 @@ function Row({ row }: { row: SessionRow }): ReactNode {
           href={row.pr.url}
           target="_blank"
           rel="noopener"
-          className="text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
+          className="text-xs text-azure-800 hover:text-azure-900 dark:text-azure-200 dark:hover:text-azure-100"
           onClick={(e) => e.stopPropagation()}
         >{`PR#${row.pr.number}`}</a>
       ) : null}
       {row.actions.map((a) => <ActionButton key={a.key} a={a} />)}
-      <span className="text-xs text-zinc-500 dark:text-zinc-400">{row.date}</span>
+      <span className="text-xs text-zinc-500 dark:text-zinc-300">{row.date}</span>
     </div>
   );
 }
@@ -121,13 +135,13 @@ function EmptyPitch(): ReactNode {
       <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
         Want to change this app? Just ask.
       </p>
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3 max-w-xs mx-auto">
+      <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-3 max-w-xs mx-auto">
         {"Describe what you'd like different in plain English. An AI writes the code and opens a "
           + 'real pull request. No coding required. The app’s users then vote it in.'}
       </p>
-      <p className="text-xs text-zinc-500 dark:text-zinc-500">
+      <p className="text-xs text-zinc-500 dark:text-zinc-300">
         {'Hit '}
-        <span className="font-medium text-emerald-700 dark:text-emerald-400">+ New Session</span>
+        <span className="font-medium text-meadow-700 dark:text-meadow-200">+ New Session</span>
         {' above to start, e.g. '}
         <span className="italic">&quot;make the header dark blue&quot;</span>
         {'.'}

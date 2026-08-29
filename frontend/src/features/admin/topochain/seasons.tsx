@@ -224,7 +224,7 @@ function SeasonForm({ id, onClose, onSaved }: {
           </FormGrid>
           <fieldset className="mt-5 border-t border-zinc-200 dark:border-zinc-800 pt-4">
             <legend className="sr-only">Visibility</legend>
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-300">
               Visibility
             </p>
             <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
@@ -274,7 +274,7 @@ function UnassignedEvents({ reloadKey }: { reloadKey: number }) {
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 sm:px-5">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">Events not assigned to a season</h3>
-          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-300">
             {`${events.length} event${events.length === 1 ? '' : 's'} with no season. Edit one to link it.`}
           </p>
         </div>
@@ -295,9 +295,9 @@ function UnassignedEvents({ reloadKey }: { reloadKey: number }) {
           >
             <span className="text-sm">
               {ev.name}
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">{` (${ev.type})`}</span>
+              <span className="text-xs text-zinc-500 dark:text-zinc-300">{` (${ev.type})`}</span>
             </span>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            <span className="text-xs text-zinc-500 dark:text-zinc-300">
               {`${fmt(ev.starts_at)} – ${fmt(ev.ends_at)}`}
             </span>
           </li>
@@ -380,19 +380,19 @@ function SeasonsScreen() {
         );
       },
     },
-    { label: 'Starts', cell: (sn) => fmt(sn.starts_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
-    { label: 'Ends', cell: (sn) => fmt(sn.ends_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Starts', cell: (sn) => fmt(sn.starts_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
+    { label: 'Ends', cell: (sn) => fmt(sn.ends_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
     {
       label: 'Events',
       cell: (sn) => (sn.season_events_count != null ? sn.season_events_count : '—'),
-      tdClass: 'text-zinc-500 dark:text-zinc-400',
+      tdClass: 'text-zinc-500 dark:text-zinc-300',
     },
     {
       label: 'Users',
       cell: (sn) => (sn.users_count != null ? sn.users_count : '—'),
-      tdClass: 'text-zinc-500 dark:text-zinc-400',
+      tdClass: 'text-zinc-500 dark:text-zinc-300',
     },
-    { label: 'Order', cell: (sn) => sn.display_order ?? 0, tdClass: 'text-zinc-500 dark:text-zinc-400' },
+    { label: 'Order', cell: (sn) => sn.display_order ?? 0, tdClass: 'text-zinc-500 dark:text-zinc-300' },
   ];
 
   return (

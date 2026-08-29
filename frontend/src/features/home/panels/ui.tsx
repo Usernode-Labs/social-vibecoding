@@ -22,7 +22,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   EllipsisVerticalIcon,
-  TrophyOutlineIcon,
+  TrophyIcon,
 } from '@/components/ui/icons';
 
 import type { PanelStamps } from '../panels-store';
@@ -87,7 +87,7 @@ export function PanelShell({
         {title}
         <button
           type="button"
-          className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none dark:text-zinc-400"
+          className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none dark:text-zinc-300"
           data-panel-key={panelKey}
           aria-haspopup="menu"
           title="Widget options"
@@ -97,7 +97,7 @@ export function PanelShell({
             panels()?.openMenu?.(panelKey, e.currentTarget);
           }}
         >
-          <EllipsisVerticalIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+          <EllipsisVerticalIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
         </button>
       </div>
       {children}
@@ -109,7 +109,7 @@ export function PanelShell({
 /** The block's own title text, truncating so a control beside it survives. */
 export function PanelTitle({ children }: { children: ReactNode }) {
   return (
-    <span className="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[0.9375rem] text-zinc-500 dark:text-zinc-500">
+    <span className="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[0.9375rem] text-zinc-500 dark:text-zinc-300">
       {children}
     </span>
   );
@@ -117,16 +117,20 @@ export function PanelTitle({ children }: { children: ReactNode }) {
 
 /**
  * THE LEADERBOARD LINK (#980). Discover's browse control verbatim — same
- * violet 12px link, same icon-then-label shape, same place in the title bar —
+ * blue 12px link, same icon-then-label shape, same place in the title bar —
  * because it answers the same question on the same screen. It renders in EVERY
  * branch and at every width: between seasons, where the block draws no footer
  * at all, it is the only control the area has.
+ *
+ * That line said "violet 12px link" while violet WAS the accent. `violet-*`
+ * is the YELLOW ramp now and this control is `azure`, so the word is
+ * corrected rather than left standing as a trap.
  */
 export function LeaderboardLink() {
   return (
     <button
       type="button"
-      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
+      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-xs font-medium text-azure-800 dark:text-azure-200 hover:underline whitespace-nowrap"
       title="Open the Leaderboard screen"
       aria-label="Open leaderboard"
       onClick={(e) => {
@@ -136,7 +140,7 @@ export function LeaderboardLink() {
         panels()?.goToLeaderboard?.();
       }}
     >
-      <TrophyOutlineIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+      <TrophyIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
       <span className="whitespace-nowrap">Open leaderboard</span>
     </button>
   );
@@ -162,7 +166,7 @@ export function PanelFooter({
     <div className="home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5">
       <button
         type="button"
-        className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
+        className="home-panel-expand flex items-center gap-1 text-xs font-medium text-azure-800 dark:text-azure-200 hover:underline whitespace-nowrap"
         data-panel-key={panelKey}
         aria-expanded={expanded}
         title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}
@@ -173,14 +177,14 @@ export function PanelFooter({
       >
         <ChevronDownIcon
           className={`w-3 h-3 shrink-0 transition-transform${expanded ? ' rotate-180' : ''}`}
-          strokeWidth="2.5"
+          strokeWidth="3"
           aria-hidden="true"
         />
         <span className="whitespace-nowrap">{label}</span>
       </button>
       <button
         type="button"
-        className="home-panel-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"
+        className="home-panel-open flex items-center gap-1 text-xs font-medium text-zinc-500 dark:text-zinc-300 hover:text-azure-700 dark:hover:text-azure-300 whitespace-nowrap"
         title="Go to the Challenges tab on the Leaderboard screen"
         aria-label="Open challenges"
         onClick={(e) => {
@@ -189,7 +193,7 @@ export function PanelFooter({
         }}
       >
         <span className="whitespace-nowrap">Open challenges</span>
-        <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        <ChevronRightIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
       </button>
     </div>
   );
@@ -211,7 +215,7 @@ export function FillFooter({ kind }: { kind: 'topochain' | 'kudos' }) {
     <div className="home-panel-footer flex-none flex items-center justify-end gap-2 px-2.5">
       <button
         type="button"
-        className="home-panel-lb-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"
+        className="home-panel-lb-open flex items-center gap-1 text-xs font-medium text-zinc-500 dark:text-zinc-300 hover:text-azure-700 dark:hover:text-azure-300 whitespace-nowrap"
         data-lb-kind={kind}
         title={title}
         aria-label={label}
@@ -221,7 +225,7 @@ export function FillFooter({ kind }: { kind: 'topochain' | 'kudos' }) {
         }}
       >
         <span className="whitespace-nowrap">{label}</span>
-        <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        <ChevronRightIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
       </button>
     </div>
   );

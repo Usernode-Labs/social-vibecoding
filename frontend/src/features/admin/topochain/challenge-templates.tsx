@@ -101,9 +101,9 @@ const fieldId = (key: string) => `admin-topo-tpl-f-${key}`;
 
 const COLUMNS: Column<Template>[] = [
   { label: 'Goal', primary: true, cell: (t) => t.goal },
-  { label: 'Category', cell: (t) => t.category, tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
-  { label: 'Reward', cell: (t) => t.reward, tdClass: 'text-zinc-500 dark:text-zinc-400' },
-  { label: 'Kind', cell: (t) => t.kind || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+  { label: 'Category', cell: (t) => t.category, tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
+  { label: 'Reward', cell: (t) => t.reward, tdClass: 'text-zinc-500 dark:text-zinc-300' },
+  { label: 'Kind', cell: (t) => t.kind || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
 ];
 
 function FormFields({ specs, values, onChange }: {

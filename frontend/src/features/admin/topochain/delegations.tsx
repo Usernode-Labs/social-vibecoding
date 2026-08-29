@@ -89,7 +89,7 @@ function PartyChip(
       <span className="inline-flex min-w-0 flex-col">
         <span className="text-sm font-medium leading-5">{title}</span>
         {sub ? (
-          <span className="text-[11px] leading-4 text-zinc-500 dark:text-zinc-400">{sub}</span>
+          <span className="text-[11px] leading-4 text-zinc-500 dark:text-zinc-300">{sub}</span>
         ) : null}
       </span>
     </span>
@@ -106,14 +106,19 @@ function Avatar({ user }: { user: Delegator | null }) {
       />
     );
   }
-  // Initial-letter fallback (the platform's avatar idiom): violet for a
-  // resolved user, zinc for the two no-claimant states.
+  // Initial-letter fallback (the platform's avatar idiom): the blue identity
+  // wash for a resolved user, zinc for the two no-claimant states. Blue rather
+  // than the accent yellow this once spelled — an avatar disc is an identity
+  // mark, and the yellow fill means "the one filled action on this screen".
+  // Delegatee() below takes the FILLED half of the same blue (the chat kit's
+  // `me` bubble recipe), which is what keeps the platform node's disc heavier
+  // than a user's without reaching back for the accent.
   const name = user ? (user.display_name || user.username || '') : '';
   const tone = user
-    ? 'bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300'
-    : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400';
+    ? 'bg-azure-100 text-azure-700 dark:bg-azure-950/60 dark:text-azure-300'
+    : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-300';
   return (
-    <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${tone}`}>
+    <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${tone}`}>
       {(name[0] || '?').toUpperCase()}
     </span>
   );
@@ -130,7 +135,7 @@ function Delegator({ d }: { d: Delegation }) {
         title={(
           <>
             {u.display_name || u.username || `user #${u.user_id}`}
-            <span className="text-xs font-normal text-zinc-500 dark:text-zinc-400">
+            <span className="text-xs font-normal text-zinc-500 dark:text-zinc-300">
               {` user #${u.user_id}`}
             </span>
           </>
@@ -147,7 +152,7 @@ function Delegator({ d }: { d: Delegation }) {
       party="delegator"
       avatar={<Avatar user={null} />}
       title={(
-        <span className="font-normal text-zinc-500 dark:text-zinc-400">
+        <span className="font-normal text-zinc-500 dark:text-zinc-300">
           {d.onchain_account_id != null ? 'Unclaimed account' : 'Account not on file'}
         </span>
       )}
@@ -161,7 +166,7 @@ function Delegatee() {
     <PartyChip
       party="delegatee"
       avatar={(
-        <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-600 text-[11px] font-semibold text-white">
+        <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-azure-700 text-white text-xs font-semibold">
           P
         </span>
       )}
@@ -174,7 +179,7 @@ function Delegatee() {
 function Tile({ label, value, valueCls }: { label: string; value: unknown; valueCls?: string }) {
   return (
     <div className={`${PANEL_CLS} px-4 py-3`}>
-      <p className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</p>
+      <p className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-300">{label}</p>
       <p className={`mt-1 text-2xl font-semibold tabular-nums ${valueCls || ''}`}>{String(value)}</p>
     </div>
   );
@@ -212,14 +217,14 @@ function History({ account }: { account: string }) {
   if (!periods) return <Skeleton rows={2} />;
   if (!periods.length) {
     return (
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+      <p className="text-xs text-zinc-500 dark:text-zinc-300">
         No periods recorded for this account.
       </p>
     );
   }
   return (
     <div>
-      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-300">
         Delegation history, newest first
       </p>
       <ul className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -229,7 +234,7 @@ function History({ account }: { account: string }) {
               ? <Badge label="Delegated" tone="green" />
               : <Badge label="Ended" tone="zinc" />}
             <span className="text-xs text-zinc-600 dark:text-zinc-300">{fmt(p.started_at)}</span>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">→</span>
+            <span className="text-xs text-zinc-500 dark:text-zinc-300">→</span>
             <span className="text-xs text-zinc-600 dark:text-zinc-300">
               {p.ended_at ? fmt(p.ended_at) : 'now'}
             </span>
@@ -348,12 +353,12 @@ function DelegationsScreen() {
         ? <Badge label="Delegated" tone="green" />
         : <Badge label="Ended" tone="zinc" />),
     },
-    { label: 'Since', cell: (d) => fmt(d.started_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
-    { label: 'Ended', cell: (d) => fmt(d.ended_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Since', cell: (d) => fmt(d.started_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
+    { label: 'Ended', cell: (d) => fmt(d.ended_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
     {
       label: 'Periods',
       cell: (d) => d.period_count,
-      tdClass: 'tabular-nums text-right text-xs text-zinc-500 dark:text-zinc-400',
+      tdClass: 'tabular-nums text-right text-xs text-zinc-500 dark:text-zinc-300',
       thClass: 'text-right',
     },
   ];
@@ -422,13 +427,13 @@ function DelegationsScreen() {
             <Tile
               label="Delegated now"
               value={stats.delegated_accounts}
-              valueCls="text-green-800 dark:text-green-400"
+              valueCls="text-meadow-700 dark:text-meadow-200"
             />
             <Tile label="Ended" value={stats.ended_accounts} />
             <Tile
               label="Account not on file"
               value={stats.orphaned_accounts}
-              valueCls={stats.orphaned_accounts ? 'text-amber-800 dark:text-amber-400' : ''}
+              valueCls={stats.orphaned_accounts ? 'text-amber-800 dark:text-amber-200' : ''}
             />
             <Tile label="Periods recorded" value={stats.total_periods} />
           </div>

@@ -143,7 +143,7 @@ export function MobileInstallBanner() {
       <img src="/icons/icon-192.png" alt="" aria-hidden="true" className="w-8 h-8 rounded-lg shrink-0" />
       <div className="min-w-0 flex-1 text-left leading-tight">
         <div className="font-medium text-zinc-900 dark:text-zinc-100 truncate">Usernode</div>
-        <div className="text-zinc-500 dark:text-zinc-400 truncate">
+        <div className="text-zinc-500 dark:text-zinc-300 truncate">
           {offer ? `Get the app on ${storeLabel(offer.os, offer.url)}` : 'Get the app'}
         </div>
       </div>
@@ -152,7 +152,7 @@ export function MobileInstallBanner() {
         href={offer ? offer.url : undefined}
         target="_blank"
         rel="noopener noreferrer"
-        className="shrink-0 inline-flex items-center h-7 px-3 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors un-touch-target"
+        className="shrink-0 inline-flex items-center h-7 px-3 rounded-lg bg-violet-600 hover:bg-violet-500 text-black text-xs font-medium transition-colors un-touch-target"
       >
         Get
       </a>
@@ -161,7 +161,7 @@ export function MobileInstallBanner() {
         type="button"
         onClick={dismiss}
         aria-label="Dismiss install banner"
-        className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors un-touch-target"
+        className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors un-touch-target"
       >
         <XIcon className="w-4 h-4" aria-hidden="true" />
       </button>

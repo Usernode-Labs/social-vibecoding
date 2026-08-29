@@ -26,29 +26,29 @@ export const STATUS_STYLES: Record<NodeStatusKind, {
   dot: string; label: string; ink: string;
 }> = {
   synced: {
-    dot: 'bg-emerald-500',
+    dot: 'bg-meadow-500',
     label: 'Synced',
-    ink: 'text-emerald-700 dark:text-emerald-400',
+    ink: 'text-meadow-700 dark:text-meadow-200',
   },
   syncing: {
     dot: 'bg-amber-500',
     label: 'Syncing',
-    ink: 'text-amber-800 dark:text-amber-400',
+    ink: 'text-amber-800 dark:text-amber-200',
   },
   connecting: {
     dot: 'bg-zinc-400 animate-pulse',
     label: 'Connecting',
-    ink: 'text-zinc-500 dark:text-zinc-400',
+    ink: 'text-zinc-500 dark:text-zinc-300',
   },
   offline: {
     dot: 'bg-red-500',
     label: 'Offline',
-    ink: 'text-red-700 dark:text-red-400',
+    ink: 'text-red-700 dark:text-red-200',
   },
   unavailable: {
     dot: 'bg-zinc-400',
     label: 'Unavailable',
-    ink: 'text-zinc-500 dark:text-zinc-400',
+    ink: 'text-zinc-500 dark:text-zinc-300',
   },
 };
 
@@ -89,7 +89,7 @@ export function NodePillRow(): ReactNode {
           shipped this span blank, and the prerender has to agree. */}
       <span
         id="account-node-status"
-        className={s.visible ? `ml-auto text-xs font-medium ${style.ink}` : 'ml-auto text-xs font-medium text-zinc-500 dark:text-zinc-400'}
+        className={s.visible ? `ml-auto text-xs font-medium ${style.ink}` : 'ml-auto text-xs font-medium text-zinc-500 dark:text-zinc-300'}
       >{s.visible ? style.label : ''}</span>
     </button>
   );

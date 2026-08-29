@@ -21,7 +21,7 @@ export function AdminPreviewSection() {
         <SwitchRow id="view-as-non-admin">
           View as non-admin
         </SwitchRow>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-2 leading-relaxed">
           Purely a client-side display toggle, so your server-side admin privileges are unaffected. The page will reload so the rest of the UI picks up the change.
         </p>
       </div>

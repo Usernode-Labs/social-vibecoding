@@ -260,7 +260,7 @@ function EventForm({ id, seasons, onClose, onSaved }: {
           </FormGrid>
           <fieldset className="mt-5 border-t border-zinc-200 dark:border-zinc-800 pt-4">
             <legend className="sr-only">Visibility</legend>
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-300">
               Visibility
             </p>
             <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -360,21 +360,21 @@ function EventList({ onManage }: { onManage: (id: number) => void }) {
       cell: (ev) => (ev.season?.name
         ? ev.season.name
         : (ev.season_id != null ? `#${ev.season_id}` : '—')),
-      tdClass: 'text-zinc-500 dark:text-zinc-400',
+      tdClass: 'text-zinc-500 dark:text-zinc-300',
     },
-    { label: 'Type', cell: (ev) => ev.type, tdClass: 'text-zinc-500 dark:text-zinc-400' },
+    { label: 'Type', cell: (ev) => ev.type, tdClass: 'text-zinc-500 dark:text-zinc-300' },
     {
       label: 'Active',
       cell: (ev) => (ev.is_active
-        ? <span className="text-green-800 dark:text-green-400">yes</span>
+        ? <span className="text-meadow-700 dark:text-meadow-200">yes</span>
         : '—'),
     },
-    { label: 'Starts', cell: (ev) => fmt(ev.starts_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
-    { label: 'Ends', cell: (ev) => fmt(ev.ends_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Starts', cell: (ev) => fmt(ev.starts_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
+    { label: 'Ends', cell: (ev) => fmt(ev.ends_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
     {
       label: 'Users',
       cell: (ev) => (ev.users_count != null ? ev.users_count : '—'),
-      tdClass: 'text-zinc-500 dark:text-zinc-400',
+      tdClass: 'text-zinc-500 dark:text-zinc-300',
     },
   ];
 

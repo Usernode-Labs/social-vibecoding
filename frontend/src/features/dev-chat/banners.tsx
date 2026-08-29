@@ -8,9 +8,9 @@ import { useCallback, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
-  CheckLongIcon,
+  CheckIcon,
   ClockIcon,
-  PlusThinIcon,
+  PlusIcon,
   SpinnerArcIcon,
   UserCircleIcon,
   WarningTriangleIcon,
@@ -30,8 +30,20 @@ function controller(): any {
 
 const BUSY_TITLE = 'Claude is busy with a turn. Sync will be available when it finishes';
 
+// A DEAD FILL on hover, and the only one left in the product. Under white ink
+// amber-600 measures Lc -77.5 (body) but amber-500 measures -54.9, and on that
+// fill NEITHER white (-54.9) nor near-black (54.2) clears the 75 body minimum —
+// so the label could not be repaired by changing the ink, only by moving the
+// fill. Every other coloured filled button in the tree already goes one step
+// DARKER on hover under white ink (`bg-red-600 hover:bg-red-700` x5,
+// `bg-meadow-600 hover:bg-meadow-700` x2); this was the sole outlier going
+// lighter, which is the YELLOW ramp's rule (near-black ink) applied to a ramp
+// that carries white. amber-700 is Lc -85.3.
+//
+// The leading space on the second fragment is load-bearing: a concatenation
+// seam with no separator glues the two tokens and Tailwind compiles NEITHER.
 const SYNC_BTN
-  = 'rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed'
+  = 'rounded-md bg-amber-600 hover:bg-amber-700 disabled:opacity-60 disabled:cursor-not-allowed'
   + ' px-3 py-1 text-xs font-medium text-white transition-colors shrink-0';
 
 /**
@@ -40,11 +52,19 @@ const SYNC_BTN
  * head's note box is one shape. Every entry is a COMPLETE literal: Tailwind's
  * extractor is a regex over source text, so a class assembled from a variable
  * is a class that never gets compiled.
+ *
+ * THE KEYS NAME THE RAMP THEY HOLD. Two of them had stopped: `emerald` held
+ * stock `emerald-*` (not an overridden ramp, so it rendered untuned Tailwind
+ * green beside the platform's own) and is `meadow` now, the product's ONE
+ * green; `violet` had already been reskinned to `azure-*` and kept the old
+ * name, which is the exact trap AGENTS.md warns about — read the hex, not the
+ * key. Renamed rather than left, since a key that lies is how the next hand
+ * reaches for a hue it did not mean.
  */
 const SHELL = {
   amber: 'flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs',
-  emerald: 'flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-200 dark:border-emerald-900/50 text-xs',
-  violet: 'flex items-center gap-2 px-3 py-2 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-900/50 text-xs',
+  meadow: 'flex items-center gap-2 px-3 py-2 bg-meadow-50 dark:bg-meadow-950/30 border-b border-meadow-200 dark:border-meadow-900/50 text-xs',
+  azure: 'flex items-center gap-2 px-3 py-2 bg-azure-50 dark:bg-azure-950/30 border-b border-azure-200 dark:border-azure-900/50 text-xs',
   creditsAmber: 'flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs',
   creditsRed: 'flex flex-wrap items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/50 text-xs',
 } as const;
@@ -61,7 +81,7 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
   if (b.kind === 'inflight') {
     return (
       <div id="dc-sync-banner" className={SHELL.amber}>
-        <SpinnerArcIcon className="w-4 h-4 animate-spin text-amber-800 dark:text-amber-400 shrink-0" />
+        <SpinnerArcIcon className="w-4 h-4 animate-spin text-amber-800 dark:text-amber-200 shrink-0" />
         <span className="text-amber-800 dark:text-amber-200 flex-1">{b.message}</span>
         <button id="dc-sync-btn" type="button" disabled className={SYNC_BTN}>Syncing…</button>
       </div>
@@ -69,13 +89,16 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
   }
   if (b.kind === 'ok') {
     return (
-      <div id="dc-sync-banner" className={SHELL.emerald}>
-        <CheckLongIcon className="w-4 h-4 text-emerald-700 dark:text-emerald-400 shrink-0" />
-        <span className="text-emerald-800 dark:text-emerald-200 flex-1">{b.message}</span>
+      <div id="dc-sync-banner" className={SHELL.meadow}>
+        {/* The glyph's dark step was `-400`, two tiers under the message it
+            sits beside; on this ramp a light 700 ink pairs with a dark 200,
+            which is what the text span next to it already spelled. */}
+        <CheckIcon className="w-4 h-4 text-meadow-700 dark:text-meadow-200 shrink-0" />
+        <span className="text-meadow-800 dark:text-meadow-200 flex-1">{b.message}</span>
       </div>
     );
   }
-  const warn = <WarningTriangleIcon className="w-4 h-4 text-amber-800 dark:text-amber-400 shrink-0" />;
+  const warn = <WarningTriangleIcon className="w-4 h-4 text-amber-800 dark:text-amber-200 shrink-0" />;
   if (b.kind === 'failed') {
     return (
       <div id="dc-sync-banner" className={SHELL.amber}>
@@ -107,9 +130,19 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
 
 function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
   return (
-    <div id="dc-new-change-banner" className={SHELL.violet}>
-      <PlusThinIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
-      <span className="text-violet-800 dark:text-violet-200 flex-1">
+    <div id="dc-new-change-banner" className={SHELL.azure}>
+      {/* The dark step MATCHES the message span beside it, which is this
+          file's own convention for all four strips: the amber sync glyph is
+          -200 against amber-200 text, the meadow ok glyph is -200 against
+          meadow-200 text, and the credits red/amber glyphs are -200 against
+          -200 text. Light may differ by one tier (glyph 700, text 800) and
+          does everywhere; the DARK halves do not. `dark:text-azure-300`
+          (Lc -66.5 on the #1F1F1B card, APCA-W3 0.1.9 as ported in
+          tests/theme-ink-guards.test.js) left this one glyph a rung under
+          its own sentence at -81.4 — the single strip in the file where a
+          glyph and its text disagree in dark. */}
+      <PlusIcon className="w-4 h-4 text-azure-700 dark:text-azure-200 shrink-0" />
+      <span className="text-azure-800 dark:text-azure-200 flex-1">
         {`This change has been ${b.stateLabel}. New work in this chat is added to the same PR, so start a new change to keep PRs focused.`}
       </span>
       {/* The one primary-filled button on these four strips, so it routes
@@ -130,8 +163,8 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
 }
 
 const ICON_CLASS = {
-  amber: 'w-4 h-4 text-amber-800 dark:text-amber-400 shrink-0',
-  red: 'w-4 h-4 text-red-700 dark:text-red-400 shrink-0',
+  amber: 'w-4 h-4 text-amber-800 dark:text-amber-200 shrink-0',
+  red: 'w-4 h-4 text-red-700 dark:text-red-200 shrink-0',
 } as const;
 
 const TEXT_CLASS = {

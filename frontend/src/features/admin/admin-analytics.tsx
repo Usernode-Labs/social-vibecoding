@@ -87,9 +87,14 @@ const ADMIN_COLOR = '#f59e0b';
 // where a saturated mid-tone is exactly right. They are NOT for text: as ink
 // on the light card this cyan measures 2.4:1 and the amber 2.2:1, and both
 // were being used for readout lines. The legend and readout text carry
-// `text-cyan-700 dark:text-cyan-400` / `text-amber-800 dark:text-amber-400`
+// `text-cyan-700 dark:text-cyan-400` / `text-amber-800 dark:text-amber-200`
 // instead — same hue family, readable on both grounds, and a class rather
-// than an inline style so it can vary by theme at all.
+// than an inline style so it can vary by theme at all. (Those ratios are
+// WCAG-era and are left as written; contrast is tracked in APCA Lc now, which
+// is why the amber dark ink moved 400 → 200 — the ramp's solved dark step.
+// The cyan pair is deliberately still on -400: cyan is a stock hue held back
+// for the chart-palette pass, because this ink labels the SYSTEM_COLOR swatch
+// below and the two must move together.)
 const SYSTEM_COLOR = '#06b6d4';
 const SPEND_PLATFORM = '#6366f1';
 const SPEND_USERKEY = '#34d399';
@@ -275,7 +280,7 @@ async function getJSON(url: string): Promise<any> {
   return res.json();
 }
 
-const EMPTY = <p className="text-sm text-zinc-500 dark:text-zinc-400">Not enough data yet.</p>;
+const EMPTY = <p className="text-sm text-zinc-500 dark:text-zinc-300">Not enough data yet.</p>;
 
 /** A colour swatch + label, the inline-swatch idiom every legend here uses. */
 function Swatch({ color, outline, children }: { color: string; outline?: boolean; children: string }) {
@@ -296,7 +301,7 @@ function Swatch({ color, outline, children }: { color: string; outline?: boolean
 function AdminLegend({ includeAdmins, nonAdminColor = '#6366f1' }: { includeAdmins: boolean; nonAdminColor?: string }) {
   if (!includeAdmins) return null;
   return (
-    <div className="flex items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-400 mb-2">
+    <div className="flex items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-300 mb-2">
       <Swatch color={nonAdminColor}>Non-admin</Swatch>
       <Swatch color={ADMIN_COLOR}>Admin</Swatch>
     </div>
@@ -329,7 +334,7 @@ function PlotGrid({ W, topPad, plot }: { W: number; topPad: number; plot: number
   return <>{out}</>;
 }
 
-const TOGGLE_ON = 'px-2 py-1 rounded bg-violet-600 text-white';
+const TOGGLE_ON = 'px-2 py-1 rounded bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900';
 const TOGGLE_OFF = 'px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800';
 
 /**
@@ -377,7 +382,7 @@ function Counters({ o }: { o: any }) {
       {cards.map((c) => (
         <div key={c.id} className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
           <div className="flex items-start justify-between gap-1">
-            <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{c.label}</div>
+            <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-300">{c.label}</div>
             <InfoIcon card={c.id} />
           </div>
           <div className="text-2xl font-bold mt-1">{c.value}</div>
@@ -414,7 +419,7 @@ function Funnel({ stages, includeAdmins }: { stages: any[]; includeAdmins: boole
           <div key={s.label}>
             <div className="flex items-center justify-between text-xs mb-1">
               <span className="text-zinc-600 dark:text-zinc-300">{s.label}</span>
-              <span className="text-zinc-500 dark:text-zinc-400">{`${count} · ${conv}`}</span>
+              <span className="text-zinc-500 dark:text-zinc-300">{`${count} · ${conv}`}</span>
             </div>
             <div className="h-6 rounded bg-zinc-200 dark:bg-zinc-800 overflow-hidden flex">
               <div className="h-full bg-violet-600" style={{ width: `${(naW + floor).toFixed(2)}%` }} />
@@ -442,7 +447,7 @@ function BarChart({
   const rich = !!(tipPrefix && tips);
   useTips(tipPrefix || 'unused', rich ? (tips as string[]) : []);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-400"
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-300"
       preserveAspectRatio="none" style={{ height: '90px' }}>
       {grid ? <GridLines W={W} H={H} steps={4} pad={pad} /> : null}
       {values.map((v, i) => {
@@ -490,7 +495,7 @@ function LineChart({
   const rich = !!(tipPrefix && tips);
   useTips(tipPrefix || 'unused', rich ? (tips as string[]) : []);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-400" style={{ height: '90px' }}>
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-300" style={{ height: '90px' }}>
       {grid ? <GridLines W={W} H={H} steps={4} pad={pad} /> : null}
       <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" />
       {vals.map((v, i) => (
@@ -521,7 +526,7 @@ function StackedBarChart({
   const rich = !!(tipPrefix && tips);
   useTips(tipPrefix || 'unused', rich ? (tips as string[]) : []);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-400"
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-300"
       preserveAspectRatio="none" style={{ height: '90px' }}>
       {grid ? <GridLines W={W} H={H} steps={4} pad={pad} /> : null}
       {stacks.map((segs, i) => {
@@ -559,7 +564,7 @@ function StackedBarChart({
 /** The `first … last` caption under a 90-day chart. */
 function Axis({ labels, lastSuffix }: { labels: string[]; lastSuffix?: string }) {
   return (
-    <div className="flex justify-between text-[10px] text-zinc-500 dark:text-zinc-400 mt-1">
+    <div className="flex justify-between text-[10px] text-zinc-500 dark:text-zinc-300 mt-1">
       <span>{labels[0] || ''}</span>
       <span>{`${labels[labels.length - 1] || ''}${lastSuffix || ''}`}</span>
     </div>
@@ -592,7 +597,7 @@ function Growth({ g, includeAdmins }: { g: any; includeAdmins: boolean }) {
           <div key={s.key}>
             <div className="flex items-center justify-between text-xs mb-1">
               <span className="text-zinc-600 dark:text-zinc-300">{s.label}</span>
-              <span className="text-zinc-500 dark:text-zinc-400">
+              <span className="text-zinc-500 dark:text-zinc-300">
                 {`${fmtInt(total + totalAdmin)} total${showAdmin ? ` · ${fmtInt(totalAdmin)} admin` : ''}`}
               </span>
             </div>
@@ -637,7 +642,7 @@ function Retention({ r, mode }: { r: any; mode: string }) {
   // One coloured cell. `key` makes the tooltip id unique within the row.
   const Cell = (v: number | null | undefined, size: number, headLabel: string, ci: number, key: string) => {
     if (v == null) {
-      return <td key={key} className="px-2 py-1 text-center text-zinc-500 dark:text-zinc-500">·</td>;
+      return <td key={key} className="px-2 py-1 text-center text-zinc-500 dark:text-zinc-300">·</td>;
     }
     const p = pct(v, size);
     const alpha = Math.max(0.06, Math.min(1, p / 100));
@@ -651,8 +656,8 @@ function Retention({ r, mode }: { r: any; mode: string }) {
   };
 
   const head: React.ReactNode[] = [
-    <th key="_c" className="text-left px-2 py-1 font-medium text-zinc-500 dark:text-zinc-400">Cohort</th>,
-    <th key="_u" className="px-2 py-1 font-medium text-zinc-500 dark:text-zinc-400">Users</th>,
+    <th key="_c" className="text-left px-2 py-1 font-medium text-zinc-500 dark:text-zinc-300">Cohort</th>,
+    <th key="_u" className="px-2 py-1 font-medium text-zinc-500 dark:text-zinc-300">Users</th>,
   ];
   let rows: React.ReactNode[];
 
@@ -661,7 +666,7 @@ function Retention({ r, mode }: { r: any; mode: string }) {
     for (const c of cohorts) for (const k of Object.keys(c.offsets)) maxOffset = Math.max(maxOffset, Number(k));
     maxOffset = Math.min(maxOffset, 11); // keep the triangle readable
     for (let k = 0; k <= maxOffset; k += 1) {
-      head.push(<th key={`w${k}`} className="px-2 py-1 font-medium text-zinc-500 dark:text-zinc-400">{`W${k}`}</th>);
+      head.push(<th key={`w${k}`} className="px-2 py-1 font-medium text-zinc-500 dark:text-zinc-300">{`W${k}`}</th>);
     }
     rows = cohorts.map((c: any, ci: number) => {
       const cells = [];
@@ -671,7 +676,7 @@ function Retention({ r, mode }: { r: any; mode: string }) {
       return (
         <tr key={c.cohortWeek}>
           <td className="px-2 py-1 whitespace-nowrap text-zinc-600 dark:text-zinc-300">{weekLabel(c.cohortWeek)}</td>
-          <td className="px-2 py-1 text-center text-zinc-500 dark:text-zinc-400">{fmtInt(c.cohortSize)}</td>
+          <td className="px-2 py-1 text-center text-zinc-500 dark:text-zinc-300">{fmtInt(c.cohortSize)}</td>
           {cells}
         </tr>
       );
@@ -691,12 +696,12 @@ function Retention({ r, mode }: { r: any; mode: string }) {
     const allCols = Array.from(weekSet).sort(); // ascending YYYY-MM-DD
     const cols = allCols.slice(Math.max(0, allCols.length - 12)); // keep readable
     for (const wk of cols) {
-      head.push(<th key={wk} className="px-2 py-1 font-medium text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{weekLabel(wk)}</th>);
+      head.push(<th key={wk} className="px-2 py-1 font-medium text-zinc-500 dark:text-zinc-300 whitespace-nowrap">{weekLabel(wk)}</th>);
     }
     rows = cohorts.map((c: any, ci: number) => (
       <tr key={c.cohortWeek}>
         <td className="px-2 py-1 whitespace-nowrap text-zinc-600 dark:text-zinc-300">{weekLabel(c.cohortWeek)}</td>
-        <td className="px-2 py-1 text-center text-zinc-500 dark:text-zinc-400">{fmtInt(c.cohortSize)}</td>
+        <td className="px-2 py-1 text-center text-zinc-500 dark:text-zinc-300">{fmtInt(c.cohortSize)}</td>
         {cols.map((wk) => Cell(cal[ci][wk], c.cohortSize,
           `${weekLabel(c.cohortWeek)} cohort · week of ${weekLabel(wk)}`, ci, wk))}
       </tr>
@@ -725,7 +730,7 @@ function DailySeries({
   const vals = daily.map((r) => Number(r[dataKey]) || 0);
   const tips = vals.map((_, i) => `<div class="font-semibold">${esc(labels[i] || '')}</div>
         <div class="text-zinc-300">${fmtInt(vals[i])} users</div>
-        <div class="text-zinc-500 dark:text-zinc-400 mt-1 text-[11px]">${def}</div>`);
+        <div class="text-zinc-500 dark:text-zinc-300 mt-1 text-[11px]">${def}</div>`);
   if (!daily.length) return EMPTY;
   return (
     <>
@@ -750,7 +755,7 @@ function PowerUserWau({ wau }: { wau: any[] }) {
   const vals = wau.map((r) => Number(r.count) || 0);
   const tips = vals.map((_, i) => `<div class="font-semibold">${esc(labels[i] || '')}</div>
           <div class="text-zinc-300">${fmtInt(vals[i])} power users</div>
-          <div class="text-zinc-500 dark:text-zinc-400 mt-1 text-[11px]">Trailing 7-day window.</div>`);
+          <div class="text-zinc-500 dark:text-zinc-300 mt-1 text-[11px]">Trailing 7-day window.</div>`);
   return (
     <>
       <LineChart values={vals} color="#6366f1" grid tipPrefix="pu-wau" tips={tips} />
@@ -766,11 +771,11 @@ function PowerUserL4({ l4 }: { l4: any[] }) {
     const total = s.reduce((a, b) => a + b, 0);
     return `<div class="font-semibold">${esc(labels[i] || '')}</div>
           <div class="text-zinc-300">${fmtInt(total)} power users (trailing 4 wks)</div>
-          <div class="text-zinc-500 dark:text-zinc-400 mt-1 text-[11px]">4/4 ${fmtInt(s[3])} · 3/4 ${fmtInt(s[2])} · 2/4 ${fmtInt(s[1])} · 1/4 ${fmtInt(s[0])}</div>`;
+          <div class="text-zinc-500 dark:text-zinc-300 mt-1 text-[11px]">4/4 ${fmtInt(s[3])} · 3/4 ${fmtInt(s[2])} · 2/4 ${fmtInt(s[1])} · 1/4 ${fmtInt(s[0])}</div>`;
   });
   return (
     <>
-      <div className="flex items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-400 mb-2">
+      <div className="flex items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-300 mb-2">
         {(['1/4', '2/4', '3/4', '4/4'] as const).map((lab, i) => (
           <Swatch key={lab} color={L4_COLORS[i]}>{lab}</Swatch>
         ))}
@@ -792,7 +797,7 @@ function TopUsers({ users, includeAdmins }: { users: any[]; includeAdmins: boole
   const bw = 26; // per-bar slot
   const W = users.length * bw;
   const tipRow = (label: string, n: number) =>
-    `<div class="flex justify-between gap-3 text-zinc-500 dark:text-zinc-400"><span>${label}</span><span class="text-zinc-300">${n}</span></div>`;
+    `<div class="flex justify-between gap-3 text-zinc-500 dark:text-zinc-300"><span>${label}</span><span class="text-zinc-300">${n}</span></div>`;
   const tips = users.map((u, i) => {
     const isAdmin = includeAdmins && !!u.is_admin;
     return `<div class="font-semibold">${esc(u.name)}${isAdmin ? ' (admin)' : ''}</div>
@@ -808,7 +813,7 @@ function TopUsers({ users, includeAdmins }: { users: any[]; includeAdmins: boole
       <AdminLegend includeAdmins={includeAdmins} />
       <div className="overflow-x-auto">
         <svg viewBox={`0 0 ${W} ${H}`} style={{ height: '200px', minWidth: `${W}px` }}
-          className="text-zinc-500 dark:text-zinc-400">
+          className="text-zinc-500 dark:text-zinc-300">
           <PlotGrid W={W} topPad={topPad} plot={plot} />
           {users.map((u, i) => {
             const v = vals[i];
@@ -824,9 +829,9 @@ function TopUsers({ users, includeAdmins }: { users: any[]; includeAdmins: boole
               // eslint-disable-next-line react/no-array-index-key
               <g key={i}>
                 <rect x={(x + 3).toFixed(1)} y={y} width={bw - 6} height={h} fill={barColor} rx="2" />
-                <text x={cx} y={y - 3} textAnchor="middle" fontSize="9" fill="currentColor" className="text-zinc-500 dark:text-zinc-400">{v}</text>
+                <text x={cx} y={y - 3} textAnchor="middle" fontSize="9" fill="currentColor" className="text-zinc-500 dark:text-zinc-300">{v}</text>
                 <text x={cx} y={H - botPad + 12} textAnchor="end" fontSize="9" fill="currentColor"
-                  className="text-zinc-500 dark:text-zinc-400" transform={`rotate(-55 ${cx} ${H - botPad + 12})`}>{short}</text>
+                  className="text-zinc-500 dark:text-zinc-300" transform={`rotate(-55 ${cx} ${H - botPad + 12})`}>{short}</text>
                 <rect className="dc-hover" x={x.toFixed(1)} y={topPad} width={bw.toFixed(1)} height={plot}
                   fill="#6366f1" fillOpacity="0" pointerEvents="all" data-tip-id={`top-${i}`} />
               </g>
@@ -866,7 +871,7 @@ function StackedColumns({
   const plot = H - topPad - botPad;
   const bw = W / n;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-400"
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-300"
       preserveAspectRatio="none" style={{ height: '180px' }}>
       <PlotGrid W={W} topPad={topPad} plot={plot} />
       {rows.map((w, i) => {
@@ -899,7 +904,7 @@ function StackedColumns({
 function Kudos({ weeks }: { weeks: any[] }) {
   const labels = weeks.map((w) => weekLabel(w.wk));
   const row = (label: string, num: number) =>
-    `<div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-400">${label}</span><span>${num}</span></div>`;
+    `<div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-300">${label}</span><span>${num}</span></div>`;
   // Per-week breakdown tooltip covering the full column height. Banded buckets
   // can't yield an exact kudos total any more (a "6–10" bucket is 6..10 each),
   // so the headline reports the one figure the bands DO give exactly — how
@@ -919,8 +924,8 @@ function Kudos({ weeks }: { weeks: any[] }) {
   useTips('kudos', tips);
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400 mb-2">
-        <span className="text-zinc-500 dark:text-zinc-400">Kudos given that week:</span>
+      <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500 dark:text-zinc-300 mb-2">
+        <span className="text-zinc-500 dark:text-zinc-300">Kudos given that week:</span>
         {KUDOS_SEGS.slice().reverse().map((s) => (
           <span key={s.key} className="inline-flex items-center gap-1">
             <span className="inline-block w-3 h-3 rounded-sm" style={{ background: s.color }} />{s.label}
@@ -953,7 +958,7 @@ function SpendDistribution({ days, includeZero }: { days: any[]; includeZero: bo
   const totals = days.map((x) => segs.reduce((a, s) => a + (Number(x[s.key]) || 0), 0));
   const labels = days.map((x) => weekLabel(x.day));
   const row = (label: string, color: string, v: number) =>
-    `<div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-400"><span class="inline-block w-2 h-2 rounded-sm align-middle mr-1" style="background:${color}"></span>${label}</span><span>${fmtInt(v)}</span></div>`;
+    `<div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-300"><span class="inline-block w-2 h-2 rounded-sm align-middle mr-1" style="background:${color}"></span>${label}</span><span>${fmtInt(v)}</span></div>`;
   const tips = days.map((x, i) => `<div class="font-semibold mb-1">${esc(labels[i])}${i === days.length - 1 ? ' (today)' : ''}</div>
         <div class="mb-1">${fmtInt(totals[i])} user${totals[i] === 1 ? '' : 's'}</div>
         <div class="text-[11px] leading-tight">
@@ -962,7 +967,7 @@ function SpendDistribution({ days, includeZero }: { days: any[]; includeZero: bo
   useTips('spend-dist', tips);
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+      <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500 dark:text-zinc-300 mb-2">
         {segs.slice().reverse().map((s) => (
           <span key={s.key} className="inline-flex items-center gap-1">
             <span className="inline-block w-3 h-3 rounded-sm" style={{ background: s.color }} />{s.label}
@@ -998,14 +1003,14 @@ function Spend({
 
   const tips = days.map((_, i) => {
     const detail = mode === 'both'
-      ? `<div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-400">Platform</span><span>${dollars(plat[i])}</span></div>
-           <div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-400">User key</span><span>${dollars(byok[i])}</span></div>
-           <div class="flex justify-between gap-3 border-t border-zinc-700 mt-1 pt-1"><span class="text-zinc-500 dark:text-zinc-400">Total</span><span>${dollars(plat[i] + byok[i])}</span></div>`
+      ? `<div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-300">Platform</span><span>${dollars(plat[i])}</span></div>
+           <div class="flex justify-between gap-3"><span class="text-zinc-500 dark:text-zinc-300">User key</span><span>${dollars(byok[i])}</span></div>
+           <div class="flex justify-between gap-3 border-t border-zinc-700 mt-1 pt-1"><span class="text-zinc-500 dark:text-zinc-300">Total</span><span>${dollars(plat[i] + byok[i])}</span></div>`
       : `<div class="text-zinc-300">${dollars(totals[i])}</div>`;
     // Admin portion for the active mode (#341): tooltip-only breakout.
     const adminCents = mode === 'platform' ? platAdmin[i] : mode === 'user' ? byokAdmin[i] : platAdmin[i] + byokAdmin[i];
     const adminLine = includeAdmins && adminCents > 0
-      ? `<div class="flex justify-between gap-3 text-[11px] text-amber-800 dark:text-amber-400"><span>of which admin</span><span>${dollars(adminCents)}</span></div>`
+      ? `<div class="flex justify-between gap-3 text-[11px] text-amber-800 dark:text-amber-200"><span>of which admin</span><span>${dollars(adminCents)}</span></div>`
       : '';
     // #361: system-token spend line, shown whenever the day had any.
     const systemLine = sys[i] > 0
@@ -1034,14 +1039,14 @@ function Spend({
         {`System tokens today: ${dollars(systemToday)} / ${dollars(systemCapCents)}`}
       </div>
       {anyLegend ? (
-        <div className="flex flex-wrap items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-400 mb-2">
+        <div className="flex flex-wrap items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-300 mb-2">
           {mode === 'both' ? <Swatch color={SPEND_PLATFORM}>Platform key</Swatch> : null}
           {mode === 'both' ? <Swatch color={SPEND_USERKEY}>User key (BYOK)</Swatch> : null}
           {hasAdminSpend ? <Swatch color={ADMIN_COLOR}>Admin spend</Swatch> : null}
           {hasSystemSpend ? <Swatch color={SYSTEM_COLOR}>System tokens</Swatch> : null}
         </div>
       ) : null}
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-400"
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-zinc-500 dark:text-zinc-300"
         preserveAspectRatio="none" style={{ height: '180px' }}>
         <PlotGrid W={W} topPad={topPad} plot={plot} />
         {days.map((_, i) => {
@@ -1115,7 +1120,7 @@ function SpendByBuilder({
   const W = sorted.length * bw;
   const color = mode === 'user' ? SPEND_USERKEY : SPEND_PLATFORM;
   const tipRow = (label: string, val: number) =>
-    `<div class="flex justify-between gap-3 text-zinc-500 dark:text-zinc-400"><span>${label}</span><span class="text-zinc-300">${dollars(val)}</span></div>`;
+    `<div class="flex justify-between gap-3 text-zinc-500 dark:text-zinc-300"><span>${label}</span><span class="text-zinc-300">${dollars(val)}</span></div>`;
   const tips = sorted.map((b, i) => {
     const p = Number(b.platform_cents) || 0;
     const u = Number(b.user_key_cents) || 0;
@@ -1124,14 +1129,14 @@ function SpendByBuilder({
         <div class="text-zinc-300 mb-1">#${i + 1} · ${dollars(valueOf(b))}</div>
         ${tipRow('Platform key', p)}
         ${tipRow('User key (BYOK)', u)}
-        ${tipRow('Total', p + u)}${isAdmin ? '<div class="mt-1 text-[11px] text-amber-800 dark:text-amber-400">admin</div>' : ''}`;
+        ${tipRow('Total', p + u)}${isAdmin ? '<div class="mt-1 text-[11px] text-amber-800 dark:text-amber-200">admin</div>' : ''}`;
   });
   useTips('builder', tips);
   const anyLegend = mode === 'both' || includeAdmins;
   return (
     <>
       {anyLegend ? (
-        <div className="flex flex-wrap items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-400 mb-2">
+        <div className="flex flex-wrap items-center gap-3 text-[10px] text-zinc-500 dark:text-zinc-300 mb-2">
           {mode === 'both' ? <Swatch color={SPEND_PLATFORM}>Platform key</Swatch> : null}
           {mode === 'both' ? <Swatch color={SPEND_USERKEY}>User key (BYOK)</Swatch> : null}
           {/* Admin marker is an outline here (#341), so its swatch is outlined. */}
@@ -1140,7 +1145,7 @@ function SpendByBuilder({
       ) : null}
       <div className="overflow-x-auto">
         <svg viewBox={`0 0 ${W} ${H}`} style={{ height: '200px', minWidth: `${W}px` }}
-          className="text-zinc-500 dark:text-zinc-400">
+          className="text-zinc-500 dark:text-zinc-300">
           <PlotGrid W={W} topPad={topPad} plot={plot} />
           {sorted.map((b, i) => {
             const p = Number(b.platform_cents) || 0;
@@ -1175,7 +1180,7 @@ function SpendByBuilder({
               <g key={i}>
                 {segs}
                 <text x={cx} y={H - botPad + 12} textAnchor="end" fontSize="9" fill="currentColor"
-                  className="text-zinc-500 dark:text-zinc-400" transform={`rotate(-55 ${cx} ${H - botPad + 12})`}>{short}</text>
+                  className="text-zinc-500 dark:text-zinc-300" transform={`rotate(-55 ${cx} ${H - botPad + 12})`}>{short}</text>
                 <rect className="dc-hover" x={x.toFixed(1)} y={topPad} width={bw.toFixed(1)} height={plot}
                   fill="#6366f1" fillOpacity="0" pointerEvents="all" data-tip-id={`builder-${i}`} />
               </g>
@@ -1199,8 +1204,8 @@ const DEMO = typeof window !== 'undefined'
   && new URLSearchParams(location.search).get('demo') === '1';
 
 const H3 = 'text-lg font-semibold inline-flex items-center';
-const SUB = 'text-xs text-zinc-500 dark:text-zinc-400 mb-4';
-const H4 = 'text-sm font-semibold text-zinc-500 dark:text-zinc-400';
+const SUB = 'text-xs text-zinc-500 dark:text-zinc-300 mb-4';
+const H4 = 'text-sm font-semibold text-zinc-500 dark:text-zinc-300';
 
 const SPEND_MODES: Array<['platform' | 'user' | 'both', string]> = [
   ['platform', 'Platform key'], ['user', 'User key'], ['both', 'Both'],
@@ -1321,15 +1326,15 @@ function AnalyticsSection() {
   return (
     <div id="admin-analytics-root" ref={rootRef}>
       <h2 className="text-lg font-semibold mb-4">Analytics</h2>
-      {gate ? <div id="admin-analytics-gate" className="text-zinc-500 dark:text-zinc-400 text-center py-20">{gate}</div> : null}
+      {gate ? <div id="admin-analytics-gate" className="text-zinc-500 dark:text-zinc-300 text-center py-20">{gate}</div> : null}
 
       {gate ? null : (
         <main id="admin-analytics-content" className="space-y-6">
           {/* Global controls */}
           <section className="flex items-center gap-2">
-            <label className="inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 cursor-pointer select-none">
+            <label className="inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-300 cursor-pointer select-none">
               <input id="include-admins" type="checkbox"
-                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                className="h-4 w-4 rounded border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-800 text-azure-700 focus:ring-zinc-900 dark:focus:ring-zinc-100 dark:text-azure-400"
                 checked={includeAdmins}
                 onChange={(e) => {
                   setIncludeAdmins(e.target.checked);
@@ -1373,7 +1378,7 @@ function AnalyticsSection() {
             <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
               <h3 className={H3}>Funnels<InfoIcon info="funnels" /></h3>
               <div className="flex flex-wrap items-center gap-1 text-xs">
-                <span className="text-zinc-500 dark:text-zinc-400 mr-1">Cohort:</span>
+                <span className="text-zinc-500 dark:text-zinc-300 mr-1">Cohort:</span>
                 <ToggleGroup cls="cohort-btn" attr="data-cohort" value={cohort} onChange={setCohort} options={[
                   ['all', 'All time'], ['90d', 'Last 90d'], ['30d', 'Last 30d'], ['14d', 'Last 14d'],
                   ['7d', 'Last 7d'], ['3d', 'Last 3d'], ['1d', 'Last 1d'],
@@ -1436,9 +1441,9 @@ function AnalyticsSection() {
               <div>
                 <div className="flex items-center justify-between text-sm mb-1">
                   <span className="font-semibold text-zinc-700 dark:text-zinc-300">DAU</span>
-                  <span id="gu-dau-latest" className="text-zinc-500 dark:text-zinc-400">{latestLabel(daily, 'dau')}</span>
+                  <span id="gu-dau-latest" className="text-zinc-500 dark:text-zinc-300">{latestLabel(daily, 'dau')}</span>
                 </div>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">Distinct users active that day.</p>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-300 mb-2">Distinct users active that day.</p>
                 <div id="gu-dau">
                   {d ? <DailySeries daily={daily} dataKey="dau" color="#6366f1"
                     def="Distinct users active that day." /> : null}
@@ -1447,9 +1452,9 @@ function AnalyticsSection() {
               <div>
                 <div className="flex items-center justify-between text-sm mb-1">
                   <span className="font-semibold text-zinc-700 dark:text-zinc-300">WAU</span>
-                  <span id="gu-wau-latest" className="text-zinc-500 dark:text-zinc-400">{latestLabel(daily, 'wau')}</span>
+                  <span id="gu-wau-latest" className="text-zinc-500 dark:text-zinc-300">{latestLabel(daily, 'wau')}</span>
                 </div>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">Distinct users active in the trailing 7 days.</p>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-300 mb-2">Distinct users active in the trailing 7 days.</p>
                 <div id="gu-wau">
                   {d ? <DailySeries daily={daily} dataKey="wau" color="#60a5fa"
                     def="Distinct users active in the trailing 7 days." /> : null}
@@ -1458,9 +1463,9 @@ function AnalyticsSection() {
               <div>
                 <div className="flex items-center justify-between text-sm mb-1">
                   <span className="font-semibold text-zinc-700 dark:text-zinc-300">MAU</span>
-                  <span id="gu-mau-latest" className="text-zinc-500 dark:text-zinc-400">{latestLabel(daily, 'mau')}</span>
+                  <span id="gu-mau-latest" className="text-zinc-500 dark:text-zinc-300">{latestLabel(daily, 'mau')}</span>
                 </div>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">Distinct users active in the trailing 30 days.</p>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-300 mb-2">Distinct users active in the trailing 30 days.</p>
                 <div id="gu-mau">
                   {d ? <DailySeries daily={daily} dataKey="mau" color="#34d399"
                     def="Distinct users active in the trailing 30 days." /> : null}
@@ -1471,14 +1476,14 @@ function AnalyticsSection() {
             <div className="flex items-center justify-between flex-wrap gap-2 mt-8 mb-3">
               <h4 className={H4}>Retention cohorts</h4>
               <div className="flex flex-wrap items-center gap-1 text-xs">
-                <span className="text-zinc-500 dark:text-zinc-400 mr-1">Align:</span>
+                <span className="text-zinc-500 dark:text-zinc-300 mr-1">Align:</span>
                 {/* Re-pivots the cached payload — no refetch. */}
                 <ToggleGroup cls="retalign-btn" attr="data-retalign" value={retAlign} onChange={setRetAlign} options={[
                   ['calendar', 'Calendar aligned'], ['cohort', 'By cohort age'],
                 ]} />
               </div>
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-3">
               Cohort = signup week. Each cell is the share of that cohort active (any action) in a given week.
             </p>
             <div id="retention-cohorts" className="overflow-x-auto">
@@ -1496,21 +1501,21 @@ function AnalyticsSection() {
               <div>
                 <div className="flex items-center justify-between text-sm mb-1">
                   <span className="font-semibold text-zinc-700 dark:text-zinc-300">Power-user WAU</span>
-                  <span id="pu-wau-latest" className="text-zinc-500 dark:text-zinc-400">
+                  <span id="pu-wau-latest" className="text-zinc-500 dark:text-zinc-300">
                     {wau.length ? `${fmtInt(Number(wau[wau.length - 1].count) || 0)} latest` : ''}
                   </span>
                 </div>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">Distinct power users over the trailing 7 days.</p>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-300 mb-2">Distinct power users over the trailing 7 days.</p>
                 <div id="pu-wau">{d ? (wau.length ? <PowerUserWau wau={wau} /> : EMPTY) : null}</div>
               </div>
               <div>
                 <div className="flex items-center justify-between text-sm mb-1">
                   <span className="font-semibold text-zinc-700 dark:text-zinc-300">Consistency (L4)</span>
-                  <span id="pu-l4-latest" className="text-zinc-500 dark:text-zinc-400">
+                  <span id="pu-l4-latest" className="text-zinc-500 dark:text-zinc-300">
                     {l4.length ? `${fmtInt(lastL4.reduce((a, b) => a + b, 0))} latest` : ''}
                   </span>
                 </div>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-300 mb-2">
                   Per day, users stacked by how many of the trailing 4 weeks they were a power user.
                 </p>
                 <div id="pu-l4">{d ? (l4.length ? <PowerUserL4 l4={l4} /> : EMPTY) : null}</div>

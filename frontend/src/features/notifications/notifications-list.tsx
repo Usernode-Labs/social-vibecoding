@@ -147,7 +147,13 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
     <div
       ref={ref}
       data-saved-message={view.messageId}
-      className="flex items-stretch border-b border-zinc-200 dark:border-zinc-800 bg-violet-500/5 border-l-2 border-l-violet-500"
+      // The rail is `azure`, matching the wash it sits on. It spelled
+      // `border-l-violet-500` — written when violet WAS the blue accent — so
+      // after the remap it painted a YELLOW keyline down the left edge of a
+      // BLUE wash, which is the accent doing two things on one row. Yellow
+      // marks the one filled ACTION on a screen; a pinned-row rail is an
+      // identity mark, and identity marks are blue.
+      className="flex items-stretch border-b border-zinc-200 dark:border-zinc-800 bg-azure-500/5 border-l-2 border-l-azure-500"
     >
       <button
         className="flex-1 min-w-0 text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
@@ -160,22 +166,27 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
             The spaces ride inside the neighbouring strings rather than as
             whitespace-only children — see the note on <Meta> for why.
         */}
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">
+        <div className="text-xs text-zinc-500 dark:text-zinc-300 mb-1">
           {/* The same mark the message's own save button carries — solid
               here, because everything in this section is saved by
               definition — so the two ends of the gesture read as one
-              feature. */}
-          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3 h-3 align-middle text-violet-700 dark:text-violet-400" />
+              feature.
+
+              A MARK, so the light half keeps 700; the dark half moves
+              400 -> 300, because -400 measures Lc -51.8 on the dark card
+              against its light partner's 68.0 while -300 is -66.5, which is
+              that pair at parity. (800/200 is the LINK ink.) */}
+          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3 h-3 align-middle text-azure-700 dark:text-azure-300" />
           <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
           {' in '}
           <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
-          <span className="text-zinc-500 dark:text-zinc-400">{` · ${view.time}`}</span>
+          <span className="text-zinc-500 dark:text-zinc-300">{` · ${view.time}`}</span>
         </div>
         <div className="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2">{view.text}</div>
       </button>
       <button
         data-saved-unsave={view.messageId}
-        className="shrink-0 text-[0.7rem] text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 px-1.5 py-1"
+        className="shrink-0 text-[0.7rem] text-zinc-500 hover:text-zinc-800 dark:text-zinc-300 dark:hover:text-zinc-200 px-1.5 py-1"
         onClick={(e) => {
           e.stopPropagation();
           controller()?._unsave(view.messageId);
@@ -216,19 +227,21 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
   return (
     <div
       ref={ref}
-      className="px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-violet-500/5 border-l-2 border-l-violet-500"
+      // Same rail as <Saved> above, and moved for the same reason: it was
+      // `border-l-violet-500`, a yellow keyline on a blue wash.
+      className="px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-azure-500/5 border-l-2 border-l-azure-500"
       data-invite-app={view.appId}
     >
       {/*
           The spaces ride inside the neighbouring strings rather than as
           whitespace-only children — see the note on <Meta> for why.
       */}
-      <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-1.5">
+      <div className="text-xs text-zinc-500 dark:text-zinc-300 mb-1.5">
         <span aria-hidden="true">{view.icon}</span>
         <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
         {` ${view.verb} `}
         <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
-        <span className="text-zinc-500 dark:text-zinc-400">{` · ${view.time}`}</span>
+        <span className="text-zinc-500 dark:text-zinc-300">{` · ${view.time}`}</span>
       </div>
       <div className="flex gap-2">
         <Button
@@ -293,7 +306,7 @@ export function NotificationsPinnedSections(): ReactNode {
       */}
       <div id="notifications-saved" className="shrink-0 overflow-y-auto max-h-48">
         {saved.length ? (
-          <div className="px-3 py-1.5 text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="px-3 py-1.5 text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-300 border-b border-zinc-200 dark:border-zinc-800">
             Saved
           </div>
         ) : null}
@@ -308,7 +321,7 @@ export function NotificationsPinnedSections(): ReactNode {
       */}
       <div id="notifications-invites" className="shrink-0 overflow-y-auto max-h-48">
         {invites.length ? (
-          <div className="px-3 py-1.5 text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="px-3 py-1.5 text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-300 border-b border-zinc-200 dark:border-zinc-800">
             Invites
           </div>
         ) : null}

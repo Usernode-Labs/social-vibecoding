@@ -53,12 +53,12 @@ export function PasswordSection() {
             is in the native app with a linked wallet (settings.js).
         */}
         <p id="cp-wallet-mode" className="hidden text-xs text-center mt-2">
-          <a id="cp-use-wallet" href="#" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">
+          <a id="cp-use-wallet" href="#" className="text-azure-800 hover:text-azure-900 dark:hover:text-azure-100 dark:text-azure-200">
             Forgot it? Use your wallet instead
           </a>
         </p>
         <p id="cp-password-mode" className="hidden text-xs text-center mt-2">
-          <a id="cp-use-password" href="#" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">
+          <a id="cp-use-password" href="#" className="text-azure-800 hover:text-azure-900 dark:hover:text-azure-100 dark:text-azure-200">
             Use current password instead
           </a>
         </p>

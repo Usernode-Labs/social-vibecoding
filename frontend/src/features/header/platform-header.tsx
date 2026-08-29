@@ -88,8 +88,8 @@ import '../notifications/mount';
 // ground these controls sit on, so every one of these discs was invisible in
 // light mode and the bar read as three bare glyphs on nothing. #eaeaea is also
 // what the chip was given when it first got a surface, which is how the bug
-// surfaced. zinc-50 (#f5f5f7) lifts off the ground; dark mode was always fine
-// (zinc-800 on zinc-950) and is unchanged.
+// surfaced. zinc-50 lifts off the ground (one step lighter on every ramp
+// since); dark mode was always fine (zinc-800 on zinc-950) and is unchanged.
 //
 // The anchor's own classes, hoisted out of the JSX so the `hidden` suffix is
 // the ONLY thing that varies between the two states — the string itself has to
@@ -432,9 +432,43 @@ export function PlatformHeader() {
             }}
           >
             <BellIcon className="w-5 h-5" />
+            {/*
+                Two things moved on this badge, and this one has TWO TWINS —
+                #notifications-badge-ai on the Improve button
+                (../improve/improve-button.tsx) and #staging-dev-console-badge
+                (../staging/staging-overlay.tsx). All three carry the same
+                geometry run, and tests/header-status-pane.test.js diffs this
+                badge against the Improve button's with the colour token
+                dropped and requires equality. Keep the three in step.
+
+                  * 17.6px -> 18px. The old value was a spelling nobody
+                    chose; 18px is what this same role measures at
+                    `.messages-unread` (public/css/app.css) and in
+                    @/components/ui/feed.tsx. It stays well under the 28px
+                    content row, so the HEADER HEIGHT INVARIANT above is
+                    untouched — and the badge hangs outside the row anyway.
+
+                  * MOVE THE FILL, NOT THE INK. White on the ramp's 500 step
+                    measured Lc -72.0, under the 75 body minimum on a 12px
+                    BOLD label, and white is already the lightest ink there
+                    is — so the DISC has to move, not the type. Measured with
+                    an APCA-W3 0.1.9 port, self-pinned at
+                    106.04 / -107.88 / 63.06.
+
+                    -700 (-85.2), NOT the -600 (-77.4) that would merely
+                    clear the floor. Both twins say so IN THEIR OWN FILES and
+                    both name this badge while doing it: staging-overlay.tsx
+                    picked -700 "because this is the same ROLE as
+                    #notifications-badge", and improve-button.tsx picked
+                    meadow-700 (-87.8) so it would land "beside the bell's
+                    bg-red-700 rather than a rung below it". A twin badge one
+                    step quieter than the pair it is supposed to match is the
+                    exact drift these three comments exist to prevent, so the
+                    extra headroom is not the thing to trade away.
+            */}
             <span
               id="notifications-badge"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
+              className="hidden absolute -top-1 -right-1 min-w-[1.125rem] h-[1.125rem] px-1 rounded-full bg-red-700 text-white text-xs font-bold flex items-center justify-center"
               aria-label="Unread notifications"
             >
             </span>

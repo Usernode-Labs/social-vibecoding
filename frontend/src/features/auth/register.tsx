@@ -32,7 +32,7 @@ import {
  * rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300
  * dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100
  * placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none
- * focus:ring-2 focus:ring-violet-500 focus:border-transparent`. #reg-code
+ * focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent`. #reg-code
  * appends `font-mono` through className, where its string appends it.
  */
 const AUTHFIELD = { box: 'auth', hint: 'muted', ring: 'seamless' } as const;
@@ -115,7 +115,7 @@ export function RegisterScreen() {
       <a
         href="#"
         data-auth-back=""
-        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
+        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-300 hover:text-azure-800 dark:hover:text-azure-300"
         style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
         onClick={(e) => {
           e.preventDefault();
@@ -129,15 +129,15 @@ export function RegisterScreen() {
           <h1 className="text-2xl font-bold text-center mb-1">
             Usernode Social Vibecoding
           </h1>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-2 italic">
+          <p className="text-xs text-zinc-500 dark:text-zinc-300 text-center mb-2 italic">
             A place where users own and build apps together
           </p>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 text-center mb-8">
+          <p className="text-sm text-zinc-500 dark:text-zinc-300 text-center mb-8">
             Create your account
           </p>
           <form id="register-form" className="space-y-4" onSubmit={onSubmit}>
             <div>
-              <label htmlFor="reg-code" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+              <label htmlFor="reg-code" className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
                 Activation Code
               </label>
               <Input
@@ -155,7 +155,7 @@ export function RegisterScreen() {
             <div>
               <label
                 htmlFor="reg-username"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+                className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1"
               >
                 Username
               </label>
@@ -173,7 +173,7 @@ export function RegisterScreen() {
             <div>
               <label
                 htmlFor="reg-password"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+                className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1"
               >
                 Password
               </label>
@@ -188,16 +188,16 @@ export function RegisterScreen() {
                 placeholder="choose a password"
               />
             </div>
-            <div id="reg-error" className={hiddenLast(!error, 'text-red-400 text-sm')}>
+            <div id="reg-error" className={hiddenLast(!error, 'text-red-700 dark:text-red-200 text-sm')}>
               {error}
             </div>
             <Button type="submit" layout="full" size="plain" ink="solidLate">
               Register
             </Button>
           </form>
-          <p className="text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6">
+          <p className="text-center text-sm text-zinc-500 dark:text-zinc-300 mt-6">
             Already have an account?
-            <a href="#login" className="text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">
+            <a href="#login" className="text-azure-800 hover:text-azure-900 dark:text-azure-200 dark:hover:text-azure-100">
               Log in
             </a>
           </p>

@@ -102,15 +102,15 @@ const ROOT_CLASS = 'rounded-2xl bg-white dark:bg-zinc-900 mb-5';
 const CARD_CLASS = 'flex flex-col px-4 pb-5';
 
 /** A group row's shared geometry. `px-4` is load-bearing — see the note above. */
-const ROW_CLASS = 'un-group-row px-4 py-2 focus-within:bg-violet-50 dark:focus-within:bg-violet-950/40';
+const ROW_CLASS = 'un-group-row px-4 py-2 focus-within:bg-azure-50 dark:focus-within:bg-azure-950/40';
 /** The same row, for a label-beside-field line. */
-const ROW_INLINE_CLASS = 'un-group-row flex items-center gap-3 px-4 min-h-[44px] focus-within:bg-violet-50 dark:focus-within:bg-violet-950/40';
+const ROW_INLINE_CLASS = 'un-group-row flex items-center gap-3 px-4 min-h-[44px] focus-within:bg-azure-50 dark:focus-within:bg-azure-950/40';
 /** A row that is itself the tappable control. */
 const ROW_ACTION_CLASS = 'un-group-row flex items-center w-full px-4 min-h-[44px] text-sm font-medium';
 
 const ROW_LABEL_CLASS = 'text-sm font-normal text-zinc-900 dark:text-zinc-100';
-const FOOTNOTE_CLASS = 'px-4 mt-1.5 text-xs text-zinc-500 dark:text-zinc-400';
-const COUNTER_CLASS = 'text-xs text-zinc-500 tabular-nums dark:text-zinc-400';
+const FOOTNOTE_CLASS = 'px-4 mt-1.5 text-xs text-zinc-500 dark:text-zinc-300';
+const COUNTER_CLASS = 'text-xs text-zinc-500 tabular-nums dark:text-zinc-300';
 
 function Avatar({ url, initial }: { url: string | null; initial: string }): ReactNode {
   if (url) {
@@ -126,7 +126,7 @@ function Avatar({ url, initial }: { url: string | null; initial: string }): Reac
     <div
       className={
         'w-12 h-12 text-lg rounded-full shrink-0 flex items-center justify-center '
-        + 'font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
+        + 'font-bold bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200'
       }
       aria-hidden="true"
     >
@@ -152,7 +152,7 @@ function Group({ title, children }: { title: string; children?: ReactNode }): Re
  */
 function FieldError({ message }: { message?: string | null }): ReactNode {
   return (
-    <p className={message ? 'px-4 mt-1.5 text-xs text-red-700 dark:text-red-400' : 'px-4 mt-1.5 text-xs text-red-700 hidden dark:text-red-400'}>
+    <p className={message ? 'px-4 mt-1.5 text-xs text-red-700 dark:text-red-200' : 'px-4 mt-1.5 text-xs text-red-700 hidden dark:text-red-200'}>
       {message || ''}
     </p>
   );
@@ -269,14 +269,19 @@ export function ProfileEditSheet({
               </div>
               <div className="min-w-0">
                 <div className={ROW_LABEL_CLASS}>Profile photo</div>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                <p className="text-xs text-zinc-500 dark:text-zinc-300">
                   PNG, JPEG or WebP.
                 </p>
               </div>
             </div>
             <button
               id="profile-edit-choose"
-              className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
+              /* dark:azure-300, the sheet row-action spelling the messages
+                 dialogs use ("Add" / "Unblock" / "Message"), not the -400 chip
+                 ink: this button sits in a matched pair with the red-700/200
+                 "Remove photo" below, and at -400 (Lc -51.8) the destructive
+                 half read a full tier LOUDER than the routine one in dark. */
+              className={`${ROW_ACTION_CLASS} text-azure-700 dark:text-azure-300`}
               onClick={() => fileRef.current?.click()}
             >
               Change photo
@@ -285,8 +290,8 @@ export function ProfileEditSheet({
               id="profile-edit-remove"
               className={
                 showRemove
-                  ? `${ROW_ACTION_CLASS} text-red-700 dark:text-red-400`
-                  : `${ROW_ACTION_CLASS} text-red-700 dark:text-red-400 hidden`
+                  ? `${ROW_ACTION_CLASS} text-red-700 dark:text-red-200`
+                  : `${ROW_ACTION_CLASS} text-red-700 dark:text-red-200 hidden`
               }
               onClick={() => { Profile.stageAvatarRemoval(); setShowRemove(false); }}
             >
@@ -296,8 +301,8 @@ export function ProfileEditSheet({
           <p
             id="profile-edit-photo-error"
             className={photoError
-              ? 'px-4 mt-1.5 text-xs text-red-700 dark:text-red-400'
-              : 'px-4 mt-1.5 text-xs text-red-700 hidden dark:text-red-400'}
+              ? 'px-4 mt-1.5 text-xs text-red-700 dark:text-red-200'
+              : 'px-4 mt-1.5 text-xs text-red-700 hidden dark:text-red-200'}
           >
             {photoError || ''}
           </p>
@@ -421,7 +426,7 @@ export function ProfileEditSheet({
                 box="groupRow"
                 ring={false}
                 width="flex"
-                className="text-right text-zinc-500 dark:text-zinc-500 cursor-not-allowed"
+                className="text-right text-zinc-500 dark:text-zinc-300 cursor-not-allowed"
                 value={user.username ? `@${user.username}` : ''}
                 readOnly
                 disabled
@@ -430,14 +435,14 @@ export function ProfileEditSheet({
           </Group>
           <p className={FOOTNOTE_CLASS}>
             {'Your @handle is your sign-in name and your public page address. To change it, go to '}
-            <a href="#settings/username" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">Settings → Username</a>
+            <a href="#settings/username" className="text-azure-800 hover:text-azure-900 dark:hover:text-azure-100 dark:text-azure-200">Settings → Username</a>
             {'. To change only how your name appears, set a display name above.'}
           </p>
         </section>
 
         <p
           id="profile-edit-error"
-          className={formError ? 'text-sm text-red-700 mb-2 dark:text-red-400' : 'text-sm text-red-700 mb-2 hidden dark:text-red-400'}
+          className={formError ? 'text-sm text-red-700 mb-2 dark:text-red-200' : 'text-sm text-red-700 mb-2 hidden dark:text-red-200'}
         >
           {formError || ''}
         </p>
@@ -455,7 +460,7 @@ export function ProfileEditSheet({
           Save
         </Button>
         <button
-          className="w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400"
+          className="w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-300"
           onClick={() => Profile._dismissSheet()}
         >
           Cancel

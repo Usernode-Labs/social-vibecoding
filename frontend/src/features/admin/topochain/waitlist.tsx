@@ -132,7 +132,7 @@ function SurveyAnswers({ answers }: { answers: Answers }) {
               between two children: a whitespace-only JSX expression cannot
               survive hydration (React #418), and the span carries only a
               colour, so the space renders identically either side of it. */}
-          <span className="text-zinc-500 dark:text-zinc-400">{`${label}: `}</span>
+          <span className="text-zinc-500 dark:text-zinc-300">{`${label}: `}</span>
           {value}
         </div>,
       );
@@ -167,7 +167,7 @@ function SurveyAnswers({ answers }: { answers: Answers }) {
   }
   if (a.verified && Object.keys(a.verified).length) {
     line('Verified', Object.entries(a.verified).map(([pf, h]) => (
-      <span key={pf} className="text-emerald-700 dark:text-emerald-400">{`✓ ${pf} · ${h}  `}</span>
+      <span key={pf} className="text-meadow-700 dark:text-meadow-200">{`✓ ${pf} · ${h}  `}</span>
     )));
   }
   if (a.handles && Object.keys(a.handles).length) {
@@ -179,13 +179,13 @@ function SurveyAnswers({ answers }: { answers: Answers }) {
     line('Invites (typed)', (
       <>
         {a.invites.join(', ')}
-        {a.admit_together ? <span className="text-zinc-500 dark:text-zinc-400">{' (only together)'}</span> : null}
+        {a.admit_together ? <span className="text-zinc-500 dark:text-zinc-300">{' (only together)'}</span> : null}
       </>
     ));
   } else if (a.admit_together) {
-    line('Invites', <span className="text-zinc-500 dark:text-zinc-400">only together</span>);
+    line('Invites', <span className="text-zinc-500 dark:text-zinc-300">only together</span>);
   }
-  if (!lines.length) return <div className="text-zinc-500 dark:text-zinc-400">No survey answers.</div>;
+  if (!lines.length) return <div className="text-zinc-500 dark:text-zinc-300">No survey answers.</div>;
   return <>{lines}</>;
 }
 
@@ -308,14 +308,14 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
         {w.email}
         {w.confirmed_at ? (
           <span
-            className="text-emerald-700 dark:text-emerald-400 text-xs"
+            className="text-meadow-700 dark:text-meadow-200 text-xs"
             title="Followed the confirm link in the join email"
           >
             {' ✓ confirmed'}
           </span>
         ) : (
           <span
-            className="text-zinc-500 dark:text-zinc-400 text-xs"
+            className="text-zinc-500 dark:text-zinc-300 text-xs"
             title="Never followed the confirm link in the join email, so this address is unproven"
           >
             {' unconfirmed'}
@@ -324,7 +324,7 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
       </>
     ),
   },
-  { label: 'Joined', cell: (w) => fmt(w.submitted_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+  { label: 'Joined', cell: (w) => fmt(w.submitted_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
   {
     // What this signup DID, from services/waitlist-signals.js. Facts, not a
     // score: nothing here reorders the queue, and how much each of these is
@@ -332,14 +332,14 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
     label: 'Signals',
     cell: (w) => {
       const s = w.signals;
-      if (!s) return <span className="text-xs text-zinc-500 dark:text-zinc-400">&mdash;</span>;
+      if (!s) return <span className="text-xs text-zinc-500 dark:text-zinc-300">&mdash;</span>;
       const bits: string[] = [];
       if (s.sections.length) bits.push(`${s.sections.length}/6 answered`);
       if (s.verified.length) bits.push(s.verified.join(', '));
       if (s.invited) bits.push(`invited ${s.invited}`);
       return bits.length
         ? <span className="text-xs text-zinc-600 dark:text-zinc-300">{bits.join(' · ')}</span>
-        : <span className="text-xs text-zinc-500 dark:text-zinc-400">nothing yet</span>;
+        : <span className="text-xs text-zinc-500 dark:text-zinc-300">nothing yet</span>;
     },
   },
   {
@@ -348,20 +348,20 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
       <>
         {w.linked_username}
         {w.has_platform_access ? (
-          <span className="text-emerald-700 dark:text-emerald-400 text-xs">{' (has access)'}</span>
+          <span className="text-meadow-700 dark:text-meadow-200 text-xs">{' (has access)'}</span>
         ) : null}
       </>
-    ) : <span className="text-zinc-500 dark:text-zinc-400">no account yet</span>),
+    ) : <span className="text-zinc-500 dark:text-zinc-300">no account yet</span>),
   },
   {
     label: 'Status',
     cell: (w) => (w.released_at
       ? (
-        <span className="text-emerald-700 dark:text-emerald-400 text-xs">
+        <span className="text-meadow-700 dark:text-meadow-200 text-xs">
           {`Released ${fmt(w.released_at)}`}
         </span>
       )
-      : <span className="text-amber-800 dark:text-amber-400 text-xs">pending</span>),
+      : <span className="text-amber-800 dark:text-amber-200 text-xs">pending</span>),
   },
 ];
 
@@ -369,17 +369,17 @@ const bpIdent = (u: BpRow) => u.display_name || u.username || u.email || `user #
 
 const BP_COLUMNS: Column<BpRow>[] = [
   { label: 'User', primary: true, cell: (u) => u.display_name || u.username || `user #${u.id}` },
-  { label: 'Email', cell: (u) => u.email || '—', tdClass: 'text-xs text-zinc-500 font-mono dark:text-zinc-400' },
-  { label: 'Requested', cell: (u) => fmt(u.bp_requested_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+  { label: 'Email', cell: (u) => u.email || '—', tdClass: 'text-xs text-zinc-500 font-mono dark:text-zinc-300' },
+  { label: 'Requested', cell: (u) => fmt(u.bp_requested_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
   {
     label: 'Status',
     cell: (u) => (u.bp_released_at
       ? (
-        <span className="text-emerald-700 dark:text-emerald-400 text-xs">
+        <span className="text-meadow-700 dark:text-meadow-200 text-xs">
           {`Released ${fmt(u.bp_released_at)}`}
         </span>
       )
-      : <span className="text-amber-800 dark:text-amber-400 text-xs">pending</span>),
+      : <span className="text-amber-800 dark:text-amber-200 text-xs">pending</span>),
   },
 ];
 
@@ -440,7 +440,7 @@ function WaitlistScreen() {
         ) : null) : undefined}
         extra={(w) => (w.answers ? (
           <details className="text-xs">
-            <summary className="cursor-pointer select-none text-zinc-500 dark:text-zinc-400 min-h-[36px] flex items-center">
+            <summary className="cursor-pointer select-none text-zinc-500 dark:text-zinc-300 min-h-[36px] flex items-center">
               Survey answers
             </summary>
             <div className="mt-1 space-y-0.5 text-zinc-600 dark:text-zinc-300">
@@ -449,7 +449,7 @@ function WaitlistScreen() {
           </details>
         ) : null)}
       />
-      <div className="mt-10">
+      <div className="mt-8">
         <Queue<BpRow>
           hostId="admin-topo-bpq-table"
           title="Block-producer queue"

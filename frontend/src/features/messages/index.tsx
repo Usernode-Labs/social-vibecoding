@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { ChevronLeftInsetIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { MessageComposer } from './composer';
@@ -51,8 +51,8 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
     >
       <UserAvatar user={conversation.kind === 'direct' ? peer : null} title={conversation.title} size="lg" />
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2"><span className="font-semibold text-sm truncate text-zinc-800 dark:text-zinc-100">{conversation.kind === 'direct' && peer ? `@${peer.username}` : conversation.title}</span>{conversation.kind === 'group' ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}<time className="ml-auto text-[11px] text-zinc-500 shrink-0 dark:text-zinc-400">{relativeTime(conversation.lastActivityAt)}</time></div>
-        <div className="mt-0.5 flex items-center gap-2"><span className={`text-xs truncate ${invited ? 'text-violet-700 dark:text-violet-400 font-medium' : 'text-zinc-500 dark:text-zinc-400'}`}>{invited ? `${conversation.kind === 'direct' ? 'Message request' : 'Group invitation'} · Tap to review` : conversation.latestSummary || 'No messages yet'}</span>{conversation.unreadCount > 0 ? <span className="messages-unread" aria-label={`${conversation.unreadCount} unread`}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}</div>
+        <div className="flex items-center gap-2"><span className="font-semibold text-sm truncate text-zinc-800 dark:text-zinc-100">{conversation.kind === 'direct' && peer ? `@${peer.username}` : conversation.title}</span>{conversation.kind === 'group' ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}<time className="ml-auto text-[11px] text-zinc-500 shrink-0 dark:text-zinc-300">{relativeTime(conversation.lastActivityAt)}</time></div>
+        <div className="mt-0.5 flex items-center gap-2"><span className={`text-xs truncate ${invited ? 'text-azure-800 dark:text-azure-200 font-medium' : 'text-zinc-500 dark:text-zinc-300'}`}>{invited ? `${conversation.kind === 'direct' ? 'Message request' : 'Group invitation'} · Tap to review` : conversation.latestSummary || 'No messages yet'}</span>{conversation.unreadCount > 0 ? <span className="messages-unread" aria-label={`${conversation.unreadCount} unread`}>{conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}</span> : null}</div>
       </div>
     </a>
   );
@@ -63,7 +63,7 @@ function ConversationList() {
   return (
     <section className={`messages-list-pane ${snap.route.conversationId ? 'hidden md:flex' : 'flex'}`} aria-label="Conversations">
       <div className="messages-list-toolbar">
-        <div className="messages-list-title"><h2 className="font-bold text-zinc-900 dark:text-zinc-100">Messages</h2><p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">Direct and group conversations</p></div>
+        <div className="messages-list-title"><h2 className="font-bold text-zinc-900 dark:text-zinc-100">Messages</h2><p className="text-xs text-zinc-500 dark:text-zinc-300 truncate">Direct and group conversations</p></div>
         <button type="button" onClick={() => openDialog('messagesCreate')} className="messages-new-button" aria-label="New conversation" title="New conversation"><PlusIcon aria-hidden="true" /></button>
       </div>
       {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
@@ -136,14 +136,14 @@ function ThreadHeader() {
   }
   return (
     <header className="messages-thread-header">
-      <a href="#messages" className="md:hidden messages-thread-back" aria-label="Back to conversations"><ChevronLeftInsetIcon aria-hidden="true" /></a>
+      <a href="#messages" className="md:hidden messages-thread-back" aria-label="Back to conversations"><ChevronLeftIcon aria-hidden="true" /></a>
       <UserAvatar user={active.kind === 'direct' ? peer : null} title={active.title} />
       <button type="button" className="min-w-0 text-left flex-1" onClick={() => active.kind === 'group' && openDialog('messagesMembers')}>
         <div className="font-semibold text-sm truncate">{active.kind === 'direct' && peer ? `@${peer.username}` : active.title}</div>
-        <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate">{active.kind === 'group' ? `${active.memberCount} members` : active.membershipStatus === 'invited' ? 'Invitation pending' : 'Direct message'}</div>
+        <div className="text-[11px] text-zinc-500 dark:text-zinc-300 truncate">{active.kind === 'group' ? `${active.memberCount} members` : active.membershipStatus === 'invited' ? 'Invitation pending' : 'Direct message'}</div>
       </button>
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
-      <div className="relative"><button type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-expanded={menu}>•••</button>{menu ? <div className="messages-thread-menu">{active.kind === 'group' ? <button type="button" onClick={() => { setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button> : <button type="button" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-400">Block @{peer?.username}</button>}<button type="button" onClick={() => { setMenu(false); void loadConversations(true); }}>Refresh conversation</button></div> : null}</div>
+      <div className="relative"><button type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label="Conversation actions" aria-expanded={menu}>•••</button>{menu ? <div className="messages-thread-menu">{active.kind === 'group' ? <button type="button" onClick={() => { setMenu(false); openDialog('messagesMembers'); }}>Members &amp; invitations</button> : <button type="button" disabled={busy || !peer} onClick={() => void blockPeer()} className="text-red-700 dark:text-red-200">Block @{peer?.username}</button>}<button type="button" onClick={() => { setMenu(false); void loadConversations(true); }}>Refresh conversation</button></div> : null}</div>
     </header>
   );
 }

@@ -421,7 +421,7 @@ export function CreateAppDialog() {
           <div id="create-import-block" className="create-import-block">
             <label
               htmlFor="import-url"
-              className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+              className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1"
             >
               GitHub repo URL
             </label>
@@ -460,7 +460,7 @@ export function CreateAppDialog() {
                 {importState === 'ok' ? 'Re-check' : 'Check'}
               </Button>
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">
               Invite
               <code className="font-mono text-xs">
                 usernode-bot
@@ -482,7 +482,7 @@ export function CreateAppDialog() {
               until #create-card[data-import-state="ok"]).
           */}
           <div id="create-name-block">
-            <label htmlFor="app-name" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+            <label htmlFor="app-name" className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
               App name
             </label>
             <Input
@@ -504,7 +504,7 @@ export function CreateAppDialog() {
           */}
           <div id="create-visibility-block" className="space-y-3">
             <div>
-              <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+              <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
                 Who can build it
               </label>
               <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
@@ -529,7 +529,7 @@ export function CreateAppDialog() {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+              <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
                 Who can see &amp; use it
               </label>
               <div className="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
@@ -555,13 +555,13 @@ export function CreateAppDialog() {
               <p
                 id="create-vis-hint"
                 ref={hintRef}
-                className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 hidden"
+                className="text-xs text-zinc-500 dark:text-zinc-300 mt-1 hidden"
               >
                 Apps everyone can build are always public to view.
               </p>
             </div>
           </div>
-          <div id="create-error" ref={errorRef} className="text-red-400 text-sm hidden">
+          <div id="create-error" ref={errorRef} className="text-red-700 dark:text-red-300 text-sm hidden">
             {error}
           </div>
           <div className="flex gap-3">

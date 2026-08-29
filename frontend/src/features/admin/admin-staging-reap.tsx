@@ -79,11 +79,11 @@ const NEUTRAL_CHIP = 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-
 // string so a new outcome shows up rather than disappearing.
 const REAP_STATES: Record<string, { label: string; cls: string }> = {
   pending: { label: 'Queued', cls: NEUTRAL_CHIP },
-  running: { label: 'Shutting down…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300' },
-  torn_down: { label: 'Shut down', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-  torn_down_no_db: { label: 'Shut down: database kept', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
+  running: { label: 'Shutting down…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200' },
+  torn_down: { label: 'Shut down', cls: 'bg-meadow-100 dark:bg-meadow-950/60 text-meadow-700 dark:text-meadow-200' },
+  torn_down_no_db: { label: 'Shut down: database kept', cls: 'bg-meadow-100 dark:bg-meadow-950/60 text-meadow-700 dark:text-meadow-200' },
   skipped_gone: { label: 'Skipped: already gone', cls: NEUTRAL_CHIP },
-  failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
+  failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-200' },
 };
 
 // Why each preview was picked up. Presentational only — the sweep tears
@@ -106,22 +106,25 @@ const REAP_CLASSIFICATIONS: Record<string, string> = {
 // Local class recipes — complete literals, because Tailwind's extractor is a
 // regex over this file's source (see the AdminUI note in admin-console.js).
 const ReapUI = Object.freeze({
-  tile: 'rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3',
-  tileLabel: 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400',
+  // 4px on `tile` and `row` below, not the 12px control step: both fill a
+  // `${AdminUI.card} p-4`, so the concentric inner is 20 − 16. Same two
+  // recipes as admin-rollover.tsx's RolloverUI and admin-overview.tsx.
+  tile: 'rounded bg-zinc-100 dark:bg-zinc-800 p-3',
+  tileLabel: 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-300',
   tileValue: 'text-2xl font-bold mt-1',
-  lede: 'text-sm text-zinc-600 dark:text-zinc-400 mb-2',
-  fine: 'text-xs text-zinc-500 dark:text-zinc-400 mb-4',
-  viewOnly: 'text-xs text-zinc-500 dark:text-zinc-400',
+  lede: 'text-sm text-zinc-600 dark:text-zinc-300 mb-2',
+  fine: 'text-xs text-zinc-500 dark:text-zinc-300 mb-4',
+  viewOnly: 'text-xs text-zinc-500 dark:text-zinc-300',
   startBtn: `${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-violet-600`,
-  summary: 'text-sm text-zinc-500 dark:text-zinc-400 mt-3',
-  row: 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800',
+  summary: 'text-sm text-zinc-500 dark:text-zinc-300 mt-3',
+  row: 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded bg-zinc-100 dark:bg-zinc-800',
   rowMain: 'flex-1 min-w-0',
   rowSlug: 'font-mono text-sm',
-  rowSession: 'text-xs text-zinc-500 dark:text-zinc-400 ml-1',
-  rowWhy: 'block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5',
-  rowError: 'block text-xs text-red-700 mt-0.5 dark:text-red-400',
+  rowSession: 'text-xs text-zinc-500 dark:text-zinc-300 ml-1',
+  rowWhy: 'block text-xs text-zinc-500 dark:text-zinc-300 mt-0.5',
+  rowError: 'block text-xs text-red-700 mt-0.5 dark:text-red-200',
   rowRight: 'flex items-center gap-2 shrink-0',
-  rowSecs: 'text-xs text-zinc-500 dark:text-zinc-400',
+  rowSecs: 'text-xs text-zinc-500 dark:text-zinc-300',
 });
 
 // "3 minutes ago" for the automatic pass's last run. Kept local and tiny:
@@ -183,7 +186,7 @@ function Summary({ loaded, job, demo }: { loaded: boolean; job: ReapJob | null; 
   const when = job.finishedAt ? 'Finished' : (job.stale ? 'Stalled' : 'Running');
   return (
     <>
-      {demo ? <><span className="text-violet-700 dark:text-violet-400">Staging demo data</span>{' · '}</> : null}
+      {demo ? <><span className="text-azure-800 dark:text-azure-200">Staging demo data</span>{' · '}</> : null}
       <span className="font-medium">{when}</span>
       {` · ${parts.join(', ')}`}
       {job.startedBy ? ` · started by ${job.startedBy}` : ''}
@@ -368,7 +371,7 @@ function StalePreviewsSection() {
           value={job ? String(job.failed) : '—'}
         />
       </div>
-      <p id="admin-reap-automatic" className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+      <p id="admin-reap-automatic" className="text-xs text-zinc-500 dark:text-zinc-300 mb-4">
         {automaticLine(automatic, unavailableReason, loaded)}
       </p>
       {canWrite ? (

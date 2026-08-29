@@ -98,31 +98,45 @@ interface Filters {
 const EMPTY_FILTERS: Filters = { app: '', pr_number: '', session_id: '', outcome: '', kind: '' };
 
 // ── Outcome badge ───────────────────────────────────────────────────────
+// The two azure badges spell text-azure-800, not -700: on the table's own
+// bg-azure-500/20 wash over the white card, azure-700 composites to Lc 53.4
+// (APCA-W3 0.1.9) — the weakest ink in this table, on the states an operator
+// watches longest, and 12 below the sky-700 the fold replaced — where -800
+// reads 63.3, level with its red-700 sibling (62.2 on its own wash). That is
+// "azure-800 ... when a surface needs to clear it" (tailwind.config.js), the
+// same call admin-mail's statusClass documents for the same fold.
+//
+// The DARK half followed it to -200 with the ratified 800/200 blue ink. It was
+// left at -300 when the light half moved, which made these two the only badges
+// in the table whose dark ink sat a step off their siblings' — every other row
+// below pairs its light 700/800 with a dark 200 (zinc's 300 is the neutral, a
+// different ramp). Same sibling-parity argument as the paragraph above, applied
+// to the other ground.
 const BADGES: Record<string, { label: string; cls: string; spin?: boolean }> = {
-  running:            { label: 'Running',              cls: 'bg-sky-500/20 text-sky-700 dark:text-sky-300', spin: true },
-  merged:             { label: 'Merged',               cls: 'bg-green-500/20 text-green-800 dark:text-green-300' },
-  blocked:            { label: 'Blocked',              cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-300' },
-  conflict_resolving: { label: 'Conflict: resolving', cls: 'bg-sky-500/20 text-sky-700 dark:text-sky-300', spin: true },
-  conflict_failed:    { label: 'Conflict: failed',    cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
+  running:            { label: 'Running',              cls: 'bg-azure-500/20 text-azure-800 dark:text-azure-200', spin: true },
+  merged:             { label: 'Merged',               cls: 'bg-meadow-500/20 text-meadow-700 dark:text-meadow-200' },
+  blocked:            { label: 'Blocked',              cls: 'bg-amber-500/20 text-amber-800 dark:text-amber-200' },
+  conflict_resolving: { label: 'Conflict: resolving', cls: 'bg-azure-500/20 text-azure-800 dark:text-azure-200', spin: true },
+  conflict_failed:    { label: 'Conflict: failed',    cls: 'bg-red-500/20 text-red-700 dark:text-red-200' },
   awaiting_github:    { label: 'Awaiting GitHub',      cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' },
-  noop:               { label: 'No-op',                cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400' },
-  error:              { label: 'Error',                cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
+  noop:               { label: 'No-op',                cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-300' },
+  error:              { label: 'Error',                cls: 'bg-red-500/20 text-red-700 dark:text-red-200' },
   // The proposal's PR is closed on GitHub and couldn't be reopened —
   // terminal, distinct from a conflict.
-  pr_closed:          { label: 'PR closed',            cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
+  pr_closed:          { label: 'PR closed',            cls: 'bg-red-500/20 text-red-700 dark:text-red-200' },
   // A kind='checks' run ends on the verdict its suite produced rather than
   // on a merge outcome. ('error' above is shared — a checks run whose
   // container broke reports the same thing a failed merge does.)
-  passing:            { label: 'Checks passing',       cls: 'bg-green-500/20 text-green-800 dark:text-green-300' },
-  failing:            { label: 'Checks failing',       cls: 'bg-red-500/20 text-red-700 dark:text-red-300' },
-  skipped:            { label: 'Checks skipped',       cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400' },
+  passing:            { label: 'Checks passing',       cls: 'bg-meadow-500/20 text-meadow-700 dark:text-meadow-200' },
+  failing:            { label: 'Checks failing',       cls: 'bg-red-500/20 text-red-700 dark:text-red-200' },
+  skipped:            { label: 'Checks skipped',       cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-300' },
 };
 
 function Badge({ status }: { status?: string }) {
   const b = (status && BADGES[status])
     || { label: status || '—', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300', spin: false };
   return (
-    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}`}>
+    <span className={`text-xs font-semibold px-2 py-0.5 rounded ${b.cls}`}>
       {b.spin ? <span className="inline-block w-2 h-2 mr-1 rounded-full bg-current spin align-middle" /> : null}
       {b.label}
     </span>
@@ -135,8 +149,8 @@ const LEVEL_DOT: Record<string, string> = {
   error: 'bg-red-400',
 };
 const LEVEL_TEXT: Record<string, string> = {
-  error: 'text-red-700 dark:text-red-300',
-  warn: 'text-amber-800 dark:text-amber-300',
+  error: 'text-red-700 dark:text-red-200',
+  warn: 'text-amber-800 dark:text-amber-200',
 };
 const LEVEL_TEXT_DEFAULT = 'text-zinc-700 dark:text-zinc-200';
 
@@ -169,10 +183,10 @@ function StepRow({ s }: { s: Step }) {
         <span className={`mt-1.5 w-2 h-2 rounded-full ${dot} flex-shrink-0`} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2">
-            <span className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-mono">{s.phase || ''}</span>
-            <span className="text-[10px] text-zinc-500 dark:text-zinc-400">{fmtTime(s.created_at)}</span>
+            <span className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-300 font-mono">{s.phase || ''}</span>
+            <span className="text-[10px] text-zinc-500 dark:text-zinc-300">{fmtTime(s.created_at)}</span>
             {ms == null ? null : (
-              <span className="text-[10px] font-mono px-1 rounded bg-zinc-200/70 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">
+              <span className="text-xs font-mono px-1 rounded bg-zinc-200/70 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">
                 {ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`}
               </span>
             )}
@@ -182,12 +196,12 @@ function StepRow({ s }: { s: Step }) {
             <>
               <button
                 type="button"
-                className="detail-toggle text-[11px] text-violet-700 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300 mt-0.5"
+                className="detail-toggle text-[11px] text-azure-800 dark:text-azure-200 hover:text-azure-900 dark:hover:text-azure-100 mt-0.5"
                 onClick={() => setDetailOpen((v) => !v)}
               >
                 detail
               </button>
-              <pre className={`detail-body${detailOpen ? '' : ' hidden'} step-detail mt-1 text-[11px] text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-950 rounded p-2 border border-zinc-200 dark:border-zinc-800`}>
+              <pre className={`detail-body${detailOpen ? '' : ' hidden'} step-detail mt-1 text-[11px] text-zinc-500 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-950 rounded p-2 border border-zinc-200 dark:border-zinc-800`}>
                 {JSON.stringify(s.detail, null, 2)}
               </pre>
             </>
@@ -233,13 +247,13 @@ function RunCard({ run }: { run: Run }) {
         aria-expanded={open}
         onClick={toggle}
       >
-        <span className="chev text-zinc-500 dark:text-zinc-400 transition-transform"
+        <span className="chev text-zinc-500 dark:text-zinc-300 transition-transform"
           style={open ? { transform: 'rotate(90deg)' } : undefined}>▶</span>
         <span className="flex-1 min-w-0">
           <span className="block text-sm font-medium truncate">
             {`${run.app_name || run.app_slug || 'unknown app'} · ${pr}${title}`}
           </span>
-          <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+          <span className="block text-xs text-zinc-500 dark:text-zinc-300">
             {`${kindLabel} · trigger: ${run.trigger || '—'} · `}
             {run.step_count != null ? `${run.step_count} steps · ` : ''}
             {`${fmtTime(run.started_at)} · ${fmtDuration(run.started_at, run.ended_at)}`}
@@ -249,12 +263,12 @@ function RunCard({ run }: { run: Run }) {
       </button>
       <div className={`run-body${open ? '' : ' hidden'} border-t border-zinc-200 dark:border-zinc-800 px-4 py-3`}>
         {stepsError
-          ? <div className="text-xs text-red-700 dark:text-red-400">Failed to load steps: {stepsError}</div>
+          ? <div className="text-xs text-red-700 dark:text-red-200">Failed to load steps: {stepsError}</div>
           : steps == null
-            ? <div className="text-xs text-zinc-500 dark:text-zinc-400">Loading steps…</div>
+            ? <div className="text-xs text-zinc-500 dark:text-zinc-300">Loading steps…</div>
             : steps.length
               ? <ol className="space-y-1.5">{steps.map((s, i) => <StepRow key={i} s={s} />)}</ol>
-              : <div className="text-xs text-zinc-500 dark:text-zinc-400">No steps recorded.</div>}
+              : <div className="text-xs text-zinc-500 dark:text-zinc-300">No steps recorded.</div>}
       </div>
     </div>
   );
@@ -374,49 +388,49 @@ function MergesSection() {
   return (
     <div id="admin-merges-root">
       <h2 className="text-lg font-semibold mb-4">Merge debug</h2>
-      {gate ? <div id="admin-merges-gate" className="text-zinc-500 dark:text-zinc-400 text-center py-20">{gate}</div> : null}
+      {gate ? <div id="admin-merges-gate" className="text-zinc-500 dark:text-zinc-300 text-center py-20">{gate}</div> : null}
 
       {ready ? (
         <main id="admin-merges-content" className="space-y-4">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="text-sm text-zinc-500 dark:text-zinc-300">
             Step-by-step trace of every PR merge and automatic conflict resolution.
             Each row is one merge attempt; expand it for the chronological steps.
           </p>
 
           {/* Filter bar */}
           <section className={`${AdminUI.card} p-3 flex flex-wrap items-end gap-3`}>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">App
+            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-300">App
               <select id="admin-merges-f-app" className={SELECT_CLASS} value={filters.app} onChange={set('app')}>
                 <option value="">All apps</option>
                 {apps.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
               </select>
             </label>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">PR #
+            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-300">PR #
               <input id="admin-merges-f-pr" type="text" inputMode="numeric" placeholder="any"
                 className={TEXT_CLASS} value={filters.pr_number} onChange={set('pr_number')} />
             </label>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Session id
+            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-300">Session id
               <input id="admin-merges-f-session" type="text" inputMode="numeric" placeholder="any"
                 className={TEXT_CLASS} value={filters.session_id} onChange={set('session_id')} />
             </label>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Outcome
+            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-300">Outcome
               <select id="admin-merges-f-outcome" className={SELECT_PLAIN} value={filters.outcome} onChange={set('outcome')}>
                 {OUTCOMES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </label>
-            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Kind
+            <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-300">Kind
               <select id="admin-merges-f-kind" className={SELECT_PLAIN} value={filters.kind} onChange={set('kind')}>
                 {KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </label>
             <button id="admin-merges-apply" type="button"
               onClick={() => { setLive(false); loadFirstPage(); }}
-              className="ml-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-700 text-white text-sm">Apply</button>
+              className="ml-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 text-black text-sm">Apply</button>
             <button id="admin-merges-refresh" type="button" onClick={loadFirstPage}
               className="px-3 py-1.5 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Refresh</button>
-            <label className="inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 cursor-pointer select-none">
+            <label className="inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-300 cursor-pointer select-none">
               <input id="admin-merges-live" type="checkbox"
-                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                className="h-4 w-4 rounded border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-800 text-azure-700 focus:ring-zinc-900 dark:focus:ring-zinc-100 dark:text-azure-300"
                 checked={live} onChange={(e) => setLive(e.target.checked)} />
               <span>Live</span>
             </label>
@@ -424,7 +438,7 @@ function MergesSection() {
 
           <div id="admin-merges-runs" className="space-y-2">
             {error
-              ? <div className="text-sm text-red-700 dark:text-red-400">Failed to load: {error}</div>
+              ? <div className="text-sm text-red-700 dark:text-red-200">Failed to load: {error}</div>
               : runs.map((r) => <RunCard key={r.id} run={r} />)}
           </div>
 
@@ -434,7 +448,7 @@ function MergesSection() {
                 className="px-4 py-2 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Load older</button>
             ) : null}
             {!error && !runs.length ? (
-              <span id="admin-merges-empty" className="text-zinc-500 dark:text-zinc-400 text-sm">
+              <span id="admin-merges-empty" className="text-zinc-500 dark:text-zinc-300 text-sm">
                 No merge runs match these filters yet.
               </span>
             ) : null}

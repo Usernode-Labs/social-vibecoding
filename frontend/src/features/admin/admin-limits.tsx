@@ -32,13 +32,17 @@ type Tone = 'ok' | 'err';
 interface Status { text: string; tone: Tone }
 
 const TONE_CLASS: Record<Tone, string> = {
-  // Two different greens, preserved: the credits line has always been
-  // emerald and the limits line green-500.
+  // The two status lines used to carry two DIFFERENT greens — the credits one
+  // emerald, the limits one green — twelve lines apart on adjacent cards, both
+  // meaning "your save succeeded". That was an accident of authorship, not a
+  // distinction, and both lines are the one product green (meadow) now. `ok`
+  // stays empty because each call site passes its own okClass; they pass the
+  // same string, and a future third line should pass it too.
   ok: '',
-  err: 'text-red-400',
+  err: 'text-red-700 dark:text-red-200',
 };
 
-const LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
+const LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-300';
 const MONEY_INPUT = `${AdminUI.input} pl-6 font-mono disabled:opacity-60`;
 
 /** A `$`-prefixed money field. */
@@ -50,7 +54,7 @@ function MoneyField({ id, label, title, placeholder, value, onChange, disabled }
     <label className="block">
       <span className={LABEL} title={title}>{label}</span>
       <div className="relative mt-1">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 dark:text-zinc-400 pointer-events-none">$</span>
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 dark:text-zinc-300 pointer-events-none">$</span>
         <input id={id} type="number" min="0" step="0.01" inputMode="decimal" disabled={disabled}
           className={MONEY_INPUT} placeholder={placeholder}
           value={value} onChange={(e) => onChange(e.target.value)} />
@@ -200,7 +204,7 @@ function LimitsSection() {
       <div className={`${AdminUI.card} p-4`}>
         <div className="flex items-center justify-between mb-3">
           <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">USD · resets midnight UTC</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-300">USD · resets midnight UTC</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
           <MoneyField id="admin-limit-user" label="Default per-user daily cap" placeholder="25.00"
@@ -212,7 +216,7 @@ function LimitsSection() {
             value={system} onChange={setSystem} disabled={dis} />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="text-xs text-zinc-500 dark:text-zinc-300">
             Per-user overrides live in the Users section; these are the platform defaults.
           </p>
           {canWrite ? (
@@ -220,7 +224,7 @@ function LimitsSection() {
               onClick={saveLimits}>Save</button>
           ) : null}
         </div>
-        <StatusLine id="admin-limits-status" status={limitsStatus} okClass="text-green-800 dark:text-green-400" />
+        <StatusLine id="admin-limits-status" status={limitsStatus} okClass="text-meadow-700 dark:text-meadow-200" />
       </div>
 
       {/* Anthropic credits (#555). Anthropic's API publishes billed spend,
@@ -252,13 +256,13 @@ function LimitsSection() {
           </label>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p id="admin-credit-derived" className="text-xs text-zinc-500 dark:text-zinc-400">{derived}</p>
+          <p id="admin-credit-derived" className="text-xs text-zinc-500 dark:text-zinc-300">{derived}</p>
           {canWrite ? (
             <button id="admin-save-credits-btn" type="button" className={AdminUI.btn.primary}
               onClick={saveCredits}>Save</button>
           ) : null}
         </div>
-        <StatusLine id="admin-credits-status" status={creditsStatus} okClass="text-emerald-700 dark:text-emerald-400" />
+        <StatusLine id="admin-credits-status" status={creditsStatus} okClass="text-meadow-700 dark:text-meadow-200" />
       </div>
     </>
   );

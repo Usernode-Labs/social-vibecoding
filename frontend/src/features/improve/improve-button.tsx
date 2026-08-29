@@ -38,7 +38,7 @@
  * #1412 parked the green session count, the version dot and a
  * spinner-while-working glyph here; the Streamlined Concept re-homed all of
  * that onto the hamburger's badge cluster — see <MenuIndicators/> in
- * ../header/platform-header.tsx (the working cue is the emerald badge's
+ * ../header/platform-header.tsx (the working cue is the green badge's
  * pulse there) — because this slot slims to a plain word and the board keeps
  * the hamburger as THE indicator cluster.
  *
@@ -100,9 +100,11 @@ import { Improve } from './improve-controller.js';
 // glyphs reads as their caption; the board's answer is the one filled control
 // in the bar.
 //
-// `violet-600` is #0a6ee0 — the shell's accent is a BLUE, not a violet (see
+// `violet-600` is #ffc93a — the shell's accent is a YELLOW, not a violet (see
 // tailwind.config.js: the scale name is an identity, not a hue), which is
-// exactly the blue the board draws.
+// exactly the fill the board draws. (That line said "the blue the board
+// draws", which contradicted its own first clause: blue is what `azure`
+// carries, and it is the one colour this pill is not.)
 //
 // h-7 and no vertical padding are the header's 28px content-row ceiling,
 // pinned by tests/header-height-parity.test.js — a filled pill keeps it by
@@ -113,17 +115,43 @@ import { Improve } from './improve-controller.js';
 // reached the right margin the rest of the shell aligns to. The bell↔Improve
 // gap is the right group's `gap-1` now — spacing belongs to the layout, not to
 // the last child's margin (#1443).
+//
+// `gap-1.5` arrived with the leading glyph below and is the one thing that
+// change did not bring with it: <ImproveGlyph/> renders an `w-4` SVG as a flex
+// item immediately before the word, and with no gap the two touch. 6px is the
+// same figure the header's own right group uses between its glyphs (`gap-1`
+// there is between whole controls; inside one control the label wants a little
+// more). It is spacing, so it does not disturb h-7, which still owns the
+// height.
 const IMPROVE_BTN_CLASS =
-  'relative inline-flex items-center h-7 px-3 rounded-full '
-  + 'bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold '
+  'relative inline-flex items-center gap-1.5 h-7 px-3 rounded-full '
+  + 'bg-violet-600 hover:bg-violet-500 text-black text-sm font-semibold '
   + 'un-touch-target';
 
-/** Amber while a build is on its way, violet once it is here to switch to. */
+/**
+ * Amber while a build is on its way, blue once it is here to switch to.
+ *
+ * FOUR states, not two. `stale` was one bit — "the platform rolled past this
+ * tab" — and it split into the build's actual lifecycle: `deploying` and
+ * `downloading` are both in-flight, `ready` and `failed` are both "there is
+ * something to reload onto". The panel's own <UpdateStatus/> reads the same
+ * four (../improve/improve-panel.tsx) and this dot is its cue in the header,
+ * so the two must agree on the state names.
+ *
+ * The COLOURS are the ones a yellow accent leaves available. The arrived-at
+ * state was spelled `bg-violet-400`, which was the accent on a violet palette
+ * and is a pale yellow here — the one hue this shell reserves for the filled
+ * action, and this pill IS that action, so a yellow dot on it says nothing.
+ * `azure-400` is the blue that carried the same meaning before the split.
+ * Both are 8px discs carrying no ink, so they are SURFACES — APCA is a text
+ * metric and says nothing useful about them; they sit at the step that reads
+ * as a dot.
+ */
 const VERSION_DOT: Record<string, string> = {
   deploying: 'bg-amber-500',
   downloading: 'bg-amber-500',
-  ready: 'bg-violet-400',
-  failed: 'bg-violet-400',
+  ready: 'bg-azure-400',
+  failed: 'bg-azure-400',
 };
 
 // The glyph on the button's leading edge, and the reason the button has one.
@@ -139,6 +167,26 @@ const VERSION_DOT: Record<string, string> = {
 // `w-4 h-4` inside the 28px content row, so the header height contract
 // (tests/header-height-parity.test.js) is untouched — no taller than the text
 // beside it. `animate-spin` is the caller's, per the note on SpinnerArcIcon.
+//
+// THE GLYPHS NEED THE ICON SET TO CARRY THEM, and the two arrived by different
+// routes — worth separating, because an earlier version of this note said both
+// were un-retired and only half of that is true.
+//
+// `LightBulbIcon` IS an un-retire: it was dropped from @/components/ui/icons.tsx
+// when the set moved to lucide, on the then-true grounds that nothing imported
+// it, and the module header lists it among the eight retired that way with the
+// slug to take it back from (`lightbulb`). This surface wants it back, so the
+// header's retired list shrinks by one and the export returns transcribed.
+//
+// `ArrowPathIcon` is NOT. It never existed on this branch — platform main's
+// #1474 introduced it after our base — so there is no retired entry to find and
+// no `refresh-cw` in any retired-slug list. It is a NEW export whose NAME is
+// inherited from Heroicons while its DRAWING is lucide's `refresh-cw`, which is
+// the one place in this merge where pixels move: four subpaths at stroke 2 in
+// place of one thin arc at 1.5.
+//
+// Either way the rule is the same — transcribed against lucide's file of that
+// name, never redrawn, like every other glyph in that module.
 const BUSY_STATES = ['deploying', 'downloading'];
 const READY_STATES = ['ready', 'failed'];
 
@@ -162,12 +210,41 @@ function ImproveGlyph({ versionState, appDeploying }: {
   </span>;
 }
 
-// Byte-identical to the bell's own badge run, which is the point: the two are
-// twins at different corners of different controls, and a contrast/geometry
-// test diffs them as such.
+// Byte-identical to the bell's own badge run APART FROM THE FILL, which is the
+// point: the two are twins at different corners of different controls, and
+// tests/header-status-pane.test.js diffs their class lists with the colour
+// token dropped and requires equality.
+//
+// TWO THINGS MOVED HERE AND BOTH ARE PAIRED WITH #notifications-badge in
+// ../header/platform-header.tsx — that badge must carry the same geometry or
+// the equality check above fails:
+//
+//   * `1.1rem` -> `1.125rem`. 17.6px was a spelling nobody chose; 18px is what
+//     this same role measures at `.messages-unread` (public/css/app.css) and
+//     in @/components/ui/feed.tsx.
+//   * `emerald-500` -> `meadow-700`. `emerald` is not one of the seven
+//     overridden ramps, so this badge was rendering an untuned STOCK green
+//     beside the kit's own — read the hex, not the key. The STEP moves too,
+//     because no ink rescues a -500 fill: white on stock emerald-500 measured
+//     Lc -54.2 and white on meadow-500 is -60.0, both under the 75 body
+//     minimum. -700 carries white at -87.8, and it is the
+//     `bg-meadow-700 … text-white` recipe the discovery tiles' "added" badge
+//     takes in the SAME change (../home/panels/discover.tsx and
+//     ../home/home.js) — one green fill under white ink, not two. Move all
+//     three together.
+//
+// AND THE THING THAT WAS NOT SETTLED, NOW SETTLED. This comment shipped a
+// draft claiming the bell was `bg-red-600` and left the choice open on that
+// basis; the bell has never been -600. It was `bg-red-500` when this run
+// started and ../header/platform-header.tsx moved it to `bg-red-700` in the
+// SAME run, for the same reason and with the same measurement — so the pair
+// is level (-85.2 bell, -87.8 here) and meadow-700 is right as it stands.
+// The history is left standing rather than deleted because a number read out
+// of a comment instead of out of the tree is what went wrong twice here:
+// MEASURE THE BELL BEFORE MOVING THIS, and move all three twins together.
 const AI_BADGE_CLS =
-  'absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full '
-  + 'bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center';
+  'absolute -top-1 -right-1 min-w-[1.125rem] h-[1.125rem] px-1 rounded-full '
+  + 'bg-meadow-700 text-white text-xs font-bold flex items-center justify-center';
 
 /**
  * What changed while you were not looking — three corners of one control.
@@ -179,8 +256,8 @@ const AI_BADGE_CLS =
  * opens it. Everything #1412 built is kept whole — the writers publish
  * through improveStore (Improve.setSessionBadge / setVersionState, never a
  * classList write by id), the count carries `data-session-done` for the
- * declared checks, the dot knows the violet "platform rolled past this tab"
- * state, and a running turn shows as a pulse on the emerald badge, which also
+ * declared checks, the dot knows the blue "there is a build to switch to"
+ * state, and a running turn shows as a pulse on the green badge, which also
  * appears dot-sized and empty when a turn runs with nothing unread yet.
  *
  * Three corners, one rule: the outbox dot is bottom-left, the session count

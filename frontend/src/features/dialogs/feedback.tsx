@@ -138,7 +138,7 @@ export function FeedbackDialog() {
               type="button"
               className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             >
-              <CameraIcon className="w-3.5 h-3.5" />
+              <CameraIcon className="w-4 h-4" />
               <span data-screenshot-label="">Attach screenshot</span>
             </button>
             <button
@@ -146,7 +146,7 @@ export function FeedbackDialog() {
               type="button"
               className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             >
-              <PhotoIcon className="w-3.5 h-3.5" />
+              <PhotoIcon className="w-4 h-4" />
               Choose from Photos
             </button>
             <input
@@ -164,7 +164,7 @@ export function FeedbackDialog() {
               alt="Screenshot preview"
               className="h-14 max-w-[8rem] rounded-md border border-zinc-300 dark:border-zinc-700 object-cover"
             />
-            <span id="feedback-screenshot-state" className="text-xs text-zinc-500 dark:text-zinc-400">
+            <span id="feedback-screenshot-state" className="text-xs text-zinc-500 dark:text-zinc-300">
             </span>
             <button
               id="feedback-screenshot-remove"
@@ -187,9 +187,9 @@ export function FeedbackDialog() {
               id="feedback-state-checkbox"
               type="checkbox"
               defaultChecked={true}
-              className="accent-violet-500 w-4 h-4 mt-0.5"
+              className="accent-azure-500 w-4 h-4 mt-0.5"
             />
-            <span className="text-xs text-zinc-600 dark:text-zinc-400">
+            <span className="text-xs text-zinc-600 dark:text-zinc-300">
               <span className="font-medium text-zinc-700 dark:text-zinc-300">
                 Include app state:
               </span>
@@ -209,14 +209,14 @@ export function FeedbackDialog() {
         */}
         <div id="feedback-bounty-row" className="hidden mt-2">
           <label className="flex items-start gap-2 cursor-pointer select-none">
-            <input id="feedback-bounty-checkbox" type="checkbox" className="accent-violet-500 w-4 h-4 mt-0.5" />
-            <span className="text-xs text-zinc-600 dark:text-zinc-400">
+            <input id="feedback-bounty-checkbox" type="checkbox" className="accent-azure-500 w-4 h-4 mt-0.5" />
+            <span className="text-xs text-zinc-600 dark:text-zinc-300">
               <span className="font-medium text-zinc-700 dark:text-zinc-300">
                 Put a kudos bounty on this:
               </span>
               pledges 1 of your weekly kudos to whoever's merged proposal closes this issue
               <br />
-              <span id="feedback-bounty-note" className="text-zinc-500 dark:text-zinc-500">
+              <span id="feedback-bounty-note" className="text-zinc-500 dark:text-zinc-300">
               </span>
             </span>
           </label>

@@ -18,7 +18,7 @@ export function DevConsoleSection() {
         <SwitchRow id="dev-console-always-show">
           Always show the icon
         </SwitchRow>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-2 leading-relaxed">
           When unchecked (the default), the icon only appears once the current app has logged at least one error.
         </p>
       </div>

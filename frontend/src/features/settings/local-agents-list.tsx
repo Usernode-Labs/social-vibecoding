@@ -39,10 +39,10 @@ export function LocalAgentsListView({ phase, agents }: LocalAgentsState) {
               <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">
                 {agent.title}
               </div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 truncate">
+              <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-1 truncate">
                 {agent.where}
               </div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{agent.detail}</div>
+              <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-0.5">{agent.detail}</div>
             </div>
             {/*
                 Demo rows (staging ?demo=1) are fabricated per request and own

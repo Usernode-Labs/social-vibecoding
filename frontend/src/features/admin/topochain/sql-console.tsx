@@ -60,12 +60,12 @@ type QueryResult =
   };
 
 const NOTE_TONES = {
-  error: 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400',
-  warn: 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400',
-  busy: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400',
+  error: 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-200',
+  warn: 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200',
+  busy: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-300',
 };
 
-const UNAVAILABLE = <p className="text-xs text-zinc-500 dark:text-zinc-400">Unavailable.</p>;
+const UNAVAILABLE = <p className="text-xs text-zinc-500 dark:text-zinc-300">Unavailable.</p>;
 
 function ResultBlock({ result }: { result: QueryResult }) {
   if (result.kind === 'idle') return null;
@@ -85,12 +85,12 @@ function ResultBlock({ result }: { result: QueryResult }) {
   }
   return (
     <>
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2 mt-3">
+      <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-2 mt-3">
         {`${result.rowCount} row(s)${result.limited ? ' (truncated to the limit)' : ''} in ${result.ms} ms`}
       </p>
       <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
         <table className="w-full">
-          <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-300">
             <tr>
               {result.columns.map((c) => <th key={c} className="px-2 py-1 text-left">{c}</th>)}
             </tr>
@@ -209,7 +209,7 @@ function SqlConsoleScreen() {
                 <button id="admin-topo-sql-run" type="button" className={BTN.primary} onClick={run}>
                   Run query
                 </button>
-                <label className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                <label className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-300">
                   <span>Limit</span>
                   <input
                     id="admin-topo-sql-limit"
@@ -218,7 +218,7 @@ function SqlConsoleScreen() {
                     max="1000"
                     value={limit}
                     onChange={(e) => setLimit(e.target.value)}
-                    className="w-24 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono min-h-[44px] sm:min-h-[36px] focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    className="w-24 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono min-h-[44px] sm:min-h-[36px] focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100"
                   />
                 </label>
               </>
@@ -274,7 +274,7 @@ function SqlConsoleScreen() {
             />
             <p
               id="admin-topo-sql-schema-count"
-              className="mb-1 text-xs text-zinc-500 dark:text-zinc-400"
+              className="mb-1 text-xs text-zinc-500 dark:text-zinc-300"
               role="status"
             >
               {Array.isArray(schema)
@@ -285,7 +285,7 @@ function SqlConsoleScreen() {
               {schema === null ? <Skeleton rows={3} /> : null}
               {schema === 'error' ? UNAVAILABLE : null}
               {Array.isArray(schema) && !shown.length ? (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">No table matches that filter.</p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-300">No table matches that filter.</p>
               ) : null}
               {shown.map(({ t, i }) => (
                 <button
@@ -297,7 +297,7 @@ function SqlConsoleScreen() {
                   onClick={() => draft(t)}
                 >
                   <span className="truncate">{t.name}</span>
-                  <span className="shrink-0 text-zinc-500 dark:text-zinc-500">{t.columns.length}</span>
+                  <span className="shrink-0 text-zinc-500 dark:text-zinc-300">{t.columns.length}</span>
                 </button>
               ))}
             </div>

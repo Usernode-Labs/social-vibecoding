@@ -122,18 +122,29 @@ type ProfileView =
 
 const GRID = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3';
 const CARD = 'tc-se-card bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 '
-  + 'dark:border-zinc-800 p-4 cursor-pointer hover:border-violet-400 '
-  + 'dark:hover:border-violet-600 transition-colors';
-const CARD_FEATURED = ' ring-1 ring-violet-500/40';
+  + 'dark:border-zinc-800 p-4 cursor-pointer hover:border-azure-400 '
+  + 'dark:hover:border-azure-600 transition-colors';
+const CARD_FEATURED = ' ring-1 ring-azure-700/40';
 const CARD_DONE = ' opacity-60';
-const CARD_LABEL = 'text-[10px] uppercase tracking-wide text-violet-700  dark:text-violet-400'
-  + 'dark:text-violet-400 font-semibold';
-const DONE_CHIP = 'shrink-0 inline-block px-2 py-0.5 rounded-full text-[0.65rem] font-semibold '
-  + 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400';
-const MINE_NOTE = 'text-xs text-emerald-700 dark:text-emerald-400 mt-2 font-medium';
-const GROUP_HEADING = 'text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-6 mb-2';
+// The blue INK pair is 800/200 — the ratified one, whose two halves are at
+// APCA parity the way the red, amber and meadow ramps' 700/200 are; 700/300
+// is not (see the composited figures in features/admin/admin-merges.tsx's
+// badge comment, and "azure-800 … when a surface needs to clear it" in
+// tailwind.config.js). 700 keeps the jobs that are about the BRAND HEX rather
+// than about reading: the `ring-azure-700/40` on the featured card below, and
+// the chip and wash steps elsewhere. Every ink in this file moved off it.
+const CARD_LABEL = 'text-xs uppercase tracking-wide text-azure-800 '
+  + 'dark:text-azure-200 font-semibold';
+// The completed chip is `meadow`, the product's ONE green, rather than the
+// stock `emerald` it was written in: emerald and green were never a semantic
+// split, only two authors and two eras, and meadow is the tuned ramp whose
+// 700/200 pair is at APCA parity the way the red and amber ramps are.
+const DONE_CHIP = 'shrink-0 inline-block px-2 py-0.5 rounded-full text-xs font-semibold '
+  + 'bg-meadow-500/15 text-meadow-700 dark:text-meadow-200';
+const MINE_NOTE = 'text-xs text-meadow-700 dark:text-meadow-200 mt-2 font-medium';
+const GROUP_HEADING = 'text-sm font-semibold text-zinc-500 dark:text-zinc-300 mt-6 mb-2';
 const GRID_ERROR = 'rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 '
-  + 'dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm';
+  + 'dark:border-red-900 text-red-700 dark:text-red-200 px-4 py-3 text-sm';
 
 const OVERLAY = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
 // Split either side of the max-width, which is the one thing the two panels
@@ -141,8 +152,8 @@ const OVERLAY = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60
 // markup shipped rather than with the width tacked on the end.
 const PANEL_HEAD = 'bg-white dark:bg-zinc-900 rounded-xl p-6 w-full';
 const PANEL_TAIL = 'max-h-[85vh] overflow-y-auto shadow-xl border border-zinc-200 '
-  + 'dark:border-zinc-800';
-const CLOSE_X = 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 text-xl leading-none dark:text-zinc-400';
+  + 'dark:border-zinc-800 dark:shadow-none';
+const CLOSE_X = 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 text-xl leading-none dark:text-zinc-300';
 const ENTRY_ROW = 'tc-se-entry flex items-center justify-between gap-3 text-xs p-1.5 rounded '
   + 'hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer';
 // × as a character, not `&times;` — the entity was HTML source; this is text.
@@ -161,9 +172,9 @@ function Card({ view }: { view: CardView }): ReactNode {
         {view.done ? <span className={DONE_CHIP}>Completed</span> : null}
       </div>
       <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-1">{view.goal}</div>
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 line-clamp-2">{view.task}</p>
+      <p className="text-xs text-zinc-500 dark:text-zinc-300 line-clamp-2">{view.task}</p>
       {view.reward ? (
-        <p className="text-xs text-violet-700 mt-2 font-medium dark:text-violet-400">{view.reward}</p>
+        <p className="text-xs text-azure-800 mt-2 font-medium dark:text-azure-200">{view.reward}</p>
       ) : null}
       {view.mineNote ? <p className={MINE_NOTE}>{view.mineNote}</p> : null}
     </div>
@@ -175,17 +186,17 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
   // starts and the loading line arrives on the very next render.
   if (!view) return null;
   if (view.kind === 'loading') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading challenges…</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-300">Loading challenges…</p>;
   }
   if (view.kind === 'error') return <div className={GRID_ERROR}>{view.message}</div>;
   if (view.kind === 'empty') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400 py-8 text-center">No challenges for this event yet.</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-300 py-8 text-center">No challenges for this event yet.</p>;
   }
   return (
     <>
       <p
         id="tc-se-challenge-summary"
-        className="text-sm text-zinc-500 dark:text-zinc-400 mb-3"
+        className="text-sm text-zinc-500 dark:text-zinc-300 mb-3"
       >
         {view.summary}
       </p>
@@ -206,7 +217,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
       <div className="mt-4 text-center">
         <button
           id="tc-se-to-standings"
-          className="text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
+          className="text-sm font-medium text-azure-800 dark:text-azure-200 hover:underline"
           onClick={() => controller()?._toStandings()}
         >
           See where the season stands →
@@ -221,7 +232,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
 function Cta({ view }: { view: CtaView }): ReactNode {
   if (view.kind === 'text') {
     return (
-      <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+      <p className="mb-3 text-xs text-zinc-500 dark:text-zinc-300">
         {view.label} <span className="italic">(link unavailable)</span>
       </p>
     );
@@ -234,7 +245,7 @@ function Cta({ view }: { view: CtaView }): ReactNode {
       href={view.href}
       target="_blank"
       rel="noopener"
-      className="inline-block mb-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
+      className="inline-block mb-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-black transition-colors"
     >
       {view.label}
     </a>
@@ -243,10 +254,10 @@ function Cta({ view }: { view: CtaView }): ReactNode {
 
 function Entries({ view }: { view: EntriesView }): ReactNode {
   if (view.kind === 'loading') {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading participants…</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-300">Loading participants…</p>;
   }
-  if (view.kind === 'error') return <p className="text-xs text-zinc-500 dark:text-zinc-400">{view.message}</p>;
-  if (view.kind === 'empty') return <p className="text-xs text-zinc-500 dark:text-zinc-400">No participants yet.</p>;
+  if (view.kind === 'error') return <p className="text-xs text-zinc-500 dark:text-zinc-300">{view.message}</p>;
+  if (view.kind === 'empty') return <p className="text-xs text-zinc-500 dark:text-zinc-300">No participants yet.</p>;
   return (
     <>
       <ul className="space-y-1">
@@ -263,16 +274,16 @@ function Entries({ view }: { view: EntriesView }): ReactNode {
               {/* The leading space lived between the two spans in the old
                   string; it is inside this one now, for the reason the header
                   gives. */}
-              {row.nonPodium ? <span className="text-zinc-500 dark:text-zinc-400"> (non-podium)</span> : null}
+              {row.nonPodium ? <span className="text-zinc-500 dark:text-zinc-300"> (non-podium)</span> : null}
             </span>
-            <span className="font-mono text-zinc-500 dark:text-zinc-400">{row.points}</span>
+            <span className="font-mono text-zinc-500 dark:text-zinc-300">{row.points}</span>
           </li>
         ))}
       </ul>
       {view.hasMore ? (
         <button
           id="tc-se-breakdown-more"
-          className="mt-2 text-xs text-violet-700 hover:text-violet-400 dark:text-violet-400"
+          className="mt-2 text-xs text-azure-800 hover:text-azure-900 dark:hover:text-azure-100 dark:text-azure-200"
           onClick={() => controller()?._moreBreakdown()}
         >
           Load more
@@ -303,24 +314,24 @@ function DetailPanel({ view }: { view: DetailView }): ReactNode {
         <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-2">{view.description}</p>
       ) : null}
       {view.mineNote ? (
-        <p className="text-xs text-emerald-700 dark:text-emerald-400 mb-2 font-medium">
+        <p className="text-xs text-meadow-700 dark:text-meadow-200 mb-2 font-medium">
           {view.mineNote}
         </p>
       ) : null}
       {view.requirements ? (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-2">
           <span className="font-medium">Requirements:</span> {view.requirements}
         </p>
       ) : null}
       {view.rewardLogic ? (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-3">
           <span className="font-medium">Reward logic:</span> {view.rewardLogic}
         </p>
       ) : null}
       {view.cta ? <Cta view={view.cta} /> : null}
       <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3">
-        <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Participants</div>
-        {view.totals ? <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">{view.totals}</p> : null}
+        <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-300 mb-1">Participants</div>
+        {view.totals ? <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-2">{view.totals}</p> : null}
         <Entries view={view.entries} />
       </div>
     </>
@@ -330,31 +341,31 @@ function DetailPanel({ view }: { view: DetailView }): ReactNode {
 // ── Profile overlay ─────────────────────────────────────────────────────
 
 function ProfileBody({ view }: { view: ProfileView }): ReactNode {
-  if (view.kind === 'loading') return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
-  if (view.kind === 'error') return <p className="text-sm text-zinc-500 dark:text-zinc-400">{view.message}</p>;
+  if (view.kind === 'loading') return <p className="text-sm text-zinc-500 dark:text-zinc-300">Loading…</p>;
+  if (view.kind === 'error') return <p className="text-sm text-zinc-500 dark:text-zinc-300">{view.message}</p>;
   return (
     <>
       <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-3">{view.name}</h2>
       <div className="grid grid-cols-2 gap-2 text-xs mb-4">
         {view.stats.map((s) => (
           <div key={s.label}>
-            <span className="text-zinc-500 dark:text-zinc-400">{s.label}</span>
+            <span className="text-zinc-500 dark:text-zinc-300">{s.label}</span>
             <div className="font-mono">{s.value}</div>
           </div>
         ))}
       </div>
-      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">Activities</div>
+      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-300 mb-1">Activities</div>
       {view.activities ? (
         <ul className="space-y-1">
           {view.activities.map((a) => (
             <li key={a.key} className="flex items-center justify-between gap-3 text-xs">
               <span className="text-zinc-600 dark:text-zinc-300">{a.text}</span>
-              <span className="font-mono text-zinc-500 dark:text-zinc-400">{a.points}</span>
+              <span className="font-mono text-zinc-500 dark:text-zinc-300">{a.points}</span>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">No activities recorded.</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-300">No activities recorded.</p>
       )}
     </>
   );

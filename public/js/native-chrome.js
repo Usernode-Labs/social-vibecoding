@@ -999,7 +999,7 @@
       // iOS: requestPermissions() maps to the notification prompt, and v4
       // turned iOS block production off — so the block-production pitch is
       // Android-only, and the iOS copy names what the OS will actually ask.
-      panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
+      panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-300 mb-3',
         isAndroid
           ? 'Your node can produce blocks while the app is in the ' +
             'background. That needs permission to wake your device at ' +
@@ -1010,11 +1010,17 @@
       const statusRow = (label, ok) => {
         const row = el('div', 'flex items-center gap-2 mt-1 text-sm');
         row.appendChild(el('span', 'w-2 h-2 rounded-full shrink-0 ' +
-          (ok ? 'bg-emerald-500' : 'bg-amber-500')));
+          (ok ? 'bg-meadow-500' : 'bg-amber-500')));
         row.appendChild(el('span', 'text-zinc-800 dark:text-zinc-200', label));
+        // meadow is the product's one green (stock emerald retired), and both
+        // dark inks take the 200 step their ramps were solved to: measured
+        // with an APCA-W3 0.1.9 port written for this pass, emerald-400 read
+        // Lc -64.2 on the zinc-900 card against a light partner of 76.8, and
+        // amber-400 read -59.8 against 90.1. meadow-200 is -82.9 and
+        // amber-200 is -80.4 — parity rather than a floor.
         row.appendChild(el('span', 'ml-auto text-xs ' + (ok
-          ? 'text-emerald-700 dark:text-emerald-400'
-          : 'text-amber-800 dark:text-amber-400'),
+          ? 'text-meadow-700 dark:text-meadow-200'
+          : 'text-amber-800 dark:text-amber-200'),
         ok ? 'Granted' : 'Not granted'));
         return row;
       };
@@ -1039,7 +1045,7 @@
         const btns = el('div', 'mt-4 space-y-2');
         if (!alarmOk) {
           const b = el('button', 'w-full rounded-lg bg-violet-600 ' +
-            'hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white',
+            'hover:bg-violet-500 px-4 py-2 text-sm font-medium text-black',
           isAndroid ? 'Grant permissions' : 'Allow notifications');
           b.addEventListener('click', async () => {
             interacted = true;
@@ -1089,7 +1095,7 @@
           btns.appendChild(b);
         }
         const done = el('button', 'w-full px-4 py-2 text-sm ' +
-          'text-zinc-500 dark:text-zinc-400',
+          'text-zinc-500 dark:text-zinc-300',
         (alarmOk && (!isAndroid || batteryOk)) ? 'Done' : 'Skip for now');
         done.addEventListener('click', () => {
           interacted = true;

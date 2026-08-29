@@ -85,7 +85,19 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {boolean} working
  * @property {number} sessionUnread
  * @property {number} sessionDone
- * @property {'idle'|'deploying'|'stale'} versionState
+ * The STORED states, which are not the states callers pass in. `setVersionState`
+ * in ./improve-controller.js normalises: its `KNOWN` list is deploying,
+ * downloading, ready and failed; `'stale'` is an INPUT alias mapped to `'ready'`
+ * and can never be stored; anything else becomes `'idle'`.
+ *
+ * This read `'idle'|'deploying'|'stale'` until the merge with platform main —
+ * wrong in both directions, missing the three states #1468 added and listing one
+ * that is unreachable. improve-panel.tsx compares against `downloading`, `ready`
+ * and `failed`, so tsc reported four "no overlap" errors for comparisons that are
+ * correct; the type was the thing that was wrong. Corrected here rather than in
+ * the component, because the component matches the controller and the JSDoc did
+ * not.
+ * @property {'idle'|'deploying'|'downloading'|'ready'|'failed'} versionState
  * @property {'forum'|'chat'|'sessions'|'topic'|null} subTab
  * @property {number|null} previewSessionId
  * @property {string|null} previewUrl

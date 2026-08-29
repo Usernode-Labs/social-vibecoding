@@ -59,20 +59,39 @@ function deliveryStatusLabel(status?: string): string {
   return status === 'sent' ? 'FCM accepted' : String(status ?? '');
 }
 
+// Four severity panels, one shape: `border-<hue>-200 bg-<hue>-50
+// text-<hue>-900` in light, and in dark the ground drops to transparent so the
+// `dark:border-<hue>-800` carries the semantic (the panel-becomes-a-border
+// rule) under a `dark:text-<hue>-200` ink. The STEPS are the same in all four
+// arms on purpose — a step spelled differently in one arm renders that panel
+// at a different weight in a list where the four sit side by side. Two
+// tempting divergences on the success arm, both rejected. Dropping its light
+// ink one step to meadow 800 measures Lc 84.6 on the meadow 50 wash, where
+// 900 is 90.6 and the other three arms' 900s span 82.5-95.9. Raising its dark
+// border one step to meadow 700 was argued from an APCA reading of the border
+// against the card, which is the wrong instrument: APCA is a TEXT metric and
+// says nothing about whether two adjacent SURFACES separate. By relative
+// luminance the 800 step of meadow (0.069) sits with red's (0.064) and
+// amber's (0.068), while meadow's 700 (0.107) would draw the success panel's
+// edge half again as bright as the error panel's.
+//
+// (Steps are written in prose here rather than as class literals: Tailwind's
+// extractor is a regex over source text and would compile a dead utility out
+// of a comment naming one.)
 function diagnosticClasses(severity?: string): string {
   switch (severity) {
     case 'success':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200';
+      return 'border-meadow-200 bg-meadow-50 text-meadow-900 dark:border-meadow-800 dark:bg-transparent dark:text-meadow-200';
     case 'error':
-      return 'border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200';
+      return 'border-red-200 bg-red-50 text-red-900 dark:border-red-800 dark:bg-transparent dark:text-red-200';
     case 'warning':
-      return 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200';
+      return 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-transparent dark:text-amber-200';
     default:
-      return 'border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200';
+      return 'border-azure-200 bg-azure-50 text-azure-900 dark:border-azure-800 dark:bg-transparent dark:text-azure-200';
   }
 }
 
-const MUTED_LABEL = 'text-zinc-500 dark:text-zinc-400 w-28 shrink-0';
+const MUTED_LABEL = 'text-zinc-500 dark:text-zinc-300 w-28 shrink-0';
 
 /** `label: value` on one line, the `<dt>`/`<dd>` pair the old templates spelled inline. */
 function Kv({ label, mono, children }: { label: string; mono?: boolean; children: React.ReactNode }) {
@@ -88,7 +107,7 @@ function Kv({ label, mono, children }: { label: string; mono?: boolean; children
 function KvInline({ label, mono, children }: { label: string; mono?: boolean; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="inline text-zinc-500 dark:text-zinc-400">{`${label}: `}</dt>
+      <dt className="inline text-zinc-500 dark:text-zinc-300">{`${label}: `}</dt>
       <dd className={mono ? 'inline font-mono break-all' : 'inline'}>{children}</dd>
     </div>
   );
@@ -159,7 +178,7 @@ function Fleet({ overview }: { overview: PushRow }) {
                 </span>
               </div>
               <div className="text-2xl font-semibold mt-2">{row.total}</div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+              <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">
                 {`registrations · last seen ${fmtTime(row.last_seen_at)}`}
               </div>
             </div>
@@ -179,7 +198,7 @@ function Fleet({ overview }: { overview: PushRow }) {
                     <span className={badge(row.status)}>{deliveryStatusLabel(row.status)}</span>
                     {row.last_error_code ? <code className="font-mono text-xs break-all">{row.last_error_code}</code> : null}
                   </div>
-                  <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{`last updated ${fmtTime(row.last_updated_at)}`}</div>
+                  <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">{`last updated ${fmtTime(row.last_updated_at)}`}</div>
                 </div>
                 <span className="text-sm font-semibold">{row.total}</span>
               </li>
@@ -254,14 +273,14 @@ function RegistrationEvents({ events }: { events?: PushRow[] }) {
               </span>
               {event.reasonCode ? <code className="font-mono text-xs break-all">{event.reasonCode}</code> : null}
             </div>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">{fmtTime(event.createdAt)}</span>
+            <span className="text-xs text-zinc-500 dark:text-zinc-300">{fmtTime(event.createdAt)}</span>
           </div>
           <dl className="mt-2 grid gap-1 text-xs">
             <KvInline label="Environment" mono>{event.environment || 'unknown'}</KvInline>
             <KvInline label="Installation" mono>{event.installationId || 'unknown'}</KvInline>
             {event.registrationId == null ? null : (
               <div>
-                <dt className="inline text-zinc-500 dark:text-zinc-400">Registration: </dt>
+                <dt className="inline text-zinc-500 dark:text-zinc-300">Registration: </dt>
                 <dd className="inline font-mono">{`#${event.registrationId}`}</dd>
               </div>
             )}
@@ -282,7 +301,7 @@ function Delivery({ d }: { d: PushRow }) {
         <span>{`${d.attempts} attempt${Number(d.attempts) === 1 ? '' : 's'}`}</span>
         {d.errorCode ? <code className="font-mono break-all">{d.errorCode}</code> : null}
       </div>
-      <div className="mt-2 grid gap-1 text-zinc-500 dark:text-zinc-400">
+      <div className="mt-2 grid gap-1 text-zinc-500 dark:text-zinc-300">
         <span>{'Environment '}<code className="font-mono">{d.environment}</code></span>
         <span>{'Installation '}<code className="font-mono break-all">{d.installationId}</code></span>
         <span>{`Created ${fmtTime(d.createdAt)}`}</span>
@@ -308,11 +327,11 @@ function Notifications({ items }: { items?: PushRow[] }) {
                 </span>
                 <span className={AdminUI.badge.secondary}>{n.category}</span>
               </div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+              <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">
                 {`Notification #${n.id} · ${fmtTime(n.createdAt)}`}
               </div>
             </div>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            <span className="text-xs text-zinc-500 dark:text-zinc-300">
               {n.readAt ? `read ${fmtTime(n.readAt)}` : 'unread'}
             </span>
           </div>
@@ -321,7 +340,7 @@ function Notifications({ items }: { items?: PushRow[] }) {
               // eslint-disable-next-line react/no-array-index-key
               ? n.deliveries.map((d: PushRow, i: number) => <Delivery key={i} d={d} />)
               : (
-                <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-3 text-sm text-amber-900 dark:text-amber-200">
+                <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-transparent p-3 text-sm text-amber-900 dark:text-amber-200">
                   No retained delivery row is available for this notification.
                 </div>
               )}
@@ -342,7 +361,7 @@ function UserResult({ data }: { data: PushRow }) {
   }
   if (!data.lookup.found || !data.user) {
     return (
-      <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-4 text-sm text-amber-900 dark:text-amber-200">
+      <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-transparent p-4 text-sm text-amber-900 dark:text-amber-200">
         {'No account matched '}<code className="font-mono">{data.lookup.query}</code>{'.'}
       </div>
     );
@@ -352,7 +371,7 @@ function UserResult({ data }: { data: PushRow }) {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{data.user.username}</h3>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">{`User #${data.user.id}`}</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-300">{`User #${data.user.id}`}</p>
         </div>
         <div className="flex gap-2 flex-wrap">
           {(data.preferences || []).map((row: PushRow) => (
@@ -423,10 +442,10 @@ function PushSection() {
       </div>
       <div id="admin-push-overview" className="grid gap-4">
         {failed
-          ? <p className="text-sm text-rose-600 dark:text-rose-400">Could not load mobile push diagnostics.</p>
+          ? <p className="text-sm text-red-700 dark:text-red-200">Could not load mobile push diagnostics.</p>
           : data
             ? <><Runtime runtime={data.runtime} deployment={data.overview?.deployment} /><Fleet overview={data.overview || {}} /></>
-            : <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading push deployment health…</p>}
+            : <p className="text-sm text-zinc-500 dark:text-zinc-300">Loading push deployment health…</p>}
       </div>
       <section className={`${AdminUI.card} p-5`}>
         <div className={AdminUI.cardHeader}>
@@ -449,7 +468,7 @@ function PushSection() {
       <div id="admin-push-user-result">
         {failed ? null
           : loadingUser
-            ? <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading account diagnostics…</p>
+            ? <p className="text-sm text-zinc-500 dark:text-zinc-300">Loading account diagnostics…</p>
             : data ? <UserResult data={data} /> : null}
       </div>
     </div>

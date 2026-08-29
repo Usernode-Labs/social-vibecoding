@@ -71,8 +71,8 @@ type ListState =
   | { kind: 'note'; text: string }
   | { kind: 'error'; text: string };
 
-const NOTE_CLASS = 'text-sm text-zinc-500 dark:text-zinc-400 py-6 text-center';
-const ERROR_CLASS = 'text-sm text-red-400 py-6 text-center';
+const NOTE_CLASS = 'text-sm text-zinc-500 dark:text-zinc-300 py-6 text-center';
+const ERROR_CLASS = 'text-sm text-red-700 dark:text-red-200 py-6 text-center';
 
 /**
  * Turn an import failure into copy the user can act on.
@@ -275,7 +275,7 @@ export function ImportPrDialog() {
         <h2 className="text-lg font-bold mb-1">
           Import a pull request
         </h2>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-2">
           Pick an open pull request to add to In progress. It stays there until you put it up for vote.
         </p>
         {/*
@@ -286,9 +286,9 @@ export function ImportPrDialog() {
             fork — rows marked "from a fork" run an outside contributor's
             code in the preview, so read the diff on GitHub first.
         */}
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-4">
           {"A staging preview is built from the pull request's head commit, so it takes a few minutes to appear, and automated checks stay pending until it does. Rows marked "}
-          <span className="text-amber-800 dark:text-amber-400">
+          <span className="text-amber-800 dark:text-amber-200">
             from a fork
           </span>
           {" are branches in someone else's repository: review the changes on GitHub before importing."}
@@ -319,7 +319,7 @@ export function ImportPrDialog() {
                     type="radio"
                     name="import-pr-choice"
                     value={num}
-                    className="mt-1 accent-violet-600"
+                    className="mt-1 accent-azure-600"
                     checked={selected === num}
                     onChange={() => {
                       setSelected(num);
@@ -330,7 +330,7 @@ export function ImportPrDialog() {
                     <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
                       #{num} · {String(c.title || '')}
                     </span>
-                    <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    <span className="block text-xs text-zinc-500 dark:text-zinc-300 mt-0.5">
                       {`${String(c.author || 'unknown')} · `}
                       <span className="font-mono">
                         {String(c.headBranch || '')} → {String(c.baseBranch || '')}
@@ -345,7 +345,7 @@ export function ImportPrDialog() {
                     */}
                     {c.fromFork ? (
                       <span
-                        className="block text-xs text-amber-800 dark:text-amber-400 mt-0.5"
+                        className="block text-xs text-amber-800 dark:text-amber-200 mt-0.5"
                         title="This branch lives in a fork, not in this app's own repository. The preview is built from the pull request's head commit. Review the changes on GitHub before importing."
                       >
                         {'from a fork: '}
@@ -357,7 +357,7 @@ export function ImportPrDialog() {
                         href={String(c.htmlUrl)}
                         target="_blank"
                         rel="noopener"
-                        className="inline-block text-xs text-violet-700 hover:underline mt-1 dark:text-violet-400"
+                        className="inline-block text-xs text-azure-800 hover:underline mt-1 dark:text-azure-200"
                         onClick={(event) => event.stopPropagation()}
                       >
                         View on GitHub ↗
@@ -379,7 +379,7 @@ export function ImportPrDialog() {
         <div
           id="import-pr-progress"
           ref={progressRef}
-          className="hidden mt-3 text-sm text-zinc-500 dark:text-zinc-400"
+          className="hidden mt-3 text-sm text-zinc-500 dark:text-zinc-300"
         >
           <div className="flex items-center gap-2">
             <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true">
@@ -392,7 +392,7 @@ export function ImportPrDialog() {
             Still working. GitHub is being slow, so don’t close this window.
           </div>
         </div>
-        <div id="import-pr-error" ref={errorRef} className="text-red-400 text-sm hidden mt-3">
+        <div id="import-pr-error" ref={errorRef} className="text-red-700 dark:text-red-200 text-sm hidden mt-3">
           {error}
         </div>
         <div className="flex gap-3 mt-5">

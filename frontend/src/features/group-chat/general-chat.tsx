@@ -60,27 +60,52 @@ export function GeneralChat({ introAppName, readOnly, maxLength }: GeneralChatPr
               be clutter.
           */}
           {introAppName ? (
-            <div className="mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs text-zinc-600 dark:text-zinc-300">
+            <div className="mx-3 mt-2 px-3 py-2 rounded-lg bg-azure-500/10 border border-azure-500/20 text-xs text-zinc-600 dark:text-zinc-300">
               {'This is where everyone using '}
               <span className="font-medium">{introAppName}</span>
               {' talks and votes on proposed changes to it.'}
             </div>
           ) : null}
+          {/*
+              NO horizontal padding, and that is the decision rather than an
+              omission. The transcript's rows are FULL-BLEED — `.gc-msg:hover`
+              paints a band that runs edge to edge — so each row holds the
+              content keyline in its own `px-3` (@/components/ui/chat.tsx's
+              ChatMessageRow, and app.css's `.gc-msg`, `.gc-msg-system` and
+              `.gc-spec-card` beside it). This scroller owning a gutter would
+              inset that hover ground and land every row at 24px.
+
+              This host was already right; the row was not. It carried `px-4`,
+              so the same row sat at 16px here, 28px in `#gc-thread-scroll` and
+              24px in the boxed thread list. All three read 12px now, which is
+              the composer bar's `px-gutter` below and the intro banner's
+              `mx-3` above.
+          */}
           <div id="gc-messages" className="flex-1 overflow-y-auto py-2 space-y-0.5" />
           <StatusLine
             scope="general"
-            className="px-3 text-xs text-zinc-500 dark:text-zinc-400 h-5 shrink-0"
+            className="px-3 text-xs text-zinc-500 dark:text-zinc-300 h-5 shrink-0"
           />
           {/*
               `platform-safe-bar` (app.css) adds the home-indicator inset to
-              this bar's own p-2. It wraps BOTH the composer and the read-only
-              notice, so both clear the indicator — which is why #621's notice
-              sits inside the bar here rather than replacing it the way the
-              thread panel's does.
+              this bar's own `py-2` — the 0.5rem the utility's calc() is
+              written against, which is why the vertical half stays `py-2`
+              when the horizontal half moves. It wraps BOTH the composer and
+              the read-only notice, so both clear the indicator — which is why
+              #621's notice sits inside the bar here rather than replacing it
+              the way the thread panel's does.
+
+              `px-gutter`, not the p-2 this was: the composer's form carries no
+              horizontal padding of its own (../group-chat/composer.tsx's
+              `<form class="flex gap-2 items-end">`), so the bar's inset IS the
+              composer's left edge, and 8px put it 4px inside the transcript
+              above it. The token is app.css's --screen-gutter, the shell's
+              content keyline — the same declaration `px-3` computes to,
+              resolved by reference rather than respelled.
           */}
-          <div className={`shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 ${SAFE_BAR}`}>
+          <div className={`shrink-0 border-t border-zinc-200 dark:border-zinc-800 py-2 px-gutter ${SAFE_BAR}`}>
             {readOnly ? (
-              <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center">
+              <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-300 text-center">
                 You&#39;re viewing this app&#39;s dev space read-only. Only collaborators can post.
               </div>
             ) : (

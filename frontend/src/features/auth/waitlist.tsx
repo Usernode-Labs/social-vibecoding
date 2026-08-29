@@ -310,7 +310,7 @@ export function WaitlistScreen() {
       <a
         href="#landing"
         data-auth-back=""
-        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
+        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-300 hover:text-azure-800 dark:hover:text-azure-200"
         style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
       >
         &larr; Back
@@ -324,7 +324,7 @@ export function WaitlistScreen() {
           id="waitlist-step"
           className={hiddenLast(
             hasSession,
-            'text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400',
+            'text-xs font-semibold uppercase tracking-widest text-azure-700 dark:text-azure-300',
           )}
         >
           {confirmed
@@ -341,14 +341,14 @@ export function WaitlistScreen() {
         <h1 className={hiddenLast(joined, 'mt-1 text-2xl font-bold')}>
           Join the waitlist
         </h1>
-        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
+        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-300')}>
           Usernode Social Vibecoding is a place where users describe the app
         they want in chat, an AI builds it, and the community votes the
         changes in. Every app in the directory was built here by the people
         who use it. They run on the Usernode chain, and contributors own a
         share of what they build.
         </p>
-        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
+        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-300')}>
           Platform access opens in batches. Join the waitlist and we'll email
         you when your spot opens. The public apps are open to everyone right
         now.
@@ -371,11 +371,11 @@ export function WaitlistScreen() {
           <div>
             <label htmlFor="waitlist-email" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Your email address
-              <span className="text-red-700 dark:text-red-400">
+              <span className="text-red-700 dark:text-red-200">
                 *
               </span>
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-0.5 mb-1.5">
               We only email you when your spot comes up. No newsletter.
             </p>
             <input
@@ -386,23 +386,23 @@ export function WaitlistScreen() {
               maxLength={255}
               placeholder="you@example.com"
               autoComplete="email"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Country
-              <span className="text-zinc-500 font-normal dark:text-zinc-400">
+              <span className="text-zinc-500 font-normal dark:text-zinc-300">
                 Optional
               </span>
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-0.5 mb-1.5">
               We&rsquo;re building early groups across different regions.
             </p>
             <select
               ref={country}
               id="waitlist-country"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
             >
               <option value="">
                 Select a country&hellip;
@@ -421,11 +421,11 @@ export function WaitlistScreen() {
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               How did you find us?
-              <span className="text-zinc-500 font-normal dark:text-zinc-400">
+              <span className="text-zinc-500 font-normal dark:text-zinc-300">
                 Optional
               </span>
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-0.5 mb-1.5">
               Pick the closest one.
             </p>
             <ChipRow
@@ -449,16 +449,17 @@ export function WaitlistScreen() {
           {msg ? msg.text : null}
         </p>
         {/*
-            Success state: joined. Stage 2 is offered straight away —
-            people are most willing to keep answering right after they
-            commit; the join email carries the same link for anyone who
-            stops here.
+            Post-submit state: joined. It says "check your email" and nothing
+            more — the list place and the stage-2 offer both live behind
+            `confirmed` below, because confirming is what puts somebody on the
+            list. The join email carries the same link for anyone who stops
+            here.
         */}
         <div id="waitlist-joined" className={hiddenFirst(!joined, 'mt-8')}>
           <p className={hiddenLast(confirmed, 'text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
             Check your email
           </p>
-          <p className={hiddenLast(confirmed, 'mt-1 text-sm text-zinc-500 dark:text-zinc-400')}>
+          <p className={hiddenLast(confirmed, 'mt-1 text-sm text-zinc-500 dark:text-zinc-300')}>
             One more step. Confirm your address and you&rsquo;re on the list.
           </p>
           {/*
@@ -474,7 +475,7 @@ export function WaitlistScreen() {
             >
               Confirm your email
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-0.5 mb-1.5">
               {sentTo
                 ? `We sent a six-digit code to ${sentTo}. You can also just click the link in that email.`
                 : 'We sent a six-digit code. You can also just click the link in that email.'}
@@ -489,7 +490,7 @@ export function WaitlistScreen() {
                 maxLength={32}
                 placeholder="000000"
                 onChange={onCodeInput}
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
               />
               <Button
                 id="waitlist-code-submit"
@@ -513,10 +514,10 @@ export function WaitlistScreen() {
             id="waitlist-confirmed"
             className={hiddenFirst(
               !confirmed,
-              'mt-4 rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 p-4',
+              'mt-4 rounded-lg border border-meadow-200 dark:border-meadow-500/30 bg-meadow-50 dark:bg-meadow-500/10 p-4',
             )}
           >
-            <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+            <p className="text-sm font-medium text-meadow-700 dark:text-meadow-200">
               You&rsquo;re on the list 🎉
             </p>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
@@ -530,13 +531,13 @@ export function WaitlistScreen() {
               'mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-4',
             )}
           >
-            <p className="text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400">
+            <p className="text-xs font-semibold uppercase tracking-widest text-azure-700 dark:text-azure-300">
               Optional (moves you up the list)
             </p>
             <h3 className="mt-1 text-base font-semibold">
               Want in sooner?
             </h3>
-            <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
+            <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-300">
               Four more questions, about three minutes: the group you&rsquo;d bring,
             a tool you&rsquo;ve lost, where else you are. These are the answers we
             actually read when we pick the next group.
@@ -545,11 +546,11 @@ export function WaitlistScreen() {
               <a
                 id="waitlist-more-link"
                 href={moreToken ? '#more/' + moreToken : '#landing'}
-                className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
+                className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-black transition-colors"
               >
                 Answer them now
               </a>
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              <span className="text-xs text-zinc-500 dark:text-zinc-300">
                 Or stop here. You&rsquo;re on the list either way, and the link is in your email.
               </span>
             </div>
@@ -562,7 +563,7 @@ export function WaitlistScreen() {
         */}
         <p
           id="waitlist-queued"
-          className={hiddenFirst(!hasSession, 'mt-8 text-sm text-zinc-500 dark:text-zinc-400')}
+          className={hiddenFirst(!hasSession, 'mt-8 text-sm text-zinc-500 dark:text-zinc-300')}
         >
           You're already on the waitlist. We'll email you when your spot opens.
         </p>

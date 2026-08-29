@@ -138,8 +138,8 @@ const CHIP_ZINC =
   'hover:bg-zinc-200 dark:hover:bg-zinc-700';
 const CHIP_VIOLET =
   'inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ' +
-  'bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 ' +
-  'hover:bg-violet-100 dark:hover:bg-violet-900/50';
+  'bg-azure-50 dark:bg-azure-900/30 text-azure-700 dark:text-azure-300 ' +
+  'hover:bg-azure-100 dark:hover:bg-azure-900/50';
 
 /** The identity card (#982) — who this profile belongs to. */
 export function identityView(state) {
@@ -193,10 +193,10 @@ export function publicControlsView(state) {
       ? 'Hidden by moderation'
       : owner.published ? 'Published' : 'Private',
     visibilityClass: owner.moderationDisabled
-      ? 'text-red-700 dark:text-red-400'
+      ? 'text-red-700 dark:text-red-200'
       : owner.published
-        ? 'text-emerald-700 dark:text-emerald-400'
-        : 'text-zinc-500 dark:text-zinc-400',
+        ? 'text-meadow-700 dark:text-meadow-200'
+        : 'text-zinc-500 dark:text-zinc-300',
     openHref: profile.url || `#profile/${encodeURIComponent(profile.username || '')}`,
     publishLabel: owner.published ? 'Unpublish' : 'Publish profile',
   };

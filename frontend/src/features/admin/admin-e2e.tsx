@@ -123,14 +123,14 @@ function CaseRow({ c }: { c: E2ECase }) {
   const badge = STATUS_BADGE[c.status] || AdminUI.badge.default;
   return (
     <tr className={AdminUI.trHover}>
-      <td className={`${AdminUI.td} font-mono text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap align-top`}>{c.id}</td>
+      <td className={`${AdminUI.td} font-mono text-xs text-zinc-500 dark:text-zinc-300 whitespace-nowrap align-top`}>{c.id}</td>
       <td className={`${AdminUI.td} align-top`}>
         <span className="font-medium text-zinc-900 dark:text-zinc-100">{c.name}</span>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{c.flow}</p>
-        {c.notes ? <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{c.notes}</p> : null}
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">{c.flow}</p>
+        {c.notes ? <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">{c.notes}</p> : null}
       </td>
-      <td className={`${AdminUI.td} align-top whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400`}>{GATE_LABEL[c.gate] || c.gate}</td>
-      <td className={`${AdminUI.td} align-top whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400`}>{METHOD_LABEL[c.method] || c.method}</td>
+      <td className={`${AdminUI.td} align-top whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-300`}>{GATE_LABEL[c.gate] || c.gate}</td>
+      <td className={`${AdminUI.td} align-top whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-300`}>{METHOD_LABEL[c.method] || c.method}</td>
       <td className={`${AdminUI.td} align-top whitespace-nowrap`}><span className={badge}>{c.status}</span></td>
     </tr>
   );
@@ -140,7 +140,7 @@ function AreaTable({ area, cases }: { area: E2EArea; cases: readonly E2ECase[] }
   return (
     <section className="mb-6">
       <h3 className={`${AdminUI.sectionTitle} mb-1`}>
-        <span className="font-mono text-violet-700 dark:text-violet-400 mr-2">{area.key}</span>{area.title}
+        <span className="font-mono text-azure-700 dark:text-azure-300 mr-2">{area.key}</span>{area.title}
       </h3>
       <p className={`${AdminUI.cardDescription} mb-3`}>{area.blurb}</p>
       <div className={AdminUI.tableWrap}>
@@ -213,10 +213,10 @@ function E2ESection() {
               data-e2e-status={s}
               aria-pressed={active}
               onClick={() => setStatusFilter((prev) => (prev === s ? null : s))}
-              className={`${AdminUI.card} px-4 py-3 text-left transition-colors ${active ? 'ring-2 ring-violet-500' : ''}`}
+              className={`${AdminUI.card} px-4 py-3 text-left transition-colors ${active ? 'ring-2 ring-zinc-900 dark:ring-zinc-100' : ''}`}
             >
-              <span className={`block text-2xl font-semibold tabular-nums ${s === 'fail' && n ? 'text-red-700 dark:text-red-400' : 'text-zinc-900 dark:text-zinc-100'}`}>{n}</span>
-              <span className="text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{s}</span>
+              <span className={`block text-2xl font-semibold tabular-nums ${s === 'fail' && n ? 'text-red-700 dark:text-red-200' : 'text-zinc-900 dark:text-zinc-100'}`}>{n}</span>
+              <span className="text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-300">{s}</span>
             </button>
           );
         })}

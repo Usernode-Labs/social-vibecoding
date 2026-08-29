@@ -196,7 +196,7 @@ export function ComposerForm({ scope, fill, placeholder, maxLength }: ComposerFo
         aria-label="Attach files"
         className={`shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 ${
           fill ? 'py-2' : 'py-1.5'
-        } text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors`}
+        } text-sm text-zinc-500 dark:text-zinc-300 hover:text-azure-700 dark:hover:text-azure-300 hover:border-azure-500 transition-colors`}
       >
         📎
       </button>

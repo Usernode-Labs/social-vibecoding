@@ -110,9 +110,9 @@ export function RenameAppDialog() {
         <h2 className="text-lg font-bold mb-1">
           Rename app
         </h2>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-4">
           Current app name:
-          <span id="rename-current" className="font-mono text-zinc-500 dark:text-zinc-400">
+          <span id="rename-current" className="font-mono text-zinc-500 dark:text-zinc-300">
             {currentName}
           </span>
         </p>
@@ -120,7 +120,7 @@ export function RenameAppDialog() {
           <div>
             <label
               htmlFor="rename-input"
-              className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+              className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1"
             >
               New app name
             </label>
@@ -137,7 +137,7 @@ export function RenameAppDialog() {
               ring="seamless"
               placeholder="a better name"
             />
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">
               3–64 characters. This is the app's display name, and the URL won't change. Opens a PR that edits
               <span className="font-mono">
                 dapp.json
@@ -145,7 +145,7 @@ export function RenameAppDialog() {
               ; the rename applies once the PR is voted in and merged.
             </p>
           </div>
-          <div id="rename-error" ref={errorRef} className="text-red-400 text-sm hidden">
+          <div id="rename-error" ref={errorRef} className="text-red-700 dark:text-red-300 text-sm hidden">
             {error}
           </div>
           <div className="flex gap-3">

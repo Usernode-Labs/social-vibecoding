@@ -29,11 +29,11 @@ export function WalletSection() {
         <div id="wallet-linking" className="hidden text-center">
           <div id="wallet-qr-canvas" className="inline-block rounded-lg bg-white p-2">
           </div>
-          <p id="wallet-link-timer" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+          <p id="wallet-link-timer" className="text-xs text-zinc-500 dark:text-zinc-300 mt-2">
           </p>
           <button
             id="wallet-link-cancel"
-            className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300 underline"
+            className="mt-2 text-xs text-zinc-500 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-300 underline"
           >
             Cancel
           </button>
@@ -41,7 +41,7 @@ export function WalletSection() {
         {/* Linked: show pubkey + unlink */}
         <div id="wallet-linked" className="hidden">
           <div className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2">
-            <span className="text-xs text-emerald-700 font-bold dark:text-emerald-400">
+            <span className="text-xs text-meadow-700 font-bold dark:text-meadow-200">
               &#x2713;
             </span>
             <span

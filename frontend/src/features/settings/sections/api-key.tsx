@@ -35,7 +35,7 @@ export function ApiKeySection() {
           that fetch has answered with nothing to show.
       */}
       <AiBudgetRow />
-      <Label className="mb-1" htmlFor="settings-api-key">
+      <Label spacing="stacked" htmlFor="settings-api-key">
         Anthropic API key
       </Label>
       <div
@@ -59,21 +59,21 @@ export function ApiKeySection() {
         <div className="font-medium text-zinc-700 dark:text-zinc-300 mb-1">
           Today's spend
         </div>
-        <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
+        <div className="flex justify-between text-zinc-600 dark:text-zinc-300">
           <span>
             Platform daily limit
           </span>
           <span id="settings-spend-platform" className="font-mono">
           </span>
         </div>
-        <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
+        <div className="flex justify-between text-zinc-600 dark:text-zinc-300">
           <span>
             Your key
           </span>
           <span id="settings-spend-byok" className="font-mono">
           </span>
         </div>
-        <div className="text-zinc-500 dark:text-zinc-500 mt-1">
+        <div className="text-zinc-500 dark:text-zinc-300 mt-1">
           Resets at midnight UTC.
         </div>
       </div>
@@ -114,14 +114,14 @@ export function ApiKeySection() {
           Remove
         </Button>
       </div>
-      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+      <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-2 leading-relaxed">
         Encrypted at rest, verified against Anthropic before saving, never shown in full after save.
     The server decrypts it in memory to call Anthropic on your behalf, so don't paste keys into services you don't trust with that level of access.
         <a
           href="https://console.anthropic.com/settings/keys"
           target="_blank"
           rel="noopener"
-          className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400"
+          className="text-azure-800 hover:text-azure-900 dark:hover:text-azure-100 underline dark:text-azure-200"
         >
           Set tight spend limits
         </a>

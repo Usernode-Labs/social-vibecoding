@@ -302,13 +302,32 @@ const TopochainEventContext = {
     // badged for what it is rather than for its own window, which has usually
     // closed while the season is still the dataset on screen.
     const isSeason = TopochainEventContext.isSeasonSelected();
+    // Four badge tones, one per state. `meadow` is the product's one green —
+    // stock `green` is not a tuned ramp, so it rendered an untuned hue beside
+    // the azure and amber badges it sits next to in this very expression. The
+    // dark inks are each ramp's own 200 step, which is what the red, amber and
+    // meadow ramps were solved to for parity with their light 700/800 halves.
+    //
+    // Azure now joins them at 800/200. This line used to end "azure stops at
+    // 300 because its light ink deliberately sits lower to stay near the brand
+    // hex", and the correction is left visible rather than deleted because the
+    // old reading is the trap: the brand hex is what the GROUNDS carry — the
+    // `-500/20` washes on all four of these badges, and the chip and fill
+    // steps elsewhere — and blue INK is a separate job that takes the 800/200
+    // parity pair. This exact recipe is already the console's, on the
+    // byte-identical wash: see the composited Lc figure in the BADGE table
+    // comment of features/admin/admin-merges.tsx, which is what sent every
+    // `bg-azure-500/20` badge there to 800/200 rather than 700.
+    //
+    // Each badge KEEPS its dark ground: the panel-becomes-a-border rule is
+    // about section-sized fields, not chips.
     const statusClass = isSeason
-      ? 'bg-violet-500/20 text-violet-700 dark:text-violet-300'
+      ? 'bg-azure-500/20 text-azure-800 dark:text-azure-200'
       : (ev.is_current
-        ? 'bg-green-500/20 text-green-800 dark:text-green-300'
+        ? 'bg-meadow-500/20 text-meadow-700 dark:text-meadow-200'
         : (ev.is_active
-          ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300'
-          : 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400'));
+          ? 'bg-amber-500/20 text-amber-800 dark:text-amber-200'
+          : 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-300'));
     const statusLabel = isSeason ? 'season'
       : (ev.is_current ? 'active now' : (ev.is_active ? 'active' : 'past'));
     const fmt = (iso) => (iso

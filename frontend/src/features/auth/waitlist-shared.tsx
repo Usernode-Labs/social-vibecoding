@@ -165,7 +165,14 @@ export type MsgTone = 'error' | 'ok' | 'warn';
 
 export function msgClass(tone: MsgTone | null): string {
   if (!tone) return 'hidden text-sm mt-3';
-  if (tone === 'error') return 'text-sm mt-3 text-red-700 dark:text-red-400';
-  if (tone === 'warn') return 'text-sm mt-3 text-amber-800 dark:text-amber-400';
-  return 'text-sm mt-3 text-emerald-700 dark:text-emerald-400';
+  // The dark halves are the steps their ramps were SOLVED to, not the -400 the
+  // WCAG-era spelling used: measured with APCA-W3 0.1.9 against the hexes in
+  // tailwind.config.js, red-700/red-400 is 80.0 / -42.8 (a 37.2 gap) where
+  // red-700/red-200 is 80.0 / -80.0, and amber-800/amber-400 is 90.1 / -59.8
+  // where amber-800/amber-200 is 90.1 / -80.4. Green is `meadow`, the product's
+  // one green ramp: meadow-700 is 82.8 on white and meadow-200 is -82.9 on the
+  // dark card — parity to a tenth.
+  if (tone === 'error') return 'text-sm mt-3 text-red-700 dark:text-red-200';
+  if (tone === 'warn') return 'text-sm mt-3 text-amber-800 dark:text-amber-200';
+  return 'text-sm mt-3 text-meadow-700 dark:text-meadow-200';
 }

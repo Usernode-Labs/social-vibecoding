@@ -104,7 +104,7 @@ export function ShareDialog() {
       <DialogCard size="md" relative>
         <button
           id="share-close"
-          className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
+          className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-200 transition-colors"
           aria-label="Close share"
           onClick={() => dialog.close()}
         >
@@ -113,7 +113,7 @@ export function ShareDialog() {
         <h2 className="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">
           Share this app
         </h2>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mb-4">
           Anyone with this link can open the app outside the Usernode platform. Whether they need to log in is up to the app; most public apps work for anonymous viewers.
         </p>
         <div className="flex gap-2">
@@ -136,7 +136,7 @@ export function ShareDialog() {
             href={href || '#'}
             target="_blank"
             rel="noopener"
-            className="text-sm text-violet-700 hover:text-violet-400 transition-colors inline-flex items-center gap-1 dark:text-violet-400"
+            className="text-sm text-azure-800 hover:text-azure-900 dark:hover:text-azure-100 transition-colors inline-flex items-center gap-1 dark:text-azure-200"
           >
             Open in new tab
             <ArrowRightIcon className="w-4 h-4" />

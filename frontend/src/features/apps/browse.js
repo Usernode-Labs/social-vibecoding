@@ -763,8 +763,8 @@ const Browse = {
       // A zero stays visible in muted grey rather than vanishing, so every
       // row keeps the same shape and the column doesn't ragged out.
       pillTint: merged > 0
-        ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300'
-        : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400',
+        ? 'bg-azure-50 dark:bg-azure-900/30 border-azure-200 dark:border-azure-700 text-azure-700 dark:text-azure-300'
+        : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-300',
     };
   },
 

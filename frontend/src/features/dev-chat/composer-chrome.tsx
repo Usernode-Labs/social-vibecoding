@@ -85,7 +85,7 @@ export function RunnerControlsView({ kind, label }: RunnerState) {
   }
   return (
     <>
-      <label className="text-xs text-zinc-500 dark:text-zinc-400" htmlFor="dc-runner-select">
+      <label className="text-xs text-zinc-500 dark:text-zinc-300" htmlFor="dc-runner-select">
         Run on:
       </label>
       {/*
@@ -97,7 +97,7 @@ export function RunnerControlsView({ kind, label }: RunnerState) {
       */}
       <select
         id="dc-runner-select"
-        className="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500"
+        className="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100"
         defaultValue="local"
         onChange={(e) => {
           if (e.target.value !== 'platform') return;

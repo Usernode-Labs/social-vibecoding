@@ -61,10 +61,10 @@ const Code = ({ children }: { children: React.ReactNode }) => (
 
 function Sender({ mail }: { mail: MailStatus }) {
   return (
-    <div className="text-zinc-500 dark:text-zinc-400 mt-1">
+    <div className="text-zinc-500 dark:text-zinc-300 mt-1">
       {'Sending as '}
       <Code>{mail.from || '(unset)'}</Code>
-      {mail.usingDefaultFrom ? <span className="text-zinc-500 dark:text-zinc-400">{' (built-in default)'}</span> : null}
+      {mail.usingDefaultFrom ? <span className="text-zinc-500 dark:text-zinc-300">{' (built-in default)'}</span> : null}
     </div>
   );
 }
@@ -80,11 +80,37 @@ function MailCard({ mail }: { mail: MailStatus | null }) {
   // and wait for an inbox that will never fill.
   if (mail.stagingLogOnly) {
     return (
-      <div className="rounded-xl border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 px-4 py-3 text-sm sm:px-5">
-        <div className="font-semibold text-sky-800 dark:text-sky-300">
+      <div className="rounded-xl border border-azure-300 dark:border-azure-800 bg-azure-50 dark:bg-transparent px-4 py-3 text-sm sm:px-5">
+        {/* -200, not -300, for the same reason the two sibling panels below
+            take it: this card, the meadow "configured" one and the amber
+            "not deliverable" one are the same rounded-xl/border/bg-*-50/
+            dark:bg-transparent shape, so their headings must read at one
+            weight. Against azure-800's 77.8 on white, azure-300 is Lc 66.5
+            on the dark card and azure-200 is 81.4 — an 11.3 mismatch versus
+            3.6. It is also the spelling the byte-identical panel in
+            admin-mail.tsx (StatusCard) carries; the two render the same copy
+            and were left disagreeing. Measured with the APCA-W3 0.1.9 port
+            in tests/theme-ink-guards.test.js.
+
+            The BODY carries no /80 either, for the same twin reason: its
+            counterpart in admin-mail.tsx dropped the opacity from both halves
+            and this copy kept it, so the two panels rendering identical copy
+            disagreed again one line further down. azure-800/80 measures Lc
+            60.7 on the azure-50 wash where the amber and red siblings' own /80
+            bodies read 72.6 and 73.0 — azure is the one arm whose light ink is
+            deliberately the lowest of the three (it stays near the brand hex),
+            so four fifths of it drops below the tier they stay above. Weight,
+            not opacity, is what separates the heading from the sentence.
+            KNOWN and left for the owner: on the DARK ground the opacity was
+            doing no harm — azure-200/80 is -59.6 against those siblings'
+            -59.0 and -58.5 — so dropping it there puts this paragraph at
+            -81.4, about 22 Lc louder than the two panels beside it. Fixing
+            that means an asymmetric spelling (full light, /80 dark) in both
+            twins, which is a call above this sweep. */}
+        <div className="font-semibold text-azure-800 dark:text-azure-200">
           Staging preview: email is rendered to the log, never delivered
         </div>
-        <p className="text-sky-800/80 dark:text-sky-300/80 mt-1">
+        <p className="text-azure-800 dark:text-azure-200 mt-1">
           This preview holds a clone of production data, so it must not mail real
           people. Login codes and links appear in the platform log
           (<Code>platform-mail</Code>) so you can complete a flow by hand.
@@ -97,10 +123,10 @@ function MailCard({ mail }: { mail: MailStatus | null }) {
   if (mail.configured) {
     return (
       <div className={`${PANEL_CLS} px-4 py-3 text-sm sm:px-5`}>
-        <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+        <span className="font-semibold text-meadow-700 dark:text-meadow-200">
           Email is configured:
         </span>
-        <span className="text-zinc-500 dark:text-zinc-400">
+        <span className="text-zinc-500 dark:text-zinc-300">
           {' login codes and waitlist confirmations are being sent via '}
           <span className="font-medium">{mail.provider || 'unknown'}</span>.
         </span>
@@ -112,23 +138,23 @@ function MailCard({ mail }: { mail: MailStatus | null }) {
   // Per-provider readiness, so the card says which provider needs what
   // instead of a flat "mail is broken".
   return (
-    <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm sm:px-5">
-      <div className="font-semibold text-amber-800 dark:text-amber-300">
+    <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-transparent px-4 py-3 text-sm sm:px-5">
+      <div className="font-semibold text-amber-800 dark:text-amber-200">
         Email is not deliverable: no mail sender configured
       </div>
-      <p className="text-amber-800/80 dark:text-amber-300/80 mt-1">
+      <p className="text-amber-800/80 dark:text-amber-200/80 mt-1">
         These flows still report success to the user but deliver nothing:
       </p>
-      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
+      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-200/80">
         {(mail.affectedFlows || []).map((f) => <li key={f}>{f}</li>)}
       </ul>
-      <p className="text-amber-800/80 dark:text-amber-300/80 mt-2">Providers:</p>
-      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">
+      <p className="text-amber-800/80 dark:text-amber-200/80 mt-2">Providers:</p>
+      <ul className="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-200/80">
         {(mail.providers || []).map((p) => (
           <li key={p.name}>
             {`${p.label || p.name}: `}
             {p.configured
-              ? <span className="text-emerald-700 dark:text-emerald-400">ready</span>
+              ? <span className="text-meadow-700 dark:text-meadow-200">ready</span>
               : (
                 <>
                   {'needs '}
@@ -140,7 +166,7 @@ function MailCard({ mail }: { mail: MailStatus | null }) {
           </li>
         ))}
       </ul>
-      <p className="text-amber-800/80 dark:text-amber-300/80 mt-2">
+      <p className="text-amber-800/80 dark:text-amber-200/80 mt-2">
         {'Set '}
         {(mail.missing || []).map((k, i) => (
           <span key={k}>{i ? ', ' : ''}<Code>{k}</Code></span>
@@ -297,8 +323,8 @@ function SettingsScreen() {
   const columns: Column<Setting>[] = [
     { label: 'Key', primary: true, cell: (s) => s.key, tdClass: 'text-xs font-mono' },
     { label: 'Value', cell: (s) => s.value, tdClass: 'font-mono text-right', thClass: 'text-right' },
-    { label: 'Description', cell: (s) => s.description || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
-    { label: 'Updated', cell: (s) => fmt(s.updated_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Description', cell: (s) => s.description || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
+    { label: 'Updated', cell: (s) => fmt(s.updated_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
   ];
 
   const editingItem = editing === 'new'

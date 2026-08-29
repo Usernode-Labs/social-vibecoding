@@ -62,6 +62,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Bars3Icon } from '@/components/ui/icons';
 
+import { auraFor } from '../apps/app-card.js';
+import { EmojiTileGlyph } from '../apps/app-card-view';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { gridStore, type GridItem, type HomeAppView, type IconView } from './grid-store';
@@ -83,7 +85,9 @@ function AppIcon({ icon }: { icon: IconView }) {
     // rather than being cropped by it (same note as AppCard.iconTileFor).
     return <img src={icon.src} alt="" className="w-full h-full object-cover" />;
   }
-  if (icon.kind === 'emoji') return <span className="text-3xl leading-none">{icon.emoji}</span>;
+  if (icon.kind === 'emoji') {
+    return <EmojiTileGlyph emoji={icon.emoji} textClass="text-3xl leading-none" />;
+  }
   return <>{icon.letter}</>;
 }
 
@@ -199,7 +203,7 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
     >
       {app.showRetry ? (
         <button
-          className="retry-btn absolute top-2 right-2 text-xs text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors"
+          className="retry-btn absolute top-2 right-2 text-xs text-meadow-700 hover:text-meadow-800 dark:text-meadow-200 dark:hover:text-meadow-100 px-2 py-0.5 rounded-md hover:bg-meadow-500/10 transition-colors"
           data-slug={app.slug}
           onClick={(e) => { e.stopPropagation(); controller()?._onRetry?.(app.slug, e.currentTarget); }}
         >
@@ -213,20 +217,21 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
             against it, so growing it to the deck's 4rem is a layout change,
             not a reskin, and belongs in its own commit.
 
-            No `data-tint`: the reskin gave every tile a slug-derived identity
-            colour, and a launcher of six pastels reads as six unrelated
-            things rather than as one shelf. `.app-icon-tile` alone is the
-            single off-white face with a hairline — the same one on every
-            surface, which is the point.
+            `data-aura`, not the retired `data-tint`: the reskin's six-pastel
+            slug tint read as six unrelated things, and the subtle-y2k v2
+            aura rotation is its owner-sanctioned successor — four gradients
+            from ONE family (AppCard.auraFor), drawn as a soft wash by
+            app.css, on the same face-with-hairline every surface shares.
         */}
         <div
           className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
           data-icon={app.icon.kind}
+          data-aura={auraFor(app)}
         >
           <AppIcon icon={app.icon} />
         </div>
         <button
-          className="card-menu-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors"
+          className="card-menu-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors dark:shadow-none"
           data-slug={app.slug}
           title="App actions"
           aria-label="App actions"
@@ -240,11 +245,20 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
             controller()?.openCardMenu?.(app.slug, e.currentTarget);
           }}
         >
-          <Bars3Icon className="w-3.5 h-3.5" aria-hidden="true" />
+          <Bars3Icon className="w-4 h-4" aria-hidden="true" />
         </button>
         {app.forkName ? (
           <span
-            className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm"
+            // amber-700, not -500. White ink on `amber-500` measures Lc -54.9
+            // (APCA-W3 0.1.9) — the NON-CONTENT tier — and no INK rescues that
+            // fill, because near-black on it is only 54.2: both candidates sit
+            // in the same tier, so the FILL is what has to move. -700 carries
+            // white at -85.3, which is the step the product's other
+            // white-on-colour discs settled on (the bell's `bg-red-700` at
+            // -85.2, the Improve badge's `bg-meadow-700` at -87.8). -600 would
+            // have cleared the 75 floor at -77.5 and left this one disc a rung
+            // below its siblings.
+            className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-700 text-white text-xs font-bold shadow-sm dark:shadow-none"
             title={`Forked from ${app.forkName}`}
             aria-label={`Forked from ${app.forkName}`}
           >
@@ -323,16 +337,22 @@ export function AppGrid() {
       {state.notice ? (
         <div
           className={`col-span-full p-4 text-sm ${
-            state.notice.tone === 'error' ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'
+            state.notice.tone === 'error' ? 'text-red-700 dark:text-red-200' : 'text-zinc-500 dark:text-zinc-300'
           }`}
         >
           {state.notice.text}
         </div>
       ) : null}
       {state.emptyQuery !== null ? (
-        <div className="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
+        <div className="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-300">
           {`No apps match “${state.emptyQuery}”. Clear the search and try `}
-          <span className="text-violet-700 dark:text-violet-400">Discover</span>
+          {/* A MARK, not a link — it names the section below rather than
+              opening it, so it keeps the 700 light ink. The dark half moves
+              400 -> 300: `azure-400` measures Lc -51.8 on the dark card
+              against its light partner's 68.0, and `azure-300` is -66.5,
+              which is the pair at parity. (The 800/200 pair is the LINK ink;
+              see the text buttons in ./panels/ui.tsx.) */}
+          <span className="text-azure-700 dark:text-azure-300">Discover</span>
           {' below.'}
         </div>
       ) : null}

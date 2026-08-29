@@ -47,7 +47,7 @@ const BuildLog = {
     let bodyHtml;
     if (!failure) {
       bodyHtml = `
-        <p class="text-sm text-zinc-500 dark:text-zinc-400">
+        <p class="text-sm text-zinc-500 dark:text-zinc-300">
           No build failure detail is recorded for this app. Failures that
           happened before this feature shipped weren't captured. Retry the
           deploy to record a fresh log.
@@ -66,13 +66,13 @@ const BuildLog = {
       }
       const logText = String(failure.log || '').trim();
       bodyHtml = `
-        <div class="text-xs text-zinc-500 dark:text-zinc-400 space-y-1">
+        <div class="text-xs text-zinc-500 dark:text-zinc-300 space-y-1">
           ${metaBits.map((m) => `<div>${m}</div>`).join('')}
         </div>
-        <p class="mt-2 text-sm font-mono text-red-700 break-words dark:text-red-400">${blEscape(String(failure.reason || '').slice(0, 280))}</p>
+        <p class="mt-2 text-sm font-mono text-red-700 break-words dark:text-red-200">${blEscape(String(failure.reason || '').slice(0, 280))}</p>
         ${logText
           ? `<pre id="build-log-pre" class="mt-3 max-h-72 overflow-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 p-3 text-[0.7rem] leading-relaxed font-mono whitespace-pre-wrap break-words select-text text-zinc-700 dark:text-zinc-300">${blEscape(logText)}</pre>`
-          : '<p class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">No log output was captured for this failure.</p>'}
+          : '<p class="mt-3 text-xs text-zinc-500 dark:text-zinc-300">No log output was captured for this failure.</p>'}
       `;
     }
 
@@ -80,14 +80,14 @@ const BuildLog = {
     overlay.id = 'build-log-overlay';
     overlay.className = 'fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4';
     overlay.innerHTML = `
-      <div class="w-full max-w-2xl rounded-2xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shadow-xl flex flex-col max-h-[85vh]">
+      <div class="w-full max-w-2xl rounded-2xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shadow-xl dark:shadow-none flex flex-col max-h-[85vh]">
         <div class="flex items-center justify-between gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">
           <div class="min-w-0">
             <h2 class="text-sm font-semibold text-zinc-800 dark:text-zinc-100 truncate">Build log</h2>
-            <p class="text-xs text-zinc-500 dark:text-zinc-400 font-mono truncate">${blEscape(slug)}</p>
+            <p class="text-xs text-zinc-500 dark:text-zinc-300 font-mono truncate">${blEscape(slug)}</p>
           </div>
-          <button id="build-log-close" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-500/10" aria-label="Close">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+          <button id="build-log-close" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:text-zinc-300 dark:hover:text-zinc-200 hover:bg-zinc-500/10" aria-label="Close">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </button>
         </div>
         <div class="px-4 py-3 overflow-y-auto">${bodyHtml}</div>
@@ -96,7 +96,16 @@ const BuildLog = {
             ? '<button id="build-log-copy" class="rounded-lg border border-zinc-300 dark:border-zinc-600 px-3 py-1.5 text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-500/10">Copy log</button>'
             : ''}
           ${canRetry
-            ? '<button id="build-log-retry" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium text-white">Retry deploy</button>'
+            // meadow, the product's one green, replacing stock emerald: white
+            // on emerald-600 measured Lc -70.1 and dropped to -54.2 on hover.
+            // The hover DARKENS (600 → 700), same direction as
+            // AdminUI.btn.destructive and the db-export red button: under
+            // white ink a lighter hover made the control harder to read
+            // exactly when the pointer reached it (meadow-500 is -60.0 to
+            // meadow-600's -80.7). Whether a FILLED action may be green at
+            // all is a four-colour-roles question and is deliberately left
+            // open here.
+            ? '<button id="build-log-retry" class="rounded-lg bg-meadow-600 hover:bg-meadow-700 px-3 py-1.5 text-sm font-medium text-white">Retry deploy</button>'
             : ''}
         </div>
       </div>`;

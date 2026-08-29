@@ -37,10 +37,13 @@
  * inside it. Nothing else on a card needs one.
  */
 
-/** A resolved type-chip: the tint classes and the SVG path, from DEV_CARD_ICONS. */
+/** A resolved type-chip: the tint classes and the lucide shapes, from DEV_CARD_ICONS. */
 export interface CardIconSpec {
   tint: string;
-  path: string;
+  /** The glyph's SVG children — see GlyphShapes in @/components/ui/icons.tsx. */
+  shapes: ReadonlyArray<readonly [string, Record<string, string | number>]>;
+  /** subtle-y2k v2: the OpenMoji glyph for the kind; the shapes are its fallback. */
+  emoji?: string;
   /** #250 — the whole chip animates while an auto-solve run is generating. */
   pulse?: boolean;
   title?: string;

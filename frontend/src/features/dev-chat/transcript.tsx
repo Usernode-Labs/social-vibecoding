@@ -380,9 +380,14 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   const more = useDetails(r.more ? r.more.details : { persistId: '', defaultOpen: false });
   const reasoning = useDetails(r.reasoning ? r.reasoning.details : { persistId: '', defaultOpen: false });
   const who = r.who === 'user' ? 'You' : r.who === 'cc' ? 'Claude Code' : 'AI';
+  // The azure branch is inert in the rendered bubble — app.css's
+  // `.dc-msg-user .dc-msg-header > *` sets `--link-ink` at (0,2,0), which
+  // outranks a Tailwind ink utility — but the spelling still moves: -400 is
+  // the tier this ramp does not pair a 700 with, and leaving a banned
+  // spelling parked where nothing renders it is how it gets copied.
   const whoClass = r.who === 'user'
-    ? 'text-violet-700 dark:text-violet-400'
-    : r.who === 'cc' ? 'text-emerald-700 dark:text-emerald-400' : 'text-emerald-700 dark:text-emerald-400';
+    ? 'text-azure-700 dark:text-azure-300'
+    : r.who === 'cc' ? 'text-meadow-700 dark:text-meadow-200' : 'text-meadow-700 dark:text-meadow-200';
   return (
     <div className={`dc-msg ${r.who === 'user' ? 'dc-msg-user' : 'dc-msg-assistant'}`}>
       <div className="dc-msg-header">

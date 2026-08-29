@@ -27,6 +27,8 @@ import { useEffect, useRef } from 'react';
 
 import { CheckIcon, InfoCircleIcon } from '@/components/ui/icons';
 
+import { auraFor } from '../apps/app-card.js';
+import { EmojiTileGlyph } from '../apps/app-card-view';
 import { useStoreState } from '../../lib/use-store-state';
 import { chromeStore, type WidgetStripState, type WidgetTileView } from './chrome-store';
 import type { IconView } from './grid-store';
@@ -52,7 +54,15 @@ function TileIcon({ icon }: { icon: IconView }) {
     );
   }
   if (icon.kind === 'emoji') {
-    return <span className="text-xl leading-none" aria-hidden="true">{icon.emoji}</span>;
+    // p-0.5, not the default p-1: the strip's tiles are w-10, where 8px of
+    // padding would shrink the artwork below the text glyph it replaces.
+    return (
+      <EmojiTileGlyph
+        emoji={icon.emoji}
+        textClass="text-xl leading-none"
+        imgClass="w-full h-full object-contain p-0.5"
+      />
+    );
   }
   return <>{icon.letter}</>;
 }
@@ -75,13 +85,14 @@ export function WidgetTile({ tile }: { tile: WidgetTileView }) {
       <div
         className="app-icon-tile w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base"
         data-icon={tile.icon.kind}
+        data-aura={tile.slug ? auraFor(tile.slug) : undefined}
       >
         <TileIcon icon={tile.icon} />
       </div>
       <span className="text-[0.65rem] leading-tight truncate w-full text-center">{tile.name}</span>
       <button
         type="button"
-        className="widget-remove-btn absolute -top-1.5 right-0 w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-[0.6rem] text-zinc-500 dark:text-zinc-300 hover:text-red-500"
+        className="widget-remove-btn absolute -top-1.5 right-0 w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-[0.6rem] text-zinc-500 dark:text-zinc-300 hover:text-red-500 dark:shadow-none"
         data-wid={tile.id}
         title="Remove from widget"
         aria-label={`Remove ${tile.name} from widget`}
@@ -116,7 +127,7 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
           <button
             type="button"
             id="widget-section-help"
-            className="w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 dark:text-zinc-500 hover:text-violet-500 dark:hover:text-violet-400 transition-colors"
+            className="w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 dark:text-zinc-300 hover:text-azure-700 dark:hover:text-azure-300 transition-colors"
             title="How to add the widget to your home screen"
             aria-label="How to add the widget to your home screen"
             aria-expanded={strip.helpVisible}
@@ -128,13 +139,13 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
               home.render();
             }}
           >
-            <InfoCircleIcon className="w-3.5 h-3.5" aria-hidden="true" />
+            <InfoCircleIcon className="w-4 h-4" aria-hidden="true" />
           </button>
         </span>
         <button
           type="button"
           id="widget-section-close"
-          className="flex items-center gap-1 text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
+          className="flex items-center gap-1 text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
           title="Close the widget section"
           aria-label="Close the widget section"
           onClick={(e) => {
@@ -149,7 +160,7 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
           }}
         >
           {'Done'}
-          <CheckIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          <CheckIcon className="w-4 h-4" aria-hidden="true" />
         </button>
       </div>
       <div
@@ -159,7 +170,7 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
         {strip.helpVisible ? (
           <div
             id="widget-help-panel"
-            className="w-full text-[0.7rem] leading-relaxed text-zinc-600 dark:text-zinc-300 rounded-lg bg-violet-500/5 dark:bg-violet-500/10 border border-violet-500/20 px-3 py-2"
+            className="w-full text-[0.7rem] leading-relaxed text-zinc-600 dark:text-zinc-300 rounded-lg bg-azure-500/5 dark:bg-azure-500/10 border border-azure-500/20 px-3 py-2"
           >
             <span className="font-medium">Add the widget to your home screen:</span>
             {' touch and hold an empty area of your iPhone home screen, tap '}
@@ -177,7 +188,7 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
         ) : null}
         {strip.tiles.map((tile) => <WidgetTile key={tile.id} tile={tile} />)}
         <div
-          className={`widget-strip-hint w-full text-[0.7rem] text-zinc-500 dark:text-zinc-400 ${
+          className={`widget-strip-hint w-full text-[0.7rem] text-zinc-500 dark:text-zinc-300 ${
             strip.tiles.length ? '' : 'py-3 text-center'
           }`}
         >

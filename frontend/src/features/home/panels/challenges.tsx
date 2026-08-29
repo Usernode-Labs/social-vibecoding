@@ -38,7 +38,7 @@ import {
 function ChallengeRow({ row }: { row: ChallengeRowView }) {
   return (
     <div
-      className="home-panel-row flex items-center gap-2 px-2.5 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors"
+      className="home-panel-row flex items-center gap-2 px-2.5 cursor-pointer hover:bg-azure-500/[0.04] dark:hover:bg-azure-500/10 transition-colors"
       data-challenge-id={row.id}
       title={row.tip}
       onClick={() => panels()?.goToChallenges?.()}
@@ -53,7 +53,15 @@ function ChallengeRow({ row }: { row: ChallengeRowView }) {
       */}
       {row.done ? (
         <span
-          className="home-panel-glyph shrink-0 w-2.5 h-2.5 flex items-center justify-center text-emerald-700 text-[11px] leading-none dark:text-emerald-400"
+          // `meadow`, not stock `emerald`. The scale keys in
+          // tailwind.config.js are identities rather than hues, and `emerald`
+          // is not one of the seven overridden ramps — so this ✓ was
+          // rendering an untuned stock green beside the kit's own, which is
+          // a difference no reviewer catches in a diff of class strings. The
+          // dark half goes to 200 rather than 400 in the same move: 700/200
+          // measures Lc 82.8 / -82.9, a pair at parity, where 700/-400 was
+          // two different readability tiers.
+          className="home-panel-glyph shrink-0 w-2.5 h-2.5 flex items-center justify-center text-meadow-700 text-[11px] leading-none dark:text-meadow-200"
           aria-hidden="true"
         >
           ✓
@@ -68,7 +76,7 @@ function ChallengeRow({ row }: { row: ChallengeRowView }) {
         {row.goal}
       </span>
       {row.meter ? (
-        <span className="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+        <span className="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-zinc-500 dark:text-zinc-300">
           {`${row.meter.current}/${row.meter.target}`}
         </span>
       ) : null}
@@ -78,7 +86,11 @@ function ChallengeRow({ row }: { row: ChallengeRowView }) {
           tight row wraps the chip to a second line the fixed row height clips.
       */}
       {row.reward ? (
-        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-700 dark:text-violet-400">
+        // A mark, not a link, so the light half keeps 700 — but the dark half
+        // moves 400 -> 300: on the dark card -400 is Lc -51.8 against its
+        // light partner's 68.0, and -300 is -66.5, which is that pair at
+        // parity. (The 800/200 pair is the LINK ink; see ./ui.tsx.)
+        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-azure-700 dark:text-azure-300">
           {row.reward}
         </span>
       ) : null}
@@ -98,7 +110,7 @@ function ChallengeRow({ row }: { row: ChallengeRowView }) {
           aria-label={`${row.goal || 'Challenge'}: ${row.meter.current} of ${row.meter.target}${row.meter.label}`}
         >
           <span
-            className="home-panel-bar-fill block h-full bg-violet-500"
+            className="home-panel-bar-fill block h-full bg-azure-500"
             style={{ width: `${row.meter.pct}%` }}
           />
         </span>
@@ -116,15 +128,15 @@ function ChallengeRow({ row }: { row: ChallengeRowView }) {
 function FillRow({ row, kind }: { row: FillRowView; kind: 'topochain' | 'kudos' }) {
   return (
     <div
-      className={`home-panel-row home-panel-lb-row flex items-center gap-2 px-2.5 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors${
-        row.you ? ' home-panel-lb-you bg-violet-500/[0.06] dark:bg-violet-500/10' : ''
+      className={`home-panel-row home-panel-lb-row flex items-center gap-2 px-2.5 cursor-pointer hover:bg-azure-500/[0.04] dark:hover:bg-azure-500/10 transition-colors${
+        row.you ? ' home-panel-lb-you bg-azure-500/[0.06] dark:bg-azure-500/10' : ''
       }`}
       data-lb-kind={kind}
       title={row.tip}
       onClick={() => panels()?.goToLeaderboard?.(kind)}
     >
       <span
-        className="home-panel-glyph shrink-0 w-2.5 text-[10px] leading-none tabular-nums text-right text-zinc-500 dark:text-zinc-500"
+        className="home-panel-glyph shrink-0 w-2.5 text-[10px] leading-none tabular-nums text-right text-zinc-500 dark:text-zinc-300"
         aria-hidden="true"
       >
         {row.rankLabel}
@@ -137,15 +149,19 @@ function FillRow({ row, kind }: { row: FillRowView; kind: 'topochain' | 'kudos' 
         {row.name}
       </span>
       {/*
-          A zero score is muted rather than a violet chip: "0" shouted in the
+          A zero score is muted rather than an accent chip: "0" shouted in the
           accent colour reads as a warning, not as a starting point.
+          (That line said "violet chip" while violet WAS the accent. `violet-*`
+          is the YELLOW ramp now and this mark is `azure`, so the word is
+          corrected rather than left standing as a trap.)
       */}
       {row.hasScore ? (
-        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-700 dark:text-violet-400">
+        // Same mark tier as the reward chip above: 700 light, 300 dark.
+        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-azure-700 dark:text-azure-300">
           {row.scoreText}
         </span>
       ) : (
-        <span className="shrink-0 whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-500">
+        <span className="shrink-0 whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-300">
           0
         </span>
       )}
@@ -156,7 +172,7 @@ function FillRow({ row, kind }: { row: FillRowView; kind: 'topochain' | 'kudos' 
 function FillBlock({ fill }: { fill: FillView }) {
   return (
     <div className="home-panel-fill flex-none" data-fill-kind={fill.kind}>
-      <div className="home-panel-fill-label flex items-center px-2.5 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">
+      <div className="home-panel-fill-label flex items-center px-2.5 text-[0.9375rem] text-zinc-500 dark:text-zinc-300">
         {fill.label}
       </div>
       {fill.rows.map((row, i) => (
@@ -188,7 +204,7 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       >
         <div className="home-panel-body">
           <p
-            className="home-panel-rows home-panel-row flex items-center px-2.5 text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors"
+            className="home-panel-rows home-panel-row flex items-center px-2.5 text-[13px] text-zinc-500 dark:text-zinc-300 cursor-pointer hover:bg-azure-500/[0.04] dark:hover:bg-azure-500/10 transition-colors"
             title="Go to the Challenges tab on the Leaderboard screen"
             onClick={() => panels()?.goToChallenges?.()}
           >

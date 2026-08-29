@@ -383,7 +383,7 @@ export function MoreScreen() {
     >
       <a
         href="#landing"
-        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
+        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-300 hover:text-azure-800 dark:hover:text-azure-200"
         style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
       >
         &larr; Back
@@ -392,7 +392,7 @@ export function MoreScreen() {
         <p
           className={hiddenLast(
             saved,
-            'text-xs font-semibold uppercase tracking-widest text-violet-700 dark:text-violet-400',
+            'text-xs font-semibold uppercase tracking-widest text-azure-700 dark:text-azure-300',
           )}
         >
           Optional (moves you up the list)
@@ -400,7 +400,7 @@ export function MoreScreen() {
         <h1 className={hiddenLast(saved, 'mt-1 text-2xl font-bold')}>
           Want in sooner?
         </h1>
-        <p className={hiddenLast(saved, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
+        <p className={hiddenLast(saved, 'mt-3 text-sm text-zinc-500 dark:text-zinc-300')}>
           Four more questions, about three minutes. These are the answers we
         actually read when we pick the next group, so they&rsquo;re worth more
         than the order you signed up in. Every one is optional, and you can
@@ -411,7 +411,7 @@ export function MoreScreen() {
           id="more-invalid"
           className={hiddenFirst(
             status !== 'invalid' && status !== 'throttled',
-            'mt-6 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-300',
+            'mt-6 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200',
           )}
         >
           {status === 'throttled' ? (
@@ -439,7 +439,7 @@ export function MoreScreen() {
               it used to be required. Joining takes an email now; this is one
               of the things that helps you move up instead. */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 dark:text-zinc-300 mb-1.5">
               Question 1 of 4
             </p>
             <label
@@ -448,7 +448,7 @@ export function MoreScreen() {
             >
               Link something you&rsquo;ve made
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-0.5 mb-1.5">
               A repo, a site, a bot, a mod, a newsletter, a spreadsheet that runs your fantasy league. Built with AI counts, we care that it exists, not how you made it.
             </p>
             <input
@@ -457,7 +457,7 @@ export function MoreScreen() {
               type="url"
               maxLength={2000}
               placeholder="https://"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
             />
             <input
               ref={madeNote}
@@ -465,18 +465,18 @@ export function MoreScreen() {
               type="text"
               maxLength={140}
               placeholder="What is it, in one line? (optional)"
-              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
             />
           </div>
           {/* 5 · The group */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 dark:text-zinc-300 mb-1.5">
               Question 2 of 4
             </p>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Tell us about a group you&rsquo;re part of that could use its own app.
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-0.5 mb-2">
               A team, a server, a club, a group chat, a co-op, a band, a league, a neighbourhood. Not a hypothetical one, a real group you&rsquo;re actually in.
             </p>
             <input
@@ -485,13 +485,13 @@ export function MoreScreen() {
               type="text"
               maxLength={255}
               placeholder="A 200-person Discord for indie game devs in Lagos"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
             />
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <select
                 ref={groupSize}
                 id="more-group-size"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
               >
                 <option value="">
                   Roughly how many people?
@@ -501,7 +501,7 @@ export function MoreScreen() {
               <select
                 ref={groupRole}
                 id="more-group-role"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
               >
                 <option value="">
                   Your role in it
@@ -509,7 +509,7 @@ export function MoreScreen() {
                 {optionList(opts?.group_roles)}
               </select>
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3 mb-1.5">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-3 mb-1.5">
               What does it run on today? (pick any)
             </p>
             <MultiChipRow
@@ -524,19 +524,19 @@ export function MoreScreen() {
               rows={3}
               maxLength={800}
               placeholder="What would its own app do that those tools can't? Money, membership, voting, scheduling, reputation, records…"
-              className="mt-3 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="mt-3 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
             >
             </textarea>
           </div>
           {/* 6 · The loss */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 dark:text-zinc-300 mb-1.5">
               Question 3 of 4
             </p>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Ever had a tool you relied on get killed, paywalled, or ruined?
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-0.5 mb-2">
               An app, a platform, a service, a game, a community. The kind of thing that made you look for something like this in the first place.
             </p>
             <ChipRow
@@ -555,9 +555,9 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Which one? Google Reader, a Discord server, a game's private servers, an API…"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
               />
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
+              <p className="text-xs text-zinc-500 dark:text-zinc-300 pt-1">
                 What happened? (pick any)
               </p>
               <MultiChipRow
@@ -572,20 +572,20 @@ export function MoreScreen() {
                 rows={3}
                 maxLength={800}
                 placeholder="What happened, and what did you do next? Where did everyone go? Did you move them somewhere? Rebuild it? Give up?"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
               >
               </textarea>
             </div>
           </div>
           {/* 7 · Handles */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 dark:text-zinc-300 mb-1.5">
               Question 4 of 4
             </p>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Where else are you?
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-0.5 mb-2">
               Connecting an account proves you&rsquo;re a person with a history, which is most of what gets a signup read quickly. It confirms the account is yours and nothing else, so follow us if you want to, but we won&rsquo;t claim we checked.
             </p>
             {/*
@@ -608,7 +608,7 @@ export function MoreScreen() {
                 connect.verified[provider] ? (
                   <span
                     key={provider}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 dark:border-emerald-500/40 bg-emerald-50 dark:bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-meadow-300 dark:border-meadow-500/40 bg-meadow-50 dark:bg-meadow-500/10 px-3 py-1.5 text-xs font-medium text-meadow-700 dark:text-meadow-200"
                   >
                     {'✓ ' + label + ' · ' + connect.verified[provider]}
                   </span>
@@ -635,7 +635,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Farcaster (@handle)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
               />
               <input
                 ref={discord}
@@ -643,7 +643,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Discord (username)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
               />
               <input
                 ref={telegram}
@@ -651,7 +651,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Telegram (@handle)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
               />
               <input
                 ref={other}
@@ -659,7 +659,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Anywhere else: Twitch, YouTube, Mastodon…"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
               />
             </div>
             {/*
@@ -707,7 +707,7 @@ export function MoreScreen() {
                 ref={followed}
                 id="more-followed"
                 type="checkbox"
-                className="mt-0.5 size-4 shrink-0 rounded accent-violet-600"
+                className="mt-0.5 size-4 shrink-0 rounded accent-azure-600"
               />
               I followed along
             </label>
@@ -718,7 +718,7 @@ export function MoreScreen() {
               renders empty until the load effect fills it, so the first
               render still matches the prerender. */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 mb-1.5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 dark:text-zinc-300 mb-1.5">
               One more thing
             </p>
             <label
@@ -727,7 +727,7 @@ export function MoreScreen() {
             >
               Bring someone you&rsquo;d build with
             </label>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-0.5 mb-2">
               We try to admit people together. Things are more fun with people you know. Share your link, and if they join we&rsquo;ll connect your applications so we can try to bring you in together.
             </p>
             <div className="flex gap-2">
@@ -737,7 +737,7 @@ export function MoreScreen() {
                 readOnly={true}
                 value={inviteUrl}
                 placeholder="Your link appears here"
-                className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent"
               />
               <Button
                 type="button"
@@ -749,7 +749,7 @@ export function MoreScreen() {
                 {copied ? 'Copied' : 'Copy'}
               </Button>
             </div>
-            <div id="more-invite-joined" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+            <div id="more-invite-joined" className="mt-2 text-xs text-zinc-500 dark:text-zinc-300">
               {inviteCount > 0 ? (
                 <>
                   <span className="font-medium text-zinc-700 dark:text-zinc-200">
@@ -764,7 +764,7 @@ export function MoreScreen() {
                 ref={admitTogether}
                 id="more-admit-together"
                 type="checkbox"
-                className="mt-0.5 size-4 shrink-0 rounded accent-violet-600"
+                className="mt-0.5 size-4 shrink-0 rounded accent-azure-600"
               />
               Only let me in when at least one person from my link gets in too
             </label>
@@ -782,7 +782,7 @@ export function MoreScreen() {
             <p id="more-msg" className={msgClass(msg ? msg.tone : null)}>
               {msg ? msg.text : null}
             </p>
-            <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-3">
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-3">
               A blank answer just means we have less to go on, and nothing here is required.
             </p>
           </div>
@@ -793,8 +793,8 @@ export function MoreScreen() {
             the only two things left to want — change an answer, or leave.
         */}
         <div id="more-saved" className={hiddenFirst(!saved, 'mt-6')}>
-          <div className="rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 p-5">
-            <h2 className="text-xl font-bold text-emerald-700 dark:text-emerald-400">
+          <div className="rounded-lg border border-meadow-200 dark:border-meadow-500/30 bg-meadow-50 dark:bg-meadow-500/10 p-5">
+            <h2 className="text-xl font-bold text-meadow-700 dark:text-meadow-200">
               Saved, thanks &#127881;
             </h2>
             <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
@@ -802,7 +802,7 @@ export function MoreScreen() {
             group. Your spot is safe either way, and we&rsquo;ll email you when
             it opens.
             </p>
-            <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+            <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-300">
               Thought of something later? The link in your waitlist email
             reopens this form, and answers merge, so nothing you already typed
             is lost.
@@ -822,7 +822,7 @@ export function MoreScreen() {
             <a
               id="more-saved-back"
               href="#landing"
-              className="text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
+              className="text-sm text-zinc-500 dark:text-zinc-300 hover:text-azure-800 dark:hover:text-azure-200"
             >
               Back to Social Vibecoding
             </a>

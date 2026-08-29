@@ -71,7 +71,7 @@ function context(): any {
 
 function Hero({ hero }: { hero: HeroView }) {
   if (hero.kind === 'loading') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-300">Loading…</p>;
   }
   if (hero.kind === 'error') {
     return (
@@ -81,7 +81,7 @@ function Hero({ hero }: { hero: HeroView }) {
     );
   }
   if (hero.kind === 'empty') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">No event selected.</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-300">No event selected.</p>;
   }
   return (
     <div className="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
@@ -94,7 +94,7 @@ function Hero({ hero }: { hero: HeroView }) {
       {hero.description ? (
         <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-2">{hero.description}</p>
       ) : null}
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+      <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-2">
         {hero.dates}
         {hero.participants}
       </p>
@@ -104,13 +104,13 @@ function Hero({ hero }: { hero: HeroView }) {
           still the dataset on screen.
       */}
       {hero.seasonNote ? (
-        <p id="tc-ev-season-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+        <p id="tc-ev-season-note" className="text-xs text-zinc-500 dark:text-zinc-300 mt-2">
           {'Whole-season standings: every public event in this season, combined. '}
           Pick a single event above to see just its results.
         </p>
       ) : null}
       {hero.fallbackNote ? (
-        <p id="tc-ev-fallback-note" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
+        <p id="tc-ev-fallback-note" className="text-xs text-zinc-500 dark:text-zinc-300 mt-2">
           Nothing is running right now, so this shows the most recent event.
         </p>
       ) : null}
@@ -126,7 +126,7 @@ export function EventBarView({
     <>
       <div className="flex flex-wrap items-center justify-end gap-3 mb-3">
         <label className="flex items-center gap-2 text-sm">
-          <span className="text-zinc-500 dark:text-zinc-400">Event</span>
+          <span className="text-zinc-500 dark:text-zinc-300">Event</span>
           <select
             id="tc-ev-select"
             className="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1.5 text-sm max-w-[16rem]"

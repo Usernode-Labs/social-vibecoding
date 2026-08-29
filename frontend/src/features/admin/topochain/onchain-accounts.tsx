@@ -102,7 +102,7 @@ const Mono = ({ value }: { value: unknown }) => (
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="py-2">
-      <dt className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</dt>
+      <dt className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-300">{label}</dt>
       <dd className="mt-0.5 text-sm break-all">{children}</dd>
     </div>
   );
@@ -115,7 +115,7 @@ function SecretKey({ secret }: { secret: string | null }) {
   const [shown, setShown] = useState(false);
   if (secret == null) {
     return (
-      <span className="text-zinc-500 dark:text-zinc-400">Hidden for view-only admins.</span>
+      <span className="text-zinc-500 dark:text-zinc-300">Hidden for view-only admins.</span>
     );
   }
   return (
@@ -216,20 +216,20 @@ function AccountDetail({ id, seasons, onClose }: {
                 <DetailRow label="Status">
                   {a.is_used ? (
                     <>
-                      <span className="text-amber-800 dark:text-amber-400">used</span>
+                      <span className="text-amber-800 dark:text-amber-200">used</span>
                       {` · ${fmt(a.used_at)}`}
                     </>
-                  ) : <span className="text-green-800 dark:text-green-400">free</span>}
+                  ) : <span className="text-meadow-700 dark:text-meadow-200">free</span>}
                 </DetailRow>
                 <DetailRow label="Delegation">
                   {a.delegated ? (
                     <>
                       <Badge label="Delegated" tone="green" />
-                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                      <span className="text-xs text-zinc-500 dark:text-zinc-300">
                         {` since ${fmt(a.delegated_since)}`}
                       </span>
                     </>
-                  ) : <span className="text-zinc-500 dark:text-zinc-400">Not delegated</span>}
+                  ) : <span className="text-zinc-500 dark:text-zinc-300">Not delegated</span>}
                 </DetailRow>
                 <DetailRow label="Created">{fmt(a.created_at)}</DetailRow>
                 <DetailRow label="Updated">{fmt(a.updated_at)}</DetailRow>
@@ -244,7 +244,7 @@ function AccountDetail({ id, seasons, onClose }: {
                   <DetailRow label="User id"><Mono value={a.user.id} /></DetailRow>
                 </dl>
               ) : (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                <p className="text-sm text-zinc-500 dark:text-zinc-300">
                   Unassigned: no user has claimed this account.
                 </p>
               )}
@@ -340,7 +340,7 @@ function ImportPanel({ onClose, onImported }: { onClose: () => void; onImported:
         </Field>
       </div>
       <FormError message={error} />
-      <div id="admin-topo-oa-imp-result" className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+      <div id="admin-topo-oa-imp-result" className="mt-3 text-xs text-zinc-500 dark:text-zinc-300">
         {result ? (
           <>
             {`Imported ${result.imported}, skipped ${result.skipped}.`}
@@ -458,7 +458,7 @@ function OnchainAccountsScreen() {
         <button
           data-acct-show={a.id}
           type="button"
-          className="text-left break-all underline decoration-dotted underline-offset-2 hover:text-violet-600 dark:hover:text-violet-400 rounded touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+          className="text-left break-all underline decoration-dotted underline-offset-2 hover:text-azure-800 dark:hover:text-azure-200 rounded touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900 dark:focus-visible:ring-zinc-100"
           aria-haspopup="dialog"
           onClick={() => setDetailId(a.id)}
         >
@@ -467,22 +467,22 @@ function OnchainAccountsScreen() {
       ),
       tdClass: 'text-xs font-mono',
     },
-    { label: 'Tier', cell: (a) => a.tier, tdClass: 'text-zinc-500 dark:text-zinc-400' },
+    { label: 'Tier', cell: (a) => a.tier, tdClass: 'text-zinc-500 dark:text-zinc-300' },
     { label: 'Amount', cell: (a) => a.amount, tdClass: 'font-mono text-right', thClass: 'text-right' },
-    { label: 'Event', cell: (a) => (a.event ? a.event.name : '—'), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Event', cell: (a) => (a.event ? a.event.name : '—'), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
     {
       label: 'Status',
       cell: (a) => (a.is_used
-        ? <span className="text-amber-800 dark:text-amber-400">used</span>
-        : <span className="text-green-800 dark:text-green-400">free</span>),
+        ? <span className="text-amber-800 dark:text-amber-200">used</span>
+        : <span className="text-meadow-700 dark:text-meadow-200">free</span>),
     },
     {
       label: 'Delegation',
       cell: (a) => (a.delegated
         ? <Badge label="Delegated" tone="green" />
-        : <span className="text-zinc-500 dark:text-zinc-400">—</span>),
+        : <span className="text-zinc-500 dark:text-zinc-300">—</span>),
     },
-    { label: 'User', cell: (a) => (a.user ? a.user.username : '—'), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'User', cell: (a) => (a.user ? a.user.username : '—'), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
   ];
 
   const filtered = !!(search || seasonFilter || eventFilter || delegatedFilter);

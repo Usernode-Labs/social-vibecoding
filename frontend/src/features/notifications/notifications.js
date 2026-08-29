@@ -1517,8 +1517,8 @@ function rowView(n) {
   // notification never "loses its line" when read. Only the background
   // tint stays unread-conditional (the unread dot below is the other cue).
   const unreadCls = n.readAt
-    ? 'border-l-2 border-violet-500'
-    : 'bg-violet-500/5 border-l-2 border-violet-500';
+    ? 'border-l-2 border-azure-500'
+    : 'bg-azure-500/5 border-l-2 border-azure-500';
   // WHERE this came from, for the meta line — and EMPTY when there is no
   // app, not the literal string 'app'. Plenty of kinds have no app at all (a
   // conversation, an account-level key, an agent question the platform cannot

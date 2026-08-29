@@ -30,8 +30,8 @@ import { UnBtn, UnP, UnRow, UnSection, UnSwitch } from './usernode-ui';
 import { usernodeSectionStore, type UsernodeSectionState } from './usernode-store';
 
 const NOTICE_TONE = {
-  warn: 'mt-2 rounded-md border px-3 py-2 text-xs border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300',
-  ok: 'mt-2 rounded-md border px-3 py-2 text-xs border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300',
+  warn: 'mt-2 rounded-md border px-3 py-2 text-xs border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200',
+  ok: 'mt-2 rounded-md border px-3 py-2 text-xs border-meadow-300 dark:border-meadow-700 bg-meadow-50 dark:bg-meadow-950/40 text-meadow-700 dark:text-meadow-200',
   plain: 'mt-2 rounded-md border px-3 py-2 text-xs border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300',
 } as const;
 
@@ -46,10 +46,10 @@ function Connection({ s }: { s: UsernodeSectionState }): ReactNode {
     >
       {c.demo ? <UnP note={{ text: 'Staging demo: sample data', tone: 'demo' }} /> : null}
       <UnRow row={c.row} />
-      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">{c.reason}</p>
+      <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-2">{c.reason}</p>
       <UnP note={{ text: c.build, tone: 'mono' }} />
       {c.message ? (
-        <p className="text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words">{c.message}</p>
+        <p className="text-xs font-mono text-zinc-500 dark:text-zinc-300 mt-1 break-words">{c.message}</p>
       ) : null}
       <div>
         <UnBtn btn={{
@@ -71,7 +71,7 @@ function Body({ s }: { s: UsernodeSectionState }): ReactNode {
   if (b.kind === 'loading') {
     return (
       <div id="settings-usernode-error" className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading Usernode app settings…</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-300">Loading Usernode app settings…</p>
       </div>
     );
   }
@@ -79,12 +79,12 @@ function Body({ s }: { s: UsernodeSectionState }): ReactNode {
     return (
       <div id="settings-usernode-error" className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
         {/* Headline unchanged so existing reports stay recognisable. */}
-        <p className="text-sm font-bold text-red-700 dark:text-red-400">
+        <p className="text-sm font-bold text-red-700 dark:text-red-200">
           Could not load Usernode app settings.
         </p>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{b.reason}</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">{b.reason}</p>
         {b.message ? (
-          <p className="text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words">{b.message}</p>
+          <p className="text-xs font-mono text-zinc-500 dark:text-zinc-300 mt-1 break-words">{b.message}</p>
         ) : null}
         <UnBtn btn={{ id: 'settings-usernode-retry', label: 'Try again', action: '_retryUsernodeRead' }} />
       </div>
@@ -108,7 +108,7 @@ function Body({ s }: { s: UsernodeSectionState }): ReactNode {
           <UnRow row={b.android.row} />
           {b.android.button ? <UnBtn btn={b.android.button} /> : null}
           {b.android.device ? (
-            <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2">{b.android.device}</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-2">{b.android.device}</p>
           ) : null}
         </>
       ) : null}
@@ -129,7 +129,7 @@ function SocialPush({ s }: { s: UsernodeSectionState }): ReactNode {
         <>
           <UnP note={{ text: p.reason }} />
           {p.failure ? (
-            <p className="text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words">{p.failure}</p>
+            <p className="text-xs font-mono text-zinc-500 dark:text-zinc-300 mt-1 break-words">{p.failure}</p>
           ) : null}
           {p.retry ? <UnBtn btn={{ label: 'Try again', action: '_retrySocialPush' }} /> : null}
         </>
@@ -140,7 +140,7 @@ function SocialPush({ s }: { s: UsernodeSectionState }): ReactNode {
             label: 'Activity notifications', checked: p.enabled,
             action: '_setSocialPushEnabled', includeErrorDetail: true,
           }} />
-          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">{p.status}</p>
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-300">{p.status}</p>
         </>
       ) : null}
     </UnSection>
@@ -177,12 +177,12 @@ function WidgetIcons({ s }: { s: UsernodeSectionState }): ReactNode {
       {w.rows.map((row) => <UnRow key={row.id || row.label} row={row} />)}
       {w.notes.map((n, i) => <UnP key={`${n.tone || 'muted'}-${i}`} note={n} />)}
       {w.entries.length === 1 && w.entries[0].empty ? (
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2">{w.entries[0].empty}</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-2">{w.entries[0].empty}</p>
       ) : (
         <div id="settings-widget-icon-entries" className="mt-3 space-y-1">
           {w.entries.map((e) => (
-            <div key={e.key} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.ok ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+            <div key={e.key} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${e.ok ? 'bg-meadow-500' : 'bg-amber-500'}`}></span>
               <span className="text-zinc-700 dark:text-zinc-300">{e.name}</span>
               <span className="ml-auto">{e.note}</span>
             </div>
@@ -227,7 +227,7 @@ function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
       {s.about ? (
         <UnSection title="Usernode app: about & legal">
           {s.about.notes.map((n, i) => (
-            <p key={i} className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{n.text}</p>
+            <p key={i} className="text-xs text-zinc-500 dark:text-zinc-300 font-mono">{n.text}</p>
           ))}
           <div>{s.about.actions.map((a) => <UnBtn key={a.action} btn={a} />)}</div>
           <Faq s={s} />
@@ -235,7 +235,7 @@ function Tail({ s }: { s: UsernodeSectionState }): ReactNode {
       ) : null}
       {s.account ? (
         <UnSection title="Usernode app: account">
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="text-xs text-zinc-500 dark:text-zinc-300">
             The app signs in automatically with your platform account. If this message persists, try closing and reopening the app.
           </p>
         </UnSection>
@@ -250,12 +250,12 @@ function Faq({ s }: { s: UsernodeSectionState }): ReactNode {
   const device = perms && perms.android ? perms.android.device : null;
   return (
     <div className="mt-3">
-      <div className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Help &amp; Info</div>
+      <div className="text-xs font-semibold text-zinc-500 dark:text-zinc-300 mb-1">Help &amp; Info</div>
       {faqTiles(isAndroid, device).map((tile) => (
         <details key={tile.title} className="rounded-lg border border-zinc-200 dark:border-zinc-800 px-3 py-2 mb-2">
           <summary className="text-sm font-medium cursor-pointer select-none">{tile.title}</summary>
           {tile.paragraphs.map((p, i) => (
-            <p key={i} className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 leading-relaxed">{p}</p>
+            <p key={i} className="text-xs text-zinc-500 dark:text-zinc-300 mt-2 leading-relaxed">{p}</p>
           ))}
         </details>
       ))}

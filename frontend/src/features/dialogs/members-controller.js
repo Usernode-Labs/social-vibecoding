@@ -93,7 +93,7 @@ const MembersDialog = {
       const visStatus = document.getElementById('members-vis-error');
       if (visStatus) {
         visStatus.textContent = 'This app is still loading. Open Members & visibility again in a moment.';
-        visStatus.className = 'text-sm text-red-400';
+        visStatus.className = 'text-sm text-red-700 dark:text-red-200';
       }
       return;
     }
@@ -116,7 +116,7 @@ const MembersDialog = {
     const visStatus = document.getElementById('members-vis-error');
     if (visStatus) {
       visStatus.textContent = '';
-      visStatus.className = 'text-red-400 text-sm hidden';
+      visStatus.className = 'text-red-700 dark:text-red-200 text-sm hidden';
     }
     if (visSection) {
       // Self-hosted platform app: visibility stays out of repo control
@@ -134,7 +134,7 @@ const MembersDialog = {
         if (!appData.repo_url) {
           if (visStatus) {
             visStatus.textContent = 'Visibility changes are proposed as a dapp.json pull request, and this app has no GitHub repository, so they\'re unavailable.';
-            visStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+            visStatus.className = 'text-sm text-zinc-500 dark:text-zinc-300';
           }
         }
       }
@@ -149,7 +149,7 @@ const MembersDialog = {
     };
     const govSection = document.getElementById('members-governance-section');
     const govStatus = document.getElementById('members-governance-error');
-    if (govStatus) { govStatus.textContent = ''; govStatus.className = 'text-red-400 text-sm hidden'; }
+    if (govStatus) { govStatus.textContent = ''; govStatus.className = 'text-red-700 dark:text-red-200 text-sm hidden'; }
     if (govSection) {
       govSection.classList.toggle('hidden', !appData.can_manage);
       if (appData.can_manage) {
@@ -160,7 +160,7 @@ const MembersDialog = {
         if (!appData.repo_url) {
           if (govStatus) {
             govStatus.textContent = 'Approval-settings changes are proposed as a dapp.json pull request, and this app has no GitHub repository, so they\'re unavailable.';
-            govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+            govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-300';
             govStatus.classList.remove('hidden');
           }
         }
@@ -470,7 +470,7 @@ const MembersDialog = {
     const setStatus = (msg, isError) => {
       if (!statusEl) return;
       statusEl.textContent = msg;
-      statusEl.className = `text-sm ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
+      statusEl.className = `text-sm ${isError ? 'text-red-700 dark:text-red-200' : 'text-zinc-500 dark:text-zinc-300'}`;
       statusEl.classList.toggle('hidden', !msg);
     };
     setStatus('', false);
@@ -508,14 +508,14 @@ const MembersDialog = {
   async loadCollaborators() {
     const list = document.getElementById('members-list');
     if (!list || !AppView.appData) return;
-    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">Loading…</div>';
+    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-300">Loading…</div>';
     try {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/collaborators`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       AppView._renderCollaborators(data.collaborators || []);
     } catch (err) {
-      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load members: ${escapeHtml(err.message)}</div>`;
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-700 dark:text-red-200">Failed to load members: ${escapeHtml(err.message)}</div>`;
     }
   },
 
@@ -525,19 +525,23 @@ const MembersDialog = {
     const me = (typeof App !== 'undefined' && App.user) ? App.user : {};
     const canManage = !!AppView.appData?.can_manage;
     if (!rows.length) {
-      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No collaborators yet.</div>';
+      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-300">No collaborators yet.</div>';
       return;
     }
     list.innerHTML = rows.map((r) => {
       const pending = r.status === 'invited';
+      // `creator` and `invited` are the same 12px tag in the same row, so they
+      // have to be the same ink weight. The amber half moved to 200 (Lc 90.1 /
+      // -80.4) while the azure half was left on 400 (68.0 / -51.8) — a full
+      // tier apart in light and nearly two in dark. 800/200 is 77.8 / -81.4.
       const tag = r.isCreator
-        ? '<span class="text-[0.65rem] text-violet-700 font-medium ml-1 dark:text-violet-400">creator</span>'
-        : (pending ? '<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">invited</span>' : '');
+        ? '<span class="text-xs text-azure-800 font-medium ml-1 dark:text-azure-200">creator</span>'
+        : (pending ? '<span class="text-xs text-amber-800 font-medium ml-1 dark:text-amber-200">invited</span>' : '');
       // Remove/revoke: creator/admin for anyone but the creator; users
       // may remove themselves (leave). Mirrors the server rules.
       const canRemove = !r.isCreator && (canManage || r.userId === me.id);
       const removeBtn = canRemove
-        ? `<button data-remove-user="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Leave app' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
+        ? `<button data-remove-user="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-300" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Leave app' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
         : '';
       return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
         <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>
@@ -672,7 +676,7 @@ const MembersDialog = {
     const govStatus = document.getElementById('members-governance-error');
     if (govStatus && showN) {
       govStatus.textContent = 'Set the number of approvals, then tap Propose.';
-      govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+      govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-300';
     }
   },
 
@@ -721,7 +725,7 @@ const MembersDialog = {
     const govStatus = document.getElementById('members-governance-error');
     if (govStatus) {
       govStatus.textContent = 'Review the initial approvers, then tap Propose.';
-      govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+      govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-300';
     }
   },
 
@@ -737,8 +741,8 @@ const MembersDialog = {
     if (!list) return;
     list.innerHTML = AppView._govDraftApprovers.map((u) =>
       `<div class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800">
-        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(u)}<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">will be invited</span></span>
-        <button type="button" data-remove-draft-approver="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400">Remove</button>
+        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(u)}<span class="text-xs text-amber-800 font-medium ml-1 dark:text-amber-200">will be invited</span></span>
+        <button type="button" data-remove-draft-approver="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-300">Remove</button>
       </div>`
     ).join('');
     list.querySelectorAll('[data-remove-draft-approver]').forEach((btn) => {
@@ -803,7 +807,7 @@ const MembersDialog = {
     const setStatus = (msg, isError) => {
       if (!statusEl) return;
       statusEl.textContent = msg;
-      statusEl.className = `text-sm ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
+      statusEl.className = `text-sm ${isError ? 'text-red-700 dark:text-red-200' : 'text-zinc-500 dark:text-zinc-300'}`;
       statusEl.classList.toggle('hidden', !msg);
     };
     setStatus('', false);
@@ -894,7 +898,7 @@ const MembersDialog = {
       AppView._renderAppAdmins(data);
     } catch (err) {
       section.classList.remove('hidden');
-      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load app admins: ${escapeHtml(err.message)}</div>`;
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-700 dark:text-red-200">Failed to load app admins: ${escapeHtml(err.message)}</div>`;
     }
   },
 
@@ -911,7 +915,7 @@ const MembersDialog = {
     const el = document.getElementById('members-appadmins-status');
     if (!el) return;
     el.textContent = msg;
-    el.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
+    el.className = `text-sm mt-2 ${isError ? 'text-red-700 dark:text-red-200' : 'text-zinc-500 dark:text-zinc-300'}`;
     el.classList.toggle('hidden', !msg);
   },
 
@@ -971,10 +975,10 @@ const MembersDialog = {
     const declaredLower = new Set(declared.map((u) => u.toLowerCase()));
     const rowCls = 'flex items-center justify-between gap-2 px-3 py-2 text-sm';
     const removeBtn = (u) => (canEdit
-      ? `<button type="button" data-remove-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 shrink-0 dark:text-zinc-400">Remove</button>`
+      ? `<button type="button" data-remove-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 shrink-0 dark:text-zinc-300">Remove</button>`
       : '');
     const undoBtn = (u) =>
-      `<button type="button" data-restore-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-violet-500 px-2 py-1 shrink-0 dark:text-zinc-400">Undo</button>`;
+      `<button type="button" data-restore-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-500 hover:text-azure-700 dark:hover:text-azure-300 px-2 py-1 shrink-0 dark:text-zinc-300">Undo</button>`;
 
     const rows = [];
     for (const name of declared) {
@@ -984,8 +988,11 @@ const MembersDialog = {
       // hasn't signed up yet, and it starts working on the next deploy
       // once they do.
       const tag = resolvedLower.has(lower)
-        ? '<span class="text-[0.65rem] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-400">Admin</span>'
-        : '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="Declared in dapp.json but no account with this username exists yet">not a registered user</span>';
+        // 400 -> 200 beside the zinc-500/300 alternative below (Lc 84.5 /
+        // -75.2): at 700/400 the Admin mark measured 68.0 / -51.8, i.e. the
+        // EMPHASIZED branch read fainter than the plain one. Now 77.8 / -81.4.
+        ? '<span class="text-xs font-semibold uppercase tracking-wide text-azure-800 dark:text-azure-200">Admin</span>'
+        : '<span class="text-xs text-zinc-500 dark:text-zinc-300" title="Declared in dapp.json but no account with this username exists yet">not a registered user</span>';
       if (draftLower.has(lower)) {
         rows.push(
           `<div class="${rowCls}${resolvedLower.has(lower) ? '' : ' opacity-60'}"><span class="truncate">@${escapeHtml(name)}</span>`
@@ -995,7 +1002,7 @@ const MembersDialog = {
         // Staged removal: struck through, nothing has happened yet.
         rows.push(
           `<div class="${rowCls} opacity-60"><span class="truncate line-through">@${escapeHtml(name)}</span>`
-          + '<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-red-700 font-medium dark:text-red-400">will be removed</span>'
+          + '<span class="flex items-center gap-1 shrink-0"><span class="text-xs text-red-700 font-medium dark:text-red-200">will be removed</span>'
           + `${canEdit ? undoBtn(name) : ''}</span></div>`
         );
       }
@@ -1010,14 +1017,14 @@ const MembersDialog = {
       const known = resolvedLower.has(lower)
         || (AppView._appAdminsKnown && AppView._appAdminsKnown.has(lower));
       const note = known ? ''
-        : '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="No account with this username yet. They\'ll become an admin once they sign up and the app next deploys">no account yet</span>';
+        : '<span class="text-xs text-zinc-500 dark:text-zinc-300" title="No account with this username yet. They\'ll become an admin once they sign up and the app next deploys">no account yet</span>';
       rows.push(
         `<div class="${rowCls}"><span class="truncate">@${escapeHtml(name)}</span>`
-        + `<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-amber-800 font-medium dark:text-amber-300">will be added</span>${note}${removeBtn(name)}</span></div>`
+        + `<span class="flex items-center gap-1 shrink-0"><span class="text-xs text-amber-800 font-medium dark:text-amber-200">will be added</span>${note}${removeBtn(name)}</span></div>`
       );
     }
     if (!rows.length) {
-      rows.push('<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No app admins yet. App admins can manage this app\'s settings and force-merge its proposals.</div>');
+      rows.push('<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-300">No app admins yet. App admins can manage this app\'s settings and force-merge its proposals.</div>');
     }
     list.innerHTML = rows.join('');
     list.querySelectorAll('[data-remove-appadmin]').forEach((btn) => {
@@ -1175,7 +1182,7 @@ const MembersDialog = {
   async loadApprovers() {
     const list = document.getElementById('members-approvers-list');
     if (!list || !AppView.appData) return;
-    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">Loading…</div>';
+    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-300">Loading…</div>';
     try {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/approvers`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1186,7 +1193,7 @@ const MembersDialog = {
       // Reveal the section so the failure isn't silently hidden.
       const section = document.getElementById('members-approvers-section');
       if (section) section.classList.remove('hidden');
-      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load approvers: ${escapeHtml(err.message)}</div>`;
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-700 dark:text-red-200">Failed to load approvers: ${escapeHtml(err.message)}</div>`;
     }
   },
 
@@ -1209,20 +1216,22 @@ const MembersDialog = {
       // Only visible when the policy is 'invited' — honest about the
       // merge gate's empty-roster fallback (services/governance.js:
       // full admins act as the approver set).
-      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No approvers yet. Platform admins can approve proposals until an approver is added.</div>';
+      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-300">No approvers yet. Platform admins can approve proposals until an approver is added.</div>';
       return;
     }
     const canManage = !!AppView.appData?.can_manage;
     list.innerHTML = rows.map((r) => {
       const pending = r.status === 'invited';
       const tag = pending
-        ? '<span class="text-[0.65rem] text-amber-800 font-medium ml-1 dark:text-amber-300">invited</span>'
-        : '<span class="text-[0.65rem] text-violet-700 font-medium ml-1 dark:text-violet-400">approver</span>';
+        ? '<span class="text-xs text-amber-800 font-medium ml-1 dark:text-amber-200">invited</span>'
+        // The approvers list's half of the same pair as the members roster
+        // above — same tag, same row, so the same 800/200 ink (77.8 / -81.4).
+        : '<span class="text-xs text-azure-800 font-medium ml-1 dark:text-azure-200">approver</span>';
       // Remove/revoke: creator/admin for anyone; approvers may remove
       // themselves (leave). Mirrors the server rules.
       const canRemove = canManage || r.userId === me.id;
       const removeBtn = canRemove
-        ? `<button data-remove-approver="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-400" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Stop being an approver' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
+        ? `<button data-remove-approver="${r.userId}" class="text-xs text-zinc-500 hover:text-red-500 px-2 py-1 dark:text-zinc-300" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Stop being an approver' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
         : '';
       return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
         <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>

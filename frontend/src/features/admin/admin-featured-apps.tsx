@@ -46,9 +46,14 @@ interface AppMeta {
 
 const FEATURED_MAX = 12;
 
-const ROW = 'flex items-center gap-2 rounded-md bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-2 py-1.5';
-const MOVE_BTN = 'px-1.5 py-0.5 text-xs rounded text-zinc-500 dark:text-zinc-400 hover:text-violet-800 dark:hover:text-violet-300 disabled:opacity-30';
-const ICON = 'w-7 h-7 rounded-md bg-violet-500/10 flex items-center justify-center shrink-0';
+// 4px: these rows fill a `${AdminUI.card} p-4`, so the concentric inner is
+// 20 − 16. (`rounded-md` was 6px before the scale consolidation and is 8 now —
+// it drifted FURTHER from concentric, which is what surfaced it.) ICON keeps
+// its own radius: at 8px of row padding the row's 4px curve is already spent,
+// so no inner corner is shared with it.
+const ROW = 'flex items-center gap-2 rounded bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-2 py-1.5';
+const MOVE_BTN = 'px-1.5 py-0.5 text-xs rounded text-zinc-500 dark:text-zinc-300 hover:text-azure-800 dark:hover:text-azure-300 disabled:opacity-30';
+const ICON = 'w-7 h-7 rounded-md bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center shrink-0';
 
 /**
  * Tiny icon preview so a row is recognisable at a glance: the same priority as
@@ -144,26 +149,26 @@ function FeaturedAppsSection() {
         <button id="admin-featured-refresh" type="button" className={`${AdminUI.btn.link} text-xs`}
           onClick={load}>Refresh</button>
       </div>
-      <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+      <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-3">
         {`These apps appear in the “Featured apps” row on everyone’s home screen, in this order. Apps a user has already added are left out of their row, and an app someone can’t see never shows up for them. Up to ${FEATURED_MAX} apps.`}
       </p>
       <div id="admin-featured-list" className="space-y-2 mb-3">
         {error
-          ? <p className="text-sm text-red-400">{`Failed to load featured apps (${error})`}</p>
+          ? <p className="text-sm text-red-700 dark:text-red-200">{`Failed to load featured apps (${error})`}</p>
           : featured == null
-            ? <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>
+            ? <p className="text-sm text-zinc-500 dark:text-zinc-300">Loading…</p>
             : !slugs.length
-              ? <p className="text-sm text-zinc-500 dark:text-zinc-400">No featured apps: the home row is hidden for everyone.</p>
+              ? <p className="text-sm text-zinc-500 dark:text-zinc-300">No featured apps: the home row is hidden for everyone.</p>
               : slugs.map((slug, i) => {
                 const m = meta[slug] || { slug, name: slug };
                 const label = m.name || slug;
                 return (
                   <div key={slug} className={ROW} data-featured-row={slug}>
-                    <span className="w-5 text-xs text-zinc-500 dark:text-zinc-400 tabular-nums">{i + 1}</span>
+                    <span className="w-5 text-xs text-zinc-500 dark:text-zinc-300 tabular-nums">{i + 1}</span>
                     <AppIcon meta={m} />
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium truncate">{label}</span>
-                      <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 truncate">{slug}</span>
+                      <span className="block text-[11px] text-zinc-500 dark:text-zinc-300 truncate">{slug}</span>
                     </span>
                     {canWrite ? (
                       <>
@@ -174,7 +179,7 @@ function FeaturedAppsSection() {
                           aria-label={`Move ${label} down`} disabled={i === slugs.length - 1}
                           onClick={() => move(slug, 1)}>↓</button>
                         <button type="button" data-featured-remove={slug} title="Remove"
-                          className="px-1.5 py-0.5 text-xs rounded text-zinc-500 dark:text-zinc-400 hover:text-red-400"
+                          className="px-1.5 py-0.5 text-xs rounded text-zinc-500 dark:text-zinc-300 hover:text-red-700 dark:hover:text-red-200"
                           aria-label={`Remove ${label}`}
                           onClick={() => {
                             setFeatured((prev) => (prev || []).filter((s) => s !== slug));
@@ -207,10 +212,10 @@ function FeaturedAppsSection() {
             <button id="admin-featured-save" type="button" className={`${AdminUI.btn.primary} disabled:opacity-50`}
               disabled={!dirty || saving} onClick={save}>Save</button>
           </div>
-          <p id="admin-featured-status" className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">{status}</p>
+          <p id="admin-featured-status" className="mt-2 text-xs text-zinc-500 dark:text-zinc-300">{status}</p>
         </>
       ) : (
-        <p className="pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400">
+        <p className="pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-300">
           View-only admin: the list is read-only here.
         </p>
       )}

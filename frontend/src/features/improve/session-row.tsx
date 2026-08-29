@@ -35,6 +35,9 @@ export type SessionRowView = {
   title: string;
   href: string;
   status: string | null;
+  /** Semantic state, decided in improve-controller.js — never re-derived
+      from `status`, which is display copy. */
+  state?: 'working' | 'needs-you' | 'paused' | 'ready' | 'handed-off';
   busy: boolean;
   lastActivityAt?: string | null;
 };
@@ -79,37 +82,44 @@ export function SessionRow({
           scanning, so it is bright and big enough to find at a glance rather
           than a grey speck.
 
-          Two states for a session, because with paused rows filtered out of
-          these lists (see isParked in ../improve/improve-controller.js) two
-          is all there is: AMBER PULSING while an AI turn is in flight — the
-          platform's own "something is building" colour, borrowed from the
-          header's deploy dot — and SOLID EMERALD once it stops, which is the
-          success green that says the change is back with you. The halo ring
-          is what makes either readable against a busy row at arm's length.
+          It wears the BRAND GRADIENTS at full vibrancy (the four radials from
+          the Brand Kit's node 503-20261, the same ones the app tiles carry as
+          a whisper). This is the one surface where they are allowed to shout:
+          a change's state is exactly the kind of thing a brand's own colour
+          language should say, and at 14px a three-stop radial reads as a
+          luminous orb rather than a flat dot. Each state's glow is its own
+          gradient's key hue — see .improve-state-dot in app.css.
 
-          A work order (#1417) is never busy: its agent runs on the user's
-          own machine, where the platform cannot see whether a turn is in
-          flight. It keeps the HOLLOW dot, so the row reads as "handed off,
-          state unknown here" instead of borrowing a liveness claim this side
-          has no way to make.
+            working    sky      + a breathing animation (the core swells)
+            needs-you  sunset   the loudest of the four, for the one state
+                                that wants you now
+            ready      meadow   green means it is back with you
+            paused     lemon    parked, not gone
+
+          Yellow-the-action is not in play here: these are multi-hue gradient
+          orbs, not the flat CTA fill, and the row carries no button.
+
+          A work order (#1417) is never busy: its agent runs on the user's own
+          machine, where the platform cannot see whether a turn is in flight.
+          It keeps the HOLLOW dot — no gradient, nothing to animate — so the
+          row reads as "handed off, state unknown here" instead of borrowing a
+          liveness claim this side has no way to make.
 
           Announced exactly once: the dot carries the label only when the row
           renders no status text of its own.
       */}
       <span
         className={
-          session.busy
-            ? 'w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-amber-400/30 shrink-0 animate-pulse'
-            : session.kind === 'task'
-              ? 'w-2.5 h-2.5 rounded-full border border-zinc-400 dark:border-zinc-500 shrink-0'
-              : 'w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/25 shrink-0'
+          session.kind === 'task'
+            ? 'w-3.5 h-3.5 rounded-full border border-zinc-400 dark:border-zinc-500 shrink-0'
+            : `improve-state-dot improve-state-dot--${session.state || (session.busy ? 'working' : 'ready')} w-3.5 h-3.5 rounded-full shrink-0`
         }
         {...(session.status
           ? { 'aria-hidden': 'true' as const }
           : { role: 'img', 'aria-label': 'Ready for you' })}
       />
       {showApp ? (
-        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[35%] truncate">
+        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-300 shrink-0 max-w-[35%] truncate">
           {session.appName}
         </span>
       ) : null}
@@ -117,18 +127,18 @@ export function SessionRow({
         {session.title}
       </span>
       {session.status ? (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
+        <span className="text-xs text-zinc-500 dark:text-zinc-300 shrink-0">
           {session.status}
         </span>
       ) : null}
       {time ? (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
+        <span className="text-xs text-zinc-500 dark:text-zinc-300 shrink-0">
           {time}
         </span>
       ) : null}
       {unread ? (
         <span
-          className="w-2 h-2 rounded-full bg-violet-500 shrink-0"
+          className="w-2 h-2 rounded-full bg-azure-500 shrink-0"
           role="img"
           aria-label="Unread activity"
           data-session-unread={session.id}

@@ -35,11 +35,15 @@ function Comment({ comment }: { comment: IssueCommentView }) {
         <span className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
           {comment.author}
         </span>
+        {/* `azure`, not `sky`: sky-* is not an overridden ramp, so it rendered
+            stock Tailwind next to the platform's tuned hues. Light stays at
+            the 700 tier (this is an identity mark, not a link) and dark pairs
+            at 300 — the azure step the merges and status tables settled on. */}
         {comment.bot ? (
-          <span className="text-[0.9375rem] text-sky-700 dark:text-sky-400">bot</span>
+          <span className="text-[0.9375rem] text-azure-700 dark:text-azure-300">bot</span>
         ) : null}
         {comment.date ? (
-          <span className="text-[10px] text-zinc-500 dark:text-zinc-500">{comment.date}</span>
+          <span className="text-[10px] text-zinc-500 dark:text-zinc-300">{comment.date}</span>
         ) : null}
       </div>
       <Body html={comment.bodyHtml} />
@@ -52,16 +56,21 @@ export function IssueCommentsView({ comments, truncated, htmlUrl }: IssueComment
   if (!comments.length) return null;
   return (
     <div className="flex flex-col gap-2 mt-2">
-      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-500 px-1">Discussion</div>
+      <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-300 px-1">Discussion</div>
       {truncated ? (
-        <div className="text-[11px] text-zinc-500 dark:text-zinc-500 px-1">
+        <div className="text-[11px] text-zinc-500 dark:text-zinc-300 px-1">
           {'Earlier comments omitted. '}
           {htmlUrl ? (
             <a
               href={htmlUrl}
               target="_blank"
               rel="noopener"
-              className="underline hover:text-zinc-600 dark:hover:text-zinc-300"
+              // The dark hover was byte-identical to the base this anchor
+              // inherits (`dark:text-zinc-300` on the paragraph), so it
+              // rendered nothing — the defect AdminUI.btn.link documents. 200
+              // brightens, the direction dev-card.tsx's edit pencil already
+              // spells for this exact pattern.
+              className="underline hover:text-zinc-600 dark:hover:text-zinc-200"
             >
               View the full thread on GitHub
             </a>

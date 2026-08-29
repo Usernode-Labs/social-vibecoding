@@ -14,17 +14,29 @@ import { SpecViewer } from './spec-viewer';
 import { DevChatTranscript } from './transcript';
 import { devViewStore, type DevViewState, type PaneView } from './view-store';
 
+// `mx-gutter` is the CONTENT KEYLINE (--screen-gutter, aliased as
+// spacing.gutter): this box's outer edge lines up with #dc-messages, the
+// composer bar and the session header rather than being a fourth x-position.
+// Its own `px-3` is the box's INTERIOR and is deliberately left alone — a
+// card's inner text inset answers to the card, not to the screen.
 const HINT
-  = 'mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20'
+  = 'mx-gutter mt-2 px-3 py-2 rounded-lg bg-azure-500/10 border border-azure-500/20'
   + ' text-xs text-zinc-600 dark:text-zinc-300 shrink-0';
 
 const HINT_TEXT
   = 'Describe the change you want. When it’s ready, promoting this'
   + " session's PR is what creates the proposal everyone votes on.";
 
-/** The composer bar's two class runs, as complete literals for Tailwind. */
+/**
+ * The composer bar's two class runs, as complete literals for Tailwind.
+ *
+ * The framed bar's horizontal inset is `px-gutter`, not the `p-2` it used to
+ * carry: the bar is a screen-level strip, so it sits on the CONTENT KEYLINE
+ * with the transcript above it rather than 4px inside it. The vertical `py-2`
+ * is unchanged — that is the bar's own height, not the keyline.
+ */
 const BAR = {
-  framed: 'shrink-0 platform-safe-bar border-t border-zinc-200 dark:border-zinc-800 p-2',
+  framed: 'shrink-0 platform-safe-bar border-t border-zinc-200 dark:border-zinc-800 py-2 px-gutter',
   bare: 'shrink-0 platform-safe-bar',
 } as const;
 
@@ -62,9 +74,27 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
       {/* The ELEMENT keeps a CONSTANT className: `PlatformUI.attachScreenFx`
           writes a hairline/blur class onto it once the chat scrolls, and
           React never rewrites a className whose prop has not changed. */}
+      {/* CHROME-16, not the content gutter. This strip is a titled bar with a
+          `border-b`, so it belongs to the header stack above it rather than to
+          the transcript below — and every other screen agrees: settings,
+          leaderboard, profile and browse all put `p-4` directly under the
+          platform header.
+
+          It was `px-gutter` for one release of this pass, on the reasoning
+          that the title should line up with the first message. Measured in the
+          browser, that reasoning does not hold: the first message is a
+          right-aligned bubble whose box starts wherever its text runs out, so
+          there was nothing to line up WITH — while the platform header's back
+          disc sits at 16 directly above, leaving a 4px jog between two stacked
+          rows with no divider between them. Too small to read as hierarchy,
+          too large to read as aligned.
+
+          The tier change now happens ON the `border-b`: chrome at 16 above it,
+          content at 12 below. A jog across a divider reads as two surfaces; a
+          jog between two undivided rows reads as a mistake. */}
       <div
         id="dc-session-header"
-        className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0"
+        className="flex items-center gap-2 px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0"
       >
         <SessionHeader />
       </div>
@@ -93,14 +123,24 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
             dangerouslySetInnerHTML={{ __html: s.launchpadHtml }}
           />
           {/* The element carries the pane's scroll geometry and
-              `initScrollTracking` binds click, keydown and scroll on it. */}
-          <div id="dc-messages" className="dc-messages-container flex-1 overflow-y-auto py-2">
+              `initScrollTracking` binds click, keydown and scroll on it.
+
+              THE SCROLLER SPELLS THE GUTTER, ONCE, ON ITSELF. It used to be
+              `py-2` with no horizontal padding, so every row in the
+              transcript had to inset itself and each one picked its own
+              number — a bubble at 0, a status line at 0, a card at 12,
+              app.css's own margins at 12 — which is how one screen ended up
+              with thirteen first-content x-positions. `px-gutter` is the
+              CONTENT KEYLINE, and the rows' INTERIOR padding (a bubble's
+              8px 12px, a card's 12px) is untouched: that answers to the
+              bubble and the card, not to the screen. */}
+          <div id="dc-messages" className="dc-messages-container flex-1 overflow-y-auto px-gutter py-2">
             <DevChatTranscript />
           </div>
           {/* platform-safe-bar (app.css): this block is the bottom of the
               screen on a phone, so it carries the home-indicator inset on top
-              of its own p-2 — the strip below the Send row is part of this bar
-              rather than dead space under it. */}
+              of its own `py-2 px-gutter` — the strip below the Send row is
+              part of this bar rather than dead space under it. */}
           <div id="dc-composer-bar" className={s.barEmpty ? BAR.bare : BAR.framed}>
             <DevComposer />
           </div>

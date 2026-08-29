@@ -135,9 +135,30 @@ export function init() {
       else bountyNote.textContent = `${remaining} of ${limit} kudos left this week`;
       bountyRow.classList.remove('hidden');
     };
-    // The selected option uses a darker violet on hover so it keeps its
-    // active look; the unselected option uses the neutral zinc hover.
-    const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
+    // Selected takes the near-black fill (the shell's "you are here"), one
+    // step lighter on hover so it keeps its active look; the unselected
+    // option uses the neutral zinc hover.
+    //
+    // The four `dark:` tokens are the other half of that, and they were
+    // missing. These pills sit on DialogCard, whose dark fill IS zinc-900
+    // (#1F1F1B): a `bg-zinc-900 border-zinc-900` pill has no ground and no
+    // edge there, while the UNSELECTED pill keeps the base
+    // `dark:border-zinc-700` — so in dark mode the selection read inverted,
+    // the chosen target looking like a plain label beside a bordered button.
+    // The chip-in-a-set spelling is `bg-zinc-900 text-white dark:bg-zinc-100
+    // dark:text-zinc-900` (these are two chips, not a track, so it is the chip
+    // form and not the raised-pill-on-a-recessed-track one). `border` follows
+    // the fill so the edge stays the fill's own, and the hover needs its own
+    // dark answer or the light `hover:bg-zinc-800` would flip the white pill
+    // near-black on hover — zinc-300 is the one-step-darker sibling there, the
+    // mirror of zinc-800 under a zinc-900 fill.
+    //
+    // Every entry is ONE DOMTokenList token and is toggled individually below,
+    // which is what makes adding stacked variants safe here.
+    const activeTargetClasses = [
+      'bg-zinc-900', 'text-white', 'border-zinc-900', 'hover:bg-zinc-800',
+      'dark:bg-zinc-100', 'dark:text-zinc-900', 'dark:border-zinc-100', 'dark:hover:bg-zinc-300',
+    ];
     const inactiveHoverClasses = ['hover:bg-zinc-100', 'dark:hover:bg-zinc-800'];
     const disabledTargetClasses = ['opacity-40', 'cursor-not-allowed'];
     // Toggle the active styling between the two buttons. Enabled/disabled
@@ -346,7 +367,7 @@ export function init() {
 
     const showFeedbackNotice = (text, isError) => {
       feedbackStatus.textContent = text;
-      feedbackStatus.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
+      feedbackStatus.className = `text-sm mt-2 ${isError ? 'text-red-700 dark:text-red-200' : 'text-zinc-500 dark:text-zinc-300'}`;
       feedbackStatus.classList.remove('hidden');
     };
 
@@ -642,7 +663,7 @@ export function init() {
         return;
       }
       feedbackStatus.textContent = line;
-      feedbackStatus.className = 'text-sm mt-2 text-zinc-500 dark:text-zinc-400';
+      feedbackStatus.className = 'text-sm mt-2 text-zinc-500 dark:text-zinc-300';
       feedbackStatus.classList.remove('hidden');
       queueLineText = line;
     };
@@ -713,7 +734,12 @@ export function init() {
         return false;
       }
       feedbackStatus.textContent = "Saved on this device. We'll send it as soon as you're back online.";
-      feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
+      // `meadow` is the product's one green; stock `emerald` renders an
+      // untuned hue beside the platform's ramps. The dark partner is 200, not
+      // 400: the tuned ramps pair a -700 light ink with a -200 dark one, which
+      // is where the two magnitudes match. Same tone the filed-issue line
+      // below and Secrets.setStatus's 'ok' branch spell.
+      feedbackStatus.className = 'text-sm mt-2 text-meadow-700 dark:text-meadow-200';
       feedbackStatus.classList.remove('hidden');
       queueLineText = '';
       feedbackText.value = '';
@@ -909,7 +935,8 @@ export function init() {
           // Both variants end the first sentence before appending, so the
           // bounty outcome reads as its own sentence either way.
           feedbackStatus.textContent = `${filedAgainst}.${bountyNotice}${stateNotice}`;
-          feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
+          // Same green as the saved-for-later line above — see the note there.
+          feedbackStatus.className = 'text-sm mt-2 text-meadow-700 dark:text-meadow-200';
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
           feedbackTitle.value = '';
@@ -944,14 +971,14 @@ export function init() {
           return;
         }
         feedbackStatus.textContent = data.error || 'Failed to submit';
-        feedbackStatus.className = 'text-sm mt-2 text-red-400';
+        feedbackStatus.className = 'text-sm mt-2 text-red-700 dark:text-red-200';
         feedbackStatus.classList.remove('hidden');
       } catch {
         // Reached only when the request itself completed and something about
         // the RESPONSE was unusable (non-JSON error body from a proxy, say).
         // A transport failure was already handled above, by saving.
         feedbackStatus.textContent = 'Network error';
-        feedbackStatus.className = 'text-sm mt-2 text-red-400';
+        feedbackStatus.className = 'text-sm mt-2 text-red-700 dark:text-red-200';
         feedbackStatus.classList.remove('hidden');
       }
       feedbackBtn.disabled = false;
@@ -1063,7 +1090,7 @@ export function init() {
           if (p.target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
           feedbackStatus.textContent = `This message couldn't be sent: ${failed.lastError || 'the server rejected it'}.`
             + ' Your text is back, so edit it and try again.';
-          feedbackStatus.className = 'text-sm mt-2 text-red-400';
+          feedbackStatus.className = 'text-sm mt-2 text-red-700 dark:text-red-200';
           feedbackStatus.classList.remove('hidden');
           queueLineText = '';
           feedbackText.focus();

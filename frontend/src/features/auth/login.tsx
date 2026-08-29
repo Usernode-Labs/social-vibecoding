@@ -79,14 +79,14 @@ type RecoveryPath = 'wallet' | 'email';
 // hand-written markup (and, for the two lazily-mounted blocks, from the
 // runtime build that used the same constants), so the compiled Tailwind
 // already covers every one of them.
-const P = 'text-sm text-zinc-500 dark:text-zinc-400';
-const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
-const QUIET_BUTTON = 'w-full text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300 dark:text-zinc-400';
+const P = 'text-sm text-zinc-500 dark:text-zinc-300';
+const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1';
+const QUIET_BUTTON = 'w-full text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300 dark:text-zinc-300';
 
 /**
  * What the retired `BUTTON` class constant is now: the same string, spelled as
  * <Button> props. `w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4
- * py-2 font-medium transition-colors text-white` — note `size="plain"` (these
+ * py-2 font-medium transition-colors text-black` — note `size="plain"` (these
  * forms set no text size of their own) and `ink="solidLate"` (the auth screens
  * write the colour after the transition; see button.tsx's header).
  *
@@ -99,7 +99,7 @@ const SOLID = { layout: 'full', size: 'plain', ink: 'solidLate' } as const;
  * And the retired `INPUT` class constant, likewise: `w-full rounded-lg
  * bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700
  * px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500
- * focus:outline-none focus:ring-2 focus:ring-violet-500`.
+ * focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100`.
  */
 const FIELD = { box: 'auth', hint: 'dim' } as const;
 
@@ -110,8 +110,13 @@ const FIELD = { box: 'auth', hint: 'dim' } as const;
  * reason input.tsx keeps `default` and `auth` apart.
  */
 const AUTHFIELD = { box: 'auth', hint: 'muted', ring: 'seamless' } as const;
-const ERROR = 'text-red-400 text-sm';
-const STATUS = 'text-sm text-zinc-500 dark:text-zinc-400';
+// red-200, not red-300, behind `dark:`: tailwind.config.js solves red's two
+// steps to Lc 80.0 (700 on white) and -80.0 (200 on the zinc-900 card), so the
+// pair is at parity to the decimal. red-300 measures -59.1 there — a 20.9 gap,
+// one full rung below its light half. (APCA-W3 0.1.9, hexes read from the
+// config.)
+const ERROR = 'text-red-700 dark:text-red-200 text-sm';
+const STATUS = 'text-sm text-zinc-500 dark:text-zinc-300';
 
 const EXPIRED_MSG =
   'This reset link is invalid or has expired. Go back to login and request a new one from "Forgot password?".';
@@ -120,9 +125,27 @@ const EXPIRED_MSG =
  * The emailed-reset confirmation is a success state, not ambient status text:
  * a green-tinted rounded box (both palettes) so "the link was sent" is
  * unmistakable. Whole class literals — the Tailwind extractor is a regex.
+ *
+ * meadow, not stock Tailwind green: meadow is the product's ONE green (the
+ * emerald/green split was by author and era rather than by meaning), and a
+ * stock hue renders untuned beside the seven ramps the config owns. The
+ * substitution is step-for-step and measured, so nothing about how this box
+ * READS moves — APCA-W3 0.1.9 port written for this pass, self-pinned at
+ * 106.0 / -107.9 / 63.1:
+ *
+ *   light  green-800 on green-100     77.9   ->  meadow-800 on meadow-100     78.8
+ *   dark   green-300 on green-950/60 -82.4   ->  meadow-200 on meadow-950/60 -83.5
+ *
+ * 800/200 rather than the 700/200 the chips use, because the ink here sits on
+ * the ramp's OWN 100-step tint rather than on a card: 700 there is 71.6, and
+ * the extra step is what keeps the pair at parity (4.7 apart).
+ *
+ * NOTE FOR THE NEXT EDITOR: dapp.json's "Emailed-reset confirmation renders
+ * once, as a green success box" check selects this element by its BACKGROUND
+ * class, so the fill and that selector are one decision.
  */
 const SENT_BOX =
-  'rounded-lg border border-green-300 bg-green-100 px-3 py-2 text-sm font-medium text-green-800 dark:border-green-800 dark:bg-green-950/60 dark:text-green-300';
+  'rounded-lg border border-meadow-300 bg-meadow-100 px-3 py-2 text-sm font-medium text-meadow-800 dark:border-meadow-800 dark:bg-meadow-950/60 dark:text-meadow-200';
 /** Anti-enumeration: the same copy whether or not the address matched. */
 const SENT_MSG =
   'If that address matches an account, a reset link is on its way. It expires in 30 minutes.';
@@ -740,7 +763,7 @@ export function LoginScreen() {
       <a
         href="#"
         data-auth-back=""
-        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
+        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-300 hover:text-azure-800 dark:hover:text-azure-200"
         style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
         onClick={(e) => {
           e.preventDefault();
@@ -754,7 +777,7 @@ export function LoginScreen() {
           <h1 className="text-2xl font-bold text-center mb-1">
             Usernode Social Vibecoding
           </h1>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">
+          <p className="text-xs text-zinc-500 dark:text-zinc-300 text-center mb-8 italic">
             A place where users own and build apps together
           </p>
           {/*
@@ -767,10 +790,10 @@ export function LoginScreen() {
               are the ones that can't work.
           */}
           <div className="offline-only mb-8 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
+            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-200">
               You're offline
             </h2>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
               Signing in needs a connection. Your username and password are checked on the server.
             Reconnect and try again; if you were signed in on this device before, reloading once
             you're back online will take you straight in.
@@ -778,14 +801,14 @@ export function LoginScreen() {
             <button
               type="button"
               data-offline-retry=""
-              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
+              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-200 hover:bg-amber-500/10 transition-colors"
             >
               Try again
             </button>
           </div>
           {/* Wallet auth status (shown when native bridge detected) */}
           <div id="wallet-auth" className={hiddenFirst(!(base && walletUi), 'space-y-4')}>
-            <div id="wallet-status" className="text-center text-sm text-zinc-500 dark:text-zinc-400">
+            <div id="wallet-status" className="text-center text-sm text-zinc-500 dark:text-zinc-300">
               {walletStatus}
             </div>
             <div id="wallet-error" className={hiddenLast(!walletError, ERROR)}>
@@ -805,7 +828,7 @@ export function LoginScreen() {
             </div>
             <div
               id="wallet-divider"
-              className={hiddenFirst(!walletControls, 'flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400')}
+              className={hiddenFirst(!walletControls, 'flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-300')}
             >
               <div className="flex-1 h-px bg-zinc-300 dark:bg-zinc-800">
               </div>
@@ -823,7 +846,7 @@ export function LoginScreen() {
             <div>
               <label
                 htmlFor="login-username"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+                className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1"
               >
                 Username or email
               </label>
@@ -841,7 +864,7 @@ export function LoginScreen() {
             <div>
               <label
                 htmlFor="login-password"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+                className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1"
               >
                 Password
               </label>
@@ -867,7 +890,7 @@ export function LoginScreen() {
             <a
               id="forgot-password-link"
               href="#"
-              className="text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
+              className="text-zinc-500 dark:text-zinc-300 hover:text-azure-800 dark:hover:text-azure-200"
               onClick={(e) => {
                 e.preventDefault();
                 showRecovery();
@@ -877,16 +900,16 @@ export function LoginScreen() {
             </a>
           </p>
           <p id="otp-link-wrap" className={hiddenLast(!base, 'text-center text-sm mt-1')}>
-            <a id="otp-link" href="#signup" className="text-zinc-500 dark:text-zinc-400 hover:text-violet-400">
+            <a id="otp-link" href="#signup" className="text-zinc-500 dark:text-zinc-300 hover:text-azure-800 dark:hover:text-azure-200">
               Sign in with an email code
             </a>
           </p>
           <p
             id="register-link"
-            className={hiddenLast(!base, 'text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6')}
+            className={hiddenLast(!base, 'text-center text-sm text-zinc-500 dark:text-zinc-300 mt-6')}
           >
             {'Have an activation code? '}
-            <a href="#register" className="text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">
+            <a href="#register" className="text-azure-800 hover:text-azure-900 dark:text-azure-200 dark:hover:text-azure-100">
               Register
             </a>
           </p>
@@ -902,11 +925,11 @@ export function LoginScreen() {
               Sign in with email
             </h2>
             <div id="otp-step-email" className={hiddenFirst(otpStep !== 'email', 'space-y-3')}>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              <p className="text-sm text-zinc-500 dark:text-zinc-300">
                 We'll email you a 6-digit code. New here? This also creates your account.
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
                   Email
                 </label>
                 <Input
@@ -929,7 +952,7 @@ export function LoginScreen() {
               </Button>
             </div>
             <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'space-y-3')}>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              <p className="text-sm text-zinc-500 dark:text-zinc-300">
                 {'Enter the 6-digit code we sent to '}
                 <span id="otp-email-echo" className="font-medium text-zinc-700 dark:text-zinc-300">
                   {otpEmailEcho}
@@ -937,7 +960,7 @@ export function LoginScreen() {
                 .
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
                   Code
                 </label>
                 <Input
@@ -972,11 +995,11 @@ export function LoginScreen() {
               </button>
             </div>
             <div id="otp-step-password" className={hiddenFirst(otpStep !== 'password', 'space-y-3')}>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              <p className="text-sm text-zinc-500 dark:text-zinc-300">
                 Code verified. Now choose a password for your account.
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
                   New password
                 </label>
                 <Input
@@ -989,7 +1012,7 @@ export function LoginScreen() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
                   Confirm password
                 </label>
                 <Input
@@ -1044,11 +1067,11 @@ export function LoginScreen() {
               id="recovery-wallet"
               className={hiddenFirst(!(view === 'recovery' && recoveryPath === 'wallet'), 'space-y-3')}
             >
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              <p className="text-sm text-zinc-500 dark:text-zinc-300">
                 Your wallet is linked to this account. Approve a signature request, then choose a new password.
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
                   New password
                 </label>
                 <Input
@@ -1061,7 +1084,7 @@ export function LoginScreen() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-300 mb-1">
                   Confirm new password
                 </label>
                 <Input
@@ -1091,7 +1114,30 @@ export function LoginScreen() {
             {resetUi ? (
               <div
                 id="recovery-email"
-                className={hiddenFirst(!(view === 'recovery' && recoveryPath === 'email'), 'space-y-3')}
+                // `flex flex-col gap-3`, not `space-y-3`, and this one is a
+                // BUG FIX rather than a modernisation. Tailwind's space-y
+                // selector is `> :not([hidden]) ~ :not([hidden])` — an
+                // ATTRIBUTE test — while this file hides by CLASS. So once a
+                // reset mail sends, the lead paragraph below goes
+                // `display:none` via `hidden` in its class string, still
+                // matches `:not([hidden])`, and the NEXT sibling keeps the
+                // 12px top margin space-y put on it: a phantom leading gap
+                // above a field with nothing above it. A `display:none` flex
+                // child contributes no gap in any position, which is the
+                // whole of the fix.
+                //
+                // The `hidden` class still wins over `flex` here: both are
+                // display utilities and Tailwind v3 emits `.hidden` last, so
+                // the container itself hides exactly as before. #wallet-divider
+                // above already ships this combination.
+                //
+                // Flex also disables the block margin collapse this stack was
+                // quietly relying on, so every direct child must be margin
+                // free — none of the five carries one, and none may gain one.
+                // (The label's `mb-1` inside the field group is an interior:
+                // it separates a label from its input, not a child from a
+                // sibling.)
+                className={hiddenFirst(!(view === 'recovery' && recoveryPath === 'email'), 'flex flex-col gap-3')}
               >
                 {/*
                     The instruction line steps aside while the sent
@@ -1146,10 +1192,10 @@ export function LoginScreen() {
                   alternative below the email flow (issue #1158).
               */}
               <hr className="border-zinc-200 dark:border-zinc-800" />
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              <p className="text-sm text-zinc-500 dark:text-zinc-300">
                 {resetUi ? ADMIN_LEAD_WITH_EMAIL : ADMIN_LEAD_SHIPPED}
               </p>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              <p className="text-sm text-zinc-500 dark:text-zinc-300">
                 {/* JSX drops a line-ending space, so the separators before the
                     inline elements must live inside the string expressions —
                     without them the text renders as "atemporary" /
@@ -1159,7 +1205,7 @@ export function LoginScreen() {
                   temporary password
                 </span>
                 {". Once you're back in, set a password you choose from "}
-                <a href="#settings/password" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
+                <a href="#settings/password" className="text-azure-800 hover:text-azure-900 dark:hover:text-azure-100 underline dark:text-azure-200">
                   Settings → Change password
                 </a>
                 .
@@ -1168,7 +1214,7 @@ export function LoginScreen() {
             <button
               id="btn-recovery-back"
               type="button"
-              className="w-full text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300"
+              className="w-full text-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-300"
               onClick={showLoginBaseView}
             >
               Back to login

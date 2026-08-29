@@ -163,7 +163,7 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
             <span
               id="app-switcher-subtitle"
               className="shrink-0 text-[0.6875rem] leading-none font-medium
-                         text-zinc-500 dark:text-zinc-400"
+                         text-zinc-500 dark:text-zinc-300"
             >
               {/* `#header-status-pill` keeps its id here: it is still the
                   lifecycle pill's seat, it is still inside #platform-header,
@@ -175,7 +175,7 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
             </span>
           ) : null}
         </span>
-        <ChevronDownIcon className="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+        <ChevronDownIcon className="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-300" aria-hidden="true" />
       </button>
     </h1>
   );

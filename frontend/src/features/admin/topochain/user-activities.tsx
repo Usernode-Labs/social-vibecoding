@@ -68,12 +68,12 @@ const COLUMNS: Column<Activity>[] = [
   {
     label: 'Event',
     cell: (a) => a.event?.name || a.season_event_id,
-    tdClass: 'text-xs text-zinc-500 dark:text-zinc-400',
+    tdClass: 'text-xs text-zinc-500 dark:text-zinc-300',
   },
-  { label: 'Challenge', cell: (a) => a.challenge?.goal || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+  { label: 'Challenge', cell: (a) => a.challenge?.goal || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
   { label: 'Type', cell: (a) => a.activity_type, tdClass: 'text-xs' },
   { label: 'Points', cell: (a) => a.points, tdClass: 'font-mono text-right', thClass: 'text-right' },
-  { label: 'At', cell: (a) => fmt(a.activity_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+  { label: 'At', cell: (a) => fmt(a.activity_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-300' },
 ];
 
 function ActivityForm({ id, events, onClose, onSaved }: {
@@ -307,7 +307,7 @@ function ImportPanel({ onClose, onImported }: { onClose: () => void; onImported:
         />
       </Field>
       <FormError message={error} />
-      <div id="admin-topo-act-imp-result" className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+      <div id="admin-topo-act-imp-result" className="mt-3 text-xs text-zinc-500 dark:text-zinc-300">
         {result ? (
           <>
             {`Imported ${result.imported}.`}
@@ -322,7 +322,7 @@ function ImportPanel({ onClose, onImported }: { onClose: () => void; onImported:
 function Stat({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 px-3 py-2">
-      <dt className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+      <dt className="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-300">
         {label}
       </dt>
       <dd className="mt-0.5 text-sm font-medium font-mono">{String(value)}</dd>
@@ -422,11 +422,11 @@ function TotalsPanel({ events, onClose }: { events: SeasonEvent[]; onClose: () =
             </dl>
             <div className="mt-4 grid grid-cols-1 gap-5 md:grid-cols-2">
               <div className="min-w-0 overflow-x-auto">
-                <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500 mb-1">
+                <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-300 mb-1">
                   By user (top 50)
                 </div>
                 <table className="w-full">
-                  <thead className="text-xs text-zinc-500 dark:text-zinc-400">
+                  <thead className="text-xs text-zinc-500 dark:text-zinc-300">
                     <tr>
                       <th className="text-left px-2">User</th>
                       <th className="text-right px-2">Points</th>
@@ -447,11 +447,11 @@ function TotalsPanel({ events, onClose }: { events: SeasonEvent[]; onClose: () =
                 </table>
               </div>
               <div className="min-w-0 overflow-x-auto">
-                <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500 mb-1">
+                <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-300 mb-1">
                   By type
                 </div>
                 <table className="w-full">
-                  <thead className="text-xs text-zinc-500 dark:text-zinc-400">
+                  <thead className="text-xs text-zinc-500 dark:text-zinc-300">
                     <tr>
                       <th className="text-left px-2">Type</th>
                       <th className="text-right px-2">Count</th>

@@ -46,12 +46,12 @@ export function FooterView({ f }: { f: FooterSpec }): ReactNode {
   }
   if (f.kind === 'github') {
     return (
-      <a href={f.href} target="_blank" rel="noopener" className="text-xs text-violet-700 hover:underline dark:text-violet-400">
+      <a href={f.href} target="_blank" rel="noopener" className="text-xs text-azure-800 hover:underline dark:text-azure-200">
         {'More open issues on GitHub →'}
       </a>
     );
   }
-  return <span className="text-xs text-zinc-500 dark:text-zinc-500 italic">{`+${f.n} more completed`}</span>;
+  return <span className="text-xs text-zinc-500 dark:text-zinc-300 italic">{`+${f.n} more completed`}</span>;
 }
 
 export function DevFeed(): ReactNode {
@@ -69,14 +69,18 @@ export function DevFeed(): ReactNode {
           ask, and hides the one thing that would help — that the filter is
           what is hiding the rest. */}
       {v.emptyNote ? (
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
+        <div className="text-xs text-zinc-500 dark:text-zinc-300 mb-2">
           {v.emptyNote.filtered ? (
             'Nothing here matches the current search and filters.'
           ) : (
             <>
               {v.emptyNote.loadFailed ? "Couldn't load open issues right now. " : ''}
               {'No activity yet. Press '}
-              <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
+              {/* The `+` is a blue mark INSIDE the zinc-500/300 run above it
+                  (Lc 84.5 / -75.2). At 700/400 it measured 68.0 / -51.8 — the
+                  emphasized glyph rendering fainter than the sentence carrying
+                  it, and in dark mode by 23 Lc. 800/200 is 77.8 / -81.4. */}
+              <span className="font-medium text-azure-800 dark:text-azure-200">+</span>
               {' to propose a change or file an issue.'}
             </>
           )}

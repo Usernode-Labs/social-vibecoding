@@ -145,19 +145,42 @@ type BodyView =
 const controller = () => (window as { Leaderboard?: any }).Leaderboard;
 
 /** The one badge table. Every `{tone,label}` the module builds reads from it. */
-const BADGE = 'px-1.5 py-0.5 rounded text-[10px] font-semibold';
+const BADGE = 'px-1.5 py-0.5 rounded text-xs font-semibold';
 
+// The KEYS are the wire vocabulary — ./leaderboard.js emits `tone: 'sky'`,
+// `tone: 'violet'` and the rest by name, and the `Tone` union above declares
+// them — so a key is never renamed here even when its hue no longer matches
+// it. `violet` has held the azure recipe since the reskin; `sky` joins it now.
+// Only the VALUES move.
 const TONES: Record<Tone, string> = {
-  emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-  amber: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
-  zinc: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
-  violet: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300',
-  sky: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300',
-  red: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+  // `meadow` is the product's one green. Its 700/200 pair is at APCA parity
+  // the way the red and amber ramps are, where stock emerald's 700/300 was
+  // not; the badge keeps its dark ground, because the panel-becomes-a-border
+  // rule is about section-sized fields and a chip needs a ground to read as a
+  // chip.
+  emerald: 'bg-meadow-100 text-meadow-700 dark:bg-meadow-900/40 dark:text-meadow-200',
+  amber: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200',
+  zinc: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-300',
+  violet: 'bg-azure-100 text-azure-700 dark:bg-azure-900/40 dark:text-azure-300',
+  // `sky` folds into azure — the two are one hue at two lightnesses, and sky
+  // is not a tuned ramp at all, so it rendered stock cold blue beside the
+  // palette's warm anchors. It separates from `violet` above by INK, not by
+  // ground: `violet` is a status badge and `sky` an issue-KIND label, two
+  // different fields, so an emphasis step reads as emphasis rather than as
+  // two competing categories.
+  //
+  // The GROUND stays on the table's -100 / -900/40 steps, which every other
+  // tone here uses. It was briefly written as `azure-50` / `azure-950/40` to
+  // make the quieter of the two, and that spends the wrong thing: azure-50 is
+  // dE 5.3 from the white card and 6.1 from the row's zinc-50 hover, against
+  // 9.4-13.4 for the other five, so the chip stopped reading as a chip. "A
+  // badge keeps its ground" is the half of the panel rule that does not fold.
+  sky: 'bg-azure-100 text-azure-800 dark:bg-azure-900/40 dark:text-azure-200',
+  red: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200',
 };
 
-const HINT = 'py-8 text-center text-sm text-zinc-500 dark:text-zinc-400';
-const ERROR_HINT = 'py-8 text-center text-sm text-red-700 dark:text-red-400';
+const HINT = 'py-8 text-center text-sm text-zinc-500 dark:text-zinc-300';
+const ERROR_HINT = 'py-8 text-center text-sm text-red-700 dark:text-red-200';
 
 /** The list row, shared by all four lists. The profile row adds the cursor. */
 const ROW = 'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg '
@@ -165,11 +188,11 @@ const ROW = 'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg '
   + 'hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors';
 
 const ROW_TITLE = 'text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate';
-const ROW_META = 'text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap dark:text-zinc-400';
+const ROW_META = 'text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap dark:text-zinc-300';
 
 const KUDOS_PILL = 'shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full '
-  + 'bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 '
-  + 'text-violet-700 dark:text-violet-300 text-sm font-semibold';
+  + 'bg-azure-50 dark:bg-azure-900/30 border border-azure-200 dark:border-azure-700 '
+  + 'text-azure-700 dark:text-azure-300 text-sm font-semibold';
 
 const MORE_BTN = 'px-4 py-1.5 text-sm font-medium rounded-lg '
   + 'border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 '
@@ -183,7 +206,7 @@ function StatusBadge({ badge }: { badge: Badge }): ReactNode {
 
 /** The `·` between meta bits. A separate node, so `gap-1.5` spaces it. */
 function Dot(): ReactNode {
-  return <span className="text-zinc-500 dark:text-zinc-400">·</span>;
+  return <span className="text-zinc-500 dark:text-zinc-300">·</span>;
 }
 
 function Loading(): ReactNode {
@@ -229,7 +252,7 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
       <a
         data-lb-back=""
         href="#leaderboard/users"
-        className="inline-block text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline mb-3"
+        className="inline-block text-sm font-medium text-azure-800 dark:text-azure-200 hover:underline mb-3"
         onClick={(e) => {
           // `e` is React's SyntheticEvent, so the guard reads the native one
           // out of it — the same NavLink call, one hop further in, exactly as
@@ -245,14 +268,14 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
         ← Top users
       </a>
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
+        <div className="w-12 h-12 rounded-full bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 flex items-center justify-center font-semibold text-lg">
           {view.initial}
         </div>
         <div className="min-w-0">
           <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 truncate">
             {`@${view.who}`}
           </h2>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="text-sm text-zinc-500 dark:text-zinc-300">
             All PRs this user has proposed, newest first.
           </p>
         </div>
@@ -262,8 +285,8 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
 }
 
 const SUB_TAB = 'px-3 py-2 text-sm font-medium border-b-2';
-const SUB_TAB_ACTIVE = 'border-violet-500 text-violet-700 dark:text-violet-300';
-const SUB_TAB_INACTIVE = 'border-transparent text-zinc-500 dark:text-zinc-400 '
+const SUB_TAB_ACTIVE = 'border-zinc-900 text-zinc-900 dark:border-zinc-100 dark:text-zinc-100';
+const SUB_TAB_INACTIVE = 'border-transparent text-zinc-500 dark:text-zinc-300 '
   + 'hover:text-zinc-800 dark:hover:text-zinc-200';
 
 const WIN_TAB = 'px-3 py-1 text-xs font-medium rounded-full';
@@ -279,7 +302,7 @@ function TabChrome({ view }: { view: Extract<ChromeView, { kind: 'tabs' }> }): R
   return (
     <>
       <header className="mb-4">
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">{view.subtitle}</p>
+        <p className="text-sm text-zinc-500 dark:text-zinc-300">{view.subtitle}</p>
       </header>
       <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 mb-3">
         <div className="flex gap-4">
@@ -299,7 +322,7 @@ function TabChrome({ view }: { view: Extract<ChromeView, { kind: 'tabs' }> }): R
             <button
               key={t.key}
               data-lb-win={t.key}
-              className={`${WIN_TAB} ${t.active ? 'bg-violet-600 text-white' : WIN_TAB_INACTIVE}`}
+              className={`${WIN_TAB} ${t.active ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900' : WIN_TAB_INACTIVE}`}
               onClick={() => controller()?._setWindow(t.key)}
             >
               {t.label}
@@ -324,7 +347,7 @@ function PrRows({ rows }: { rows: PrRow[] }): ReactNode {
           className={ROW}
           onClick={() => controller()?._routeToPr(row.slug, row.sessionId)}
         >
-          <div className="w-7 text-center text-sm font-mono text-zinc-500 dark:text-zinc-400">{row.rank}</div>
+          <div className="w-7 text-center text-sm font-mono text-zinc-500 dark:text-zinc-300">{row.rank}</div>
           <div className="flex-1 min-w-0">
             <div className={ROW_TITLE}>{row.title}</div>
             <div className={ROW_META}>
@@ -354,8 +377,8 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           className={ROW}
           onClick={() => controller()?._openUser(row.who)}
         >
-          <div className="w-7 text-center text-sm font-mono text-zinc-500 dark:text-zinc-400">{row.rank}</div>
-          <div className="w-9 h-9 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-sm">
+          <div className="w-7 text-center text-sm font-mono text-zinc-500 dark:text-zinc-300">{row.rank}</div>
+          <div className="w-9 h-9 rounded-full bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 flex items-center justify-center font-semibold text-sm">
             {row.initial}
           </div>
           <div className="flex-1 min-w-0">
@@ -371,7 +394,7 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           </div>
           {row.unmergedNote ? (
             <span
-              className="shrink-0 text-[11px] text-amber-800 dark:text-amber-400"
+              className="shrink-0 text-[11px] text-amber-800 dark:text-amber-200"
               title="Kudos on PRs that haven’t merged yet, not counted toward ranking"
             >
               {row.unmergedNote}
@@ -428,7 +451,7 @@ function ProfileRows({ rows }: { rows: ProfileRow[] }): ReactNode {
               rel="noopener"
               data-lb-ext=""
               title="Open on GitHub"
-              className="shrink-0 px-1.5 py-0.5 rounded text-sm text-zinc-500 hover:text-violet-600 dark:hover:text-violet-400 dark:text-zinc-400"
+              className="shrink-0 px-1.5 py-0.5 rounded text-sm text-zinc-500 hover:text-azure-800 dark:hover:text-azure-200 dark:text-zinc-300"
               onClick={(e) => e.stopPropagation()}
             >
               <span aria-hidden="true">↗</span>
@@ -450,7 +473,7 @@ function ProfileBody({ view }: { view: Extract<BodyView, { kind: 'profile' }> })
     <>
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <span
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-xs font-semibold"
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-azure-50 dark:bg-azure-900/30 border border-azure-200 dark:border-azure-700 text-azure-700 dark:text-azure-300 text-xs font-semibold"
           title="Kudos earned on merged PRs: the leaderboard ranking score"
         >
           <span aria-hidden="true">{CLAP}</span>
@@ -492,8 +515,8 @@ function Marker({ marker }: { marker: HistoryRow['marker'] }): ReactNode {
       : <StatusBadge badge={{ tone: 'red', label: 'no' }} />;
   }
   return marker.up
-    ? <span className="text-emerald-700 dark:text-emerald-400 font-bold" aria-hidden="true">▲</span>
-    : <span className="text-red-700 dark:text-red-400 font-bold" aria-hidden="true">▼</span>;
+    ? <span className="text-meadow-700 dark:text-meadow-200 font-bold" aria-hidden="true">▲</span>
+    : <span className="text-red-700 dark:text-red-200 font-bold" aria-hidden="true">▼</span>;
 }
 
 /**
@@ -506,7 +529,7 @@ function HistoryMeta({ bits }: { bits: MetaBit[] }): ReactNode {
     <>
       {bits.map((bit, i) => (
         <Fragment key={`${bit.kind}|${bit.text}`}>
-          {i > 0 ? <span className="text-zinc-500 dark:text-zinc-400">{' · '}</span> : null}
+          {i > 0 ? <span className="text-zinc-500 dark:text-zinc-300">{' · '}</span> : null}
           {bit.kind === 'badge'
             ? <span className={`${BADGE} ${TONES[bit.tone]}`} title={bit.title}>{bit.text}</span>
             : bit.kind === 'italic'
@@ -535,7 +558,7 @@ function HistoryRows({ rows }: { rows: HistoryRow[] }): ReactNode {
             <div className={ROW_TITLE}>{row.title}</div>
             <div className={ROW_META}><HistoryMeta bits={row.meta} /></div>
           </div>
-          <div className="shrink-0 text-xs text-zinc-500 dark:text-zinc-500">{row.when}</div>
+          <div className="shrink-0 text-xs text-zinc-500 dark:text-zinc-300">{row.when}</div>
         </button>
       ))}
     </div>
@@ -556,7 +579,7 @@ function HistoryBody({ view }: { view: Extract<BodyView, { kind: 'history' }> })
             data-lb-hfilter={chip.key}
             className={`px-3 py-1 text-xs font-medium rounded-full border ${
               chip.on
-                ? 'bg-violet-600 text-white border-violet-600'
+                ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 border-zinc-900 dark:border-zinc-100'
                 : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 '
                   + 'border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-700'
             }`}

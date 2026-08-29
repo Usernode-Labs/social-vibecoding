@@ -35,9 +35,9 @@ function PublicAvatar({ profile }: { profile: any }): ReactNode {
   return (
     <div
       className={
-        'w-20 h-20 relative rounded-full overflow-hidden bg-violet-100 '
-        + 'dark:bg-violet-950 flex items-center justify-center text-violet-700  dark:text-violet-400'
-        + 'dark:text-violet-300 text-2xl font-bold shrink-0'
+        'w-20 h-20 relative rounded-full overflow-hidden bg-zinc-200 '
+        + 'dark:bg-zinc-700 flex items-center justify-center text-zinc-700 dark:text-zinc-200 '
+        + 'text-2xl font-bold shrink-0'
       }
     >
       {initial}
@@ -71,7 +71,7 @@ function ReportForm({ username }: { username: string }): ReactNode {
 
   return (
     <details id="public-profile-report" className="mt-4 text-sm">
-      <summary className="cursor-pointer text-zinc-500 dark:text-zinc-400">Report profile</summary>
+      <summary className="cursor-pointer text-zinc-500 dark:text-zinc-300">Report profile</summary>
       <label className="block mt-3 text-xs font-medium">
         Reason
         <select
@@ -112,7 +112,7 @@ function ReportForm({ username }: { username: string }): ReactNode {
       >
         Send report
       </button>
-      <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400" role="status" aria-live="polite">{status}</div>
+      <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-300" role="status" aria-live="polite">{status}</div>
     </details>
   );
 }
@@ -136,7 +136,7 @@ export function PublicProfileCard({
             <h2 className="text-xl font-bold break-words">
               {profile.displayName || profile.username}
             </h2>
-            <div className="text-sm text-zinc-500 dark:text-zinc-400 break-all">
+            <div className="text-sm text-zinc-500 dark:text-zinc-300 break-all">
               {`@${profile.username}`}
             </div>
             {profile.bio ? (

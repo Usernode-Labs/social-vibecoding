@@ -21,7 +21,7 @@ import { type ChangeEvent, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   DraftEditIcon,
-  DraftSendIcon,
+  SendIcon,
   DraftTrashIcon,
   PaperclipIcon,
   SaveDraftIcon,
@@ -45,15 +45,15 @@ const ATTACH_TITLE
 
 const ATTACH_BTN
   = 'dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100'
-  + ' dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 hover:text-violet-400'
-  + ' hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors';
+  + ' dark:bg-zinc-900 text-zinc-500 dark:text-zinc-300 hover:text-azure-800 dark:hover:text-azure-300'
+  + ' hover:border-azure-500 px-1.5 py-1 shrink-0 transition-colors';
 
 const MODEL_SELECT
   = 'rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700'
   + ' px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none'
-  + ' focus:ring-2 focus:ring-violet-500';
+  + ' focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100';
 
-const MUTED_XS = 'text-xs text-zinc-500 dark:text-zinc-400';
+const MUTED_XS = 'text-xs text-zinc-500 dark:text-zinc-300';
 
 /**
  * The send button's four states.
@@ -137,21 +137,21 @@ function SavedDrafts({ rows, busy }: { rows: SavedDraftView[]; busy: boolean }):
                   data-draft-action="send" aria-label="Send this draft"
                   disabled={busy} title={sendTitle}
                 >
-                  <DraftSendIcon width={14} height={14} aria-hidden="true" />
+                  <SendIcon className="w-4 h-4" aria-hidden="true" />
                 </button>
                 <button
                   type="button" className="dc-draft-btn dc-draft-edit"
                   data-draft-action="edit" aria-label="Edit this draft"
                   title="Put this draft back in the box to edit"
                 >
-                  <DraftEditIcon width={14} height={14} aria-hidden="true" />
+                  <DraftEditIcon className="w-4 h-4" aria-hidden="true" />
                 </button>
                 <button
                   type="button" className="dc-draft-btn dc-draft-trash"
                   data-draft-action="trash" aria-label="Delete this draft"
                   title="Delete this draft"
                 >
-                  <DraftTrashIcon width={14} height={14} aria-hidden="true" />
+                  <DraftTrashIcon className="w-4 h-4" aria-hidden="true" />
                 </button>
               </span>
             </div>
@@ -214,7 +214,7 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
             >Change model</button>
             <div
               id="dc-agent-note"
-              className="basis-full text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"
+              className="basis-full text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-300"
             >{s.openRouter.note}</div>
           </div>
         ) : null}
@@ -229,7 +229,7 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
             type="button" id="dc-attach-btn" title={ATTACH_TITLE}
             aria-label="Attach files" className={ATTACH_BTN}
           >
-            <PaperclipIcon width={14} height={14} />
+            <PaperclipIcon className="w-4 h-4" />
           </button>
           <QuickRepliesBar />
         </div>
@@ -265,7 +265,7 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
             hidden={s.saveDraft.hidden || undefined} disabled={s.saveDraft.disabled}
             title={s.saveDraft.title} aria-label="Save as draft"
           >
-            <SaveDraftIcon width={14} height={14} aria-hidden="true" />
+            <SaveDraftIcon className="w-4 h-4" aria-hidden="true" />
           </button>
           <SendButton send={s.send} />
         </form>
@@ -273,7 +273,7 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
             because both spellings carry `<kbd>`, and the constants in
             dev-chat.js are what `_onComposerShortcut` is documented against. */}
         <div
-          className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 text-right"
+          className="text-xs text-zinc-500 dark:text-zinc-300 mt-1 text-right"
           id="dc-shortcut-hint"
           dangerouslySetInnerHTML={{ __html: s.shortcutHintHtml }}
         />

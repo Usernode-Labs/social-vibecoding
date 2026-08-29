@@ -67,17 +67,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import {
-  ChatBubbleTailIcon,
+  ChatIcon,
   ChevronRightIcon,
   CogIcon,
   HomeIcon,
-  PlusWideIcon,
+  PlusIcon,
   SearchIcon,
   ShieldCheckIcon,
   UserIcon,
   XIcon,
 } from '@/components/ui/icons';
 
+import { auraFor } from '../apps/app-card.js';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -95,8 +96,12 @@ const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
   + 'transition-colors';
 
+// zinc-500, not zinc-400: the light half of `text-zinc-400 dark:text-zinc-300`
+// measures Lc 46.6 on the page ground (APCA-W3 0.1.9, hexes read from
+// tailwind.config.js) — under the 60 larger-or-bolder rung, and 18.9 off its
+// own dark partner. zinc-500 is 74.8 there, 0.4 from zinc-300's -75.2.
 const SECTION = 'px-5 pt-4 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide '
-  + 'text-zinc-400 dark:text-zinc-500';
+  + 'text-zinc-500 dark:text-zinc-300';
 
 /**
  * One destination. An ANCHOR, always — whether clean-path or fragment-routed,
@@ -131,12 +136,16 @@ function MenuRow({
         AppContext.dismissForNav();
       }}
     >
-      <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-400" aria-hidden="true">
+      <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5 text-zinc-500 dark:text-zinc-300" aria-hidden="true">
         {icon}
       </span>
       <span className="flex-1 min-w-0 truncate font-medium">{label}</span>
       {trailing}
-      <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+      {/* zinc-400, not zinc-300: the light half measured Lc 16.2 on the page
+          ground (APCA-W3 0.1.9), under the 30 non-content rung, against its
+          dark half's 41.1. zinc-400 is 46.6/41.1. Same glyph, same fix as
+          grouped-list.tsx and notifications-sheet.tsx. */}
+      <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-400" aria-hidden="true" />
     </a>
   );
 }
@@ -172,19 +181,26 @@ function AppTile({ app, current }: { app: SwitcherApp; current: boolean }) {
           ground, so a selected tile reads as one edge rather than two. */}
       <span
         data-icon={appIconKind(app)}
+        data-aura={auraFor(app)}
         className={'app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center text-xl font-bold'
           + (current
-            ? ' ring-2 ring-violet-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900'
+            ? ' ring-2 ring-zinc-900 dark:ring-zinc-100 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900'
             : '')}
       >
         <AppIconContent app={app} />
       </span>
       {/* Colour only, never weight — navigation.md forbids a weight change
-          between nav item states. */}
+          between nav item states.
+
+          The current label is the blue INK pair (800/200), the same one this
+          sheet's "Create New" carries, not the 700/300 it used to spell. Both
+          halves moved together: 700 sat BELOW the near-black every UNselected
+          label beside it is drawn in, so the one label meant to stand out was
+          the quietest thing in the strip. */}
       <span
         className={'w-full text-center text-[0.8125rem] truncate '
           + (current
-            ? 'text-violet-600 dark:text-violet-400'
+            ? 'text-azure-800 dark:text-azure-200'
             : 'text-zinc-900 dark:text-zinc-100')}
       >
         {label}
@@ -266,7 +282,7 @@ export function AppsSwitcherSheet(): ReactNode {
         aria-label="Menu"
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
-        className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl app-context-transition"
+        className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl app-context-transition dark:shadow-none"
       >
         <div className="flex items-center gap-3 px-5 pt-5 pb-3 shrink-0">
           <span className="flex-1 min-w-0 block text-lg font-semibold text-zinc-900 dark:text-zinc-100">
@@ -275,7 +291,16 @@ export function AppsSwitcherSheet(): ReactNode {
           <button
             id="apps-switcher-create"
             type="button"
-            className="inline-flex items-center gap-1 text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline un-touch-target"
+            // A TEXT BUTTON, so it takes the LINK ink, not the action fill.
+            // The sheet's one filled action is elsewhere; blue is what carries
+            // everything accent-shaped that is not the action. It arrived here
+            // spelled `violet-600 dark:violet-400`, which was a violet on the
+            // palette it was written against and is PALE YELLOW on this one
+            // (violet-600 is #FFC93A, the CTA fill) — 1.5:1 of yellow ink on
+            // white. `azure-800 dark:azure-200` is the settled link pair;
+            // azure-700 is for chips, washes and fills, and a link is not a
+            // chip.
+            className="inline-flex items-center gap-1 text-sm font-medium text-azure-800 dark:text-azure-200 hover:underline un-touch-target"
             // `Home.openCreateApp` never existed — the optional call swallowed
             // it, so this button closed the sheet and did nothing else. The
             // create dialog is reached through App.showCreateModal(), which
@@ -302,13 +327,13 @@ export function AppsSwitcherSheet(): ReactNode {
               });
             }}
           >
-            <PlusWideIcon className="w-3.5 h-3.5 shrink-0" strokeWidth="2.5" aria-hidden="true" />
+            <PlusIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
             Create New
           </button>
           <button
             id="apps-switcher-close"
             type="button"
-            className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 un-touch-target"
+            className="text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-200 un-touch-target"
             aria-label="Close"
             onClick={close}
           >
@@ -333,7 +358,7 @@ export function AppsSwitcherSheet(): ReactNode {
             <AppTile key={app.slug} app={app} current={app.slug === slug} />
           ))}
           {apps && rows.length === 0 ? (
-            <span className="py-4 text-sm text-zinc-500 dark:text-zinc-400">
+            <span className="py-4 text-sm text-zinc-500 dark:text-zinc-300">
               No apps yet. Discover finds the ones you can join.
             </span>
           ) : null}
@@ -391,7 +416,7 @@ export function AppsSwitcherSheet(): ReactNode {
           <MenuRow
             id="switcher-row-messages"
             href="#messages"
-            icon={<ChatBubbleTailIcon />}
+            icon={<ChatIcon />}
             label="Messages"
           />
           <div className={SECTION}>You</div>
@@ -410,7 +435,7 @@ export function AppsSwitcherSheet(): ReactNode {
               <span
                 ref={byokRef}
                 id="switcher-byok-dot"
-                className="hidden w-2 h-2 rounded-full bg-emerald-500 shrink-0"
+                className="hidden w-2 h-2 rounded-full bg-meadow-500 shrink-0"
                 aria-hidden="true"
               >
               </span>

@@ -74,11 +74,17 @@ function FileRow({ file, demo }: { file: AgentFileView; demo: boolean }) {
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300 truncate">{file.name}</span>
         <span className="shrink-0 flex items-center gap-2">
-          <span className="text-zinc-500 dark:text-zinc-500">{`${file.kb} KB`}</span>
+          <span className="text-zinc-500 dark:text-zinc-300">{`${file.kb} KB`}</span>
+          {/* 400 -> 300 (and the hover 300 -> 200): the azure half of this row
+              was missed while the `Delete` beside it moved red-400 -> red-200,
+              leaving two text buttons in ONE row a full ink tier apart. 700
+              pairs 300 across the tree (58 sites, against 57 for the links'
+              800/200) and 700 is what this button's light half spells, so the
+              pairing is the in-convention one rather than a new number. */}
           <button
             type="button"
             data-role="view"
-            className="text-violet-700 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 font-medium"
+            className="text-azure-700 hover:text-azure-800 dark:text-azure-300 dark:hover:text-azure-200 font-medium"
             onClick={() => { void toggle(); }}
           >
             {open ? 'Hide' : 'View'}
@@ -86,7 +92,7 @@ function FileRow({ file, demo }: { file: AgentFileView; demo: boolean }) {
           <button
             type="button"
             data-role="delete"
-            className="text-red-700 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 font-medium"
+            className="text-red-700 hover:text-red-800 dark:text-red-200 dark:hover:text-red-100 font-medium"
             onClick={() => { void controller()?._onAgentFileDelete?.(file.kind, file.name); }}
           >
             Delete
@@ -94,7 +100,7 @@ function FileRow({ file, demo }: { file: AgentFileView; demo: boolean }) {
         </span>
       </div>
       {file.description ? (
-        <div className="text-zinc-500 dark:text-zinc-500 mt-1 truncate">{file.description}</div>
+        <div className="text-zinc-500 dark:text-zinc-300 mt-1 truncate">{file.description}</div>
       ) : null}
       {open ? (
         <pre
@@ -120,15 +126,15 @@ export function AgentFilesList({ kind, empty }: { kind: string; empty: string })
   // as they did before: one fetch feeds both lists, and saying "Loading…"
   // twice for one request reads as two requests.
   if (state.phase === 'loading') {
-    return kind === 'instruction' ? <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p> : null;
+    return kind === 'instruction' ? <p className="text-xs text-zinc-500 dark:text-zinc-300">Loading…</p> : null;
   }
   if (state.phase === 'error') {
     return kind === 'instruction'
-      ? <p className="text-xs text-red-700 dark:text-red-400">Failed to load your agent files.</p>
+      ? <p className="text-xs text-red-700 dark:text-red-200">Failed to load your agent files.</p>
       : null;
   }
   const files = state.files.filter((f) => f.kind === kind);
-  if (!files.length) return <p className="text-xs text-zinc-500 dark:text-zinc-500">{empty}</p>;
+  if (!files.length) return <p className="text-xs text-zinc-500 dark:text-zinc-300">{empty}</p>;
   return (
     <>
       {files.map((f) => <FileRow key={`${f.kind}:${f.name}`} file={f} demo={state.demo} />)}

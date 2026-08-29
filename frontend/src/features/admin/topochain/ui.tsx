@@ -36,7 +36,7 @@ export function ScreenHeader(
       <div className="min-w-0">
         <h2 className="text-base font-semibold">{title}</h2>
         {subtitle ? (
-          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</p>
+          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-300">{subtitle}</p>
         ) : null}
       </div>
       {actions ? (
@@ -109,8 +109,13 @@ export function Panel({
   onClose?: () => void;
   closeLabel?: string;
 }) {
+  // In dark mode the danger tone keeps the NEUTRAL ground and says "danger"
+  // with its bottom border alone. The header is `sticky` + `backdrop-blur`, so
+  // its ground is the scrim the scrolling body passes under — dropping it the
+  // way the dark-mode rule drops other coloured panel fields would let content
+  // read through the title. Same surface, coloured divider.
   const headTone = tone === 'danger'
-    ? 'bg-red-50/90 dark:bg-red-950/40 border-red-200 dark:border-red-900'
+    ? 'bg-red-50/90 dark:bg-zinc-900/90 border-red-200 dark:border-red-800'
     : 'bg-white/90 dark:bg-zinc-900/90 border-zinc-200 dark:border-zinc-800';
   const label = closeLabel || 'Close';
   return (
@@ -119,7 +124,7 @@ export function Panel({
         <div className="min-w-0">
           <h3 className="text-sm font-semibold truncate">{title}</h3>
           {subtitle ? (
-            <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</p>
+            <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-300">{subtitle}</p>
           ) : null}
         </div>
         {onClose ? <CloseButton label={label} onClick={onClose} /> : null}
@@ -181,11 +186,11 @@ export function EmptyState(
   { title, body, action }: { title?: string; body?: ReactNode; action?: ReactNode },
 ) {
   return (
-    <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 px-4 py-10 text-center">
+    <div className="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 px-4 py-8 text-center">
       <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
         {title || 'Nothing here yet'}
       </p>
-      {body ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">{body}</p> : null}
+      {body ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-300">{body}</p> : null}
       {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
     </div>
   );
@@ -207,17 +212,17 @@ export function ErrorState({
     ? "Couldn't reach the server."
     : (message || `Request failed${status ? ` (HTTP ${status})` : ''}.`);
   return (
-    <div className="rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 px-4 py-8 text-center">
-      <p className="text-sm font-medium text-red-700 dark:text-red-300">
+    <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-transparent px-4 py-8 text-center">
+      <p className="text-sm font-medium text-red-700 dark:text-red-200">
         {title || "Couldn't load this"}
       </p>
-      <p className="mt-1 text-xs text-red-700 dark:text-red-400">{detail}</p>
+      <p className="mt-1 text-xs text-red-700 dark:text-red-200">{detail}</p>
       {onRetry ? (
         <div className="mt-4 flex justify-center">
           <button
             type="button"
             onClick={onRetry}
-            className={`${BTN_BASE} ${BTN_SM} border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-950/60`}
+            className={`${BTN_BASE} ${BTN_SM} border border-red-300 dark:border-red-800 text-red-700 dark:text-red-200 hover:bg-red-100 dark:hover:bg-red-950/60`}
           >
             Try again
           </button>
@@ -271,7 +276,7 @@ export function List<T>({
     <>
       <div className="hidden md:block overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
         <table className="w-full text-sm">
-          <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-300">
             <tr>
               {columns.map((c) => (
                 <th key={c.label} className={`px-3 py-2 text-left font-medium ${c.thClass || ''}`}>
@@ -318,7 +323,7 @@ export function List<T>({
               <dl className="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">
                 {columns.filter((c) => c !== primary && !c.hideOnCard).map((c) => (
                   <div key={c.label} className="flex items-start justify-between gap-3 py-1">
-                    <dt className="shrink-0 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                    <dt className="shrink-0 text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-300">
                       {c.label}
                     </dt>
                     <dd className="min-w-0 text-right text-sm break-words">{c.cell(it)}</dd>
@@ -347,7 +352,7 @@ export type PageMeta = { page: number; total_pages: number; total: number };
 export function Pager({ meta, onPage }: { meta: PageMeta | null; onPage: (page: number) => void }) {
   if (!meta) return null;
   return (
-    <div className="mt-4 flex flex-col gap-2 text-xs text-zinc-500 dark:text-zinc-400 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mt-4 flex flex-col gap-2 text-xs text-zinc-500 dark:text-zinc-300 sm:flex-row sm:items-center sm:justify-between">
       <span>{`Page ${meta.page} of ${Math.max(meta.total_pages, 1)} · ${meta.total} total`}</span>
       <div className="flex flex-wrap gap-2">
         <button
@@ -387,12 +392,12 @@ export function Field({
 }) {
   return (
     <div className={`block text-xs${className ? ` ${className}` : ''}`}>
-      <label className="font-medium text-zinc-600 dark:text-zinc-400" htmlFor={htmlFor}>
+      <label className="font-medium text-zinc-600 dark:text-zinc-300" htmlFor={htmlFor}>
         {label}
       </label>
       <div className="mt-1">{children}</div>
       {help ? (
-        <span className="block mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{help}</span>
+        <span className="block mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-300">{help}</span>
       ) : null}
     </div>
   );
@@ -416,7 +421,7 @@ export function FormError({ message }: { message?: string | null }) {
   if (!message) return null;
   return (
     <p
-      className="mt-3 rounded-lg bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-400"
+      className="mt-3 rounded-lg bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-200"
       role="alert"
     >
       {message}
@@ -462,12 +467,12 @@ export function CheckField({
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-5 w-5 shrink-0 rounded border-zinc-300 dark:border-zinc-600 text-violet-700 focus:ring-2 focus:ring-violet-500 dark:text-violet-400"
+        className="mt-0.5 h-5 w-5 shrink-0 rounded border-zinc-300 dark:border-zinc-600 text-azure-700 focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 dark:text-azure-400"
       />
       <span className="text-xs">
-        <span className="font-medium text-zinc-600 dark:text-zinc-400">{label}</span>
+        <span className="font-medium text-zinc-600 dark:text-zinc-300">{label}</span>
         {help ? (
-          <span className="block mt-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{help}</span>
+          <span className="block mt-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-300">{help}</span>
         ) : null}
       </span>
     </label>
@@ -477,16 +482,19 @@ export function CheckField({
 // A small status pill. Mirrors AdminTopochain._badgeHtml; the tone table is
 // the same four, and an unknown tone falls back to zinc rather than
 // disappearing.
+// The KEYS are the tone names callers pass as runtime strings (`tone="green"`,
+// and `violet` for what has been the blue recipe since the reskin) — they are
+// decoupled from the hue and must not be renamed. Only the values move.
 const BADGE_TONES: Record<string, string> = {
-  green: 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400',
-  amber: 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400',
-  violet: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400',
+  green: 'bg-meadow-50 text-meadow-700 dark:bg-meadow-950/40 dark:text-meadow-200',
+  amber: 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200',
+  violet: 'bg-azure-50 text-azure-700 dark:bg-azure-950/40 dark:text-azure-300',
   zinc: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
 };
 
 export function Badge({ label, tone }: { label: ReactNode; tone?: string }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${BADGE_TONES[tone || 'zinc'] || BADGE_TONES.zinc}`}>
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${BADGE_TONES[tone || 'zinc'] || BADGE_TONES.zinc}`}>
       {label}
     </span>
   );
@@ -497,7 +505,7 @@ export function Badge({ label, tone }: { label: ReactNode; tone?: string }) {
 // be answered by reading every label. Mirrors AdminTopochain._formSection.
 export function FormSection({ label }: { label: ReactNode }) {
   return (
-    <p className="mt-5 mb-3 border-t border-zinc-200 dark:border-zinc-800 pt-4 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+    <p className="mt-5 mb-3 border-t border-zinc-200 dark:border-zinc-800 pt-4 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-300">
       {label}
     </p>
   );

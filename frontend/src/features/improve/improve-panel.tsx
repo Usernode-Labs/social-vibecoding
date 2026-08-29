@@ -63,7 +63,7 @@ function dismissForNav(): void {
 // Sentence case, not uppercase: the board's own labels read "Changes in
 // progress", and the app name above them is the app's name as written.
 const SECTION_LABEL_CLASS =
-  'px-4 pt-2.5 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400';
+  'px-4 pt-2.5 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-300';
 
 const ROW_BASE =
   'w-full flex items-center gap-3 px-4 min-h-[44px] text-left';
@@ -107,8 +107,35 @@ const ACTION_BASE =
   'inline-flex flex-1 basis-0 min-w-0 items-center justify-center h-9 px-3 '
   + 'rounded-full text-sm font-semibold transition-colors un-touch-target';
 
+/*
+ * ONE treatment for both pills, and it is NEUTRAL rather than an accent wash.
+ *
+ * THE UNIFICATION IS KEPT. It arrived from two directions at once and they
+ * agree: the note above argues neither action is more special than the other,
+ * and the branch that carried the accent tint had already reached the same
+ * place from the other end — Feedback is the ALTERNATIVE to New change, not a
+ * lesser version of it, and a tint beside a solid pill read as "the same
+ * thing, dimmed". So `ACTION_PRIMARY`/`ACTION_SECONDARY` stay collapsed into
+ * this single constant and `primary` is gone from QuickAction's props.
+ *
+ * THE VALUE DOES NOT SURVIVE, because the ramp under it moved. This was
+ * `bg-violet-500/10 hover:bg-violet-500/20 text-violet-700 dark:text-violet-400`
+ * — a violet wash under violet ink, which is right on a violet accent. It is
+ * not a legibility problem here: measured with the APCA-W3 port in
+ * tests/theme-ink-guards.test.js, that run reads Lc 76.6 light and -86.5 dark,
+ * both over the body minimum. It is a ROLE problem, which is the harder one to
+ * see in a diff of class strings. `violet-*` is the YELLOW ramp now
+ * (violet-600 is #FFC93A) and yellow marks the ONE filled action on a screen —
+ * here that action is #improve-btn, the pill this panel opens from. Two yellow
+ * washes directly beneath it spend the accent on a pair of peers, which is
+ * exactly what the note above objects to in the filled-pill version.
+ *
+ * Grey is what a pair of peer actions is for. This is button.tsx's `neutral`
+ * variant plus its `neutral` ink — the recipe the shell already calls a filled
+ * secondary — at Lc 93.8 light and -92.8 dark, parity to a decimal.
+ */
 const ACTION_FILL =
-  'bg-violet-500/10 hover:bg-violet-500/20 text-violet-700 dark:text-violet-400';
+  'bg-zinc-100 hover:bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:hover:bg-zinc-700 dark:text-zinc-100';
 
 function QuickAction({ id, label, onClick }: {
   id: string;
@@ -165,11 +192,18 @@ function UpdateStatus(): ReactNode {
 
   if (ready) {
     return (
+      // A text button, so it takes the BLUE: `text-azure-800 dark:text-azure-200`
+      // is the settled link/text-action ink (Lc 77.8 / -81.4). It arrived
+      // spelled `text-violet-600 dark:text-violet-400`, which was the accent
+      // ink on a violet palette and is pale yellow on this one — violet-600
+      // #FFC93A on the white footer measures Lc 24.6, the non-content tier,
+      // against its dark half's -90.1. A 65 Lc gap between the two themes is
+      // the failure tests/theme-ink-guards.test.js's pair rule exists for.
       <button
         id="improve-update-ready"
         type="button"
         className={'flex w-full items-center gap-3 px-4 py-3 text-left '
-          + 'text-sm font-medium text-violet-600 dark:text-violet-400 '
+          + 'text-sm font-medium text-azure-800 dark:text-azure-200 '
           + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 un-touch-target'}
         onClick={() => window.location.reload()}
       >
@@ -190,9 +224,14 @@ function UpdateStatus(): ReactNode {
         : 'A new version of the platform is being built.')
       : 'A new version of this app is being built.';
     return (
+      // `dark:text-zinc-300`, not the `-400` this arrived with: every other
+      // muted line in this file pairs zinc-500 with zinc-300 after the neutral
+      // sweep. zinc-400 on the dark card is Lc -43.5 against zinc-500's 84.5 on
+      // white — the light theme showing body text where the dark one shows a
+      // disabled label.
       <div
         id="improve-update-note"
-        className="flex items-center gap-3 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400"
+        className="flex items-center gap-3 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-300"
       >
         <SpinnerArcIcon className="w-4 h-4 shrink-0 animate-spin" aria-hidden="true" />
         <span className="min-w-0 flex-1">{line}</span>
@@ -289,7 +328,7 @@ export function ImprovePanel() {
         aria-label={target === 'platform' ? 'Improve the platform' : 'Improve this app'}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
-        className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl improve-panel-transition"
+        className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl improve-panel-transition dark:shadow-none"
       >
         {/*
             ONE LINE. It was a stacked title-over-subtitle pair with `py-3`,
@@ -301,21 +340,42 @@ export function ImprovePanel() {
             The name keeps its id and its job: on the home screen the target is
             the platform itself, and this is the only cue that says "Improve"
             there means Social Vibecoding rather than an app.
+
+            The padding is ASYMMETRIC, and "the sheet starts where its content
+            starts" is why it had to become so. That sentence is right for a
+            row in the middle of a column and wrong against this particular
+            edge: the sheet's top corners are `border-top-*-radius: 1.25rem`
+            (app.css, the max-width:639px block), so at `py-2` the title's
+            first line sat 8px down inside a 20px arc — still turning — and
+            read as collided rather than merely tight. `pt-5` is that radius,
+            which is the same answer the sibling sheet already reached:
+            app-context-sheet.tsx's header is `pt-5` against the identical
+            1.25rem corner. One family, one number — clear the arc.
+
+            `pb-2` keeps the compression the note above argued for, because
+            BELOW the row the neighbour is the quick-action strip and it
+            brings its own `pt-1`. Top padding answers to the container's
+            edge, bottom padding to a sibling: different jobs that only look
+            like one value, which is why this is not `py-*`.
+
+            Horizontal stays `px-4` rather than following app-context to
+            `px-5`: that is this panel's own gutter, shared with its rows and
+            action strip, and a straight edge has no arc to clear.
         */}
-        <div className="flex items-center gap-2 px-4 py-2 shrink-0">
-          <h2 className="shrink-0 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+        <div className="flex items-center gap-2 px-4 pt-5 pb-2 shrink-0">
+          <h2 className="shrink-0 text-sm font-semibold text-zinc-800 dark:text-zinc-100">
             Improve
           </h2>
           <p
             id="improve-target-name"
-            className="min-w-0 flex-1 truncate text-sm text-zinc-500 dark:text-zinc-400"
+            className="min-w-0 flex-1 truncate text-sm text-zinc-500 dark:text-zinc-300"
           >
             {name}
           </p>
           <button
             id="improve-close"
             type="button"
-            className="shrink-0 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 un-touch-target dark:text-zinc-400"
+            className="shrink-0 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 un-touch-target dark:text-zinc-300"
             aria-label="Close"
             onClick={close}
           >
@@ -347,8 +407,12 @@ export function ImprovePanel() {
               category label sitting next to an action. The two labels are the
               same part of speech now. It still leads, because it is the one
               action that needs nothing of the viewer — no collaborator bit, no
-              session, no repo. New change carries the fill, because starting
-              one is what this panel is for.
+              session, no repo. Neither carries a fill the other does not:
+              ACTION_FILL is one treatment for both, for the reasons on
+              QuickAction. (This paragraph ended "New change carries the fill,
+              because starting one is what this panel is for" — a sentence that
+              outlived the primary/secondary split it described by one change,
+              and is corrected here rather than left as a second opinion.)
 
               Share was the third segment and is not here any more: it is a
               fact ABOUT the app rather than something you do to it, so it
@@ -432,7 +496,7 @@ export function ImprovePanel() {
               </div>
             )}
             {state.loadingSessions && !state.sessionsLoaded ? (
-              <div className="px-4 pb-2 text-xs text-zinc-500 dark:text-zinc-400">
+              <div className="px-4 pb-2 text-xs text-zinc-500 dark:text-zinc-300">
                 Loading…
               </div>
             ) : null}
@@ -459,7 +523,7 @@ export function ImprovePanel() {
                 <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
                   No changes in progress.
                 </p>
-                <p className="mt-1 text-sm text-zinc-500 text-pretty dark:text-zinc-400">
+                <p className="mt-1 text-sm text-zinc-500 text-pretty dark:text-zinc-300">
                   Start one with New change, or send feedback and let someone
                   else pick it up.
                 </p>
@@ -468,7 +532,7 @@ export function ImprovePanel() {
             {/* This app is quiet but another is not: the space is contested
                 again, so the note goes back to one muted line. */}
             {state.sessionsLoaded && sessions.length === 0 && otherSessions.length > 0 ? (
-              <div className="px-4 pb-2 text-xs text-zinc-500 dark:text-zinc-400">
+              <div className="px-4 pb-2 text-xs text-zinc-500 dark:text-zinc-300">
                 Nothing running on this app.
               </div>
             ) : null}
@@ -564,6 +628,13 @@ export function ImprovePanel() {
                 onClick={() => Improve.share()}
               />
             ) : null}
+            {/* The three version rows that stood here — #improve-row-version,
+                #drawer-row-platform-version and <NativeAppVersionRow/> — are
+                gone with the block comment above, not restyled. The branch
+                this merge brings in had only recoloured their muted ink
+                (`dark:text-zinc-400` → `-300`), so there is nothing of ours
+                left to carry across; the sweep that produced it reaches the
+                Settings rows those facts moved to instead. */}
             <UpdateStatus />
           </div>
         </div>

@@ -82,6 +82,23 @@ function statusLabel(session) {
   return null;
 }
 
+/**
+ * The same decision as statusLabel, as a SEMANTIC KEY rather than display
+ * text — session-row.tsx picks the state's brand gradient from it, and a
+ * component that re-derived the state by matching on 'Working…' would break
+ * the first time that copy changed.
+ *
+ * 'handed-off' is the work order's, and it is the one state that draws no
+ * gradient: see taskToRow on why this side cannot claim liveness for it.
+ */
+function stateKey(session) {
+  if (isBusy(session)) return 'working';
+  const state = String(session.status || '').toLowerCase();
+  if (state === 'paused') return 'paused';
+  if (state === 'awaiting_input' || state === 'needs_input') return 'needs-you';
+  return 'ready';
+}
+
 /** ms since epoch, or 0 for anything unparseable — never NaN into a sort. */
 function timeOf(value) {
   const t = Date.parse(value || '');
@@ -105,6 +122,7 @@ function toRow(session, appNameFallback) {
       || `Session #${session.id}`,
     href: `#app/${session.app_slug}/dev/sessions/${session.id}`,
     status: statusLabel(session),
+    state: stateKey(session),
     busy: isBusy(session),
     sortAt: timeOf(session.last_activity_at) || timeOf(session.created_at),
     // Streamlined Concept: the app-context sheet's change rows show a
@@ -140,6 +158,7 @@ function taskToRow(task, appNameFallback) {
       ? `#app/${task.app_slug}/dev/issues/${task.issue_number}`
       : `#app/${task.app_slug}/dev`,
     status: agentLabel(task.agent),
+    state: 'handed-off',
     busy: false,
     sortAt: timeOf(task.created_at),
   };

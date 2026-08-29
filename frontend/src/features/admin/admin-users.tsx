@@ -71,7 +71,7 @@ interface User {
 const console_ = () => (window as any).AdminConsole;
 
 const SMALL_INPUT = 'rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60';
-const TINY_LABEL = 'text-xs text-zinc-500 dark:text-zinc-400';
+const TINY_LABEL = 'text-xs text-zinc-500 dark:text-zinc-300';
 const CONTROL = 'flex items-center gap-1 shrink-0';
 
 const ROLE_LABEL: Record<string, string> = {
@@ -181,14 +181,14 @@ function Kebab({ user, open, onToggle, onReload }: {
       <button type="button" className="admin-kebab-btn rounded px-2 py-1 text-lg leading-none text-zinc-500 hover:text-zinc-700 dark:text-zinc-300 dark:hover:text-zinc-200"
         aria-label="User actions" aria-haspopup="true" aria-expanded={open}
         onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>⋯</button>
-      <div className={`admin-kebab-menu${open ? '' : ' hidden'} absolute right-0 mt-1 z-20 min-w-[11rem] rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 py-1 shadow-lg`}>
+      <div className={`admin-kebab-menu${open ? '' : ' hidden'} absolute right-0 mt-1 z-20 min-w-[11rem] rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 py-1 shadow-lg dark:shadow-none`}>
         <button type="button" data-reset-id={user.id} data-username={user.username} onClick={resetPassword}
-          className="admin-reset-pw-btn block w-full text-left px-3 py-2 text-sm text-violet-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-violet-400">
+          className="admin-reset-pw-btn block w-full text-left px-3 py-2 text-sm text-azure-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-azure-200">
           Reset password</button>
         {/* Delete stays hidden for admins. */}
         {!user.is_admin ? (
           <button type="button" data-delete-id={user.id} onClick={remove}
-            className="admin-delete-user-btn block w-full text-left px-3 py-2 text-sm text-red-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-red-400">
+            className="admin-delete-user-btn block w-full text-left px-3 py-2 text-sm text-red-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 dark:text-red-200">
             Delete</button>
         ) : null}
       </div>
@@ -260,8 +260,8 @@ function OpenRouterCard({ user, onReload }: { user: User; onReload: () => void }
         <span className="rounded px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-800">
           {(status && MANAGED_STATUS_LABEL[status]) || status || 'None'}
         </span>
-        {limit ? <span className="text-zinc-500 dark:text-zinc-400">{limit}</span> : null}
-        <span className="text-zinc-500 dark:text-zinc-400">
+        {limit ? <span className="text-zinc-500 dark:text-zinc-300">{limit}</span> : null}
+        <span className="text-zinc-500 dark:text-zinc-300">
           {user.social_verified ? 'verified identity' : 'identity no longer verified'}
         </span>
         <div className="ml-auto flex gap-2">
@@ -281,7 +281,7 @@ function OpenRouterCard({ user, onReload }: { user: User; onReload: () => void }
           ) : null}
         </div>
       </div>
-      <div className="mt-1 text-zinc-500 dark:text-zinc-400 break-all">
+      <div className="mt-1 text-zinc-500 dark:text-zinc-300 break-all">
         {hash
           ? <>{'OpenRouter hash: '}<code>{hash}</code></>
           : 'No confirmed remote hash; reconcile this user label in the OpenRouter dashboard.'}
@@ -440,11 +440,11 @@ function UserRow({ user, fullAdminCount, canWrite, menuOpen, onMenu, onReload }:
       <div className="flex-1 min-w-0 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between xl:gap-6">
         <div className="min-w-0">
           <div className="font-medium break-words">{user.username}</div>
-          <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
+          <div className="text-sm text-zinc-500 dark:text-zinc-300 truncate">
             {`$${costToday} spent today `}
             {user.activation_code ? (
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                {'code: '}<code className="text-zinc-500 dark:text-zinc-400">{user.activation_code}</code>
+              <span className="text-xs text-zinc-500 dark:text-zinc-300">
+                {'code: '}<code className="text-zinc-500 dark:text-zinc-300">{user.activation_code}</code>
               </span>
             ) : null}
           </div>
@@ -489,7 +489,7 @@ function UserRow({ user, fullAdminCount, canWrite, menuOpen, onMenu, onReload }:
             <CommitField className={`admin-quota-input w-16 ${SMALL_INPUT}`}
               type="number" inputMode="numeric" disabled={!canWrite}
               committed={String(appQuota)} onCommit={commitQuota} />
-            <span className="text-xs text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{`${appsCreated} used`}</span>
+            <span className="text-xs text-zinc-500 dark:text-zinc-300 whitespace-nowrap">{`${appsCreated} used`}</span>
           </div>
         </div>
       </div>
@@ -606,7 +606,7 @@ function UsersSection() {
           {canWrite ? (
             <div id="admin-bulk-quota-control" className="flex items-center gap-2"
               title="Set every user's app quota to this number.">
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">Set all quotas to</span>
+              <span className="text-xs text-zinc-500 dark:text-zinc-300">Set all quotas to</span>
               <input id="admin-bulk-quota-input" type="number" min="0" step="1" inputMode="numeric"
                 className={`w-16 ${SMALL_INPUT}`} placeholder="0"
                 value={bulk} onChange={(e) => setBulk(e.target.value)} />
@@ -616,10 +616,10 @@ function UsersSection() {
           ) : null}
         </div>
         <div id="admin-user-list" className="divide-y divide-zinc-200 dark:divide-zinc-800">
-          {denied ? <p className="p-4 text-sm text-zinc-500 dark:text-zinc-400">Admin access required.</p> : null}
-          {!denied && users == null ? <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">Loading…</p> : null}
+          {denied ? <p className="p-4 text-sm text-zinc-500 dark:text-zinc-300">Admin access required.</p> : null}
+          {!denied && users == null ? <p className="p-4 text-xs text-zinc-500 dark:text-zinc-300">Loading…</p> : null}
           {!denied && users != null && !shown.length && query ? (
-            <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">
+            <p className="p-4 text-xs text-zinc-500 dark:text-zinc-300">
               No user matches “{filter.trim()}”.
             </p>
           ) : null}

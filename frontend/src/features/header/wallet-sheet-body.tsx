@@ -51,55 +51,66 @@ function StakingCard({ s }: { s: WalletSheetState }): ReactNode {
   if (staking.kind === 'absent') return null;
   return (
     <section className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
-      <div className="text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-400">
+      <div className="text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-300">
         Block production
       </div>
-      <div className="my-3 rounded-lg bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-800 dark:text-amber-300">
+      <div className="my-3 rounded-lg bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-800 dark:text-amber-200">
         When delegated, you receive half the points you would earn by producing blocks directly from your phone.
       </div>
-      <div className="mb-3 rounded-lg bg-sky-500/10 px-3 py-2 text-sm font-medium text-sky-800 dark:text-sky-300">
+      {/* GREY, not a fold to azure: folding sky here would make this advisory
+          strip identical to the `delegated` wash fourteen lines below, and an
+          informational panel is grey by role — an accent tint on it spends the
+          accent on something that is neither an action nor a state. */}
+      <div className="mb-3 rounded-lg bg-zinc-500/10 px-3 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-300">
         Want to run a node on your own laptop or server and monitor it from your phone? Start the node there using the same account you use on this phone.
       </div>
       {staking.kind === 'pending' ? (
         <>
           {/* Setup unfinished is NOT "not delegated": it offers a retry. */}
           <div className="text-sm font-semibold">Wallet setup is still in progress</div>
+          {/* `layout="stacked3"`, not `layout="full"` + a hand-written margin.
+              The 12px lead-in is this button's own rhythm — it follows a
+              message it did not come from — so it belongs in button.tsx's
+              `layout` table, which already names these two call sites in the
+              comment above `stacked3`. A margin in `className` is the caller
+              reaching into the callee's layout. */}
           <Button
-            layout="full" size="narrowBold" className="mt-3"
+            layout="stacked3" size="narrowBold"
             disabled={s.refreshPending}
             onClick={() => controller()?.retryState?.()}
           >{s.refreshPending ? 'Retrying…' : 'Retry'}</Button>
         </>
       ) : (
         <>
-          <div className={staking.kind === 'delegated' ? 'rounded-lg bg-violet-500/10 px-3 py-2' : ''}>
+          <div className={staking.kind === 'delegated' ? 'rounded-lg bg-azure-500/10 px-3 py-2' : ''}>
             <div className={staking.kind === 'delegated'
-              ? 'text-base font-semibold text-violet-800 dark:text-violet-300'
+              ? 'text-base font-semibold text-azure-800 dark:text-azure-300'
               : 'text-base font-semibold'}>
               {staking.kind === 'delegated' ? 'Delegated' : 'Producing blocks on this phone'}
             </div>
             <div className={staking.kind === 'delegated'
-              ? 'mt-1 text-sm text-violet-700 dark:text-violet-300/80'
-              : 'mt-1 text-sm text-zinc-500 dark:text-zinc-400'}>
+              ? 'mt-1 text-sm text-azure-700 dark:text-azure-300/80'
+              : 'mt-1 text-sm text-zinc-500 dark:text-zinc-300'}>
               {staking.kind === 'delegated'
                 ? 'Block production on this phone is disabled.'
                 : 'Producing blocks directly on this phone earns full points.'}
             </div>
             {staking.kind === 'delegated' ? (
               <>
-                <div className="mt-2 font-mono text-xs text-violet-700 dark:text-violet-300">
+                <div className="mt-2 font-mono text-xs text-azure-700 dark:text-azure-300">
                   {staking.delegate}
                 </div>
                 {staking.since ? (
-                  <div className="mt-1 text-xs text-violet-700 dark:text-violet-300/80">
+                  <div className="mt-1 text-xs text-azure-700 dark:text-azure-300/80">
                     {`Delegated since ${staking.since}`}
                   </div>
                 ) : null}
               </>
             ) : null}
           </div>
+          {/* Same variant as the Retry above, for the same reason. */}
           <Button
-            layout="full" size="narrowBold" className="mt-3"
+            layout="stacked3" size="narrowBold"
             disabled={s.stakingPending}
             onClick={() => controller()?._manageStaking?.()}
           >{s.stakingPending ? 'Opening…' : 'Manage delegation'}</Button>
@@ -127,7 +138,7 @@ function ReceivePanel({ address }: { address: string }): ReactNode {
   return (
     <div className="flex flex-col items-center gap-2 p-4 mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800">
       <div ref={qrRef} className="bg-white p-2 rounded"></div>
-      <div className="font-mono text-xs break-all text-center text-zinc-500 dark:text-zinc-400">
+      <div className="font-mono text-xs break-all text-center text-zinc-500 dark:text-zinc-300">
         {address}
       </div>
     </div>
@@ -163,7 +174,7 @@ function SendForm({ onSent }: { onSent: () => void }): ReactNode {
         value={amount} onChange={(e) => setAmount(e.target.value)}
       />
       <Button size="flushBold" disabled={sending} onClick={submit}>Send</Button>
-      <div className="text-xs text-zinc-500 dark:text-zinc-400">
+      <div className="text-xs text-zinc-500 dark:text-zinc-300">
         You will confirm this transaction on the next screen.
       </div>
     </div>
@@ -178,11 +189,20 @@ export function WalletSheetBody(): ReactNode {
   return (
     <>
       <div className="text-3xl font-bold mb-1">{s.balanceLabel}</div>
-      <div className="flex items-center gap-2 mb-4 text-sm text-zinc-500 dark:text-zinc-400">
+      <div className="flex items-center gap-2 mb-4 text-sm text-zinc-500 dark:text-zinc-300">
         <span className="font-mono">{s.shortAddress}</span>
         {s.address ? (
+          // A TEXT BUTTON takes the link ink (800/200), not the chip ink:
+          // azure-700 is Lc 68.0 on white against azure-800's 77.8, and the
+          // dark half moves 300 -> 200 (-66.5 -> -81.4) so the pair lands 3.6
+          // apart at a higher tier rather than 1.5 apart at a lower one. Both
+          // hovers step one further out (900 / 100) or they would collapse
+          // onto the new base and render nothing — the same correction the
+          // browse detail's Back link carries. The azure inks on the
+          // delegated PANEL below stay where they are: those sit on a wash,
+          // which is chip territory, not link territory.
           <button
-            className="text-violet-700 hover:text-violet-400 text-xs font-medium dark:text-violet-400"
+            className="text-azure-800 hover:text-azure-900 dark:hover:text-azure-100 text-xs font-medium dark:text-azure-200"
             onClick={() => controller()?.copyAddress?.()}
           >Copy</button>
         ) : null}
@@ -195,12 +215,12 @@ export function WalletSheetBody(): ReactNode {
         >Receive</button>
       </div>
       {!s.walletSupported ? (
-        <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-400">
+        <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-300">
           Wallet state is unavailable in this app version.
         </div>
       ) : null}
       {s.stateError ? (
-        <div className="mb-4 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-400">
+        <div className="mb-4 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-200">
           {s.stateError}
         </div>
       ) : null}
@@ -209,19 +229,19 @@ export function WalletSheetBody(): ReactNode {
         {expand === 'receive' && s.address ? <ReceivePanel address={s.address} /> : null}
         {expand === 'send' ? <SendForm onSent={() => setExpand('none')} /> : null}
       </div>
-      <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-2 mb-1">
+      <div className="text-sm font-semibold text-zinc-500 dark:text-zinc-300 mt-2 mb-1">
         Recent
       </div>
       <div>
         {s.receipts == null
-          ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">Loading…</div>
+          ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-300">Loading…</div>
           : s.receipts.length === 0
-            ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-400">No transactions sent from this session yet.</div>
+            ? <div className="text-sm text-zinc-500 py-2 dark:text-zinc-300">No transactions sent from this session yet.</div>
             : s.receipts.slice(0, 20).map((r) => (
               <div key={r.key} className={ROW_LINE}>
                 <div className="min-w-0">
                   <div className="font-medium truncate">{r.line1}</div>
-                  <div className="text-xs text-zinc-500 dark:text-zinc-400">{r.line2}</div>
+                  <div className="text-xs text-zinc-500 dark:text-zinc-300">{r.line2}</div>
                 </div>
               </div>
             ))}

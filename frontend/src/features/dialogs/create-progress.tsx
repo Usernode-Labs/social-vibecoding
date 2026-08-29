@@ -49,16 +49,26 @@ export interface CreateProgressProps {
   onClose: () => void;
 }
 
-/** The glyph for one step, keyed by its state. */
+/** The glyph for one step, keyed by its state.
+ *
+ * The dark half is `azure-300`, not the `azure-400` these were written with:
+ * -400 sits a tier below its light partner on the dark card, so the two themes
+ * disagreed about how loud a running step is. It is the same correction the
+ * profile sheet's row actions already carry, and it moves regardless of where
+ * the blue LINK ink lands — a step glyph is not a link.
+ */
 function StepGlyph({ state }: { state: StepState }) {
   if (state === 'done') {
-    return <CheckIcon className="h-4 w-4 text-violet-500" aria-hidden="true" />;
+    return <CheckIcon className="h-4 w-4 text-azure-700 dark:text-azure-300" aria-hidden="true" />;
   }
   if (state === 'active') {
-    return <SpinnerArcIcon className="h-4 w-4 animate-spin text-violet-500" aria-hidden="true" />;
+    return <SpinnerArcIcon className="h-4 w-4 animate-spin text-azure-700 dark:text-azure-300" aria-hidden="true" />;
   }
   if (state === 'failed') {
-    return <XIcon className="h-4 w-4 text-red-500" aria-hidden="true" />;
+    // Paired, and on the same ink as the failed step's label below: bare
+    // red-500 rendered into BOTH themes, at Lc -33 on the dark card — the
+    // non-content rung, for the one glyph that reports a failure.
+    return <XIcon className="h-4 w-4 text-red-700 dark:text-red-200" aria-hidden="true" />;
   }
   // Idle: an empty ring, so the row still occupies the same box and the
   // list does not reflow as steps light up.
@@ -71,10 +81,13 @@ function StepGlyph({ state }: { state: StepState }) {
 }
 
 const STEP_LABEL_CLASS: Record<StepState, string> = {
-  done: 'text-zinc-500 dark:text-zinc-400',
+  done: 'text-zinc-500 dark:text-zinc-300',
   active: 'text-zinc-900 dark:text-zinc-100 font-medium',
-  failed: 'text-red-600 dark:text-red-400 font-medium',
-  idle: 'text-zinc-400 dark:text-zinc-600',
+  failed: 'text-red-700 dark:text-red-200 font-medium',
+  // Same ink as `done`: the step's ordinal-vs-check glyph is what separates
+  // them, and at dark zinc-400 (Lc -43) a step you have not reached yet was
+  // unreadable rather than quiet.
+  idle: 'text-zinc-500 dark:text-zinc-300',
 };
 
 function headline(outcome: CreationOutcome, mode: 'new' | 'import', appName: string): string {
@@ -153,8 +166,8 @@ export function CreateProgress({
         aria-live="polite"
         className={
           outcome === 'failed'
-            ? 'text-sm text-red-600 dark:text-red-400'
-            : 'text-sm text-zinc-500 dark:text-zinc-400'
+            ? 'text-sm text-red-700 dark:text-red-200'
+            : 'text-sm text-zinc-500 dark:text-zinc-300'
         }
       >
         {outcome === 'failed' || outcome === 'needs-secrets' ? (
@@ -180,13 +193,13 @@ export function CreateProgress({
           // dialog's own segmented pills already use.
           className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 p-3"
         >
-          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-300 mb-2">
             What happens next
           </p>
           <ol className="space-y-1.5">
             {NEXT_STEPS.map((line, i) => (
               <li key={line} className="flex gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-                <span className="text-zinc-500 dark:text-zinc-500 tabular-nums">{i + 1}.</span>
+                <span className="text-zinc-500 dark:text-zinc-300 tabular-nums">{i + 1}.</span>
                 <span>{line}</span>
               </li>
             ))}

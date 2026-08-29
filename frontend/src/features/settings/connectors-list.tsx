@@ -33,7 +33,7 @@ export function ConnectorsListView({ phase, connectors }: ConnectorsState) {
   if (phase === 'loading') return <>Loading connections…</>;
   if (!connectors.length) {
     return (
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+      <p className="text-xs text-zinc-500 dark:text-zinc-300">
         No chat products connected yet.
       </p>
     );
@@ -50,13 +50,13 @@ export function ConnectorsListView({ phase, connectors }: ConnectorsState) {
               <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                 {connector.title}
               </div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+              <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">
                 {connector.detail}
               </div>
             </div>
             <button
               type="button"
-              className="shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+              className="shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-200 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
               onClick={(e) => controller()?._disconnectConnector?.(connector.id, e.currentTarget)}
             >
               Disconnect

@@ -51,8 +51,8 @@ function RevokedRow({ grant }: { grant: GrantView }) {
   return (
     <div className={ROW_CLASS}>
       <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-zinc-500 dark:text-zinc-500 truncate">{grant.appName}</span>
-        <span className="shrink-0 rounded px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400">
+        <span className="font-medium text-zinc-500 dark:text-zinc-300 truncate">{grant.appName}</span>
+        <span className="shrink-0 rounded px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-300">
           Revoked
         </span>
       </div>
@@ -65,12 +65,12 @@ function GrantRow({ grant }: { grant: GrantView }) {
     <div className={ROW_CLASS}>
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium text-zinc-700 dark:text-zinc-300 truncate">{grant.appName}</span>
-        <span className="font-mono text-zinc-600 dark:text-zinc-400 shrink-0">
+        <span className="font-mono text-zinc-600 dark:text-zinc-300 shrink-0">
           {`$${grant.spent} / $${grant.cap} today`}
         </span>
       </div>
       <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
-        <label className="flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
+        <label className="flex items-center gap-1 text-zinc-600 dark:text-zinc-300">
           Cap $
           <input
             data-role="cap"
@@ -83,11 +83,11 @@ function GrantRow({ grant }: { grant: GrantView }) {
           />
         </label>
         {grant.showByok ? (
-          <label className="flex items-center gap-1 cursor-pointer select-none text-zinc-600 dark:text-zinc-400">
+          <label className="flex items-center gap-1 cursor-pointer select-none text-zinc-600 dark:text-zinc-300">
             <input
               data-role="byok"
               type="checkbox"
-              className="accent-violet-500 w-3.5 h-3.5"
+              className="accent-azure-500 w-3.5 h-3.5"
               checked={grant.allowByok}
               onChange={(e) => controller()?._onGrantByokChange?.(grant.appId, e.currentTarget.checked)}
             />
@@ -103,7 +103,7 @@ function GrantRow({ grant }: { grant: GrantView }) {
         <button
           type="button"
           data-role="revoke"
-          className="rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-0.5 font-medium text-red-700 dark:text-red-400 transition-colors"
+          className="rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-0.5 font-medium text-red-700 dark:text-red-200 transition-colors"
           onClick={() => { void controller()?._onGrantRevoke?.(grant.appId, grant.appName); }}
         >
           Revoke
@@ -116,10 +116,10 @@ function GrantRow({ grant }: { grant: GrantView }) {
 export function GrantsList() {
   const state = useStoreState(grantsStore);
   if (state.phase === 'idle') return null;
-  if (state.phase === 'loading') return <p className="text-xs text-zinc-500 dark:text-zinc-400">Loading…</p>;
-  if (state.phase === 'error') return <p className="text-xs text-red-700 dark:text-red-400">Failed to load app permissions.</p>;
+  if (state.phase === 'loading') return <p className="text-xs text-zinc-500 dark:text-zinc-300">Loading…</p>;
+  if (state.phase === 'error') return <p className="text-xs text-red-700 dark:text-red-200">Failed to load app permissions.</p>;
   if (!state.grants.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-500">No apps have asked to use AI yet.</p>;
+    return <p className="text-xs text-zinc-500 dark:text-zinc-300">No apps have asked to use AI yet.</p>;
   }
   return (
     <>

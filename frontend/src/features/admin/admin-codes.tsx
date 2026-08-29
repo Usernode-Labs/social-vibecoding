@@ -37,8 +37,10 @@ interface Code {
   used_at?: string;
 }
 
-const ROW = 'flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
-const LINK_BTN = 'text-xs text-zinc-500 dark:text-zinc-400 transition-colors';
+// 4px, not the control step: these rows fill a `${AdminUI.card} p-4`, so the
+// concentric inner is 20 − 16. Same recipe as admin-overview.tsx's ROW/TILE.
+const ROW = 'flex flex-wrap items-center justify-between gap-3 p-2.5 rounded bg-zinc-100 dark:bg-zinc-800';
+const LINK_BTN = 'text-xs text-zinc-500 dark:text-zinc-300 transition-colors';
 
 /**
  * A copy button that says so for a moment. The timer lives with the button,
@@ -71,28 +73,28 @@ function CodeRow({ code, canWrite, onDelete }: {
   return (
     <div className={ROW}>
       <div className="flex-1 min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1">
-        <code className={`font-mono text-sm ${used ? 'text-zinc-500 dark:text-zinc-400 line-through' : 'text-violet-700 dark:text-violet-400'}`}>{code.code}</code>
+        <code className={`font-mono text-sm ${used ? 'text-zinc-500 dark:text-zinc-300 line-through' : 'text-azure-700 dark:text-azure-300'}`}>{code.code}</code>
         {used ? (
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            {'Used by '}<strong className="text-zinc-500 dark:text-zinc-400">{code.used_by_username}</strong>
+          <span className="text-xs text-zinc-500 dark:text-zinc-300">
+            {'Used by '}<strong className="text-zinc-500 dark:text-zinc-300">{code.used_by_username}</strong>
             {` on ${new Date(code.used_at as string).toLocaleDateString()}`}
           </span>
         ) : <span className={AdminUI.badge.success}>Available</span>}
       </div>
       <div className="flex items-center gap-2 shrink-0">
         {!used ? (
-          <CopyButton className={`admin-copy-code-btn ${LINK_BTN} hover:text-violet-800 dark:hover:text-violet-300`}
+          <CopyButton className={`admin-copy-code-btn ${LINK_BTN} hover:text-azure-800 dark:hover:text-azure-300`}
             label="Copy" done="Copied!" value={code.code} />
         ) : null}
         {!used ? (
           // In-SPA register route (fold-auth-pages-into-SPA); the old
           // /register.html?code=… form still works via the redirect stub.
-          <CopyButton className={`admin-share-code-btn ${LINK_BTN} hover:text-green-400`}
+          <CopyButton className={`admin-share-code-btn ${LINK_BTN} hover:text-meadow-700 dark:hover:text-meadow-200`}
             label="Share link" done="Link copied!"
             value={`${location.origin}/#register/${encodeURIComponent(code.code)}`} />
         ) : null}
         {!used && canWrite ? (
-          <button type="button" className={`admin-delete-code-btn ${LINK_BTN} hover:text-red-400`}
+          <button type="button" className={`admin-delete-code-btn ${LINK_BTN} hover:text-red-700 dark:hover:text-red-200`}
             data-id={code.id} aria-label="Delete code"
             onClick={async () => {
               await fetch(`/api/admin/codes/${code.id}`, { method: 'DELETE' });
@@ -134,7 +136,7 @@ function CodesSection() {
         {(codes || []).map((c) => <CodeRow key={c.id} code={c} canWrite={canWrite} onDelete={load} />)}
       </div>
       <p id="admin-code-empty"
-        className={`text-sm text-zinc-500 dark:text-zinc-400${codes && !codes.length ? '' : ' hidden'}`}>
+        className={`text-sm text-zinc-500 dark:text-zinc-300${codes && !codes.length ? '' : ' hidden'}`}>
         No activation codes yet.
       </p>
     </div>

@@ -49,19 +49,20 @@ const POLL_MS = 2000;
 // topochain-style vocabulary.
 const NodeUI = Object.freeze({
   kv: 'grid grid-cols-[max-content_1fr] items-baseline gap-x-6 gap-y-1.5 text-sm',
-  label: 'text-zinc-500 dark:text-zinc-400',
+  label: 'text-zinc-500 dark:text-zinc-300',
   val: 'break-all text-zinc-900 dark:text-zinc-100',
-  small: 'text-[11px] text-zinc-500 dark:text-zinc-400',
-  empty: 'py-1.5 text-xs italic text-zinc-500 dark:text-zinc-400',
-  errText: 'text-xs text-red-700 dark:text-red-400',
-  warnText: 'text-xs text-amber-800 dark:text-amber-400',
+  small: 'text-[11px] text-zinc-500 dark:text-zinc-300',
+  empty: 'py-1.5 text-xs italic text-zinc-500 dark:text-zinc-300',
+  errText: 'text-xs text-red-700 dark:text-red-200',
+  warnText: 'text-xs text-amber-800 dark:text-amber-200',
   code: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 font-mono text-xs',
-  link: 'text-violet-700 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 hover:underline',
+  // Tracks AdminUI.btn.link's ink quadruple: 800/200 base, 900/100 hover.
+  link: 'text-azure-800 hover:text-azure-900 dark:text-azure-200 dark:hover:text-azure-100 hover:underline',
   details: 'rounded-lg bg-zinc-50 dark:bg-zinc-800/50 px-3 py-1.5 my-2',
   summary: 'cursor-pointer select-none py-1 text-[13px] font-medium text-zinc-700 dark:text-zinc-300',
   syncBar: 'mt-1 h-1.5 w-full max-w-[240px] overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800',
   syncFill: 'h-full rounded-full bg-violet-600 transition-all duration-300',
-  syncFillFull: 'h-full rounded-full bg-emerald-500 transition-all duration-300',
+  syncFillFull: 'h-full rounded-full bg-meadow-500 transition-all duration-300',
 });
 
 interface Snapshot {
@@ -313,7 +314,7 @@ function ServicesCard({ svc }: { svc: Record<string, any> }) {
 }
 
 const LED: Record<string, string> = {
-  live: 'inline-block h-2 w-2 rounded-full bg-emerald-500',
+  live: 'inline-block h-2 w-2 rounded-full bg-meadow-500',
   dead: 'inline-block h-2 w-2 rounded-full bg-red-500',
   connecting: 'inline-block h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-600',
 };
@@ -371,11 +372,11 @@ function NodeSection() {
           <h2 id="admin-node-server-name" className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
             {snap ? (srv.name || 'usernode-social-vibecoding') : 'Loading…'}
           </h2>
-          <div className="mb-6 text-[13px] text-zinc-500 dark:text-zinc-400" id="admin-node-server-meta">
+          <div className="mb-6 text-[13px] text-zinc-500 dark:text-zinc-300" id="admin-node-server-meta">
             {snap ? bits.join(' · ') : ''}
           </div>
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400" id="admin-node-conn">
+        <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-300" id="admin-node-conn">
           <span id="admin-node-led" className={LED[conn]} />
           <span id="admin-node-conn-text">{CONN_TEXT[conn]}</span>
         </div>

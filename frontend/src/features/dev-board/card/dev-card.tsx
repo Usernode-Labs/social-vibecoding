@@ -50,6 +50,7 @@ import {
   PencilSquareIcon,
 } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { openmojiSrcFor } from '../../../lib/openmoji';
 import { useStoreState } from '../../../lib/use-store-state';
 import { aiEnabledStore, cardNowStore } from './cards-store';
 import type {
@@ -103,28 +104,43 @@ function Spinner(): ReactNode {
 }
 
 /**
- * The per-type tinted icon chip (`_devCardIcon`'s markup).
+ * The per-type icon chip (`_devCardIcon`'s markup).
  *
- * `<Glyph>` rather than a named icon: the path comes out of app-view.js's
- * `DEV_CARD_ICONS` table at render time, which is exactly the case the
+ * subtle-y2k v2: the chip prefers the spec's OpenMoji glyph (an <img> from
+ * the vendored slice — lib/openmoji.js resolves it, and a miss falls back
+ * to the stroked glyph, never to a blank). `<Glyph>` rather than a named
+ * icon for that fallback: the shapes come out of app-view.js’s
+ * DEV_CARD_ICONS table at render time, which is exactly the case the
  * escape hatch exists for (see @/components/ui/icons.tsx).
  */
 export function CardIcon({ spec }: { spec: CardIconSpec }): ReactNode {
   const box = spec.small ? 'w-7 h-7' : 'w-9 h-9';
   const glyph = spec.small ? 'w-4 h-4' : 'w-5 h-5';
+  const illustrated = spec.emoji ? openmojiSrcFor(spec.emoji) : null;
   return (
     <span
       className={`${box} rounded-lg ${spec.tint} flex items-center justify-center shrink-0${spec.pulse ? ' animate-pulse' : ''}`}
       title={spec.title}
     >
-      <Glyph className={glyph} d={spec.path} aria-hidden="true" />
+      {illustrated ? (
+        <img
+          src={illustrated}
+          alt=""
+          loading="lazy"
+          draggable="false"
+          aria-hidden="true"
+          className={`${spec.small ? 'w-5 h-5' : 'w-6 h-6'} object-contain`}
+        />
+      ) : (
+        <Glyph className={glyph} shapes={spec.shapes} aria-hidden="true" />
+      )}
     </span>
   );
 }
 
 /** The tap-through chevron (`DEV_CARD_CHEVRON`). */
 export function Chevron(): ReactNode {
-  return <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" />;
+  return <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-300 shrink-0" />;
 }
 
 /**
@@ -268,9 +284,17 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
       );
     case 'chat':
       // Rendered at 0 too, wearing `hidden`, so a live bump has a target.
+      //
+      // A CHIP IN THE BADGE ROW, not a standalone status badge — so it keeps
+      // the shared `bg-<hue>-500/10 text-<hue>-700` recipe its neighbours in
+      // that row wear (the attr chips, the work-state tints and the
+      // linked-issue chips; tests/topic-attributes.test.js pins the recipe
+      // and names this one as sharing it). Deepening this alone would leave
+      // one chip in a row heavier than the rest. Only the dark step moves:
+      // -400 is a tier under the -300 this ramp pairs a 700 with.
       return (
         <span
-          className={`dev-chat-badge dev-badge ${b.count ? 'bg-violet-500/10 text-violet-700 dark:text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'}`}
+          className={`dev-chat-badge dev-badge ${b.count ? 'bg-azure-500/10 text-azure-700 dark:text-azure-300' : 'hidden bg-zinc-500/10 text-zinc-500 dark:text-zinc-300'}`}
           data-count={b.count}
           title="Messages in this thread"
         >{`\u{1F4AC} ${b.count}`}</span>
@@ -470,7 +494,12 @@ function TitleContent({ t }: { t: TitleSpec }): ReactNode {
         />
         <button type="button" className="gc-vote-btn" onClick={() => call({ fn: 'saveIssueTitle', args: [n] })}>Save</button>
         <button type="button" className="gc-vote-btn" onClick={() => call({ fn: 'cancelIssueTitleEdit' })}>Cancel</button>
-        <span id="dev-issue-title-error" className="w-full text-xs text-red-400 hidden"></span>
+        {/* -200, not -300: the red ramp is SOLVED to parity — 700 is Lc 80.0
+            on white and 200 is Lc -80.0 on the dark card — and every other
+            red ink in this feature (topic-head's tone table, its check rows
+            and roster, session-list's danger hover) already spells the pair.
+            This was the one site left at -300. */}
+        <span id="dev-issue-title-error" className="w-full text-xs text-red-700 dark:text-red-200 hidden"></span>
       </div>
     );
   }
@@ -487,12 +516,12 @@ function TitleContent({ t }: { t: TitleSpec }): ReactNode {
         <>
           <button
             type="button"
-            className="align-middle text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
+            className="align-middle text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-300"
             title="Edit this issue's title (you created it)"
             aria-label="Edit title"
             onClick={() => call({ fn: 'beginIssueTitleEdit', args: [t.edit!.issue] })}
           >
-            <PencilSquareIcon className="w-3.5 h-3.5 inline -mt-0.5" />
+            <PencilSquareIcon className="w-4 h-4 inline -mt-0.5" />
           </button>
         </>
       ) : null}
@@ -503,21 +532,30 @@ function TitleContent({ t }: { t: TitleSpec }): ReactNode {
 function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
   if (x.t === 'note') {
     return (
-      <div className="mt-1 px-0.5 text-[0.7rem] leading-snug text-zinc-500 dark:text-zinc-400" data-work-note={x.workState}>
+      <div className="mt-1 px-0.5 text-[0.7rem] leading-snug text-zinc-500 dark:text-zinc-300" data-work-note={x.workState}>
         {x.text}
       </div>
     );
   }
   // The topic-view-only admin claim list, with its per-claim clear control.
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-1 px-0.5 text-[0.65rem] text-zinc-500 dark:text-zinc-400">
+    <div className="mt-1 flex flex-wrap items-center gap-1 px-0.5 text-xs text-zinc-500 dark:text-zinc-300">
       {'Claims:'}
+      {/* A CHIP, not a badge: it stays on the 700 ink and the /10 wash, which
+          is the tier that carries the brand hex. Only the dark step moves,
+          from -400 to the -300 this ramp pairs 700 with.
+
+          The × inside it had no visible hover in EITHER theme: its light
+          hover named the same step as the ink it inherits from the chip, and
+          once the base moved its dark hover would have named its own base
+          too. Each now moves one step in its theme's darker/brighter
+          direction — the fix session-list.tsx's ACTION_TONE documents. */}
       {x.claims.map((c) => (
-        <span key={c.userId} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-700 dark:text-sky-400">
+        <span key={c.userId} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-azure-500/10 text-azure-700 dark:text-azure-300">
           {c.username}
           <button
             type="button"
-            className="hover:text-sky-700 dark:hover:text-sky-300 dark:text-sky-400"
+            className="hover:text-azure-800 dark:hover:text-azure-200 dark:text-azure-300"
             title={`Release ${c.username}'s claim (admin)`}
             onClick={() => call({ fn: 'clearIssueClaim', args: [c.issue, c.userId] })}
           >{'×'}</button>

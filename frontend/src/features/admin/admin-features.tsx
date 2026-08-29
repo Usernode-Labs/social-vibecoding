@@ -39,9 +39,12 @@ const FEATURES_CSV_FIELDS = [
 ];
 
 const FEATURES_STATUS_BADGE: Record<string, { label: string; cls: string }> = {
-  open: { label: 'Open', cls: 'bg-green-500/20 text-green-800 dark:text-green-300' },
+  open: { label: 'Open', cls: 'bg-meadow-500/20 text-meadow-700 dark:text-meadow-200' },
   closed: { label: 'Closed', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' },
-  completed: { label: 'Shipped', cls: 'bg-violet-500/20 text-violet-700 dark:text-violet-300' },
+  // 800/200 on the `bg-azure-500/20` wash, the same call admin-merges.tsx and
+  // admin-db-export.tsx document for the identical wash: 700 composites to the
+  // weakest ink in a set whose other two rows read at the status tier.
+  completed: { label: 'Shipped', cls: 'bg-azure-500/20 text-azure-800 dark:text-azure-200' },
 };
 
 interface Feature {
@@ -74,28 +77,28 @@ function FeatureCard({ f, rank }: { f: Feature; rank: number }) {
   return (
     <div className="border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 p-4">
       <div className="flex items-start gap-3">
-        <div className="text-zinc-500 dark:text-zinc-400 font-mono text-sm pt-0.5 w-8 shrink-0">{`#${rank}`}</div>
+        <div className="text-zinc-500 dark:text-zinc-300 font-mono text-sm pt-0.5 w-8 shrink-0">{`#${rank}`}</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold">{f.title}</span>
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}`}>{b.label}</span>
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded ${b.cls}`}>{b.label}</span>
           </div>
           {f.description ? (
-            <div className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 whitespace-pre-wrap break-words">{f.description}</div>
+            <div className="text-sm text-zinc-500 dark:text-zinc-300 mt-1 whitespace-pre-wrap break-words">{f.description}</div>
           ) : null}
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-violet-700 dark:text-violet-400">{f.app_name}</span>
-            <span className="text-zinc-500 dark:text-zinc-400">{f.app_slug}</span>
+          <div className="text-xs text-zinc-500 dark:text-zinc-300 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="text-azure-800 dark:text-azure-200">{f.app_name}</span>
+            <span className="text-zinc-500 dark:text-zinc-300">{f.app_slug}</span>
             <span>{`by ${f.created_by_username || '—'}`}</span>
             <span>{fmtTime(f.created_at)}</span>
             {f.github_issue_number
-              ? <span className="text-xs text-zinc-500 dark:text-zinc-400">{`GitHub #${f.github_issue_number}`}</span>
+              ? <span className="text-xs text-zinc-500 dark:text-zinc-300">{`GitHub #${f.github_issue_number}`}</span>
               : null}
           </div>
         </div>
         <div className="text-right text-sm shrink-0">
-          <div className="text-green-800 dark:text-green-400 font-semibold">{`▲ ${f.up_count}`}</div>
-          <div className="text-zinc-500 dark:text-zinc-400">{`▼ ${f.down_count}`}</div>
+          <div className="text-meadow-700 dark:text-meadow-200 font-semibold">{`▲ ${f.up_count}`}</div>
+          <div className="text-zinc-500 dark:text-zinc-300">{`▼ ${f.down_count}`}</div>
         </div>
       </div>
     </div>
@@ -199,12 +202,12 @@ function FeaturesSection() {
             disabled={busy} onClick={downloadCsv}>{busy ? 'Preparing…' : 'Download CSV'}</button>
         </div>
       </div>
-      <p id="admin-features-summary" className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">{summary}</p>
+      <p id="admin-features-summary" className="text-xs text-zinc-500 dark:text-zinc-300 mb-3">{summary}</p>
       <div id="admin-features-list" className="space-y-3">
         {(features || []).map((f, i) => <FeatureCard key={f.id} f={f} rank={i + 1} />)}
       </div>
       <p id="admin-features-empty"
-        className={`text-sm text-zinc-500 dark:text-zinc-400${empty ? '' : ' hidden'}`}>{empty}</p>
+        className={`text-sm text-zinc-500 dark:text-zinc-300${empty ? '' : ' hidden'}`}>{empty}</p>
     </div>
   );
 }

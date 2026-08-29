@@ -37,7 +37,7 @@ export function ExperimentalSection() {
         <SwitchRow id="ai-progress-estimate">
           AI progress estimate
         </SwitchRow>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+        <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-2 leading-relaxed">
           While the coding agent works, a small AI model skims its progress log about once a minute and guesses how far along it is and roughly how long is left. It's calibrated against how long real runs actually take, but it's still a guess and can be wrong. Adds a tiny per-run cost (billed to your own API key if you've saved one above).
         </p>
         <StatusLine id="ai-progress-estimate-status" size="xs" />
@@ -45,7 +45,7 @@ export function ExperimentalSection() {
           <SwitchRow id="session-bridge-enabled">
             Session bridge (run this chat on your computer)
           </SwitchRow>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+          <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-2 leading-relaxed">
             Adds <span className="font-mono">Your computer &middot; Usernode session</span> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Usernode CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.
           </p>
           <StatusLine id="session-bridge-status" size="xs" />

@@ -42,9 +42,9 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
         {`Allow ${view.appName} to use AI?`}
       </h2>
       {view.purpose ? (
-        <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">{`“${view.purpose}”`}</p>
+        <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-3 italic">{`“${view.purpose}”`}</p>
       ) : null}
-      <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-3">{view.intro}</p>
+      <p className="text-sm text-zinc-600 dark:text-zinc-300 mb-3">{view.intro}</p>
       {view.capacity.t === 'blocked' ? (
         <div className="rounded-lg border border-amber-300/70 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-900 dark:text-amber-200">
           {view.capacity.eligibilityUnavailable
@@ -61,7 +61,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
         </div>
       ) : (
         <>
-          <Label htmlFor="llm-consent-cap" className="mb-1">
+          <Label htmlFor="llm-consent-cap" spacing="stacked">
             Daily cap for this app ($ per day)
           </Label>
           <Input
@@ -73,14 +73,14 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
             width="w32"
             className="font-mono"
           />
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-1">{view.capacity.suggestedNote}</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-300 mt-1">{view.capacity.suggestedNote}</p>
           {view.capacity.byok ? (
             <label className="flex items-start gap-2 cursor-pointer select-none mt-4">
               <input
                 id="llm-consent-byok"
                 type="checkbox"
                 defaultChecked={view.capacity.byok.checked}
-                className="accent-violet-500 w-4 h-4 mt-0.5"
+                className="accent-azure-500 w-4 h-4 mt-0.5"
               />
               <span className="text-xs text-zinc-700 dark:text-zinc-300">{view.capacity.byok.label}</span>
             </label>
@@ -88,7 +88,7 @@ export function LlmConsentCard({ view }: { view: LlmConsentModalView }): ReactNo
         </>
       )}
       {/* app-view.js's line — see the header. Rendered once, empty, hidden. */}
-      <div id="llm-consent-error" className="hidden text-sm text-red-700 mt-3 dark:text-red-400"></div>
+      <div id="llm-consent-error" className="hidden text-sm text-red-700 mt-3 dark:text-red-200"></div>
       <div className="flex justify-end gap-2 mt-5">
         <Button
           type="button"
