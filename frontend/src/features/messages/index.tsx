@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { ChevronLeftInsetIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { MessageComposer } from './composer';
@@ -136,7 +136,7 @@ function ThreadHeader() {
   }
   return (
     <header className="messages-thread-header">
-      <a href="#messages" className="md:hidden messages-thread-back" aria-label="Back to conversations"><ChevronLeftInsetIcon aria-hidden="true" /></a>
+      <a href="#messages" className="md:hidden messages-thread-back" aria-label="Back to conversations"><ChevronLeftIcon aria-hidden="true" /></a>
       <UserAvatar user={active.kind === 'direct' ? peer : null} title={active.title} />
       <button type="button" className="min-w-0 text-left flex-1" onClick={() => active.kind === 'group' && openDialog('messagesMembers')}>
         <div className="font-semibold text-sm truncate">{active.kind === 'direct' && peer ? `@${peer.username}` : active.title}</div>

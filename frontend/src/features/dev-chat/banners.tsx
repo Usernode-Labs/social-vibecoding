@@ -8,9 +8,9 @@ import { useCallback, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
-  CheckLongIcon,
+  CheckIcon,
   ClockIcon,
-  PlusThinIcon,
+  PlusIcon,
   SpinnerArcIcon,
   UserCircleIcon,
   WarningTriangleIcon,
@@ -70,7 +70,7 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
   if (b.kind === 'ok') {
     return (
       <div id="dc-sync-banner" className={SHELL.emerald}>
-        <CheckLongIcon className="w-4 h-4 text-emerald-700 dark:text-emerald-400 shrink-0" />
+        <CheckIcon className="w-4 h-4 text-emerald-700 dark:text-emerald-400 shrink-0" />
         <span className="text-emerald-800 dark:text-emerald-200 flex-1">{b.message}</span>
       </div>
     );
@@ -108,7 +108,7 @@ function SyncBanner({ b }: { b: SyncBannerView }): ReactNode {
 function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
   return (
     <div id="dc-new-change-banner" className={SHELL.violet}>
-      <PlusThinIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
+      <PlusIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
       <span className="text-violet-800 dark:text-violet-200 flex-1">
         {`This change has been ${b.stateLabel}. New work in this chat is added to the same PR, so start a new change to keep PRs focused.`}
       </span>

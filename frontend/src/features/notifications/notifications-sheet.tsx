@@ -63,7 +63,7 @@
 
 import { useState, type ReactNode } from 'react';
 
-import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
+import { ChatIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
@@ -409,7 +409,7 @@ export function NotificationsSheetView() {
             else window.location.hash = '#messages';
           }}
         >
-          <ChatBubbleTailIcon className="w-5 h-5 shrink-0" />
+          <ChatIcon className="w-5 h-5 shrink-0" />
           <span className="flex-1 min-w-0">
             All messages
           </span>

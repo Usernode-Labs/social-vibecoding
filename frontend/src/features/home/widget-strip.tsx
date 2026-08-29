@@ -27,6 +27,8 @@ import { useEffect, useRef } from 'react';
 
 import { CheckIcon, InfoCircleIcon } from '@/components/ui/icons';
 
+import { EmojiTileGlyph } from '../apps/app-card-view';
+
 import { useStoreState } from '../../lib/use-store-state';
 import { chromeStore, type WidgetStripState, type WidgetTileView } from './chrome-store';
 import type { IconView } from './grid-store';
@@ -52,7 +54,15 @@ function TileIcon({ icon }: { icon: IconView }) {
     );
   }
   if (icon.kind === 'emoji') {
-    return <span className="text-xl leading-none" aria-hidden="true">{icon.emoji}</span>;
+    // p-0.5, not the default p-1: the strip's tiles are w-10, where 8px of
+    // padding would shrink the artwork below the text glyph it replaces.
+    return (
+      <EmojiTileGlyph
+        emoji={icon.emoji}
+        textClass="text-xl leading-none"
+        imgClass="w-full h-full object-contain p-0.5"
+      />
+    );
   }
   return <>{icon.letter}</>;
 }
@@ -128,7 +138,7 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
               home.render();
             }}
           >
-            <InfoCircleIcon className="w-3.5 h-3.5" aria-hidden="true" />
+            <InfoCircleIcon className="w-4 h-4" aria-hidden="true" />
           </button>
         </span>
         <button
@@ -149,7 +159,7 @@ export function WidgetStripBody({ strip }: { strip: WidgetStripState }) {
           }}
         >
           {'Done'}
-          <CheckIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          <CheckIcon className="w-4 h-4" aria-hidden="true" />
         </button>
       </div>
       <div

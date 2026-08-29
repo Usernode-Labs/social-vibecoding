@@ -139,7 +139,7 @@ function Row({ view }: { view: RowView }): ReactNode {
           controller()?.toggleRowAdded(view);
         }}
       >
-        {view.added ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" /> : null}
+        {view.added ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="2.5" aria-hidden="true" /> : null}
         {view.added ? 'Added' : 'Add'}
       </button>
         </>

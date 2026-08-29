@@ -138,7 +138,7 @@ export function FeedbackDialog() {
               type="button"
               className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             >
-              <CameraIcon className="w-3.5 h-3.5" />
+              <CameraIcon className="w-4 h-4" />
               <span data-screenshot-label="">Attach screenshot</span>
             </button>
             <button
@@ -146,7 +146,7 @@ export function FeedbackDialog() {
               type="button"
               className="hidden inline-flex min-h-[48px] items-center gap-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             >
-              <PhotoIcon className="w-3.5 h-3.5" />
+              <PhotoIcon className="w-4 h-4" />
               Choose from Photos
             </button>
             <input

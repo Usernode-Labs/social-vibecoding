@@ -119,7 +119,7 @@ const AppView = {
   DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-3.5 py-3 text-left transition-colors',
   // Trailing chevron marking a card as tappable (same affordance as the
   // General chat card).
-  DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
+  DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
   // Tappable cards have no border left to tint, so the affordance moves to the
   // surface itself — the same `active:` fill ListRow uses.
   DEV_CARD_HOVER_CLS: 'hover:bg-zinc-50 dark:hover:bg-zinc-800 cursor-pointer',
@@ -135,47 +135,94 @@ const AppView = {
   // to itself is what actually protects it.
   DEV_CARD_MUTED_CLS: 'dev-card-muted',
 
-  // Per-type tinted icon chips — the Dev list's identity system, a mini
-  // version of the home tiles' avatar square. [tint classes, SVG path].
+  // Per-type icon chips — the Dev list's identity system, a mini version of
+  // the home tiles' avatar square. [tint classes, lucide shapes, emoji].
+  //
+  // Each kind carries an OpenMoji illustration as well as a glyph. The lucide
+  // glyph stays as the FALLBACK for an emoji outside the vendored slice
+  // (card/dev-card.tsx does the lookup at render time), and the text-*
+  // utilities in the tint ink that fallback glyph. It is SHAPES rather than
+  // one path because most of these lucide glyphs are not path-only; <Glyph>
+  // in @/components/ui/icons.tsx renders them, and two of the entries this
+  // replaces were Tabler paths — a third family nobody had noticed.
+  //
+  // The tint strings are NOT this change's to move: colour is a separate
+  // decision with its own evidence, so every one of them is left exactly as
+  // it was spelled before the icon family moved.
   DEV_CARD_ICONS: {
-    chat: ['bg-violet-600/15 text-violet-700 dark:text-violet-400', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
-    // Pencil (Heroicons outline) — sessions are edits-in-progress, not
-    // terminals (#219). Distinct from the issue icon's pencil-in-bubble.
-    session: ['bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z'],
-    // Comment-bubble-with-pencil: the chat bubble outline (dots removed)
-    // plus the Heroicons pencil-alt tip scaled to sit inside it — issues
-    // are written feedback, not warnings (hence no more exclamation).
-    issue: ['bg-amber-500/15 text-amber-800 dark:text-amber-300', 'M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5zM15.35 6.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H10.2v-1.7l5.15-5.15z'],
-    proposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
-    gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
-    done: ['bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', 'M5 13l4 4L19 7'],
-    // Document-text (Heroicons outline) — an issue with an auto-generated
-    // proposal attached (#250). Sky keeps "blue = proposal" consistent with
-    // the proposal cards, while the page shape stays distinct from their
-    // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
-    issueProposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
-    // "Mine" variants — distinguished from their base by GLYPH ONLY: they keep
-    // the same sky tint as the base issue/PR chips but swap in a self-contained
-    // pencil/edit mark = "your work-in-progress, jump back in." They mark the
-    // two feed rows where the viewer already has a session waiting: a ready
-    // issue they cloned (Go to session) and an open PR they authored (Open
-    // session). No manual coordinate compositing: issueProposalMine is a true
-    // document-with-pencil (page + folded corner + pencil) so it still reads
-    // as a document; proposalMine is a plain pencil "edit" mark.
-    issueProposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
-    proposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3'],
+    chat: [
+      'bg-violet-600/15 text-violet-700 dark:text-violet-400',
+      [['path', { d: 'M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z' }], ['path', { d: 'M8 11h.01' }], ['path', { d: 'M12 11h.01' }], ['path', { d: 'M16 11h.01' }]],  // lucide/message-square-more
+      '💬',
+    ],
+    // Pencil — sessions are edits-in-progress, not terminals (#219).
+    session: [
+      'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+      [['path', { d: 'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z' }], ['path', { d: 'm15 5 4 4' }]],  // lucide/pencil
+      '✏️',
+    ],
+    // Issues are written feedback with some urgency — the OpenMoji ❗; the
+    // bubble-with-pencil path stays as the fallback glyph.
+    issue: [
+      'bg-amber-500/15 text-amber-800 dark:text-amber-300',
+      [['path', { d: 'M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z' }], ['path', { d: 'M12 7v4' }], ['path', { d: 'M12 15h.01' }]],  // lucide/message-square-warning
+      '❗',
+    ],
+    // The tally: a proposal accrues votes. NOT the ballot box (1F5F3) — the
+    // vendored slice draws that in two greys with a pale outline, so it was
+    // the one glyph in this table that vanished into its own chip. The lucide
+    // fallback stays lucide/vote: stroked in currentColor, a ballot box has no
+    // washing-out problem and is the more literal reading.
+    proposal: [
+      'bg-sky-500/15 text-sky-700 dark:text-sky-400',
+      [['path', { d: 'm9 12 2 2 4-4' }], ['path', { d: 'M5 7c0-1.1.9-2 2-2h10a2 2 0 0 1 2 2v12H5V7Z' }], ['path', { d: 'M22 19H2' }]],  // lucide/vote
+      '📊',
+    ],
+    gov: [
+      'bg-slate-500/15 text-slate-400',
+      [['path', { d: 'M12 3v18' }], ['path', { d: 'm19 8 3 8a5 5 0 0 1-6 0zV7' }], ['path', { d: 'M3 7h1a17 17 0 0 0 8-2 17 17 0 0 0 8 2h1' }], ['path', { d: 'm5 8 3 8a5 5 0 0 1-6 0zV7' }], ['path', { d: 'M7 21h10' }]],  // lucide/scale
+      '⚖️',
+    ],
+    done: [
+      'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+      [['path', { d: 'M20 6 9 17l-5-5' }]],  // lucide/check
+      '✅',
+    ],
+    // An issue with an auto-generated proposal attached (#250): a drafted
+    // spec, so the memo. Sky keeps "blue = proposal" consistent with the
+    // proposal cards.
+    issueProposal: [
+      'bg-sky-500/15 text-sky-700 dark:text-sky-400',
+      [['path', { d: 'M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z' }], ['path', { d: 'M14 2v5a1 1 0 0 0 1 1h5' }], ['path', { d: 'M10 9H8' }], ['path', { d: 'M16 13H8' }], ['path', { d: 'M16 17H8' }]],  // lucide/file-text
+      '📝',
+    ],
+    // "Mine" variants — distinguished from their base by GLYPH ONLY, as
+    // before: pens = "your work-in-progress, jump back in." The crayon and
+    // brush rather than the fountain/ballpoint pens: same metaphor, but the
+    // vendored slice draws those two in colour and the pens in grey.
+    issueProposalMine: [
+      'bg-sky-500/15 text-sky-700 dark:text-sky-400',
+      [['path', { d: 'M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34' }], ['path', { d: 'M14 2v5a1 1 0 0 0 1 1h5' }], ['path', { d: 'M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z' }]],  // lucide/file-pen
+      '🖌️',
+    ],
+    proposalMine: [
+      'bg-sky-500/15 text-sky-700 dark:text-sky-400',
+      [['path', { d: 'M13 21h8' }], ['path', { d: 'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z' }]],  // lucide/pen-line
+      '🖍️',
+    ],
   },
 
-  // Returns the icon's SPEC — tint classes + SVG path — which
+  // Returns the icon's SPEC — tint classes + SVG shapes + emoji — which
   // card/dev-card.tsx renders. `pulse` animates the whole chip for
   // in-progress states (#250); `title` is the tooltip naming the state the
   // tint encodes. The class literals stay in DEV_CARD_ICONS above, which is
   // where Tailwind's extractor already scanned them.
   _devCardIcon(type, opts) {
-    const [tint, d] = AppView.DEV_CARD_ICONS[type] || AppView.DEV_CARD_ICONS.issue;
+    const [tint, shapes, emoji] = AppView.DEV_CARD_ICONS[type] || AppView.DEV_CARD_ICONS.issue;
     return {
       tint,
-      path: d,
+      shapes,
+      emoji: emoji || undefined,
       small: (opts && opts.small) ? true : undefined,
       pulse: (opts && opts.pulse) ? true : undefined,
       title: (opts && opts.title) || undefined,

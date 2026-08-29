@@ -179,8 +179,10 @@ test('card: one hamburger trigger, none of the old corner buttons', () => {
   const html = Home.renderAppCard(baseApp());
   assert.equal((html.match(/card-menu-btn/g) || []).length, 1, 'exactly one menu trigger');
   // The trigger is a hamburger SVG (three horizontal lines), not the
-  // old "⋯" glyph.
-  assert.match(html, /card-menu-btn[\s\S]*?M4 6h16M4 12h16M4 18h16/, 'hamburger icon path');
+  // old "⋯" glyph. lucide/menu draws the three rules as three separate
+  // <path>s at 5/12/19 — Heroicons drew one path at 6/12/18.
+  assert.match(html, /card-menu-btn[\s\S]*?M4 5h16[\s\S]*?M4 12h16[\s\S]*?M4 19h16/,
+    'hamburger icon path');
   assert.doesNotMatch(html, /⋯/, 'no ⋯ glyph anywhere on the card');
   assert.doesNotMatch(html, /star-btn/, 'no inline star');
   assert.doesNotMatch(html, /lock-btn/, 'no inline lock');

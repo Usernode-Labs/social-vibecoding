@@ -21,7 +21,7 @@ import { type ChangeEvent, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   DraftEditIcon,
-  DraftSendIcon,
+  SendIcon,
   DraftTrashIcon,
   PaperclipIcon,
   SaveDraftIcon,
@@ -137,7 +137,7 @@ function SavedDrafts({ rows, busy }: { rows: SavedDraftView[]; busy: boolean }):
                   data-draft-action="send" aria-label="Send this draft"
                   disabled={busy} title={sendTitle}
                 >
-                  <DraftSendIcon width={14} height={14} aria-hidden="true" />
+                  <SendIcon width={14} height={14} aria-hidden="true" />
                 </button>
                 <button
                   type="button" className="dc-draft-btn dc-draft-edit"

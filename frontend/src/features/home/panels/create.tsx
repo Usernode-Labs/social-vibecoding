@@ -37,7 +37,7 @@
  * would have left a loaded gun pointed at this block.
  */
 
-import { PlusWideIcon } from '@/components/ui/icons';
+import { PlusIcon } from '@/components/ui/icons';
 
 import type { CreateView } from '../panels-store';
 
@@ -81,7 +81,7 @@ export function CreatePanel({ view }: { view: CreateView }) {
           className="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
           aria-hidden="true"
         >
-          <PlusWideIcon className="w-6 h-6" strokeWidth="2.5" />
+          <PlusIcon className="w-6 h-6" />
         </span>
         <span
           className={`home-create-label text-sm leading-tight max-w-full ${

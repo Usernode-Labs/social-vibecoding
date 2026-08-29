@@ -20,7 +20,12 @@ const src = fs.readFileSync(
 );
 
 test('DEV_CARD_ICONS carries an issueProposal entry with the sky tint', () => {
-  assert.match(src, /issueProposal:\s*\['bg-sky-500\/15 text-sky-700/);
+  // `\s*` after the `[`: the lucide move gave every DEV_CARD_ICONS entry its
+  // own line per column (tint / shapes / emoji), so the tint no longer sits
+  // on the same line as its key. The invariant this test protects is
+  // unchanged — "sky = proposal", shared with the PR cards — and the tint
+  // string itself is deliberately untouched by that move.
+  assert.match(src, /issueProposal:\s*\[\s*'bg-sky-500\/15 text-sky-700/);
 });
 
 test('_renderIssueRow selects issueProposal for the generating status', () => {
@@ -46,7 +51,7 @@ test('_renderIssueRow selects a sky proposal chip for the ready status (mine vs 
 });
 
 test('DEV_CARD_ICONS issueProposalMine is also a sky chip', () => {
-  assert.match(src, /issueProposalMine:\s*\['bg-sky-500\/15 text-sky-700/);
+  assert.match(src, /issueProposalMine:\s*\[\s*'bg-sky-500\/15 text-sky-700/);
 });
 
 test('_devCardIcon supports the pulse and title opts', () => {

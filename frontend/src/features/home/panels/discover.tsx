@@ -32,7 +32,9 @@
 
 import { useEffect, useRef } from 'react';
 
-import { CheckIcon, PlusWideIcon, SearchIcon } from '@/components/ui/icons';
+import { CheckIcon, PlusIcon, SearchIcon } from '@/components/ui/icons';
+
+import { EmojiTileGlyph } from '../../apps/app-card-view';
 
 import type { IconView } from '../grid-store';
 import type { DiscoverTileView, DiscoverView } from '../panels-store';
@@ -55,7 +57,15 @@ function TileIcon({ icon }: { icon: IconView }) {
     );
   }
   if (icon.kind === 'emoji') {
-    return <span className="text-xl leading-none" aria-hidden="true">{icon.emoji}</span>;
+    // p-0.5, not the default p-1: these tiles run as small as ~32px in the
+    // narrowest lane, where 8px of padding would shrink the artwork to a dot.
+    return (
+      <EmojiTileGlyph
+        emoji={icon.emoji}
+        textClass="text-xl leading-none"
+        imgClass="w-full h-full object-contain p-0.5"
+      />
+    );
   }
   return <>{icon.letter}</>;
 }
@@ -100,7 +110,7 @@ function DiscoverTile({ tile }: { tile: DiscoverTileView }) {
         >
           {added
             ? <CheckIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" />
-            : <PlusWideIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" />}
+            : <PlusIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" />}
         </button>
       </div>
       <span className="text-[0.6rem] leading-tight truncate w-full text-center text-zinc-600 dark:text-zinc-300">
@@ -155,7 +165,7 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
               window.location.hash = '#apps';
             }}
           >
-            <SearchIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+            <SearchIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
             <span className="whitespace-nowrap">Browse all apps</span>
           </button>
         </>

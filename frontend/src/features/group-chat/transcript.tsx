@@ -330,7 +330,7 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
           {/* Solid when saved, outline when not — the state lives in the SHAPE,
               which is legible at 12px and in a screenshot. Not one path with
               its fill flipped; see the note in @/components/ui/icons.tsx. */}
-          {saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}
+          {saved ? <BookmarkSolidIcon /> : <BookmarkIcon />}
         </button>
       ) : null}
       {msg.showReact ? (

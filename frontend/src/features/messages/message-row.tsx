@@ -127,7 +127,7 @@ export function MessageRow({ message, conversationId }: { message: ConversationM
           className={message.saved ? 'messages-action-saved' : undefined}
           title={message.saved ? 'Saved. Click to unsave' : 'Save to your notifications'}
           aria-label={message.saved ? 'Unsave message' : 'Save message'}
-        >{message.saved ? <BookmarkSolidIcon /> : <BookmarkIcon strokeWidth="1.5" />}</button>
+        >{message.saved ? <BookmarkSolidIcon /> : <BookmarkIcon />}</button>
         {mine && message.content ? <button type="button" onClick={() => { setEditValue(message.content); setEditing(true); }} title="Edit" aria-label="Edit">✎</button> : null}
         {!mine ? <button type="button" onClick={() => { setReporting((open) => !open); setNotice(''); }} title="Report" aria-label="Report">!</button> : null}
       </div> : null}

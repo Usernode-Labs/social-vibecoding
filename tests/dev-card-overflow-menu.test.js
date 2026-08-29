@@ -181,7 +181,7 @@ test('a card with no ⋯ still gets its chevron, with no empty rail around it', 
   const html = cardHtml(model);
   assert.equal(menuKeyOf(html), null);
   assert.doesNotMatch(html, /dev-card-rail/);
-  assert.match(html, /M9 5l7 7-7 7/, 'the chevron survives on its own');
+  assert.match(html, /m9 18 6-6-6-6/, 'the chevron survives on its own');
 
   // Give that same card a preview and the column DOES appear — the eye needs
   // something to be pinned to the bottom of, even with no ⋯ above it.
@@ -193,7 +193,7 @@ test('a card with no ⋯ still gets its chevron, with no empty rail around it', 
   assert.match(withPreview, /dev-card-rail/);
   const rail = withPreview.slice(withPreview.indexOf('dev-card-rail'));
   assert.doesNotMatch(rail, /dev-card-menu-btn/, 'no trigger in it');
-  assert.match(rail, /M9 5l7 7-7 7[\s\S]*gc-vote-btn-preview/,
+  assert.match(rail, /m9 18 6-6-6-6[\s\S]*gc-vote-btn-preview/,
     'chevron above, eye at the bottom');
 });
 

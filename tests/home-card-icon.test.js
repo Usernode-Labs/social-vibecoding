@@ -126,9 +126,22 @@ test('letter fallback renders when no icon is declared', () => {
 });
 
 test('emoji icon renders on the tile', () => {
+  // subtle-y2k: an emoji the curated OpenMoji slice covers renders as the
+  // vendored illustration (an <img>, like the custom-image kind), tagged
+  // data-icon="emoji" exactly as before — the kind is a data contract, the
+  // artwork is not. 🎮 is 1F3AE, which the slice carries.
   const html = makeHome().renderAppCard(baseApp({ icon_emoji: '🎮' }));
   assert.match(html, /data-icon="emoji"/);
-  assert.ok(html.includes('🎮'));
+  assert.match(html, /<img src="\/vendor\/openmoji\/1F3AE\.svg"/);
+});
+
+test('an emoji outside the curated slice falls back to the text glyph', () => {
+  // The manifest is a curated slice of Unicode, and icon emojis are user
+  // data — the miss path IS the contract (lib/openmoji.js). U+1FAE0 is a
+  // real emoji the slice deliberately doesn't carry.
+  const html = makeHome().renderAppCard(baseApp({ icon_emoji: '\u{1FAE0}' }));
+  assert.match(html, /data-icon="emoji"/);
+  assert.ok(html.includes('\u{1FAE0}'));
   assert.doesNotMatch(html, /<img/);
 });
 

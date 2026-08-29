@@ -3,48 +3,96 @@ import * as React from 'react';
 /**
  * The shell's icon set, as named components.
  *
- * ── Why this is NOT `lucide-react` ────────────────────────────────────
+ * ── One family, transcribed — NOT a package ───────────────────────────
  *
- * shadcn's own examples import glyphs from `lucide-react`, and every icon
- * below has a lucide counterpart with the same NAME. It does not have the same
- * PATH. The shell's glyphs are Heroicons v1/v2 outline, hand-picked over
- * several years, and lucide draws them on a different grid with a different
- * stroke rhythm — swapping the set would restyle thirty-odd buttons at once,
- * which is precisely the visual change this migration is not allowed to make.
- * It would also be the first runtime dependency added since step 1, for
- * something the shell already ships inline.
+ * Every glyph below is **lucide v1.35.0** (ISC), transcribed verbatim from
+ * `lucide-static`'s own SVGs — children in file order, attributes untouched.
+ * The set is lucide's; the dependency is not. `public/vendor/README.md`
+ * records the same arrangement for marked, DOMPurify and qrcodejs, and
+ * `tests/shell-icon-set.test.js` still forbids an icon package outright: the
+ * shell ships its glyphs inline, and `<Glyph>`'s two table-driven callers
+ * interpolate shapes into markup that an imported component cannot supply.
  *
- * So: **every `d` string in this file is transcribed verbatim from the markup
- * it replaces.** If a glyph here ever looks wrong, the fix is to correct the
- * path, never to reach for a package.
+ * If a glyph looks wrong, fix it against lucide's file of that name — the
+ * `// lucide/<slug>` comment on each line says which — never by redrawing.
  *
- * ── Why three renderers and a table, rather than 25 components ────────
+ * ── Why the set moved ─────────────────────────────────────────────────
  *
- * The 36 inline `<svg>` blocks this replaces differ in exactly three ways,
- * and the three factories below are those three ways:
+ * It used to be Heroicons "v1/v2 outline, hand-picked over several years",
+ * and the years were the problem. Heroicons is really four optical families
+ * keyed by size, and v2 redrew every path AND moved the outline weight from
+ * 2 to 1.5, so a set assembled across that boundary disagreed with itself:
+ * three plusses (one of them Feather's), two checks, and a paperclip drawn
+ * TWICE at different decimal precision — `PaperclipIcon` and `PaperClipIcon`,
+ * one capital apart. #1120 knew and could not act: a mechanical refactor was
+ * not allowed to change pixels, so it recorded the duplicates and shipped
+ * them. This is that deferred work.
  *
- *   `stroked`     — `strokeWidth` on the `<svg>`. Twenty-nine of them.
- *   `strokedPath` — `strokeWidth` on the `<path>`. Five of them, all glyphs
- *                   that predate the others; the rendered result is identical
- *                   but the DOM is not, and a like-for-like conversion keeps
- *                   the DOM.
- *   `filled`      — `fill="currentColor"`, no stroke. One: the GitHub mark.
+ * lucide is one family — 24 grid, stroke 2, round caps and joins, 1px of
+ * safe padding — with no version boundary to accrete across. Nine names
+ * collapsed into the glyph they were always spelling:
  *
- * One glyph is written out instead of built: `EllipsisVerticalIcon` is three
- * <circle>s on the 20 grid, and there is no `d` to hand a factory.
+ *   ChevronLeftInsetIcon → ChevronLeftIcon   PlusWideIcon  ┐
+ *   ArrowRightShortIcon  → ArrowRightIcon    PlusThinIcon  ┴→ PlusIcon
+ *   PaperClipIcon        → PaperclipIcon     CheckLongIcon → CheckIcon
+ *   TrophyOutlineIcon    → TrophyIcon        DraftSendIcon → SendIcon
+ *   ChatBubbleTailIcon   → ChatIcon
  *
- * Everything else — `fill="none"`, `stroke="currentColor"`,
- * `viewBox="0 0 24 24"`, `strokeLinecap`/`strokeLinejoin` on every path — was
- * already identical at all 36 sites, so it lives in the factory.
+ * Eight more went with them, for a different reason: nothing imported them.
+ * `Squares2X2Icon` `AppWindowIcon` `BoardIcon` `NewspaperIcon` `ListLinesIcon`
+ * `ThumbsUpIcon` `SunIcon` `LightBulbIcon`. Three of those had drawn the
+ * App / Board / Activity views before those became a segmented control of
+ * three words, and the set had been carrying them since. If a surface wants
+ * one back, take it from lucide by the slug the old entry named —
+ * `layout-grid`, `app-window`, `kanban`, `newspaper`, `menu`, `thumbs-up`,
+ * `sun`, `lightbulb` — rather than redrawing it.
+ *
+ * `LightBulbIcon` is the first to come back, and it came back that way: #1474
+ * gave the Improve button a three-state glyph and the bulb is its idle one, so
+ * it is a `lucide/lightbulb` transcription rather than the Heroicons path it
+ * was. That is the procedure working, not an exception to it — seven left.
+ *
+ * ── Two weights, and the rule that picks between them ─────────────────
+ *
+ * `STROKE` is lucide's own 2, and it is the shell's default. The admin
+ * console draws the same family at 1.5 (`NAV_ICONS` in
+ * features/admin/admin-console.js) — that is AGENTS.md's density boundary,
+ * not drift, and it stays on the admin side of it because
+ * `tests/admin-ui-registry.test.js` forbids an admin source from importing
+ * this module.
+ *
+ * A call site overrides `strokeWidth` for ONE reason: to hold the rendered
+ * stroke near 1.5px as the box shrinks, which is lucide's own
+ * `absoluteStrokeWidth` idea. When a site needs that, this is the table:
+ *
+ *   w-4 (16px) and up → 2 (the default)   w-3.5 (14px) → 2.5   w-3 (12px) → 3
+ *
+ * Most small sites do not override and inherit 2, which is legible; the rule
+ * governs the ones that DO, and an override outside it is a stray. Four were
+ * when the set moved — a `w-6` asking for 2.5, two `w-3.5`s at 3, one `w-3`
+ * at 2.5 — plus the two bookmarks, which passed 1.5 because the Heroicons v2
+ * glyph was drawn for it. lucide's is drawn for 2.
+ *
+ * ── Why two renderers and a table, rather than 46 components ──────────
+ *
+ * `glyph` is lucide's frame with the children slotted in. Note that
+ * `strokeLinecap`/`strokeLinejoin` sit on the `<svg>`, where lucide puts
+ * them, rather than on each `<path>` — both inherit, so nothing draws
+ * differently, and it is what lets a glyph hold `<circle>`, `<rect>` and
+ * `<line>` children without repeating attributes on each. 17 of the 46 do;
+ * lucide draws primitives as primitives rather than approximating them in
+ * path data, which the old `stroked`/`strokedPath` pair could not express.
+ *
+ * `solid` is the two filled glyphs: the GitHub mark, and the bookmark's
+ * saved state.
  *
  * ── Prop order is load-bearing ────────────────────────────────────────
  *
  * React serialises attributes in the order the props are written, and the
- * prerendered public/index.html is compared against the hand-written shell
- * attribute by attribute. `id` and `className` are therefore destructured and
- * rendered FIRST, in that order, with `{...rest}` last — which is the order
- * all 36 call sites already used. `id={undefined}` emits nothing, so the
- * sites without one are unaffected.
+ * prerendered public/index.html is compared against the shell attribute by
+ * attribute. `id` and `className` are therefore destructured and rendered
+ * FIRST, in that order, with `{...rest}` last. `id={undefined}` emits
+ * nothing, so the sites without one are unaffected.
  *
  * Size is NOT a variant. Every call site passes its own `className`
  * (`w-4 h-4`, `w-5 h-5`, `w-3.5 h-3.5`, sometimes with `shrink-0` or
@@ -57,14 +105,12 @@ export type IconProps = Omit<
   'children' | 'viewBox' | 'fill' | 'stroke' | 'd'
 >;
 
-function paths(d: string | readonly string[]): readonly string[] {
-  return typeof d === 'string' ? [d] : d;
-}
+/** lucide's drawing weight. Every glyph below is optically drawn for it. */
+const STROKE = '2';
 
-/** A 24×24 outline glyph whose stroke width sits on the `<svg>`. */
-function stroked(name: string, d: string | readonly string[]) {
-  const list = paths(d);
-  const Icon = ({ id, className, strokeWidth = '2', ...rest }: IconProps) => (
+/** A 24×24 lucide glyph, in the frame lucide itself ships. */
+function glyph(name: string, children: React.ReactNode) {
+  const Icon = ({ id, className, strokeWidth = STROKE, ...rest }: IconProps) => (
     <svg
       id={id}
       className={className}
@@ -72,22 +118,11 @@ function stroked(name: string, d: string | readonly string[]) {
       stroke="currentColor"
       viewBox="0 0 24 24"
       strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
       {...rest}
     >
-      {list.map((entry) => (
-        <path key={entry} strokeLinecap="round" strokeLinejoin="round" d={entry} />
-      ))}
-    </svg>
-  );
-  Icon.displayName = name;
-  return Icon;
-}
-
-/** A 24×24 outline glyph whose stroke width sits on the `<path>`. */
-function strokedPath(name: string, d: string) {
-  const Icon = ({ id, className, ...rest }: IconProps) => (
-    <svg id={id} className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" {...rest}>
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={d} />
+      {children}
     </svg>
   );
   Icon.displayName = name;
@@ -95,7 +130,7 @@ function strokedPath(name: string, d: string) {
 }
 
 /** A 24×24 solid glyph. */
-function filled(name: string, d: string) {
+function solid(name: string, d: string) {
   const Icon = ({ id, className, ...rest }: IconProps) => (
     <svg id={id} className={className} fill="currentColor" viewBox="0 0 24 24" {...rest}>
       <path d={d} />
@@ -107,173 +142,166 @@ function filled(name: string, d: string) {
 
 // ── Navigation and chrome ────────────────────────────────────────────────
 
-export const ChevronLeftIcon = strokedPath('ChevronLeftIcon', 'M15 19l-7-7 7-7');
+export const ChevronLeftIcon = glyph('ChevronLeftIcon', <path d="m15 18-6-6 6-6" />);  // lucide/chevron-left
 
-/** The tighter back chevron used in the mobile Messages thread header. */
-export const ChevronLeftInsetIcon = stroked('ChevronLeftInsetIcon', 'M15 18l-6-6 6-6');
+export const ChevronRightIcon = glyph('ChevronRightIcon', <path d="m9 18 6-6-6-6" />);  // lucide/chevron-right
 
-export const ChevronRightIcon = stroked('ChevronRightIcon', 'M9 5l7 7-7 7');
-
-// Heroicons v1 outline view-grid — the drawer's "Your apps" row (owner
-// review round 2: the section header is a nav item of its own).
-export const Squares2X2Icon = stroked('Squares2X2Icon', 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z');
-
-/**
- * An app WINDOW — a framed rectangle with a title bar (#1367).
- *
- * The "App" segment of the App/Feed/Kanban toggle, sitting beside BoardIcon
- * (kanban columns) and ListLinesIcon (a feed). Those two draw what their view
- * looks like, so this one does too: the running app in its frame, which is the
- * one of the three that is not a view OF the development work.
- */
-export const AppWindowIcon = stroked('AppWindowIcon', [
-  'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
-  'M4 9.5h16',
-]);
+/** The disclosure caret — the home panels' expand toggle, and the header title tab. */
+export const ChevronDownIcon = glyph('ChevronDownIcon', <path d="m6 9 6 6 6-6" />);  // lucide/chevron-down
 
 /**
  * The pencil with a spark — "back to building" on a session screen while its
- * preview is up (Streamlined Concept: the Figma bar names lucide's
- * pencil-sparkles; this is the shell's own transcription of that idea — the
- * composer's pencil body plus a four-point spark in the freed corner).
+ * preview is up. The Figma bar names lucide's pencil-sparkles, which lucide
+ * does not ship; this is the one COMPOSED glyph in the set — lucide/pencil's
+ * two paths, plus the shell's own four-point spark in the freed corner.
  */
-export const PencilSparklesIcon = stroked('PencilSparklesIcon', [
-  'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
-  'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
-]);
+export const PencilSparklesIcon = glyph('PencilSparklesIcon', (  // lucide/pencil + spark
+  <>
+    <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+    <path d="m15 5 4 4" />
+    <path d="M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z" />
+  </>
+));
 
-export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H3');
+export const ArrowRightIcon = glyph('ArrowRightIcon', (  // lucide/arrow-right
+  <>
+    <path d="M5 12h14" />
+    <path d="m12 5 7 7-7 7" />
+  </>
+));
 
-/**
- * The SHORT right arrow, drawn on a tighter inset than ArrowRightIcon. Not a
- * duplicate: this one is the go-into-the-app arrow on #browse-detail-open,
- * where it sits beside a word inside a pill and the long arrow's 3→21 span
- * would crowd the label. Two spellings on purpose, each with one caller.
- */
-export const ArrowRightShortIcon = stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0l-5 5m5-5H6');
+export const XIcon = glyph('XIcon', (  // lucide/x
+  <>
+    <path d="M18 6 6 18" />
+    <path d="m6 6 12 12" />
+  </>
+));
 
-export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
+export const Bars3Icon = glyph('Bars3Icon', (  // lucide/menu
+  <>
+    <path d="M4 5h16" />
+    <path d="M4 12h16" />
+    <path d="M4 19h16" />
+  </>
+));
 
-export const Bars3Icon = stroked('Bars3Icon', 'M4 6h16M4 12h16M4 18h16');
+export const PlusIcon = glyph('PlusIcon', (  // lucide/plus
+  <>
+    <path d="M5 12h14" />
+    <path d="M12 5v14" />
+  </>
+));
 
-export const PlusIcon = stroked('PlusIcon', 'M12 5v14M5 12h14');
+export const HomeIcon = glyph('HomeIcon', (  // lucide/house
+  <>
+    <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" />
+    <path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  </>
+));
 
-/**
- * The plus that spans the whole 24 grid rather than PlusIcon's inset one, and
- * is always drawn at a heavier stroke. Three sites want the bolder mark
- * because it is the CONTENT of a small round badge or an empty tile rather
- * than a label's leading glyph: the home card menu's Add control, Discover's
- * add badge, and the Create app tile.
- *
- * Two of those still live in HTML strings (features/home/home.js's card menu)
- * — this export is the source of truth for that duplicate.
- */
-export const PlusWideIcon = stroked('PlusWideIcon', 'M12 4v16m8-8H4');
-
-/**
- * The disclosure caret the home panels' expand toggle rotates — and
- * (Streamlined Concept) the header title tab's "name ⌄" caret.
- */
-export const ChevronDownIcon = stroked('ChevronDownIcon', 'M19 9l-7 7-7-7');
-
-export const HomeIcon = strokedPath(
-  'HomeIcon',
-  'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z',
-);
-
-export const SearchIcon = stroked('SearchIcon', 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z');
+export const SearchIcon = glyph('SearchIcon', (  // lucide/search
+  <>
+    <path d="m21 21-4.34-4.34" />
+    <circle cx="11" cy="11" r="8" />
+  </>
+));
 
 // ── Status and account ───────────────────────────────────────────────────
 
-export const BellIcon = stroked(
-  'BellIcon',
-  'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9',
-);
+export const BellIcon = glyph('BellIcon', (  // lucide/bell
+  <>
+    <path d="M10.268 21a2 2 0 0 0 3.464 0" />
+    <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" />
+  </>
+));
 
-export const UserIcon = stroked(
-  'UserIcon',
-  'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
-);
+export const UserIcon = glyph('UserIcon', (  // lucide/user
+  <>
+    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
+  </>
+));
 
-export const WalletIcon = stroked(
-  'WalletIcon',
-  'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
-);
+export const WalletIcon = glyph('WalletIcon', (  // lucide/wallet
+  <>
+    <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1" />
+    <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4" />
+  </>
+));
 
-export const TrophyIcon = stroked(
-  'TrophyIcon',
-  'M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6',
-);
+/** The door to the Leaderboard — the home screen's Challenges bar and its footer. */
+export const TrophyIcon = glyph('TrophyIcon', (  // lucide/trophy
+  <>
+    <path d="M10 14.66V17a1 1 0 0 1-1 1 2 2 0 0 0-2 2v2" />
+    <path d="M14 14.66V17a1 1 0 0 0 1 1 2 2 0 0 1 2 2v2" />
+    <path d="M17.916 10H19.5A2.5 2.5 0 0 0 22 7.5V5a1 1 0 0 0-1-1h-3" />
+    <path d="M4 22h16" />
+    <path d="M6 9a6 6 0 0 0 12 0V3a1 1 0 0 0-1-1H7a1 1 0 0 0-1 1z" />
+    <path d="M6.084 10H4.5A2.5 2.5 0 0 1 2 7.5V5a1 1 0 0 1 1-1h3" />
+  </>
+));
 
 /**
  * The bare tick. Every "added / done" affordance on the platform draws this
  * one path — the home launcher's Added badge, the home panels' checklist, the
- * app view's step list — and the browse row's Add button is the first of them
- * to render from the module. Its callers differ only in `strokeWidth`, which
- * is why this is a `stroked` glyph rather than a `strokedPath` one.
+ * dev chat's completion banner, the app view's step list, the browse row's Add
+ * button. Its callers differ only in `strokeWidth`, which the size rule in
+ * this file's header governs.
  */
-export const CheckIcon = stroked('CheckIcon', 'M5 13l4 4L19 7');
+export const CheckIcon = glyph('CheckIcon', <path d="M20 6 9 17l-5-5" />);  // lucide/check
 
-// ── The dev chat's banner glyphs ─────────────────────────────────────────
-//
-// Five ports, moved here from inline `<svg>`s in `renderChatView`'s four
-// banner templates when that strip converted. Each is the heroicons 24-outline
-// path the templates carried; none is a redraw, and none of the four glyphs
-// above is the same shape — `CheckIcon` and `PlusWideIcon` are the shell's own
-// smaller-box spellings, and swapping either in would have been a visual
-// change on a strip this slice does not otherwise touch.
-export const CheckLongIcon = stroked('CheckLongIcon', 'M4.5 12.75l6 6 9-13.5');
-export const PlusThinIcon = stroked('PlusThinIcon', 'M12 4.5v15m7.5-7.5h-15');
-export const ClockIcon = stroked('ClockIcon', 'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z');
-export const UserCircleIcon = stroked(
-  'UserCircleIcon',
-  'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z'
-);
-export const WarningTriangleIcon = stroked(
-  'WarningTriangleIcon',
-  'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z'
-);
+export const ClockIcon = glyph('ClockIcon', (  // lucide/clock
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 6v6l4 2" />
+  </>
+));
 
-// Five more ports, from `renderChatView`'s composer and `_renderSavedDrafts`'
-// three row actions, moved here when that block converted. Each is the path
-// the template carried, unchanged.
-//
-// Their FRAME is normalised onto `stroked`, which is a real DOM difference
-// and a deliberate one: the templates wrote `stroke-linecap` and
-// `stroke-linejoin` on the `<svg>`, this factory writes them on each `<path>`.
-// Both inherit, so nothing draws differently — and the alternative is a
-// fourth renderer whose only job is to hold five glyphs' attribute placement.
-// Size still comes from `width`/`height` attributes, which is how the
-// composer wrote them (every other call site in the shell uses a class).
-export const PaperclipIcon = stroked(
-  'PaperclipIcon',
-  'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48'
-);
-export const SaveDraftIcon = stroked('SaveDraftIcon', [
-  'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
-  'M17 21v-8H7v8',
-  'M7 3v5h8',
-]);
-export const DraftSendIcon = stroked('DraftSendIcon', ['M22 2 11 13', 'M22 2 15 22l-4-9-9-4z']);
-export const DraftEditIcon = stroked('DraftEditIcon', [
-  'M12 20h9',
-  'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
-]);
-export const DraftTrashIcon = stroked('DraftTrashIcon', [
-  'M3 6h18',
-  'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2',
-  'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6',
-]);
+export const UserCircleIcon = glyph('UserCircleIcon', (  // lucide/circle-user
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <circle cx="12" cy="10" r="3" />
+    <path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662" />
+  </>
+));
+
+export const WarningTriangleIcon = glyph('WarningTriangleIcon', (  // lucide/triangle-alert
+  <>
+    <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+    <path d="M12 9v4" />
+    <path d="M12 17h.01" />
+  </>
+));
+
+export const ShieldCheckIcon = glyph('ShieldCheckIcon', (  // lucide/shield-check
+  <>
+    <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+    <path d="m9 12 2 2 4-4" />
+  </>
+));
+
+export const LockIcon = glyph('LockIcon', (  // lucide/lock
+  <>
+    <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </>
+));
+
+export const KeyIcon = glyph('KeyIcon', (  // lucide/key-round
+  <>
+    <path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" />
+    <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" />
+  </>
+));
 
 /**
  * The spinning arc, as the sync banner draws it.
  *
- * Not a `stroked()` glyph: it is a faint ring with a bright quarter-arc laid
- * over it — a `<circle>` and a FILLED `<path>`, two different kinds of child —
- * so the helpers above cannot express it. The colour and the size come from
- * `className`, like every other icon here; `animate-spin` is the caller's, so
- * a still frame of it can be rendered where a capture would otherwise be
- * non-deterministic.
+ * Not a lucide glyph and not a `glyph()` one: it is a faint ring with a bright
+ * quarter-arc laid over it — a `<circle>` and a FILLED `<path>` — so it has no
+ * counterpart in an outline set. The colour and the size come from
+ * `className`; `animate-spin` is the caller's, so a still frame of it can be
+ * rendered where a capture would otherwise be non-deterministic.
  */
 export const SpinnerArcIcon = ({ id, className, ...rest }: IconProps) => (
   <svg id={id} className={className} fill="none" viewBox="0 0 24 24" {...rest}>
@@ -283,271 +311,259 @@ export const SpinnerArcIcon = ({ id, className, ...rest }: IconProps) => (
 );
 SpinnerArcIcon.displayName = 'SpinnerArcIcon';
 
-/**
- * A trophy on a plinth — the door to the Leaderboard screen, drawn on the
- * 24 grid at a finer weight than TrophyIcon's blockier mark. TrophyIcon was
- * the hamburger drawer's row glyph; this is the one the home screen's
- * Challenges bar and its standings footer carry, and the two are genuinely
- * different drawings rather than two spellings of one.
- */
-export const TrophyOutlineIcon = stroked(
-  'TrophyOutlineIcon',
-  'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
-);
-
-export const ShieldCheckIcon = stroked(
-  'ShieldCheckIcon',
-  'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
-);
-
-export const LockIcon = stroked(
-  'LockIcon',
-  'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
-);
-
-export const KeyIcon = stroked(
-  'KeyIcon',
-  'M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z',
-);
-
 // ── Conversation ─────────────────────────────────────────────────────────
 
-/** The chat glyph in the header — a rounded speech bubble with an ellipsis. */
-export const ChatIcon = stroked(
-  'ChatIcon',
-  'M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
-);
+/** A speech bubble with an ellipsis — the header's chat, and the Messages drawer. */
+export const ChatIcon = glyph('ChatIcon', (  // lucide/message-circle-more
+  <>
+    <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+    <path d="M8 12h.01" />
+    <path d="M12 12h.01" />
+    <path d="M16 12h.01" />
+  </>
+));
 
-/** The Messages drawer glyph, whose tail sits outside the bubble. */
-export const ChatBubbleTailIcon = stroked(
-  'ChatBubbleTailIcon',
-  'M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z',
-);
+export const ShareIcon = glyph('ShareIcon', (  // lucide/share-2
+  <>
+    <circle cx="18" cy="5" r="3" />
+    <circle cx="6" cy="12" r="3" />
+    <circle cx="18" cy="19" r="3" />
+    <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" />
+    <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />
+  </>
+));
 
-export const ThumbsUpIcon = stroked(
-  'ThumbsUpIcon',
-  'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
-);
+export const PaperclipIcon = glyph('PaperclipIcon', <path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551" />);  // lucide/paperclip
 
-export const ShareIcon = stroked(
-  'ShareIcon',
-  'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z',
-);
+export const ArrowUpTrayIcon = glyph('ArrowUpTrayIcon', (  // lucide/upload
+  <>
+    <path d="M12 3v12" />
+    <path d="m17 8-5-5-5 5" />
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+  </>
+));
 
-export const PaperClipIcon = stroked(
-  'PaperClipIcon',
-  'M21.4 11.6l-8.5 8.5a6 6 0 01-8.5-8.5l9-9a4 4 0 015.7 5.7l-9 9a2 2 0 01-2.8-2.8l8.4-8.4',
-);
+export const SendIcon = glyph('SendIcon', (  // lucide/send
+  <>
+    <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
+    <path d="m21.854 2.147-10.94 10.939" />
+  </>
+));
 
-export const ArrowUpTrayIcon = stroked(
-  'ArrowUpTrayIcon',
-  'M12 3v12m0-12l-4 4m4-4l4 4M5 13v7h14v-7',
-);
+export const UserGroupIcon = glyph('UserGroupIcon', (  // lucide/users
+  <>
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <path d="M16 3.128a4 4 0 0 1 0 7.744" />
+    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+    <circle cx="9" cy="7" r="4" />
+  </>
+));
 
-export const SendIcon = stroked(
-  'SendIcon',
-  'M4 4l17 8-17 8 3-8-3-8zm3 8h14',
-);
+// ── The dev chat's draft rows ────────────────────────────────────────────
 
-export const UserGroupIcon = stroked(
-  'UserGroupIcon',
-  'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zm8-1a3 3 0 010 6m4 5v-2a4 4 0 00-3-3.9',
-);
+export const SaveDraftIcon = glyph('SaveDraftIcon', (  // lucide/save
+  <>
+    <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+    <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
+    <path d="M7 3v4a1 1 0 0 0 1 1h7" />
+  </>
+));
+
+export const DraftEditIcon = glyph('DraftEditIcon', (  // lucide/pencil
+  <>
+    <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+    <path d="m15 5 4 4" />
+  </>
+));
+
+export const DraftTrashIcon = glyph('DraftTrashIcon', (  // lucide/trash-2
+  <>
+    <path d="M10 11v6" />
+    <path d="M14 11v6" />
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+    <path d="M3 6h18" />
+    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+  </>
+));
 
 // ── Tooling ──────────────────────────────────────────────────────────────
 
-/**
- * Board columns — the Dev screen's Kanban tab, and the Improve panel's row
- * that opens it.
- *
- * Transcribed verbatim from `VIEW_ICON_PATHS.kanban` in
- * features/dev-board/board-frame.tsx, which is where this glyph has been drawn
- * since the board shipped. THE UI OVERHAUL gave it a second call site (the
- * Improve panel), and a second inline copy of a path is exactly the drift this
- * module exists to prevent — so it became an export rather than a duplicate.
- */
-export const BoardIcon = stroked('BoardIcon', 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z');
+export const TerminalIcon = glyph('TerminalIcon', (  // lucide/square-terminal
+  <>
+    <path d="m7 11 2-2-2-2" />
+    <path d="M11 13h4" />
+    <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+  </>
+));
 
-/**
- * A NEWSPAPER — the Activity row and screen.
- *
- * The Figma board names this slot `lucide/newspaper`, and the glyph is right:
- * Activity is the project's record of what happened, not a chat. The path is
- * the shell's own set's Heroicons v1 outline newspaper rather than lucide's,
- * for the reason in this file's header — one grid, one stroke rhythm.
- */
-export const NewspaperIcon = stroked(
-  'NewspaperIcon',
-  'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
-);
-
-/**
- * Three equal rules — the Dev screen's Feed tab, and the Improve panel's row
- * that opens it.
- *
- * The same path `VIEW_ICON_PATHS.list` drew for the retired List view, kept
- * deliberately: Feed IS that surface, refocused on recent activity, and giving
- * it a new glyph would have said "something else lives here now" to everyone
- * who already knew where to look.
- *
- * Identical to Bars3Icon's path, which is not a mistake — the hamburger and a
- * list of rules are the same three lines. Two names, because the call sites
- * mean different things and a `Bars3Icon` in a Feed row would read as a bug.
- */
-export const ListLinesIcon = stroked('ListLinesIcon', 'M4 6h16M4 12h16M4 18h16');
-
-export const TerminalIcon = stroked(
-  'TerminalIcon',
-  'M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z',
-);
-
-export const CogIcon = stroked('CogIcon', [
-  'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
-  'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
-]);
-
-export const SunIcon = stroked(
-  'SunIcon',
-  'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
-);
+export const CogIcon = glyph('CogIcon', (  // lucide/settings
+  <>
+    <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+    <circle cx="12" cy="12" r="3" />
+  </>
+));
 
 /**
  * An ⓘ in a circle — a help affordance beside a heading, not a status. The
  * home screen's widget strip uses it for "how do I add this to my home
- * screen?"; it is the only glyph in the set drawn as a filled counter inside a
- * ring, which is what keeps it from reading as an error or a warning.
+ * screen?", and the ring is what keeps it from reading as an error.
  */
-export const InfoCircleIcon = stroked(
-  'InfoCircleIcon',
-  'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
-);
+export const InfoCircleIcon = glyph('InfoCircleIcon', (  // lucide/info
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 16v-4" />
+    <path d="M12 8h.01" />
+  </>
+));
 
-export const LightBulbIcon = stroked(
-  'LightBulbIcon',
-  'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
-);
+/**
+ * The Improve button's two settled states (#1474). The bulb is idle — "there
+ * is something here you could change" — and the cyclic arrows are "a new build
+ * is ready, reload onto it". `SpinnerArcIcon` above is the third state and the
+ * only one of the three that is not a lucide file.
+ *
+ * The bulb came BACK here rather than being redrawn. It left the set when the
+ * Improve pill went text-only and nothing imported it; the note at the head of
+ * this module says to take a retired glyph from lucide by the slug the old
+ * entry named, and `lightbulb` is that slug.
+ */
+export const LightBulbIcon = glyph('LightBulbIcon', (  // lucide/lightbulb
+  <>
+    <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" />
+    <path d="M9 18h6" />
+    <path d="M10 22h4" />
+  </>
+));
 
-// Heroicons' arrow-path: the "there is a new build, reload onto it" glyph on
-// the Improve button, and the only rotational arrow in the set — ArrowRightIcon
-// and its short twin are directional, not cyclic.
-export const ArrowPathIcon = stroked(
-  'ArrowPathIcon',
-  'M16.023 9.348h4.992V4.356m-4.992 4.992l3.181-3.183a8.25 8.25 0 00-13.803 3.7M4.031 9.865v4.99m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7',
-);
+/**
+ * The only CYCLIC arrow in the set — `ArrowRightIcon` is directional, and the
+ * distinction is the whole reason this one exists separately. lucide spells it
+ * `refresh-cw`; Heroicons called the same two-arc glyph `arrow-path`, which is
+ * where this export's name comes from.
+ */
+export const ArrowPathIcon = glyph('ArrowPathIcon', (  // lucide/refresh-cw
+  <>
+    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+    <path d="M21 3v5h-5" />
+    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+    <path d="M8 16H3v5" />
+  </>
+));
 
-export const CameraIcon = stroked('CameraIcon', [
-  'M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z',
-  'M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z',
-]);
+// ── Media ────────────────────────────────────────────────────────────────
 
-export const PhotoIcon = stroked(
-  'PhotoIcon',
-  'M3 16.5l5.25-5.25a2.25 2.25 0 013.182 0L15 14.818m-1.5-1.5 1.068-1.068a2.25 2.25 0 013.182 0L21 15.5m-18 3.75h18A2.25 2.25 0 0023.25 17V6.75A2.25 2.25 0 0021 4.5H3A2.25 2.25 0 00.75 6.75V17A2.25 2.25 0 003 19.25z',
-);
+export const CameraIcon = glyph('CameraIcon', (  // lucide/camera
+  <>
+    <path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z" />
+    <circle cx="12" cy="13" r="3" />
+  </>
+));
+
+export const PhotoIcon = glyph('PhotoIcon', (  // lucide/image
+  <>
+    <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+    <circle cx="9" cy="9" r="2" />
+    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+  </>
+));
 
 /**
  * #1280: saving a message. The outline/solid PAIR is the point — this is the
  * only glyph in the set that has to render two states, and hollow-versus-
  * filled says which one at 12px, where an opacity difference does not.
  *
- * Heroicons v2 (24 outline / 24 solid) like the rest of the file, drawn for
- * `strokeWidth="1.5"` — both call sites pass it, rather than the default '2'
- * this file's older v1 glyphs want.
- *
- * These two paths used to be inlined in public/js/group-chat.js as well —
- * the one duplication in the set, because the message's save button was
- * rendered by a classic script that cannot import this module. The transcript
- * is React and that button is `<RowActions>`, so the copy is gone and this is
- * the only place either glyph is drawn.
+ * lucide ships no solid variant, so the saved state is lucide/bookmark's own
+ * path filled rather than stroked. Same drawing, two treatments.
  */
-export const BookmarkIcon = stroked(
-  'BookmarkIcon',
-  'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z',
-);
+export const BookmarkIcon = glyph('BookmarkIcon', <path d="M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z" />);  // lucide/bookmark
 
-export const BookmarkSolidIcon = filled(
+export const BookmarkSolidIcon = solid(
   'BookmarkSolidIcon',
-  'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
+  'M17 3a2 2 0 0 1 2 2v15a1 1 0 0 1-1.496.868l-4.512-2.578a2 2 0 0 0-1.984 0l-4.512 2.578A1 1 0 0 1 5 20V5a2 2 0 0 1 2-2z',
 );
 
 /**
- * The ⋮ overflow control — three filled dots on the 20 grid, not the 24 one.
+ * The ⋮ and ⋯ overflow controls.
  *
- * It is written out rather than built by `filled()` because it is the only
- * glyph in the set drawn from <circle>s: three round dots on a 24 grid have to
- * be described as three arcs each, and the path data for that is unreadable
- * next to `cx`/`cy`/`r`. The 20 viewBox is the reason the radii are whole
- * numbers.
+ * lucide draws each dot as a stroked `<circle>` of radius 1: at stroke 2 the
+ * stroke closes the circle, so it reads as a solid 4px dot. That is what
+ * retired the set's last 20-grid outlier — these two used to be the only
+ * glyphs drawn on a viewBox other than 24.
  */
-export const EllipsisVerticalIcon = ({ id, className, ...rest }: IconProps) => (
-  <svg id={id} className={className} viewBox="0 0 20 20" fill="currentColor" {...rest}>
-    <circle cx="10" cy="4.2" r="1.6" />
-    <circle cx="10" cy="10" r="1.6" />
-    <circle cx="10" cy="15.8" r="1.6" />
-  </svg>
-);
-EllipsisVerticalIcon.displayName = 'EllipsisVerticalIcon';
+export const EllipsisVerticalIcon = glyph('EllipsisVerticalIcon', (  // lucide/ellipsis-vertical
+  <>
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="12" cy="5" r="1" />
+    <circle cx="12" cy="19" r="1" />
+  </>
+));
 
-/**
- * The Dev card's ⋯ trigger — three dots on a HORIZONTAL row, in a 20×20 box.
- *
- * Its own component rather than a `stroked` entry for the same reason
- * `EllipsisVerticalIcon` above is: circles, not a path, and a viewBox that
- * matches the pill it sits in rather than the 24×24 outline grid.
- */
-export const EllipsisHorizontalIcon = ({ id, className, ...rest }: IconProps) => (
-  <svg id={id} className={className} viewBox="0 0 20 20" fill="currentColor" {...rest}>
-    <circle cx="4" cy="10" r="1.6" />
-    <circle cx="10" cy="10" r="1.6" />
-    <circle cx="16" cy="10" r="1.6" />
-  </svg>
-);
-EllipsisHorizontalIcon.displayName = 'EllipsisHorizontalIcon';
+export const EllipsisHorizontalIcon = glyph('EllipsisHorizontalIcon', (  // lucide/ellipsis
+  <>
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="19" cy="12" r="1" />
+    <circle cx="5" cy="12" r="1" />
+  </>
+));
 
 /** "Open the staging preview" — the eye, and the same eye struck through. */
-export const EyeIcon = ({ id, className, strokeWidth = '2', ...rest }: IconProps) => (
-  <svg id={id} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} {...rest}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
-    <circle cx="12" cy="12" r="2.75" />
-  </svg>
-);
-EyeIcon.displayName = 'EyeIcon';
+export const EyeIcon = glyph('EyeIcon', (  // lucide/eye
+  <>
+    <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+    <circle cx="12" cy="12" r="3" />
+  </>
+));
 
-export const EyeOffIcon = ({ id, className, strokeWidth = '2', ...rest }: IconProps) => (
-  <svg id={id} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} {...rest}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
-    <circle cx="12" cy="12" r="2.75" />
-    <path strokeLinecap="round" d="M4 20 20 4" />
-  </svg>
-);
-EyeOffIcon.displayName = 'EyeOffIcon';
+export const EyeOffIcon = glyph('EyeOffIcon', (  // lucide/eye-off
+  <>
+    <path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49" />
+    <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+    <path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
+    <path d="m2 2 20 20" />
+  </>
+));
 
 /** The author-only inline title edit: a pencil over a document corner. */
-export const PencilSquareIcon = stroked(
-  'PencilSquareIcon',
-  'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
-);
+export const PencilSquareIcon = glyph('PencilSquareIcon', (  // lucide/square-pen
+  <>
+    <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+    <path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" />
+  </>
+));
 
-export const GitHubIcon = filled(
+/**
+ * The GitHub mark. lucide removed brand icons in 2023, so this one stays the
+ * shell's own — a brand mark is not a drawing anyone may normalise anyway.
+ */
+export const GitHubIcon = solid(
   'GitHubIcon',
   'M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z',
 );
 
 /**
- * The escape hatch, for the two call sites that pick their `d` out of a table
- * at render time rather than naming a glyph: the dev board's view switcher
- * (`VIEW_ICON_PATHS[mode]`) and the app card's visibility chip
- * (`VIS_CHIP_PATHS[vis.icon]`, whose table app-card.js also interpolates into
- * the string renderer, so the path data has to stay there). Same `stroked`
- * shape as everything above.
+ * One glyph's worth of shapes: `['path', { d: '…' }]`, `['circle', { … }]`.
+ * lucide's children, as data rather than as JSX.
+ */
+export type GlyphShapes = ReadonlyArray<readonly [string, Record<string, string | number>]>;
+
+/**
+ * The escape hatch, for the two call sites that pick their glyph out of a
+ * table at render time rather than naming one: the app card's visibility chip
+ * (`VIS_CHIP_SHAPES`) and the Dev card's per-kind icon (`DEV_CARD_ICONS`,
+ * whose glyph is the fallback behind an OpenMoji illustration).
+ *
+ * It takes SHAPES, not a `d`, because 35 of the lucide glyphs in this file
+ * are not path-only — and both of those tables are also read by a string
+ * renderer in `public/js/**` or `features/apps/app-card.js`, which cannot
+ * import a component. One table, two renderers, no second copy of the data.
  */
 export const Glyph = ({
   id,
   className,
-  d,
-  strokeWidth = '2',
+  shapes,
+  strokeWidth = STROKE,
   ...rest
-}: IconProps & { d: string }) => (
+}: IconProps & { shapes: GlyphShapes }) => (
   <svg
     id={id}
     className={className}
@@ -555,9 +571,11 @@ export const Glyph = ({
     stroke="currentColor"
     viewBox="0 0 24 24"
     strokeWidth={strokeWidth}
+    strokeLinecap="round"
+    strokeLinejoin="round"
     {...rest}
   >
-    <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    {shapes.map(([tag, attrs], i) => React.createElement(tag, { key: i, ...attrs }))}
   </svg>
 );
 Glyph.displayName = 'Glyph';

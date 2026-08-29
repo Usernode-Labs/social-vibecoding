@@ -37,6 +37,8 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
 
+import { EmojiTileGlyph } from '../apps/app-card-view';
+
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
@@ -181,9 +183,7 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
             className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
             data-icon="emoji"
           >
-            <span className="text-3xl leading-none" aria-hidden="true">
-              {app.icon_emoji}
-            </span>
+            <EmojiTileGlyph emoji={app.icon_emoji} textClass="text-3xl leading-none" />
           </div>
         ) : (
           <div

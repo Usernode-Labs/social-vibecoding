@@ -26,6 +26,7 @@
 // legacy module has its own copy: it is three lines, and a shared import would
 // be a load-order dependency between classic scripts that don't have one.
 
+import { openmojiSrcFor } from '../../lib/openmoji';
 
 function escapeHtml(str) {
   const div = document.createElement('div');
@@ -67,9 +68,17 @@ export function iconTileFor(app) {
     };
   }
   if (app.icon_emoji) {
+    // The OpenMoji upgrade renders as an <img> like the custom-image kind
+    // (object-contain, not cover: the artwork is a glyph, not a photo; p-1
+    // gives it the air a text emoji's line box used to). The text span is
+    // the fallback for emojis outside the curated slice — see
+    // lib/openmoji.js on why a miss is a soft degrade.
+    const illustrated = openmojiSrcFor(app.icon_emoji);
     return {
       kind: 'emoji',
-      html: `<span class="text-3xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`,
+      html: illustrated
+        ? `<img src="${escapeHtml(illustrated)}" alt="" loading="lazy" draggable="false" aria-hidden="true" class="w-full h-full object-contain p-1">`
+        : `<span class="text-3xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`,
     };
   }
   return { kind: 'letter', html: escapeHtml((app.name || '?').charAt(0).toUpperCase()) };
@@ -154,21 +163,40 @@ export function appPillsFor(app) {
 // the ink that has to move.
 export const CHIP_BASE_CLS = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
 export const VIS_CHIP_CLS = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-700 dark:text-violet-400';
-// Heroicons v1 outline paths, drawn as inline currentColor SVGs (rather than
-// emoji) so the glyphs tint violet with the chip in both themes.
-export const VIS_CHIP_PATHS = {
-  lock: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
-  mail: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
+// lucide glyphs, drawn as inline currentColor SVGs (rather than emoji) so they
+// tint with the chip in both themes.
+//
+// SHAPES, not paths: neither lucide/lock nor lucide/mail is path-only — the
+// set draws a box as a <rect> rather than approximating one in path data — and
+// this table has two readers, `renderAppPillsHtml` below and <Glyph> in
+// app-card-view.tsx. One table, two renderers, no second copy to drift.
+/**
+ * Annotated so TypeScript reads each entry as a [tag, attrs] TUPLE. Without
+ * it the inference is `(string | object)[]`, which <Glyph>'s GlyphShapes will
+ * not accept — the array form loses the fact that position 0 is the tag.
+ *
+ * @type {Record<'lock' | 'mail', ReadonlyArray<readonly [string, Record<string, string>]>>}
+ */
+export const VIS_CHIP_SHAPES = {
+  lock: [['rect', { width: '18', height: '11', x: '3', y: '11', rx: '2', ry: '2' }], ['path', { d: 'M7 11V7a5 5 0 0 1 10 0v4' }]],
+  mail: [['path', { d: 'm22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7' }], ['rect', { x: '2', y: '4', width: '20', height: '16', rx: '2' }]],
 };
+
+/** One glyph's shapes as SVG child markup — the string twin of <Glyph>. */
+export function shapesToMarkup(shapes) {
+  return shapes.map(([tag, attrs]) =>
+    `<${tag} ${Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(' ')}/>`
+  ).join('');
+}
 
 export function renderAppPillsHtml(app) {
   const { chips, vis } = appPillsFor(app);
   const chipsHtml = chips.map((c) =>
     `<span class="${CHIP_BASE_CLS} ${c.cls}" title="${c.tip}">${c.label}</span>`
   ).join('');
-  const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
+  const visChipIcon = (shapes) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shapesToMarkup(shapes)}</svg>`;
   const visChipHtml = vis
-    ? `<span class="${VIS_CHIP_CLS}" title="${vis.tip}">${visChipIcon(VIS_CHIP_PATHS[vis.icon])} ${vis.label}</span>`
+    ? `<span class="${VIS_CHIP_CLS}" title="${vis.tip}">${visChipIcon(VIS_CHIP_SHAPES[vis.icon])} ${vis.label}</span>`
     : '';
   return `${chipsHtml}${visChipHtml}`;
 }

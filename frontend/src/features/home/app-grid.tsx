@@ -62,6 +62,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Bars3Icon } from '@/components/ui/icons';
 
+import { EmojiTileGlyph } from '../apps/app-card-view';
+
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { gridStore, type GridItem, type HomeAppView, type IconView } from './grid-store';
@@ -83,7 +85,9 @@ function AppIcon({ icon }: { icon: IconView }) {
     // rather than being cropped by it (same note as AppCard.iconTileFor).
     return <img src={icon.src} alt="" className="w-full h-full object-cover" />;
   }
-  if (icon.kind === 'emoji') return <span className="text-3xl leading-none">{icon.emoji}</span>;
+  if (icon.kind === 'emoji') {
+    return <EmojiTileGlyph emoji={icon.emoji} textClass="text-3xl leading-none" />;
+  }
   return <>{icon.letter}</>;
 }
 

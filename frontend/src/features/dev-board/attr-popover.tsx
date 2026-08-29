@@ -62,7 +62,7 @@ export function AttrOptionRow({ option, field }: { option: AttrOptionView; field
       <span className="attr-opt-right">
         {option.count ? <span className="attr-opt-count">{option.count}</span> : null}
         {option.mine ? (
-          <CheckIcon className="w-3.5 h-3.5 text-violet-700 shrink-0 dark:text-violet-400" strokeWidth="3" />
+          <CheckIcon className="w-3.5 h-3.5 text-violet-700 shrink-0 dark:text-violet-400" strokeWidth="2.5" />
         ) : null}
       </span>
     </button>

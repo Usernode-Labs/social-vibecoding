@@ -22,7 +22,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   EllipsisVerticalIcon,
-  TrophyOutlineIcon,
+  TrophyIcon,
 } from '@/components/ui/icons';
 
 import type { PanelStamps } from '../panels-store';
@@ -136,7 +136,7 @@ export function LeaderboardLink() {
         panels()?.goToLeaderboard?.();
       }}
     >
-      <TrophyOutlineIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+      <TrophyIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
       <span className="whitespace-nowrap">Open leaderboard</span>
     </button>
   );
@@ -173,7 +173,7 @@ export function PanelFooter({
       >
         <ChevronDownIcon
           className={`w-3 h-3 shrink-0 transition-transform${expanded ? ' rotate-180' : ''}`}
-          strokeWidth="2.5"
+          strokeWidth="3"
           aria-hidden="true"
         />
         <span className="whitespace-nowrap">{label}</span>
@@ -189,7 +189,7 @@ export function PanelFooter({
         }}
       >
         <span className="whitespace-nowrap">Open challenges</span>
-        <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        <ChevronRightIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
       </button>
     </div>
   );
@@ -221,7 +221,7 @@ export function FillFooter({ kind }: { kind: 'topochain' | 'kudos' }) {
         }}
       >
         <span className="whitespace-nowrap">{label}</span>
-        <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+        <ChevronRightIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
       </button>
     </div>
   );

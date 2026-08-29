@@ -284,9 +284,23 @@ test('the message button draws the shell’s own bookmark, not a second one', ()
   // in the icon set, kept honest by reading both ends. There is no copy any
   // more: the button is `<RowActions>` in the React transcript, which imports
   // the glyphs, so the rule is now simply that neither end draws its own.
-  const outline = ICONS_SRC.match(/BookmarkIcon',\s*\n\s*'([^']+)'/);
+  // The two are extracted DIFFERENTLY because the module draws them
+  // differently, and that is the point of the pair rather than an accident:
+  // the outline is a lucide transcription whose children are JSX, so its path
+  // lives in a `d="…"` attribute; the solid one is the same drawing handed to
+  // `solid()` as a string, because a filled glyph is one path and needs no
+  // frame. Both regexes therefore end at the same path DATA, which is what
+  // this test compares against group-chat.js.
+  //
+  // They read `BookmarkIcon',\n  '…'` until the icon set moved to lucide —
+  // the old `stroked()`/`filled()` factories took the path as a string on the
+  // next line, and both do not any more. The RULE did not change: neither end
+  // may carry its own copy. Only the shape it is written in did.
+  const outline = ICONS_SRC.match(/BookmarkIcon'[\s\S]{0,80}?<path d="([^"]+)"/);
   const solid = ICONS_SRC.match(/BookmarkSolidIcon',\s*\n\s*'([^']+)'/);
   assert.ok(outline && solid, 'the module exports the outline/solid bookmark pair');
+  assert.equal(outline[1], solid[1],
+    'the two treatments are the SAME drawing — one stroked, one filled');
   assert.ok(!CHAT_SRC.includes(outline[1]) && !CHAT_SRC.includes(solid[1]),
     'group-chat.js no longer carries a second copy of the path data');
   const chatCode = CHAT_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
@@ -303,10 +317,20 @@ test('the mark is hollow when unsaved and solid when saved', () => {
   // The pair is drawn by the icon module now, so the "state is the SHAPE, not
   // the opacity" rule is checked where the shapes are: a fill with no stroke
   // for saved, a stroked outline with no fill for not.
-  assert.match(ICONS_SRC, /export const BookmarkSolidIcon = filled\(/, 'saved is a fill');
-  assert.match(ICONS_SRC, /export const BookmarkIcon = stroked\(/, 'unsaved is an outline');
-  assert.match(ICONS_SRC, /function filled\([\s\S]{0,200}?fill="currentColor"/);
-  assert.match(ICONS_SRC, /function stroked\([\s\S]{0,300}?fill="none"\s*\n\s*stroke="currentColor"/);
+  // `filled`/`stroked` became `solid`/`glyph` when the set moved to lucide.
+  // The names changed because the FRAME did: `glyph` slots JSX children into
+  // lucide's own <svg>, which is what lets a glyph hold <circle>, <rect> and
+  // <line> children rather than approximating them in path data — 17 of the
+  // set do. `solid` still takes one path string, because a filled glyph is
+  // one path and needs no frame.
+  //
+  // The rule this test exists for is untouched and still asserted below: the
+  // saved state is a FILL and the unsaved one is a STROKE, so the state is
+  // the shape rather than the opacity.
+  assert.match(ICONS_SRC, /export const BookmarkSolidIcon = solid\(/, 'saved is a fill');
+  assert.match(ICONS_SRC, /export const BookmarkIcon = glyph\(/, 'unsaved is an outline');
+  assert.match(ICONS_SRC, /function solid\([\s\S]{0,200}?fill="currentColor"/);
+  assert.match(ICONS_SRC, /function glyph\([\s\S]{0,300}?fill="none"\s*\n\s*stroke="currentColor"/);
   // A class toggle alone would leave the previous state's mark on screen, so
   // the optimistic toggle has to change the SHAPE. It used to do that by
   // rewriting the button's innerHTML; the transcript is React now

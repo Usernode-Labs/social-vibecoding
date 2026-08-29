@@ -15,19 +15,58 @@
  * and the chip run, never the wrapper.
  */
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { Glyph } from '@/components/ui/icons';
 
+import { openmojiSrcFor } from '../../lib/openmoji';
 import {
   appPillsFor,
   iconViewFor,
   CHIP_BASE_CLS,
   VIS_CHIP_CLS,
-  VIS_CHIP_PATHS,
+  VIS_CHIP_SHAPES,
 } from './app-card.js';
 
 type AppRecord = Record<string, any>;
+
+/**
+ * An emoji tile's glyph, upgraded to its vendored OpenMoji illustration when
+ * the curated slice covers it (lib/openmoji.js) — the subtle-y2k treatment.
+ * The text span is the fallback for anything outside the slice, styled by
+ * `textClass` exactly as each surface drew it before. Every React tile
+ * surface renders its emoji through this one component so the upgrade (and
+ * its fallback rule) cannot drift between the launcher grid, the widget
+ * strip, Discover, the landing grid and the shared AppIconContent; the
+ * string renderer in ./app-card.js is the same pair of branches as HTML.
+ */
+export function EmojiTileGlyph({ emoji, textClass, imgClass = 'w-full h-full object-contain p-1' }: {
+  emoji: string;
+  textClass: string;
+  imgClass?: string;
+}): ReactNode {
+  // A manifest hit is a promise the FILE resolves, not that this load will:
+  // offline before the SW has the SVG cached, the <img> would otherwise
+  // render as a blank tile (alt="" aria-hidden). onError falls back to the
+  // same text glyph an uncovered emoji gets — a miss and a failure degrade
+  // identically.
+  const [failed, setFailed] = useState(false);
+  const src = failed ? null : openmojiSrcFor(emoji);
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        draggable="false"
+        aria-hidden="true"
+        className={imgClass}
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return <span className={textClass} aria-hidden="true">{emoji}</span>;
+}
 
 /**
  * The tile's inner markup. Carries no sizing of its own except the emoji's
@@ -52,7 +91,7 @@ export function AppIconContent({ app }: { app: AppRecord }): ReactNode {
     );
   }
   if (icon.kind === 'emoji') {
-    return <span className="text-3xl leading-none" aria-hidden="true">{icon.emoji}</span>;
+    return <EmojiTileGlyph emoji={icon.emoji} textClass="text-3xl leading-none" />;
   }
   return icon.letter;
 }
@@ -79,10 +118,10 @@ export function AppPills({ app }: { app: AppRecord }): ReactNode {
       ))}
       {vis ? (
         <span className={VIS_CHIP_CLS} title={vis.tip}>
-          {/* <Glyph>, not a named export: the two visibility paths live in
-              app-card.js's VIS_CHIP_PATHS because the string renderer there
-              interpolates the same table, and one table beats two copies. */}
-          <Glyph className="w-3 h-3 shrink-0" aria-hidden="true" d={VIS_CHIP_PATHS[vis.icon]} />
+          {/* <Glyph>, not a named export: the two visibility glyphs live in
+              app-card.js's VIS_CHIP_SHAPES because the string renderer there
+              reads the same table, and one table beats two copies. */}
+          <Glyph className="w-3 h-3 shrink-0" aria-hidden="true" shapes={VIS_CHIP_SHAPES[vis.icon]} />
           {` ${vis.label}`}
         </span>
       ) : null}

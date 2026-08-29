@@ -50,6 +50,7 @@ import {
   PencilSquareIcon,
 } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { openmojiSrcFor } from '../../../lib/openmoji';
 import { useStoreState } from '../../../lib/use-store-state';
 import { aiEnabledStore, cardNowStore } from './cards-store';
 import type {
@@ -103,21 +104,36 @@ function Spinner(): ReactNode {
 }
 
 /**
- * The per-type tinted icon chip (`_devCardIcon`'s markup).
+ * The per-type icon chip (`_devCardIcon`'s markup).
  *
- * `<Glyph>` rather than a named icon: the path comes out of app-view.js's
- * `DEV_CARD_ICONS` table at render time, which is exactly the case the
+ * subtle-y2k v2: the chip prefers the spec's OpenMoji glyph (an <img> from
+ * the vendored slice — lib/openmoji.js resolves it, and a miss falls back
+ * to the stroked glyph, never to a blank). `<Glyph>` rather than a named
+ * icon for that fallback: the shapes come out of app-view.js’s
+ * DEV_CARD_ICONS table at render time, which is exactly the case the
  * escape hatch exists for (see @/components/ui/icons.tsx).
  */
 export function CardIcon({ spec }: { spec: CardIconSpec }): ReactNode {
   const box = spec.small ? 'w-7 h-7' : 'w-9 h-9';
   const glyph = spec.small ? 'w-4 h-4' : 'w-5 h-5';
+  const illustrated = spec.emoji ? openmojiSrcFor(spec.emoji) : null;
   return (
     <span
       className={`${box} rounded-lg ${spec.tint} flex items-center justify-center shrink-0${spec.pulse ? ' animate-pulse' : ''}`}
       title={spec.title}
     >
-      <Glyph className={glyph} d={spec.path} aria-hidden="true" />
+      {illustrated ? (
+        <img
+          src={illustrated}
+          alt=""
+          loading="lazy"
+          draggable="false"
+          aria-hidden="true"
+          className={`${spec.small ? 'w-5 h-5' : 'w-6 h-6'} object-contain`}
+        />
+      ) : (
+        <Glyph className={glyph} shapes={spec.shapes} aria-hidden="true" />
+      )}
     </span>
   );
 }

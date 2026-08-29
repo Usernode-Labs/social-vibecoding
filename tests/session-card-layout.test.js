@@ -111,7 +111,7 @@ function assertOrder(html, markers) {
   }
 }
 
-const CHEVRON = 'M9 5l7 7-7 7';
+const CHEVRON = 'm9 18 6-6-6-6';
 const SPINNER = 'dc-status-spinner-arc';
 // The single-row shell every card on the board shares.
 // `rounded-2xl` since the widget language landed (#1191): the card is a white

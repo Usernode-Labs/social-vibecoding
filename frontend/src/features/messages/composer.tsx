@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { ArrowUpTrayIcon, PaperClipIcon, SendIcon } from '@/components/ui/icons';
+import { ArrowUpTrayIcon, PaperclipIcon, SendIcon } from '@/components/ui/icons';
 import * as api from './api';
 import { draftFor, notifyTyping, replyFor, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
 import type { MessageAttachment, SharedObjectReference } from './types';
@@ -149,7 +149,7 @@ export function MessageComposer() {
       {mention?.length ? <div className="messages-mention-menu" role="listbox">{mention.map((member) => <button key={member.id} type="button" role="option" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
       <div className="flex items-end gap-1.5">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={(event) => { void addFiles([...(event.target.files || [])]); event.target.value = ''; }} />
-        <button type="button" className="messages-composer-action" onClick={() => fileRef.current?.click()} disabled={attachments.length + uploading >= MAX_ATTACHMENTS} aria-label="Attach files" title="Attach files"><PaperClipIcon aria-hidden="true" /></button>
+        <button type="button" className="messages-composer-action" onClick={() => fileRef.current?.click()} disabled={attachments.length + uploading >= MAX_ATTACHMENTS} aria-label="Attach files" title="Attach files"><PaperclipIcon aria-hidden="true" /></button>
         <button type="button" className="messages-composer-action" onClick={() => window.UsernodeReact?.dialogs?.messagesShare?.open()} aria-label="Share Usernode item" title="Share item"><ArrowUpTrayIcon aria-hidden="true" /></button>
         <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } else if (event.key === 'Escape' && reply) setReply(conversationId, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder="Message…" aria-label="Message" className="messages-composer-input" />
         <button type="button" onClick={() => void submit()} disabled={sending || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message">{sending ? '…' : <SendIcon aria-hidden="true" />}</button>

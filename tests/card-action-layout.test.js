@@ -212,7 +212,7 @@ test('the ⋯ lives in the card\'s top-right RAIL, not in the action row', () =>
   assert.match(html, /dev-card-rail/);
   const rail = html.slice(html.indexOf('dev-card-rail'));
   assert.match(rail, /dev-card-menu-btn/, 'the trigger is inside the rail');
-  assert.match(rail, /M9 5l7 7-7 7/, 'and the chevron below it');
+  assert.match(rail, /m9 18 6-6-6-6/, 'and the chevron below it');
   // Never in the action row.
   const actions = html.match(/<div class="gc-card-actions">[\s\S]*?<\/div>/);
   assert.ok(actions && !/data-card-menu/.test(actions[0]),

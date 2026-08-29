@@ -29,7 +29,7 @@
 import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ArrowRightShortIcon, ChevronRightIcon } from '@/components/ui/icons';
+import { ArrowRightIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
@@ -240,7 +240,7 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
           onPointerDown={view.canOpen ? warm : undefined}
           onMouseEnter={view.canOpen ? warm : undefined}
         >
-          {view.canOpen ? <ArrowRightShortIcon className="w-4 h-4" aria-hidden="true" /> : null}
+          {view.canOpen ? <ArrowRightIcon className="w-4 h-4" aria-hidden="true" /> : null}
           {view.openLabel}
         </Button>
         <button

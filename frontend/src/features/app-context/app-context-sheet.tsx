@@ -67,11 +67,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import {
-  ChatBubbleTailIcon,
+  ChatIcon,
   ChevronRightIcon,
   CogIcon,
   HomeIcon,
-  PlusWideIcon,
+  PlusIcon,
   SearchIcon,
   ShieldCheckIcon,
   UserIcon,
@@ -302,7 +302,7 @@ export function AppsSwitcherSheet(): ReactNode {
               });
             }}
           >
-            <PlusWideIcon className="w-3.5 h-3.5 shrink-0" strokeWidth="2.5" aria-hidden="true" />
+            <PlusIcon className="w-3.5 h-3.5 shrink-0" strokeWidth="2.5" aria-hidden="true" />
             Create New
           </button>
           <button
@@ -391,7 +391,7 @@ export function AppsSwitcherSheet(): ReactNode {
           <MenuRow
             id="switcher-row-messages"
             href="#messages"
-            icon={<ChatBubbleTailIcon />}
+            icon={<ChatIcon />}
             label="Messages"
           />
           <div className={SECTION}>You</div>

@@ -141,7 +141,7 @@ test('a merged row is openable: data-proposal-row + hover + chevron', () => {
   assert.match(html, /hover:bg-zinc-50/, 'hover affordance present');
   // React escapes the apostrophe in an attribute value.
   assert.match(html, /title="Open this proposal&#x27;s discussion"/, 'open hint title present');
-  assert.match(html, /M9 5l7 7-7 7/, 'chevron svg path present');
+  assert.match(html, /m9 18 6-6-6-6/, 'chevron svg path present');
 });
 
 test('a merged row shows a visible 💬 badge when chat_count > 0', () => {
