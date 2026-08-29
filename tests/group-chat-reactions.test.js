@@ -73,11 +73,15 @@ test('"yours" is a visible state, in both themes', () => {
   // Not merely "different classes": the ground and the ink both move to the
   // accent ramp, and each has a dark counterpart. `.gc-react-mine` — the
   // border-only rule this replaces — is gone from app.css entirely.
-  assert.match(mine, /bg-violet-100/);
-  assert.match(mine, /text-violet-700/);
-  assert.match(mine, /dark:bg-violet-950/);
-  assert.match(mine, /dark:text-violet-300/);
-  assert.ok(!theirs.includes('violet'), 'someone else’s pill stays neutral');
+  //
+  // The ramp is `azure` (the BLUE accent) rather than `violet` (the yellow):
+  // "this reaction is mine" is identity, and the yellow is reserved for the
+  // one action on a screen. See the accent note in tailwind.config.js.
+  assert.match(mine, /bg-azure-100/);
+  assert.match(mine, /text-azure-700/);
+  assert.match(mine, /dark:bg-azure-950/);
+  assert.match(mine, /dark:text-azure-300/);
+  assert.ok(!theirs.includes('azure'), 'someone else’s pill stays neutral');
   assert.match(theirs, /bg-zinc-100/);
   assert.match(theirs, /dark:bg-zinc-800/);
 
@@ -91,9 +95,9 @@ test('the accent tone corrects its own hover ink', () => {
     loadTsx(FEED).ReactionPill,
     { emoji: '👍', count: 1, tone: 'accent' },
   ));
-  assert.match(html, /hover:bg-violet-200/);
-  assert.match(html, /hover:text-violet-800/);
-  assert.match(html, /dark:hover:bg-violet-900/);
+  assert.match(html, /hover:bg-azure-200/);
+  assert.match(html, /hover:text-azure-800/);
+  assert.match(html, /dark:hover:bg-azure-900/);
 
   // Every class in the table is a complete literal — Tailwind's extractor is
   // a regex over source text, so a computed one compiles to nothing.

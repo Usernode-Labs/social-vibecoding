@@ -233,7 +233,14 @@ test('returning to the menu tears the active section down', () => {
 
 test('the mobile menu is a list, not a tab set, with real tap targets', () => {
   const fn = consoleJs.slice(consoleJs.indexOf('  _mobileMenuHtml() {'));
-  const body = fn.slice(0, 2000);
+  // 2000 -> 2600: the WINDOW moved, not the contract. `_mobileMenuHtml` grew
+  // when the dark-ink pass documented why the chevron's stroke-width does NOT
+  // move while its ink does, and that prose pushed `aria-label="Admin sections"`
+  // past a slice sized to the function of the day. Every assertion below still
+  // requires its string to be PRESENT — widening only restores the reach this
+  // window was written to have. A slice tied to a function's LENGTH fails on a
+  // comment, which is a false alarm wearing a regression's clothes.
+  const body = fn.slice(0, 2600);
   assert.match(body, /min-h-\[44px\]/, 'rows meet the 44px touch-target floor');
   assert.match(body, /data-admin-section="\$\{s\.key\}"/,
     'rows reuse the existing section-button contract');

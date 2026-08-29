@@ -351,7 +351,10 @@ test('the group rows get their field box from the primitive (#1285)', () => {
   const boxes = sheetCode.match(/box="groupRow"/g) || [];
   assert.equal(rings.length, boxes.length,
     'a clipped ring is no focus cue — focus-within tints the row');
-  assert.match(sheetCode, /focus-within:bg-violet-50/);
+  // `azure`, not `violet`: the accent's non-action family (washes and ink)
+  // is the BLUE now — the yellow marks only a primary action. See
+  // tailwind.config.js.
+  assert.match(sheetCode, /focus-within:bg-azure-50/);
 });
 
 test('the hidden file input sits OUTSIDE the group (#1285)', () => {

@@ -78,7 +78,28 @@ test('the saved confirmation reads as success, and consumes the draft', () => {
     feedbackJs.indexOf('// Keep the dialog honest while it is open'),
   );
   assert.match(saveForLater, /Saved on this device. We'll send it as soon as you're back online\./);
-  assert.match(saveForLater, /text-emerald-400/, 'the same green a filed issue gets');
+  // `meadow` is the product's ONE green — stock `emerald` renders an untuned
+  // hue beside the platform's ramps — and its dark partner is 200, not the
+  // 400 the WCAG era left here: the tuned ramps pair a -700 light ink with a
+  // -200 dark one, which is where the two magnitudes match.
+  const SUCCESS_INK = 'text-sm mt-2 text-meadow-700 dark:text-meadow-200';
+  assert.ok(saveForLater.includes(SUCCESS_INK), `the saved line paints ${SUCCESS_INK}`);
+  // Read off the filed-issue branch rather than restated as a second literal,
+  // so "the same green a filed issue gets" is checked and not merely claimed.
+  // Anchor on the CODE, not on the string 'Thanks! Filed against' — that
+  // phrase's first occurrence is a comment ~280 lines earlier, so a slice
+  // taken from it runs back over the saveForLater line above and the
+  // assertion passes on the literal it was supposed to be comparing against.
+  // The window is closed at the branch's own clearCaptureDraft() for the
+  // same reason: an open-ended slice is not evidence about this branch.
+  const filedStart = feedbackJs.indexOf('const filedAgainst = (target');
+  assert.ok(filedStart > 0, 'the filed-issue branch still opens with `const filedAgainst = (target`');
+  assert.ok(filedStart > feedbackJs.indexOf(SUCCESS_INK), 'the filed branch is the SECOND of the two paints');
+  const filedBranch = feedbackJs.slice(
+    filedStart,
+    feedbackJs.indexOf('clearCaptureDraft();', filedStart),
+  );
+  assert.ok(filedBranch.includes(SUCCESS_INK), 'the same green a filed issue gets');
   // Same cleanup as a successful submit: the draft is gone, the dialog locks
   // and closes on the shared 1500 ms grace window.
   assert.match(saveForLater, /feedbackText\.value = '';/);

@@ -153,7 +153,7 @@ test('delegation card renders off, active and setup states with disclosure', () 
     'delegated_since is not active-state evidence');
   assert.doesNotMatch(
     stakingHtml(wallet, { delegate: null, delegated_since: null }),
-    /bg-violet-500\/10/,
+    /bg-azure-500\/10/,
     'the delegated highlight only appears while delegated');
 
   const activeValue = '2026-08-11T10:30:00Z';
@@ -174,7 +174,7 @@ test('delegation card renders off, active and setup states with disclosure', () 
   // The status line and the address live INSIDE the tinted container — the
   // containment the element walk used to prove, now read off the markup.
   const tinted = activeHtml.match(
-    /<div class="rounded-lg bg-violet-500\/10 px-3 py-2">([\s\S]*?)<\/div><button/);
+    /<div class="rounded-lg bg-azure-500\/10 px-3 py-2">([\s\S]*?)<\/div><button/);
   assert.ok(tinted, 'the delegated state sits in a tinted container');
   assert.match(tinted[1], /Delegated/);
   assert.match(tinted[1], /B62qiTKp…b3nvBG/);

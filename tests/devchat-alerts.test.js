@@ -372,6 +372,16 @@ test('dev-alerts.js still loads before notifications, and index.html ships the s
     'a surviving classic tag would load a second copy of the module');
   assert.match(html, /id="devchat-alerts-toggle"/);
   assert.match(html, /id="devchat-alerts-test"/);
-  // #138: the distinct green AI-completion badge on the bell.
-  assert.match(html, /id="notifications-badge-ai"[^>]*bg-emerald-500/);
+  // #138: the distinct green AI-completion badge. The green is `meadow`, the
+  // product's ONE green — stock `emerald` was an accident of authorship, not a
+  // distinction. The step is -700, not -500, and it is THIS badge's own
+  // measurement that says so: white on stock emerald-500 read Lc -54.2 and on
+  // meadow-500 -60.0, both under the 75 body minimum for a 12px bold label,
+  // and white is already the lightest ink there is — so the DISC moved rather
+  // than the type. meadow-700 carries white at -87.8, level with the bell's
+  // bg-red-700 at -85.2. Do NOT reuse the bell's -500 figure here: -72.0 is
+  // red-500, a different ramp. The numbers live beside the fill they describe,
+  // in frontend/src/features/improve/improve-button.tsx (this badge) and
+  // frontend/src/features/header/platform-header.tsx (its twin).
+  assert.match(html, /id="notifications-badge-ai"[^>]*bg-meadow-700/);
 });

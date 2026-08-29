@@ -480,11 +480,27 @@ test('the Improve panel leads with its two actions, shaped like the button that 
     'the header button is a filled violet pill');
   assert.match(panel, /rounded-full text-sm font-semibold/,
     'and the two actions are the same pill shape');
-  assert.match(panel, /const ACTION_FILL =\n\s+'bg-violet-500\/10 hover:bg-violet-500\/20/,
-    'both wearing the tinted fill');
-  assert.ok(!/ACTION_PRIMARY/.test(panel),
+  // One fill, worn by both — the unification above, in this palette's values.
+  // The constant arrived as an accent WASH with accent ink
+  // (`bg-violet-500/10 … text-violet-700`), which was a violet on the palette
+  // it was written against; here `violet-*` is the yellow ramp, so that reads
+  // as pale yellow ink on a pale yellow ground. It also spends the accent
+  // twice over: yellow is the one filled ACTION on a screen, and #improve-btn
+  // directly above already is it — which is the very competition the comment
+  // above says the solid pill was retired to end. Two equal peers under it are
+  // what the neutral ramp is for, so the shared fill is button.tsx's `neutral`
+  // recipe, the one this panel's secondary already wore.
+  assert.match(panel, /const ACTION_FILL =\n\s+'bg-zinc-100 hover:bg-zinc-200 text-zinc-900 dark:bg-zinc-800/,
+    'both wearing the same neutral fill');
+  // Both negatives read the CODE, comments stripped. The second one always
+  // did — prose has to be able to say the word "primary" to explain why there
+  // is no longer one — and the first joins it because the constant's own
+  // comment now records the collapse it came out of, which is how this
+  // repository is asked to document a retirement.
+  const panelCode = panel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/ACTION_PRIMARY/.test(panelCode),
     'there is no primary-and-secondary pair here any more');
-  assert.ok(!/\bprimary\b/.test(panel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
+  assert.ok(!/\bprimary\b/.test(panelCode),
     'and no call site marks one of them as the primary');
 
   // Share moved to the footer beside the repository link, keeping its id, its

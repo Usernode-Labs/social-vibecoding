@@ -1347,7 +1347,7 @@ test('contributors: a ready row carries rank, avatar, @username, meta and the me
   assert.equal(row.initial, 'A', 'initial-avatar circle');
   assert.equal(row.meta, 'Creator · 30 votes', 'role then vote count');
   assert.equal(row.merged, 12);
-  assert.match(row.pillTint, /violet/, 'a non-zero count gets the violet pill');
+  assert.match(row.pillTint, /azure/, 'a non-zero count gets the accent (blue) pill');
 });
 
 test('contributors: creator wins over member on the role label', () => {
@@ -1366,7 +1366,7 @@ test('contributors: a zero-merge row keeps a muted pill, and zero votes drop the
   );
   assert.equal(view.rows[0].merged, 0,
     'the row still shows a count so the column stays aligned');
-  assert.match(view.rows[0].pillTint, /bg-zinc-100/, 'muted rather than violet at zero');
+  assert.match(view.rows[0].pillTint, /bg-zinc-100/, 'muted rather than accent at zero');
   assert.equal(view.rows[0].meta, null, 'no vote fragment at zero');
   // A votes-only contributor DOES get the fragment.
   const votesOnly = Browse.contributorsView(

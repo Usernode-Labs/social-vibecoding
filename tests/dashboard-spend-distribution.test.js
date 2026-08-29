@@ -195,13 +195,14 @@ test('html: the chart header carries a Hide/Show $0 toggle', () => {
   assert.match(html, /\['hide', 'Hide \$0'\]/, 'a "Hide $0" button must exist');
   assert.match(html, /\['show', 'Show \$0'\]/, 'a "Show $0" button must exist');
   assert.match(html, /attr="data-zero"/, 'each button must carry its value as data-zero');
-  // Hide is the default-active button (the accent), Show is inactive
-  // (neutral). The scale keys moved with the reskin — the admin console
-  // speaks the shell's zinc/violet now — and the active class is picked by
-  // state rather than written per button, but the CONTRACT is unchanged: the
-  // default is the filled accent one.
-  assert.match(html, /const TOGGLE_ON = 'px-2 py-1 rounded bg-violet-600 text-white'/,
-    'the active toggle must be the filled accent');
+  // Hide is the default-active button, Show is inactive (neutral). The
+  // treatment has moved twice — the reskin re-keyed the scales, and the
+  // subtle-y2k tiers made SELECTION near-black (an accent fill means "this
+  // is the action"; a segmented toggle is a state, not an action — see
+  // tailwind.config.js). The CONTRACT is unchanged: the default is the
+  // filled one.
+  assert.match(html, /const TOGGLE_ON = 'px-2 py-1 rounded bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'/,
+    'the active toggle must be the filled selected state');
   assert.match(html, /value=\{spendDistIncludeZero \? 'show' : 'hide'\}/,
     'and the default state must be hide, so Hide $0 starts active');
   assert.match(html, /const INITIAL_SPEND_DIST_ZERO = typeof window !== 'undefined'/,

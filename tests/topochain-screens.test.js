@@ -324,7 +324,10 @@ test('admin-authored copy is escaped in text AND attribute contexts', () => {
         kind: 'event',
         name: hostile,
         statusLabel: 'active now',
-        statusClass: 'bg-green-500/20 text-green-600 dark:text-green-300',
+        // Verbatim from topochain-event-context.js's `active now` branch —
+        // this fixture teaches by example, so a stock-hue spelling here
+        // outlives everyone who knows `meadow` is the product's one green.
+        statusClass: 'bg-meadow-500/20 text-meadow-700 dark:text-meadow-200',
         description: hostile,
         dates: 'Jan 1, 2026 – Mar 1, 2026',
         participants: ' · 12 taking part',

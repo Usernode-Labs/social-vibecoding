@@ -289,7 +289,8 @@ test('once a preview exists the strip draws the doing<->seeing switch', () => {
   // segments, not a pill on each. So the colour is on the thumb and the ink
   // is on the segment it is under.
   assert.match(doing, /aria-hidden="true"[^>]*bg-violet-600/, 'the thumb is the accent under doing');
-  assert.match(doing, /id="session-build-btn"[^>]*text-white/, 'and the doing segment takes white ink');
+  assert.match(doing, /id="session-build-btn"[^>]*text-black/,
+    'and the doing segment takes the accent ink (near-black on the yellow caret)');
   assert.equal((doing.match(/bg-violet-600|bg-amber-300/g) || []).length, 1,
     'exactly one fill in the control — two would be two buttons again');
 

@@ -116,21 +116,23 @@ test('the platform palette reached the output', () => {
   // Tailwind emits palette colours as space-separated rgb triplets so the
   // opacity modifier can slot in: `rgb(11 11 12/var(--tw-bg-opacity,1))`.
   //
-  // These four moved in the widget-language reskin, which is what this guard
-  // is FOR: the scale keys `zinc`/`violet` are unchanged (see the long note in
-  // tailwind.config.js on why they keep their names while their hues moved),
-  // so nothing about a call site would reveal an accidental revert to the old
-  // violet-tinted ramp. Pinning the hex is the only thing that would.
+  // These four moved in the widget-language reskin and again in the
+  // subtle-y2k retune, which is what this guard is FOR: the scale keys
+  // `zinc`/`violet` are unchanged (see the long note in tailwind.config.js on
+  // why they keep their names while their hues moved), so nothing about a
+  // call site would reveal an accidental revert to an earlier ramp. Pinning
+  // the hex is the only thing that would.
   const triplets = {
-    'zinc-950 (#0b0b0c) — the dark page ground': '11 11 12',
-    'zinc-100 (#eaeaea) — the light page ground cards float on': '234 234 234',
-    // Corrected from the eyedropped #0a7cff: white on that is 3.93:1, so every
-    // primary button in the product was a control you could see and a label
-    // you could not quite read — and the same hex as INK on white failed
-    // identically. #0a6ee0 clears both at 4.86. See the note beside --accent
-    // in public/css/app.css.
-    'violet-600 (#0a6ee0) — the accent': '10 110 224',
-    'violet-400 (#5aa9ff) — the dark-mode accent': '90 169 255',
+    'zinc-950 (#0e0e0b) — the dark page ground': '14 14 11',
+    'zinc-100 (#efefeb) — the grey page ground cards float on': '239 239 235',
+    // The v2 accent is a vibrant YELLOW, and yellow inverts the accent
+    // convention: no usable yellow carries white text (~1.5:1), so the CTA
+    // fill takes near-black ink (12.6:1 — see button.tsx's `ink` table and
+    // --accent-ink in public/css/app.css) and ink-on-white lives down-ramp
+    // at violet-700 (#8a5b0b, 5.86:1). Pinning 600 and 400 still catches a
+    // silent revert of the fill and the dark-mode accent.
+    'violet-600 (#ffc93a) — the accent CTA fill': '255 201 58',
+    'violet-400 (#ffe768) — the dark-mode accent': '255 231 104',
   };
   for (const [name, rgb] of Object.entries(triplets)) {
     assert.ok(css.includes(rgb), `expected platform palette colour ${name} → rgb(${rgb}) in ${OUTPUT_FILE}`);
@@ -145,6 +147,34 @@ test('the platform palette reached the output', () => {
   // -800/-900/-950; while they were unpinned they rendered STOCK Tailwind
   // violet, which against a blue accent reads as stray purple.
   assert.ok(!css.includes('245 243 255'), 'stock Tailwind violet-50 (#f5f3ff) leaked in — is the accent ramp closed across every shade?');
+  // The ramps of every earlier era are gone too — the widget-language grey
+  // and blue, and v1's cream and brand blue, would each read as a silent
+  // partial revert beside the current ramps.
+  assert.ok(!css.includes('234 234 234'), 'the pre-y2k zinc-100 (#eaeaea) is still compiled in — did the neutral ramp land everywhere?');
+  assert.ok(!css.includes('10 110 224'), 'the pre-y2k accent (#0a6ee0) is still compiled in — did the accent ramp land everywhere?');
+  assert.ok(!css.includes('250 247 223'), "v1's cream zinc-100 (#faf7df) is still compiled in — did the grey ramp land everywhere?");
+  assert.ok(!css.includes('33 114 182'), "v1's blue accent (#2172b6) is still compiled in — did the yellow ramp land everywhere?");
+});
+
+test('the theme fonts reached the output', () => {
+  // fontFamily.sans/mono front Geist / Geist Mono (vendored — see
+  // public/vendor/README.md). Preflight derives the document font from
+  // fontFamily.sans, so if this ever stops matching, the whole shell
+  // silently reverts to the system stack with no error anywhere.
+  assert.match(css, /font-family:\s*Geist,/, 'expected fontFamily.sans to front Geist (preflight html rule)');
+  assert.match(css, /Geist Mono/, 'expected fontFamily.mono to front Geist Mono');
+});
+
+test('the aura gradient utilities compile', () => {
+  // theme.extend.backgroundImage holds the brand kit's four radial auras.
+  // They are decorative-only utilities, so nothing else in the suite would
+  // notice if the extractor stopped seeing their call sites. Stop hexes are
+  // matched in the minified spelling (lowercased hexes, 0% → 0) — the hex
+  // sequence is the part that must survive.
+  assert.ok(css.includes('bg-aura-lemon'), 'expected a bg-aura-lemon utility to be compiled (the landing hero uses it)');
+  assert.ok(css.includes('bg-aura-sky'), 'expected a bg-aura-sky utility to be compiled (the browse-detail hero uses it)');
+  assert.match(css, /radial-gradient\(closest-side,#ffae2b 0,#ffce4d 50%,#ffee6f 100%\)/i,
+    'expected the aura-lemon stops (minified) from the Figma node');
 });
 
 test('future.hoverOnlyWhenSupported is compiled in', () => {
@@ -165,10 +195,18 @@ test('sentinel classes used by the shell are present', () => {
     // `max-w-[85vw]` was here and is gone with its only caller — the
     // hamburger drawer's panel. A sentinel for a utility nothing uses stops
     // proving the extractor works and starts proving it compiles dead CSS.
-    'min-w-\\[1\\.1rem\\]',
-    // Opacity-modifier colours (status chips, focus rings).
-    'bg-emerald-500\\/15',
-    'ring-violet-500\\/40',
+    // 17.6px was a spelling nobody chose; the three twin count badges (the
+    // header bell, the improve button's AI badge, the staging overlay) all
+    // moved together to 18px, which is what this same role already measures
+    // at `.messages-unread` in app.css and in @/components/ui/feed.tsx.
+    'min-w-\\[1\\.125rem\\]',
+    // Opacity-modifier colours (status chips, focus rings). The green wash
+    // was `bg-emerald-500/15` — stock `emerald` is not one of the overridden
+    // ramps, so it painted an untuned Tailwind green beside the platform's
+    // own; `meadow` is the product's ONE green and the same three call sites
+    // (admin-gallery, challenges-pane, profile-view) carry it now.
+    'bg-meadow-500\\/15',
+    'ring-azure-700\\/40',
     // Plain palette utilities.
     'bg-violet-600',
     'text-zinc-400',
@@ -178,7 +216,7 @@ test('sentinel classes used by the shell are present', () => {
     'dark\\:bg-zinc-900:is(.dark *)',
     'hover\\:bg-violet-500',
     'dark\\:hover\\:bg-zinc-800',
-    'focus\\:ring-violet-500',
+    'focus\\:ring-zinc-900',
     'disabled\\:opacity-60',
     'sm\\:col-span-2',
   ];

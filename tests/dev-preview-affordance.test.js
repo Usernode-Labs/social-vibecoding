@@ -125,7 +125,7 @@ test('unavailable: a non-interactive span carrying the captured reason', () => {
   assert.match(html, /^<span/);
   assert.match(html, /aria-label="Preview unavailable"/);
   assert.match(html, /docker build exploded/, 'the reason is in the tooltip');
-  assert.match(html, /M4 20 20 4/, 'the eye-with-a-slash glyph (icons.tsx EyeOffIcon)');
+  assert.match(html, /m2 2 20 20/, 'the eye-with-a-slash glyph (icons.tsx EyeOffIcon)');
 });
 
 test('neither flag: an empty slot (a GC\'d or not-yet-built native row)', () => {
@@ -317,7 +317,7 @@ test('on a board card the eye is the RAIL\'s last child — the bottom-right cor
     // The chevron must sit BEFORE it (its auto margins centre it in the gap
     // between the ⋯ above and the eye below); the ⋯, when the card has one,
     // stays first.
-    const chevronAt = rail.indexOf('M9 5l7 7-7 7');
+    const chevronAt = rail.indexOf('m9 18 6-6-6-6');
     const eyeAt = rail.indexOf('gc-vote-btn-preview');
     assert.ok(chevronAt > 0 && chevronAt < eyeAt,
       `${kind}: the chevron is between the ⋯ and the eye`);

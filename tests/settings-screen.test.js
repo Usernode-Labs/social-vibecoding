@@ -522,8 +522,12 @@ test('the nav components render what the module shapes, and nothing else', () =>
   // with state, so it stays in the module — which is also what keeps
   // settings.js loadable by the vm harnesses (see settings-mobile-push).
   const nav = settingsJs.slice(settingsJs.indexOf('    _navView() {'));
-  assert.match(nav.slice(0, 1200), /bg-violet-600\/10 text-violet-700 dark:text-violet-400/,
-    'the active sidebar row keeps its tint, character for character');
+  // The active row is the shell's "you are here" fill — near-black, inverting
+  // in dark — not an accent tint. It was `bg-violet-600/10 text-violet-700`
+  // until the accent became a yellow and the three tiers split action
+  // (accent fill) from selection (near-black); see tailwind.config.js.
+  assert.match(nav.slice(0, 1200), /bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900/,
+    'the active sidebar row keeps its selected fill, character for character');
   assert.match(navTsx, /className=\{item\.className\}/,
     'the component renders that string rather than recomputing it');
 
@@ -1592,11 +1596,14 @@ test('the tier card carries its tone as well as its wording', () => {
   assert.match(locked, /border-amber-300/, 'a locked tier is amber');
   assert.match(locked, /Layer 1 locked · \$0\/day/);
   const open = socialHtml({ ...socialBase, tier: { tone: 'ok', title: 'Layer 1 unlocked · $10.00/day', detail: 'Verified.' } });
-  assert.match(open, /border-emerald-300/, 'an unlocked one is emerald');
+  // `meadow` is the palette's ONE green — stock `emerald` was an accident of
+  // authorship, not a distinction, and renders an untuned hue beside the
+  // platform's own ramps.
+  assert.match(open, /border-meadow-300/, 'an unlocked one is meadow');
   // The three neutral states (unavailable, legacy policy, admin override)
   // share the plain card — they are statements of fact, not outcomes.
   const plain = socialHtml({ ...socialBase, tier: { tone: 'plain', title: 'Administrator-set allowance: $25.00/day', detail: 'Override.' } });
-  assert.doesNotMatch(plain, /border-amber-300|border-emerald-300/);
+  assert.doesNotMatch(plain, /border-amber-300|border-meadow-300/);
 });
 
 test('a demo Connect control is inert but present, and matches the live one', () => {
@@ -1623,7 +1630,7 @@ test('a demo Connect control is inert but present, and matches the live one', ()
     providers: [{ ...row, connect: { label: 'Connect GitHub', href: null } }],
   });
   assert.match(demo, /<button type="button" disabled/);
-  const surface = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white';
+  const surface = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-black';
   assert.ok(live.includes(surface) && demo.includes(surface), 'one surface, both spellings');
 });
 

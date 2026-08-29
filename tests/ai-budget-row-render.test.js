@@ -106,15 +106,19 @@ test('the parts are separated by a real space, because each one is nowrap', asyn
 test('the spend threshold picks the tone, and the tone is a class the row owns', async () => {
   const low = await publish(budget({ spentCents: 100, remainingCents: 1900 }));
   assert.equal(low.view.parts[0].runs[1].tone, 'low');
-  assert.match(rowHtml(low), /text-emerald-700 dark:text-emerald-400">\$1\.00/);
+  // meadow is the product's ONE green (stock emerald is gone), and it takes
+  // the same 700/200 shape its red and amber neighbours do — the -400 dark
+  // halves were WCAG-era and read as non-content ink under APCA. The TONE
+  // table in frontend/src/features/header/ai-budget.tsx carries the numbers.
+  assert.match(rowHtml(low), /text-meadow-700 dark:text-meadow-200">\$1\.00/);
 
   const mid = await publish(budget({ spentCents: 1200, remainingCents: 800 }));
   assert.equal(mid.view.parts[0].runs[1].tone, 'mid');
-  assert.match(rowHtml(mid), /text-amber-800 dark:text-amber-400">\$12\.00/);
+  assert.match(rowHtml(mid), /text-amber-800 dark:text-amber-200">\$12\.00/);
 
   const high = await publish(budget({ spentCents: 1900, remainingCents: 100 }));
   assert.equal(high.view.parts[0].runs[1].tone, 'high');
-  assert.match(rowHtml(high), /text-red-700 dark:text-red-400">\$19\.00/);
+  assert.match(rowHtml(high), /text-red-700 dark:text-red-200">\$19\.00/);
 
   // The thresholds themselves stay in the module, where the budget is.
   assert.match(CREDIT_SRC, /pct > 80 \? 'high' : pct > 50 \? 'mid' : 'low'/);
@@ -140,7 +144,7 @@ test('a BYOK figure is its own part, so the "·" wraps with it', async () => {
   assert.deepEqual(byok.runs.map((r) => r.text), ['· ', 'your key $4.50']);
   assert.equal(byok.runs[1].tone, 'byok');
   const html = rowHtml(s);
-  assert.match(html, /<span class="drawer-meter-part"><span class="drawer-meter-dim">· <\/span><span class="text-emerald-700 dark:text-emerald-400">your key \$4\.50<\/span><\/span>/);
+  assert.match(html, /<span class="drawer-meter-part"><span class="drawer-meter-dim">· <\/span><span class="text-meadow-700 dark:text-meadow-200">your key \$4\.50<\/span><\/span>/);
   assert.match(s.view.title, /does not count against the allowance/);
 });
 
@@ -169,7 +173,7 @@ test('a locked tier with a key still says the key is available', async () => {
 test('an unverifiable eligibility says so, in one flat amber run', async () => {
   const s = await publish(budget({ limitCents: 0, entitlementAvailable: false }));
   const html = rowHtml(s);
-  assert.match(html, /class="ai-budget-meter drawer-meter text-amber-800 dark:text-amber-400"/);
+  assert.match(html, /class="ai-budget-meter drawer-meter text-amber-800 dark:text-amber-200"/);
   assert.match(html, />credits temporarily unavailable</, 'bare text, no wrapper span');
   assert.match(html, /title="Credit eligibility could not be verified/);
 });

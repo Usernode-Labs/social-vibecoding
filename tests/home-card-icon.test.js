@@ -126,9 +126,22 @@ test('letter fallback renders when no icon is declared', () => {
 });
 
 test('emoji icon renders on the tile', () => {
+  // subtle-y2k: an emoji the curated OpenMoji slice covers renders as the
+  // vendored illustration (an <img>, like the custom-image kind), tagged
+  // data-icon="emoji" exactly as before — the kind is a data contract, the
+  // artwork is not. 🎮 is 1F3AE, which the slice carries.
   const html = makeHome().renderAppCard(baseApp({ icon_emoji: '🎮' }));
   assert.match(html, /data-icon="emoji"/);
-  assert.ok(html.includes('🎮'));
+  assert.match(html, /<img src="\/vendor\/openmoji\/1F3AE\.svg"/);
+});
+
+test('an emoji outside the curated slice falls back to the text glyph', () => {
+  // The manifest is a curated slice of Unicode, and icon emojis are user
+  // data — the miss path IS the contract (lib/openmoji.js). U+1FAE0 is a
+  // real emoji the slice deliberately doesn't carry.
+  const html = makeHome().renderAppCard(baseApp({ icon_emoji: '\u{1FAE0}' }));
+  assert.match(html, /data-icon="emoji"/);
+  assert.ok(html.includes('\u{1FAE0}'));
   assert.doesNotMatch(html, /<img/);
 });
 
@@ -255,21 +268,67 @@ test('the tile hairline steps down to --border in dark mode', () => {
 // a rendering change without a bump never reaches a homescreen.
 test('the widget PNG carries a light AND a dark palette', () => {
   const src = SRC;
-  // Light: unchanged from the original single-palette treatment.
+  // Light: --bg-primary / --border-light / --text-faint on the warm ramp
+  // (gen 7, the subtle-y2k v2 retune — the values before it had gone stale
+  // against app.css).
   assert.match(
     src,
-    /light: \{ face: '#ffffff', hairline: '#e4e4e7', letter: '#a1a1aa' \}/,
+    /light: \{ face: '#ffffff', hairline: '#e4e4df', letter: '#97968e' \}/,
     'light palette matches the in-app light tile'
   );
   // Dark: --bg-secondary / --border / --text-faint under `.dark`.
   assert.match(
     src,
-    /dark: \{ face: '#1a1a30', hairline: '#2e2e50', letter: '#9898b0' \}/,
+    /dark: \{ face: '#1f1f1b', hairline: '#2d2d28', letter: '#97968e' \}/,
     'dark palette matches the in-app dark tile'
   );
   // Emoji keep their own colour glyphs in BOTH palettes.
   assert.match(src, /app\.icon_emoji \? null : palette\.letter/);
-  assert.match(src, /WIDGET_ICON_GEN: 5,/);
+  assert.match(src, /WIDGET_ICON_GEN: 7,/);
+});
+
+// The SAME duplication one level down, and for the same reason: the per-app
+// aura wash exists twice — as `.app-icon-tile[data-aura=…]` rules in app.css
+// (the DOM tile) and as WIDGET_AURA_STOPS in home.js (the baked PNG) — because
+// CSS cannot import JS. Nothing but this test can notice them drifting, and a
+// drift is invisible until someone compares a homescreen widget against the
+// app side by side.
+test('every aura wash is stop-for-stop identical in app.css and home.js', () => {
+  const css = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'css', 'app.css'),
+    'utf8'
+  );
+  const stopsIn = (block) => (block.match(/rgba\([^)]*\)/g) || []).join(' | ');
+
+  for (const aura of ['sky', 'meadow', 'sunset', 'lemon']) {
+    for (const mode of ['light', 'dark']) {
+      // The CSS rule: `.app-icon-tile[data-aura="x"]` for light, prefixed
+      // with `.dark ` for dark.
+      const selector = mode === 'dark'
+        ? `\\.dark \\.app-icon-tile\\[data-aura="${aura}"\\]`
+        : `\\.app-icon-tile\\[data-aura="${aura}"\\]`;
+      const rule = css.match(new RegExp(`(?:^|\\n)${selector} \\{[^}]*\\}`));
+      assert.ok(rule, `app.css has no ${mode} rule for the ${aura} aura`);
+
+      // The JS table: the aura's key, then its light/dark array.
+      const table = SRC.match(
+        new RegExp(`${aura}: \\{[\\s\\S]*?\\n    \\}`)
+      );
+      assert.ok(table, `WIDGET_AURA_STOPS has no ${aura} entry`);
+      // The arm is one line of NESTED arrays (`light: [[0, '…'], …]],`), so
+      // this greedily takes the whole line rather than stopping at the first
+      // inner `]`.
+      const arm = table[0].match(new RegExp(`${mode}: \\[.*\\]\\],`));
+      assert.ok(arm, `WIDGET_AURA_STOPS.${aura} has no ${mode} arm`);
+
+      assert.equal(
+        stopsIn(arm[0]),
+        stopsIn(rule[0]),
+        `the ${aura} aura's ${mode} stops differ between home.js and app.css — `
+        + 'the homescreen PNG would stop matching the tile it mirrors'
+      );
+    }
+  }
 });
 
 // The PNG lands on the iOS homescreen, which renders under the SYSTEM
@@ -322,7 +381,7 @@ test('an explicit variant beats the system appearance in the renderer', () => {
   // …and the other way round.
   Home.__sandbox.matchMedia = () => ({ matches: false, addEventListener: () => {} });
   Home._widgetIconDataUrl(baseApp(), 'dark');
-  assert.equal(paints[0], '#1a1a30', 'an explicit dark variant paints the dark face');
+  assert.equal(paints[0], '#1f1f1b', 'an explicit dark variant paints the dark face');
 });
 
 // The marker records WHICH artwork was baked. On the capable path that

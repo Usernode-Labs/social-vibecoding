@@ -157,11 +157,22 @@ test("the work badge sits exactly where the bell's unread one does", () => {
 
   // Two badges side by side in the same header read as one convention
   // only if their geometry matches. Colour is the ONLY intended
-  // difference (emerald = your work in flight, red = unread), so diff
+  // difference (meadow = your work in flight, red = unread), so diff
   // the class lists with the colour token dropped and require equality —
   // that catches a corner, size or padding drift on either one.
+  //
+  // Both tokens are their ramp's -700 step, not -500, and both moved for the
+  // same reason: white is already the lightest ink there is, so on a -500
+  // fill the DISC has to move rather than the type. The two ramps do NOT
+  // share one figure — read each beside its own fill. Bell: white on red-500
+  // is Lc -72.0, on red-700 -85.2 (platform-header.tsx). Work badge: white on
+  // meadow-500 is -60.0 and on retired stock emerald-500 -54.2, on meadow-700
+  // -87.8 (improve-button.tsx). All four -500 values sit under the 75 body
+  // minimum for a 12px BOLD label; the -700 pair is level. Quoting -72.0 at
+  // the green badge is the exact "read a sibling's value out of a comment"
+  // mistake improve-button.tsx's header was written to stop.
   const classesOf = (tag) => tag.match(/class="([^"]*)"/)[1]
-    .split(/\s+/).filter((c) => c && !/^bg-(emerald|red)-500$/.test(c)).sort();
+    .split(/\s+/).filter((c) => c && !/^bg-(meadow|red)-700$/.test(c)).sort();
   assert.deepEqual(classesOf(cog[0]), classesOf(bellBadge[0]),
     'the two header badges must differ only in colour');
 
@@ -169,9 +180,11 @@ test("the work badge sits exactly where the bell's unread one does", () => {
   // satisfied by moving BOTH badges somewhere unintended.
   assert.match(cog[0], /-top-1 -right-1/, 'the work badge is top-right');
   assert.match(bellBadge[0], /-top-1 -right-1/, 'the bell badge is top-right');
-  // …and keep the colours themselves distinct.
-  assert.match(cog[0], /bg-emerald-500/, 'the cog badge stays green');
-  assert.match(bellBadge[0], /bg-red-500/, 'the bell badge stays red');
+  // …and keep the colours themselves distinct. Green is `meadow`, the
+  // palette's ONE green — stock `emerald` was an accident of authorship and
+  // renders an untuned hue beside the platform's own ramps.
+  assert.match(cog[0], /bg-meadow-700/, 'the cog badge stays green');
+  assert.match(bellBadge[0], /bg-red-700/, 'the bell badge stays red');
 });
 
 test('the version dot rides the Improve button, hidden by default', () => {

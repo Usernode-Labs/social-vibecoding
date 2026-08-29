@@ -422,7 +422,10 @@ test('render: a done row gets the ✓ glyph, not a chip or an earned-points line
   // The literal character, not `&#10003;`: React writes a text child as text
   // and the string renderer wrote the entity. Same glyph on screen.
   assert.match(html, /✓/);
-  assert.match(html, /text-emerald-700/);
+  // `meadow` is the product's ONE green — stock `emerald` was an accident of
+  // authorship, not a distinction, and rendered an untuned hue beside the
+  // platform's own ramps.
+  assert.match(html, /text-meadow-700/);
   assert.doesNotMatch(html, /You earned/, 'dropped — the row is one line now');
   assert.doesNotMatch(html, /Done<\/span>/);
 });
@@ -551,7 +554,7 @@ test('a numeric challenge at full target draws a full bar AND the ✓', () => {
   assert.match(html, /width:100%/);
   assert.match(html, /aria-valuenow="5"[^>]*aria-valuemax="5"/);
   assert.match(html, /5\/5/);
-  assert.match(html, /home-panel-glyph[^>]*text-emerald-700[^>]*>✓</);
+  assert.match(html, /home-panel-glyph[^>]*text-meadow-700[^>]*>✓</);
 });
 
 test('both glyph states occupy the same 10px box the bar aligns to', () => {

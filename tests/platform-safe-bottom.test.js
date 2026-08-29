@@ -89,7 +89,11 @@ test('.platform-safe-scroll pads a scroller by the bottom inset', () => {
     + 'paints through the strip');
 });
 
-test('.platform-safe-bar adds the inset to a bar\'s own p-2 gap', () => {
+test('.platform-safe-bar adds the inset to a bar\'s own py-2 gap', () => {
+  // The bars spelled `p-2` when this was written. The horizontal half moved
+  // to `px-gutter` (the content keyline) and the VERTICAL half stayed `py-2`
+  // precisely because 0.5rem is the value this calc() is written against —
+  // so the utility is unchanged and still additive.
   const m = /\.platform-safe-bar\s*\{([^}]*)\}/.exec(APP_CSS);
   assert.ok(m, 'app.css must define .platform-safe-bar');
   assert.match(m[1], /padding-bottom:\s*calc\(0\.5rem \+ var\(--platform-safe-bottom\)\)\s*!important/,
@@ -99,10 +103,12 @@ test('.platform-safe-bar adds the inset to a bar\'s own p-2 gap', () => {
 
 test('both utilities carry !important — app.css loses the cascade otherwise', () => {
   // /css/tailwind.css is linked AFTER /css/app.css, so a plain class here
-  // ties with `p-2` / `p-4` on the same element and loses on source
-  // order. The kit's own .un-safe-* helpers use !important for exactly
-  // this reason. Assert the load order too, so a reorder can't silently
-  // un-style every composer.
+  // ties with the padding utility on the same element and loses on source
+  // order. `p-2` / `p-4` named that collision when this was written; the
+  // live ones are `py-2` on the three composer bars and `pt-2` / `pb-2` on
+  // the improve panel and the app-context sheet. The kit's own .un-safe-*
+  // helpers use !important for exactly this reason. Assert the load order
+  // too, so a reorder can't silently un-style every composer.
   const appIdx = INDEX.indexOf('/css/app.css');
   const twIdx = INDEX.indexOf('/css/tailwind.css');
   assert.ok(appIdx > -1 && twIdx > -1, 'both stylesheets must be linked');

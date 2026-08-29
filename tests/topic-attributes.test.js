@@ -964,14 +964,39 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
   assert.match(cardTsx, /`attr-chip dev-badge \$\{b\.cls\}/,
     'chip base uses the shared badge geometry class');
   assert.match(cardTsx, /dev-chat-badge dev-badge /, 'the 💬 badge shares it too');
-  assert.match(fe, /'dev-badge font-mono bg-violet/, 'and so do the linked-issue chips');
+  assert.match(fe, /'dev-badge font-mono bg-azure/, 'and so do the linked-issue chips');
   // #1112: the work-state chip picks its tint from a table (it has five of
   // them now), so its class list is composed rather than a single literal —
   // but it still leads with the same shared geometry class, and every tint in
   // the table is the same `bg-<hue>-500/10 text-<hue>-…` badge recipe.
   assert.match(fe, /cls: `dev-badge \$\{tone\}`/, 'the work-state chip leads with dev-badge');
   const toneTable = fe.slice(fe.indexOf('_WORK_TONE_CLS:'), fe.indexOf('_WORK_TONE_HOVER:'));
-  assert.match(toneTable, /sky: 'bg-sky-500\/10 text-sky-700 dark:text-sky-400'/, 'sky tint is the badge recipe');
+  // READ THE HUE, NOT THE KEY. The tone KEYS are still the hue names they
+  // were born with — `_issueWorkState` writes `violet`/`sky`/`emerald` and
+  // renaming them is a separate change — but the tints they carry are the
+  // tuned ramps now. `sky` was never an overridden ramp, so it rendered stock
+  // Tailwind beside the platform's own; it folded into `azure`, which is the
+  // product's one blue and is why this key and `violet` above it now hold the
+  // SAME recipe. `emerald` folded into `meadow` for the same reason — one
+  // green — and takes `dark:text-meadow-200`, the sole dark meadow ink in the
+  // tree. Both dark partners follow the azure/meadow steps the rest of the
+  // product settled on, not the bare -400 they used to spell.
+  assert.match(toneTable, /violet: 'bg-azure-500\/10 text-azure-700 dark:text-azure-300'/,
+    'the violet tone key carries the azure badge recipe');
+  assert.match(toneTable, /sky: 'bg-azure-500\/10 text-azure-700 dark:text-azure-300'/,
+    'and so does sky — there is one blue');
+  assert.match(toneTable, /emerald: 'bg-meadow-500\/10 text-meadow-700 dark:text-meadow-200'/,
+    'the emerald tone key carries the one green');
+  // AMBER STAYS AT 800, AND THAT IS THE POINT OF PINNING IT. This is the one
+  // row the stock-hue pass deliberately left alone: `amber-800` is the
+  // deployed warn ink and was ruled NOT to be swept down to 700 with the
+  // rest — documentation, not churn. Nothing else guards the STEP: the
+  // hue-pairing loop below only checks that both halves name the same ramp,
+  // so a later sweep "correcting" 800 to 700 would go green everywhere. That
+  // exact mutation was the sole survivor when these assertions were checked
+  // against a deliberately broken table.
+  assert.match(toneTable, /amber: 'bg-amber-500\/10 text-amber-800 dark:text-amber-300'/,
+    'the amber warn tint holds 800 — blessed, not an oversight');
   for (const line of toneTable.split('\n')) {
     // The contrast pass gave every light ink a dark partner, so a tint is a
     // PAIR now. Both halves must still name the same hue — that is the
@@ -984,7 +1009,28 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
   }
   assert.match(fe, /bg-zinc-500\/10 text-zinc-500/, 'muted placeholder uses the badge muted tint');
   // Hover deepens the same tint (like the linked-issue pills), not a filter.
-  assert.match(fe, /hover:bg-(red|amber|sky|violet|zinc)-500\/20/, 'interactive chip uses tint-deepening hover');
+  //
+  // SCOPED TO THE TABLE, AND PAIRED — because a hue alternation over the whole
+  // of app-view.js was hollow twice over. It matched anywhere in a 13k-line
+  // file, so `_categoryMeta`'s `hover:bg-red-500/20` satisfied it and
+  // `_WORK_TONE_HOVER` could have been deleted outright without turning this
+  // red; and the hue LIST itself rotted, still naming `sky` and `violet` after
+  // the stock-hue fold retired both from these rows. Reading the pairing off
+  // the two tables needs no list at all: the invariant IS "the hover deepens
+  // the tint this key already carries", so a key that drifts to another hue —
+  // or loses its hover, or gains one the tint table has no row for — fails on
+  // its own terms and cannot go stale when a ramp is renamed.
+  const hoverStart = fe.indexOf('_WORK_TONE_HOVER:');
+  const hoverTable = fe.slice(hoverStart, fe.indexOf('\n  },', hoverStart));
+  const hueMap = (src, re) => Object.fromEntries(
+    src.split('\n').map((l) => l.match(re)).filter(Boolean).map((m) => [m[1], m[2]]));
+  const tintHues = hueMap(toneTable, /^\s*([a-z]+): 'bg-([a-z]+)-500\/10 /);
+  const hoverHues = hueMap(hoverTable, /^\s*([a-z]+): 'hover:bg-([a-z]+)-500\/20',/);
+  // Five work-state tones. The equality is load-bearing: without it two empty
+  // maps would satisfy the deepEqual below and the guard would evaporate.
+  assert.equal(Object.keys(tintHues).length, 5, 'five work-state tones carry a tint');
+  assert.deepEqual(hoverHues, tintHues,
+    'every work-state hover must deepen the SAME hue its tint already spells');
   assert.doesNotMatch(fe, /hover:brightness-110/, 'no leftover brightness-filter hover');
 
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf-8');
@@ -1001,5 +1047,11 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
   const badge = css.slice(css.indexOf('.dev-badge {'), css.indexOf('button.dev-badge'));
   assert.match(badge, /height:\s*20px/, 'one fixed chip height');
   assert.match(badge, /box-sizing:\s*border-box/);
-  assert.match(badge, /font-size:\s*10\.5px/);
+  // 10.5px is gone: the named type ladder has no step below 12px, and that is
+  // the badge floor — under it APCA's readability matrix has no row at all, so
+  // no ink colour makes the chip conformant and the fix has to be type rather
+  // than hue. The exact value's OWNER is dev-chip-geometry.test.js, which
+  // pins a 12–12.5px band inside the 20px box; match the band rather than a
+  // competing literal the two files could drift apart on.
+  assert.match(badge, /font-size:\s*12(\.5)?px/);
 });
