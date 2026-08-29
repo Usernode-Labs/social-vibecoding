@@ -1,33 +1,33 @@
 /**
- * The Challenges block: what the group is working towards, plus a preview of
- * the standings under it.
+ * The Challenges block: what the group is working towards.
  *
  * ── Two branches, and why the empty one is not "nothing" ──────────────
  *
  * With no season running the block STAYS — for everyone, admins included — and
- * says so. A block that silently vanishes between seasons leaves the viewer
- * with no way to tell "nothing is running" from "this broke". That line leads
- * and the LEADERBOARD fill takes the rest, which between seasons is the only
- * thing this area has to show.
+ * says so in one line. A block that silently vanishes between seasons leaves
+ * the viewer with no way to tell "nothing is running" from "this broke".
  *
- * ── The fill is the point, not the packing material ───────────────────
+ * ── The standings preview is GONE ─────────────────────────────────────
  *
- * The standings preview used to be a desktop-tile affordance: something had to
- * spend the fixed 2x2 rectangle. THE UI OVERHAUL retired the hamburger's
- * Leaderboard row, so these rows are how the home screen shows the standings
- * at all, and they draw at every width. Only an EXPANDED challenge list
- * suppresses them — that state exists to show every row the season has, and a
- * standings preview under thirty challenges is not a preview.
+ * A block of leaderboard rows used to sit under the challenges — first as
+ * something to spend the fixed 2x2 rectangle on, then, once the hamburger's
+ * Leaderboard row was retired, as the home screen's only view of the
+ * standings. It is removed: this area is called Challenges, and a second list
+ * with its own label, its own footer and its own tap target inside one card
+ * made the reader work out which list they were looking at before they could
+ * read either. The standings are a screen, and the way to it is one tap from
+ * here — "Open leaderboard", in this section's own heading, which renders in
+ * every branch including the between-seasons one.
  *
- * `.home-panel-lb-row` is load-bearing rather than decoration: it is what
- * separates a tap that goes to the Leaderboard screen from one that goes to
- * Challenges, and the two lists sit in the same block.
+ * What went with it: `FillView`/`FillRowView` and `HomePanels.fillView` on the
+ * client, `attachLeaderboardFill` and its two board queries on the server (so
+ * a home load asks for one thing less), the `data-fill` stamp, and
+ * `.home-panel-fill*` / `.home-panel-lb-row` in app.css. `.home-panel-lb-browse`
+ * — the heading's link — is a different thing and stays.
  */
 
-import type { ChallengeRowView, ChallengesView, FillView } from '../panels-store';
-import {
-  FillFooter, PanelFooter, PanelShell, panels,
-} from './ui';
+import type { ChallengeRowView, ChallengesView } from '../panels-store';
+import { PanelFooter, PanelShell, panels } from './ui';
 
 /**
  * One 40px line: glyph · goal · count · reward, plus a 9px progress bar in the
@@ -117,76 +117,10 @@ function ChallengeRow({ row }: { row: ChallengeRowView }) {
   );
 }
 
-/**
- * One leaderboard line, on the challenge row's geometry: the rank sits in the
- * glyph's 10px column, the name takes the goal's lane, and the score takes the
- * reward chip's slot — so the two kinds of row line up rather than reading as
- * two lists jammed together.
- */
-function FillRow({ row, kind }: { row: FillRowView; kind: 'topochain' | 'kudos' }) {
-  return (
-    <div
-      className={`home-panel-row home-panel-lb-row flex items-center gap-2 px-2.5 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors${
-        row.you ? ' home-panel-lb-you bg-violet-500/[0.06] dark:bg-violet-500/10' : ''
-      }`}
-      data-lb-kind={kind}
-      title={row.tip}
-      onClick={() => panels()?.goToLeaderboard?.(kind)}
-    >
-      <span
-        className="home-panel-glyph shrink-0 w-2.5 text-[10px] leading-none tabular-nums text-right text-zinc-500 dark:text-zinc-500"
-        aria-hidden="true"
-      >
-        {row.rankLabel}
-      </span>
-      <span
-        className={`home-panel-goal flex-1 min-w-0 truncate whitespace-nowrap text-[13px] ${
-          row.you ? 'font-semibold text-zinc-900 dark:text-zinc-100' : 'text-zinc-900 dark:text-zinc-100'
-        }`}
-      >
-        {row.name}
-      </span>
-      {/*
-          A zero score is muted rather than a violet chip: "0" shouted in the
-          accent colour reads as a warning, not as a starting point.
-      */}
-      {row.hasScore ? (
-        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-700 dark:text-violet-400">
-          {row.scoreText}
-        </span>
-      ) : (
-        <span className="shrink-0 whitespace-nowrap text-[11px] text-zinc-500 dark:text-zinc-500">
-          0
-        </span>
-      )}
-    </div>
-  );
-}
-
-function FillBlock({ fill }: { fill: FillView }) {
-  return (
-    <div className="home-panel-fill flex-none" data-fill-kind={fill.kind}>
-      <div className="home-panel-fill-label flex items-center px-2.5 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">
-        {fill.label}
-      </div>
-      {fill.rows.map((row, i) => (
-        <FillRow key={`${row.rankLabel}:${row.name}:${i}`} row={row} kind={fill.kind} />
-      ))}
-    </div>
-  );
-}
-
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
-  const fillRows = view.fill ? view.fill.rows.length : 0;
-
   if (!view.rows.length) {
     return (
-      <PanelShell
-        panelKey={view.key}
-        expanded={false}
-        stamps={{ rows: 0, fill: fillRows }}
-        footer={view.fill && fillRows ? <FillFooter kind={view.fill.kind} /> : null}
-      >
+      <PanelShell panelKey={view.key} expanded={false} stamps={{ rows: 0 }}>
         <div className="home-panel-body">
           <p
             className="home-panel-rows home-panel-row flex items-center px-2.5 text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors"
@@ -195,7 +129,6 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
           >
             No challenges are running right now
           </p>
-          {view.fill ? <FillBlock fill={view.fill} /> : null}
         </div>
       </PanelShell>
     );
@@ -205,7 +138,7 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
     <PanelShell
       panelKey={view.key}
       expanded={view.expanded}
-      stamps={{ rows: view.rows.length, fill: fillRows }}
+      stamps={{ rows: view.rows.length }}
       footer={<PanelFooter panelKey={view.key} total={view.total} expanded={view.expanded} />}
     >
       <div className="home-panel-body">
@@ -213,13 +146,11 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
             The meter lane is a property of the LIST, not of the row that draws
             a bar: reserving it on every row is what keeps the goals on one
             baseline. A block with no numeric challenge reserves nothing and
-            its rows centre plainly. The fill sits OUTSIDE this list, so
-            leaderboard rows never inherit the lane's padding.
+            its rows centre plainly.
         */}
         <div className={`home-panel-rows${view.metered ? ' home-panel-rows--metered' : ''}`}>
           {view.rows.map((row) => <ChallengeRow key={row.id} row={row} />)}
         </div>
-        {view.fill ? <FillBlock fill={view.fill} /> : null}
       </div>
     </PanelShell>
   );

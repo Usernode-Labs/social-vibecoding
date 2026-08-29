@@ -223,7 +223,46 @@ const Improve = {
     });
     saveShellSnapshot({ improveTarget: target.kind === 'platform' ? 'platform' : 'app' });
     if (slugChanged) Improve._rebucket();
+    Improve.prefetchSessions();
   },
+
+  /**
+   * Fill the session lists BEFORE the panel is opened.
+   *
+   * `loadSessions()` used to run only from `open()`, so the panel presented
+   * with `sessionsLoaded` false — its placeholder — and the real rows arrived
+   * a round trip later, on top of a sheet that had already finished animating
+   * in. The list visibly snapped in under the viewer's thumb.
+   *
+   * The request does not depend on the panel at all: GET /api/me/active-sessions
+   * is per-USER, not per-app, and `_rebucket()` is what splits its answer into
+   * "this app" and "everything else". So it can be made as soon as there is a
+   * target — which is also the moment the button that opens the panel appears —
+   * and `open()`'s own call then refreshes a list that is already on screen
+   * instead of drawing one.
+   *
+   * ONCE, not per target change. A viewer moving between apps re-buckets the
+   * same payload (setTarget does that above), and re-fetching per hop would
+   * turn a navigation into a request for a surface nobody has opened. Later
+   * freshness is `onSessionStateChanged`'s, which already reloads while the
+   * panel is open and is driven by SessionState's own tick.
+   *
+   * Fire-and-forget, and silent: `loadSessions` swallows its own failures and
+   * only raises `loadingSessions` when nothing has ever loaded, so a preload
+   * that fails leaves the panel exactly as it was before this existed.
+   */
+  prefetchSessions() {
+    if (Improve._prefetched) return;
+    const state = improveStore.get();
+    if (!state.slug || state.sessionsLoaded || state.loadingSessions) return;
+    Improve._prefetched = true;
+    try {
+      Promise.resolve(Improve.loadSessions()).catch(() => {});
+    } catch (err) { /* never let a preload break a target publish */ }
+  },
+
+  /** Whether the preload above has already been started this page visit. */
+  _prefetched: false,
 
   /**
    * Publish which half of the app is on screen — the App tab or the Dev area.

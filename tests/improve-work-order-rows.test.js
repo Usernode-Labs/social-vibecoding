@@ -131,6 +131,37 @@ test('work orders ride the call the panel already makes', () => {
     'the panel makes exactly one call here; a second round trip is not needed');
 });
 
+test('the session lists are fetched before the panel is opened', () => {
+  // THE LIST USED TO SNAP IN. `loadSessions()` ran only from `open()`, so the
+  // panel presented with `sessionsLoaded` false — its placeholder — and the
+  // real rows landed a round trip later, on top of a sheet that had already
+  // finished animating in.
+  //
+  // Nothing about the request needs the panel: GET /api/me/active-sessions is
+  // per-USER, and `_rebucket()` is what splits its answer into "this app" and
+  // "everything else". So it is made as soon as there IS a target, which is
+  // also the moment the button that opens the panel appears.
+  assert.match(CONTROLLER, /Improve\.prefetchSessions\(\);/,
+    'setTarget starts it');
+  const fn = CONTROLLER.slice(CONTROLLER.indexOf('  prefetchSessions() {'));
+  const body = fn.slice(0, fn.indexOf('\n  },'));
+  assert.match(body, /if \(Improve\._prefetched\) return;/,
+    'ONCE — a viewer hopping between apps re-buckets the same payload, and '
+    + 'a fetch per hop would be a request for a surface nobody has opened');
+  assert.match(body, /state\.sessionsLoaded \|\| state\.loadingSessions/,
+    'never on top of a load that has happened or is happening');
+  assert.match(body, /\.catch\(\(\) => \{\}\)/,
+    'fire-and-forget: a preload that fails must not break a target publish');
+  // `open()` still loads — the point is that it now refreshes a list that is
+  // already on screen rather than drawing one.
+  const open = CONTROLLER.slice(CONTROLLER.indexOf('  open() {'));
+  assert.match(open.slice(0, open.indexOf('\n  },')), /Improve\.loadSessions\(\)/);
+  // …and `loadSessions` only raises the placeholder when nothing has ever
+  // loaded, which is what makes the refresh invisible.
+  assert.match(CONTROLLER,
+    /if \(!improveStore\.get\(\)\.sessionsLoaded\) improveStore\.set\(\{ loadingSessions: true \}\)/);
+});
+
 test('a work order is NOT counted against the session budget', () => {
   const handler = ROUTE.slice(ROUTE.indexOf("router.get('/api/me/active-sessions'"));
   const body = handler.slice(0, handler.indexOf('\n  });'));

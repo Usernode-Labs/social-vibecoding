@@ -174,24 +174,29 @@ test("the work badge sits exactly where the bell's unread one does", () => {
   assert.match(bellBadge[0], /bg-red-500/, 'the bell badge stays red');
 });
 
-test('the version dot rides the Improve button, hidden by default', () => {
-  // #1412 built it as #improve-version-dot on the Improve button; the
-  // Streamlined Concept parked it on the hamburger's badge cluster as
-  // #header-menu-deploy-dot; and with the hamburger gone it is back where
-  // #1412 put it, under its original name. A `header-menu-*` id on the
-  // Improve button would be a lie that outlives everyone who remembers it.
-  // It renders from improveStore (<ImproveIndicators/>), never from a
-  // classList write by id.
-  const dot = header.match(/<span id="improve-version-dot"[^>]*>/);
-  assert.ok(dot, '#improve-version-dot exists on the Improve button');
-  assert.match(dot[0], /class="hidden /, 'ships hidden');
-  assert.match(dot[0], /bg-amber-/, 'renders amber at rest, matching the deploying pill');
+test('the version state is the glyph, not a second dot beside it', () => {
+  // THE DOT IS RETIRED. #1412 built it as #improve-version-dot on the Improve
+  // button, the Streamlined Concept parked it on the hamburger as
+  // #header-menu-deploy-dot, and with the hamburger gone it came back here —
+  // by which time the button had grown a LEADING GLYPH that changes for
+  // exactly the states the dot coloured: the spinner for deploying and
+  // downloading, the arrow-path for ready and failed, off the same
+  // `versionState`. Two renderers for one fact, and the smaller one needed a
+  // colour lookup to be read at all.
+  assert.ok(!html.includes('id="improve-version-dot"'), 'the dot is gone');
   assert.ok(!html.includes('id="header-menu-deploy-dot"'),
-    'and the hamburger-era copy is gone, not duplicated');
+    'and so is the hamburger-era copy — this is a retirement, not a move');
+  const button = fs.readFileSync(
+    path.join(root, 'frontend/src/features/improve/improve-button.tsx'), 'utf8');
+  assert.match(button, /BUSY_STATES = \['deploying', 'downloading'\]/);
+  assert.match(button, /READY_STATES = \['ready', 'failed'\]/);
+  assert.match(button, /versionState: string/,
+    'the glyph still reads the state the dot used to colour');
+  assert.doesNotMatch(button, /VERSION_DOT/, 'and the colour table went with it');
 
   const improve = header.match(/<button id="improve-btn"[^>]*>[\s\S]*?<\/button>/)[0];
   assert.match(header.match(/<button id="improve-btn"[^>]*>/)[0], /relative/,
-    'the Improve button is a positioning context for its three corners');
+    'the Improve button is a positioning context for its corners');
   // The work indicators cluster on the control whose panel holds the work.
   assert.ok(improve.includes('id="notifications-badge-ai"'),
     'the green session count sits on the Improve button');
@@ -249,7 +254,7 @@ test('the deploy dot is derived from a named state, not sniffed out of the DOM',
   assert.match(fn.slice(0, 1400), /setVersionState/,
     'the dot is store state, not a class toggled by id');
   assert.ok(!/getElementById\('improve-version-dot'\)/.test(headerMenuJs),
-    'nothing resolves the dot by id');
+    'nothing resolves the retired dot by id');
   // The platform-revision renderer and the app-open lifecycle both synchronize
   // the dot. dApp deploy pills live on home cards and are out of scope.
   const calls = (appJs.match(/ImproveStatus\.refreshDeployDot\(\)/g) || []).length
