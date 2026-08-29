@@ -1414,19 +1414,14 @@ html, body {
 
    A section grows. What bounds the collapsed block is the MARKUP:
    visibleSlots() draws at most HomePanels.ROW_SLOTS challenge rows and the
-   footer's "See all N challenges" is the way past them. A second, invisible
-   ceiling on top of that had one remaining effect, and it was to clip the
-   thing this area now exists to show — see below.
+   footer's "See all N challenges" is the way past them.
 
-   THE LEADERBOARD FILL is the standings preview under the challenge rows
-   (.home-panel-fill). It used to be sized by SUBTRACTION, and that was right
-   for a tile: `fillSlots(n) = 4 - max(n, 1)` spent whatever the challenge
-   rows left of the 201.5px inside the cap. THE UI OVERHAUL made the preview
-   the point of the area rather than its packing material — the hamburger's
-   Leaderboard row is gone, so these rows are how the home screen shows the
-   standings at all — and subtraction meant the ordinary case (four open
-   challenges, which is all the server sends) showed none of them. It is a
-   constant three rows now: HomePanels.FILL_SLOTS.
+   THE LEADERBOARD FILL (.home-panel-fill) was a standings preview under the
+   challenge rows, and it is REMOVED — two labelled lists with two different
+   tap destinations inside one card called Challenges. The standings are a
+   screen, and the section's heading carries the one tap to it. Its rules are
+   gone from this file; `.home-panel-lb-browse`, the heading's link, is a
+   different thing and stays.
 
    NO WIDTH CAP any more. It was --home-panel-max-w, half of .home-column
    (512px of 1024px), and the argument for it was "a widget is not a section":
@@ -1564,29 +1559,12 @@ html, body {
   flex: 0 0 auto;
 }
 
-/* The LEADERBOARD fill. Its rows carry .home-panel-row too, so they get the
-   same 40px single-line geometry as a challenge row — which is what makes the
-   two lists line up instead of reading as two lists jammed together. They sit
-   OUTSIDE .home-panel-rows, so a metered challenge list never pushes its
-   14px meter lane onto them. */
-.home-panel-fill {
-  flex: 0 0 auto;
-}
-/* 16px including its own hairline — the figure the row budget above spends.
-   Still 16px now the hairline is a pseudo-element: the box is border-box, so
-   the pixel the border used to occupy is inside the height either way. */
-.home-panel-fill-label {
-  position: relative;
-  height: 1rem;
-}
-
-/* The two GROUP boundaries inside the card — above the leaderboard fill's
-   label, and above the footer — take the same 0.625rem inset as the row
-   hairlines above. Consistency is the point: with the row rules inset and
-   these two full-bleed, the card had two kinds of hairline and the full-bleed
-   pair were the ones reaching its corner radius. One lane for every rule
-   inside the card. */
-.home-panel-fill-label::before,
+/* The GROUP boundary inside the card — above the footer — takes the same
+   0.625rem inset as the row hairlines above. Consistency is the point: with
+   the row rules inset and this one full-bleed, the card had two kinds of
+   hairline and the full-bleed one was the one reaching its corner radius. One
+   lane for every rule inside the card. (Its twin, above the retired
+   leaderboard fill's label, went with the fill.) */
 .home-panel-footer::before {
   content: '';
   position: absolute;
@@ -1678,7 +1656,7 @@ html, body {
    Challenges screen. Same height family as the title bar so the block
    reads as chrome-rows-around-content. */
 .home-panel-footer {
-  position: relative; /* its hairline is a ::before — see .home-panel-fill-label */
+  position: relative; /* its hairline is a ::before, inset like the row rules */
   min-height: 1.625rem; /* 26px */
 }
 

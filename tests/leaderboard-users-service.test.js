@@ -150,7 +150,7 @@ test('weekStartUtc buckets to Monday 00:00 UTC', () => {
 
 // The extraction only pays off if the route actually calls it — an inlined
 // copy left behind in kudos.js would drift silently.
-test('the endpoint and the widget both go through the service', () => {
+test('the endpoint goes through the service', () => {
   const kudos = read('src/routes/kudos.js');
   assert.match(kudos, /require\('\.\.\/services\/leaderboard-users'\)/);
   assert.match(kudos, /await rankedUsers\(pool, \{/);
@@ -158,9 +158,14 @@ test('the endpoint and the widget both go through the service', () => {
   assert.ok(!kudos.includes('kudos_received_prs_merged DESC'),
     'the ORDER BY lives in the service only');
 
+  // THE HOME PANEL WAS THE SECOND CONSUMER and is not one any more. Its
+  // challenges block drew a standings preview under the challenge rows, on
+  // this service's slim ranking as the fallback board; the preview is removed
+  // — one area, one list — so the route asks for challenges and nothing else.
   const panels = read('src/routes/home-panels.js');
-  assert.match(panels, /require\('\.\.\/services\/leaderboard-users'\)/);
-  assert.match(panels, /rankedUsers\(pool, \{ window: 'all', slim: true \}\)/);
+  assert.doesNotMatch(panels, /require\('\.\.\/services\/leaderboard-users'\)/,
+    'the home panels no longer rank users at all');
+  assert.doesNotMatch(panels, /rankedUsers\(/);
 
   // weekStartUtc moved with it, and is re-exported so existing importers
   // (src/routes/issues.js) are untouched.

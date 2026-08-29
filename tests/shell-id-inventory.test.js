@@ -337,7 +337,15 @@ const ADDED_IDS = {
   'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
   'improve-quick-actions': 'The panel\'s three circular actions — Feedback, New change, Share — captioned beneath so three fit across a phone.',
   'improve-sessions': 'The changes in flight, here and on the viewer\'s other apps — and the panel\'s ONE scroller, which is what keeps the actions and the views on screen at any height.',
-  'improve-version-dot': 'The platform deploy/stale dot, renamed from #header-menu-deploy-dot when it followed the badge cluster onto #improve-btn.',
+  // #improve-version-dot is NOT here any more, and did not move: it is
+  // retired. Amber while a build was deploying or downloading, violet once
+  // one was here to reload onto — and the button's LEADING GLYPH already
+  // draws the spinner for exactly the amber pair and the arrow-path for
+  // exactly the violet one, off the same `versionState`. Two cues for one
+  // fact, one of them 8px of colour whose meaning depends on which colour
+  // it is. `Improve.setVersionState` and the store field stay; the second
+  // renderer is what went. It never reached tests/baselines, so it leaves
+  // this map without entering RETIRED_IDS.
   'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────

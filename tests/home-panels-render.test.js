@@ -731,9 +731,8 @@ test('render: the empty state renders for EVERY viewer, compact and footer-less'
     assert.match(out.html, /home-area-label[^"]*flex items-center/, `${who}: the heading is a row`);
     assert.match(out.html, /min-w-0 flex-1 truncate[^>]*>Challenges/, `${who}: the label takes it`);
     assert.match(out.html, /data-rows="0"/, `${who}: stamped`);
-    // No `panel.leaderboard` in this payload, so there is nothing to fill
-    // with — the stamp says so rather than claiming rows nobody drew.
-    assert.match(out.html, /data-fill="0"/, `${who}: nothing to preview`);
+    assert.doesNotMatch(out.html, /data-fill/,
+      `${who}: no standings preview, so no stamp counting its rows`);
   }
 });
 
@@ -1291,10 +1290,9 @@ test('openMenu goes through the kit\'s ADAPTIVE menu — one call site, both idi
 // collapsed size is bounded by the MARKUP — visibleSlots() draws at most
 // ROW_SLOTS challenge rows and the footer's "See all N" is the way past them.
 //
-// Re-introducing it would clip the standings preview the Challenges area now
-// exists to show: four rows plus the chrome plus a three-row fill is ~350px,
-// well past the 256px the cap allowed.
-test('the block sizes to its content — no height cap to clip the fill', () => {
+// Re-introducing it would clip the block a viewer actually gets: four
+// challenge rows plus the chrome is already past the 256px the cap allowed.
+test('the block sizes to its content — no height cap to clip it', () => {
   const css = read('public/css/app.css');
   assert.doesNotMatch(css, /--home-panel-max-h:/);
   const panelRule = css.match(/\.home-panel \{[^}]*\}/)[0];
@@ -1305,16 +1303,15 @@ test('the block sizes to its content — no height cap to clip the fill', () => 
   assert.match(css.match(/\.home-panel-row \{[^}]*\}/)[0],
     /height:\s*var\(--home-panel-row-h\)/);
   assert.match(css, /--home-panel-row-h:\s*2\.5rem/);
-  // The collapsed block a viewer actually gets — four challenge rows AND the
-  // three-row fill — is what a re-introduced 16rem cap would cut.
+  // The collapsed block a viewer actually gets — four challenge rows and the
+  // footer — is what a re-introduced 16rem cap would start cutting into.
   const rowPx = parseFloat(css.match(/--home-panel-row-h:\s*([\d.]+)rem/)[1]) * 16;
   const footerPx = parseFloat(
     css.match(/\.home-panel-footer \{[^}]*min-height:\s*([\d.]+)rem/)[1]) * 16;
   const rowSlots = Number(SRC.match(/ROW_SLOTS:\s*(\d+)/)[1]);
-  const fillSlots = Number(SRC.match(/FILL_SLOTS:\s*(\d+)/)[1]);
-  const collapsed = 2 + 25.5 + (rowSlots + fillSlots) * rowPx + 16 + footerPx + 1;
-  assert.ok(collapsed > 256,
-    `the collapsed block is ${collapsed}px — past the 16rem the old cap allowed`);
+  const collapsed = 2 + rowSlots * rowPx + footerPx + 1;
+  assert.ok(collapsed > 160,
+    `the collapsed block is ${collapsed}px, and a 16rem cap is a ceiling on it`);
   // No runtime measurement — #922 deleted that mechanism for the width
   // axis and app.css says not to bring it back.
   assert.doesNotMatch(HOME, /alignSections|--home-section-indent/);
@@ -1854,295 +1851,24 @@ test('the Discover lanes fit the cells their footprint buys', () => {
   assert.doesNotMatch(css, /--home-panel-max-h:/);
 });
 
-// ── The breakpoint split (#947) ────────────────────────────────────
+// ── THE STANDINGS PREVIEW IS REMOVED ──────────────────────────────
 //
-// One widget, two renderings. On a PHONE it sizes to content (a CSS-only
-// concern, asserted against app.css below). On DESKTOP it keeps its fixed
-// two-row tile and spends the leftover on a LEADERBOARD section, which is a
-// MARKUP concern and so is decided here.
+// The Challenges block used to draw a second list under the challenge rows:
+// the head of the Topochain standings plus the viewer's own row, on the same
+// 40px geometry so the two lined up, with its own hairline label and its own
+// footer control. Thirteen tests covered its composition, its em dashes, its
+// score formatting and its two boards; they are gone with it.
 //
-// The harness has no innerWidth, so the column count is injected the way the
-// module actually reads it: through Home.currentCols().
-function makeDesktop(data, opts = {}) {
-  const slot = makeSlot('challenges');
-  const { HP, sandbox } = makeHomePanels({
-    ...opts,
-    slots: [slot],
-    home: { currentCols: () => opts.cols || 5, ...(opts.home || {}) },
-  });
-  HP._data = data;
-  HP.render();
-  return { HP, html: paintHosts(sandbox, [slot]), slot, sandbox };
-}
-
-// The board as src/routes/home-panels.js sends it: a `kind`, a `label`, rows
-// carrying a display `name` and a server-decided `you` flag. This one is the
-// PRIMARY board — the Topochain standings, five-figure points and all.
-const fill = (over = {}) => ({
-  kind: 'topochain',
-  label: 'Leaderboard',
-  event: { id: 77, name: 'Block Production Sprint' },
-  top: [
-    { rank: 1, name: 'ada', score: 59146, you: false },
-    { rank: 2, name: 'grace', score: 27515, you: false },
-    { rank: 3, name: 'linus', score: 918, you: false },
-  ],
-  viewer: { rank: 7, name: 'me', score: 640, you: true },
-  total: 42,
-  ...over,
-});
-
-// The FALLBACK board, for a deployment with no public standings at all.
-const kudosFill = (over = {}) => fill({
-  kind: 'kudos',
-  label: 'Kudos',
-  event: null,
-  top: [
-    { rank: 1, name: 'ada', score: 41, you: false },
-    { rank: 2, name: 'grace', score: 27, you: false },
-    { rank: 3, name: 'linus', score: 18, you: false },
-  ],
-  viewer: { rank: 7, name: 'me', score: 6, you: true },
-  ...over,
-});
-
-const withFill = (panelOver = {}) => ({
-  registry: [], hidden: [],
-  panels: [panel({ leaderboard: fill(), ...panelOver })],
-});
-
-// THE FILL'S BUDGET IS A CONSTANT. It was `4 - max(challengeRows, 1)` — the
-// leftover of the 201.5px inside a 2x2 tile's height cap, so 3 rows at zero
-// or one challenge and 0 at four. THE UI OVERHAUL made the block a section
-// that grows and made the standings preview the POINT of the Challenges area
-// (the hamburger's Leaderboard row is gone), and four open challenges is the
-// ORDINARY case — CHALLENGE_ROW_LIMIT is all the server sends — so
-// subtraction meant the standings were usually absent from the one place
-// that shows them.
-test('fillSlots: a constant, whatever the challenge rows cost', () => {
-  const { HP } = makeHomePanels();
-  assert.equal(HP.FILL_SLOTS, 3, 'the head of the board plus the viewer');
-  assert.equal(HP.fillSlots(), 3);
-  // …and it takes no argument now. Called with the old one, it must not go
-  // back to subtracting.
-  assert.equal(HP.fillSlots(4), 3);
-  assert.equal(HP.fillSlots(0), 3);
-});
-
-test('the standings preview draws under the rows, at every list length', () => {
-  for (const nChallenges of [1, 2, 3, 4]) {
-    const rows = Array.from({ length: nChallenges }, (_, i) => challenge({ id: i + 1 }));
-    const { html } = makeDesktop(withFill({ challenges: rows, total: nChallenges }));
-    const drawn = (html.match(/home-panel-lb-row/g) || []).length;
-    assert.equal(drawn, 3, `${nChallenges} challenges → the fill is still 3 rows`);
-    assert.match(html, new RegExp(`data-rows="${nChallenges}"`));
-    assert.match(html, new RegExp('data-fill="3"'));
-    const labels = (html.match(/home-panel-fill-label/g) || []).length;
-    assert.equal(labels, 1, 'exactly one label');
-  }
-});
-
-test('desktop: the zero state leads with the note, then fills the tile', () => {
-  const { html } = makeDesktop({
-    registry: [], hidden: [],
-    panels: [panel({ total: 0, done: 0, challenges: [], leaderboard: fill() })],
-  });
-  assert.match(html, /No challenges are running right now/, 'same copy at both widths');
-  assert.match(html, /data-rows="0"/);
-  assert.match(html, /data-fill="3"/);
-  // Nothing to expand or count: one footer control, and it names THE BOARD it
-  // is the full version of — the title bar's link is what says "leaderboard"
-  // now (#980), so the two must not read as the same door twice.
-  assert.doesNotMatch(html, /home-panel-expand/);
-  assert.match(html, /home-panel-lb-open/);
-  assert.match(html, /See full standings/);
-  assert.doesNotMatch(html, /See full leaderboard/);
-  // …and the bar carries the widget's leaderboard link in this state too.
-  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open leaderboard"/);
-});
-
-test('desktop: the viewer’s own row is last, marked, and never duplicated', () => {
-  const { html } = makeDesktop(withFill({ challenges: [challenge()], total: 1 }));
-  assert.match(html, /home-panel-lb-you/, 'the viewer is tinted');
-  // Names in the FILL block only — the challenge rows above it share the
-  // .home-panel-goal lane, which is the point (the two lists line up).
-  const namesIn = (h) => [...h.slice(h.indexOf('home-panel-fill-label'))
-    .matchAll(/home-panel-goal[^>]*>([^<]+)</g)].map((m) => m[1]);
-  // Top 2 then "You" — the last slot belongs to the viewer.
-  assert.deepEqual(namesIn(html), ['ada', 'grace', 'You']);
-  assert.equal((html.match(/home-panel-lb-you/g) || []).length, 1);
-
-  // Already in the top slice: highlighted in place (the SERVER flags which
-  // row is theirs), and the freed slot goes to the next entry down rather
-  // than repeating them.
-  const base = fill();
-  const inTop = makeDesktop(withFill({
-    challenges: [challenge()],
-    total: 1,
-    leaderboard: fill({
-      top: base.top.map((r, i) => ({ ...r, you: i === 1 })),
-      viewer: { rank: 2, name: 'grace', score: 27515, you: true },
-    }),
-  }));
-  assert.deepEqual(namesIn(inTop.html), ['ada', 'You', 'linus']);
-  assert.equal((inTop.html.match(/home-panel-lb-you/g) || []).length, 1);
-});
-
-test('desktop: the standings board names itself and shortens its points', () => {
-  const { html } = makeDesktop(withFill({ challenges: [challenge()], total: 1 }));
-  const block = html.slice(html.indexOf('home-panel-fill-label'));
-  assert.match(block, /home-panel-fill-label[^>]*>Leaderboard</, 'labelled from the payload');
-  // Five-figure points are shortened so the name lane survives; small ones
-  // are left alone.
-  assert.match(block, />59\.1k</, '59,146 renders as 59.1k');
-  assert.match(block, />640</, 'a three-digit score is not shortened');
-  assert.match(block, /by points in Block Production Sprint/, 'the tooltip names the metric');
-  assert.match(html, /data-fill-kind="topochain"/);
-});
-
-test('desktop: the kudos fallback says Kudos, and keeps the kudos copy', () => {
-  const { html } = makeDesktop(withFill({
-    challenges: [challenge()], total: 1, leaderboard: kudosFill(),
-  }));
-  const block = html.slice(html.indexOf('home-panel-fill-label'));
-  assert.match(block, /home-panel-fill-label[^>]*>Kudos</,
-    'the fallback board must not call itself the Leaderboard');
-  assert.match(block, />41</, 'kudos counts are never abbreviated');
-  assert.match(block, /by kudos on merged proposals/);
-  assert.match(html, /data-fill-kind="kudos"/);
-});
-
-// Most viewers have no standings row at all — the slot goes to one more
-// participant rather than to an invented rank.
-test('desktop: a board with no viewer row spends every slot on the top', () => {
-  const namesIn = (h) => [...h.slice(h.indexOf('home-panel-fill-label'))
-    .matchAll(/home-panel-goal[^>]*>([^<]+)</g)].map((m) => m[1]);
-  const { html } = makeDesktop(withFill({
-    challenges: [challenge()], total: 1, leaderboard: fill({ viewer: null }),
-  }));
-  assert.deepEqual(namesIn(html), ['ada', 'grace', 'linus']);
-  assert.equal((html.match(/home-panel-lb-you/g) || []).length, 0);
-});
-
-// A podium-excluded row carries no rank; the screen's table draws those as
-// an em dash, so the fill does too rather than printing "#0".
-test('desktop: a rank-less row renders an em dash, not a zero', () => {
-  const { html } = makeDesktop(withFill({
-    challenges: [challenge()], total: 1,
-    leaderboard: fill({ viewer: { rank: null, name: 'me', score: 99999, you: true } }),
-  }));
-  const youRow = html.slice(html.indexOf('home-panel-lb-you'));
-  assert.match(youRow.slice(0, 700), /home-panel-glyph[^>]*>—</);
-  assert.match(youRow, /You are unranked of 42 by points/);
-});
-
-test('desktop: a zero-score viewer row is muted, not a violet chip', () => {
-  const { html } = makeDesktop(withFill({
-    challenges: [challenge()],
-    total: 1,
-    leaderboard: kudosFill({ viewer: { rank: 300, name: 'me', score: 0, you: true } }),
-  }));
-  const youRow = html.slice(html.indexOf('home-panel-lb-you'));
-  assert.doesNotMatch(youRow.slice(0, 600), /text-violet-600/, '0 is not an accent-coloured shout');
-  assert.match(youRow, /You are #300 of 42 by kudos on merged proposals/);
-});
-
-// The fill used to be suppressed at three widths and states: on a phone
-// (where the block owned one 116px cell), in the #home-panels search-view
-// fallback (no fixed-height rectangle to fill), and while expanded. The first
-// two went with the placement — the fill IS the point of the Challenges area
-// now, at every width — so expansion is the only thing left that stands it
-// down, plus the obvious case of a server that sent no board.
-test('the fill draws at every width; only expansion and an absent board stop it', () => {
-  const data = withFill({ challenges: [challenge()], total: 1 });
-
-  // No Home on the window at all — the width is unknown and it does not
-  // matter, because nothing about the block is a width decision any more.
-  const anyWidth = renderWith(data);
-  assert.equal((anyWidth.html.match(/home-panel-lb-row/g) || []).length, 3);
-  assert.match(anyWidth.html, /data-fill="3"/);
-
-  // Expanded is all challenges — a standings preview under thirty rows is
-  // not a preview, so the fill steps aside.
-  const slot = makeSlot('challenges');
-  const { HP } = makeHomePanels({ slots: [slot] });
-  HP._expanded.challenges = true;
-  HP._data = data;
-  HP.render();
-  assert.equal((slot.innerHTML.match(/home-panel-lb-row/g) || []).length, 0);
-
-  // And no fill when the server sent no board at all (the block still
-  // renders — the challenge rows are its primary content).
-  const noBoard = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({ challenges: [challenge()], total: 1 })],
-  });
-  assert.equal((noBoard.html.match(/home-panel-lb-row/g) || []).length, 0);
-  assert.match(noBoard.html, /data-fill="0"/);
-  assert.match(noBoard.html, /Report a reproducible bug/);
-});
-
-// `HomePanels.currentCols()` — the module's own read of the grid's column
-// count, with a phone fallback for an unknown width — is gone. It existed
-// only to choose between the two renderings, and there is one now.
-test('the module no longer reads the column count at all', () => {
-  const { HP } = makeHomePanels();
-  assert.equal(typeof HP.currentCols, 'undefined');
-  assert.doesNotMatch(SRC, /^\s*DESKTOP_COLS:/m);
-  assert.doesNotMatch(SRC, /^\s*PHONE_ROW_SLOTS:/m);
-});
-
-test('fill rows are excluded from the challenges click wiring', () => {
-  // A leaderboard line and a challenge line are both `.home-panel-row`, and a
-  // tap on "#1 alice" must not land on the Challenges tab. `_wire` expressed
-  // that as `querySelectorAll('.home-panel-row:not(.home-panel-lb-row)')` — one
-  // selector, and the `:not()` was the whole guard. The two rows are separate
-  // COMPONENTS now, so the guard is that each names its own destination.
-  const [, src] = PANEL_SOURCES.find(([n]) => n.endsWith('challenges.tsx'));
-  const row = src.slice(src.indexOf('function ChallengeRow('), src.indexOf('function FillRow('));
-  const fillRow = src.slice(src.indexOf('function FillRow('), src.indexOf('function FillBlock('));
-  assert.match(row, /onClick=\{\(\) => panels\(\)\?\.goToChallenges\?\.\(\)\}/);
-  assert.doesNotMatch(row, /goToLeaderboard/, 'a challenge row never goes to the board');
-  assert.match(fillRow, /onClick=\{\(\) => panels\(\)\?\.goToLeaderboard\?\.\(kind\)\}/);
-  assert.doesNotMatch(fillRow, /goToChallenges/, 'and a board row never goes to Challenges');
-  // …and the class the CSS and the checks select on is still on the fill row,
-  // which is what makes the two distinguishable from outside.
-  assert.match(fillRow, /home-panel-row home-panel-lb-row/);
-});
-
-// Each board previews a DIFFERENT tab, and every clickable element of the
-// fill carries which one on data-lb-kind (that is what _wire reads).
-test('the fill navigates to the tab that shows the board it previewed', () => {
-  const std = makeDesktop(withFill({ challenges: [challenge()], total: 1 }));
-  std.HP.goToLeaderboard('topochain');
-  assert.equal(std.sandbox.location.hash, '#leaderboard',
-    'the standings ARE the primary tab, so they address as the bare hash');
-  std.HP.goToLeaderboard('kudos');
-  assert.equal(std.sandbox.location.hash, '#leaderboard/users',
-    'the kudos fallback goes to the Kudos tab’s Top users view');
-  // An absent kind is the primary board — the same default the renderer uses.
-  std.HP.goToLeaderboard(undefined);
-  assert.equal(std.sandbox.location.hash, '#leaderboard');
-
-  // Every control the wiring hangs off must carry the kind.
-  for (const m of std.html.match(/home-panel-lb-(?:row|open)[^>]*>/g) || []) {
-    assert.match(m, /data-lb-kind="topochain"/, m.slice(0, 60));
-  }
-  const zero = makeDesktop({
-    registry: [], hidden: [],
-    panels: [panel({ total: 0, done: 0, challenges: [], leaderboard: kudosFill() })],
-  });
-  assert.match(zero.html, /home-panel-lb-open[^>]*data-lb-kind="kudos"/,
-    'the zero-state footer follows its rows');
-  // The kind reaches the handler as a value rather than through
-  // `dataset.lbKind`: the row renders the attribute AND closes over the same
-  // `kind`, so a tap can no longer disagree with what the element says.
-  const [, src] = PANEL_SOURCES.find(([n]) => n.endsWith('challenges.tsx'));
-  assert.match(src, /data-lb-kind=\{kind\}[\s\S]{0,200}?goToLeaderboard\?\.\(kind\)/);
-  const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));
-  assert.match(ui, /data-lb-kind=\{kind\}[\s\S]{0,400}?goToLeaderboard\?\.\(kind\)/,
-    'the footer control too');
-});
+// The reason is what it did to the card, not to any of that: two labelled
+// lists with two different tap destinations inside one area called Challenges
+// made the reader work out which one they were looking at before they could
+// read either. The standings are a screen, and this section's heading carries
+// the one tap to it — in every branch, including the between-seasons one where
+// the block draws a single line. `FillView`, `fillView`, `FillFooter`,
+// FILL_SLOTS, the `data-fill` stamp and `.home-panel-fill*` / `.home-panel-lb-row`
+// went together, as did the server's two board queries (see
+// tests/home-panels-api.test.js). `.home-panel-lb-browse` — the heading's link
+// — is a different thing and stays.
 
 // ── The phone shape (#968) is gone ────────────────────────────────
 //
@@ -2185,21 +1911,20 @@ test('the block draws all four rows, its footer and its toggle — at any width'
     'the two-label branch went with the shape that needed the short one');
 });
 
-test('the empty state is the bar, its one note row, and the fill', () => {
+test('the empty state is one note row, and nothing else', () => {
   const { html } = renderWith({
     registry: [], hidden: [],
-    panels: [panel({ total: 0, done: 0, challenges: [], leaderboard: fill() })],
+    panels: [panel({ total: 0, done: 0, challenges: [] })],
   });
   assert.match(html, /No challenges are running right now/, 'it still says why');
   assert.match(html, /data-rows="0"/);
-  // Between seasons the standings are the only thing this area has to show,
-  // so the fill spends the whole budget on them (fillSlots(0) === 3).
-  assert.equal((html.match(/home-panel-lb-row/g) || []).length, 3);
-  assert.match(html, /data-fill="3"/);
-  // Still no expand toggle — there is nothing to expand — but the fill's own
-  // footer offers the board it previewed.
+  // The standings preview that used to fill this state is removed, so the
+  // between-seasons card is that one line. Its way to the board is the
+  // section heading's link, which renders in this branch like every other.
+  assert.doesNotMatch(html, /home-panel-lb-row|home-panel-lb-open|data-fill/);
+  assert.match(html, /home-panel-lb-browse/, 'the heading still links to the screen');
+  // Still no expand toggle — there is nothing to expand.
   assert.doesNotMatch(html, /home-panel-expand/);
-  assert.match(html, /home-panel-lb-open/);
 });
 
 test('an expansion is honoured at every width now', () => {
@@ -2242,17 +1967,17 @@ test('the per-cell budgets and their hooks are gone', () => {
   assert.doesNotMatch(css, /--home-panel-max-h:/);
 });
 
-test('app.css: the body wrapper and fill block carry the budget’s geometry', () => {
+test('app.css: the body wrapper carries the budget’s geometry', () => {
   const css = read('public/css/app.css');
   // The body takes the article's remaining height and clips...
   const body = css.match(/\.home-panel-body \{[^}]*\}/)[0];
   assert.match(body, /flex:\s*1 1 auto/);
   assert.match(body, /min-height:\s*0/);
   assert.match(body, /overflow:\s*hidden/);
-  // ...and both children hold their natural height, so the leftover collects
-  // at the BOTTOM of the tile rather than splitting it down the middle.
+  // ...and the rows list holds its natural height inside it.
   assert.match(css, /\.home-panel-body > \.home-panel-rows \{[^}]*flex:\s*0 0 auto/);
-  assert.match(css, /\.home-panel-fill \{[^}]*flex:\s*0 0 auto/);
-  // 16px is the figure the fillSlots budget spends on the label.
-  assert.match(css, /\.home-panel-fill-label \{[^}]*height:\s*1rem/);
+  // The standings preview that shared this wrapper is removed, and so are its
+  // two rules — a `.home-panel-fill` left behind would be a lane reserved for
+  // a list nothing draws.
+  assert.doesNotMatch(css, /\.home-panel-fill[ .{]/);
 });

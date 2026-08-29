@@ -3,7 +3,7 @@
  * and footer carry.
  *
  * A like-for-like port of `HomePanels._panelShell` / `_leaderboardLink` /
- * `_panelFooter` / `_fillFooter` — same classes, same `data-*`, same order —
+ * `_panelFooter` — same classes, same `data-*`, same order —
  * so app.css's `--home-panel-max-h` cap, the dapp.json checks and the
  * screenshot assertions all keep matching. What changed is who owns the
  * listeners: they were eight `querySelectorAll` sweeps in `HomePanels._wire`,
@@ -46,7 +46,6 @@ export function stampProps(stamps: PanelStamps | undefined) {
   if (stamps.featured !== undefined) out['data-featured'] = String(stamps.featured);
   if (stamps.popular !== undefined) out['data-popular'] = String(stamps.popular);
   if (stamps.rows !== undefined) out['data-rows'] = String(stamps.rows);
-  if (stamps.fill !== undefined) out['data-fill'] = String(stamps.fill);
   if (stamps.createEnabled !== undefined) {
     out['data-create-enabled'] = String(stamps.createEnabled);
   }
@@ -216,8 +215,9 @@ export function LeaderboardLink() {
       aria-label="Open leaderboard"
       onClick={(e) => {
         e.stopPropagation();
-        // No kind: the bar's link is the widget's door to the SCREEN, not to
-        // whichever board the fill below it happened to preview.
+        // No kind: this is the area's door to the leaderboard SCREEN, and
+        // since the standings preview was removed from the card it is the
+        // only thing here that goes there.
         panels()?.goToLeaderboard?.();
       }}
     >
@@ -274,38 +274,6 @@ export function PanelFooter({
         }}
       >
         <span className="whitespace-nowrap">Open challenges</span>
-        <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-      </button>
-    </div>
-  );
-}
-
-/**
- * The footer for a block whose only rows are the leaderboard fill's: nothing
- * to expand and nothing to count, so one way out instead — and it names THE
- * BOARD ABOVE IT rather than "the leaderboard" (#980), because the bar's link
- * already goes to the screen and a footer repeating that word one card away
- * would read as two doors to one place.
- */
-export function FillFooter({ kind }: { kind: 'topochain' | 'kudos' }) {
-  const title = kind === 'kudos'
-    ? 'Go to the Top users view on the Leaderboard screen’s Kudos tab'
-    : 'Go to the Leaderboard screen';
-  const label = kind === 'kudos' ? 'See full kudos board' : 'See full standings';
-  return (
-    <div className="home-panel-footer flex-none flex items-center justify-end gap-2 px-2.5">
-      <button
-        type="button"
-        className="home-panel-lb-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"
-        data-lb-kind={kind}
-        title={title}
-        aria-label={label}
-        onClick={(e) => {
-          e.stopPropagation();
-          panels()?.goToLeaderboard?.(kind);
-        }}
-      >
-        <span className="whitespace-nowrap">{label}</span>
         <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
       </button>
     </div>

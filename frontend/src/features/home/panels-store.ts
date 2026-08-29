@@ -12,9 +12,8 @@
  * them. `panels/sections.tsx` renders them.
  *
  * Every derivation the renderers did inline is resolved HERE, where the data
- * lives: which rows fit, whether the list reserves a meter lane, which
- * leaderboard rows the fill spends its slots on, whether the viewer may create
- * an app. A component reads facts.
+ * lives: which rows fit, whether the list reserves a meter lane, whether the
+ * viewer may create an app. A component reads facts.
  *
  * ── `painted` ─────────────────────────────────────────────────────────
  *
@@ -34,9 +33,8 @@ export interface PanelStamps {
   /** Discover's two lane counts, mirrored so one selector can ask for both. */
   featured?: number;
   popular?: number;
-  /** The Challenges block's composition: challenge rows and fill rows drawn. */
+  /** The Challenges block's composition: how many challenge rows it drew. */
   rows?: number;
-  fill?: number;
   /** The Create block's quota state. */
   createEnabled?: boolean;
 }
@@ -73,23 +71,6 @@ export interface ChallengeRowView {
   meter: { current: number; target: number; label: string; pct: number } | null;
 }
 
-export interface FillRowView {
-  /** '—' for a podium-excluded standings row, matching the screen's table. */
-  rankLabel: string;
-  name: string;
-  scoreText: string;
-  /** A zero score is muted rather than shouted in the accent colour. */
-  hasScore: boolean;
-  you: boolean;
-  tip: string;
-}
-
-export interface FillView {
-  kind: 'topochain' | 'kudos';
-  label: string;
-  rows: FillRowView[];
-}
-
 export interface ChallengesView {
   key: string;
   title: string;
@@ -100,7 +81,6 @@ export interface ChallengesView {
   rows: ChallengeRowView[];
   /** Does the LIST reserve the meter lane? A property of the list, not a row. */
   metered: boolean;
-  fill: FillView | null;
 }
 
 // ── Create app ────────────────────────────────────────────────────────

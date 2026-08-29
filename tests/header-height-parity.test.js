@@ -161,6 +161,13 @@ test('CEILING: the Improve button is exactly the 28px row', () => {
   assert.match(tag, /\bitems-center\b/,
     'the Improve button centres its glyph and label vertically');
   assert.match(tag, /\binline-flex\b/, 'the Improve button is a flex box');
+  // …and SPACES them. There was no gap at all, so the glyph and the "I" of
+  // Improve met — one smudged mark rather than a state cue in front of a
+  // label, worst on the spinner (whose arc carries no bounding whitespace)
+  // and on the arrow-path (whose head reaches the glyph box's edge). A gap
+  // is a horizontal cost only, so the 28px ceiling above is untouched.
+  assert.match(tag, /\bgap-1\.5\b/,
+    'the glyph and the label are spaced like the header group they sit in');
 });
 
 test('CEILING: the landing CTAs stay 28px at every width', () => {

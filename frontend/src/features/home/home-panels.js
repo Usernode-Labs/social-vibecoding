@@ -51,22 +51,21 @@
 // rectangle of the launcher canvas and went with the placement. What
 // survives is the four-row budget itself — a ~26px title bar, up to FOUR
 // 40px single-line rows, a ~27px footer — because it is a good density for
-// a home-screen block, and the leaderboard fill that spends whatever the
-// challenge rows leave (see fillSlots). Overflow is still handled by
+// a home-screen block. Overflow is still handled by
 // rendering fewer rows plus the footer's expand toggle — never an inner
 // scroller (a nested scroll region inside the page scroller is a touch trap)
 // and never a horizontal pager (invisible to the screenshot capture and to
 // dapp.json checks, which can only navigate).
 //
-// THE LEADERBOARD FILL is the standings preview under the challenge rows:
-// the top few rows of the same board the Leaderboard screen's primary tab
-// shows — the Topochain standings — plus the viewer's own row when they have
-// one. The server sends it as `panel.leaderboard`, already carrying its
-// `kind` ('topochain', or 'kudos' for the fallback board a deployment with
-// no public standings falls back to), its `label` and the `you` flags;
-// src/services/topochain/event-standings.js and
-// src/services/leaderboard-users.js are the one copy of each board's
-// ordering. See fillSlots below for the row budget.
+// THE LEADERBOARD FILL IS GONE. A standings preview used to sit under the
+// challenge rows — first as something to spend the fixed 2x2 rectangle on,
+// then, once the hamburger's Leaderboard row was retired, as the home
+// screen's only view of the standings. Two labelled lists with two different
+// tap destinations inside one card called Challenges made the reader work out
+// which one they were looking at before they could read either. The standings
+// are a screen, and this section's heading carries the one tap to it in every
+// branch. `fillView`, `fillRowView`, `formatFillScore`, FILL_SLOTS and the
+// server's `panel.leaderboard` (with its two board queries) went together.
 //
 // FETCH DISCIPLINE. Home.load() is called from a dozen WS/event paths, so
 // this module must NOT fetch per Home.load(): ensureLoaded() is TTL-guarded
@@ -108,31 +107,6 @@ const HomePanels = {
   // and the phone half went with the placement. Four survives as a PREVIEW
   // cap; the footer's "See all N challenges" is the way past it.
   ROW_SLOTS: 4,
-
-  // ── The leaderboard fill's budget ──────────────────────────────────
-  //
-  // THIS USED TO BE THE LEFTOVER, and that was right while the block was a
-  // fixed 2x2 tile among app icons: something had to spend the rectangle the
-  // challenge rows didn't, so `fillSlots(n) = 4 - max(n, 1)` handed the
-  // remainder to the standings — 3 rows at zero or one challenge, 0 at four.
-  //
-  // A section has no rectangle to spend, and THE UI OVERHAUL made this
-  // preview the POINT of the area rather than its packing material: the
-  // hamburger's Leaderboard row is gone, so these rows are how the home
-  // screen shows the standings at all. Leftover-sizing meant a season with
-  // four open challenges — the ordinary case, since the server sends at most
-  // four — showed none of them, which is the one outcome the move was
-  // supposed to prevent.
-  //
-  // So it is a CONSTANT now: the head of the board plus the viewer's own row
-  // (see renderFillBlock, which spends the last slot on them when they are
-  // not already in the head). That is what a standings preview is at any
-  // size.
-  FILL_SLOTS: 3,
-
-  fillSlots() {
-    return HomePanels.FILL_SLOTS;
-  },
 
   // `esc()` and `safeHref()` lived here. Both existed for the string
   // renderers: organiser prose (challenge goals, metric labels) landed in BOTH
@@ -236,11 +210,11 @@ const HomePanels = {
     // server only honours it in staging. `expand` names the one panel the
     // viewer has opened in place, so the fetch brings its full list.
     //
-    // `challenges=few|none` and `board=kudos` ride along WITH it: both demo
-    // variants are chosen server-side, so a param left in the address bar but
-    // not on the fetch would silently serve the default payload — which is
-    // what the deep link, the dapp.json check and the before/after
-    // screenshots would then all capture.
+    // `challenges=few|none` rides along WITH it: the demo variant is chosen
+    // server-side, so a param left in the address bar but not on the fetch
+    // would silently serve the default payload — which is what the deep link,
+    // the dapp.json check and the before/after screenshots would then all
+    // capture. (`board=kudos` went with the standings preview it selected.)
     const params = new URLSearchParams();
     try {
       const here = new URLSearchParams(location.search);
@@ -248,8 +222,6 @@ const HomePanels = {
         params.set('demo', '1');
         const variant = here.get('challenges');
         if (variant) params.set('challenges', variant);
-        const board = here.get('board');
-        if (board) params.set('board', board);
       }
     } catch (err) { /* ignore */ }
     const expandKey = Object.keys(HomePanels._expanded)
@@ -432,17 +404,6 @@ const HomePanels = {
     // set would keep ?expand=challenges on every later fetch, asking for a
     // finished-challenge list that would repopulate the block.
     if (empty && HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
-    // THE LEADERBOARD FILL — the standings preview under the challenge rows.
-    // It used to be a desktop-tile affordance: something had to spend the
-    // fixed 2x2 rectangle. THE UI OVERHAUL made it the point — the hamburger's
-    // Leaderboard row is gone and this is where the home screen shows the
-    // standings now — so it draws at every width. Only an EXPANDED challenge
-    // list suppresses it: that state exists to show every row the season has,
-    // and a standings preview under thirty challenges is not a preview.
-    const canFill = empty || !expanded;
-    const fill = canFill
-      ? HomePanels.fillView(panel.leaderboard, HomePanels.fillSlots())
-      : null;
     if (empty) {
       return {
         key: panel.key,
@@ -452,7 +413,6 @@ const HomePanels = {
         expanded: false,
         rows: [],
         metered: false,
-        fill,
       };
     }
     const { rows } = HomePanels.visibleSlots(panel, { slots: HomePanels.ROW_SLOTS });
@@ -467,99 +427,12 @@ const HomePanels = {
       // bar: reserving it on every row is what keeps the goals on one
       // baseline. A block with no numeric challenge reserves nothing.
       metered: rows.some((c) => HomePanels.hasMeter(c)),
-      fill,
-    };
-  },
-
-  // The LEADERBOARD block: a hairline label plus at most `slots` rows.
-  //
-  // Composition: the top rows in order, and the VIEWER'S OWN ROW last, tinted
-  // — the pattern every standings surface uses, and the reason the fill is
-  // worth the space at all ("where am I?"). A viewer already inside the top
-  // slice is highlighted in place rather than repeated, and the freed slot goes
-  // to the next entry down. A viewer with NO row on the board (the common case
-  // on the Topochain standings, which are keyed by participation rather than by
-  // having an account) simply doesn't get a line — the slot goes to one more
-  // participant instead of inventing a rank.
-  //
-  // The server decides which rows are the viewer's (`row.you`) and what the
-  // block is called (`fill.label`), so the client never string-matches names or
-  // has to know which board it was handed.
-  //
-  // Returns null when there is no room or no data, which is also what keeps
-  // `data-fill="0"` honest: the block's stamp counts the rows in THIS model, so
-  // it can never claim rows nothing drew.
-  fillView(fill, slots) {
-    if (!fill || slots < 1) return null;
-    const top = Array.isArray(fill.top) ? fill.top : [];
-    const viewer = fill.viewer || null;
-    const total = Number(fill.total) || 0;
-    const kind = fill.kind === 'kudos' ? 'kudos' : 'topochain';
-    // Is the viewer inside the part of the top list we can actually show?
-    const viewerInTop = !!viewer && top.slice(0, slots).some((r) => r && r.you);
-    let picks;
-    if (viewer && !viewerInTop) {
-      // Last slot belongs to the viewer; the rest is the head of the board.
-      picks = top.slice(0, slots - 1).map((r) => ({ row: r, you: false }));
-      picks.push({ row: viewer, you: true });
-    } else {
-      picks = top.slice(0, slots).map((r) => ({ row: r, you: !!(r && r.you) }));
-    }
-    if (!picks.length) return null;
-    return {
-      kind,
-      label: fill.label || 'Leaderboard',
-      rows: picks.map((p) => HomePanels.fillRowView(p.row, p.you, total, fill, kind)),
-    };
-  },
-
-  // Points are five-figure numbers on the Topochain standings (production's
-  // top score is ~59,000) against single digits on the kudos board, so the
-  // primary board's score is shortened — "59.1k" — to keep the name lane
-  // readable. The screen's own table keeps the full figures.
-  formatFillScore(score, kind) {
-    const n = Number(score) || 0;
-    if (kind === 'kudos' || n < 1000) return String(n);
-    try {
-      return new Intl.NumberFormat('en-US', {
-        notation: 'compact', maximumFractionDigits: 1,
-      }).format(n).toLowerCase();
-    } catch (err) {
-      return String(n);
-    }
-  },
-
-  // One leaderboard line. ./panels/challenges.tsx draws it on the challenge
-  // row's geometry — the rank in the glyph's 10px column, the name in the
-  // goal's lane, the score in the reward chip's slot — so the two kinds of row
-  // line up rather than reading as two lists jammed together.
-  fillRowView(row, isYou, total, fill, kind) {
-    // A podium-excluded standings row carries no rank — the screen's table
-    // draws those as an em dash, so the fill does too.
-    const rank = Number(row.rank) || 0;
-    const score = Number(row.score) || 0;
-    const who = String(row.name || '');
-    const metric = kind === 'kudos'
-      ? 'by kudos on merged proposals'
-      : `by points${fill && fill.event && fill.event.name ? ` in ${fill.event.name}` : ''}`;
-    const where = rank ? `#${rank}` : 'unranked';
-    return {
-      rankLabel: rank ? String(rank) : '—',
-      name: isYou ? 'You' : who,
-      scoreText: HomePanels.formatFillScore(score, kind),
-      hasScore: score > 0,
-      you: isYou,
-      tip: isYou
-        ? `You are ${where}${total ? ` of ${total}` : ''} ${metric}`
-        : `${who} · ${where} ${metric}`,
     };
   },
 
   // `renderChallengesPanel` and `_countFillRows` lived here. The first is
-  // `challengesView` above; the second counted `home-panel-lb-row` occurrences
-  // in the rendered fill so `data-fill` could never claim rows the renderer
-  // had declined to draw — with the fill as DATA the block simply stamps
-  // `fill.rows.length`, which is the same number by construction.
+  // `challengesView` above; the second counted the standings-preview rows the
+  // renderer had actually drawn, and went with the preview itself.
 
   // ── Discover ───────────────────────────────────────────────────────
   //
@@ -710,11 +583,12 @@ const HomePanels = {
     location.hash = '#leaderboard/challenges';
   },
 
-  // The desktop fill's destination: the full version of whichever board the
-  // fill previewed. The Topochain standings ARE the Leaderboard screen's
-  // primary tab, so they address as the bare hash; the kudos fallback goes to
-  // the Kudos tab's Top users view. Same real hash navigation as
-  // goToChallenges, so the device back gesture returns home.
+  // The Challenges heading's "Open leaderboard". The Topochain standings ARE
+  // the Leaderboard screen's primary tab, so they address as the bare hash;
+  // `kind` survives because the ⋮ menu's own row still passes one, and it is
+  // the same real hash navigation as goToChallenges, so the device back
+  // gesture returns home. (It used to be the standings PREVIEW's destination
+  // too, on whichever board that preview had drawn; the preview is gone.)
   goToLeaderboard(kind) {
     location.hash = kind === 'kudos' ? '#leaderboard/users' : '#leaderboard';
   },
@@ -722,10 +596,9 @@ const HomePanels = {
   // `_wire(section)` lived here: eight `querySelectorAll` sweeps re-run after
   // every paint, because the paint had just destroyed the nodes they were on.
   // Every one of them is a prop in ./panels/ now — the challenge rows and the
-  // footer's Open button (Challenges), the fill's rows and its footer control
-  // (the Leaderboard screen, on the tab each element carries), the bar's
-  // leaderboard link, the expand toggle, the ⋮, Discover's browse control, and
-  // the create tile's two branches.
+  // footer's Open button (Challenges), the heading's leaderboard link, the
+  // expand toggle, the ⋮, Discover's browse control, and the create tile's two
+  // branches.
   //
   // Two of its calls did not become props, for two different reasons:
   //

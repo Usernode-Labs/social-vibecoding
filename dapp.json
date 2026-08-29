@@ -586,9 +586,9 @@
       "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
     },
     {
-      "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
+      "name": "Challenges: with nothing running it says so, and shows only that (#947)",
       "path": "/?demo=1&challenges=none",
-      "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
+      "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"] .home-panel-row",
       "expectText": "No challenges are running right now"
     },
     {
@@ -818,17 +818,6 @@
       "path": "/?demo=1&shot=browse-detail#apps",
       "expectSelector": "#browse-detail-contributors .browse-contrib-row",
       "expectText": "staging-demo-lead"
-    },
-    {
-      "name": "Challenges widget: the fill previews the Topochain standings (#962)",
-      "path": "/?demo=1&challenges=none",
-      "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
-      "expectText": "staging-demo-validator"
-    },
-    {
-      "name": "Challenges widget: with no standings at all the fill falls back to the Kudos board (#962)",
-      "path": "/?demo=1&challenges=none&board=kudos",
-      "expectSelector": "#home-body [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"kudos\"] .home-panel-lb-row[data-lb-kind=\"kudos\"]"
     },
     {
       "name": "Bare #leaderboard renders all three tabs and opens on the standings (#962)",

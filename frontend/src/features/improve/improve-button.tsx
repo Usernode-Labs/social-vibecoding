@@ -35,12 +35,14 @@
  * button is the only way to reach the feedback dialog — an unsent draft with
  * no visible cue is the failure it exists to prevent.
  *
- * #1412 parked the green session count, the version dot and a
+ * #1412 parked the green session count, a version dot and a
  * spinner-while-working glyph here; the Streamlined Concept re-homed all of
  * that onto the hamburger's badge cluster — see <MenuIndicators/> in
  * ../header/platform-header.tsx (the working cue is the emerald badge's
  * pulse there) — because this slot slims to a plain word and the board keeps
- * the hamburger as THE indicator cluster.
+ * the hamburger as THE indicator cluster. The version dot has since been
+ * retired outright: the leading glyph already changes for exactly the states
+ * it coloured — see <ImproveIndicators/> below.
  *
  * ── The slot is NOT contextual any more ────────────────────────────────
  *
@@ -113,18 +115,19 @@ import { Improve } from './improve-controller.js';
 // reached the right margin the rest of the shell aligns to. The bell↔Improve
 // gap is the right group's `gap-1` now — spacing belongs to the layout, not to
 // the last child's margin (#1443).
+// `gap-1.5` between the glyph and the word. There was NO gap: the icon and
+// the "I" of Improve met, which reads as one smudged mark rather than as a
+// state cue in front of a label — worst on the spinner, whose arc has no
+// bounding whitespace of its own, and on the arrow-path, whose head reaches
+// the glyph box's right edge. 6px is the gap the header's own right group
+// uses between controls, so the pill's insides are spaced like the bar it
+// sits in. It costs the pill 6px of width and nothing of height, so the
+// header's 28px content row (tests/header-height-parity.test.js) is
+// untouched.
 const IMPROVE_BTN_CLASS =
-  'relative inline-flex items-center h-7 px-3 rounded-full '
+  'relative inline-flex items-center gap-1.5 h-7 px-3 rounded-full '
   + 'bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold '
   + 'un-touch-target';
-
-/** Amber while a build is on its way, violet once it is here to switch to. */
-const VERSION_DOT: Record<string, string> = {
-  deploying: 'bg-amber-500',
-  downloading: 'bg-amber-500',
-  ready: 'bg-violet-400',
-  failed: 'bg-violet-400',
-};
 
 // The glyph on the button's leading edge, and the reason the button has one.
 //
@@ -170,28 +173,43 @@ const AI_BADGE_CLS =
   + 'bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center';
 
 /**
- * What changed while you were not looking — three corners of one control.
+ * What changed while you were not looking.
  *
  * #1412 built these for the Improve button and the Streamlined header then
  * parked them on the hamburger, because that was the control whose drawer
  * held the sessions. It does not any more: this panel is the sessions
  * surface, so the cue that says "go and look" belongs on the control that
- * opens it. Everything #1412 built is kept whole — the writers publish
- * through improveStore (Improve.setSessionBadge / setVersionState, never a
- * classList write by id), the count carries `data-session-done` for the
- * declared checks, the dot knows the violet "platform rolled past this tab"
- * state, and a running turn shows as a pulse on the emerald badge, which also
- * appears dot-sized and empty when a turn runs with nothing unread yet.
+ * opens it. The writers publish through improveStore
+ * (Improve.setSessionBadge, never a classList write by id), the count carries
+ * `data-session-done` for the declared checks, and a running turn shows as a
+ * pulse on the emerald badge, which also appears dot-sized and empty when a
+ * turn runs with nothing unread yet.
  *
- * Three corners, one rule: the outbox dot is bottom-left, the session count
- * top-right, the version dot bottom-right — so a deploy rolling out during an
- * unread finish cannot hide underneath the count.
+ * ── #improve-version-dot is GONE, and the glyph is why ─────────────────
+ *
+ * It was the third corner: amber while a build was deploying or downloading,
+ * violet once one was here to reload onto. Every one of those states is
+ * ALREADY the glyph on the other side of the label — `BUSY_STATES` draws the
+ * spinner for exactly the amber pair and `READY_STATES` the arrow-path for
+ * exactly the violet one, off the same `versionState`. So the dot said a
+ * second time, in 8px of colour, what a 16px glyph was already saying in
+ * shape; and two cues for one fact is worse than one, because a reader who
+ * notices only the dot has to work out which of two colours it is.
+ *
+ * `Improve.setVersionState` and the store field are untouched — the glyph
+ * reads them. What is gone is the second renderer.
+ *
+ * Two corners left, and the rule that separated them still holds: the outbox
+ * dot is bottom-left and the session count top-right, so an unsent draft and
+ * an unread finish cannot hide under each other. The outbox dot STAYS — it is
+ * the one cue here the glyph does not cover, and an unsent feedback draft with
+ * nothing to show for it is the failure it exists to prevent.
  *
  * At rest everything is `hidden` with the exact class runs the prerender
  * ships, so hydration matches.
  */
 function ImproveIndicators() {
-  const { working, sessionUnread, sessionDone, versionState } = useStoreState(improveStore);
+  const { working, sessionUnread, sessionDone } = useStoreState(improveStore);
   const showAi = working || sessionUnread > 0;
   return (
     <>
@@ -203,18 +221,6 @@ function ImproveIndicators() {
           : `hidden ${AI_BADGE_CLS}`}
       >
         {sessionUnread > 0 ? (sessionUnread > 99 ? '99+' : String(sessionUnread)) : ''}
-      </span>
-      {/* Renamed with the move. It was #header-menu-deploy-dot, from when the
-          version rows lived in that drawer's footer — a `header-menu-*` id on
-          the Improve button would be a lie that outlives everyone who
-          remembers it. */}
-      <span
-        id="improve-version-dot"
-        className={VERSION_DOT[versionState]
-          ? `absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full ${VERSION_DOT[versionState]}`
-          : 'hidden absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500'}
-        aria-hidden="true"
-      >
       </span>
     </>
   );
