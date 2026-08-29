@@ -37,7 +37,9 @@ interface Code {
   used_at?: string;
 }
 
-const ROW = 'flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
+// 4px, not the control step: these rows fill a `${AdminUI.card} p-4`, so the
+// concentric inner is 20 − 16. Same recipe as admin-overview.tsx's ROW/TILE.
+const ROW = 'flex flex-wrap items-center justify-between gap-3 p-2.5 rounded bg-zinc-100 dark:bg-zinc-800';
 const LINK_BTN = 'text-xs text-zinc-500 dark:text-zinc-400 transition-colors';
 
 /**

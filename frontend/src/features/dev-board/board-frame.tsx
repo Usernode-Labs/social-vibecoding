@@ -393,7 +393,7 @@ export function DevBoardFrame({
         */}
         <div id="dev-locked-notice" className={locked ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
           {locked ? (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-400">
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-400">
               App is locked. An admin must approve any proposal before it applies.
             </div>
           ) : null}

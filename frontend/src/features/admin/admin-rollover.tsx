@@ -89,7 +89,10 @@ const ROLLOVER_STATES: Record<string, { label: string; cls: string }> = {
 // Local class recipes — complete literals, because Tailwind's extractor is a
 // regex over this file's source (see the AdminUI note in admin-console.js).
 const RolloverUI = Object.freeze({
-  tile: 'rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3',
+  // 4px on `tile` and `row` below, not the 12px control step: both fill a
+  // `${AdminUI.card} p-4`, so the concentric inner is 20 − 16. Same two
+  // recipes as admin-staging-reap.tsx's ReapUI and admin-overview.tsx.
+  tile: 'rounded bg-zinc-100 dark:bg-zinc-800 p-3',
   tileLabel: 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400',
   tileValue: 'text-2xl font-bold mt-1',
   lede: 'text-sm text-zinc-600 dark:text-zinc-400 mb-2',
@@ -97,7 +100,7 @@ const RolloverUI = Object.freeze({
   viewOnly: 'text-xs text-zinc-500 dark:text-zinc-400',
   startBtn: `${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-violet-600`,
   summary: 'text-sm text-zinc-500 dark:text-zinc-400 mt-3',
-  row: 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800',
+  row: 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded bg-zinc-100 dark:bg-zinc-800',
   rowMain: 'flex-1 min-w-0',
   rowSlug: 'font-mono text-sm',
   rowError: 'block text-xs text-red-700 mt-0.5 dark:text-red-400',

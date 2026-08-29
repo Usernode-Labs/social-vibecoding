@@ -334,6 +334,39 @@ module.exports = {
     // scale rather than editing call sites rounds every existing
     // `rounded-lg`/`rounded-xl` up one step at once, with no class churn.
     // `rounded-full` is untouched (pills stay pills).
-    borderRadius: { lg: '0.75rem', xl: '1rem', '2xl': '1.25rem', '3xl': '1.5rem' },
+    // ── FIVE radius steps, and the missing rung ────────────────────────
+    //
+    // The scale rendered SIXTEEN distinct radii across classes and app.css.
+    // Five survive, each with a role: 4 a mark inside a text line · 8 the
+    // INNER of a control · 12 a control · 20 a container · full a pill or
+    // disc. Plus 0.
+    //
+    // 8px is the whole point. Nested corners only look right when they share
+    // a centre of curvature — inner = outer − padding — and this product's
+    // three CORRECT nestings are all 12 outer / 4 padding / 8 inner
+    // (.dev-card-menu, .gc-mention-menu, .attr-popover). Every one of them had
+    // to spell that 8 as a bare `border-radius: 8px` in app.css, because no
+    // class could say it: 8px WAS `rounded-lg` in stock Tailwind and the
+    // reskin overrode it away, leaving a 6 -> 12 hole. 8 is the answer to five
+    // of the twenty common outer/padding combinations in the product, and
+    // there are 31 raw 8px declarations proving the demand.
+    //
+    // `md` 6 -> 8 was vetoed once, correctly, on the grounds that 17 raw
+    // `border-radius: 6px` declarations would then disagree with the 50
+    // `rounded-md` sites on the same cards. That veto is answered by moving
+    // those 17 in the same pass, not by leaving the hole open.
+    //
+    // sm 2 -> 4 merges a 4-site step into DEFAULT; 2px is not a radius anyone
+    // can see. xl 16 -> 20 and 3xl 24 -> 20 collapse three container radii to
+    // one — 16/20/24 are 1.25 and 1.2 apart, below anything perceivable on a
+    // card edge. lg (284 sites) and 2xl (39) do not move at all.
+    borderRadius: {
+      sm: '0.25rem',   //  4px  was 2 — merged into DEFAULT's value
+      md: '0.5rem',    //  8px  was 6 — THE INNER STEP, see above
+      lg: '0.75rem',   // 12px  unchanged, 256 sites
+      xl: '1.25rem',   // 20px  was 16 — merged up into the container step
+      '2xl': '1.25rem',// 20px  unchanged, 33 sites
+      '3xl': '1.25rem',// 20px  was 24 — 1 site
+    },
   } },
 };

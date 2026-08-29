@@ -62,12 +62,30 @@ import { useDevViewMode } from '../dev-board/view-mode-store';
 import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
 
-/** The recessed track, the same well the quick actions sit in. */
+/*
+ * The recessed track, the same well the quick actions sit in.
+ *
+ * CAPSULE IN CAPSULE, and it always was — `rounded-full` here only says out
+ * loud what the browser already drew. The track is 36px tall (an `h-8`
+ * segment plus `p-0.5` top and bottom) and carried `rounded-xl`; since the
+ * radius scale moved that is 20px, and CSS scales all four radii by
+ * 36/(20+20) = 0.9 when they overrun a side, so it rendered at 18px — exactly
+ * half the height. A capsule.
+ *
+ * That matters because the concentric inner of an 18px corner at a 2px inset
+ * is 16px, which is half of the segment's own 32px — a capsule too. So the
+ * pill is `rounded-full` rather than the `rounded-lg` (12px) it drifted to:
+ * concentric exactly, at any inset, with no number to keep in sync. It is
+ * also the geometry @/components/ui/tabs.tsx already ships for the identical
+ * strip (SECTION_TABS_LIST / SECTION_TAB_BASE are `rounded-full` on an `h-8`
+ * segment in a `p-0.5` track) — this file borrows that convention everywhere
+ * else, and the radius was the one place it had stopped.
+ */
 const TRACK =
-  'shrink-0 flex items-stretch gap-0.5 rounded-xl p-0.5 bg-zinc-100 dark:bg-white/5';
+  'shrink-0 flex items-stretch gap-0.5 rounded-full p-0.5 bg-zinc-100 dark:bg-white/5';
 
 const SEG =
-  'flex flex-1 basis-0 min-w-0 items-center justify-center h-8 px-1 rounded-[0.625rem] '
+  'flex flex-1 basis-0 min-w-0 items-center justify-center h-8 px-1 rounded-full '
   + 'text-sm font-medium transition-colors un-touch-target';
 
 /*

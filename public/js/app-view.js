@@ -11399,7 +11399,7 @@ const AppView = {
     const tile = (label, side, b, a, path, mobile) => {
       const v = side === 'before' ? b : a;
       if (!v) return '';
-      const mediaStyle = 'display:block;width:100%;max-height:160px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.25);border:1px solid rgba(127,127,127,0.25);border-radius:6px';
+      const mediaStyle = 'display:block;width:100%;max-height:160px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.25);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
       // Gallery mode (preload:'none') makes the clip click-to-play with the
       // still as its poster; the default stays the autoplaying silent loop.
       const media = v.webm

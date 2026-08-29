@@ -46,7 +46,12 @@ interface AppMeta {
 
 const FEATURED_MAX = 12;
 
-const ROW = 'flex items-center gap-2 rounded-md bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-2 py-1.5';
+// 4px: these rows fill a `${AdminUI.card} p-4`, so the concentric inner is
+// 20 − 16. (`rounded-md` was 6px before the scale consolidation and is 8 now —
+// it drifted FURTHER from concentric, which is what surfaced it.) ICON keeps
+// its own radius: at 8px of row padding the row's 4px curve is already spent,
+// so no inner corner is shared with it.
+const ROW = 'flex items-center gap-2 rounded bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-2 py-1.5';
 const MOVE_BTN = 'px-1.5 py-0.5 text-xs rounded text-zinc-500 dark:text-zinc-400 hover:text-violet-800 dark:hover:text-violet-300 disabled:opacity-30';
 const ICON = 'w-7 h-7 rounded-md bg-violet-500/10 flex items-center justify-center shrink-0';
 

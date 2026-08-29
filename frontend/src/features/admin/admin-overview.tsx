@@ -40,7 +40,11 @@ interface OverviewData {
   llmToday?: { totalSpendCents: number; users?: Array<{ username: string; costCents: number }> };
 }
 
-const TILE = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3';
+// CONCENTRIC with the card these sit in: AdminUI.card is 20px (`rounded-2xl`)
+// and the card takes `p-4`, so inner = 20 − 16 = 4px. `rounded`, not
+// `rounded-lg` — which is the CONTROL step and made a tile read rounder than
+// the surface holding it. ROW below was already 4px; the two now agree.
+const TILE = 'rounded bg-zinc-100 dark:bg-zinc-800 p-3';
 const TILE_LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400';
 const GROUP_LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-1';
 const ROW = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2 rounded bg-zinc-100 dark:bg-zinc-800';
