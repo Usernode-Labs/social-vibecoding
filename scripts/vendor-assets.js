@@ -62,6 +62,64 @@ const ASSETS = [
   },
 ];
 
+// The curated OpenMoji subset (CC BY-SA 4.0) for illustrated app icons and
+// decorative empty states. The full set is 4,495 files / 43 MB — vendoring a
+// curated slice keeps the payload sane, and frontend/src/lib/openmoji.js
+// falls back to the platform's plain text-emoji rendering for anything not
+// in the manifest, so a missing glyph is a soft degrade, never a broken tile.
+//
+// Listed as emoji literals (reviewable), resolved to OpenMoji's
+// codepoint-sequence filenames at vendor time; the run fails loudly if any
+// entry stops resolving against the pinned package. The set is versioned AS A
+// UNIT: the version lives in the generated manifest + the README table, not
+// in 200 individual filenames.
+const OPENMOJI = {
+  pkg: 'openmoji',
+  version: '17.0.0',
+  srcDir: path.join('color', 'svg'),
+  outDir: 'openmoji',
+  manifest: path.join(ROOT, 'frontend', 'src', 'lib', 'openmoji-manifest.json'),
+  emojis: [
+    // tech & dev
+    '🚀', '🛠️', '🔧', '🔨', '⚙️', '🧰', '💻', '🖥️', '📱', '⌨️', '🖱️', '💾', '💿', '📀', '📼', '🔌', '🔋', '📡', '🤖', '👾', '🧠', '⚡', '✨', '🔮', '💡', '🔦', '🔭', '🔬', '🧪', '🧬', '📊', '📈', '📉', '🧮', '🕹️', '📟', '🖨️', '📺', '📻',
+    // communication
+    '💬', '🗨️', '📣', '📢', '📨', '📬', '✉️', '📮', '🔔', '📞', '☎️',
+    // docs & productivity
+    '📝', '✏️', '🖊️', '🖋️', '🖍️', '📋', '📁', '📂', '🗂️', '📆', '📅', '⏰', '⏱️', '⏳', '📌', '📍', '✂️', '📎', '📏', '📐', '🗃️', '🗑️', '🔒', '🔓', '🔑', '🗝️', '🔍', '🔎', '📖', '📚', '📓', '📔', '📒', '📕', '📗', '📘', '📙', '📄', '🧾', '🏷️', '📦',
+    // money & commerce
+    '💰', '💵', '💸', '🪙', '💳', '🏦', '🛒', '🛍️', '💎', '⚖️',
+    // games & sport
+    '🎮', '🎲', '🎯', '🎰', '🧩', '♟️', '🃏', '🎳', '⚽', '🏀', '🏈', '⚾', '🎾', '🏐', '🏓', '🏸', '🏆', '🥇', '🏅', '🎖️',
+    // media & art
+    '🎨', '🖌️', '📷', '📸', '🎥', '🎬', '🎤', '🎧', '🎵', '🎶', '🎹', '🎸', '🥁', '🎺', '🎻', '🎭', '🖼️', '🎪',
+    // food & drink
+    '🍕', '🍔', '🍟', '🌮', '🌯', '🍜', '🍣', '🍩', '🍪', '🎂', '🍰', '🧁', '☕', '🍵', '🧋', '🍺', '🍷', '🥤', '🍎', '🍌', '🍉', '🍇', '🍓', '🥑', '🥕', '🌽', '🍞', '🥐', '🧀', '🍳',
+    // nature & animals
+    '🐱', '🐶', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🦁', '🐮', '🐷', '🐸', '🐵', '🐔', '🐧', '🐦', '🦆', '🦉', '🐴', '🦄', '🐝', '🦋', '🐌', '🐞', '🐢', '🐍', '🐙', '🦀', '🐠', '🐬', '🐳', '🦈', '🌱', '🌿', '🍀', '🌵', '🌴', '🌳', '🍄', '🌸', '🌼', '🌻', '🌹', '🌷', '💐', '🍁',
+    // space & weather
+    '☀️', '🌙', '⭐', '🌟', '💫', '🌈', '☁️', '❄️', '⛄', '🌊', '🔥', '💧', '🌍', '🌎', '🌏', '🪐', '🌌', '☄️',
+    // transport & places
+    '🚗', '🚕', '🚌', '🚲', '🛴', '🏍️', '✈️', '🚁', '🚢', '⛵', '🚂', '🏠', '🏡', '🏢', '🏰', '🗼', '🗽', '⛺', '🌋', '🏔️',
+    // people & gesture
+    '💪', '👀', '👁️', '👍', '✋', '🤝', '🙌', '👏', '🫶',
+    // symbols & celebration
+    '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '💖', '💘', '💝', '☮️', '☯️', '✅', '❌', '❓', '❗', '♻️', '🎉', '🎊', '🎁', '🎈', '🪄', '🧿', '🔱', '📛',
+    // the dev board's card-icon kinds (DEV_CARD_ICONS in public/js/app-view.js)
+    '🗳️',
+  ],
+};
+
+// OpenMoji names files by UPPERCASE hex codepoints joined with '-'. Single
+// glyphs drop the FE0F variation selector ('2764.svg' for ❤️) while keycap
+// and ZWJ sequences keep it ('0023-FE0F-20E3.svg'), so the resolver tries
+// the full sequence first, then the FE0F-stripped one.
+function openmojiCandidates(emoji) {
+  const cps = [...emoji].map((ch) => ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0'));
+  const full = cps.join('-');
+  const stripped = cps.filter((cp) => cp !== 'FE0F').join('-');
+  return full === stripped ? [full] : [full, stripped];
+}
+
 // Assets fetched from a version-pinned upstream URL rather than npm. The
 // Tailwind browser runtime is not published to npm for v3 (the package ships
 // only the CLI and directive stubs — no dist/ CSS, no browser bundle), so the
@@ -152,6 +210,49 @@ for (const asset of ASSETS) {
   console.log(`[vendor-assets] ${asset.pkg}@${installed} → public/vendor/${asset.to} (${(bytes.length / 1024).toFixed(1)} KB)`);
 }
 
+// OpenMoji: resolve every curated emoji to its file in the pinned package,
+// copy the slice, and write the lookup manifest the frontend helper imports.
+// A literal that stops resolving fails the run with the full list, so the
+// curated table and the pinned package can never silently drift apart.
+const openmojiDir = resolvePackageDir(OPENMOJI.pkg);
+{
+  const installed = JSON.parse(fs.readFileSync(path.join(openmojiDir, 'package.json'), 'utf8')).version;
+  if (installed !== OPENMOJI.version) {
+    fail(`${OPENMOJI.pkg} is installed at ${installed} but this script vendors ${OPENMOJI.version}. `
+      + 'Update package.json and the OPENMOJI table together.');
+  }
+}
+const openmojiOut = path.join(OUT_DIR, OPENMOJI.outDir);
+fs.rmSync(openmojiOut, { recursive: true, force: true });
+fs.mkdirSync(openmojiOut, { recursive: true });
+const openmojiNames = new Set();
+const openmojiMissing = [];
+for (const emoji of OPENMOJI.emojis) {
+  const name = openmojiCandidates(emoji)
+    .find((n) => fs.existsSync(path.join(openmojiDir, OPENMOJI.srcDir, `${n}.svg`)));
+  if (!name) { openmojiMissing.push(emoji); continue; }
+  openmojiNames.add(name);
+}
+if (openmojiMissing.length) {
+  fail(`these curated emojis resolve to no file in ${OPENMOJI.pkg}@${OPENMOJI.version}: ${openmojiMissing.join(' ')}`);
+}
+const openmojiSorted = [...openmojiNames].sort();
+const openmojiHash = crypto.createHash('sha384');
+let openmojiBytes = 0;
+for (const name of openmojiSorted) {
+  const bytes = fs.readFileSync(path.join(openmojiDir, OPENMOJI.srcDir, `${name}.svg`));
+  fs.writeFileSync(path.join(openmojiOut, `${name}.svg`), bytes);
+  openmojiHash.update(name).update(bytes);
+  openmojiBytes += bytes.length;
+}
+const openmojiDigest = openmojiHash.digest('base64');
+fs.writeFileSync(
+  OPENMOJI.manifest,
+  `${JSON.stringify({ version: OPENMOJI.version, icons: openmojiSorted }, null, 1)}\n`,
+);
+console.log(`[vendor-assets] ${OPENMOJI.pkg}@${OPENMOJI.version} → public/vendor/openmoji/ `
+  + `(${openmojiSorted.length} icons, ${(openmojiBytes / 1024).toFixed(1)} KB) + frontend/src/lib/openmoji-manifest.json`);
+
 const remoteRows = [];
 for (const asset of REMOTE_ASSETS) remoteRows.push(await fetchRemote(asset));
 
@@ -190,6 +291,22 @@ ${rows.map((r) => `| \`${r.to}\` | \`${r.pkg}\` | ${r.installed} | \`${r.from.sp
 ## What each one is for
 
 ${rows.map((r) => `- **${r.to}** — ${r.purpose}`).join('\n')}
+
+## OpenMoji illustrated icons (subtle-y2k theme)
+
+\`openmoji/\` holds a **curated slice** of the OpenMoji color set —
+${openmojiSorted.length} SVGs copied verbatim from the pinned
+\`openmoji@${OPENMOJI.version}\` package (\`color/svg/<sequence>.svg\`),
+used for illustrated app-icon tiles and decorative empty states. The slice
+is versioned **as a unit**: \`frontend/src/lib/openmoji-manifest.json\`
+records the version plus every vendored sequence, and the lookup helper
+falls back to plain text-emoji rendering for anything not listed, so the
+curation is a soft boundary. Aggregate digest of the slice
+(name+bytes, sorted): \`sha384-${openmojiDigest}\` (${(openmojiBytes / 1024).toFixed(1)} KB total).
+
+**License: CC BY-SA 4.0.** Attribution — *All emojis designed by
+[OpenMoji](https://openmoji.org) – the open-source emoji and icon project.
+License: [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).*
 
 ## Centrally-hosted Tailwind runtime (served to child apps)
 

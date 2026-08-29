@@ -38,6 +38,22 @@ integrity attribute at all.
 - **purify-3.4.4.min.js** — Sanitizes that rendered markdown before it reaches innerHTML. Never bypass it.
 - **qrcode-1.0.0.min.js** — Wallet address QR codes (frontend/src/features/header/wallet-sheet.js, frontend/src/features/settings/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.
 
+## OpenMoji illustrated icons (subtle-y2k theme)
+
+`openmoji/` holds a **curated slice** of the OpenMoji color set —
+290 SVGs copied verbatim from the pinned
+`openmoji@17.0.0` package (`color/svg/<sequence>.svg`),
+used for illustrated app-icon tiles and decorative empty states. The slice
+is versioned **as a unit**: `frontend/src/lib/openmoji-manifest.json`
+records the version plus every vendored sequence, and the lookup helper
+falls back to plain text-emoji rendering for anything not listed, so the
+curation is a soft boundary. Aggregate digest of the slice
+(name+bytes, sorted): `sha384-cPuGHVnX/BmRCE6IF0r0Fl2HF5L+ADEeu8/N8ZMDzdvyxcCY0A+yroaRi1DvczVN` (816.7 KB total).
+
+**License: CC BY-SA 4.0.** Attribution — *All emojis designed by
+[OpenMoji](https://openmoji.org) – the open-source emoji and icon project.
+License: [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).*
+
 ## Centrally-hosted Tailwind runtime (served to child apps)
 
 Not under `public/vendor/` — it lives at a versioned path modelled on
