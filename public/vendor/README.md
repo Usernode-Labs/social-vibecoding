@@ -36,7 +36,23 @@ integrity attribute at all.
 
 - **marked-15.0.12.min.js** — Markdown → HTML for renderMarkdown() in public/js/dev-chat.js (also used by group-chat.js and app-view.js).
 - **purify-3.4.4.min.js** — Sanitizes that rendered markdown before it reaches innerHTML. Never bypass it.
-- **qrcode-1.0.0.min.js** — Wallet address QR codes (frontend/src/features/header/wallet-sheet.js, frontend/src/features/settings/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.
+- **qrcode-1.0.0.min.js** — Wallet address QR codes (frontend/src/features/header/wallet-sheet.js, public/js/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.
+
+## Webfonts (subtle-y2k theme)
+
+Same provenance model, different payload: the two variable woff2 files below
+are the shell's whole typographic load, referenced by the `@font-face`
+block at the top of `public/css/app.css` and precached by the service
+worker. **License: SIL Open Font License 1.1** (Vercel's Geist project — the
+OFL permits bundling and self-hosting with the reserved font name intact).
+
+| File | Package | Version | Source path in package | sha384 (base64) | Size |
+|---|---|---|---|---|---|
+| `geist/geist-sans-variable-1.7.2.woff2` | `geist` | 1.7.2 | `dist/fonts/geist-sans/Geist-Variable.woff2` | `A5ySEfg9NyEbLKjQhPQfEHVPKSFpeOQZ+rQiDggpNR4NUm2QTPnqukMat4Sh5JvE` | 68.0 KB |
+| `geist/geist-mono-variable-1.7.2.woff2` | `geist` | 1.7.2 | `dist/fonts/geist-mono/GeistMono-Variable.woff2` | `44tW/M5QW+6GJCPDzYh2AGnj1NUglXiihbVcH+XYgX9HJ4Ngc0bfCNkvt8BI7rqN` | 69.7 KB |
+
+- **geist/geist-sans-variable-1.7.2.woff2** — Geist (variable, all weights) — the shell UI typeface. Loaded by the @font-face block at the top of public/css/app.css; fronts the `sans` stack in tailwind.config.js.
+- **geist/geist-mono-variable-1.7.2.woff2** — Geist Mono (variable) — technical/uppercase labels and code. The licensed stand-in for the brand kit's Berkeley Mono (commercial). Fronts the `mono` stack.
 
 ## Centrally-hosted Tailwind runtime (served to child apps)
 

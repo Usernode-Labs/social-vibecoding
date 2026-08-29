@@ -62,6 +62,28 @@ const ASSETS = [
   },
 ];
 
+// Webfonts, same provenance model as ASSETS (pinned devDependency → copy →
+// digest row in the README). Geist/Geist Mono are the subtle-y2k theme's
+// typefaces (OFL 1.1); the VARIABLE woff2 is one ~70 KB file per family that
+// covers every weight the shell uses, so these two files are the whole
+// typographic payload and small enough for the service worker to precache.
+const FONT_ASSETS = [
+  {
+    pkg: 'geist',
+    version: '1.7.2',
+    from: path.join('dist', 'fonts', 'geist-sans', 'Geist-Variable.woff2'),
+    to: path.join('geist', 'geist-sans-variable-1.7.2.woff2'),
+    purpose: 'Geist (variable, all weights) — the shell UI typeface. Loaded by the @font-face block at the top of public/css/app.css; fronts the `sans` stack in tailwind.config.js.',
+  },
+  {
+    pkg: 'geist',
+    version: '1.7.2',
+    from: path.join('dist', 'fonts', 'geist-mono', 'GeistMono-Variable.woff2'),
+    to: path.join('geist', 'geist-mono-variable-1.7.2.woff2'),
+    purpose: "Geist Mono (variable) — technical/uppercase labels and code. The licensed stand-in for the brand kit's Berkeley Mono (commercial). Fronts the `mono` stack.",
+  },
+];
+
 // Assets fetched from a version-pinned upstream URL rather than npm. The
 // Tailwind browser runtime is not published to npm for v3 (the package ships
 // only the CLI and directive stubs — no dist/ CSS, no browser bundle), so the
@@ -152,6 +174,26 @@ for (const asset of ASSETS) {
   console.log(`[vendor-assets] ${asset.pkg}@${installed} → public/vendor/${asset.to} (${(bytes.length / 1024).toFixed(1)} KB)`);
 }
 
+const fontRows = [];
+for (const asset of FONT_ASSETS) {
+  const dir = resolvePackageDir(asset.pkg);
+  const installed = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version;
+  if (installed !== asset.version) {
+    fail(`${asset.pkg} is installed at ${installed} but this script vendors ${asset.version}. `
+      + 'Update package.json and the FONT_ASSETS table (and the filenames) together.');
+  }
+  const src = path.join(dir, asset.from);
+  if (!fs.existsSync(src)) fail(`${asset.pkg}@${installed} has no ${asset.from} — check the package layout.`);
+
+  const bytes = fs.readFileSync(src);
+  const dest = path.join(OUT_DIR, asset.to);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, bytes);
+  const sha384 = crypto.createHash('sha384').update(bytes).digest('base64');
+  fontRows.push({ ...asset, installed, sha384, bytes: bytes.length });
+  console.log(`[vendor-assets] ${asset.pkg}@${installed} → public/vendor/${asset.to.split(path.sep).join('/')} (${(bytes.length / 1024).toFixed(1)} KB)`);
+}
+
 const remoteRows = [];
 for (const asset of REMOTE_ASSETS) remoteRows.push(await fetchRemote(asset));
 
@@ -190,6 +232,20 @@ ${rows.map((r) => `| \`${r.to}\` | \`${r.pkg}\` | ${r.installed} | \`${r.from.sp
 ## What each one is for
 
 ${rows.map((r) => `- **${r.to}** — ${r.purpose}`).join('\n')}
+
+## Webfonts (subtle-y2k theme)
+
+Same provenance model, different payload: the two variable woff2 files below
+are the shell's whole typographic load, referenced by the \`@font-face\`
+block at the top of \`public/css/app.css\` and precached by the service
+worker. **License: SIL Open Font License 1.1** (Vercel's Geist project — the
+OFL permits bundling and self-hosting with the reserved font name intact).
+
+| File | Package | Version | Source path in package | sha384 (base64) | Size |
+|---|---|---|---|---|---|
+${fontRows.map((r) => `| \`${r.to.split(path.sep).join('/')}\` | \`${r.pkg}\` | ${r.installed} | \`${r.from.split(path.sep).join('/')}\` | \`${r.sha384}\` | ${(r.bytes / 1024).toFixed(1)} KB |`).join('\n')}
+
+${fontRows.map((r) => `- **${r.to.split(path.sep).join('/')}** — ${r.purpose}`).join('\n')}
 
 ## Centrally-hosted Tailwind runtime (served to child apps)
 

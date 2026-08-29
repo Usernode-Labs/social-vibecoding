@@ -77,6 +77,13 @@ test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/usernode-bridge/v1/bridge.js'), 'shell');
   assert.equal(classify('GET', '/manifest.webmanifest'), 'shell');
   assert.equal(classify('GET', '/icons/icon-192.png'), 'shell');
+  // The whole /vendor/ prefix, not just its .js files: the theme's woff2
+  // pair is in SHELL_ASSETS (a precache that classify used to route around,
+  // making it write-only), and the OpenMoji SVGs rely on this rule for
+  // their cache-on-first-view offline behaviour.
+  assert.equal(classify('GET', '/vendor/geist/geist-sans-variable-1.7.2.woff2'), 'shell');
+  assert.equal(classify('GET', '/vendor/geist/geist-mono-variable-1.7.2.woff2'), 'shell');
+  assert.equal(classify('GET', '/vendor/openmoji/1F3AE.svg'), 'shell');
 });
 
 test('content-addressed images are cache-first', () => {

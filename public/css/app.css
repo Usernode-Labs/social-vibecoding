@@ -1,3 +1,25 @@
+/* ── Webfonts (subtle-y2k) ───────────────────────────────
+   Geist / Geist Mono, vendored same-origin (public/vendor/geist/ — see the
+   provenance table in public/vendor/README.md) and precached by the service
+   worker. One VARIABLE file per family carries every weight, and
+   `font-display: swap` keeps first paint on the system stack the shell
+   shipped before, so a cold cache degrades to exactly the old rendering.
+   The stacks that consume these live in tailwind.config.js (fontFamily). */
+@font-face {
+  font-family: 'Geist';
+  src: url('/vendor/geist/geist-sans-variable-1.7.2.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/vendor/geist/geist-mono-variable-1.7.2.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --bg-primary: #ffffff;
   --bg-secondary: #f5f5f7;
@@ -2281,7 +2303,7 @@ html, body {
 
 .card-menu-slug {
   font-size: 0.7rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-muted);
   overflow-wrap: anywhere;
 }
@@ -2487,7 +2509,7 @@ html, body {
   background: var(--bg-code-header);
   border-radius: 8px 8px 0 0;
   border-bottom: 1px solid var(--border);
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 .dc-code-block {
@@ -2498,7 +2520,7 @@ html, body {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-code);
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
   margin: 4px 0 8px;
 }
 
@@ -2510,7 +2532,7 @@ html, body {
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 12px;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 .dc-blockquote {
@@ -2527,7 +2549,7 @@ html, body {
 
 /* GFM task items (F4): non-interactive ☐ / ✓ marker, no list bullet. */
 .dc-task-item { list-style: none; margin-left: -16px; }
-.dc-task-check { display: inline-block; width: 1em; color: var(--text-muted); font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+.dc-task-check { display: inline-block; width: 1em; color: var(--text-muted); font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace; }
 .dc-task-check.dc-task-checked { color: var(--accent); }
 
 /* Held-back trailing line of a live-streaming assistant bubble: the
@@ -2549,7 +2571,7 @@ html, body {
 .dc-md-fallback {
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-code);
@@ -2597,7 +2619,7 @@ html, body {
   font-size: 11px;
   color: var(--text-muted);
   padding: 2px 0 2px 22px;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
   opacity: 0.7;
   white-space: nowrap;
   overflow: hidden;
@@ -2940,7 +2962,7 @@ html, body {
 }
 
 .dc-launchpad-resume-detail code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   color: var(--text-primary);
   word-break: break-all;
@@ -2996,7 +3018,7 @@ html, body {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-secondary);
@@ -3716,7 +3738,7 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
   margin: 0;
 }
 
@@ -3778,7 +3800,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 }
 
 .dc-cc-attached-log {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 11px;
   line-height: 1.5;
   /* Slightly duller than --text-muted so it sits visually below the
@@ -4744,7 +4766,7 @@ span.gc-vote-btn-icon { cursor: default; }
 /* ── Developer console ─────────────────────────────────── */
 
 #dev-console-panel {
-  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
 }
 
@@ -4996,7 +5018,7 @@ span.gc-vote-btn-icon { cursor: default; }
   align-items: center;
   padding: 0 5px;
   border-radius: 5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.92em;
   font-weight: 600;
   cursor: pointer;
@@ -6503,7 +6525,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   border-radius: 3px;
   padding: 0 4px;
   font-size: 10px;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 /* ── Scrollbar styling ─────────────────────────────────── */
@@ -6550,7 +6572,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   background: transparent;
   color: var(--text-secondary);
   font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   text-decoration: none;
   line-height: 1;
   border: 1px solid var(--border-light);
@@ -6829,7 +6851,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
      single string and lays out identically here. */
   display: inline-block;
   font-size: 11.5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   line-height: 1.4;
   letter-spacing: 0.01em;
   text-decoration: none;
@@ -6885,7 +6907,7 @@ a.drawer-meter:hover .drawer-meter-strong {
   background: none;
   font-size: 12px;
   font-weight: 500;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   line-height: 1.3;
   letter-spacing: 0.02em;
   color: var(--text-secondary);
@@ -6920,7 +6942,7 @@ a.drawer-ver:hover {
 button.drawer-ver--stale {
   color: var(--accent-light);
   cursor: pointer;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .dark button.drawer-ver--stale {
   color: var(--accent);
@@ -7838,8 +7860,8 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
 
 #admin-status-root .mono,
 #admin-node-root .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 /* The admin-only progressive-disclosure flag. On the standalone page this
@@ -8303,7 +8325,7 @@ body.is-offline [data-offline-disabled] {
   max-width: min(100%, 30rem);
   overflow: hidden;
   color: var(--text-primary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
   font-weight: 600;
   text-overflow: ellipsis;

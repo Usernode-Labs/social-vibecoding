@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "dompurify": "3.4.4",
+    "geist": "1.7.2",
     "marked": "15.0.12",
     "postgres": "3.4.9",
     "qrcodejs": "1.0.0",

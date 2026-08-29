@@ -125,6 +125,16 @@ module.exports = {
         500:'#1f86ff',600:'#0a6ee0',700:'#0062cc',800:'#004fa3',900:'#003b7a',950:'#00264d',
       },
     },
+    // Geist (vendored, see public/vendor/geist/ and the @font-face block at
+    // the top of public/css/app.css) ahead of the previous system stack, so
+    // every glyph the webfont covers renders Geist and everything else falls
+    // back to exactly what shipped before. Geist Mono likewise fronts the
+    // mono stack — it is the licensed stand-in for the brand kit's Berkeley
+    // Mono (commercial, not vendorable).
+    fontFamily: {
+      sans: ['Geist', 'ui-sans-serif', 'system-ui', 'sans-serif', '"Apple Color Emoji"', '"Segoe UI Emoji"', '"Segoe UI Symbol"', '"Noto Color Emoji"'],
+      mono: ['"Geist Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', '"Liberation Mono"', '"Courier New"', 'monospace'],
+    },
     // The language is markedly rounder than the shell was. Remapping the
     // scale rather than editing call sites rounds every existing
     // `rounded-lg`/`rounded-xl` up one step at once, with no class churn.

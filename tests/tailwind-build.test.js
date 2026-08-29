@@ -147,6 +147,15 @@ test('the platform palette reached the output', () => {
   assert.ok(!css.includes('245 243 255'), 'stock Tailwind violet-50 (#f5f3ff) leaked in — is the accent ramp closed across every shade?');
 });
 
+test('the theme fonts reached the output', () => {
+  // fontFamily.sans/mono front Geist / Geist Mono (vendored — see
+  // public/vendor/README.md). Preflight derives the document font from
+  // fontFamily.sans, so if this ever stops matching, the whole shell
+  // silently reverts to the system stack with no error anywhere.
+  assert.match(css, /font-family:\s*Geist,/, 'expected fontFamily.sans to front Geist (preflight html rule)');
+  assert.match(css, /Geist Mono/, 'expected fontFamily.mono to front Geist Mono');
+});
+
 test('future.hoverOnlyWhenSupported is compiled in', () => {
   // Without the flag, hover: utilities emit bare :hover rules, which stick
   // after taps on touch screens (the reason the flag was set originally).

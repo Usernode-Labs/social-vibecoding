@@ -180,6 +180,14 @@ const SHELL_ASSETS = [
   '/vendor/qrcode-1.0.0.min.js',
   '/vendor/marked-15.0.12.min.js',
   '/vendor/purify-3.4.4.min.js',
+  // The theme's two variable webfonts (~70 KB each), loaded by the
+  // @font-face block at the top of app.css. Precached so offline text
+  // renders in Geist rather than falling back to the system stack. The
+  // vendored OpenMoji SVGs are deliberately NOT listed: they are a
+  // per-app decorative upgrade with a text-emoji fallback, not something
+  // the shell needs to render.
+  '/vendor/geist/geist-sans-variable-1.7.2.woff2',
+  '/vendor/geist/geist-mono-variable-1.7.2.woff2',
   '/usernode-native/v1/native.css',
   '/usernode-native/v1/native.js',
   '/usernode-bridge.js',
@@ -364,6 +372,14 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // The shell's own static assets (incl. /usernode-bridge/v1/... versions).
   if (/\.(?:html|js|css|webmanifest)$/i.test(p)) return 'shell';
   if (p.startsWith('/icons/')) return 'shell';
+  // Everything vendored: the woff2 pair SHELL_ASSETS precaches (without this
+  // the precache was write-only — fonts fell through to `bypass` and the
+  // cached bytes were never served) and the OpenMoji SVGs, which are
+  // deliberately NOT precached but get cached here on first view, so a tile
+  // once seen renders offline. Network-first, not 'immutable': openmoji
+  // filenames carry no version, so cache-first could pin stale art across a
+  // package bump.
+  if (p.startsWith('/vendor/')) return 'shell';
 
   // Everything else (e.g. the /health connectivity probe) goes straight
   // to the network so it always reflects real reachability.
