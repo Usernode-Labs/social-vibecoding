@@ -35,9 +35,10 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND = path.join(dirname, '..');
 const ROOT = path.join(FRONTEND, '..');
 
-const { expectedStamp, formatHtmlStamp, formatJsStamp, HTML_OUTPUT, JS_OUTPUT } = require(
-  path.join(ROOT, 'scripts', 'shell-stamp.js'),
-);
+const {
+  expectedStamp, formatHtmlStamp, formatJsStamp, formatBuildMeta, normalizeBuildSha,
+  HTML_OUTPUT, JS_OUTPUT,
+} = require(path.join(ROOT, 'scripts', 'shell-stamp.js'));
 
 function fail(message) {
   console.error(`[build-shell] ${message}`);
@@ -164,10 +165,18 @@ const entryTag = '  <!-- React shell entry. A deferred module on purpose: it hyd
   + '       why that ordering — and the flushSync around hydration — is load-bearing. -->\n'
   + '  <script type="module" src="/shell/assets/shell.js"></script>\n';
 
+// Which platform build this document IS, baked in at generation time. Read
+// back by public/js/app.js as its boot baseline — see the header over
+// formatBuildMeta in scripts/shell-stamp.js for why a server answer could not
+// be one. `dev` outside a deploy, which is what /api/version reports there
+// too. Docker's shell stage forwards the GIT_SHA build arg into this process.
+const buildSha = normalizeBuildSha(process.env.GIT_SHA);
+
 const html = `<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
   ${formatHtmlStamp(stamp)}
+  ${formatBuildMeta(buildSha)}
   <!-- GENERATED FILE — DO NOT EDIT.
        Built from frontend/ by \`npm run build:shell\`; the markup lives in
        frontend/src/Shell.tsx and this <head> in frontend/src/head.html.
@@ -195,3 +204,4 @@ fs.rmSync(ssrDir, { recursive: true, force: true });
 
 console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes) and ${JS_OUTPUT} (${js.length} bytes)`);
 console.log(`[build-shell] stamped ${stamp.slice(0, 16)}… over ${files.length} input files`);
+console.log(`[build-shell] platform build id: ${buildSha}`);

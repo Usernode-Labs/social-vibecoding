@@ -120,6 +120,56 @@ function formatJsStamp(stamp) {
   return `${JS_STAMP_PREFIX}${stamp}${JS_STAMP_SUFFIX}`;
 }
 
+// ── The document's own build identity ──────────────────────────────────
+//
+// The stamp above answers "were these artifacts built from these sources".
+// This answers a different question, and one the RUNNING TAB has to be able
+// to ask: "which platform build am I?".
+//
+// It exists because App.loadedPlatformSha used to be captured from the FIRST
+// /api/version answer a document saw. That is only a boot baseline when the
+// document came off the network. A tab booting from the service worker's
+// shell cache — a cold start after the app was killed, exactly when a
+// platform deploy is most likely to have happened in between — runs the OLD
+// build and records the NEW sha as its baseline, so `isStale` is false
+// forever and the reload offer never appears. The one state the reload
+// button exists for was the one state it could not reach.
+//
+// So the document says which build it is, baked in when it was generated:
+// docker-compose.yml already passes GIT_SHA as a build arg, the Dockerfile's
+// shell stage forwards it, and public/js/app.js reads the meta below instead
+// of guessing from a server answer.
+//
+// `dev` is the honest answer, not a failure: local builds and the platform's
+// own staging previews are built without a GIT_SHA (see
+// src/services/mcp-connect-constants.js), and /api/version reports `dev`
+// there too — so both halves agree and the stale path stays off, which is
+// what it did before this existed.
+const BUILD_META_NAME = 'platform-build';
+
+// GIT_SHA arrives from the environment rather than from this repository, so
+// it is narrowed rather than trusted: a commit sha, or the `dev` sentinel.
+// Narrowed the same way src/services/mcp-connect-constants.js narrows it for
+// the MCP server version, and to the full 40 characters because /api/version
+// reports the full sha and app.js compares the two as strings.
+function normalizeBuildSha(value) {
+  const raw = String(value == null ? '' : value).trim().toLowerCase();
+  return /^[0-9a-f]{7,40}$/.test(raw) ? raw : 'dev';
+}
+
+function formatBuildMeta(sha) {
+  return `<meta name="${BUILD_META_NAME}" content="${normalizeBuildSha(sha)}">`;
+}
+
+// Pull the build id back out of a generated document. Kept beside the writer
+// so the two spellings cannot drift; public/js/app.js reads the real one
+// through the DOM.
+function readBuildMeta(html) {
+  const m = new RegExp(`<meta name="${BUILD_META_NAME}" content="([0-9a-f]{7,40}|dev)">`)
+    .exec(String(html));
+  return m ? m[1] : null;
+}
+
 module.exports = {
   ROOT,
   HTML_OUTPUT,
@@ -132,4 +182,8 @@ module.exports = {
   readJsStamp,
   formatHtmlStamp,
   formatJsStamp,
+  BUILD_META_NAME,
+  normalizeBuildSha,
+  formatBuildMeta,
+  readBuildMeta,
 };

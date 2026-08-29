@@ -13,9 +13,14 @@
 // Contracts pinned here:
 //   1. App.platformMovedOn compares against the boot-time
 //      loadedPlatformSha, fails closed, and ignores the dev sentinel.
+//      It answers with the SHA it saw, because the caller has to name
+//      the build it wants pulled down before it reloads onto it.
 //   2. App._refreshOrReload runs the data refresh, reloads only when
-//      the platform moved on, and parks the spinner (never-resolving
-//      promise) through the reload.
+//      the platform moved on, waits for that build to be in the shell
+//      cache first (see tests/shell-update-prefetch.test.js — a bare
+//      location.reload() loses sw.js's navigation race by design and
+//      serves the old document straight back), and parks the spinner
+//      (never-resolving promise) through the reload.
 //   3. enterAnonymous captures the boot SHA (the anonymous shell has
 //      no authed loadVersion poll to do it).
 //   4. The landing + home PTR callbacks route through _refreshOrReload.
@@ -42,8 +47,8 @@ test('platformMovedOn compares /api/version against the boot baseline', () => {
   );
   assert.ok(fn.length > 0, 'platformMovedOn is defined before _refreshOrReload');
   assert.match(fn, /fetch\('\/api\/version'\)/);
-  assert.match(fn, /info\.sha !== App\.loadedPlatformSha/,
-    'stale = served sha differs from the boot sha');
+  assert.match(fn, /info\.sha !== App\.loadedPlatformSha \? info\.sha : null/,
+    'stale = served sha differs from the boot sha, and the sha is what comes back');
   // dev servers report sha "dev" — never treat that as a deploy.
   assert.match(fn, /info\.sha === 'dev'/);
   // Fail closed: network errors must not become reload loops.
@@ -62,6 +67,12 @@ test('_refreshOrReload reloads only on a moved-on platform and parks the spinner
   assert.ok(fn.length > 0, '_refreshOrReload is defined');
   assert.match(fn, /App\.platformMovedOn\(\)/);
   assert.match(fn, /location\.reload\(\)/);
+  // The pull is the OTHER door into the same reload, and on a phone it is
+  // the one people actually use. It goes through the same prefetch the
+  // drawer's button has used since #1468 — behaviour executed against a
+  // stubbed worker in tests/shell-update-prefetch.test.js.
+  assert.match(fn, /App\._ensureShellPrefetch\(movedOnSha\)\.then\(\(\) => \{/,
+    'the new build is in the shell cache before the reload navigates onto it');
   // The never-resolving promise keeps the PTR puck spinning until the
   // reload tears the document down (no false "done" settle).
   assert.match(fn, /new Promise\(\(\) => \{\}\)/);
