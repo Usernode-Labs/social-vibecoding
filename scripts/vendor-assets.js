@@ -62,6 +62,86 @@ const ASSETS = [
   },
 ];
 
+// Webfonts, same provenance model as ASSETS (pinned devDependency → copy →
+// digest row in the README). Geist/Geist Mono are the subtle-y2k theme's
+// typefaces (OFL 1.1); the VARIABLE woff2 is one ~70 KB file per family that
+// covers every weight the shell uses, so these two files are the whole
+// typographic payload and small enough for the service worker to precache.
+const FONT_ASSETS = [
+  {
+    pkg: 'geist',
+    version: '1.7.2',
+    from: path.join('dist', 'fonts', 'geist-sans', 'Geist-Variable.woff2'),
+    to: path.join('geist', 'geist-sans-variable-1.7.2.woff2'),
+    purpose: 'Geist (variable, all weights) — the shell UI typeface. Loaded by the @font-face block at the top of public/css/app.css; fronts the `sans` stack in tailwind.config.js.',
+  },
+  {
+    pkg: 'geist',
+    version: '1.7.2',
+    from: path.join('dist', 'fonts', 'geist-mono', 'GeistMono-Variable.woff2'),
+    to: path.join('geist', 'geist-mono-variable-1.7.2.woff2'),
+    purpose: "Geist Mono (variable) — technical/uppercase labels and code. The licensed stand-in for the brand kit's Berkeley Mono (commercial). Fronts the `mono` stack.",
+  },
+];
+
+// The curated OpenMoji subset (CC BY-SA 4.0) for illustrated app icons and
+// decorative empty states. The full set is 4,495 files / 43 MB — vendoring a
+// curated slice keeps the payload sane, and frontend/src/lib/openmoji.js
+// falls back to the platform's plain text-emoji rendering for anything not
+// in the manifest, so a missing glyph is a soft degrade, never a broken tile.
+//
+// Listed as emoji literals (reviewable), resolved to OpenMoji's
+// codepoint-sequence filenames at vendor time; the run fails loudly if any
+// entry stops resolving against the pinned package. The set is versioned AS A
+// UNIT: the version lives in the generated manifest + the README table, not
+// in 200 individual filenames.
+const OPENMOJI = {
+  pkg: 'openmoji',
+  version: '17.0.0',
+  srcDir: path.join('color', 'svg'),
+  outDir: 'openmoji',
+  manifest: path.join(ROOT, 'frontend', 'src', 'lib', 'openmoji-manifest.json'),
+  emojis: [
+    // tech & dev
+    '🚀', '🛠️', '🔧', '🔨', '⚙️', '🧰', '💻', '🖥️', '📱', '⌨️', '🖱️', '💾', '💿', '📀', '📼', '🔌', '🔋', '📡', '🤖', '👾', '🧠', '⚡', '✨', '🔮', '💡', '🔦', '🔭', '🔬', '🧪', '🧬', '📊', '📈', '📉', '🧮', '🕹️', '📟', '🖨️', '📺', '📻',
+    // communication
+    '💬', '🗨️', '📣', '📢', '📨', '📬', '✉️', '📮', '🔔', '📞', '☎️',
+    // docs & productivity
+    '📝', '✏️', '🖊️', '🖋️', '🖍️', '📋', '📁', '📂', '🗂️', '📆', '📅', '⏰', '⏱️', '⏳', '📌', '📍', '✂️', '📎', '📏', '📐', '🗃️', '🗑️', '🔒', '🔓', '🔑', '🗝️', '🔍', '🔎', '📖', '📚', '📓', '📔', '📒', '📕', '📗', '📘', '📙', '📄', '🧾', '🏷️', '📦',
+    // money & commerce
+    '💰', '💵', '💸', '🪙', '💳', '🏦', '🛒', '🛍️', '💎', '⚖️',
+    // games & sport
+    '🎮', '🎲', '🎯', '🎰', '🧩', '♟️', '🃏', '🎳', '⚽', '🏀', '🏈', '⚾', '🎾', '🏐', '🏓', '🏸', '🏆', '🥇', '🏅', '🎖️',
+    // media & art
+    '🎨', '🖌️', '📷', '📸', '🎥', '🎬', '🎤', '🎧', '🎵', '🎶', '🎹', '🎸', '🥁', '🎺', '🎻', '🎭', '🖼️', '🎪',
+    // food & drink
+    '🍕', '🍔', '🍟', '🌮', '🌯', '🍜', '🍣', '🍩', '🍪', '🎂', '🍰', '🧁', '☕', '🍵', '🧋', '🍺', '🍷', '🥤', '🍎', '🍌', '🍉', '🍇', '🍓', '🥑', '🥕', '🌽', '🍞', '🥐', '🧀', '🍳',
+    // nature & animals
+    '🐱', '🐶', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🦁', '🐮', '🐷', '🐸', '🐵', '🐔', '🐧', '🐦', '🦆', '🦉', '🐴', '🦄', '🐝', '🦋', '🐌', '🐞', '🐢', '🐍', '🐙', '🦀', '🐠', '🐬', '🐳', '🦈', '🌱', '🌿', '🍀', '🌵', '🌴', '🌳', '🍄', '🌸', '🌼', '🌻', '🌹', '🌷', '💐', '🍁',
+    // space & weather
+    '☀️', '🌙', '⭐', '🌟', '💫', '🌈', '☁️', '❄️', '⛄', '🌊', '🔥', '💧', '🌍', '🌎', '🌏', '🪐', '🌌', '☄️',
+    // transport & places
+    '🚗', '🚕', '🚌', '🚲', '🛴', '🏍️', '✈️', '🚁', '🚢', '⛵', '🚂', '🏠', '🏡', '🏢', '🏰', '🗼', '🗽', '⛺', '🌋', '🏔️',
+    // people & gesture
+    '💪', '👀', '👁️', '👍', '✋', '🤝', '🙌', '👏', '🫶',
+    // symbols & celebration
+    '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '💖', '💘', '💝', '☮️', '☯️', '✅', '❌', '❓', '❗', '♻️', '🎉', '🎊', '🎁', '🎈', '🪄', '🧿', '🔱', '📛',
+    // the dev board's card-icon kinds (DEV_CARD_ICONS in public/js/app-view.js)
+    '🗳️',
+  ],
+};
+
+// OpenMoji names files by UPPERCASE hex codepoints joined with '-'. Single
+// glyphs drop the FE0F variation selector ('2764.svg' for ❤️) while keycap
+// and ZWJ sequences keep it ('0023-FE0F-20E3.svg'), so the resolver tries
+// the full sequence first, then the FE0F-stripped one.
+function openmojiCandidates(emoji) {
+  const cps = [...emoji].map((ch) => ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0'));
+  const full = cps.join('-');
+  const stripped = cps.filter((cp) => cp !== 'FE0F').join('-');
+  return full === stripped ? [full] : [full, stripped];
+}
+
 // Assets fetched from a version-pinned upstream URL rather than npm. The
 // Tailwind browser runtime is not published to npm for v3 (the package ships
 // only the CLI and directive stubs — no dist/ CSS, no browser bundle), so the
@@ -152,6 +232,69 @@ for (const asset of ASSETS) {
   console.log(`[vendor-assets] ${asset.pkg}@${installed} → public/vendor/${asset.to} (${(bytes.length / 1024).toFixed(1)} KB)`);
 }
 
+const fontRows = [];
+for (const asset of FONT_ASSETS) {
+  const dir = resolvePackageDir(asset.pkg);
+  const installed = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version;
+  if (installed !== asset.version) {
+    fail(`${asset.pkg} is installed at ${installed} but this script vendors ${asset.version}. `
+      + 'Update package.json and the FONT_ASSETS table (and the filenames) together.');
+  }
+  const src = path.join(dir, asset.from);
+  if (!fs.existsSync(src)) fail(`${asset.pkg}@${installed} has no ${asset.from} — check the package layout.`);
+
+  const bytes = fs.readFileSync(src);
+  const dest = path.join(OUT_DIR, asset.to);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(dest, bytes);
+  const sha384 = crypto.createHash('sha384').update(bytes).digest('base64');
+  fontRows.push({ ...asset, installed, sha384, bytes: bytes.length });
+  console.log(`[vendor-assets] ${asset.pkg}@${installed} → public/vendor/${asset.to.split(path.sep).join('/')} (${(bytes.length / 1024).toFixed(1)} KB)`);
+}
+
+// OpenMoji: resolve every curated emoji to its file in the pinned package,
+// copy the slice, and write the lookup manifest the frontend helper imports.
+// A literal that stops resolving fails the run with the full list, so the
+// curated table and the pinned package can never silently drift apart.
+const openmojiDir = resolvePackageDir(OPENMOJI.pkg);
+{
+  const installed = JSON.parse(fs.readFileSync(path.join(openmojiDir, 'package.json'), 'utf8')).version;
+  if (installed !== OPENMOJI.version) {
+    fail(`${OPENMOJI.pkg} is installed at ${installed} but this script vendors ${OPENMOJI.version}. `
+      + 'Update package.json and the OPENMOJI table together.');
+  }
+}
+const openmojiOut = path.join(OUT_DIR, OPENMOJI.outDir);
+fs.rmSync(openmojiOut, { recursive: true, force: true });
+fs.mkdirSync(openmojiOut, { recursive: true });
+const openmojiNames = new Set();
+const openmojiMissing = [];
+for (const emoji of OPENMOJI.emojis) {
+  const name = openmojiCandidates(emoji)
+    .find((n) => fs.existsSync(path.join(openmojiDir, OPENMOJI.srcDir, `${n}.svg`)));
+  if (!name) { openmojiMissing.push(emoji); continue; }
+  openmojiNames.add(name);
+}
+if (openmojiMissing.length) {
+  fail(`these curated emojis resolve to no file in ${OPENMOJI.pkg}@${OPENMOJI.version}: ${openmojiMissing.join(' ')}`);
+}
+const openmojiSorted = [...openmojiNames].sort();
+const openmojiHash = crypto.createHash('sha384');
+let openmojiBytes = 0;
+for (const name of openmojiSorted) {
+  const bytes = fs.readFileSync(path.join(openmojiDir, OPENMOJI.srcDir, `${name}.svg`));
+  fs.writeFileSync(path.join(openmojiOut, `${name}.svg`), bytes);
+  openmojiHash.update(name).update(bytes);
+  openmojiBytes += bytes.length;
+}
+const openmojiDigest = openmojiHash.digest('base64');
+fs.writeFileSync(
+  OPENMOJI.manifest,
+  `${JSON.stringify({ version: OPENMOJI.version, icons: openmojiSorted }, null, 1)}\n`,
+);
+console.log(`[vendor-assets] ${OPENMOJI.pkg}@${OPENMOJI.version} → public/vendor/openmoji/ `
+  + `(${openmojiSorted.length} icons, ${(openmojiBytes / 1024).toFixed(1)} KB) + frontend/src/lib/openmoji-manifest.json`);
+
 const remoteRows = [];
 for (const asset of REMOTE_ASSETS) remoteRows.push(await fetchRemote(asset));
 
@@ -190,6 +333,36 @@ ${rows.map((r) => `| \`${r.to}\` | \`${r.pkg}\` | ${r.installed} | \`${r.from.sp
 ## What each one is for
 
 ${rows.map((r) => `- **${r.to}** — ${r.purpose}`).join('\n')}
+
+## Webfonts (subtle-y2k theme)
+
+Same provenance model, different payload: the two variable woff2 files below
+are the shell's whole typographic load, referenced by the \`@font-face\`
+block at the top of \`public/css/app.css\` and precached by the service
+worker. **License: SIL Open Font License 1.1** (Vercel's Geist project — the
+OFL permits bundling and self-hosting with the reserved font name intact).
+
+| File | Package | Version | Source path in package | sha384 (base64) | Size |
+|---|---|---|---|---|---|
+${fontRows.map((r) => `| \`${r.to.split(path.sep).join('/')}\` | \`${r.pkg}\` | ${r.installed} | \`${r.from.split(path.sep).join('/')}\` | \`${r.sha384}\` | ${(r.bytes / 1024).toFixed(1)} KB |`).join('\n')}
+
+${fontRows.map((r) => `- **${r.to.split(path.sep).join('/')}** — ${r.purpose}`).join('\n')}
+
+## OpenMoji illustrated icons (subtle-y2k theme)
+
+\`openmoji/\` holds a **curated slice** of the OpenMoji color set —
+${openmojiSorted.length} SVGs copied verbatim from the pinned
+\`openmoji@${OPENMOJI.version}\` package (\`color/svg/<sequence>.svg\`),
+used for illustrated app-icon tiles and decorative empty states. The slice
+is versioned **as a unit**: \`frontend/src/lib/openmoji-manifest.json\`
+records the version plus every vendored sequence, and the lookup helper
+falls back to plain text-emoji rendering for anything not listed, so the
+curation is a soft boundary. Aggregate digest of the slice
+(name+bytes, sorted): \`sha384-${openmojiDigest}\` (${(openmojiBytes / 1024).toFixed(1)} KB total).
+
+**License: CC BY-SA 4.0.** Attribution — *All emojis designed by
+[OpenMoji](https://openmoji.org) – the open-source emoji and icon project.
+License: [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).*
 
 ## Centrally-hosted Tailwind runtime (served to child apps)
 
