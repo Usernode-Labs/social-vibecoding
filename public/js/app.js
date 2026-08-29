@@ -1,3 +1,29 @@
+// ── The build this document IS ─────────────────────────────────────────
+//
+// `<meta name="platform-build">`, written into public/index.html by
+// frontend/scripts/build-shell.mjs from the GIT_SHA the image was built with.
+//
+// This is the boot baseline `loadedPlatformSha` needs, and the reason it
+// cannot be recovered from /api/version: that endpoint answers "what is the
+// SERVER running", and the document is not always from the server. A tab
+// booting off the service worker's shell cache — a cold start after the app
+// was killed, which is exactly when a deploy has most likely happened in
+// between — runs the OLD build and would record the NEW sha as its own
+// baseline. `isStale` then goes false permanently: no prefetch, no dot on the
+// Improve button, no reload offer. The one state that whole machine exists
+// for was the one state it could never observe.
+//
+// Returns null outside a deploy (`dev`, and local/staging builds have no
+// GIT_SHA at all), which leaves the old first-poll capture in loadVersion as
+// the fallback — the same behaviour those environments had before.
+function documentPlatformSha() {
+  try {
+    const meta = document.querySelector('meta[name="platform-build"]');
+    const value = meta && meta.getAttribute('content');
+    return value && value !== 'dev' ? value : null;
+  } catch { return null; }
+}
+
 // Top-level `const` doesn't auto-write to `window` in non-module
 // scripts, so other modules that read `window.App.…` instead of the
 // bare `App.…` identifier silently see `undefined`. Mirror onto
@@ -1010,11 +1036,14 @@ const App = {
     location.hash = '#admin';
   },
 
-  // The SHA the currently-loaded client JS was shipped with. Captured on
-  // first poll so we can compare against later polls and surface a
-  // "platform updated, reload to use new features" hint when the running
-  // platform has moved on but this tab hasn't.
-  loadedPlatformSha: null,
+  // The SHA the currently-loaded client JS was shipped with, so later polls
+  // can surface a "platform updated, reload to use new features" hint when the
+  // running platform has moved on but this tab hasn't.
+  //
+  // Read from the DOCUMENT (see documentPlatformSha above), because the
+  // document is the thing whose age is in question. Null outside a deploy —
+  // and only then does loadVersion's first-poll capture below fill it in.
+  loadedPlatformSha: documentPlatformSha(),
 
   // ── The update the reload button is offering ──────────────────────────
   //
@@ -1030,10 +1059,13 @@ const App = {
   // downloaded the update instead of switching to it.
   //
   // It was worse than a no-op, because the tab then went quiet about it:
-  // `loadedPlatformSha` is captured from the FIRST /api/version answer this
-  // document sees, so the reloaded-but-still-old document records the NEW sha
-  // as its own baseline, `isStale` goes false and the pill stops offering
-  // anything. The reload looked like it worked.
+  // `loadedPlatformSha` used to be captured from the FIRST /api/version
+  // answer each document saw, so the reloaded-but-still-old document recorded
+  // the NEW sha as its own baseline, `isStale` went false and the pill
+  // stopped offering anything. The reload looked like it had worked. (That
+  // half is fixed at its root now — the baseline is read from the document's
+  // own `<meta name="platform-build">`, so a document that did not come from
+  // the network can no longer mistake the server's sha for its own.)
   //
   // So the new build is pulled into the shell cache first (see
   // public/sw.js's `prefetch-shell`), and only then is a reload offered. Once
@@ -1046,16 +1078,36 @@ const App = {
    *
    * Idempotent per SHA — renderPlatformVersionPill calls this from the stale
    * branch, which runs on every 10s poll for as long as the tab stays behind.
+   *
+   * Returns a promise that resolves with the settled state ('ready' or
+   * 'failed') and NEVER rejects. The pill ignores it and repaints from
+   * `App.shellUpdate` instead, because it is already on a timer; pull-to-
+   * refresh awaits it, because a pull has one moment to get this right and
+   * reloading before the cache holds the new build is the exact mistake this
+   * whole machine was built to stop. It is bounded by the same
+   * SHELL_PREFETCH_TIMEOUT_MS bail-out below, so awaiting it cannot hang a
+   * gesture.
    */
   _ensureShellPrefetch(sha) {
-    if (!sha) return;
-    if (App.shellUpdate && App.shellUpdate.sha === sha) return;
+    if (!sha) return Promise.resolve('failed');
+    if (App.shellUpdate && App.shellUpdate.sha === sha) {
+      // Already asked for this build. Hand back the in-flight promise so a
+      // second caller waits on the same download rather than starting one.
+      return App._shellPrefetchSettled && App._shellPrefetchSettled.sha === sha
+        ? App._shellPrefetchSettled.promise
+        : Promise.resolve(App.shellUpdate.state);
+    }
     App.shellUpdate = { sha, state: 'fetching' };
+
+    let resolveSettled;
+    const promise = new Promise((resolve) => { resolveSettled = resolve; });
+    App._shellPrefetchSettled = { sha, promise };
 
     const settle = (state) => {
       if (!App.shellUpdate || App.shellUpdate.sha !== sha) return;
       if (App.shellUpdate.state !== 'fetching') return;
       App.shellUpdate = { sha, state };
+      resolveSettled(state);
       // Repaint from the last answer rather than re-polling: the pill is the
       // only thing this changes, and /api/version is already on a 10s timer.
       if (App._lastVersionInfo) App.renderPlatformVersionPill(App._lastVersionInfo);
@@ -1069,7 +1121,8 @@ const App = {
       // network: offer it immediately rather than waiting for a reply that
       // is never coming.
       App.shellUpdate = { sha, state: 'ready' };
-      return;
+      resolveSettled('ready');
+      return promise;
     }
 
     try {
@@ -1080,14 +1133,18 @@ const App = {
       controller.postMessage({ type: 'prefetch-shell' }, [channel.port2]);
     } catch {
       settle('failed');
-      return;
+      return promise;
     }
     // A worker that never answers — killed mid-fetch, or a browser that
     // dropped the port — must not leave the row saying "updating…" forever.
     // 'failed' still OFFERS the reload: it may serve the old build, which is
     // exactly today's behaviour and strictly better than no way back.
     setTimeout(() => settle('failed'), App.SHELL_PREFETCH_TIMEOUT_MS);
+    return promise;
   },
+
+  /** `{ sha, promise }` for the prefetch in flight — see _ensureShellPrefetch. */
+  _shellPrefetchSettled: null,
 
   // Generous on purpose: this is a full re-download of the shell on whatever
   // connection the tab has, and the only cost of waiting is that the reload
@@ -1112,10 +1169,12 @@ const App = {
     } catch {}
   },
 
-  // True when /api/version reports a different SHA than the one this
-  // document booted with — i.e. the platform redeployed and this tab is
-  // running stale client code. Fail-closed (false) on any error: a
-  // flaky network must never turn a data refresh into a reload loop.
+  // The SHA /api/version reports when it differs from the one this document
+  // booted with — i.e. the platform redeployed and this tab is running stale
+  // client code. Null when it hasn't. The SHA rather than a bare true because
+  // the caller has to name the build it wants pulled into the shell cache
+  // before it reloads onto it. Fail-closed (false) on any error: a flaky
+  // network must never turn a data refresh into a reload loop.
   async platformMovedOn() {
     try {
       const res = await fetch('/api/version');
@@ -1123,12 +1182,13 @@ const App = {
       const info = await res.json();
       if (!info.sha || info.sha === 'dev') return false;
       if (!App.loadedPlatformSha) {
-        // No boot baseline (first poll lost a race, or the boot fetch
-        // failed) — record what we see and treat this tab as current.
+        // No boot baseline. Since the document carries its own build id this
+        // only happens outside a deploy (no GIT_SHA, so the meta reads `dev`)
+        // — record what we see and treat this tab as current.
         App.loadedPlatformSha = info.sha;
         return false;
       }
-      return info.sha !== App.loadedPlatformSha;
+      return info.sha !== App.loadedPlatformSha ? info.sha : null;
     } catch { return false; }
   },
 
@@ -1137,14 +1197,32 @@ const App = {
   // full reload — pull-to-refresh means "get me the latest", and data
   // alone can't deliver new client code. The never-resolving promise
   // keeps the kit's spinner up until the reload tears the page down.
+  //
+  // The reload waits for the new build to be IN THE SHELL CACHE first, for
+  // the reason _ensureShellPrefetch exists: `location.reload()` is an
+  // ordinary navigation, public/sw.js races it against the cached document on
+  // a deadline shorter than a round trip, and losing that race — the designed
+  // case — serves the old build straight back and latches the whole load onto
+  // it. The Improve drawer's reload button has held that line since #1468;
+  // pull-to-refresh was the other door into the same reload and still went
+  // through it unguarded, so on a phone (where the pull IS how people
+  // refresh) the update quietly failed to arrive.
+  //
+  // Awaiting is safe: _ensureShellPrefetch always settles, within
+  // SHELL_PREFETCH_TIMEOUT_MS at the latest, and 'failed' still reloads —
+  // that is exactly the old behaviour, and a pull with no way forward would
+  // be worse. The spinner stays up throughout, which is honest: the download
+  // is what the pull is now waiting on.
   _refreshOrReload(refresh) {
     return Promise.all([
       Promise.resolve().then(refresh).catch(() => {}),
       App.platformMovedOn(),
-    ]).then(([, movedOn]) => {
-      if (!movedOn) return undefined;
-      location.reload();
-      return new Promise(() => {});
+    ]).then(([, movedOnSha]) => {
+      if (!movedOnSha) return undefined;
+      return App._ensureShellPrefetch(movedOnSha).then(() => {
+        location.reload();
+        return new Promise(() => {});
+      });
     });
   },
 

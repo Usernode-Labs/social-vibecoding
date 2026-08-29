@@ -8,6 +8,20 @@ RUN npm ci --ignore-scripts
 WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
+# The commit this image is being built from, so the generated document can
+# carry its OWN build identity (a <meta name="platform-build">) instead of the
+# running tab having to infer one from the first /api/version answer it sees —
+# which a tab booting off the service worker's shell cache gets wrong, in
+# exactly the case the reload offer exists for. docker-compose.yml already
+# passes this arg on the platform service anchor, so all three build paths
+# (deploy.sh, platform-rollout.sh, rollback.sh) already supply it and each
+# patches .env's GIT_SHA BEFORE building. It was simply never declared here,
+# so it was dropped. Declared LAST in this stage so a new commit does not
+# invalidate the npm ci layer above.
+# `dev` is the honest default: staging previews of the platform are built
+# without a GIT_SHA and /api/version reports `dev` there too.
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
 RUN node frontend/scripts/build-shell.mjs
 
 # Stage 2 — compile Tailwind after the shell prerender. public/index.html is a

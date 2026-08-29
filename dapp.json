@@ -1813,6 +1813,11 @@
       "expectText": "new version available"
     },
     {
+      "name": "The image-built document carries its own platform build identity",
+      "path": "/",
+      "expectSelector": "head > meta[name=\"platform-build\"][content]"
+    },
+    {
       "name": "The Improve panel: quick actions, the app's views, the work in flight, then what the app is (#1443)",
       "path": "/?demo=1",
       "expectSelector": "#improve-body > #improve-quick-actions + #improve-views + #improve-sessions + #improve-footer"

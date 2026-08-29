@@ -35,6 +35,14 @@
 //  4. Every failure mode still ends at a reload button — a refused port, a
 //     worker that never answers, no worker at all. A tab with no way forward
 //     would be worse than today's behaviour, which is what 'failed' restores.
+//  5. PULL-TO-REFRESH GOES THROUGH THE SAME DOOR. The drawer's button was
+//     never the only reload: App._refreshOrReload upgrades a pull to a full
+//     reload whenever the platform has moved on, and it called
+//     location.reload() directly. On a phone the pull IS how people refresh,
+//     so the guard that made the button honest was being walked straight past
+//     by the gesture most likely to be used. The pull now waits for the same
+//     prefetch to settle, and — like the button — reloads anyway when it
+//     fails, so a pull can never become a dead gesture.
 //
 // Points 1-4 are executed, not grepped: both methods touch only `App`,
 // `document`, `navigator` and `MessageChannel`, so they run in a vm against
@@ -73,20 +81,32 @@ function sliceMethod(src, signature, indent = '  ') {
 
 const METHODS = `({
 ${sliceMethod(appJs, '_ensureShellPrefetch(sha) {')},
+${sliceMethod(appJs, 'async platformMovedOn() {')},
+${sliceMethod(appJs, '_refreshOrReload(refresh) {')},
 ${sliceMethod(appJs, 'renderPlatformVersionPill(info) {')}
 })`;
 
 // A minimal world: the pill's slot, a controller that hands us its port, and
 // a setTimeout we fire by hand so the 30s bail-out is testable in no time.
-function harness({ controller = true, postThrows = false } = {}) {
+function harness({ controller = true, postThrows = false, serverSha = null } = {}) {
   const slot = { innerHTML: '' };
   const timers = [];
   const posted = [];
+  const reloads = [];
   let port = null;
 
   const ctx = {
     console,
     Date,
+    Promise,
+    // /api/version, as pull-to-refresh sees it. `serverSha` null means the
+    // endpoint is not part of the test and must not be called.
+    fetch: async (url) => {
+      assert.equal(url, '/api/version');
+      assert.ok(serverSha, 'this harness was not given a server answer');
+      return { ok: true, json: async () => ({ sha: serverSha }) };
+    },
+    location: { reload: () => { reloads.push(Date.now()); } },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
     document: {
       getElementById: (id) => (id === 'platform-version-pill-slot' ? slot : null),
@@ -115,6 +135,7 @@ function harness({ controller = true, postThrows = false } = {}) {
   const App = Object.assign({
     loadedPlatformSha: null,
     shellUpdate: null,
+    _shellPrefetchSettled: null,
     _lastVersionInfo: null,
     SHELL_PREFETCH_TIMEOUT_MS: 30_000,
     ImproveStatus: { refreshDeployDot() { App.dotRefreshes = (App.dotRefreshes || 0) + 1; } },
@@ -126,6 +147,7 @@ function harness({ controller = true, postThrows = false } = {}) {
     slot,
     posted,
     timers,
+    reloads,
     /** The worker's answer, delivered down the port the page transferred. */
     reply: (data) => port.postMessage(data),
     /** Fire the longest pending timer — the bail-out. */
@@ -350,4 +372,108 @@ test('the document is refreshed under the key the navigation actually reads', ()
   assert.equal(sw.SHELL_ASSETS[0], '/index.html');
   const navigate = swJs.slice(swJs.indexOf('async function networkFirstNavigate'));
   assert.match(navigate.slice(0, 3000), /matchCache: \(\) => cache\.match\('\/index\.html'\)/);
+});
+
+// ─── 6. Pull-to-refresh uses the same door ──────────────────────────────
+//
+// A pull has ONE moment to get this right. There is no 10s poll behind it and
+// no row to re-read: the gesture either lands on the new build or it silently
+// serves the old one back and latches the whole load onto it.
+
+const PULLED = { current: 0 };
+const pull = (h) => h.App._refreshOrReload(() => { PULLED.current += 1; });
+
+test('a pull with the platform still where it was reloads nothing', async () => {
+  const h = harness({ serverSha: BOOTED });
+  h.App.loadedPlatformSha = BOOTED;
+  await pull(h);
+  assert.equal(h.posted.length, 0, 'nothing to download');
+  assert.equal(h.reloads.length, 0, 'and nothing to reload onto');
+});
+
+test('a pull on a moved-on platform downloads the build BEFORE reloading', async () => {
+  const h = harness({ serverSha: STALE.sha });
+  h.App.loadedPlatformSha = BOOTED;
+
+  const settled = pull(h);
+  // One turn of the loop is enough for the fetch and the prefetch ask; the
+  // reload must NOT have happened yet — that is the whole point.
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.posted.length, 1, 'the worker was asked for the new build');
+  assert.equal(h.posted[0].type, 'prefetch-shell');
+  assert.equal(h.reloads.length, 0,
+    'reloading here is the exact mistake: sw.js would race it and serve the old document back');
+
+  h.reply({ ok: true });
+  await Promise.race([settled, new Promise((r) => setImmediate(r))]);
+  assert.equal(h.reloads.length, 1, 'and only once the cache holds the new build');
+});
+
+test('the pull still reloads when the download fails — never a dead gesture', async () => {
+  const h = harness({ serverSha: STALE.sha });
+  h.App.loadedPlatformSha = BOOTED;
+
+  const settled = pull(h);
+  await new Promise((r) => setImmediate(r));
+  h.reply({ ok: false });
+  await Promise.race([settled, new Promise((r) => setImmediate(r))]);
+  assert.equal(h.reloads.length, 1,
+    "'failed' is the pre-change behaviour, and a pull that does nothing is worse");
+});
+
+test('a worker that never answers bails the pull out on the same timeout', async () => {
+  const h = harness({ serverSha: STALE.sha });
+  h.App.loadedPlatformSha = BOOTED;
+
+  const settled = pull(h);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.reloads.length, 0);
+  assert.ok(h.timers.some((t) => t.ms === 30_000),
+    'bounded by SHELL_PREFETCH_TIMEOUT_MS, so the spinner cannot hang forever');
+
+  h.fireTimeouts();
+  await Promise.race([settled, new Promise((r) => setImmediate(r))]);
+  assert.equal(h.reloads.length, 1);
+});
+
+test('the pull joins a download the drawer already started, rather than restarting it', async () => {
+  // Both doors are open at once whenever the drawer is on screen. Two full
+  // shell refetches over a phone connection for one deploy is exactly what
+  // the per-SHA idempotence exists to stop.
+  const h = harness({ serverSha: STALE.sha });
+  h.App.loadedPlatformSha = BOOTED;
+  h.App._lastVersionInfo = STALE;
+  h.App.renderPlatformVersionPill(STALE);
+  assert.equal(h.posted.length, 1);
+
+  const settled = pull(h);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.posted.length, 1, 'one download, two waiters');
+  assert.equal(h.reloads.length, 0, 'and the pull waits on it like anyone else');
+
+  h.reply({ ok: true });
+  await Promise.race([settled, new Promise((r) => setImmediate(r))]);
+  assert.equal(h.reloads.length, 1);
+});
+
+test('a pull after the download already settled reloads without asking again', async () => {
+  const h = harness({ serverSha: STALE.sha });
+  h.App.loadedPlatformSha = BOOTED;
+  h.App._lastVersionInfo = STALE;
+  h.App.renderPlatformVersionPill(STALE);
+  h.reply({ ok: true });
+  assert.equal(h.App.shellUpdate.state, 'ready');
+
+  const settled = pull(h);
+  await Promise.race([settled, new Promise((r) => setImmediate(r))]);
+  assert.equal(h.posted.length, 1, 'the build is already in the cache');
+  assert.equal(h.reloads.length, 1);
+});
+
+test('the data refresh runs on every pull, moved on or not', async () => {
+  const before = PULLED.current;
+  const h = harness({ serverSha: BOOTED });
+  h.App.loadedPlatformSha = BOOTED;
+  await pull(h);
+  assert.equal(PULLED.current, before + 1, 'a pull is a data refresh first');
 });
