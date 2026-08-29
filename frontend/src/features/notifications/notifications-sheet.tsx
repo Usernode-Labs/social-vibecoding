@@ -65,6 +65,7 @@ import { useState, type ReactNode } from 'react';
 
 import { ChatIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
+import { EmojiTileGlyph } from '../apps/app-card-view';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
@@ -116,7 +117,18 @@ function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
       className={'w-8 h-8 shrink-0 rounded-full bg-violet-500/10 text-violet-500 '
         + 'flex items-center justify-center text-sm font-semibold'}
     >
-      {view.icon || initial}
+      {view.icon
+        // notifications.js picks these icons as emoji strings — the same
+        // OpenMoji upgrade (and slice-miss / load-failure fallback) every
+        // tile surface gets, one size down for the w-8 disc.
+        ? (
+          <EmojiTileGlyph
+            emoji={view.icon}
+            textClass="text-sm leading-none"
+            imgClass="w-5 h-5 object-contain"
+          />
+        )
+        : initial}
     </span>
   );
 }

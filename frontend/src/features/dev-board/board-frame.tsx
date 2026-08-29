@@ -60,6 +60,7 @@
 
 import { ChatIcon, ChevronRightIcon } from '@/components/ui/icons';
 
+import { openmojiSrcFor } from '../../lib/openmoji';
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
@@ -192,7 +193,23 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
         title="Open the app's general chat"
       >
         <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-700 flex items-center justify-center shrink-0 dark:text-violet-400">
-          <ChatIcon className="w-5 h-5" aria-hidden="true" />
+          {/* The same chip DEV_CARD_ICONS' `chat` kind wears on the feed —
+              OpenMoji 💬, ChatIcon as the slice-miss fallback (mirrors
+              card/dev-card.tsx CardIcon). The chip's own tint is NOT this
+              change's to move: colour is a separate decision with its own
+              evidence, so the class string above is left exactly as it was. */}
+          {openmojiSrcFor('💬') ? (
+            <img
+              src={openmojiSrcFor('💬')!}
+              alt=""
+              loading="lazy"
+              draggable="false"
+              aria-hidden="true"
+              className="w-6 h-6 object-contain"
+            />
+          ) : (
+            <ChatIcon className="w-5 h-5" aria-hidden="true" />
+          )}
         </span>
         <span className="flex-1 min-w-0">
           <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
