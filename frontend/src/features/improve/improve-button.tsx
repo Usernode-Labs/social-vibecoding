@@ -100,7 +100,7 @@ import { Improve } from './improve-controller.js';
 // glyphs reads as their caption; the board's answer is the one filled control
 // in the bar.
 //
-// `violet-600` is #0a6ee0 — the shell's accent is a BLUE, not a violet (see
+// `violet-600` is #ffc93a — the shell's accent is a YELLOW, not a violet (see
 // tailwind.config.js: the scale name is an identity, not a hue), which is
 // exactly the blue the board draws.
 //

@@ -29,7 +29,7 @@ import { cn } from '@/lib/utils';
  *
  *   [lead] [layout] [radius + surface] [disabled] [padding + weight] [ink]
  *   shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm
- *   font-medium text-white transition-colors
+ *   font-medium text-black transition-colors
  *
  * so that is the group order. The base string is EMPTY: the old base led with
  * `font-medium transition-colors`, which no hand-written button in the shell
@@ -123,11 +123,11 @@ const buttonVariants = cva('', {
     variant: {
       // The primary action, everywhere.
       default: 'rounded-lg bg-violet-600 hover:bg-violet-500',
-      // The profile screen's spelling of the same box, one step darker on
-      // hover. #profile-edit-save and the publish/unpublish button both write
-      // it; normalising them to `default` would be a visual change, and this
-      // slice's contract is that there are none.
-      tapPrimary: 'rounded-lg bg-violet-600 hover:bg-violet-700',
+      // The profile screen's spelling of the same box. Its hover used to go
+      // one step DARKER (hover:bg-violet-500); the yellow accent forced the
+      // lighter direction everywhere — violet-700 is the dark-gold INK shade
+      // now, and near-black ink on it would be unreadable mid-hover.
+      tapPrimary: 'rounded-lg bg-violet-600 hover:bg-violet-500',
       // The bell drawer's invite Accept button — a `text-xs` action row inside
       // the notifications panel, one radius step up from `compact`.
       pill: 'rounded-md bg-violet-600 hover:bg-violet-500',
@@ -140,12 +140,15 @@ const buttonVariants = cva('', {
       roundedFull: 'rounded-full',
       // #agent-files-cancel — the neutral bordered sibling of `compact`.
       //
-      // THIS VARIANT CARRIES NO INK, and the default ink is `solid` (white).
-      // `variant="outline"` on its own therefore renders white text on a
-      // white card — an invisible label, which is exactly how the three
-      // messages dialogs shipped their Cancel/Done buttons until a contrast
-      // sweep measured them at 1.00:1. Every call site must pass an ink;
-      // `muted` is what the two that got it right pass.
+      // THIS VARIANT CARRIES NO INK, and the default ink is `solid` — which
+      // was white when the accent was blue, and `variant="outline"` on its
+      // own therefore rendered white text on a white card: an invisible
+      // label, which is exactly how the three messages dialogs shipped their
+      // Cancel/Done buttons until a contrast sweep measured them at 1.00:1.
+      // The yellow accent's near-black `solid` makes that failure mode
+      // merely wrong-looking rather than invisible, but the rule stands:
+      // every call site must pass an ink; `muted` is what the two that got
+      // it right pass.
       outline: 'rounded border border-zinc-300 dark:border-zinc-700',
       // The widget language's SECONDARY action: a filled neutral pill, not an
       // outline. The language separates by figure/ground rather than by rule,
@@ -219,25 +222,31 @@ const buttonVariants = cva('', {
       // Text-only controls add no box of their own.
       inline: 'text-sm',
     },
-    /** Text colour, hover fill where the surface has none, and the transition. */
+    /** Text colour, hover fill where the surface has none, and the transition.
+     *
+     * The `solid*` values are "the ink that sits on the accent fill", and the
+     * subtle-y2k v2 accent is a vibrant YELLOW — no yellow can carry white
+     * text (~1.5:1), so these moved from `text-white` to near-black
+     * (12.6:1 on the fill). Values move, names stay: the same ramp-identity
+     * rule the `zinc`/`violet` scales run under. */
     ink: {
       none: '',
-      solid: 'text-white transition-colors',
+      solid: 'text-black transition-colors',
       // #profile-edit-save and the profile's publish/unpublish button, which
       // fold the text size and weight into this trailing run and carry no
       // transition. Their `disabled:opacity-60` is written at the very end of
       // the string, so it rides in through className like the three buttons
       // named in the header.
-      solidText: 'text-white text-sm font-medium',
+      solidText: 'text-black text-sm font-medium',
       // The auth screens' spelling of the same pair — see the header.
-      solidLate: 'transition-colors text-white',
+      solidLate: 'transition-colors text-black',
       // #browse-detail-open's two states. The browse detail page is the one
       // place that writes the whole surface after the transition, because the
-      // button swaps its ENTIRE fill (violet action ↔ inert grey) on
+      // button swaps its ENTIRE fill (accent action ↔ inert grey) on
       // `canOpen` and the shared run in front of it never changes. Carrying
       // the fill in `variant` would put the swap two groups earlier and move
       // the rendered class attribute.
-      fillLate: 'transition-colors bg-violet-600 hover:bg-violet-500 text-white',
+      fillLate: 'transition-colors bg-violet-600 hover:bg-violet-500 text-black',
       unavailableLate:
         'transition-colors bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed dark:text-zinc-400',
       // #agent-files-cancel.

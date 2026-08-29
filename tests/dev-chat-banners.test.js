@@ -235,9 +235,11 @@ test('the one primary-filled button routes through <Button>, byte for byte', () 
   const tag = html.match(/<button[^>]*>/)[0];
   assert.equal(
     tag,
+    // `text-black`, not text-white: the yellow accent's ink flip lives in
+    // the cva table's `solid` value, so the byte-for-byte pin moves with it.
     '<button id="dc-new-change-btn" type="button" class="rounded-md bg-violet-600 '
     + 'hover:bg-violet-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 '
-    + 'text-xs font-medium text-white transition-colors shrink-0">'
+    + 'text-xs font-medium text-black transition-colors shrink-0">'
   );
 });
 

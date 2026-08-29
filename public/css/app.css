@@ -22,20 +22,20 @@
 
 :root {
   --bg-primary: #ffffff;
-  --bg-secondary: #f5f5f7;
-  --bg-tertiary: #e3e3e6;
-  --bg-code: #f5f5f7;
-  --bg-code-header: #e3e3e6;
+  --bg-secondary: #f7f7f3;
+  --bg-tertiary: #e4e4df;
+  --bg-code: #f7f7f3;
+  --bg-code-header: #e4e4df;
   --bg-card: rgba(10, 124, 255, 0.06);
-  --bg-card-alt: rgba(16, 185, 129, 0.04);
-  --bg-input: #f5f5f7;
-  --border: #d1d1d6;
-  --border-light: #e3e3e6;
-  --text-primary: #0a0a0a;
-  --text-secondary: #3a3a3c;
-  --text-muted: #6c6c70;
-  --text-faint: #8e8e93;
-  --text-code: #3a3a3c;
+  --bg-card-alt: rgba(105, 168, 85, 0.05);
+  --bg-input: #f7f7f3;
+  --border: #d9d9d3;
+  --border-light: #e4e4df;
+  --text-primary: #131311;
+  --text-secondary: #3c3c36;
+  --text-muted: #6b6b64;
+  --text-faint: #97968e;
+  --text-code: #3c3c36;
   /* #0a6ee0, not the #0a7cff eyedropped from the design screenshots.
      White on that blue is 3.93:1 — below AA for normal text, which made EVERY
      primary button in the product (Send, Open, Publish profile, Improve, New
@@ -824,35 +824,32 @@ html.un-kb .platform-safe-sheet {
 }
 
 .dark {
-  --bg-primary: #0b0b0c;
-  --bg-secondary: #1c1c1e;
-  --bg-tertiary: #2c2c2e;
-  --bg-code: #141416;
-  --bg-code-header: #1c1c1e;
+  --bg-primary: #0e0e0b;
+  --bg-secondary: #1f1f1b;
+  --bg-tertiary: #2d2d28;
+  --bg-code: #161613;
+  --bg-code-header: #1f1f1b;
   --bg-card: rgba(90, 169, 255, 0.10);
-  --bg-card-alt: rgba(16, 185, 129, 0.05);
-  --bg-input: #1c1c1e;
-  --border: #2c2c2e;
-  --border-light: #3a3a3c;
-  --text-primary: #f5f5f7;
-  --text-secondary: #e3e3e6;
-  /* #8e8e93, not the #6c6c70 this carried. --text-muted was the ONE token in
-     this block with no dark counterpart — it kept its light value, so on a
-     near-black page it was as dark as it is on a near-white one. Every muted
-     label the token paints measured 3.2:1 or worse against the dark ground,
-     and the create modal's unselected segment pills 2.7:1 against their track.
-     One step up the neutral ramp reads at 6.0 on the ground and 5.3 on a card,
-     and is still plainly quieter than --text-secondary above. */
-  --text-muted: #8e8e93;
-  --text-faint: #8e8e93;
-  --text-code: #e3e3e6;
+  --bg-card-alt: rgba(138, 189, 116, 0.05);
+  --bg-input: #1f1f1b;
+  --border: #2d2d28;
+  --border-light: #3c3c36;
+  --text-primary: #f7f7f3;
+  --text-secondary: #e4e4df;
+  /* One step up the neutral ramp from where an earlier bug left this token
+     (it once kept its LIGHT value on the dark ground and measured 3.2:1 or
+     worse on every muted label). The 400 reads 6.5:1 on the ground and
+     5.6:1 on a card, and is still plainly quieter than --text-secondary. */
+  --text-muted: #97968e;
+  --text-faint: #97968e;
+  --text-code: #e4e4df;
   --accent: #5aa9ff;
   --accent-light: #8cc4ff;
   --accent-tint: rgba(90, 169, 255, 0.14);
   --accent-ink: #0b0b0c;
   /* One step UP from the page here, not white: the page is near-black, so a
      bubble has to be lighter than it or it stops being a bubble. */
-  --bubble-bg: #1c1c1e;
+  --bubble-bg: #1f1f1b;
 
   /* Dark counterparts of the semantic state tokens. Every --state-*
      declared on :root has one here — tests/dev-color-tokens.test.js
@@ -906,12 +903,12 @@ html.un-kb .platform-safe-sheet {
   --un-surface: var(--bg-secondary);
   --un-hairline: var(--border);
   --un-muted: var(--text-faint);
-  --un-group-bg: #1c1c1e;
-  --un-sheet-bg: #1c1c1e;
-  /* One step lighter than --bg-primary (#0b0b0c) so the floating menu
+  --un-group-bg: #1f1f1b;
+  --un-sheet-bg: #1f1f1b;
+  /* One step lighter than --bg-primary (#0e0e0b) so the floating menu
      reads as elevated above the page rather than merging into it. */
-  --un-popover-bg: #1c1c1e;
-  --un-navbar-bg: rgba(11, 11, 12, 0.78);
+  --un-popover-bg: #1f1f1b;
+  --un-navbar-bg: rgba(14, 14, 11, 0.78);
   --un-zoom-bg: var(--bg-primary);
 }
 
@@ -1295,8 +1292,8 @@ html, body {
 
    The hairline uses a DIFFERENT token per mode. --border-light is
    inverted between the two palettes: in light mode it is fainter than
-   --border (#e4e4e7 vs #d4d4d8), but in dark mode it is stronger
-   (#484870 vs #2e2e50). Using it in both would make the tile ring the
+   --border (#e4e4df vs #d9d9d3), but in dark mode it is stronger
+   (#3c3c36 vs #2d2d28). Using it in both would make the tile ring the
    most contrasty border on a dark page, wrapped around every icon —
    so dark mode steps down to --border instead (see below). The token
    itself is left alone; 17 other rules depend on its current value.
@@ -1330,6 +1327,70 @@ html, body {
    step to the same faint token. */
 .app-icon-tile[data-icon="letter"] {
   color: var(--text-faint);
+  /* The aura-lemon wash: the FALLBACK for a tile whose renderer set no
+     data-aura (the per-app rules below out-cascade this by source order
+     wherever the attribute is present). */
+  background-image: radial-gradient(closest-side, rgba(255, 174, 43, 0.14), rgba(255, 206, 77, 0.10), rgba(255, 238, 111, 0.07));
+}
+.dark .app-icon-tile[data-icon="letter"] {
+  background-image: radial-gradient(closest-side, rgba(255, 174, 43, 0.10), rgba(255, 206, 77, 0.06), rgba(255, 238, 111, 0.04));
+}
+/* subtle-y2k v2: THE PER-APP AURA. Every app deterministically wears one of
+   the brand kit's four radial gradients (AppCard.auraFor — a slug hash), as
+   a soft wash behind letter glyphs and OpenMoji artwork; a custom image
+   icon covers the whole tile, so the wash simply never shows through it.
+   Stops are the Figma auras' hues at whisper alpha — full-strength they
+   would bury the glyph. The canvas widget tile paints the same stops
+   (home.js AURA_STOPS, gen 7), so the homescreen PNG matches the DOM tile.
+
+   This knowingly reverses the retired six-pastel per-app tint (the note
+   above stands as history): Lukas's call — four auras from one gradient
+   family read as one shelf where six unrelated pastels did not. The
+   forbidden `data-tint` attribute stays forbidden; this is data-aura. */
+.app-icon-tile[data-aura="sky"] {
+  background-image: radial-gradient(closest-side, rgba(78, 77, 252, 0.16), rgba(27, 186, 253, 0.11), rgba(2, 240, 253, 0.07));
+}
+.app-icon-tile[data-aura="meadow"] {
+  background-image: radial-gradient(closest-side, rgba(65, 178, 74, 0.16), rgba(139, 214, 105, 0.11), rgba(214, 250, 135, 0.07));
+}
+.app-icon-tile[data-aura="sunset"] {
+  background-image: radial-gradient(closest-side, rgba(251, 23, 157, 0.13), rgba(252, 87, 80, 0.10), rgba(253, 150, 2, 0.07));
+}
+.app-icon-tile[data-aura="lemon"] {
+  background-image: radial-gradient(closest-side, rgba(255, 174, 43, 0.20), rgba(255, 206, 77, 0.14), rgba(255, 238, 111, 0.10));
+}
+/* Dark mode: same hues, stepped up slightly — the washes sit on the darker
+   tile face (--bg-secondary) where the light-mode alphas nearly vanish. */
+.dark .app-icon-tile[data-aura="sky"] {
+  background-image: radial-gradient(closest-side, rgba(78, 77, 252, 0.28), rgba(27, 186, 253, 0.16), rgba(2, 240, 253, 0.08));
+}
+.dark .app-icon-tile[data-aura="meadow"] {
+  background-image: radial-gradient(closest-side, rgba(65, 178, 74, 0.26), rgba(139, 214, 105, 0.14), rgba(214, 250, 135, 0.07));
+}
+.dark .app-icon-tile[data-aura="sunset"] {
+  background-image: radial-gradient(closest-side, rgba(251, 23, 157, 0.22), rgba(252, 87, 80, 0.13), rgba(253, 150, 2, 0.08));
+}
+.dark .app-icon-tile[data-aura="lemon"] {
+  background-image: radial-gradient(closest-side, rgba(255, 174, 43, 0.24), rgba(255, 206, 77, 0.14), rgba(255, 238, 111, 0.08));
+}
+/* The dev board's card icon chips wear the same four auras, assigned
+   SEMANTICALLY rather than by slug hash (DEV_CARD_ICONS in app-view.js:
+   meadow = work/done, sky = proposals/discussion, sunset = issues,
+   lemon = governance). Slightly stronger stops than the app tiles — a
+   w-9 chip has less area to make a wash legible in. One rule set for both
+   modes: these chips sit on white/dark cards where the mid-alphas read
+   fine either way. */
+.dev-icon-aura-sky {
+  background-image: radial-gradient(closest-side, rgba(78, 77, 252, 0.20), rgba(27, 186, 253, 0.13), rgba(2, 240, 253, 0.08));
+}
+.dev-icon-aura-meadow {
+  background-image: radial-gradient(closest-side, rgba(65, 178, 74, 0.20), rgba(139, 214, 105, 0.13), rgba(214, 250, 135, 0.08));
+}
+.dev-icon-aura-sunset {
+  background-image: radial-gradient(closest-side, rgba(251, 23, 157, 0.16), rgba(252, 87, 80, 0.12), rgba(253, 150, 2, 0.08));
+}
+.dev-icon-aura-lemon {
+  background-image: radial-gradient(closest-side, rgba(255, 174, 43, 0.24), rgba(255, 206, 77, 0.16), rgba(255, 238, 111, 0.10));
 }
 .dark .app-icon-tile {
   /* --bg-primary is near-black in dark mode; one step up so the tile
@@ -1359,17 +1420,21 @@ html, body {
    don't inherit `currentColor` so we can't collapse to a single
    variable-driven version cleanly. */
 .home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%230a7cff' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  /* Outline in the accent gold (#8a5b0b — the dashes must stay visible on
+     the grey ground, which the CTA yellow cannot do at 1.3:1), over a faint
+     aura-lemon wash. The SVG layer must stay FIRST so the dashes paint
+     above the wash. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%238a5b0b' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E"), radial-gradient(closest-side, rgba(255, 174, 43, 0.20), rgba(255, 206, 77, 0.14), rgba(255, 238, 111, 0.10));
   background-repeat: no-repeat;
 }
 .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%230a7cff' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%238a5b0b' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E"), radial-gradient(closest-side, rgba(255, 174, 43, 0.30), rgba(255, 206, 77, 0.20), rgba(255, 238, 111, 0.14));
 }
 .dark .home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%235aa9ff' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23ffd84d' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E"), radial-gradient(closest-side, rgba(255, 174, 43, 0.12), rgba(255, 206, 77, 0.08), rgba(255, 238, 111, 0.05));
 }
 .dark .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%235aa9ff' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23ffd84d' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E"), radial-gradient(closest-side, rgba(255, 174, 43, 0.18), rgba(255, 206, 77, 0.12), rgba(255, 238, 111, 0.08));
 }
 
 /* Drag-reorderable starred cards (issue #191): a long-press must
@@ -2092,14 +2157,14 @@ html, body {
   /* Same SVG-outline trick as .home-create-tile above (a data-URL SVG can't
      inherit currentColor, so each colour is its own image) — stepped to the
      neutral hairline so the slot reads as present-but-locked. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23cfcfc8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .home-create-widget--disabled .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23cfcfc8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .dark .home-create-widget--disabled .home-create-tile,
 .dark .home-create-widget--disabled .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%232e2e50' stroke-opacity='0.95' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%233c3c36' stroke-opacity='0.95' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .home-create-widget--disabled .app-icon-tile--empty {
   color: var(--text-faint);
@@ -3343,7 +3408,7 @@ a.dc-flow-action {
 
 .dc-pr-btn-promote { background: var(--accent); color: white; }
 .dc-pr-btn-promote:hover { background: var(--accent-light); }
-.dc-pr-btn-promote:disabled { background: #3f3f46; cursor: not-allowed; }
+.dc-pr-btn-promote:disabled { background: #3c3c36; cursor: not-allowed; }
 /* #558: the shared arc spinner borders in var(--accent) (violet), which is
    near-invisible on this filled violet/dark button while a proposal is in
    flight. Scope a white spinner to this button only so the busy state reads
@@ -4781,7 +4846,7 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 
 .dc-log-time {
-  color: #6e6e8a;
+  color: #86857c;
   font-size: 10px;
   align-self: center;
 }
@@ -4797,11 +4862,11 @@ span.gc-vote-btn-icon { cursor: default; }
   min-width: 44px;
 }
 
-.dc-log-msg { color: #e4e4e7; }
+.dc-log-msg { color: #e4e4df; }
 
-.dc-log-log   .dc-log-level { background: #27272a; color: #a1a1aa; }
+.dc-log-log   .dc-log-level { background: #2d2d28; color: #97968e; }
 .dc-log-info  .dc-log-level { background: #1e3a5f; color: #93c5fd; }
-.dc-log-debug .dc-log-level { background: #27272a; color: #6e6e8a; }
+.dc-log-debug .dc-log-level { background: #2d2d28; color: #86857c; }
 .dc-log-warn  .dc-log-level { background: #78350f; color: #fde68a; }
 .dc-log-warn  .dc-log-msg   { color: #fcd34d; }
 .dc-log-error .dc-log-level { background: #7f1d1d; color: #fecaca; }
@@ -4809,8 +4874,8 @@ span.gc-vote-btn-icon { cursor: default; }
 
 #dev-console-log::-webkit-scrollbar { width: 8px; }
 #dev-console-log::-webkit-scrollbar-track { background: transparent; }
-#dev-console-log::-webkit-scrollbar-thumb { background: #2e2e50; border-radius: 4px; }
-#dev-console-log { scrollbar-width: thin; scrollbar-color: #2e2e50 transparent; }
+#dev-console-log::-webkit-scrollbar-thumb { background: #3c3c36; border-radius: 4px; }
+#dev-console-log { scrollbar-width: thin; scrollbar-color: #3c3c36 transparent; }
 
 /* ── Group chat messages ───────────────────────────────── */
 
@@ -7432,7 +7497,7 @@ button.dev-badge { cursor: pointer; }
 .dev-badge-name {
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 11ch;
+  max-width: 9.5ch;
 }
 
 /* NOTE the property here is `font-family`, NOT the `font` shorthand. The
@@ -7945,7 +8010,15 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
   padding: 1rem;
   text-align: center;
   background-color: var(--bg-primary);
+  /* subtle-y2k: the launch moment carries a soft aura-sky glow behind the
+     tile — the brand kit's blue radial at whisper opacity, centred where
+     the icon sits. Decorative only; the cover's ground is still the token
+     above, so the fade-out composites exactly as before. */
+  background-image: radial-gradient(70% 55% at 50% 42%, rgba(52, 132, 252, 0.10), rgba(27, 186, 253, 0.05), rgba(2, 240, 253, 0));
   transition: opacity 160ms linear;
+}
+.dark .app-launch-cover {
+  background-image: radial-gradient(70% 55% at 50% 42%, rgba(52, 132, 252, 0.14), rgba(27, 186, 253, 0.06), rgba(2, 240, 253, 0));
 }
 .app-launch-cover--out {
   opacity: 0;
@@ -8441,15 +8514,15 @@ body.is-offline [data-offline-disabled] {
 #dev-feed .dev-feed-comment {
   font-size: 0.75rem;
   line-height: 1.5;
-  color: rgb(82 82 91); /* zinc-600 */
+  color: rgb(75 74 68); /* zinc-600 */
   padding: 0.15rem 0;
 }
-.dark #dev-feed .dev-feed-comment { color: rgb(212 212 216); /* zinc-300 */ }
+.dark #dev-feed .dev-feed-comment { color: rgb(207 207 200); /* zinc-300 */ }
 #dev-feed .dev-feed-comment-author {
   font-weight: 500;
-  color: rgb(63 63 70); /* zinc-700 */
+  color: rgb(60 60 54); /* zinc-700 */
 }
-.dark #dev-feed .dev-feed-comment-author { color: rgb(228 228 231); }
+.dark #dev-feed .dev-feed-comment-author { color: rgb(228 228 223); /* zinc-200 */ }
 /* The body sits INLINE after the author, like a chat line. Its markdown
    arrives as block elements, so they are flattened back to inline here —
    a paragraph per comment would otherwise put the text on its own line and
@@ -8458,7 +8531,7 @@ body.is-offline [data-offline-disabled] {
 #dev-feed .dev-feed-comment-body > * { display: inline; margin: 0; }
 #dev-feed .dev-feed-comment-more {
   font-size: 0.6875rem;
-  color: rgb(161 161 170); /* zinc-400 */
+  color: rgb(151 150 142); /* zinc-400 */
   padding: 0.15rem 0;
 }
 

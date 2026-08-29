@@ -91,28 +91,39 @@ module.exports = {
   // a DENSITY one now, and it lives in AGENTS.md's "One language, two
   // surfaces" rule.
   //
-  // Values are eyedropped from the design screenshots and are EXPECTED TO BE
-  // CORRECTED against the real source tokens; they are anchored deliberately
-  // at three points and interpolated between:
-  //   zinc-100  the page background the cards float on
-  //   zinc-400  secondary label text ("Private, 3m ago agent finished")
-  //   violet-600  the outgoing message bubble — CORRECTED from the eyedropped
-//               #0a7cff to #0a6ee0, because white on the original is 3.93:1
-//               and so is the original as ink on white. See the note beside
-//               --accent in public/css/app.css.
+  // Values come from the Brand Kit 2026 frames in the Streamlined Concept
+  // Figma (subtle-y2k v2: GREY ground, YELLOW accent) and are CORRECTED for
+  // contrast where a brand hex fails in a role; the anchors:
+  //   zinc-100  the page background the cards float on — a warm-NEUTRAL
+  //             grey (not blue-grey, so the yellow accent harmonizes)
+  //   violet-300  the brand yellow #FFEE6F, verbatim — decorative
+  //   violet-600  the CTA fill (#FFC93A). No vibrant yellow can carry white
+//               text (~1.5:1), so the accent convention INVERTS here: fills
+//               take near-black ink (12.6:1) — button.tsx's `ink` table and
+//               --accent-ink in public/css/app.css are where that flip
+//               lives — and ink-on-white moves down-ramp to violet-700.
+  //   violet-700  the accent as INK (links, chip text): #8A5B0B, a dark
+  //             gold — 5.86:1 on white, 5.09:1 on the grey ground.
   theme: { extend: {
     colors: {
-      // zinc-500 is the product's SECONDARY INK, and it was eyedropped at
-      // #6c6c70 — which lands at 4.35:1 on zinc-100, the page ground these
-      // labels actually sit on. A live WCAG sweep found 63 distinct failing
-      // styles from that one value, more than any other cause in the product.
+      // The warm-neutral grey. zinc-500 is the product's SECONDARY INK, and
+      // an earlier live WCAG sweep found 63 failing styles when this shade
+      // sat at 4.35:1 on the ground. #6B6B64 cleared 4.66:1 on the grey
+      // ground and 5.37:1 on a white card. Correcting the RAMP rather than
+      // the call sites is the whole reason this is a token.
       //
-      // #68686c is four steps darker and clears 4.61:1. Correcting the RAMP
-      // rather than 63 call sites is the whole reason this is a token: the
-      // alternative was `text-zinc-500` → `text-zinc-600` everywhere, which
-      // is 7.58:1 — near-primary, and no longer a secondary ink at all.
-      // Exactly the correction the note above anticipates.
-      zinc: { 50:'#f5f5f7',100:'#eaeaea',200:'#e3e3e6',300:'#c7c7cc',400:'#8e8e93',500:'#68686c',600:'#48484a',700:'#3a3a3c',800:'#2c2c2e',900:'#1c1c1e',950:'#0b0b0c' },
+      // #6B6B64 -> #595953 when the product moved to APCA. Under Lc that shade
+      // measured 67.1 on the grey page — below the 75 body floor — while
+      // reading a comfortable 76.8 on a white card, so the deficit was the
+      // GROUND, not the ink. #595953 is 74.8 on the page and 84.5 on a card.
+      //
+      // Retuning the ramp beat the alternative of moving 365 call sites to
+      // zinc-600 for a reason that is not about effort: zinc-600 measures 90.4
+      // on a card, which is within 5 Lc of BODY ink (95.7), so secondary text
+      // would have stopped reading as secondary. 84.5 keeps an 11-point step.
+      // The 69 non-text uses of this shade (42 backgrounds, 21 placeholders,
+      // 5 borders, a ring) move with it and are imperceptible at 10% alpha.
+      zinc: { 50:'#F7F7F3',100:'#EFEFEB',200:'#E4E4DF',300:'#CFCFC8',400:'#97968E',500:'#595953',600:'#4B4A44',700:'#3C3C36',800:'#2D2D28',900:'#1F1F1B',950:'#0E0E0B' },
       // The FULL ramp, deliberately. The pre-reskin config pinned only
       // 400/500/600/700, so 280 call sites using violet-50 (191 of them),
       // -100, -200, -300, -800, -900 and -950 were quietly rendering STOCK
@@ -120,10 +131,122 @@ module.exports = {
       // were violet too; against a blue accent every one of them would have
       // read as a stray purple tint. Closing the ramp is what makes the
       // remap total rather than partial.
+      //
+      // Yellow's geometry is unlike a blue's: 300–600 are all light (every
+      // fill wants dark ink), so the ramp jumps at 700 to the dark gold that
+      // does ink duty. Consequences enforced by the ink sweep, not by this
+      // table: nothing may spell `text-violet-600` (1.5:1 — use 700), and
+      // accent `hover:bg-violet-700` became `hover:bg-violet-500` (a dark
+      // gold hover fill under near-black ink would be unreadable).
       violet: {
-        50:'#eaf4ff',100:'#d6e9ff',200:'#b3d6ff',300:'#85bcff',400:'#5aa9ff',
-        500:'#1f86ff',600:'#0a6ee0',700:'#0062cc',800:'#004fa3',900:'#003b7a',950:'#00264d',
+        50:'#FFFBE6',100:'#FFF6C7',200:'#FFF09B',300:'#FFEE6F',400:'#FFE768',
+        500:'#FFD84D',600:'#FFC93A',700:'#8A5B0B',800:'#6E4809',900:'#533607',950:'#302005',
       },
+      // The brand kit's BLUE (#3090E1), as the accent's INK and its
+      // non-action fill. A real scale rather than a re-hued end of the
+      // `violet` ramp, because 700–950 there are used as surfaces too and
+      // a two-hue ramp would bleed blue into yellow washes.
+      //
+      // Why a second accent hue exists at all: yellow is PRECIOUS. It marks
+      // the one action on a screen and nothing else — the moment it also
+      // paints links, your own chat bubble and every badge, it stops
+      // meaning "do this". Blue takes everything that wants accent-ness
+      // without being an action: links, text buttons, your message, the
+      // accent's identity marks.
+      //
+      // 700 is the working value and it does BOTH jobs at 4.14:1 — as ink
+      // on white, and as a fill under white ink (contrast is symmetric).
+      // Deliberately a little under AA's 4.5 for now, Lukas's call, to keep
+      // it close to the brand hex; 800 is the same hue at 5.65:1 when a
+      // surface needs to clear it. 500 IS the brand hex, for decoration and
+      // large type (3.39:1 — never body text) and as the dark-mode ink.
+      azure: {
+        50:'#F0F7FE',100:'#DBEDFB',200:'#BCDDF7',300:'#8FC6EF',400:'#5CACE8',
+        500:'#3090E1',600:'#2589D9',700:'#1D81CD',800:'#186BA9',900:'#135285',950:'#0D3757',
+      },
+      // ── `lemon` WAS HERE, and is deliberately not coming back ──────────
+      //
+      // An eleven-step yellow (50–950) anchored on the brand kit's pale
+      // #FCFAB3 and core #FFEE6F, added as a NEW scale key alongside `meadow`
+      // when the two supporting brand accents landed together. `meadow` grew
+      // call sites; this one finished with ZERO. Not a `lemon-<step>` utility,
+      // arbitrary value, `cva` entry or template-literal class anywhere in
+      // frontend/**, public/js/**, app.css, the scanned kit demo or the test
+      // suite — the compiled stylesheet emitted no rule for it at all, which
+      // is why removing the key leaves public/css/tailwind.css byte-identical.
+      //
+      // It was also largely a SECOND NAME for a colour the product already
+      // spells: 300 (#FFEE6F) and 950 (#302005) were byte-identical to
+      // `violet`'s, and 900 differed by a rounding error. Two yellow ramps
+      // with no rule for choosing between them is how a palette drifts, and
+      // `violet` IS the yellow (read the hex, not the key — see the note
+      // above). If a yellow that is not the action fill is ever wanted, argue
+      // it against `violet` rather than reinstating this table.
+      //
+      // `bg-aura-lemon` in `backgroundImage` below is a DIFFERENT THING and
+      // must survive. It is one of the four brand aura gradients; its stops
+      // are raw hexes written into the gradient string and never read this
+      // table. The landing hero renders it and tests/tailwind-build.test.js
+      // pins both the utility and its minified stops.
+      //
+      // The brand kit's supporting GREEN, as a new scale key — meadow-300
+      // #A9CF97 is the core green verbatim, and the 600/700 steps are
+      // corrected dark enough to be ink (meadow-600 5.16:1 on white;
+      // meadow-700 6.17:1 on the ground). Stock `emerald`/`green` are not a
+      // second green: the stock-hue pass folded them onto this ramp, because
+      // two green families were an accident of authorship, not a distinction.
+      meadow: {
+        50:'#F2F8ED',100:'#E4F0DB',200:'#CCE2BD',300:'#A9CF97',400:'#8ABD74',
+        500:'#69A855',600:'#427A36',700:'#38672E',800:'#2E5326',900:'#25411F',950:'#142711',
+      },
+      // ── The two STATUS ramps, tuned. Danger and warning. ────────────────
+      //
+      // These override stock Tailwind rather than adding a key, because 440
+      // red and 400 amber call sites already spell them and the brand kit has
+      // no red or amber of its own to rename them after. Both are HARMONIZED
+      // rather than remapped: the palette's four anchors are cream #FFFEEA,
+      // yellow #FFEE6F, blue #3090E1 and green #A9CF97, all warm or soft, and
+      // stock red at hue 0 read cold beside them.
+      //
+      // Hue is the whole design. red sits at 8 deg and amber at 30 — 22 apart,
+      // which is what keeps "blocked" and "needs review" distinguishable as
+      // adjacent badges, the thing they most often are. Amber is a further
+      // 13.6 off the ACTION yellow at 43.6 (violet-600 #FFC93A), which it must
+      // be: yellow means "the one filled action on this screen" and warning is
+      // not an action. Pushing amber toward orange also happens to be the one
+      // move that HELPS its three `bg-amber-500 text-white` sites.
+      //
+      // Steps are solved to APCA Lc, not picked. The pairing that matters is
+      // 700 and 200: 700 is the light-mode ink at Lc 80 on white, 200 is the
+      // DARK-mode ink at Lc -80 on the #1F1F1B card. That is parity to a
+      // decimal, and parity — not an absolute floor — is the target, because
+      // it is self-calibrating and it is what the dark-mode guidance asks for.
+      // 600/800/900 are Lc 72/90/100 for the surfaces that need a step either
+      // side. 500 is the wash and fill hue; 50-100 the light tints.
+      //
+      // Note 200 does double duty, exactly as it does in azure and meadow: a
+      // pale tint in light mode AND the dark-mode ink. That is not a clash —
+      // on a dark ground a pale tint IS the readable ink, and the alternative
+      // (a saturated dark-mode red) cannot reach Lc 80 at any lightness.
+      red: {
+        50:'#FDF3F2',100:'#FAE1DD',200:'#F7CDC6',300:'#F09D91',400:'#E96E5B',500:'#E3462E',
+        600:'#D5351D',700:'#B42D18',800:'#882212',900:'#55150C',950:'#340D07',
+      },
+      amber: {
+        50:'#FEF7F1',100:'#FCECDB',200:'#F8D0A7',300:'#F5B97C',400:'#F2A252',500:'#EE8822',
+        600:'#B05F0D',700:'#95500B',800:'#713C08',900:'#462505',950:'#2B1703',
+      },
+    },
+    // The four "aura" gradients from the brand kit, stops verbatim from the
+    // Figma node (503-20258). Radial, dark centre → light edge, sized to the
+    // element (closest-side matches the Figma render, whose radius is half
+    // the square). Decorative moments only — tiles, covers, empty states —
+    // never on density surfaces (buttons, tab strips, the admin console).
+    backgroundImage: {
+      'aura-sky': 'radial-gradient(closest-side, #6717FB 0%, #5A32FB 12.5%, #4E4DFC 25%, #3484FC 50%, #1BBAFD 75%, #0FD5FD 87.5%, #02F0FD 100%)',
+      'aura-meadow': 'radial-gradient(closest-side, #41B24A 0%, #66C459 25%, #8BD669 50%, #B0E878 75%, #D6FA87 100%)',
+      'aura-sunset': 'radial-gradient(closest-side, #FB179D 0%, #FC3776 25%, #FC5750 50%, #FD7629 75%, #FD8615 87.5%, #FD9602 100%)',
+      'aura-lemon': 'radial-gradient(closest-side, #FFAE2B 0%, #FFCE4D 50%, #FFEE6F 100%)',
     },
     // Geist (vendored, see public/vendor/geist/ and the @font-face block at
     // the top of public/css/app.css) ahead of the previous system stack, so

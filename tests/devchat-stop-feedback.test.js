@@ -689,7 +689,7 @@ test('each send state renders the class, the label and the glyph it always did',
   // The hand-written string, then the class `classList.add` appended. cva
   // emits `lead` first and className last, which is where both belong.
   const SHELL = 'class="dc-send-btn rounded-lg bg-violet-600 hover:bg-violet-500'
-    + ' px-4 py-2 text-sm font-medium text-white transition-colors shrink-0';
+    + ' px-4 py-2 text-sm font-medium text-black transition-colors shrink-0';
 
   const idle = btn({ kind: 'send' });
   assert.ok(idle.includes(`${SHELL}"`), 'idle carries no state class');

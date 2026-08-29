@@ -113,13 +113,13 @@ test('the class strings did not move when they went through the primitives', () 
   assert.equal(
     send[1],
     'rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium'
-      + ' text-white transition-colors shrink-0',
+      + ' text-black transition-colors shrink-0',
   );
 
   // The boxed thread layout is the same string one size down.
   const tight = form('thread', false);
   assert.match(tight, /px-3 py-1\.5 text-sm text-zinc-900/);
-  assert.match(tight, /<button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1\.5 text-sm font-medium text-white transition-colors shrink-0"/);
+  assert.match(tight, /<button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1\.5 text-sm font-medium text-black transition-colors shrink-0"/);
 });
 
 // ── The three rows ────────────────────────────────────────────────────

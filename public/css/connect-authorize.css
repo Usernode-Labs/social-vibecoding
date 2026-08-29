@@ -15,16 +15,16 @@ body {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  background: #08080f;
-  color: #f4f4f5;
+  background: #0e0e0b;
+  color: #f7f7f3;
 }
 
 main {
   width: min(32rem, calc(100% - 3rem));
   padding: 2rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid #3c3c36;
   border-radius: 1rem;
-  background: #18181b;
+  background: #1f1f1b;
 }
 
 h1 {
@@ -37,7 +37,7 @@ h2 {
   font-size: .8rem;
   text-transform: uppercase;
   letter-spacing: .06em;
-  color: #a1a1aa;
+  color: #97968e;
 }
 
 dl {
@@ -47,7 +47,7 @@ dl {
   margin: 1.25rem 0 0;
 }
 
-dt { color: #a1a1aa; }
+dt { color: #97968e; }
 
 dd {
   margin: 0;
@@ -59,7 +59,7 @@ dd {
 .origin {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 600;
-  color: #a5b4fc;
+  color: #ffd84d;
 }
 
 ul {
@@ -71,9 +71,9 @@ ul {
 li {
   padding: .65rem .85rem;
   margin-bottom: .5rem;
-  border: 1px solid #3f3f46;
+  border: 1px solid #3c3c36;
   border-radius: .6rem;
-  background: #101014;
+  background: #161613;
 }
 
 li strong { display: block; }
@@ -82,7 +82,7 @@ li span {
   display: block;
   margin-top: .2rem;
   font-size: .85rem;
-  color: #a1a1aa;
+  color: #97968e;
 }
 
 .warning {
@@ -102,13 +102,15 @@ button {
   padding: .75rem 1rem;
   border: 0;
   border-radius: .5rem;
-  background: #0a7cff;
-  color: white;
+  background: #ffc93a;
+  /* True black on the accent fill (13.7:1) — the ink the yellow surface
+     takes everywhere. */
+  color: #000000;
   font: inherit;
   cursor: pointer;
 }
 
-button.secondary { background: #3f3f46; }
+button.secondary { background: #3c3c36; color: #f7f7f3; }
 
 button:disabled {
   opacity: .55;
