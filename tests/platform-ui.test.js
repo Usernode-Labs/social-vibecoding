@@ -437,6 +437,37 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
   const fallback = src.slice(fallbackIdx, src.indexOf('Home.load();', fallbackIdx));
   assert.ok(fallback.includes('App.ImproveStatus.setAppOpen(false);'),
     'the hash-fallback home landing must clear the app target too');
+
+  // 5. …AND IT DOES NOT WAIT FOR /api/apps.
+  //
+  // Everything above resolves the row out of that payload, which is the boot's
+  // slowest request — so for as long as it took, the header's standing action
+  // was simply MISSING, on home and on every other platform screen (they all
+  // reach here through _enterScreenChrome). That is the "the Improve button
+  // shows up a few seconds late" report: not a stale button, an absent one.
+  //
+  // The fix is a remembered copy, published while the payload is still on its
+  // way and overwritten by the real one the moment it lands. Two properties
+  // make it safe rather than merely fast, and both are asserted here: it is
+  // written only from a SUCCESSFUL publish (so it can only exist in a profile
+  // already served the row, and cannot leak its existence to a viewer the API
+  // hides it from), and it is only READ while `_appsLoaded` is false (so once
+  // the list is here, the list is the truth — including the truth that this
+  // viewer gets no row).
+  assert.ok(publish.includes('Home._cachedImproveTarget()'),
+    'a cold boot publishes the remembered target rather than nothing');
+  assert.ok(/if \(Home\._appsLoaded\) return;[\s\S]{0,200}_cachedImproveTarget/.test(publish),
+    'and only while the apps payload has not arrived');
+  assert.ok(publish.includes('Home._rememberImproveTarget(target)'),
+    'the cache is written from the real publish, not from the cache read');
+  const loadStart = home.indexOf('  async load() {');
+  const load = home.slice(loadStart, home.indexOf('\n  },', loadStart));
+  assert.ok(load.includes('Home.publishImproveTarget();'),
+    'load() publishes before its own fetch — render() does not run until it lands');
+  // Session residue, cleared with the rest of it: the next account may not be
+  // served the self-hosted row at all.
+  assert.ok(/_dropCachedSession\(\)[\s\S]{0,900}Home\.IMPROVE_TARGET_KEY/.test(src),
+    'the remembered target is dropped with the session');
 });
 
 // ── #1367: the App/Feed/Kanban toggle, and what it replaced ──────────

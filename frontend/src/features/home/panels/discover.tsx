@@ -30,13 +30,13 @@
  * while every tap in it is dead.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 
-import { CheckIcon, PlusWideIcon, SearchIcon } from '@/components/ui/icons';
+import { CheckIcon, PlusWideIcon } from '@/components/ui/icons';
 
 import type { IconView } from '../grid-store';
 import type { DiscoverTileView, DiscoverView } from '../panels-store';
-import { PanelShell, PanelTitle } from './ui';
+import { PanelShell } from './ui';
 
 function home(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
@@ -103,7 +103,16 @@ function DiscoverTile({ tile }: { tile: DiscoverTileView }) {
             : <PlusWideIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" />}
         </button>
       </div>
-      <span className="text-[0.6rem] leading-tight truncate w-full text-center text-zinc-600 dark:text-zinc-300">
+      {/*
+          TWO LINES, like the launcher tile's own label. A lane is six tracks
+          wide at every width (see .home-discover-tiles), so a track is ~55px on
+          a phone — and a single truncated line turned most of these into
+          "Opinio…", "ClearS…", "Watch…": a row of tiles nobody could read,
+          which is a poor advertisement for an area called Discover. The clamp
+          is in app.css beside the launcher label's, because `line-clamp` is
+          three properties and one of them is prefixed.
+      */}
+      <span className="home-discover-name text-[0.6rem] leading-tight w-full text-center text-zinc-600 dark:text-zinc-300">
         {tile.name}
       </span>
     </div>
@@ -127,6 +136,17 @@ function Lane({ tiles, extraClass }: { tiles: DiscoverTileView[]; extraClass?: s
       className={`home-panel-rows home-discover-lane home-discover-tiles${
         extraClass ? ` ${extraClass}` : ''
       }`}
+      // ONE TRACK PER TILE, never fewer — which is the same no-wrap invariant
+      // the fixed six tracks gave (see .home-discover-tiles in app.css: a lane
+      // is budgeted at one row, and anything that wraps is clipped), stated
+      // against the DATA rather than against a constant. Six was the count
+      // either lane could ever produce, so a five-tile featured lane spent a
+      // sixth of its width on an empty track and squeezed the five names that
+      // were left. The floor of four keeps a lane of one or two from stretching
+      // its labels across the whole card. The icons do not change size — their
+      // wrapper caps at 40px and centres — so this widens the NAME and nothing
+      // else, which is the thing that had no room.
+      style={{ '--lane-tracks': Math.max(tiles.length, 4) } as CSSProperties}
     >
       {tiles.map((tile) => <DiscoverTile key={tile.slug} tile={tile} />)}
     </div>
@@ -139,27 +159,6 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
       panelKey={view.key}
       expanded={false}
       stamps={{ featured: view.featured.length, popular: view.popular.length }}
-      title={
-        <>
-          <PanelTitle>{view.title}</PanelTitle>
-          <button
-            type="button"
-            id="home-browse-btn"
-            className="home-panel-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
-            title="Browse every app in the directory"
-            aria-label="Browse all apps"
-            onClick={(e) => {
-              e.stopPropagation();
-              // Through the hash, so the browse screen gets a real history
-              // entry and the OS back gesture returns here.
-              window.location.hash = '#apps';
-            }}
-          >
-            <SearchIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-            <span className="whitespace-nowrap">Browse all apps</span>
-          </button>
-        </>
-      }
     >
       {view.featured.length ? (
         <Lane tiles={view.featured} />
@@ -175,8 +174,18 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
       */}
       {view.popular.length ? (
         <>
+          {/*
+              A CAPTION, not a heading. It was `text-[0.9375rem]` — the size
+              the block's own title used to be — which was fine while that
+              title sat in a bar above it and this was the second-largest thing
+              in the card. The title is the section label OUTSIDE the card now,
+              at that same size, so an equal-sized "Popular" inside it read as a
+              second area rather than as the divider between two lanes of one.
+              12px muted is the shell's caption, and it is what the widget
+              strip's own header uses.
+          */}
           <div className="home-discover-divider flex-none flex items-center px-2.5">
-            <span className="text-[0.9375rem] text-zinc-500 dark:text-zinc-500">Popular</span>
+            <span className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">Popular</span>
           </div>
           <Lane tiles={view.popular} extraClass="home-discover-popular" />
         </>

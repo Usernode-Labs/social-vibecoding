@@ -1,7 +1,41 @@
 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>dApps</title>
+  <!-- THE PLATFORM'S NAME, not "dApps". This is the title the SERVICE WORKER
+       serves: public/index.html is precached, so a cached load shows it in the
+       tab, the task switcher and the native AppBar until the SPA routes and
+       calls App.setHeaderTitle('Social Vibecoding'). "dApps" is the name this
+       shell had before the platform had one, and every other surface —
+       manifest.webmanifest, the header on home, the landing page — says
+       Social Vibecoding. A cached document that names the product something
+       nothing else calls it is the discontinuity, not just the delay. -->
+  <title>Social Vibecoding</title>
+  <!-- The browser-chrome colour, and the ground the shell paints on before
+       any stylesheet has loaded. Both live UP HERE, ahead of the theme
+       module, because that module rewrites the meta from the resolved theme
+       and the critical style has to beat the compiled Tailwind sheet (the LAST
+       stylesheet in this head, by a contract documented on its own link). The
+       value is a starting point only — a dark-mode viewer's first paint is
+       corrected by Theme.apply() below, in the same head-blocking pass that
+       adds `.dark`, so nothing flashes either way. -->
+  <meta name="theme-color" content="#eaeaea">
+  <style>
+    /* WHY THIS IS INLINE AND NOT IN app.css. The page ground is a Tailwind
+       utility on <body> (`bg-zinc-100 dark:bg-zinc-950`, see
+       frontend/scripts/build-shell.mjs), and the stylesheet that defines it
+       is the last resource in this head. Everything before it paints against
+       the browser's default canvas — WHITE — so every load flashed white
+       before settling on #eaeaea, and a dark-mode load flashed white before
+       going near-black. The service worker makes that MORE visible rather
+       than less: a shell served from cache paints immediately, so the gap
+       between "there is a document" and "there is a stylesheet" is where the
+       whole first impression happens.
+       Set on <html> so it also fills the rubber-band area and any strip the
+       body's own box does not cover. Duplicating the two values is the point:
+       this rule has to be true with no stylesheet at all. */
+    html { background-color: #eaeaea; }
+    html.dark { background-color: #0b0b0c; }
+  </style>
   <script>
     // Theme module — Light / Dark / System mode selector.
     // Storage contract:
@@ -39,6 +73,13 @@
         }
       }
 
+      // The two page grounds, spelled here as well as in
+      // frontend/scripts/build-shell.mjs's `bg-zinc-100 dark:bg-zinc-950` on
+      // <body>. They are tailwind.config.js's zinc-100 / zinc-950, and the
+      // critical <style> below plus the theme-color meta both need them
+      // BEFORE any stylesheet has loaded, which is the whole point.
+      const GROUND = { light: '#eaeaea', dark: '#0b0b0c' };
+
       function apply() {
         const mode = get();
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -48,6 +89,20 @@
         } else {
           document.documentElement.classList.remove('dark');
         }
+        // THE BROWSER CHROME IS PART OF THE PAGE'S BACKGROUND, and it was
+        // pinned to the dark ground for everybody. `theme-color` paints the
+        // address bar on Android, the status-bar strip and the rubber-band
+        // area on iOS, and the window ground a standalone install shows
+        // before the document paints — so a light-mode viewer got a black
+        // band above a #eaeaea page on every load and every overscroll.
+        // Written from the RESOLVED theme rather than left to a
+        // `media="(prefers-color-scheme: …)"` pair, because the shell's own
+        // Light/Dark override is a class on <html> that no media query can
+        // see: a viewer who picks Light on a dark OS has to get the light
+        // one. This runs before first paint on load and again on every
+        // set() / OS change, so the chrome tracks the page it frames.
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', wantDark ? GROUND.dark : GROUND.light);
       }
 
       function set(mode) {
@@ -199,8 +254,13 @@
   <!-- PWA (#487): installable shell + read-only offline mode. The service
        worker is registered by src/lib/service-worker.ts, from the React
        bundle loaded at the end of this head (#1078 retired the
-       /js/offline.js module that used to do it). -->
+       /js/offline.js module that used to do it).
+       The `theme-color` meta this block used to carry is at the TOP of this
+       head now, because the theme module rewrites it — see the note there.
+       The manifest's own `background_color` is the install splash's and is
+       necessarily static (a manifest is fetched with no theme to read), so it
+       states the light ground, which is what the majority of loads settle
+       on. -->
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#0b0b0c">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">

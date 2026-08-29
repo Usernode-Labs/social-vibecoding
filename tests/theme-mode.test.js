@@ -61,6 +61,42 @@ test('theme.js defines the three modes', () => {
   }
 });
 
+test('the ground is painted before any stylesheet, and the chrome follows the theme', () => {
+  // THE BACKGROUND SHOWN BEFORE THE PAGE LOADS DID NOT MATCH THE PAGE.
+  //
+  // Two halves, both fixed here because both have to be true with NOTHING
+  // loaded yet:
+  //
+  //   * the page ground is a Tailwind utility on <body>, and the compiled
+  //     stylesheet is the LAST resource in this head — so every load painted
+  //     the browser's default white first, which a service-worker-served
+  //     shell makes more visible rather than less. An inline rule on <html>
+  //     states the same two colours with no stylesheet at all.
+  //   * `theme-color` was pinned to the dark ground for everybody, so a
+  //     light-mode viewer got a black band above a #eaeaea page in the
+  //     address bar, the iOS status strip, the rubber-band area and a
+  //     standalone install's window ground.
+  const src = themeSrc();
+  assert.match(src, /html \{ background-color: #eaeaea; \}/,
+    'the light ground is painted with no stylesheet loaded');
+  assert.match(src, /html\.dark \{ background-color: #0b0b0c; \}/,
+    'and the dark one, keyed off the class apply() has just written');
+  // Written from the RESOLVED theme, not left to a prefers-color-scheme meta
+  // pair: the shell's own Light/Dark override is a class on <html> that no
+  // media query can see, so a viewer who picks Light on a dark OS has to get
+  // the light chrome.
+  assert.match(src, /const GROUND = \{ light: '#eaeaea', dark: '#0b0b0c' \};/);
+  const apply = src.slice(src.indexOf('function apply()'), src.indexOf('function set('));
+  assert.match(apply, /meta\[name="theme-color"\]/,
+    'apply() owns the chrome colour');
+  assert.match(apply, /wantDark \? GROUND\.dark : GROUND\.light/,
+    'and picks it from the same resolved boolean that writes the class');
+  // The meta has to be PARSED by the time apply() runs — it is head-blocking
+  // and runs during parse, so a tag further down the head would not be found.
+  assert.ok(src.indexOf('name="theme-color"') < src.indexOf('window.Theme'),
+    'the theme-color meta must precede the module that rewrites it');
+});
+
 test('theme.js registers prefers-color-scheme and storage listeners', () => {
   const src = themeSrc();
   assert.match(

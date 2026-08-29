@@ -257,12 +257,14 @@ test('the header becomes the section nav bar on mobile level 2 only', () => {
   assert.match(body, /AdminConsole\._isMobile\(\) && AdminConsole\._level === 2/,
     'only a mobile section view borrows the header');
   // #1036: the second argument is the anchor's href — inside a section
-  // the chevron pops to the console's own menu, so that is where it points;
-  // at level 1 it points at PROFILE, this screen's parent since the drawer
-  // that linked Admin from anywhere was retired. ALWAYS an arrow: with the
-  // hamburger gone, a hidden back slot would strand level 1.
-  assert.match(body, /setBackIcon\('arrow', inSection \? '#admin' : '#profile'\)/,
-    'the arrow is always there, and targets the console menu inside a section');
+  // the chevron pops to the console's own menu, so that is where it points.
+  // LEVEL 2 ONLY. The root's arrow (which pointed at Profile) is gone with the
+  // other two account screens': Admin, Settings and Profile are reached from
+  // the Home account row and left through it, and a header arrow duplicating
+  // the row one tap below it read as chrome. The mobile drill-in keeps its
+  // chevron because it is the only way up a level INSIDE this screen.
+  assert.match(body, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
+    'the chevron is the section view\'s alone; the root draws no back control');
   assert.match(body, /App\.setHeaderTitle\(s \? s\.label : /,
     'the title becomes the section label (which also feeds the native AppBar)');
   assert.match(body, /'Platform status'/,

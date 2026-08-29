@@ -31,7 +31,7 @@ const { renderComponent } = require('./lib/render-tsx');
 // the view models. Assertions about markup read the components, assertions
 // about what decides the markup read the module.
 const PANEL_SRC = Object.fromEntries(
-  ['ui', 'challenges', 'discover', 'create'].map(
+  ['ui', 'challenges', 'discover', 'create', 'sections'].map(
     (n) => [n, read(`frontend/src/features/home/panels/${n}.tsx`)]
   )
 );
@@ -280,10 +280,12 @@ test('the Discover widget swaps its tile row for a note, never an empty box', ()
   assert.match(src, /view\.featured\.length/);
   assert.match(src, /Nothing featured right now/);
   // The browse control always renders: it is THE discovery path, so it must
-  // not depend on curation existing. It lives in the title bar now (#949),
-  // not in a footer — see the block test below.
-  assert.match(src, /home-browse-btn/);
-  assert.match(src, /Browse all apps/);
+  // not depend on curation existing. It lives in the SECTION HEADING now, not
+  // in the card at all — see the block test below — so it does not even
+  // depend on the block having rendered.
+  assert.match(PANEL_SRC.ui, /home-browse-btn/);
+  assert.match(PANEL_SRC.ui, /Browse all apps/);
+  assert.match(PANEL_SRC.sections, /<BrowseLink \/>/);
   // ...and the widget derives its tiles from the SAME per-viewer flags the
   // old row did, rather than issuing a second query.
   assert.match(PANELS_SRC, /Home\.featuredApps\(/);
@@ -390,20 +392,20 @@ test('the apps grid is four columns at every width, two rows by default', () => 
     'the expander has a host outside #app-list');
 });
 
-test('Discover is one bordered block: lanes under a bar that carries the browse link', () => {
-  // Same shell as every other widget, so the three read as one family and
-  // the drag handle is in the same place — but Discover passes NO footer
-  // (#949). A .home-panel-footer is 27px, which on a phone is the whole
-  // difference between a tile lane that fits its one cell and one that
-  // clips.
+test('Discover is one bordered block: two lanes, and no chrome of its own', () => {
+  // Same shell as every other widget, so the three read as one family — but
+  // Discover passes NO footer (#949), and since the title moved out to become
+  // the section's label there is no bar either: the card is two lanes and the
+  // hairline between them.
   const src = PANEL_SRC.discover;
   assert.match(src, /<PanelShell\b/, 'the same shell as every other block');
   assert.doesNotMatch(src, /footer=/, 'and Discover passes it no footer');
   assert.doesNotMatch(src, /home-panel-footer/, 'no footer of its own');
-  // The browse control rides in the TITLE BAR instead, and it is still the
-  // same #home-browse-btn the old footer carried.
-  assert.match(src, /title=\{[\s\S]*?id="home-browse-btn"[\s\S]*?\}/);
-  assert.match(src, /home-panel-browse/);
+  assert.doesNotMatch(src, /home-panel-bar/, 'and no title bar');
+  // The browse control rides in the SECTION HEADING instead, and it is still
+  // the same #home-browse-btn the old footer carried.
+  assert.match(PANEL_SRC.sections, /action=\{<><BrowseLink \/>/);
+  assert.match(PANEL_SRC.ui, /home-panel-browse/);
   // The second lane is separated by a hairline, so it reads as part of the
   // same block rather than a second card. The hairline used to be a
   // `border-t` utility ON the divider; the reskin moved it into app.css as an
@@ -491,7 +493,7 @@ test('the home feed is a 1024px centred column', () => {
 test('the browse action routes through the hash for a real history entry', () => {
   // The OS/browser back gesture has to return to home, so this navigates by
   // hash rather than calling the router directly.
-  assert.match(PANEL_SRC.discover, /home-panel-browse[\s\S]*?location\.hash = '#apps'/);
+  assert.match(PANEL_SRC.ui, /home-panel-browse[\s\S]*?location\.hash = '#apps'/);
   // ...and it is reachable from the widget's ⋮ menu too.
   assert.match(PANELS_SRC, /label: 'Browse all apps'/);
 });

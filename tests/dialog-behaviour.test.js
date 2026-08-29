@@ -240,6 +240,32 @@ test('the card rides the kit exit rather than being pulled out before it', () =>
   assert.match(STATIC_MODAL, /if \(adoption\) adoption\.restore\(\);\s*\n\s*opts\.current\.onExited\?\.\(\);/);
 });
 
+test('the exit lets go of the keyboard instead of waiting for the card to die', () => {
+  // THE SECOND HALF OF THE CLOSE FLICKER, and the one the exit-riding fix
+  // above could not reach. A dialog that focuses a field on open — create-app,
+  // rename, fork, close-issue — raises the on-screen keyboard, and that field
+  // KEPT FOCUS for the whole exit: the kit removes its shell only after the
+  // animation finishes, so the blur that finally retracts the keyboard landed
+  // when the node was destroyed, i.e. after the dialog had visually gone. The
+  // viewer then watched the page behind it resize for the keyboard's own
+  // duration — `--un-kb-inset` unwinding `.un-modal`'s `top`, `html.un-kb`
+  // releasing `.un-kb-avoid`'s padding, the scroller re-clamping. Give
+  // feedback, the one dialog that does NOT autofocus, never had it.
+  //
+  // Blurring at the START of the exit overlaps the two motions instead.
+  assert.match(KIT_SURFACE,
+    /dismiss: \(\) => \{[\s\S]{0,80}releaseFocus\(contentEl, handle\.el\);[\s\S]{0,80}handle\.dismiss\(\);/,
+    'the adoption releases focus before it asks the kit to animate');
+  const fn = KIT_SURFACE.slice(KIT_SURFACE.indexOf('function releaseFocus('));
+  assert.match(fn, /contentEl\.contains\(active\) \|\| !!shellEl\?\.contains\(active\)/,
+    'the card AND the kit shell — the kit focuses its own container on present');
+  assert.match(fn, /active === document\.body/,
+    'nothing focused is nothing to release');
+  // In kit-surface, not the dialogs' hook: sheets and panels adopt through the
+  // same seam and carry composers of their own.
+  assert.doesNotMatch(STATIC_MODAL, /releaseFocus/);
+});
+
 test('suspend/resume move the dialog without running the lifecycle', () => {
   // The feedback screenshot capture's round trip. If this regressed to
   // close()/open(), taking a screenshot would wipe the draft it is being

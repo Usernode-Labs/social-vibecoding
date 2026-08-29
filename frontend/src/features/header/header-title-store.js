@@ -18,10 +18,17 @@
  *
  * ── The initial value is the prerender ─────────────────────────────────
  *
- * The shipped markup renders the title as "dApps" (see platform-header.tsx),
- * so that is the initial value — a first client render that disagrees with
- * the prerendered document is a hydration mismatch, and a console error on
- * any route fails proposal checks.
+ * The shipped markup renders this title (see platform-header.tsx), so the two
+ * are the same constant — a first client render that disagrees with the
+ * prerendered document is a hydration mismatch, and a console error on any
+ * route fails proposal checks.
+ *
+ * IT IS THE PLATFORM'S NAME. It was "dApps", the name this shell carried
+ * before the platform had one, and that string is what the service worker's
+ * cached document put in the chip on every load until routing replaced it
+ * with "Social Vibecoding" — a cached page naming the product something no
+ * other surface calls it. The neutral starting point and the right one are
+ * the same string, so there is no reason for it to be the wrong one.
  *
  * During the transition (until app-switcher-chip.tsx takes ownership of the
  * subtree) app.js DUAL-WRITES: it publishes here AND still assigns
@@ -56,7 +63,7 @@ import { createStore } from '../../lib/plain-store.js';
 
 /** @type {HeaderTitleState} */
 const INITIAL = {
-  text: 'dApps',
+  text: 'Social Vibecoding',
   subtitle: '',
 };
 

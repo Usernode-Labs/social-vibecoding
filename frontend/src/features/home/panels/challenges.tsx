@@ -26,7 +26,7 @@
 
 import type { ChallengeRowView, ChallengesView, FillView } from '../panels-store';
 import {
-  FillFooter, LeaderboardLink, PanelFooter, PanelShell, PanelTitle, panels,
+  FillFooter, PanelFooter, PanelShell, panels,
 } from './ui';
 
 /**
@@ -78,7 +78,17 @@ function ChallengeRow({ row }: { row: ChallengeRowView }) {
           tight row wraps the chip to a second line the fixed row height clips.
       */}
       {row.reward ? (
-        <span className="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-700 dark:text-violet-400">
+        // A TINTED CHIP, not bold accent text. `font-semibold text-violet-700`
+        // made the reward the loudest thing on a row whose subject is the
+        // GOAL: a column of blue "250 pts" read down the card before any of
+        // the sentences beside them did. A chip keeps it just as findable —
+        // it is the only tinted thing on the row — while letting the goal be
+        // read first, and it is the same chip language the rest of the shell
+        // labels a value with.
+        <span
+          className={'shrink-0 whitespace-nowrap rounded-full bg-violet-500/10 px-1.5 py-0.5 '
+            + 'text-[11px] font-medium text-violet-700 dark:bg-violet-500/15 dark:text-violet-300'}
+        >
           {row.reward}
         </span>
       ) : null}
@@ -175,15 +185,6 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
         panelKey={view.key}
         expanded={false}
         stamps={{ rows: 0, fill: fillRows }}
-        title={
-          // flex-1 so the ⋮ sits at the right edge, same as the populated
-          // branch — this state is on every home screen now, so its chrome has
-          // to match the one beside it.
-          <>
-            <PanelTitle>{view.title}</PanelTitle>
-            <LeaderboardLink />
-          </>
-        }
         footer={view.fill && fillRows ? <FillFooter kind={view.fill.kind} /> : null}
       >
         <div className="home-panel-body">
@@ -205,22 +206,6 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       panelKey={view.key}
       expanded={view.expanded}
       stamps={{ rows: view.rows.length, fill: fillRows }}
-      title={
-        // truncate (which carries white-space: nowrap) plus an explicit nowrap
-        // on the counter: it must never push the title onto a second line, it
-        // gets clipped with an ellipsis instead. The leaderboard link is a
-        // shrink-0 sibling, so a long summary truncates rather than pushing
-        // the control off the bar.
-        <>
-          <PanelTitle>
-            {view.title}
-            {view.summary ? (
-              <span className="whitespace-nowrap">{` · ${view.summary}`}</span>
-            ) : null}
-          </PanelTitle>
-          <LeaderboardLink />
-        </>
-      }
       footer={<PanelFooter panelKey={view.key} total={view.total} expanded={view.expanded} />}
     >
       <div className="home-panel-body">

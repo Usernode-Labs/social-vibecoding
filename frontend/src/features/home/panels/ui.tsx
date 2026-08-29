@@ -22,6 +22,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   EllipsisVerticalIcon,
+  SearchIcon,
   TrophyOutlineIcon,
 } from '@/components/ui/icons';
 
@@ -53,25 +54,135 @@ export function stampProps(stamps: PanelStamps | undefined) {
 }
 
 /**
- * The bordered block: title bar, body, optional footer.
+ * A home-screen area's LABEL, and the controls that act on the block below it.
  *
- * `flex-none` on the bar/footer and `.home-panel-rows` on the list are what
- * make app.css's height cap clip rather than grow;
- * `.home-panel--expanded` lifts the cap entirely.
+ * ── Why the title moved back out of the card ──────────────────────────
  *
- * THE TITLE BAR IS NOT A DRAG HANDLE. It was one while these blocks were grid
- * items — the whole bar was the grab surface, and `_wire` had to stop the ⋮
- * button's pointerdown before the recognizer saw it. THE UI OVERHAUL fixed
- * them into sections; the grip, the cursor, the tooltip and that guard all
- * went together.
+ * It lived inside the block's own bar, on the reasoning that N widgets could
+ * not share one heading above a section — true while these were draggable grid
+ * items and a section could hold several. THE UI OVERHAUL ended that: there is
+ * exactly one block per section now, in a fixed order, so the heading has
+ * exactly one thing to name.
+ *
+ * What that bought is the shape the owner's reference screen has: a quiet grey
+ * label, then the white card it introduces, repeated down the page. A title
+ * printed INSIDE the card competes with the card's own content for the same
+ * surface and gives every area a second, smaller header bar; the label outside
+ * lets each card be nothing but what it holds.
+ *
+ * ── …and why the CONTROLS followed it out ─────────────────────────────
+ *
+ * They did not, at first, and that was worse than leaving the title in. The
+ * bar's remaining occupants — Discover's "Browse all apps", Challenges' "Open
+ * leaderboard", the ⋮ every block carries — are all `shrink-0`, so with the
+ * title gone the first row of every card was a strip of white with three
+ * quarters of it empty and one link floating at the right. The card opened on
+ * chrome instead of on content.
+ *
+ * A section header with the label left and its one action right is the shape
+ * that row was always trying to be, and it is the reference screen's own
+ * (name on the left, state on the right). So the heading is a ROW: `label`
+ * takes the space, `action` sits at the end of it, and the card underneath
+ * holds nothing but the block.
+ *
+ * NO `id`, deliberately: nothing selects these, and an id would have to be
+ * recorded in tests/baselines/shell-markup.json for no one's benefit. The
+ * class is `home-area-label` rather than the `home-section-header` this first
+ * shipped as — that one is TAKEN (app.css sizes it 12px muted, and the widget
+ * strip's caption and the search-results heading are it), and two different
+ * labels sharing a class is a rule waiting to be changed for one of them.
+ *
+ * Sized and coloured as the block titles it replaces (`text-[0.9375rem]`,
+ * zinc-500 — the shell's secondary ink), so the type itself is a MOVE rather
+ * than a restyle.
+ */
+export function SectionHeading({ children, action }: {
+  children: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-[0.9375rem] leading-tight text-zinc-500 dark:text-zinc-500">
+      <span className="min-w-0 flex-1 truncate whitespace-nowrap">{children}</span>
+      {action}
+    </h2>
+  );
+}
+
+/**
+ * The ⋮ that opens a block's own menu (hide this widget, and the rows
+ * HomePanels.menuItems builds for it).
+ *
+ * It rides in the section heading beside the block's link — see
+ * `SectionHeading` for why everything that is chrome ABOUT a block sits above
+ * it rather than inside it. `data-panel-key` still names which block it acts
+ * on, which is what it was for when the button lived in the card.
+ */
+export function PanelMenuButton({ panelKey }: { panelKey: string }) {
+  return (
+    <button
+      type="button"
+      className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none dark:text-zinc-400"
+      data-panel-key={panelKey}
+      aria-haspopup="menu"
+      title="Widget options"
+      aria-label="Widget options"
+      onClick={(e) => {
+        e.stopPropagation();
+        panels()?.openMenu?.(panelKey, e.currentTarget);
+      }}
+    >
+      <EllipsisVerticalIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+    </button>
+  );
+}
+
+/**
+ * Discover's one destination — the `#apps` directory.
+ *
+ * Lifted out of DiscoverPanel with the rest of the block's chrome, so the
+ * section heading can render it beside the ⋮. Same id, same classes, same
+ * hash navigation: `#home-browse-btn` is selected on from dapp.json.
+ */
+export function BrowseLink() {
+  return (
+    <button
+      type="button"
+      id="home-browse-btn"
+      className="home-panel-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
+      title="Browse every app in the directory"
+      aria-label="Browse all apps"
+      onClick={(e) => {
+        e.stopPropagation();
+        // Through the hash, so the browse screen gets a real history entry and
+        // the OS back gesture returns here.
+        window.location.hash = '#apps';
+      }}
+    >
+      <SearchIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+      <span className="whitespace-nowrap">Browse all apps</span>
+    </button>
+  );
+}
+
+/**
+ * The bordered block: body, optional footer, and nothing else.
+ *
+ * IT HAS NO TITLE BAR ANY MORE. The bar held the block's title until the
+ * heading moved out above the card, and then its controls followed (see
+ * `SectionHeading`) — so the card begins on its own content. `.home-panel-bar`
+ * is gone with it, along with the `user-select` and cursor rules app.css kept
+ * for a strip that was once a drag handle.
+ *
+ * `flex-none` on the footer and `.home-panel-rows` on the list are what made
+ * app.css's height cap clip rather than grow; `.home-panel--expanded` lifts
+ * the cap entirely.
  */
 export function PanelShell({
-  panelKey, expanded, stamps, title, footer, children,
+  panelKey, expanded, stamps, footer, children,
 }: {
   panelKey: string;
   expanded: boolean;
   stamps?: PanelStamps;
-  title: ReactNode;
   footer?: ReactNode;
   children: ReactNode;
 }) {
@@ -83,44 +194,18 @@ export function PanelShell({
       data-panel={panelKey}
       {...stampProps(stamps)}
     >
-      <div className="home-panel-bar flex-none flex items-center gap-2 px-3.5 pt-2.5 pb-1">
-        {title}
-        <button
-          type="button"
-          className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none dark:text-zinc-400"
-          data-panel-key={panelKey}
-          aria-haspopup="menu"
-          title="Widget options"
-          aria-label="Widget options"
-          onClick={(e) => {
-            e.stopPropagation();
-            panels()?.openMenu?.(panelKey, e.currentTarget);
-          }}
-        >
-          <EllipsisVerticalIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-        </button>
-      </div>
       {children}
       {footer || null}
     </article>
   );
 }
 
-/** The block's own title text, truncating so a control beside it survives. */
-export function PanelTitle({ children }: { children: ReactNode }) {
-  return (
-    <span className="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[0.9375rem] text-zinc-500 dark:text-zinc-500">
-      {children}
-    </span>
-  );
-}
-
 /**
- * THE LEADERBOARD LINK (#980). Discover's browse control verbatim — same
- * violet 12px link, same icon-then-label shape, same place in the title bar —
- * because it answers the same question on the same screen. It renders in EVERY
- * branch and at every width: between seasons, where the block draws no footer
- * at all, it is the only control the area has.
+ * THE LEADERBOARD LINK (#980). `BrowseLink` verbatim — same violet 12px link,
+ * same icon-then-label shape, same seat in the section heading — because it
+ * answers the same question on the same screen. It renders in EVERY branch and
+ * at every width: between seasons, where the block draws no footer at all, it
+ * is the only control the area has.
  */
 export function LeaderboardLink() {
   return (

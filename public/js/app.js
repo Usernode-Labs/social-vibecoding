@@ -162,6 +162,13 @@ const App = {
     try {
       window.UsernodeReact?.shellSnapshot?.clear?.();
     } catch (err) { /* nothing stored, or no storage at all */ }
+    // …and the remembered Improve target, which is the same kind of residue
+    // for the same reason: it exists so a cold boot can put the header's
+    // standing action up before /api/apps answers, and the next account may
+    // not be served the self-hosted row at all.
+    try {
+      if (typeof Home !== 'undefined') localStorage.removeItem(Home.IMPROVE_TARGET_KEY);
+    } catch (err) { /* nothing stored, or no storage at all */ }
     try {
       navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     } catch (err) { /* no SW — nothing cached to drop */ }
@@ -3441,8 +3448,20 @@ const App = {
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
       App.setHeaderTitle(username ? `@${username}` : 'Profile');
-      // See the note in navigateToLeaderboard.
-      App.setBackIcon('arrow');
+      // NO BACK ARROW ON THE ACCOUNT SCREENS. Profile, Settings and Admin &
+      // moderation are the three screens the owner asked to lose it, and the
+      // "no dead ends" note in navigateToLeaderboard is what this is a
+      // deliberate exception to rather than an oversight: those three form a
+      // stack of their own (Home → Profile → Settings/Admin) whose OWN rows
+      // are the way back up, they are reachable from the Home account row on
+      // every visit, and the platform header's title already names where you
+      // are. An arrow that duplicates a row one tap below it reads as chrome.
+      // The leaderboard and browse screens keep theirs — they are leaves with
+      // no such rows.
+      //
+      // `'home'` means HIDDEN to setBackIcon (see back-button-store.js); the
+      // slot is then free for the app glyph exactly as it is on Home.
+      App.setBackIcon('home');
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inProfile = true;
     if (window.Profile?.open) Profile.open(username);

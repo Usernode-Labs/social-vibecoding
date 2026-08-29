@@ -88,6 +88,7 @@ import { AppGrid } from './app-grid';
 import { AppsMore } from './apps-more';
 import { AccountPanel } from './panels/account';
 import { ChallengesSection, CreateSection, DiscoverSection } from './panels/sections';
+import { SectionHeading } from './panels/ui';
 import { WidgetStrip } from './widget-strip';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -216,6 +217,16 @@ export function HomeScreen() {
             drop. Trim the padding here, never there.
         */}
         <section id="home-apps-section" className="px-3">
+          {/*
+              The area's label, in the same treatment the four below it use —
+              see ./panels/ui.tsx's SectionHeading for why every area on this
+              screen is now "grey label, then the thing". This one is what the
+              reference screen calls "Your saved apps"; "Your apps" is the name
+              the rest of the product already uses for the same set (the tile
+              menus' "Add to Your apps", the browse screen's badge), and two
+              names for one collection is worse than a shorter label.
+          */}
+          <SectionHeading>Your apps</SectionHeading>
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the
@@ -274,7 +285,13 @@ export function HomeScreen() {
             Not a `<Section>`: it has no title bar, no ⋮ and no panel model,
             the same reason CreatePanel is not one. It is one row.
         */}
-        <section id="home-account-section" className="px-3 mt-4">
+        <section id="home-account-section" className="px-3 pb-3">
+          {/*
+              `mt-4` is gone from this section: the heading's own `pt-4` is the
+              gap now, so all five areas are spaced by one rule instead of this
+              one being spaced by hand.
+          */}
+          <SectionHeading>You</SectionHeading>
           <AccountPanel />
         </section>
         {/*

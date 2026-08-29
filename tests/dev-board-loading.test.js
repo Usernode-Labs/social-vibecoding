@@ -49,6 +49,9 @@ function makeAppView(over) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener: () => {},
     localStorage: { getItem: () => null, setItem: () => {} },
+    // `_demoQS()` reads it on every request URL, so a sandbox without one
+    // throws before the first fetch is issued.
+    location: o.location || { search: '', hash: '', href: 'http://localhost/' },
     URLSearchParams,
   };
   sandbox.window = sandbox;
@@ -81,7 +84,11 @@ test('_devDataReady starts false and is set only by a COMPLETED load', () => {
   assert.equal(AppView._devDataReady, false, 'nothing has been fetched at construction');
 
   const code = APP_VIEW_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-  const load = code.slice(code.indexOf('async _loadDevData()'), code.indexOf('async _loadDevFeed()'));
+  // `_fetchDevData` is the body of the load. `_loadDevData` is the de-duping
+  // wrapper in front of it (it joins a run already in flight, so the preload
+  // an app open starts and the board's own call share one round of requests),
+  // and the wrapper touches no caches at all.
+  const load = code.slice(code.indexOf('async _fetchDevData(slug)'), code.indexOf('async _loadDevFeed()'));
   const set = load.indexOf('AppView._devDataReady = true;');
   assert.notEqual(set, -1, '_loadDevData sets the flag');
   assert.ok(set < load.indexOf('return true;'), 'on the success path, before it returns true');
@@ -89,6 +96,71 @@ test('_devDataReady starts false and is set only by a COMPLETED load', () => {
   // placeholders up and _loadDevFeed paints its own message.
   const failure = load.slice(load.indexOf('} catch {'));
   assert.ok(!failure.includes('_devDataReady = true'), 'a failed load does not mark the board ready');
+});
+
+// ── The preload, and the de-duplication that makes it pay ──────────────
+//
+// Opening an app now starts the Dev area's load immediately (AppView.open →
+// prefetchDevData), so the board has its caches by the time the viewer asks
+// for it. That is only a saving if the board's OWN call joins the run already
+// in flight instead of issuing the same six requests beside it.
+
+function countingFetch() {
+  const calls = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const fetch = async (url) => {
+    calls.push(String(url));
+    await gate;
+    return { ok: true, json: async () => ({}) };
+  };
+  return { fetch, calls, release: () => release() };
+}
+
+test('_loadDevData joins the run already in flight rather than doubling it', async () => {
+  const { fetch, calls, release } = countingFetch();
+  const AppView = makeAppView({ fetch });
+  AppView.appData = { slug: 'demo-app' };
+
+  const first = AppView._loadDevData();
+  const roundOne = calls.length;
+  assert.ok(roundOne > 0, 'the first call issues the requests');
+
+  const second = AppView._loadDevData();
+  assert.equal(calls.length, roundOne, 'the second call adds no requests of its own');
+  assert.equal(second, first, '…because it is handed the same promise');
+
+  release();
+  assert.equal(await first, true);
+  assert.equal(await second, true);
+
+  // Once the run has settled the slot clears, so the NEXT caller gets a fresh
+  // load: this is a de-duplicator, not a cache, and every existing caller
+  // means "the current state" (a pull-to-refresh, a merge broadcast, a vote).
+  assert.equal(AppView._devDataInflight, null, 'the in-flight slot clears when the run ends');
+  const after = calls.length;
+  void AppView._loadDevData();
+  assert.ok(calls.length > after, 'a later call really does go to the network again');
+});
+
+test('prefetchDevData starts a load for the open app, and only for it', async () => {
+  const { fetch, calls, release } = countingFetch();
+  const AppView = makeAppView({ fetch });
+  AppView.appData = { slug: 'demo-app' };
+
+  AppView.prefetchDevData('another-app');
+  assert.equal(calls.length, 0, 'never loads an app that is not the one on screen');
+
+  AppView.prefetchDevData('demo-app');
+  const started = calls.length;
+  assert.ok(started > 0, 'the open app warms its caches');
+
+  // Already warm: nothing is waiting on a second round.
+  release();
+  await AppView._devDataInflight;
+  assert.equal(AppView._devDataReady, true);
+  AppView.prefetchDevData('demo-app');
+  assert.equal(calls.length, started, 'a loaded board is not re-fetched by the preload');
 });
 
 test('the flag is cleared when the board stops being this app\'s', () => {
