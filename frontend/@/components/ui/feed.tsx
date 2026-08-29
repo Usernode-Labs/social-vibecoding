@@ -95,11 +95,11 @@ export function ActivityRow({
       {avatarNode}
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-2">
-          <div className="min-w-0 flex-1 text-[1.0625rem] leading-snug text-zinc-500 dark:text-zinc-500 [&>strong]:font-bold [&>strong]:text-zinc-900 dark:[&>strong]:text-zinc-100">
+          <div className="min-w-0 flex-1 text-[1.0625rem] leading-snug text-zinc-500 dark:text-zinc-300 [&>strong]:font-bold [&>strong]:text-zinc-900 dark:[&>strong]:text-zinc-100">
             {summary}
           </div>
           {timestamp ? (
-            <span className="shrink-0 text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{timestamp}</span>
+            <span className="shrink-0 text-[0.9375rem] text-zinc-500 dark:text-zinc-300">{timestamp}</span>
           ) : null}
         </div>
         {children ? <div className="mt-2 space-y-2">{children}</div> : null}
@@ -125,7 +125,7 @@ export function QuoteCard({
         <div className="text-[1.0625rem] font-bold text-zinc-900 dark:text-zinc-100">{title}</div>
       ) : null}
       {body ? (
-        <div className="mt-0.5 line-clamp-2 text-[1.0625rem] text-zinc-500 dark:text-zinc-500">{body}</div>
+        <div className="mt-0.5 line-clamp-2 text-[1.0625rem] text-zinc-500 dark:text-zinc-300">{body}</div>
       ) : null}
       {children ? <div className="mt-3 flex flex-wrap items-center gap-2">{children}</div> : null}
     </div>
@@ -150,13 +150,13 @@ const pill = cva(
       // `.gc-react-mine` in app.css — an accent border over a surface that
       // Tailwind then won back, so it drew nothing at all.
       //
-      // `hover:text-violet-800` is not decoration: accent ink on the light
+      // `hover:text-azure-800 dark:hover:text-azure-300` is not decoration: accent ink on the light
       // hover ground is 3.86:1 without it and 5.28:1 with it. The neutral
       // tone needs no such correction (13.9:1 at hover) and the dark accent
       // does not either (5.71:1).
       tone: {
         neutral: 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700',
-        accent: 'bg-violet-100 text-violet-700 hover:bg-violet-200 hover:text-violet-800 dark:bg-violet-950 dark:text-violet-300 dark:hover:bg-violet-900',
+        accent: 'bg-azure-100 text-azure-700 hover:bg-azure-200 hover:text-azure-800 dark:hover:text-azure-300 dark:bg-azure-950 dark:text-azure-300 dark:hover:bg-azure-900',
       },
     },
     defaultVariants: { size: 'action', tone: 'neutral' },

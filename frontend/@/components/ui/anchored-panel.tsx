@@ -34,7 +34,7 @@
 import type { ReactNode, Ref } from 'react';
 
 /** The exact class string both panels shipped with, character for character. */
-export const ANCHORED_PANEL_CLASS = 'hidden fixed top-14 right-3 z-50 w-80 max-w-[95vw] max-h-[70vh] flex flex-col bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-2xl overflow-hidden';
+export const ANCHORED_PANEL_CLASS = 'hidden fixed top-14 right-3 z-50 w-80 max-w-[95vw] max-h-[70vh] flex flex-col bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-2xl overflow-hidden dark:shadow-none';
 
 export function AnchoredPanel({
   id,

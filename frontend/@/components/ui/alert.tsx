@@ -16,8 +16,17 @@ import { cn } from '@/lib/utils';
  * The `banner` variant reproduces, exactly:
  *
  *   #offline-banner   shrink-0 bg-amber-500/15 border-b border-amber-500/30
- *                     text-amber-800 dark:text-amber-400 text-xs text-center
+ *                     text-amber-800 dark:text-amber-200 text-xs text-center
  *                     px-3 py-1.5
+ *
+ * The dark ink is the one value that has MOVED since that transcription. The
+ * banner shipped `dark:text-amber-400` against a light `text-amber-800`, and
+ * under APCA those are not the same ink: amber-400 on the dark card is the
+ * larger-or-bolder tier while amber-800 on white is body-preferred, and this
+ * strip is 12px centred text. amber-200 is the step tailwind.config.js solved
+ * as amber's dark-mode ink (200 does double duty — a pale tint in light, the
+ * readable ink on a dark ground), which is where the rest of the product's
+ * warn inks are going.
  *
  * ── Why the OTHER amber banner is not in here ──────────────────────────
  *
@@ -63,7 +72,7 @@ const alertVariants = cva('', {
       // #offline-banner — a full-bleed strip under the header. `shrink-0`
       // keeps it out of the flex column's height negotiation.
       banner:
-        'shrink-0 bg-amber-500/15 border-b border-amber-500/30 text-amber-800 dark:text-amber-400 text-xs text-center px-3 py-1.5',
+        'shrink-0 bg-amber-500/15 border-b border-amber-500/30 text-amber-800 dark:text-amber-200 text-xs text-center px-3 py-1.5',
     },
   },
   defaultVariants: { variant: 'banner', startHidden: false },

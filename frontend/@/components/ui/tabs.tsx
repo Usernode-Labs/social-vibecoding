@@ -171,16 +171,40 @@ TabsTrigger.displayName = 'TabsTrigger';
  * ground, so the track is a raised white surface, like the header's hamburger
  * disc and an unselected chip.
  */
+/*
+ * ── KNOWN: this constant ends in a MARGIN, and that is worth naming ────
+ *
+ * `mb-4` is a layout decision travelling across a component boundary inside a
+ * class string. It is invisible to an invocation scan — nothing anywhere reads
+ * `<TabsList className="mb-4">`; the one consumer
+ * (features/leaderboard/index.tsx) writes `className={SECTION_TABS_LIST}` and
+ * inherits the 16px without ever seeing it. That is exactly the shape of
+ * defect the separation rule exists to catch, and it survived this pass only
+ * because the fix is not in this file: the strip's siblings are a block-flow
+ * stack inside the Leaderboard's own `max-w-5xl` column, so the margin has to
+ * become a `gap` on THAT container, in one edit that strips every child margin
+ * in the stack at the same time. Dropping it here alone silently removes 16px
+ * from the only screen that uses it.
+ *
+ * If you are the one converting that column: take the `mb-4` out of this
+ * constant in the same commit, not before it.
+ */
 export const SECTION_TABS_LIST =
-  'inline-flex items-center gap-0.5 rounded-full bg-white dark:bg-zinc-900 p-0.5 mb-4';
+  'inline-flex items-center gap-0.5 rounded-full bg-zinc-200 dark:bg-zinc-900 p-0.5 mb-4';
 
 export const SECTION_TAB_BASE =
   'inline-flex items-center justify-center h-8 px-4 rounded-full text-sm font-semibold transition-colors';
 
-export const SECTION_TAB_ACTIVE = 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900';
+// Selection is a RAISED pill, not a black fill — see the note in
+// features/improve/view-tabs.tsx for why the fill inverted the tier order.
+// The track is zinc-200 here too: this list sits on the zinc-100 page where
+// Improve's sits on a white sheet, so the grounds are inverted and only the
+// track/pill RELATIONSHIP can be shared, not the literal colours.
+export const SECTION_TAB_ACTIVE =
+  'bg-white text-zinc-900 shadow-sm dark:bg-zinc-100 dark:text-zinc-900 dark:shadow-none';
 
 export const SECTION_TAB_INACTIVE =
-  'text-zinc-500 dark:text-zinc-400 '
+  'text-zinc-600 dark:text-zinc-300 '
   + 'hover:text-zinc-900 dark:hover:text-zinc-100';
 
 export { Tabs, TabsList, TabsTrigger };

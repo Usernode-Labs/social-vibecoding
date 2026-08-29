@@ -49,7 +49,7 @@ export function CircleButton({
     <button
       type="button"
       className={cn(
-        'flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm transition-colors hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 [&>svg]:h-6 [&>svg]:w-6',
+        'flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm transition-colors hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 [&>svg]:h-6 [&>svg]:w-6 dark:shadow-none',
         className,
       )}
       {...props}
@@ -99,7 +99,7 @@ export function StackedTitle({
     <div className={cn('min-w-0 text-center', className)} {...props}>
       <div className="truncate text-[1.375rem] font-bold text-zinc-900 dark:text-zinc-100">{title}</div>
       {subtitle ? (
-        <div className="truncate text-[1.0625rem] text-zinc-500 dark:text-zinc-500">{subtitle}</div>
+        <div className="truncate text-[1.0625rem] text-zinc-500 dark:text-zinc-300">{subtitle}</div>
       ) : null}
     </div>
   );
@@ -144,7 +144,7 @@ export function PillTitle({
           ) : null}
         </span>
         {subtitle ? (
-          <span className="block truncate text-[0.9375rem] leading-tight text-zinc-500 dark:text-zinc-500">
+          <span className="block truncate text-[0.9375rem] leading-tight text-zinc-500 dark:text-zinc-300">
             {subtitle}
           </span>
         ) : null}

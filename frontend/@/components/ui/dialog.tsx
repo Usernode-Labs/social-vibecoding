@@ -87,7 +87,7 @@ const dialogCardVariants = cva('bg-white dark:bg-zinc-900 rounded-xl p-6 w-full'
       lg: 'max-w-lg mx-4',
     },
     /** For the two cards with an absolutely-positioned close button. */
-    relative: { true: 'shadow-xl relative', false: 'shadow-xl' },
+    relative: { true: 'shadow-xl relative dark:shadow-none', false: 'shadow-xl dark:shadow-none' },
     /** #app-secrets-modal's internally-scrolling body. */
     scroll: { true: 'max-h-[80vh] flex flex-col', false: '' },
   },

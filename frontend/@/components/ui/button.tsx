@@ -29,7 +29,7 @@ import { cn } from '@/lib/utils';
  *
  *   [lead] [layout] [radius + surface] [disabled] [padding + weight] [ink]
  *   shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm
- *   font-medium text-white transition-colors
+ *   font-medium text-black transition-colors
  *
  * so that is the group order. The base string is EMPTY: the old base led with
  * `font-medium transition-colors`, which no hand-written button in the shell
@@ -101,10 +101,35 @@ const buttonVariants = cva('', {
       hiddenShrink: 'hidden shrink-0',
       // #members-invite-confirm.
       hidden: 'hidden',
+      // ── The two stacked rhythms ────────────────────────────────────────
+      //
+      // `mt-2` and `mt-3` are BOTH here on purpose, and the pairing is the
+      // owner's call rather than an oversight to be normalised away. A button
+      // that continues its own form (#password-change-submit, under the last
+      // field of the password form) leads with 8px; a button that follows a
+      // block it did not come from — a status line, a card's message, a
+      // selected-people row — leads with 12px, because it is starting
+      // something rather than finishing it. Folding one into the other is a
+      // visual change on six screens with no evidence behind it, so they stay
+      // two NAMED values and neither is spelled at a call site.
+      //
       // #password-change-submit.
       stacked: 'mt-2 w-full',
       // #password-set-submit, revealed only for passwordless accounts.
       hiddenStacked: 'hidden mt-2 w-full',
+      // The 12px sibling of `stacked`: the members dialog's Invite button under
+      // the selected-people row (features/messages/members-dialog.tsx — the
+      // unidentified one, not #members-invite-confirm), and the wallet sheet's
+      // Retry / staking actions under their message
+      // (features/header/wallet-sheet-body.tsx), which spell `layout="full"`
+      // plus a hand-written `mt-3` today.
+      stacked3: 'mt-3 w-full',
+      // The same lead-in with no width of its own: #awaiting-open-secrets /
+      // #app-error-build-log under the app-frame status message, and the
+      // profile's Reveal button under its terms line.
+      gap3: 'mt-3',
+      // #settings-openrouter-claim, revealed inside the managed-key card.
+      hiddenGap3: 'hidden mt-3',
       // The profile screen writes its padding and its 44px tap target BEFORE
       // the box rather than after it, so on those two buttons the padding
       // travels here and the `size` group contributes nothing. #profile-edit-save.
@@ -123,11 +148,11 @@ const buttonVariants = cva('', {
     variant: {
       // The primary action, everywhere.
       default: 'rounded-lg bg-violet-600 hover:bg-violet-500',
-      // The profile screen's spelling of the same box, one step darker on
-      // hover. #profile-edit-save and the publish/unpublish button both write
-      // it; normalising them to `default` would be a visual change, and this
-      // slice's contract is that there are none.
-      tapPrimary: 'rounded-lg bg-violet-600 hover:bg-violet-700',
+      // The profile screen's spelling of the same box. Its hover used to go
+      // one step DARKER (hover:bg-violet-500); the yellow accent forced the
+      // lighter direction everywhere — violet-700 is the dark-gold INK shade
+      // now, and near-black ink on it would be unreadable mid-hover.
+      tapPrimary: 'rounded-lg bg-violet-600 hover:bg-violet-500',
       // The bell drawer's invite Accept button — a `text-xs` action row inside
       // the notifications panel, one radius step up from `compact`.
       pill: 'rounded-md bg-violet-600 hover:bg-violet-500',
@@ -140,12 +165,15 @@ const buttonVariants = cva('', {
       roundedFull: 'rounded-full',
       // #agent-files-cancel — the neutral bordered sibling of `compact`.
       //
-      // THIS VARIANT CARRIES NO INK, and the default ink is `solid` (white).
-      // `variant="outline"` on its own therefore renders white text on a
-      // white card — an invisible label, which is exactly how the three
-      // messages dialogs shipped their Cancel/Done buttons until a contrast
-      // sweep measured them at 1.00:1. Every call site must pass an ink;
-      // `muted` is what the two that got it right pass.
+      // THIS VARIANT CARRIES NO INK, and the default ink is `solid` — which
+      // was white when the accent was blue, and `variant="outline"` on its
+      // own therefore rendered white text on a white card: an invisible
+      // label, which is exactly how the three messages dialogs shipped their
+      // Cancel/Done buttons until a contrast sweep measured them at 1.00:1.
+      // The yellow accent's near-black `solid` makes that failure mode
+      // merely wrong-looking rather than invisible, but the rule stands:
+      // every call site must pass an ink; `muted` is what the two that got
+      // it right pass.
       outline: 'rounded border border-zinc-300 dark:border-zinc-700',
       // The widget language's SECONDARY action: a filled neutral pill, not an
       // outline. The language separates by figure/ground rather than by rule,
@@ -153,7 +181,7 @@ const buttonVariants = cva('', {
       // never draws — the same reason the cards themselves lost their borders.
       // Call sites: the profile screen's Edit profile, Preview, Open public
       // page, Copy public link, Reveal and Browse challenges, all of which
-      // were `border border-zinc-300` or `border border-violet-500` boxes.
+      // were `border border-zinc-300` or `border border-azure-500` boxes.
       neutral: 'rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700',
       // #settings-remove — the bordered destructive button.
       destructive: 'rounded-lg border border-red-400 dark:border-red-700',
@@ -219,37 +247,56 @@ const buttonVariants = cva('', {
       // Text-only controls add no box of their own.
       inline: 'text-sm',
     },
-    /** Text colour, hover fill where the surface has none, and the transition. */
+    /** Text colour, hover fill where the surface has none, and the transition.
+     *
+     * The `solid*` values are "the ink that sits on the accent fill", and the
+     * subtle-y2k v2 accent is a vibrant YELLOW — no yellow can carry white
+     * text (~1.5:1), so these moved from `text-white` to near-black
+     * (12.6:1 on the fill). Values move, names stay: the same ramp-identity
+     * rule the `zinc`/`violet` scales run under. */
     ink: {
       none: '',
-      solid: 'text-white transition-colors',
+      solid: 'text-black transition-colors',
       // #profile-edit-save and the profile's publish/unpublish button, which
       // fold the text size and weight into this trailing run and carry no
       // transition. Their `disabled:opacity-60` is written at the very end of
       // the string, so it rides in through className like the three buttons
       // named in the header.
-      solidText: 'text-white text-sm font-medium',
+      solidText: 'text-black text-sm font-medium',
       // The auth screens' spelling of the same pair — see the header.
-      solidLate: 'transition-colors text-white',
+      solidLate: 'transition-colors text-black',
       // #browse-detail-open's two states. The browse detail page is the one
       // place that writes the whole surface after the transition, because the
-      // button swaps its ENTIRE fill (violet action ↔ inert grey) on
+      // button swaps its ENTIRE fill (accent action ↔ inert grey) on
       // `canOpen` and the shared run in front of it never changes. Carrying
       // the fill in `variant` would put the swap two groups earlier and move
       // the rendered class attribute.
-      fillLate: 'transition-colors bg-violet-600 hover:bg-violet-500 text-white',
+      fillLate: 'transition-colors bg-violet-600 hover:bg-violet-500 text-black',
+      // The dark ink is `zinc-300`, not the `zinc-400` this was transcribed
+      // with. That pair was the WCAG-era answer — both halves cleared a ratio
+      // against their own ground — but under APCA the light half reads as
+      // near-body while the dark half sits in the non-content tier, so the
+      // two themes disagree about how unavailable this button is. zinc-300 is
+      // the partner the product's ~824 other secondary runs already spell.
+      // The disabled AFFORDANCE is the grey fill and the cursor, not a dimmer
+      // ink, so nothing about the state is lost by matching them.
       unavailableLate:
-        'transition-colors bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed dark:text-zinc-400',
+        'transition-colors bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed dark:text-zinc-300',
       // #agent-files-cancel.
       muted:
-        'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors',
+        'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors',
       // The ink that goes with `variant: 'neutral'` — near-black, which is
       // what the language puts on a control you are meant to be able to hit.
       // The fill is already in `variant`, so this group only carries colour.
       neutral: 'text-zinc-900 dark:text-zinc-100 transition-colors',
-      // #settings-remove.
+      // #settings-remove. The dark ink is `red-200`, the step
+      // tailwind.config.js SOLVED as red's dark-mode partner for `red-700`:
+      // the two were tuned to the same APCA magnitude on their own grounds,
+      // where the `red-400` this was transcribed with sits two rungs below its
+      // light half. 200 doing double duty as a light tint and a dark ink is
+      // the ramp's own design, not a step borrowed from elsewhere.
       danger:
-        'text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors',
+        'text-red-700 dark:text-red-200 hover:bg-red-50 dark:hover:bg-red-950 transition-colors',
     },
   },
   defaultVariants: {

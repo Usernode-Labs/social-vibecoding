@@ -70,9 +70,17 @@ const inputVariants = cva('', {
      * features/dev-chat/composer.tsx.
      */
     lead: { composer: 'gc-composer-input', devComposer: 'dc-textarea', none: '' },
-    // Leads the string on the two fields inside #agent-files-form, which sit
-    // under their own label text rather than beside it.
-    spacing: { mt1: 'mt-1', none: '' },
+    // The field's own gap from the sibling it stacks against.
+    //
+    // `mt1` leads the string on the two fields inside #agent-files-form, which
+    // sit under their own label text rather than beside it. `mb2` is the other
+    // direction: #feedback-title stacks above the description textarea and
+    // spelled `className="mb-2"` by hand, which is the caller reaching into
+    // this component's layout. Naming it here is what keeps a margin out of an
+    // invocation; it emits BEFORE the box rather than after the focus ring,
+    // which is a token-order change and nothing else — a CSS selector matches
+    // tokens, not their order.
+    spacing: { mt1: 'mt-1', mb2: 'mb-2', none: '' },
     width: {
       full: 'w-full',
       flex: 'flex-1 min-w-0',
@@ -161,12 +169,12 @@ const inputVariants = cva('', {
     },
     mono: { true: 'font-mono', false: '' },
     ring: {
-      true: 'focus:outline-none focus:ring-2 focus:ring-violet-500',
+      true: 'focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100',
       false: '',
       // The dialogs' fields also drop the border colour while focused, so the
       // ring reads as the only edge.
       seamless:
-        'focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent',
+        'focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:focus:ring-zinc-100 focus:border-transparent',
     },
     // Only the `inset` box carries its text colour after the two groups above;
     // `default` has it inline, where the hand-written string put it.

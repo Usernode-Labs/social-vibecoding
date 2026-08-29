@@ -17,8 +17,27 @@ import { cn } from '@/lib/utils';
  *
  *   block text-xs font-medium text-zinc-700 dark:text-zinc-300
  *
- * with the caller supplying the trailing margin (`mb-1`, `mt-2 mb-1`) that
- * varies per field. Keep every class name a COMPLETE literal.
+ * This used to read "with the caller supplying the trailing margin (`mb-1`,
+ * `mt-2 mb-1`) that varies per field", and that sentence is left here
+ * CORRECTED rather than deleted because it was the instruction: eight of the
+ * fourteen Label call sites hand-write a margin in `className`, and they do it
+ * because this comment told them to. A component invoked with a margin in its
+ * className is the caller reaching into the callee's layout. The rhythm is
+ * named here now — `spacing="stacked"` for the `mb-1` a stacked field label
+ * takes over its control, `spacing="stackedGap"` for the one field that also
+ * opens a new group (#settings-openrouter-reasoning) — and a caller picks a
+ * value instead of spelling a utility.
+ *
+ * `spacing` is NOT baked into the `default` VARIANT, and that is the whole
+ * reason it is a second group rather than a wider `default`: six Labels are
+ * ROW labels sitting beside their control (the five in
+ * features/profile/profile-edit-sheet.tsx and #browse-sort-select's), and each
+ * of them would gain a wrong 4px under the label. `none` stays the default.
+ *
+ * `spacing` is declared AFTER `variant` so the emitted string is
+ * `block … dark:text-zinc-300 mb-1` — byte for byte what `cn(variants,
+ * 'mb-1')` renders today, because cva emits groups in declaration order and
+ * className lands last. Keep every class name a COMPLETE literal.
  *
  * className is rendered BEFORE `{...props}` here, the reverse of Alert/Input:
  * React serializes attributes in prop order, and every hand-written label on
@@ -33,10 +52,25 @@ const labelVariants = cva('block', {
       default: 'text-xs font-medium text-zinc-700 dark:text-zinc-300',
       // The quieter label inside #agent-files-form's inline card, which wraps
       // its control rather than pointing at it.
-      inline: 'text-zinc-600 dark:text-zinc-400',
+      inline: 'text-zinc-600 dark:text-zinc-300',
+    },
+    /**
+     * The gap between a STACKED label and the control under it. A row label
+     * beside its control takes `none`, which is the default — see the header
+     * for why this is not folded into `variant`.
+     */
+    spacing: {
+      none: '',
+      // #settings-api-key, #settings-openrouter-key, #settings-openrouter-model,
+      // #connector-url, #connector-name-spelling, #llm-consent-cap and
+      // #auto-session-model.
+      stacked: 'mb-1',
+      // #settings-openrouter-reasoning, the one stacked label that also opens a
+      // new group inside its section and so leads with its own 8px.
+      stackedGap: 'mt-2 mb-1',
     },
   },
-  defaultVariants: { variant: 'default' },
+  defaultVariants: { variant: 'default', spacing: 'none' },
 });
 
 export interface LabelProps
@@ -44,10 +78,10 @@ export interface LabelProps
     VariantProps<typeof labelVariants> {}
 
 const Label = React.forwardRef<HTMLLabelElement, LabelProps>(
-  ({ className, variant, ...props }, ref) => (
+  ({ className, variant, spacing, ...props }, ref) => (
     <label
       ref={ref}
-      className={cn(labelVariants({ variant }), className)}
+      className={cn(labelVariants({ variant, spacing }), className)}
       {...props}
     />
   ),

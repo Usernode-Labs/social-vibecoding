@@ -41,18 +41,37 @@ import { ChevronRightIcon } from './icons';
  */
 
 export function SectionHeader({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
+  // subtle-y2k: section labels wear the brand kit's technical-label voice —
+  // Geist Mono, uppercase, tracked — one size down from the sentence-case
+  // 0.9375rem they replaced, because a mono uppercase line runs wider than
+  // the same words in the text face.
   return (
     <h2
-      className={cn('px-4 pb-2 pt-6 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500', className)}
+      className={cn('px-4 pb-2 pt-6 font-mono text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-300', className)}
       {...props}
     />
   );
 }
 
+/**
+ * The card itself: figure, and nothing about where it sits on the ground.
+ *
+ * It used to bake `mx-4` into this root. That was a component deciding its own
+ * position in a layout it cannot see, and the evidence was unambiguous — the
+ * ONE caller (features/settings/settings-nav.tsx) passed `mx-0` to cancel it,
+ * so the baked margin was overridden at 100% of its call sites. `cn` is
+ * tailwind-merge, so `mx-4` + `mx-0` already resolved to `mx-0`: dropping it
+ * renders the same class attribute byte for byte, and leaves the caller's
+ * `mx-0` as a no-op it can now delete.
+ *
+ * A screen that wants this card inset spells that inset on its own scroll
+ * container, once, rather than every card self-insetting — which is the
+ * defect, not the 16px.
+ */
 export function GroupedList({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('mx-4 overflow-hidden rounded-2xl bg-white dark:bg-zinc-900', className)}
+      className={cn('overflow-hidden rounded-2xl bg-white dark:bg-zinc-900', className)}
       {...props}
     />
   );
@@ -146,15 +165,35 @@ export const ListRow = React.forwardRef<HTMLElement, ListRowProps>(function List
           titleClassName,
         )}>{title}</div>
         {subtitle ? (
-          <div className="truncate text-[0.9375rem] text-zinc-500 dark:text-zinc-500">{subtitle}</div>
+          <div className="truncate text-[0.9375rem] text-zinc-500 dark:text-zinc-300">{subtitle}</div>
         ) : null}
       </div>
       {dot ? (
         <span className="h-2 w-2 shrink-0 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-hidden="true" />
       ) : null}
       {trailing}
+      {/* zinc-400, not zinc-300, and ONLY the light half moved: `dark:` already
+          named zinc-400, so it always won in dark and the zinc-300 was never
+          rendered there. This card's ground is `bg-white`, so the figures that
+          matter are on a card (APCA-W3 0.1.9, the port in
+          tests/theme-ink-guards.test.js): zinc-300 was Lc 25.9 and zinc-400 is
+          56.3, against an unchanged -43.5 in dark.
+
+          Read the ladder carefully before citing it, because an earlier draft
+          of this comment got it backwards: 25.9 is INSIDE the non-content band
+          (30 is its top, 15 is "barely visible"), not below it — a disclosure
+          chevron is decorative and non-content is where it belongs. The move is
+          made on CONSISTENCY, not on a failed rung: notifications-sheet.tsx
+          spells `text-zinc-400 dark:text-zinc-400` for this same glyph, and one
+          chevron in two inks is the thing worth fixing.
+
+          The redundant `dark:` half is load-bearing in one narrow way — it is
+          what exempts this run from tests/theme-ink-guards.test.js's unpaired
+          zinc-400 ban, which tests for the presence of `dark:text-`. That is an
+          exemption satisfied by spelling, so it is named here rather than left
+          to look like a considered pair. */}
       {chevron ? (
-        <ChevronRightIcon className="h-5 w-5 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
+        <ChevronRightIcon className="h-5 w-5 shrink-0 text-zinc-400 dark:text-zinc-400" aria-hidden="true" />
       ) : null}
     </Tag>
   );

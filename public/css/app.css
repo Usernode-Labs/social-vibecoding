@@ -1,37 +1,174 @@
-:root {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f5f5f7;
-  --bg-tertiary: #e3e3e6;
-  --bg-code: #f5f5f7;
-  --bg-code-header: #e3e3e6;
-  --bg-card: rgba(10, 124, 255, 0.06);
-  --bg-card-alt: rgba(16, 185, 129, 0.04);
-  --bg-input: #f5f5f7;
-  --border: #d1d1d6;
-  --border-light: #e3e3e6;
-  --text-primary: #0a0a0a;
-  --text-secondary: #3a3a3c;
-  --text-muted: #6c6c70;
-  --text-faint: #8e8e93;
-  --text-code: #3a3a3c;
-  /* #0a6ee0, not the #0a7cff eyedropped from the design screenshots.
-     White on that blue is 3.93:1 — below AA for normal text, which made EVERY
-     primary button in the product (Send, Open, Publish profile, Improve, New
-     conversation) a control you could see and a label you could not quite
-     read. It failed the same way as ink: `text-violet-600` on white was the
-     identical 3.93. One step darker clears both at 4.86, and the hue is
-     unchanged to two decimal places of what the deck shows.
+/* ── Webfonts (subtle-y2k) ───────────────────────────────
+   Geist / Geist Mono, vendored same-origin (public/vendor/geist/ — see the
+   provenance table in public/vendor/README.md) and precached by the service
+   worker. One VARIABLE file per family carries every weight, and
+   `font-display: swap` keeps first paint on the system stack the shell
+   shipped before, so a cold cache degrades to exactly the old rendering.
+   The stacks that consume these live in tailwind.config.js (fontFamily). */
+@font-face {
+  font-family: 'Geist';
+  src: url('/vendor/geist/geist-sans-variable-1.7.2.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/vendor/geist/geist-mono-variable-1.7.2.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
-     The DARK accent below is untouched: it is a lighter blue on purpose,
-     because against a near-black page it has to be, and it is used mostly as
-     ink rather than as a fill. Where it IS a fill, --accent-ink supplies the
-     near-black text that goes on it. */
-  --accent: #0a6ee0;
-  --accent-light: #1f86ff;
-  --accent-tint: rgba(10, 110, 224, 0.08);
-  /* Text ON the accent — the outgoing message bubble is the only place the
-     shell puts type on a saturated fill, and it must not follow the page. */
-  --accent-ink: #ffffff;
+:root {
+  /* Tell the UA which mode it is painting its OWN widgets for. Everything a
+     stylesheet cannot reach lives behind this one property: scrollbars,
+     <select> popups, the date/datetime-local pickers, checkbox and radio
+     glyphs, spinner buttons, form-control default borders, the caret, and
+     the autofill background. Without it the browser assumes light and paints
+     white popups and light scrollbars on the near-black page — 47 <select>s,
+     21 checkboxes, 19 number inputs and 6 date/datetime fields in this
+     product are entirely UA-drawn (app.css styles none of them).
+
+     NOT a custom property, so tests/theme-ink-guards.test.js's light/dark
+     parity check does not see it — that guard scans for double-dash
+     declarations only. It still needs a value in BOTH blocks anyway, for the
+     cascade reason below. (Do not write a double-dash name followed by a
+     colon into a comment inside these blocks: the guard's regex is a plain
+     text scan and reads it as a real token, which fails the suite.)
+
+     `light` here is what the UA already did with no declaration at all
+     (`normal` renders light), so this half changes nothing on its own; it is
+     declared so the pair is explicit and so `.dark` has something to
+     override. The two selectors have EQUAL specificity (0,1,0 — `:root` is a
+     pseudo-class, `.dark` a class), so the cascade is decided by ORDER:
+     `.dark` must stay later in this file than this block. It does. */
+  color-scheme: light;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f7f7f3;
+  --bg-tertiary: #e4e4df;
+  --bg-code: #f7f7f3;
+  --bg-code-header: #e4e4df;
+  /* Card/group surfaces (it also feeds --un-group-bg, i.e. every native-kit
+     grouped list). Neutral for the same reason as --quiet-tint above.
+     107/107/100 was the PRE-APCA zinc-500 (#6B6B64); the wash now carries the
+     ramp's current 500 step, 89/89/83, which is the rgb triple every
+     --state-*-bg above already derives from. Alpha held unchanged so only hue
+     moves. */
+  --bg-card: rgba(89, 89, 83, 0.06);
+  --bg-card-alt: rgba(105, 168, 85, 0.05);
+  --bg-input: #f7f7f3;
+  /* THE NEUTRAL TOKENS ARE RAMP STEPS, NOT NEIGHBOURS OF RAMP STEPS. Three of
+     them used to sit just off the scale, which is how a token drifts out of a
+     sweep: a class-name guard cannot see a raw hex, so #d9d9d3, #131311 and
+     #6b6b64 survived every retune the utilities went through.
+
+       --border        #d9d9d3 -> zinc-300 #CFCFC8. It sat BETWEEN zinc-200
+                       and zinc-300 while --border-light already WAS zinc-200,
+                       so the pair spanned 1.5 steps of a scale it was not on.
+       --text-primary  #131311 -> zinc-950 #0E0E0B. Sub-JND either way
+                       (Lc 105.2 -> 105.6 on white, APCA-W3 0.1.9) — this one
+                       buys no contrast, only the guarantee that the body ink
+                       and `bg-zinc-950` are the same colour.
+       --text-muted    #6b6b64 -> zinc-500 #595953, and its dark half
+                       #97968e -> zinc-300 #CFCFC8. This is the one that
+                       mattered. ~92 var-reading rules take it, and it was the
+                       pre-APCA secondary ink: 76.8 on white / 71.8 on the
+                       #F7F7F3 page against a dark half of -43.5 on the
+                       #1F1F1B card — the NON-CONTENT tier, exactly what the
+                       neutral class sweep spent itself eliminating. It is now
+                       84.5 / 79.5 light and -75.2 dark, the same zinc-500/300
+                       pair --state-neutral uses and the same 9.3-point
+                       magnitude gap documented there.
+
+     --text-faint keeps zinc-400 in both halves and is NOT part of this: it is
+     already a ramp step, and "faint" names the non-content tier on purpose
+     (-45.2 on the dark pane) rather than by accident. Pulling it up would
+     collapse it into --text-muted, which is the three-level-ladder flattening
+     the dark-mode note further down warns about. */
+  --border: #cfcfc8;
+  --border-light: #e4e4df;
+  --text-primary: #0e0e0b;
+  --text-secondary: #3c3c36;
+  --text-muted: #595953;
+  --text-faint: #97968e;
+  --text-code: #3c3c36;
+  /* THE FILL IS YELLOW, THE INK IS BLUE, AND THAT SPLIT IS WHY THE TOKEN IS
+     TWO PAIRS. This block used to open "THE ACCENT IS YELLOW NOW" and to
+     describe --accent as a gold (#8a5b0b); both readings are WRONG and are
+     corrected in place rather than deleted, because the stale reading is an
+     active trap — the ramp key `violet-*` is the YELLOW and the blue is its
+     own `azure` scale, so "the accent" names two different hues depending on
+     which half of the pair you land on. Read the hex, not the prose and not
+     the key.
+
+     A blue could be one value doing both jobs — ink on white AND a fill
+     under white text — but no vibrant yellow can carry light text (~1.5:1),
+     and the dark gold that once read as ink made a muddy fill. So the roles
+     are two token pairs, and only ONE of them is still yellow:
+
+       --accent / --accent-light        the accent as INK, and it is BLUE
+                                        (azure). ~46 rules colour text with
+                                        these. --accent is azure-800 /
+                                        azure-200: Lc 77.8 on white and
+                                        -81.4 on the #1F1F1B dark card
+                                        (APCA-W3 0.1.9), which is the branch's
+                                        parity target. It was azure-700 /
+                                        azure-400 — 68.0 and -51.8, a
+                                        16.2-point magnitude mismatch, the
+                                        last of the WCAG-era gaps. -700
+                                        still carries the brand hex #3090E1's
+                                        neighbourhood for CHIPS, WASHES and
+                                        FILLS; only the INK moved.
+                                        --accent-light stays one step off
+                                        (azure-600 / azure-300) because its
+                                        15 `color:` sites are all HOVER
+                                        partners of --accent and need a
+                                        delta, not parity.
+       --accent-fill / --accent-fill-hover
+                                        the accent as SURFACE (the CTA
+                                        yellow, #ffc93a — what the Improve
+                                        pill wears). Everything painted with
+                                        these MUST take --accent-ink, which
+                                        is TRUE BLACK in BOTH modes:
+                                        13.7:1 on the fill, 15.2:1 on hover.
+
+     The DARK-mode --accent below is a PALE BLUE (azure-200), not the bright
+     yellow this line used to claim: against a near-black page ink has to be
+     light, and on a dark ground a pale tint IS the readable ink. The fill
+     pair stays the same vibrant yellow in both modes. */
+  --accent: #186ba9;
+  --accent-light: #2589d9;
+  --accent-fill: #ffc93a;
+  --accent-fill-hover: #ffd84d;
+  /* Your own message bubble and its ink. NOT --accent-fill: a bubble is
+     not an action, and the yellow only means "do this" for as long as
+     nothing else wears it.
+
+     azure-800, not the -700 this was: white on -700 measures Lc -73.5
+     (APCA-W3 0.1.9) — under the 75 body minimum — while near-black on the
+     same fill is 35.3. It is the one step of the ramp where NEITHER ink
+     reads, which is why the bubble looked neither strong nor light. -800
+     is -83.1. Four surfaces share this token and they must move together:
+     .messages-unread, the dev-chat count badge, .dc-msg-user, and the
+     React `me` bubble in @/components/ui/chat.tsx — .dc-msg-user and `me`
+     are the same bubble in two renderers, so a one-sided fix desyncs them.
+     Same value in both themes on purpose: a self-contained fill needs no
+     dark partner, and `them` carries the theme swap. */
+  --link-fill: #186ba9;
+  --link-ink: #ffffff;
+  /* The QUIET wash — hovers, "mine" marks, attachment discs, quoted
+     blocks. It was --accent-tint, a pale yellow, until the accent was
+     restricted to actions and selections: a hover state is neither, and a
+     product whose every hover is tinted with its action colour has an
+     action colour that means nothing. Neutral, and renamed so the name
+     cannot drift back. */
+  --quiet-tint: rgba(89, 89, 83, 0.10);
+  /* Text ON the accent fill: TRUE black, in both modes. White on any
+     usable yellow is unreadable (~1.5:1), and a warm near-black still
+     reads as a tint against a saturated yellow — pure #000 is the only
+     ink that looks deliberate on this surface (13.7:1). */
+  --accent-ink: #000000;
   /* The agent bubble's surface — see the .dark counterpart. */
   --bubble-bg: #ffffff;
 
@@ -54,6 +191,28 @@
   --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
   --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
 
+  /* THE SHELL'S CONTENT KEYLINE. Every list, feed, chat and transcript on the
+     phone-density shell puts its content's left edge here, and a screen-level
+     scroll container or bar spells it ONCE on itself rather than letting each
+     child self-inset — which is what #dc-messages did, giving that one screen
+     thirteen distinct first-content x-positions, none of them chosen.
+
+     This is the CONTENT tier, not the only one. Chrome sits at 16px (the
+     platform header, auth, the reading columns, and every native-kit surface
+     in the frozen /v1/ contract), and the admin console is at p-4 lg:px-6 on
+     the far side of the density boundary. The 12/16 jog between a back
+     chevron and a screen's content is that seam, not drift: collapsing it
+     would fight the kit and rewrite two tests' arithmetic for 4px.
+
+     0.75rem, not 12px, so the token is definitionally identical to what
+     `px-3` computes to. tailwind.config.js aliases it as `spacing.gutter`,
+     so `px-gutter` and this declaration resolve ONE value by reference and
+     there is no second number to drift. Interiors are NOT this: a chip's own
+     padding and a list's content indent answer to their own surface, and
+     tests/screen-keyline.test.js scopes its raw-12px ban to manifested
+     containers for exactly that reason. */
+  --screen-gutter: 0.75rem;
+
   /* Content-row height of the mobile install strip (#1372). Declared here,
      unconditionally, rather than on either element that reads it: `body`
      reserves this much padding and the strip itself is sized to it, and a
@@ -70,8 +229,10 @@
 
        neutral    — not started, skipped, draft, paused, archived
        progress   — actively happening: merging, resolving, checks
-                    running, in vote. Violet, NOT amber: amber used to
-                    do this job as well as three others.
+                    running, in vote. Blue (azure), NOT amber: amber
+                    used to do this job as well as three others. It was
+                    stock violet #7c3aed until the reskin swept these
+                    tokens onto the tuned ramps.
        attention  — non-blocking heads-up: behind main, console
                     errors, advisory votes, explicit approval. Amber
                     now means ONLY this.
@@ -82,26 +243,44 @@
        ok         — done and good: merged, checks passing, passed —
                     merging shortly, a Yes tally. Green. ("✓ Checks
                     passing" used to inherit the violet Merged colour.)
-       admin      — an admin bypass. Same amber family as attention
-                    but distinguished by an OUTLINE (see
-                    .gc-vote-btn-admin) so hue alone isn't the signal.
+       admin      — an admin bypass. ACHROMATIC (zinc), split off from
+                    attention: all five status hues are spoken for, and
+                    admin is the only state token that inks an
+                    INTERACTIVE control rather than a status label, so
+                    it takes the body ink tier rather than the status
+                    one. Carrying no hue at all is what distinguishes
+                    an out-of-band bypass from the five statuses, and
+                    it leaves the dashed OUTLINE (see
+                    .gc-vote-btn-admin) free to be a second, INDEPENDENT
+                    signal rather than the only one.
 
      `-bg` companions are the faint fills; `-fill` the stronger
-     proportional-fill wash used inside the tally pill. */
-  --state-neutral: #6b7280;
-  --state-neutral-bg: rgba(107, 114, 128, 0.12);
-  --state-progress: #7c3aed;
-  --state-progress-bg: rgba(124, 58, 237, 0.12);
-  --state-attention: #b45309;
-  --state-attention-bg: rgba(245, 158, 11, 0.14);
-  --state-blocked: #dc2626;
-  --state-blocked-bg: rgba(239, 68, 68, 0.12);
-  --state-blocked-fill: rgba(239, 68, 68, 0.32);
-  --state-ok: #15803d;
-  --state-ok-bg: rgba(34, 197, 94, 0.12);
-  --state-ok-fill: rgba(34, 197, 94, 0.32);
-  --state-admin: #b45309;
-  --state-admin-bg: rgba(245, 158, 11, 0.10);
+     proportional-fill wash used inside the tally pill.
+
+     All fourteen values below are tuned-ramp steps, not stock Tailwind.
+     Inks target the status tier (|Lc| ~80) at light/dark PARITY —
+     zinc-500/300, meadow-700/200, red-700/200, amber-700/200,
+     azure-800/200 — except admin, which targets the body tier
+     (zinc-700/100, 95.7 / -95.3, the product's own body-ink pair).
+     Every `-bg`/`-fill` is derived from its ramp's 500 step, the
+     documented wash hue, with the pre-existing alphas held unchanged so
+     only hue moves; light and dark share the rgb triple and differ only
+     in alpha. Lc figures throughout are APCA-W3 0.1.9 (0.98G-4g), on
+     white and on the #1F1F1B dark card. */
+  --state-neutral: #595953;
+  --state-neutral-bg: rgba(89, 89, 83, 0.12);
+  --state-progress: #186BA9;
+  --state-progress-bg: rgba(48, 144, 225, 0.12);
+  --state-attention: #95500B;
+  --state-attention-bg: rgba(238, 136, 34, 0.14);
+  --state-blocked: #B42D18;
+  --state-blocked-bg: rgba(227, 70, 46, 0.12);
+  --state-blocked-fill: rgba(227, 70, 46, 0.32);
+  --state-ok: #38672E;
+  --state-ok-bg: rgba(105, 168, 85, 0.12);
+  --state-ok-fill: rgba(105, 168, 85, 0.32);
+  --state-admin: #3C3C36;
+  --state-admin-bg: rgba(89, 89, 83, 0.10);
 }
 
 /* ── Safe-area utilities ─────────────────────────────────
@@ -203,19 +382,51 @@ html.un-kb .platform-safe-sheet {
 .messages-thread-action,
 .messages-thread-back,
 .messages-composer-action,
+/* ── THE MINI-CONTROL LADDER: 20 · 24 · 28 · 34 · 38 ─────
+   The legacy messages / group-chat / dev-chat renderers ran ELEVEN distinct
+   control heights — 20 22 24 25 26 28 30 31 34 36 38 — which is not a ladder,
+   it is eleven separate decisions made by eleven people. Half of them differed
+   by 1–2px from a neighbour, which is under the threshold at which anyone
+   could have been choosing. Five steps, each of which is the size of a
+   different KIND of thing:
+
+     20  a mark inside a text line — the hover affordances (.gc-react-add,
+         .gc-msg-edit, .gc-msg-save), the step marks, the inline spinner.
+     24  a small chip or tray control — .messages-message-actions button, the
+         reaction pill's min-height, the reply-draft dismiss, .dc-draft-btn.
+     28  a medium round control — the reaction pickers in both renderers,
+         .gc-react-bar-more, the attachment disc.
+     34  a composer-adjacent secondary — .dc-quick-pill, .dc-save-draft-btn.
+     38  the primary composer row — Send in both renderers, and the composer
+         input's resting min-height, which is what that row is measured against.
+
+   TWO FAMILIES ARE DELIBERATELY OUTSIDE THIS and were not touched:
+     · The dev-card status band's 20 / 22 / 24, whose arithmetic is written
+       out in its own comments (a 20px chip centring in a 22px band; 24px
+       being .gc-vote-btn's fixed height, which .gc-card-actions reserves and
+       clips to) and pinned by tests/dev-card-band-layout.test.js and
+       tests/dev-chip-geometry.test.js. Its 22 is why 22px still appears in
+       this file; it is not a stray mini-control.
+     · .gc-msg-system > .gc-react-add at 18px and .drawer-ver-row at 26px —
+       an inline glyph in a centred sentence, and a footer TEXT row that its
+       own comment says is "not a control". */
 .messages-send {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
+  /* 38px — the ladder's top step, which is .messages-composer-input's resting
+     min-height and .dc-send-btn's height. It was 36, so the round Send sat
+     2px shorter than the pill it is laid out beside and than the send button
+     in the other chat renderer. */
+  width: 38px;
+  height: 38px;
   border-radius: 9999px;
   color: var(--text-secondary);
 }
 
-.messages-new-button { color: white; background: var(--accent); }
-.messages-new-button:hover { background: var(--accent-light); }
+.messages-new-button { color: var(--accent-ink); background: var(--accent-fill); }
+.messages-new-button:hover { background: var(--accent-fill-hover); }
 .messages-new-button svg,
 .messages-thread-action svg,
 .messages-thread-back svg,
@@ -267,14 +478,14 @@ html.un-kb .platform-safe-sheet {
   pointer-events: none;
 }
 .messages-conversation-row:hover { background: var(--bg-secondary); }
-.messages-conversation-active { background: var(--accent-tint); }
+.messages-conversation-active { background: var(--bg-tertiary); }
 .messages-group-tag {
   flex: 0 0 auto;
   padding: 1px 5px;
   border-radius: 9999px;
   color: var(--text-muted);
   background: var(--bg-secondary);
-  font-size: 10px;
+  font-size: 12px;
 }
 .messages-unread {
   flex: 0 0 auto;
@@ -282,23 +493,29 @@ html.un-kb .platform-safe-sheet {
   height: 18px;
   padding: 0 5px;
   border-radius: 9999px;
-  background: var(--accent);
-  color: white;
-  font-size: 10px;
+  background: var(--link-fill);
+  color: var(--link-ink);
+  font-size: 12px;
   font-weight: 700;
   line-height: 18px;
   text-align: center;
 }
 
+/* Opaque amber banner. Both halves were stock Tailwind (amber-800 on
+   amber-100 / amber-200 on amber-950); they are the tuned warm amber
+   ramp now, ink and ground drawn from the SAME ramp so the pair moves
+   together. It is a 12px label, which the ladder puts at the |Lc| 90
+   floor rather than the 75 body minimum — the stock pairing missed that
+   in light (76.6). Measured with APCA-W3 0.1.9. */
 .messages-network-banner {
   flex: 0 0 auto;
   padding: 5px 12px;
-  color: #92400e;
-  background: #fef3c7;
-  font-size: 11px;
+  color: #462505;
+  background: #FCECDB;
+  font-size: 12px;
   text-align: center;
 }
-.dark .messages-network-banner { color: #fde68a; background: #451a03; }
+.dark .messages-network-banner { color: #FCECDB; background: #2B1703; }
 
 .messages-state,
 .messages-empty,
@@ -322,15 +539,21 @@ html.un-kb .platform-safe-sheet {
   margin-top: 5px;
   border-radius: 8px;
   padding: 7px 12px;
-  background: var(--accent);
-  /* --accent-ink, not `white`. The dark accent is a LIGHTER blue (#5aa9ff) —
-     it has to be, against a near-black page — so white on it is 2.5:1. The
-     token is exactly this pair: white on the light accent, near-black on the
-     dark one. Same rule the outgoing chat bubble runs under. */
-  color: var(--accent-ink);
+  /* ONE YELLOW PER SCREEN. This empty-state CTA opens the same dialog as
+     the header's persistent `+` (.messages-new-button, which keeps the
+     yellow) — two yellow shapes for one action spends the scarce colour
+     twice and makes neither read as THE thing to do. The duplicate takes
+     the near-black filled treatment instead. */
+  background: var(--text-primary);
+  color: var(--bg-primary);
   font-weight: 600;
 }
-.messages-state-error { color: #dc2626; }
+/* Was a bare stock red-600 with no dark counterpart, so it painted the
+   same mid red on the white card and on the near-black page — Lc 71.6
+   / -29.8, the second of those in the BARELY VISIBLE tier.
+   --state-blocked is this file's own token for the meaning and carries
+   the split: 80.0 / -81.7. (APCA-W3 0.1.9.) */
+.messages-state-error { color: var(--state-blocked); }
 .messages-spinner {
   width: 20px;
   height: 20px;
@@ -361,15 +584,17 @@ html.un-kb .platform-safe-sheet {
   width: 200px;
   padding: 5px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--bg-primary);
   box-shadow: 0 12px 30px rgba(0, 0, 0, .18);
 }
+/* Dark mode drops the drop shadow — the 1px --border above is the edge here. */
+.dark .messages-thread-menu { box-shadow: none; }
 .messages-thread-menu button {
   display: block;
   width: 100%;
   padding: 8px 9px;
-  border-radius: 6px;
+  border-radius: 4px;
   font-size: 12px;
   text-align: left;
 }
@@ -381,25 +606,27 @@ html.un-kb .platform-safe-sheet {
   gap: 12px;
   flex: 0 0 auto;
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(10, 124, 255, .25);
-  background: var(--accent-tint);
+  border-bottom: 1px solid var(--border);
+  background: var(--quiet-tint);
   font-size: 12px;
 }
 .messages-invitation strong { color: var(--accent); }
 .messages-invitation p { margin-top: 1px; color: var(--text-muted); }
-.messages-invitation [role="alert"] { display: block; margin-top: 3px; color: #dc2626; }
+.messages-invitation [role="alert"] { display: block; margin-top: 3px; color: var(--state-blocked); }
 .messages-invite-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .messages-invite-decline,
 .messages-invite-block,
 .messages-invite-accept {
   border-radius: 7px;
   padding: 6px 9px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 .messages-invite-decline { border: 1px solid var(--border); color: var(--text-secondary); }
-.messages-invite-block { border: 1px solid rgba(220, 38, 38, .35); color: #dc2626; }
-.messages-invite-accept { background: var(--accent); color: white; }
+/* Border re-derived from red-500, the ramp's documented wash/fill hue,
+   with the .35 alpha held; ink onto the themed token. */
+.messages-invite-block { border: 1px solid rgba(227, 70, 46, .35); color: var(--state-blocked); }
+.messages-invite-accept { background: var(--accent-fill); color: var(--accent-ink); }
 
 .messages-thread-scroll { padding: 7px 0 4px; }
 .messages-load-older {
@@ -407,7 +634,7 @@ html.un-kb .platform-safe-sheet {
   padding: 4px 10px;
   color: var(--text-muted);
   background: var(--bg-secondary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .messages-message {
@@ -420,7 +647,7 @@ html.un-kb .platform-safe-sheet {
 .messages-message:hover { background: var(--bg-card-alt); }
 .messages-message-self { background: var(--bg-card); }
 .messages-message-pending { opacity: .7; }
-.messages-message-failed { background: rgba(239, 68, 68, .06); }
+.messages-message-failed { background: rgba(227, 70, 46, .06); }
 .messages-message-head {
   display: flex;
   align-items: baseline;
@@ -431,7 +658,7 @@ html.un-kb .platform-safe-sheet {
   font-weight: 600;
 }
 .messages-message-head time,
-.messages-message-head time ~ span { color: var(--text-faint); font-size: 10px; font-weight: 400; }
+.messages-message-head time ~ span { color: var(--text-faint); font-size: 12px; font-weight: 400; }
 .messages-markdown { color: var(--text-primary); overflow-wrap: anywhere; }
 .messages-markdown a { color: var(--accent); text-decoration: underline; }
 .messages-message-actions {
@@ -447,11 +674,18 @@ html.un-kb .platform-safe-sheet {
   background: var(--bg-primary);
   box-shadow: 0 3px 10px rgba(0, 0, 0, .1);
 }
+/* Dark mode drops the drop shadow — the 1px --border-light above is the edge here. */
+.dark .messages-message-actions { box-shadow: none; }
 .messages-message:hover .messages-message-actions,
 .messages-message:focus-within .messages-message-actions { display: flex; }
 .messages-message-actions button {
-  width: 26px;
-  height: 25px;
+  /* SQUARE, and on the ladder's small-control step. It was 26 wide by 25
+     tall around a square 15px glyph — a 1px oblong nobody chose, and the
+     only non-square icon button in the product. 24 is the step the reply
+     draft's dismiss and the reaction pill's min-height already sit on; the
+     tray is hover-revealed on desktop only, so the 2px is not tap target. */
+  width: 24px;
+  height: 24px;
   border-radius: 5px;
   color: var(--text-muted);
   font-size: 13px;
@@ -513,8 +747,8 @@ html.un-kb .platform-safe-sheet {
   border-left: 3px solid var(--accent-light);
   padding: 4px 7px;
   color: var(--text-muted);
-  background: var(--accent-tint);
-  font-size: 11px;
+  background: var(--quiet-tint);
+  font-size: 12px;
   text-align: left;
 }
 .messages-quote { margin: 2px 0 4px; border-radius: 0 6px 6px 0; }
@@ -537,9 +771,9 @@ html.un-kb .platform-safe-sheet {
   border-radius: 9999px;
   color: var(--text-primary);
   background: var(--bg-tertiary);
-  font-size: 11px;
+  font-size: 12px;
 }
-.messages-reactions .messages-reaction-mine { border-color: var(--accent-light); color: var(--accent); background: var(--accent-tint); }
+.messages-reactions .messages-reaction-mine { border-color: var(--accent-light); color: var(--accent); background: var(--quiet-tint); }
 .messages-reaction-picker {
   position: absolute;
   z-index: 25;
@@ -553,7 +787,12 @@ html.un-kb .platform-safe-sheet {
   background: var(--bg-primary);
   box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
 }
-.messages-reaction-picker button { width: 30px; height: 30px; border-radius: 9999px; font-size: 18px; }
+/* Dark mode drops the drop shadow — the 1px --border above is the edge here. */
+.dark .messages-reaction-picker { box-shadow: none; }
+/* 28px — the ladder's medium round step, shared with .gc-react-bar-more,
+   which is the SAME control (open more reactions) in the group-chat
+   renderer. It was 30. */
+.messages-reaction-picker button { width: 28px; height: 28px; border-radius: 9999px; font-size: 18px; }
 .messages-reaction-picker button:hover { background: var(--bg-secondary); transform: scale(1.1); }
 
 .messages-edit textarea {
@@ -578,7 +817,7 @@ html.un-kb .platform-safe-sheet {
   overflow-y: auto;
 }
 .messages-edit > div { display: flex; gap: 9px; margin-top: 3px; }
-.messages-edit button { color: var(--accent); font-size: 11px; font-weight: 600; }
+.messages-edit button { color: var(--accent); font-size: 12px; font-weight: 600; }
 
 .messages-report {
   display: grid;
@@ -590,12 +829,12 @@ html.un-kb .platform-safe-sheet {
   padding: 8px;
   background: var(--bg-secondary);
 }
-.messages-report label { display: grid; gap: 3px; color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.messages-report label { display: grid; gap: 3px; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
 .messages-report select,
 .messages-report textarea {
   width: 100%;
   border: 1px solid var(--border-light);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 6px 7px;
   color: var(--text-primary);
   background: var(--bg-input);
@@ -603,7 +842,7 @@ html.un-kb .platform-safe-sheet {
 }
 .messages-report textarea { resize: vertical; }
 .messages-report > div { display: flex; gap: 10px; }
-.messages-report button { color: var(--accent); font-size: 11px; font-weight: 600; }
+.messages-report button { color: var(--accent); font-size: 12px; font-weight: 600; }
 .messages-report button:disabled { opacity: .55; }
 
 .messages-attachments,
@@ -620,26 +859,29 @@ html.un-kb .platform-safe-sheet {
   padding: 7px 9px;
   color: var(--text-primary);
   background: var(--bg-secondary);
-  font-size: 11px;
+  font-size: 12px;
   text-decoration: none;
 }
-.messages-attachment img { width: 120px; max-height: 100px; border-radius: 6px; object-fit: cover; }
-.messages-attachment span { color: var(--text-muted); font-size: 10px; }
+.messages-attachment img { width: 120px; max-height: 100px; border-radius: 4px; object-fit: cover; }
+.messages-attachment span { color: var(--text-muted); font-size: 12px; }
 .messages-file-icon,
 .messages-object-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 31px;
-  height: 31px;
+  /* 28px, the ladder's medium round step. 31 is the clearest case in the set
+     of a size nobody chose — it is not a step of anything, and nothing in the
+     attachment card is measured against it. */
+  width: 28px;
+  height: 28px;
   border-radius: 7px;
   color: var(--accent);
-  background: var(--accent-tint);
+  background: var(--quiet-tint);
   font-size: 12px;
   font-weight: 700;
 }
-.messages-attachment-view { color: var(--accent); font-size: 10px; font-weight: 600; }
+.messages-attachment-view { color: var(--accent); font-size: 12px; font-weight: 600; }
 .messages-object-card:hover { border-color: var(--accent-light); }
 .messages-object-unavailable { opacity: .75; filter: grayscale(1); }
 
@@ -648,14 +890,20 @@ html.un-kb .platform-safe-sheet {
   min-height: 18px;
   padding: 2px 13px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 12px;
 }
 .messages-composer,
 .messages-composer-disabled {
   position: relative;
   flex: 0 0 auto;
   border-top: 1px solid var(--border-light);
-  padding: 8px;
+  /* THE COMPOSER JOINS THE CONTENT KEYLINE. A pinned bottom bar is a
+     screen-level container, and this one sat 4px inboard of the transcript
+     scrolling above it, so the send control and the last message it answers
+     did not share a left edge. The BLOCK half stays at 8px — that is the
+     bar's own vertical breathing, not a gutter. All four composer bars in
+     the product move together or none of them do. */
+  padding: 8px var(--screen-gutter);
   background: var(--bg-primary);
 }
 .messages-composer-disabled { color: var(--text-muted); font-size: 12px; text-align: center; }
@@ -665,7 +913,7 @@ html.un-kb .platform-safe-sheet {
   max-height: 140px;
   min-height: 38px;
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: 9999px;
   padding: 8px 12px;
   color: var(--text-primary);
   background: var(--bg-input);
@@ -681,7 +929,7 @@ html.un-kb .platform-safe-sheet {
 .messages-composer-input:focus { border-color: var(--accent-light); }
 .messages-composer-action { color: var(--text-muted); }
 .messages-composer-action:disabled { opacity: .35; }
-.messages-send { color: white; background: var(--accent); }
+.messages-send { color: var(--accent-ink); background: var(--accent-fill); }
 .messages-send:disabled { opacity: .35; }
 .messages-reply-draft,
 .messages-pending-object { margin-bottom: 6px; }
@@ -702,6 +950,8 @@ html.un-kb .platform-safe-sheet {
   background: var(--bg-primary);
   box-shadow: 0 -7px 20px rgba(0, 0, 0, .12);
 }
+/* Dark mode drops the drop shadow — the 1px --border above is the edge here. */
+.dark .messages-mention-menu { box-shadow: none; }
 .messages-mention-menu button { display: block; width: 100%; padding: 7px 8px; border-radius: 5px; color: var(--text-primary); font-size: 12px; text-align: left; }
 .messages-mention-menu button:hover { background: var(--bg-secondary); }
 .messages-composer-dragging { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -802,54 +1052,94 @@ html.un-kb .platform-safe-sheet {
 }
 
 .dark {
-  --bg-primary: #0b0b0c;
-  --bg-secondary: #1c1c1e;
-  --bg-tertiary: #2c2c2e;
-  --bg-code: #141416;
-  --bg-code-header: #1c1c1e;
-  --bg-card: rgba(90, 169, 255, 0.10);
-  --bg-card-alt: rgba(16, 185, 129, 0.05);
-  --bg-input: #1c1c1e;
-  --border: #2c2c2e;
-  --border-light: #3a3a3c;
-  --text-primary: #f5f5f7;
-  --text-secondary: #e3e3e6;
-  /* #8e8e93, not the #6c6c70 this carried. --text-muted was the ONE token in
-     this block with no dark counterpart — it kept its light value, so on a
-     near-black page it was as dark as it is on a near-white one. Every muted
-     label the token paints measured 3.2:1 or worse against the dark ground,
-     and the create modal's unselected segment pills 2.7:1 against their track.
-     One step up the neutral ramp reads at 6.0 on the ground and 5.3 on a card,
-     and is still plainly quieter than --text-secondary above. */
-  --text-muted: #8e8e93;
-  --text-faint: #8e8e93;
-  --text-code: #e3e3e6;
-  --accent: #5aa9ff;
-  --accent-light: #8cc4ff;
-  --accent-tint: rgba(90, 169, 255, 0.14);
-  --accent-ink: #0b0b0c;
+  /* The other half of the pair opened on :root — see the long note there for
+     what this reaches and why it is not covered by the token parity test.
+     `.dark` is only ever set on <html> (frontend/src/head.html's no-flash
+     guard, `document.documentElement.classList.add('dark')`), which is the
+     element `color-scheme` has to land on for the UA widgets to follow.
+
+     Safe against a canvas leak: <body> paints `bg-zinc-100 dark:bg-zinc-950`
+     explicitly, so the UA's own dark canvas never shows through. */
+  color-scheme: dark;
+  --bg-primary: #0e0e0b;
+  --bg-secondary: #1f1f1b;
+  --bg-tertiary: #2d2d28;
+  --bg-code: #161613;
+  --bg-code-header: #1f1f1b;
+  --bg-card: rgba(247, 247, 243, 0.06);
+  --bg-card-alt: rgba(138, 189, 116, 0.05);
+  --bg-input: #1f1f1b;
+  --border: #2d2d28;
+  --border-light: #3c3c36;
+  --text-primary: #f7f7f3;
+  --text-secondary: #e4e4df;
+  /* zinc-300, the dark half of the light zinc-500 above. Two moves brought it
+     here, and the first one's note is kept because it records what was
+     believed at the time: "One step up the neutral ramp from where an earlier
+     bug left this token (it once kept its LIGHT value on the dark ground and
+     measured 3.2:1 or worse on every muted label). The 400 reads 6.5:1 on the
+     ground and 5.6:1 on a card, and is still plainly quieter than
+     --text-secondary." Every ratio there is WCAG, and WCAG is what scored
+     zinc-400 as adequate: under APCA-W3 0.1.9 it measures Lc -43.5 on the
+     #1F1F1B card, the non-content tier. zinc-300 is -75.2, at parity with the
+     light half's 84.5 to within the 9.3 points --state-neutral documents for
+     this same pair. --text-faint keeps zinc-400 and is now genuinely a step
+     below this rather than a duplicate of it. */
+  --text-muted: #cfcfc8;
+  --text-faint: #97968e;
+  --text-code: #e4e4df;
+  /* The ink pair goes PALE here — this line said "goes BRIGHT (yellow text
+     belongs on a dark page — 13.3:1 on a card)" and it was describing a
+     token that has been BLUE since the accent split; corrected in place, not
+     deleted, because the yellow reading is the trap the :root note names.
+     --accent is azure-200 at Lc -81.4 on the #1F1F1B card (APCA-W3 0.1.9),
+     the dark half of the parity pair with the light 77.8. It was azure-400,
+     -51.8 — the non-content end of a 16.2-point mismatch. The fill pair
+     stays the same vibrant yellow as light mode, still under the near-black
+     --accent-ink. */
+  --accent: #bcddf7;
+  --accent-light: #8fc6ef;
+  --accent-fill: #ffc93a;
+  --accent-fill-hover: #ffd84d;
+  --link-fill: #186ba9;
+  --link-ink: #ffffff;
+  --quiet-tint: rgba(247, 247, 243, 0.10);
+  --accent-ink: #000000;
   /* One step UP from the page here, not white: the page is near-black, so a
      bubble has to be lighter than it or it stops being a bubble. */
-  --bubble-bg: #1c1c1e;
+  --bubble-bg: #1f1f1b;
 
   /* Dark counterparts of the semantic state tokens. Every --state-*
      declared on :root has one here — tests/dev-color-tokens.test.js
      asserts the two lists match, so a token added above without a dark
-     value fails the suite rather than rendering an unreadable badge. */
-  --state-neutral: #9ca3af;
-  --state-neutral-bg: rgba(156, 163, 175, 0.16);
-  --state-progress: #a78bfa;
-  --state-progress-bg: rgba(167, 139, 250, 0.18);
-  --state-attention: #fbbf24;
-  --state-attention-bg: rgba(245, 158, 11, 0.18);
-  --state-blocked: #f87171;
-  --state-blocked-bg: rgba(239, 68, 68, 0.18);
-  --state-blocked-fill: rgba(239, 68, 68, 0.38);
-  --state-ok: #34d399;
-  --state-ok-bg: rgba(34, 197, 94, 0.18);
-  --state-ok-fill: rgba(34, 197, 94, 0.38);
-  --state-admin: #fbbf24;
-  --state-admin-bg: rgba(245, 158, 11, 0.14);
+     value fails the suite rather than rendering an unreadable badge.
+
+     Each ink is the 200 step of the SAME ramp its light counterpart's
+     700 comes from, because on a dark ground a PALE TINT is the
+     readable ink — no saturated dark-mode red or green reaches the
+     status tier at any lightness. That is what puts these at parity
+     with light (|Lc| ~80 both sides) where the stock saturated
+     mid-steps they replaced sat at -43 to -72. Two deliberate
+     exceptions: neutral keeps the product's shipped zinc-300 secondary
+     pair (-75.2, a 9.3-point magnitude gap from its light 84.5) rather
+     than the closer zinc-200, which IS --text-secondary here and would
+     make the quietest state ink like body-adjacent text; and admin sits
+     at the body tier on zinc-100 (-95.3). The washes carry the same rgb
+     triple as their light partners and differ only in alpha. */
+  --state-neutral: #CFCFC8;
+  --state-neutral-bg: rgba(89, 89, 83, 0.16);
+  --state-progress: #BCDDF7;
+  --state-progress-bg: rgba(48, 144, 225, 0.18);
+  --state-attention: #F8D0A7;
+  --state-attention-bg: rgba(238, 136, 34, 0.18);
+  --state-blocked: #F7CDC6;
+  --state-blocked-bg: rgba(227, 70, 46, 0.18);
+  --state-blocked-fill: rgba(227, 70, 46, 0.38);
+  --state-ok: #CCE2BD;
+  --state-ok-bg: rgba(105, 168, 85, 0.18);
+  --state-ok-fill: rgba(105, 168, 85, 0.38);
+  --state-admin: #EFEFEB;
+  --state-admin-bg: rgba(89, 89, 83, 0.14);
 }
 
 /* ── usernode-native kit theming ─────────────────────────
@@ -877,20 +1167,110 @@ html.un-kb .platform-safe-sheet {
   /* The tile-zoom overlay surface: the app view's screens paint on the
      body background, so the moving card must match it exactly. */
   --un-zoom-bg: var(--bg-primary);
+
+  /* ── Colour tokens claimed from the kit's pre-reskin defaults ──
+     The kit declares 30 --un-*; the block above claimed 10, leaving the
+     rest rendering defaults from two palettes ago — several of them
+     blue-cast blue-greys (#d4d4e4, #6e6e8a, #1c1c2a, #f4f4f8) or stock
+     violet (#a78bfa), all of which read cold beside the warm ramps.
+     Seven more colour tokens are claimed here and in the .dark twin.
+     Bridge only; never fork or out-specificity the kit CSS.
+
+     Deliberately NOT claimed, with reasons, so the gap is not re-opened
+     by someone reading it as an oversight:
+       --un-action-text  #ffffff in both modes; already the correct
+                         maximum-contrast ink on both fills claimed here.
+       --un-backdrop     a pure black scrim — no hue to drift, and no
+                         platform token to bridge from.
+       --un-panel-bg     defaults to var(--un-sheet-bg), which is claimed
+                         above, so it already tracks the platform;
+                         claiming it would close the seam the kit left
+                         open for an app to split the two surfaces.
+       --un-panel-width, --un-radius, --un-radius-full  geometry.
+                         --un-radius is 0.5rem, already exactly the
+                         platform's 8px inner step, and --un-radius-full
+                         is 9999px — nothing to correct in either.
+       the six --un-ease-spring* / --un-dur-spring*  MOTION, and these
+                         must never be claimed: native.css computes those
+                         linear() curves from the SAME integrator
+                         parameters native.js uses, so overriding the CSS
+                         half alone desyncs CSS motion from JS motion.
+                         Native feel stays uniform across differently
+                         branded apps by design. */
+  /* Ink ON --un-accent (bridged to --accent above). White on the light
+     accent is correct; the pair is declared explicitly so the dark
+     override below reads as a pair rather than a lone override. */
+  --un-accent-contrast: #ffffff;
+  --un-switch-track-off: #cfcfc8;
+  --un-switch-thumb: #ffffff;
+  --un-action-danger: #b42d18;
+  --un-action-neutral: #595953;
+  /* The toast surface is dark in BOTH themes (the iOS HUD idiom the kit
+     documents), so its ink and its text-action colour take the same
+     value in both blocks — the same shape as --accent-fill/--accent-ink.
+     The kit's default action colour is stock violet-400, the loudest
+     remaining pre-reskin default on any kit surface. */
+  --un-toast-bg: rgba(31, 31, 27, 0.92);
+  --un-toast-text: #f7f7f3;
+  --un-toast-action: #bcddf7;
 }
 
 .dark {
   --un-accent: var(--accent);
   --un-surface: var(--bg-secondary);
   --un-hairline: var(--border);
-  --un-muted: var(--text-faint);
-  --un-group-bg: #1c1c1e;
-  --un-sheet-bg: #1c1c1e;
-  /* One step lighter than --bg-primary (#0b0b0c) so the floating menu
+  /* --text-faint -> --text-muted, so this half binds the SAME token the :root
+     block does. The asymmetry predates this branch and was invisible while
+     both halves were mediocre, but the neutral sweep moved only the light one:
+     --text-muted went #6b6b64 -> #595953 (Lc 76.8 -> 84.5 on white) while this
+     line kept #97968e at Lc -43.5 on the #1F1F1B sheet, so the gap WIDENED
+     from 33.3 to 41.0 (APCA-W3 0.1.9). -43.5 is the non-content tier, and the
+     kit spends --un-muted on TEXT: .un-group-header, .un-action-title and
+     .un-alert-message are all 13px labels reading it (native.css:518, 738,
+     902). --text-muted is #cfcfc8 here, Lc -75.2, which is the 9.3-point
+     magnitude gap --state-neutral and the zinc-500/300 pair already document.
+     "Faint" naming the non-content tier on purpose is right for the tile
+     placeholder glyph it was written for; it is not right for a group header.
+     The kit's OWN defaults are 61.9 / -45.4 — near-symmetric — so this
+     override was the thing that pulled the two halves apart, not the kit. */
+  --un-muted: var(--text-muted);
+  --un-group-bg: #1f1f1b;
+  --un-sheet-bg: #1f1f1b;
+  /* One step lighter than --bg-primary (#0e0e0b) so the floating menu
      reads as elevated above the page rather than merging into it. */
-  --un-popover-bg: #1c1c1e;
-  --un-navbar-bg: rgba(11, 11, 12, 0.78);
+  --un-popover-bg: #1f1f1b;
+  --un-navbar-bg: rgba(14, 14, 11, 0.78);
   --un-zoom-bg: var(--bg-primary);
+
+  /* Dark half of the colour bridge opened on :root — see the note there
+     for what is deliberately left unclaimed.
+
+     --un-accent-contrast is the "a light accent fill takes near-black
+     ink" rule generalised from yellow to blue: --un-accent is
+     var(--accent) = azure-200 here (this line said azure-400 and is
+     corrected in place — the ink moved when --accent did), and the kit's
+     default #1a1a30 is a blue-black carrying a foreign hue. It is a
+     checkmark GLYPH fill, not text, so the mid tier is the right target;
+     the move to a paler --accent takes it well past that anyway, from
+     Lc 55.3 to 83.2 (APCA-W3 0.1.9).
+
+     --un-action-danger is a knowingly imperfect compromise, not a
+     solved value. The kit overloads ONE token as both a swipe-button
+     FILL under white --un-action-text and destructive INK on the
+     sheet/popover surface; in dark mode those want opposite ends of the
+     ramp and no single value serves both. red-400 improves the three
+     ink sites at the cost of the one fill site, with both staying
+     inside the band the kit already ships. The real fix is a second kit
+     token (--un-action-danger-ink), which is a /v1/ ADDITION the kit
+     permits — but it has to be made kit-side, not here. */
+  --un-accent-contrast: #0e0e0b;
+  --un-switch-track-off: #3c3c36;
+  --un-switch-thumb: #f7f7f3;
+  --un-action-danger: #e96e5b;
+  --un-action-neutral: #4b4a44;
+  --un-toast-bg: rgba(60, 60, 54, 0.94);
+  --un-toast-text: #f7f7f3;
+  --un-toast-action: #bcddf7;
 }
 
 /* Full-screen modal roots whose card is currently riding inside a kit
@@ -1084,7 +1464,10 @@ html.un-kb .platform-safe-sheet {
    design, therefore pin them to the platform surface in this scope. */
 html.un-ios.in-native-webview {
   --un-navbar-bg: var(--bg-primary);
-  --un-toast-bg: #1c1c2a;
+  /* Opaque (no alpha) because the blur is dropped below; zinc-900, the
+     warm equivalent at the same lightness as the blue-cast #1c1c2a this
+     replaced. The themed pair now lives in the bridge blocks above. */
+  --un-toast-bg: #1f1f1b;
 }
 
 html.un-ios.in-native-webview .platform-chat-header.un-scrolled,
@@ -1168,13 +1551,21 @@ html.un-ios.in-native-webview .work-cog-spinning,
 html.un-ios.in-native-webview .app-version-pill--stale .app-version-pill-dot {
   animation: none;
 }
+/* These two static rings are the motion-free twins of the dc-active-pulse-*
+   keyframes, and both were left behind when those moved: `active` still held
+   stock Tailwind emerald-500 (16/185/129, a hue that exists nowhere else in
+   the product) and `promoted` still held the CTA yellow 255/201/58 — the same
+   "yellow only means the one action" defect the keyframe and the
+   .app-version-pill dot halo were each fixed for. They now carry the same rgb
+   triples their animated counterparts do: meadow-500 105/168/85 and azure
+   48/144/225. Alpha unchanged. */
 html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-active {
   animation: none;
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.38);
+  box-shadow: 0 0 0 2px rgba(105, 168, 85, 0.38);
 }
 html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-promoted {
   animation: none;
-  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.38);
+  box-shadow: 0 0 0 2px rgba(48, 144, 225, 0.38);
 }
 
 /* Pressed-state opt-outs: the kit gives every button an instant
@@ -1273,8 +1664,10 @@ html, body {
 
    The hairline uses a DIFFERENT token per mode. --border-light is
    inverted between the two palettes: in light mode it is fainter than
-   --border (#e4e4e7 vs #d4d4d8), but in dark mode it is stronger
-   (#484870 vs #2e2e50). Using it in both would make the tile ring the
+   --border (#e4e4df vs #cfcfc8 — this line said #d9d9d3, the off-ramp value
+   --border carried before it was snapped to zinc-300; the ARGUMENT is
+   unchanged and the gap only widened), but in dark mode it is stronger
+   (#3c3c36 vs #2d2d28). Using it in both would make the tile ring the
    most contrasty border on a dark page, wrapped around every icon —
    so dark mode steps down to --border instead (see below). The token
    itself is left alone; 17 other rules depend on its current value.
@@ -1308,6 +1701,70 @@ html, body {
    step to the same faint token. */
 .app-icon-tile[data-icon="letter"] {
   color: var(--text-faint);
+  /* The aura-lemon wash: the FALLBACK for a tile whose renderer set no
+     data-aura (the per-app rules below out-cascade this by source order
+     wherever the attribute is present). */
+  background-image: radial-gradient(closest-side, rgba(255, 174, 43, 0.14), rgba(255, 206, 77, 0.10), rgba(255, 238, 111, 0.07));
+}
+.dark .app-icon-tile[data-icon="letter"] {
+  background-image: radial-gradient(closest-side, rgba(255, 174, 43, 0.10), rgba(255, 206, 77, 0.06), rgba(255, 238, 111, 0.04));
+}
+/* subtle-y2k v2: THE PER-APP AURA. Every app deterministically wears one of
+   the brand kit's four radial gradients (AppCard.auraFor — a slug hash), as
+   a soft wash behind letter glyphs and OpenMoji artwork; a custom image
+   icon covers the whole tile, so the wash simply never shows through it.
+   Stops are the Figma auras' hues at whisper alpha — full-strength they
+   would bury the glyph. The canvas widget tile paints the same stops
+   (home.js AURA_STOPS, gen 7), so the homescreen PNG matches the DOM tile.
+
+   This knowingly reverses the retired six-pastel per-app tint (the note
+   above stands as history): Lukas's call — four auras from one gradient
+   family read as one shelf where six unrelated pastels did not. The
+   forbidden `data-tint` attribute stays forbidden; this is data-aura. */
+.app-icon-tile[data-aura="sky"] {
+  background-image: radial-gradient(closest-side, rgba(78, 77, 252, 0.16), rgba(27, 186, 253, 0.11), rgba(2, 240, 253, 0.07));
+}
+.app-icon-tile[data-aura="meadow"] {
+  background-image: radial-gradient(closest-side, rgba(65, 178, 74, 0.16), rgba(139, 214, 105, 0.11), rgba(214, 250, 135, 0.07));
+}
+.app-icon-tile[data-aura="sunset"] {
+  background-image: radial-gradient(closest-side, rgba(251, 23, 157, 0.13), rgba(252, 87, 80, 0.10), rgba(253, 150, 2, 0.07));
+}
+.app-icon-tile[data-aura="lemon"] {
+  background-image: radial-gradient(closest-side, rgba(255, 174, 43, 0.20), rgba(255, 206, 77, 0.14), rgba(255, 238, 111, 0.10));
+}
+/* Dark mode: same hues, stepped up slightly — the washes sit on the darker
+   tile face (--bg-secondary) where the light-mode alphas nearly vanish. */
+.dark .app-icon-tile[data-aura="sky"] {
+  background-image: radial-gradient(closest-side, rgba(78, 77, 252, 0.28), rgba(27, 186, 253, 0.16), rgba(2, 240, 253, 0.08));
+}
+.dark .app-icon-tile[data-aura="meadow"] {
+  background-image: radial-gradient(closest-side, rgba(65, 178, 74, 0.26), rgba(139, 214, 105, 0.14), rgba(214, 250, 135, 0.07));
+}
+.dark .app-icon-tile[data-aura="sunset"] {
+  background-image: radial-gradient(closest-side, rgba(251, 23, 157, 0.22), rgba(252, 87, 80, 0.13), rgba(253, 150, 2, 0.08));
+}
+.dark .app-icon-tile[data-aura="lemon"] {
+  background-image: radial-gradient(closest-side, rgba(255, 174, 43, 0.24), rgba(255, 206, 77, 0.14), rgba(255, 238, 111, 0.08));
+}
+/* The dev board's card icon chips wear the same four auras, assigned
+   SEMANTICALLY rather than by slug hash (DEV_CARD_ICONS in app-view.js:
+   meadow = work/done, sky = proposals/discussion, sunset = issues,
+   lemon = governance). Slightly stronger stops than the app tiles — a
+   w-9 chip has less area to make a wash legible in. One rule set for both
+   modes: these chips sit on white/dark cards where the mid-alphas read
+   fine either way. */
+.dev-icon-aura-sky {
+  background-image: radial-gradient(closest-side, rgba(78, 77, 252, 0.20), rgba(27, 186, 253, 0.13), rgba(2, 240, 253, 0.08));
+}
+.dev-icon-aura-meadow {
+  background-image: radial-gradient(closest-side, rgba(65, 178, 74, 0.20), rgba(139, 214, 105, 0.13), rgba(214, 250, 135, 0.08));
+}
+.dev-icon-aura-sunset {
+  background-image: radial-gradient(closest-side, rgba(251, 23, 157, 0.16), rgba(252, 87, 80, 0.12), rgba(253, 150, 2, 0.08));
+}
+.dev-icon-aura-lemon {
+  background-image: radial-gradient(closest-side, rgba(255, 174, 43, 0.24), rgba(255, 206, 77, 0.16), rgba(255, 238, 111, 0.10));
 }
 .dark .app-icon-tile {
   /* --bg-primary is near-black in dark mode; one step up so the tile
@@ -1337,17 +1794,21 @@ html, body {
    don't inherit `currentColor` so we can't collapse to a single
    variable-driven version cleanly. */
 .home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%230a7cff' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  /* Outline in the accent gold (#8a5b0b — the dashes must stay visible on
+     the grey ground, which the CTA yellow cannot do at 1.3:1), over a faint
+     aura-lemon wash. The SVG layer must stay FIRST so the dashes paint
+     above the wash. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%238a5b0b' stroke-opacity='0.55' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E"), radial-gradient(closest-side, rgba(255, 174, 43, 0.20), rgba(255, 206, 77, 0.14), rgba(255, 238, 111, 0.10));
   background-repeat: no-repeat;
 }
 .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%230a7cff' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%238a5b0b' stroke-opacity='0.85' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E"), radial-gradient(closest-side, rgba(255, 174, 43, 0.30), rgba(255, 206, 77, 0.20), rgba(255, 238, 111, 0.14));
 }
 .dark .home-create-tile {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%235aa9ff' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23ffd84d' stroke-opacity='0.5' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E"), radial-gradient(closest-side, rgba(255, 174, 43, 0.12), rgba(255, 206, 77, 0.08), rgba(255, 238, 111, 0.05));
 }
 .dark .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%235aa9ff' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23ffd84d' stroke-opacity='0.75' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E"), radial-gradient(closest-side, rgba(255, 174, 43, 0.18), rgba(255, 206, 77, 0.12), rgba(255, 238, 111, 0.08));
 }
 
 /* Drag-reorderable starred cards (issue #191): a long-press must
@@ -1824,9 +2285,15 @@ html, body {
    left plain rather than tinted red — the absence of the affordance is the
    clearer signal, and it matches the ghost springing back. */
 .home-grid-cell--on {
-  background-color: rgba(31, 134, 255, 0.14);
-  border-color: rgba(31, 134, 255, 0.75);
+  /* The drop target is a "this cell, here" affordance, not an action — so
+     it wears the blue, like the overflow marker and your own bubble. It
+     also held the last reference to the retired gold #8a5b0b. */
+  background-color: rgba(29, 129, 205, 0.14);
+  border-color: rgba(29, 129, 205, 0.75);
   border-style: solid;
+}
+.dark .home-grid-cell--on {
+  border-color: rgba(92, 172, 232, 0.75);
 }
 @media (prefers-reduced-motion: reduce) {
   .home-grid-cell { transition: none; }
@@ -1870,8 +2337,8 @@ html, body {
   border-radius: 9999px;
   font-size: 0.75rem;
   line-height: 1;
-  color: #fff;
-  background-color: rgba(31, 134, 255, 0.9);
+  color: var(--link-ink);
+  background-color: var(--link-fill);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2060,24 +2527,24 @@ html, body {
   overflow: hidden;
 }
 .home-create-widget .home-create-tile {
-  background-color: rgba(31, 134, 255, 0.02);
+  background-color: rgba(255, 201, 58, 0.02);
 }
 .dark .home-create-widget .home-create-tile {
-  background-color: rgba(31, 134, 255, 0.04);
+  background-color: rgba(255, 201, 58, 0.04);
 }
 .home-create-widget--disabled .home-create-tile {
   background-color: transparent;
   /* Same SVG-outline trick as .home-create-tile above (a data-URL SVG can't
      inherit currentColor, so each colour is its own image) — stepped to the
      neutral hairline so the slot reads as present-but-locked. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23cfcfc8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .home-create-widget--disabled .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23cfcfc8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .dark .home-create-widget--disabled .home-create-tile,
 .dark .home-create-widget--disabled .home-create-tile:hover {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%232e2e50' stroke-opacity='0.95' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%233c3c36' stroke-opacity='0.95' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
 }
 .home-create-widget--disabled .app-icon-tile--empty {
   color: var(--text-faint);
@@ -2205,8 +2672,9 @@ html, body {
   transition: background-color 150ms, border-color 150ms;
 }
 .dark .browse-row { --browse-border: var(--border); }
-/* Neutral, not --bg-card: that token is an accent TINT, so a plain hover read
-   as a selected/highlighted row once the accent turned blue. */
+/* Neutral hover. --bg-card was an accent TINT when this was written, so a
+   plain hover read as a selected row; the token is neutral now too, and
+   this rule stays explicit about which surface it wants. */
 .browse-row:hover { background-color: var(--bg-secondary); }
 
 /* Phone: a single hairline BETWEEN consecutive rows, INSET to the text column.
@@ -2245,7 +2713,7 @@ html, body {
        colour in without the box changing size under the cursor. */
     border: 1px solid transparent;
     background-color: var(--bg-primary);
-    border-radius: 1rem;
+    border-radius: 1.25rem;
   }
   .browse-row:hover,
   .browse-row + .browse-row:hover { border-color: var(--accent-light); }
@@ -2280,8 +2748,8 @@ html, body {
 }
 
 .card-menu-slug {
-  font-size: 0.7rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-muted);
   overflow-wrap: anywhere;
 }
@@ -2294,7 +2762,7 @@ html, body {
 
 .card-menu-updated {
   margin-top: 0.25rem;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
 }
 
@@ -2310,9 +2778,15 @@ html, body {
 /* ── Status dots ───────────────────────────────────────── */
 
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.status-dot.running { background-color: #22c55e; }
-.status-dot.creating { background-color: #eab308; animation: pulse 1.5s ease-in-out infinite; }
-.status-dot.error { background-color: #ef4444; }
+/* Three stock Tailwind hexes (green-500 / yellow-500 / red-500) naming
+   three meanings the --state-* vocabulary above already names. Routed
+   through it, which also gives each dot a theme split it did not have:
+   a mid-saturation dot tuned for a white card was painting unchanged on
+   the near-black one. These are 8px marks, not text, so the ink tier
+   serves them. */
+.status-dot.running { background-color: var(--state-ok); }
+.status-dot.creating { background-color: var(--state-attention); animation: pulse 1.5s ease-in-out infinite; }
+.status-dot.error { background-color: var(--state-blocked); }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -2382,8 +2856,8 @@ html, body {
    uniformly rounded and rely on side and colour to say who is speaking. */
 .dc-msg-user {
   margin-left: auto;
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--link-fill);
+  color: var(--link-ink);
   border-radius: 1.25rem;
   margin-bottom: 4px;
 }
@@ -2403,7 +2877,7 @@ html, body {
   align-items: baseline;
   gap: 8px;
   margin-bottom: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -2415,19 +2889,29 @@ html, body {
 }
 
 /* ── Ink on the outgoing bubble ────────────────────────────
-   Everything inside .dc-msg-user sits on the accent fill, so it takes the
+   Everything inside .dc-msg-user sits on the LINK fill, so it takes that
    fill's ink rather than the page's. Without this the role label and the
    message id keep --text-muted and the body keeps --text-secondary — all
    three tuned for a near-white page, and close to illegible on blue. Scoped
-   to the user bubble only: the agent's is still a neutral surface. */
+   to the user bubble only: the agent's is still a neutral surface.
+
+   --link-ink, NOT --accent-ink. These three rules said --accent-ink, which
+   is #000000 in BOTH themes because a YELLOW fill inverts the convention and
+   takes near-black. This bubble stopped being yellow when it became the link
+   fill: the fill token was updated and the ink token was not, so the whole
+   bubble rendered near-black on blue at Lc 35.3 (APCA-W3 0.1.9) — a
+   non-content tier doing body work — and darkening the fill to azure-800
+   drove it to 25.4 before this was caught. White on azure-800 is 83.1.
+   Every other --accent-ink in this file pairs with --accent-fill on the same
+   rule and is correct; these three were the only strays. */
 .dc-msg-user .dc-msg-content,
 .dc-msg-user .dc-msg-content strong,
 .dc-msg-user .dc-msg-header {
-  color: var(--accent-ink);
+  color: var(--link-ink);
 }
 /* Everything in the header takes the fill's ink. */
 .dc-msg-user .dc-msg-header > * {
-  color: var(--accent-ink);
+  color: var(--link-ink);
 }
 /* The id and timestamp stay quieter than the words, but by OPACITY — a second
    colour token would need its own light and dark values for a surface that
@@ -2451,17 +2935,25 @@ html, body {
    so it outranks these) supplies the white and the 0.72 there. */
 .dc-msg-meta {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
   /* No opacity dimming on the neutral bubble. --text-muted is already the
-     quiet token, and halving it took the stamp to 2:1 against the bubble —
-     9px is what makes this an aside, not a second helping of transparency. */
+     quiet token, and halving it took the stamp to 2:1 against the bubble.
+     The size used to carry that job too — 9px, "what makes this an aside,
+     not a second helping of transparency". It cannot: below 12px APCA's
+     readability matrix has no row at all, so a 9px stamp is not a quiet
+     aside, it is an unreadable one. The aside now reads as an aside from
+     --text-muted and from sitting a step under the 13px bubble content. */
 }
 .dc-msg-model {
   color: var(--text-muted);
 }
 .dc-msg-user .dc-msg-content a,
 .dc-msg-user .dc-msg-content a:hover {
-  color: var(--accent-ink);
+  /* --link-ink for the same reason as the bubble's other three rules above:
+     a link inside the blue bubble takes the bubble's ink, not the yellow
+     fill's near-black. The underline carries "this is a link" here, since
+     the usual blue ink cannot show on a blue ground. */
+  color: var(--link-ink);
   text-decoration: underline;
 }
 
@@ -2481,13 +2973,13 @@ html, body {
 .dc-msg-content em { font-style: italic; color: var(--text-faint); }
 
 .dc-code-header {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   padding: 4px 12px;
   background: var(--bg-code-header);
   border-radius: 8px 8px 0 0;
   border-bottom: 1px solid var(--border);
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 .dc-code-block {
@@ -2498,7 +2990,7 @@ html, body {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-code);
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
   margin: 4px 0 8px;
 }
 
@@ -2510,7 +3002,7 @@ html, body {
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 12px;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 .dc-blockquote {
@@ -2527,7 +3019,7 @@ html, body {
 
 /* GFM task items (F4): non-interactive ☐ / ✓ marker, no list bullet. */
 .dc-task-item { list-style: none; margin-left: -16px; }
-.dc-task-check { display: inline-block; width: 1em; color: var(--text-muted); font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+.dc-task-check { display: inline-block; width: 1em; color: var(--text-muted); font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace; }
 .dc-task-check.dc-task-checked { color: var(--accent); }
 
 /* Held-back trailing line of a live-streaming assistant bubble: the
@@ -2545,11 +3037,11 @@ html, body {
 .dc-table th { font-weight: 600; color: var(--text-primary); background: var(--bg-code-header); }
 
 /* Fallback when marked / DOMPurify fail to load (F7). */
-.dc-md-fallback-notice { font-size: 11px; color: var(--text-muted); margin: 0 0 4px; font-style: italic; }
+.dc-md-fallback-notice { font-size: 12px; color: var(--text-muted); margin: 0 0 4px; font-style: italic; }
 .dc-md-fallback {
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-code);
@@ -2563,14 +3055,12 @@ html, body {
 
 /* ── Status lines (deploying, building, etc.) ──────────── */
 
-.dc-status-log {
-  margin-bottom: 8px;
-  border-left: 2px solid var(--border-light);
-  padding-left: 8px;
-}
+/* .dc-status-log was deleted here: zero producers in public/**, frontend/**,
+   tests/** or dapp.json — the class name appeared only in its own selector.
+   It carried a 2px rail and an 8px left inset that nothing wore. */
 
 .dc-status-line {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   padding: 2px 0;
   display: flex;
@@ -2594,10 +3084,10 @@ html, body {
 }
 
 .dc-cc-progress {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   padding: 2px 0 2px 22px;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
   opacity: 0.7;
   white-space: nowrap;
   overflow: hidden;
@@ -2629,27 +3119,36 @@ html, body {
    the user which steps finished. Kept at the same box dimensions as
    the spinner so nothing shifts when a step transitions from active
    → done. */
+/* Was stock emerald-500, which as INK measured Lc 49.1 on the white
+   card and -52.5 on the dark page — the "large headline only" tier, on
+   a glyph that is neither large nor a headline. --state-ok is 82.8 /
+   -84.5. (APCA-W3 0.1.9.) */
 .dc-status-check {
-  color: #10b981;
+  color: var(--state-ok);
   font-weight: 700;
 }
 
 /* ── PR card ────────────────────────────────────────────── */
 
 .dc-pr-card {
-  margin: 8px 12px;
+  /* Vertical rhythm only. The 12px that used to sit on the HORIZONTAL half
+     was this card self-insetting to the content keyline inside a scroller
+     that now spells --screen-gutter once on itself — the defect that gave
+     #dc-messages thirteen distinct first-content x-positions. The scroller
+     owns the keyline; a child that adds its own lands at 24px. */
+  margin: 8px 0;
   padding: 12px;
   /* A card in the language: an opaque surface with no hairline and the
-     language's corner. --bg-card is an accent TINT, which read as a
-     highlighted state once the accent turned blue; the neutral surface is
+     language's corner. --bg-card was an accent TINT when this was written,
+     which read as a highlighted state; the neutral surface is
      what the deck's embedded cards use. */
   background: var(--bg-secondary);
   border: 1px solid transparent;
-  border-radius: 1rem;
+  border-radius: 1.25rem;
   transition: background 300ms;
 }
 
-.dc-pr-card-highlight { background: rgba(31, 134, 255, 0.2); }
+.dc-pr-card-highlight { background: rgba(255, 201, 58, 0.2); }
 .dc-pr-card-header { margin-bottom: 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 
 .dc-pr-link { font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; }
@@ -2689,7 +3188,7 @@ html, body {
 
 .dc-pr-btn {
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -2705,7 +3204,7 @@ html, body {
    it is an offer of three ways forward, not an error. */
 .dc-credits-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bg-secondary);
   padding: 12px 14px;
   margin: 6px 0;
@@ -2765,11 +3264,11 @@ html, body {
 /* The per-option CTA. Shares .dc-pr-btn's geometry; the first option is
    the primary route so every button reads equally actionable. */
 .dc-credits-go {
-  background: var(--accent);
-  color: white;
+  background: var(--accent-fill);
+  color: var(--accent-ink);
   flex: 0 0 auto;
 }
-.dc-credits-go:hover { background: var(--accent-light); }
+.dc-credits-go:hover { background: var(--accent-fill-hover); }
 
 /* The "Are you a developer?" half of the out-of-credits card (#1281).
    The routes that need a terminal — the CLI lease and importing your own
@@ -2816,33 +3315,56 @@ html, body {
   flex-wrap: wrap;
 }
 
+/* SEVEN stock Tailwind red steps lived in this one banner, in the
+   space-separated rgb() form — 100/200/300/500/600/800/950 — and none of them
+   was visible to a class-name guard. Each is remapped STEP FOR STEP onto the
+   product's own `red` ramp (hue 8, retuned warm), so the button's structure,
+   its light/dark pair and every alpha stay exactly as they were and only the
+   hue moves. This one keeps its two-block shape rather than routing through
+   --state-blocked, because the primary is a FILLED action under white ink and
+   the --state-* tokens are inks, not fills. Measured with APCA-W3 0.1.9:
+   white on the fill -77.0 -> -77.4 (unchanged in effect), the outline ink
+   87.1 -> 90.0 on white. */
 .dc-credits-banner-btn {
   border-radius: 4px;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  border: 1px solid rgb(252 165 165);
+  border: 1px solid #F09D91;
   background: transparent;
-  color: rgb(153 27 27);
+  color: #882212;
   transition: background 150ms;
 }
-.dc-credits-banner-btn:hover { background: rgb(254 226 226); }
+.dc-credits-banner-btn:hover { background: #FAE1DD; }
 .dc-credits-banner-btn-primary {
-  background: rgb(220 38 38);
-  border-color: rgb(220 38 38);
+  background: #D5351D;
+  border-color: #D5351D;
   color: white;
 }
-.dc-credits-banner-btn-primary:hover { background: rgb(239 68 68); }
+/* The HOVER is the one step the remap could not carry across faithfully, and
+   the reason is that the original was already broken. It went 600 -> 500, i.e.
+   one step LIGHTER under white ink, which on this ramp is the wrong direction:
+   red-500 #E3462E is Lc -72.0 under white and 37.6 under near-black, so on
+   that fill NEITHER ink clears the 75 body minimum — a dead fill no ink
+   change can repair, only a fill change (APCA-W3 0.1.9). Stock red-500 was
+   worse still at -69.3, so this is inherited rather than introduced, and
+   preserving it step-for-step would have preserved the defect. red-700 is
+   -85.2, and 600 -> 700 is what every other coloured filled button in the tree
+   already spells (`bg-red-600 hover:bg-red-700` x5, `bg-meadow-600
+   hover:bg-meadow-700` x2). Going darker on hover under WHITE ink is the
+   mirror of the yellow ramp's rule, not a contradiction of it: yellow hovers
+   lighter because its ink is near-black. */
+.dc-credits-banner-btn-primary:hover { background: #B42D18; }
 
 .dark .dc-credits-banner-btn {
-  border-color: rgb(153 27 27);
-  color: rgb(254 202 202);
+  border-color: #882212;
+  color: #F7CDC6;
 }
-.dark .dc-credits-banner-btn:hover { background: rgb(69 10 10); }
+.dark .dc-credits-banner-btn:hover { background: #340D07; }
 .dark .dc-credits-banner-btn-primary {
-  background: rgb(220 38 38);
-  border-color: rgb(220 38 38);
+  background: #D5351D;
+  border-color: #D5351D;
   color: white;
 }
 
@@ -2880,14 +3402,18 @@ html, body {
   flex: none;
   max-height: calc(100% - 5rem);
   overflow-y: auto;
-  padding: 0 8px;
+  /* The slot IS a screen-level container (it spans the pane and owns the
+     inset for whatever mounts inside it), so it spells the keyline once,
+     by reference — 8px was a number, --screen-gutter is the shell's content
+     tier and cannot drift from px-gutter. */
+  padding: 0 var(--screen-gutter);
   border-bottom: 1px solid var(--border);
 }
 .dc-launchpad-slot:empty { display: none; }
 
 .dc-launchpad {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bg-secondary);
   padding: 12px 14px;
   margin: 6px 0;
@@ -2940,8 +3466,8 @@ html, body {
 }
 
 .dc-launchpad-resume-detail code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
   color: var(--text-primary);
   word-break: break-all;
 }
@@ -2965,7 +3491,7 @@ html, body {
   border: 1px solid var(--border);
   background: var(--bg-primary);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 18px;
   text-align: center;
@@ -2996,8 +3522,8 @@ html, body {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
   background: var(--bg-primary);
@@ -3048,7 +3574,7 @@ html, body {
 .dc-flow-brief:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(10, 124, 255, 0.25);
+  box-shadow: 0 0 0 2px var(--text-primary);
 }
 .dc-flow-brief:disabled { opacity: 0.6; }
 
@@ -3079,15 +3605,15 @@ html, body {
 
 .dc-flow-vendor-on,
 .dc-flow-vendor-on:disabled {
-  background: var(--accent);
-  color: #fff;
+  background: var(--text-primary);
+  color: var(--bg-primary);
   cursor: default;
   opacity: 1;
 }
 
 .dc-flow-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bg-secondary);
   padding: 12px 14px;
   margin: 6px 0;
@@ -3141,11 +3667,11 @@ html, body {
 }
 
 .dc-flow-go {
-  background: var(--accent);
-  color: white;
+  background: var(--accent-fill);
+  color: var(--accent-ink);
   flex: 0 0 auto;
 }
-.dc-flow-go:hover { background: var(--accent-light); }
+.dc-flow-go:hover { background: var(--accent-fill-hover); }
 
 .dc-flow-remember {
   display: flex;
@@ -3158,7 +3684,7 @@ html, body {
 }
 
 .dc-flow-remember-hint {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   margin-top: 2px;
 }
@@ -3188,7 +3714,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   border: 1px solid var(--border);
   color: var(--text-muted);
@@ -3210,17 +3736,23 @@ html, body {
   line-height: 1.4;
 }
 
+/* A filled disc, so it is self-contained and needs no theme split — the
+   same meadow-700 works on both grounds. White on it reads Lc -87.8,
+   against -70.1 for the stock emerald-600 it replaces. Not
+   var(--state-ok): that token goes PALE in dark mode (meadow-200, which
+   is correct for ink on a dark page and wrong as a fill under white),
+   and this is the fill role, not the ink one. */
 .dc-flow-step-done .dc-flow-step-mark {
-  background: #059669;
-  border-color: #059669;
+  background: #38672E;
+  border-color: #38672E;
   color: white;
 }
 .dc-flow-step-done .dc-flow-step-title { color: var(--text-muted); }
 
 .dc-flow-step-current .dc-flow-step-mark {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: white;
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-primary);
 }
 
 .dc-flow-step-todo { opacity: 0.65; }
@@ -3251,26 +3783,32 @@ a.dc-flow-action {
 .dc-flow-action:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .dc-flow-action-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: white;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--accent-ink);
 }
-.dc-flow-action-primary:hover { background: var(--accent-light); }
+.dc-flow-action-primary:hover { background: var(--accent-fill-hover); }
 
+/* Both of these were stock Tailwind pairs — red-700/red-300 and
+   emerald-700/emerald-300 — hand-written as two rules each. They are the
+   --state-* vocabulary's `blocked` and `ok` meanings, so they route through
+   the tokens and the .dark override RETIRES: the token carries the split, one
+   declaration instead of two, and no way for the halves to drift apart again.
+   Same move the four admin status pills further down document. APCA-W3 0.1.9,
+   on white and on the #1F1F1B card: error 80.2 / -64.6 -> 80.0 / -80.0;
+   notice 76.8 / -77.1 -> 82.8 / -82.9. */
 .dc-flow-error {
   font-size: 12px;
-  color: rgb(185 28 28);
+  color: var(--state-blocked);
   margin-top: 6px;
   line-height: 1.4;
 }
-.dark .dc-flow-error { color: rgb(252 165 165); }
 
 .dc-flow-notice {
   font-size: 12px;
-  color: rgb(4 120 87);
+  color: var(--state-ok);
   margin-top: 6px;
 }
-.dark .dc-flow-notice { color: rgb(110 231 183); }
 
 .dc-flow-order { margin-top: 10px; }
 
@@ -3286,7 +3824,7 @@ a.dc-flow-action {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--text-secondary);
   background: var(--bg-primary);
@@ -3319,15 +3857,28 @@ a.dc-flow-action {
 }
 .dc-pr-btn-preview:disabled:hover { background: var(--bg-secondary); }
 
-.dc-pr-btn-promote { background: var(--accent); color: white; }
-.dc-pr-btn-promote:hover { background: var(--accent-light); }
-.dc-pr-btn-promote:disabled { background: #3f3f46; cursor: not-allowed; }
-/* #558: the shared arc spinner borders in var(--accent) (violet), which is
-   near-invisible on this filled violet/dark button while a proposal is in
-   flight. Scope a white spinner to this button only so the busy state reads
-   clearly; the shared class stays untouched everywhere else. */
-.dc-pr-btn-promote .dc-status-spinner-arc {
-  border-color: rgba(255, 255, 255, 0.85);
+.dc-pr-btn-promote { background: var(--accent-fill); color: var(--accent-ink); }
+.dc-pr-btn-promote:hover { background: var(--accent-fill-hover); }
+/* The disabled fill IS the in-flight state — transcript.tsx sets
+   `disabled={r.proposePending}` — so it needs its own ink, not the accent
+   ink it would otherwise inherit from the rule above (near-black on this
+   grey is 1.7:1: a "Proposing…" label you cannot read). */
+.dc-pr-btn-promote:disabled {
+  background: #3c3c36;
+  color: #f7f7f3;
+  cursor: not-allowed;
+}
+/* #558: the shared arc spinner borders in var(--accent), which is
+   near-invisible on this accent-filled button while a proposal is in
+   flight. Scope an ink-coloured spinner to this button so the busy state
+   reads clearly — and scope it AWAY from :disabled, whose grey fill is the
+   state the spinner actually spins on; each half follows its own ink. */
+.dc-pr-btn-promote:not(:disabled) .dc-status-spinner-arc {
+  border-color: rgba(0, 0, 0, 0.85);
+  border-right-color: transparent;
+}
+.dc-pr-btn-promote:disabled .dc-status-spinner-arc {
+  border-color: rgba(247, 247, 243, 0.85);
   border-right-color: transparent;
 }
 
@@ -3335,7 +3886,7 @@ a.dc-flow-action {
 
 .dc-qa-chips { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 8px; }
 
-.dc-qa-group-label { font-size: 11px; color: var(--text-muted); }
+.dc-qa-group-label { font-size: 12px; color: var(--text-muted); }
 
 .dc-qa-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
 
@@ -3354,11 +3905,11 @@ a.dc-flow-action {
 }
 .dc-qa-chip:hover { background: var(--bg-tertiary); }
 .dc-qa-chip-default { border-color: var(--accent); }
-.dc-qa-chip-selected { background: var(--accent); border-color: var(--accent); color: #fff; }
-.dc-qa-chip-selected:hover { background: var(--accent-light); }
+.dc-qa-chip-selected { background: var(--text-primary); border-color: var(--text-primary); color: var(--bg-primary); }
+.dc-qa-chip-selected:hover { background: var(--text-secondary); }
 
 .dc-qa-chip-hint {
-  font-size: 9px;
+  font-size: 12px;
   margin-left: 6px;
   opacity: 0.6;
   text-transform: uppercase;
@@ -3369,20 +3920,20 @@ a.dc-flow-action {
 
 .dc-qa-send {
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   border: none;
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-fill);
+  color: var(--accent-ink);
   transition: background 150ms;
 }
-.dc-qa-send:hover { background: var(--accent-light); }
+.dc-qa-send:hover { background: var(--accent-fill-hover); }
 
 .dc-qa-defaults {
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -3473,7 +4024,7 @@ a.dc-flow-action {
   align-items: baseline;
   gap: 6px;
   padding: 2px 4px 4px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -3483,7 +4034,7 @@ a.dc-flow-action {
   text-transform: none;
   letter-spacing: 0;
   font-weight: 400;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .dc-draft-row {
@@ -3491,7 +4042,7 @@ a.dc-flow-action {
   align-items: center;
   gap: 6px;
   padding: 4px 4px 4px 6px;
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--bg-card);
   border: 1px solid var(--border);
 }
@@ -3519,9 +4070,12 @@ a.dc-flow-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
+  /* 24px, the ladder's small-control step (was 26). Only .dc-draft-btn is
+     actually sized by this — .dc-save-draft-btn overrides to 34 below to sit
+     level with Send — so the row loses 2px and nothing else moves. */
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
   cursor: pointer;
   background: var(--bg-secondary);
   color: var(--text-muted);
@@ -3529,9 +4083,9 @@ a.dc-flow-action {
   transition: color 150ms, border-color 150ms, background 150ms;
 }
 .dc-draft-btn:hover:not(:disabled) { background: var(--bg-tertiary); border-color: var(--accent); }
-.dc-draft-send:hover:not(:disabled) { color: #10b981; border-color: #10b981; }
+.dc-draft-send:hover:not(:disabled) { color: var(--state-ok); border-color: var(--state-ok); }
 .dc-draft-edit:hover:not(:disabled) { color: var(--accent); }
-.dc-draft-trash:hover:not(:disabled) { color: #ef4444; border-color: #ef4444; }
+.dc-draft-trash:hover:not(:disabled) { color: var(--state-blocked); border-color: var(--state-blocked); }
 .dc-draft-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Save icon in the composer, sized to sit level with the Send button. */
@@ -3595,7 +4149,7 @@ a.dc-flow-action {
   white-space: nowrap;
 }
 
-.dc-attach-size { color: var(--text-muted); font-size: 11px; }
+.dc-attach-size { color: var(--text-muted); font-size: 12px; }
 
 /* Kind badge on zip/binary chips ("ZIP · 214 files", "BIN"). */
 .dc-attach-kind {
@@ -3603,7 +4157,7 @@ a.dc-flow-action {
   background: var(--bg-tertiary);
   border-radius: 4px;
   padding: 1px 4px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.03em;
   white-space: nowrap;
@@ -3622,12 +4176,12 @@ a.dc-flow-action {
   cursor: pointer;
   flex: 0 0 auto;
 }
-.dc-attach-remove:hover { color: #ef4444; }
+.dc-attach-remove:hover { color: var(--state-blocked); }
 
 .dc-attach-uploading { color: var(--text-muted); font-size: 12px; padding: 0 4px; }
 
 .dc-attach-error {
-  color: #ef4444;
+  color: var(--state-blocked);
   font-size: 12px;
   margin-bottom: 6px;
 }
@@ -3647,7 +4201,7 @@ a.dc-flow-action {
   max-height: 120px;
   max-width: 220px;
   object-fit: contain;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.25);
 }
@@ -3691,14 +4245,14 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
 .dc-cc-log {
   margin: 6px 0;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
 }
 
 .dc-cc-log-toggle {
   cursor: pointer;
   padding: 4px 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   background: var(--bg-code);
   user-select: none;
@@ -3708,7 +4262,7 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
 
 .dc-cc-log-content {
   padding: 8px 10px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
   color: var(--text-faint);
   background: var(--bg-primary);
@@ -3716,7 +4270,7 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
   margin: 0;
 }
 
@@ -3778,8 +4332,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 }
 
 .dc-cc-attached-log {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 11px;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
   line-height: 1.5;
   /* Slightly duller than --text-muted so it sits visually below the
      status line without disappearing into the background. */
@@ -3806,7 +4360,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    id/timestamp span never shifts as the label changes. */
 .dc-status-elapsed {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
@@ -3814,7 +4368,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 .dc-cc-current {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3824,7 +4378,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 .dc-cc-steps {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -3835,7 +4389,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    genuinely emitted and cannot be wrong. */
 .dc-cc-phase {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -3846,7 +4400,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-cc-cohort {
   color: var(--text-muted);
   opacity: 0.65;
-  font-size: 11px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3859,7 +4413,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   color: var(--text-muted);
   opacity: 0.75;
   font-style: italic;
-  font-size: 11px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3915,10 +4469,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-cc-attached-md li { margin: 2px 0; }
 .dc-cc-attached-md pre.dc-code-block {
   margin: 6px 0;
-  font-size: 11px;
+  font-size: 12px;
 }
 .dc-cc-attached-md code.dc-inline-code {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* ── Vote panel ─────────────────────────────────────────── */
@@ -3938,7 +4492,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   height: 24px;
   padding: 0 10px;
   border-radius: 9999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
@@ -3958,7 +4512,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   transition: all 150ms;
 }
 .gc-vote-btn:hover {
-  background: var(--accent-tint);
+  background: var(--quiet-tint);
   border-color: var(--accent-light);
   color: var(--accent);
 }
@@ -3970,52 +4524,78 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   color: var(--text-muted);
 }
 
+/* Yes/No carried STOCK Tailwind green-500 (#22c55e) and red-500 (#ef4444) as
+   raw values — invisible to every class-name guard, and the exact shape of
+   defect the four admin status pills further down were converted out of. They
+   are the --state-* vocabulary's `ok` and `blocked` meanings ("a Yes tally"
+   is named in that block), so they route through the tokens rather than
+   through a second pair of hexes: one declaration each instead of a hue that
+   has to be re-tuned twice, and the tokens carry their own light/dark split,
+   which these single stock values never had. The washes take the same rgb
+   triple as --state-ok-bg / --state-blocked-bg (meadow-500 105/168/85 and
+   red-500 227/70/46) with every alpha held exactly as it was, so only hue
+   moves. */
 .gc-vote-btn-yes {
-  color: #22c55e;
-  background: rgba(34, 197, 94, 0.10);
-  border-color: rgba(34, 197, 94, 0.35);
+  color: var(--state-ok);
+  background: rgba(105, 168, 85, 0.10);
+  border-color: rgba(105, 168, 85, 0.35);
 }
-.gc-vote-btn-yes:hover { background: rgba(34, 197, 94, 0.18); border-color: rgba(34, 197, 94, 0.5); color: #22c55e; }
+.gc-vote-btn-yes:hover { background: rgba(105, 168, 85, 0.18); border-color: rgba(105, 168, 85, 0.5); color: var(--state-ok); }
 .gc-vote-btn-no {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.10);
-  border-color: rgba(239, 68, 68, 0.35);
+  color: var(--state-blocked);
+  background: rgba(227, 70, 46, 0.10);
+  border-color: rgba(227, 70, 46, 0.35);
 }
-.gc-vote-btn-no:hover { background: rgba(239, 68, 68, 0.18); border-color: rgba(239, 68, 68, 0.5); color: #ef4444; }
+.gc-vote-btn-no:hover { background: rgba(227, 70, 46, 0.18); border-color: rgba(227, 70, 46, 0.5); color: var(--state-blocked); }
 .gc-vote-btn-preview {
   color: var(--accent);
-  background: rgba(90, 169, 255, 0.10);
-  border-color: rgba(90, 169, 255, 0.35);
+  background: var(--quiet-tint);
+  border-color: var(--border);
 }
-.gc-vote-btn-preview:hover { background: rgba(90, 169, 255, 0.18); border-color: rgba(90, 169, 255, 0.5); color: var(--accent); }
-/* Admin force-merge / force-undo buttons. Amber instead of red so
+.gc-vote-btn-preview:hover { background: var(--bg-tertiary); border-color: var(--text-faint); color: var(--accent); }
+/* Admin force-merge / force-undo buttons. ACHROMATIC instead of red so
  * they don't visually dominate the Yes/No pair, but distinct enough
  * from the regular vote buttons that an admin clicking through the
- * row can tell at a glance which one bypasses voting. The
- * ConfirmModal in castAdminMerge/castAdminUndo is the actual
- * misclick guard; the colour is just the affordance hint. */
+ * row can tell at a glance which one bypasses voting. (It was amber
+ * until --state-admin split off from --state-attention; carrying no
+ * hue at all is a cleaner "outside the voting system" than borrowing
+ * a status hue, and it does not collide with the red .gc-vote-btn-no
+ * sitting in the same row.) The ConfirmModal in
+ * castAdminMerge/castAdminUndo is the actual misclick guard; the
+ * colour is just the affordance hint. */
 .gc-vote-btn-admin {
   color: var(--state-admin);
   background: var(--state-admin-bg);
   border-color: var(--state-admin);
-  /* Distinguished by SHAPE as well as hue: a dashed outline, so an
-     admin bypass never reads as just-another-amber-warning. */
+  /* Distinguished by SHAPE as well as tone: a dashed outline, so an
+     admin bypass never reads as just-another-status-button. Shape and
+     tone are two INDEPENDENT signals now that the tone is achromatic;
+     neither is carrying the meaning alone. */
   border-style: dashed;
   border-width: 1.5px;
 }
-.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.2); border-color: var(--state-admin); color: var(--state-admin); }
+/* One step past the 0.10/0.14 base wash on the SAME neutral triple, so a
+   single value darkens over the white card and lightens over the dark one
+   — a correct hover in both themes without a .dark override. It was a
+   hard-coded stock amber-500 while the ink and border above were amber;
+   both of those are achromatic now. */
+.gc-vote-btn-admin:hover { background: rgba(89, 89, 83, 0.16); border-color: var(--state-admin); color: var(--state-admin); }
 /* The viewer's cast vote: stronger tint + bolder text (color comes from
  * the -yes/-no variant it sits on). */
-.gc-vote-active { background: rgba(127, 127, 127, 0.18); font-weight: 600; }
-.gc-vote-btn-yes.gc-vote-active { background: rgba(34, 197, 94, 0.22); }
-.gc-vote-btn-no.gc-vote-active { background: rgba(239, 68, 68, 0.22); }
+/* 127/127/127 was a pure-neutral placeholder grey — the one grey in this file
+   with no warmth at all, beside a ramp whose neutral is warm. 89/89/83 is
+   zinc-500, the same triple .gc-vote-btn-admin:hover directly above already
+   uses and the one every --state-*-bg derives from; alpha unchanged. */
+.gc-vote-active { background: rgba(89, 89, 83, 0.18); font-weight: 600; }
+.gc-vote-btn-yes.gc-vote-active { background: rgba(105, 168, 85, 0.22); }
+.gc-vote-btn-no.gc-vote-active { background: rgba(227, 70, 46, 0.22); }
 /* Read-only "You voted X" box shown in place of the buttons once the viewer
    has cast a vote. Tinted by their choice (green = yes, red = no). */
 .gc-vote-voted-box {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
   /* Theme-following. This rule used to hard-code an opaque white with
@@ -4253,6 +4833,8 @@ span.gc-vote-btn-icon { cursor: default; }
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
   padding: 4px;
 }
+/* Dark mode drops the drop shadow — the 1px --border above is the edge here. */
+.dark .dev-card-menu { box-shadow: none; }
 .dev-card-menu-item {
   display: flex;
   align-items: center;
@@ -4264,7 +4846,7 @@ span.gc-vote-btn-icon { cursor: default; }
   border-radius: 8px;
   background: none;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -4288,7 +4870,7 @@ span.gc-vote-btn-icon { cursor: default; }
   min-width: 0;
   flex: 1 1 auto;
 }
-.dev-card-menu-item:hover:not(:disabled) { background: var(--accent-tint); color: var(--accent); }
+.dev-card-menu-item:hover:not(:disabled) { background: var(--quiet-tint); color: var(--accent); }
 .dev-card-menu-item:disabled { opacity: 0.45; cursor: default; }
 .dev-card-menu-item-danger { color: var(--state-blocked); }
 .dev-card-menu-item-danger:hover:not(:disabled) { background: var(--state-blocked-bg); color: var(--state-blocked); }
@@ -4345,7 +4927,7 @@ span.gc-vote-btn-icon { cursor: default; }
 .dev-detail-reasons {
   margin-top: 8px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 8px 10px;
   background: var(--bg-card);
 }
@@ -4510,7 +5092,7 @@ span.gc-vote-btn-icon { cursor: default; }
   overflow: hidden;
   padding: 2px 9px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   /* Theme-following. This rule used to hard-code an opaque white with
      no `.dark` override, so the tally pill sat as a white box on an
@@ -4585,7 +5167,7 @@ span.gc-vote-btn-icon { cursor: default; }
   margin-left: 4px;
   padding: 2px 7px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--state-neutral);
   background: var(--state-neutral-bg);
@@ -4603,7 +5185,7 @@ span.gc-vote-btn-icon { cursor: default; }
   margin-left: 4px;
   padding: 2px 7px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-attention);
   background: var(--state-attention-bg);
@@ -4618,7 +5200,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   /* #405 recoloured this emerald -> amber; the semantic-token pass moves
      it to `progress` (violet): "working toward a merge" is something
@@ -4633,7 +5215,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-neutral);
   white-space: nowrap;
@@ -4646,7 +5228,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -4659,7 +5241,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
   padding: 2px 8px;
@@ -4681,7 +5263,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-blocked);
   white-space: nowrap;
@@ -4693,7 +5275,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-attention);
   white-space: nowrap;
@@ -4705,7 +5287,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-blocked);
   white-space: nowrap;
@@ -4716,7 +5298,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-ok);
   white-space: nowrap;
@@ -4730,7 +5312,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-ok);
   white-space: nowrap;
@@ -4744,9 +5326,12 @@ span.gc-vote-btn-icon { cursor: default; }
 /* ── Developer console ─────────────────────────────────── */
 
 #dev-console-panel {
-  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
 }
+/* Dark mode drops the lift shadow — the panel's own `border-t border-zinc-700`
+   (features/dev-console/index.tsx) is the edge against the page. */
+.dark #dev-console-panel { box-shadow: none; }
 
 .dc-log-entry {
   display: grid;
@@ -4759,36 +5344,51 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 
 .dc-log-time {
-  color: #6e6e8a;
-  font-size: 10px;
+  color: #86857c;
+  font-size: 12px;
   align-self: center;
 }
 
 .dc-log-level {
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   padding: 1px 5px;
   border-radius: 3px;
   align-self: center;
   text-align: center;
-  min-width: 44px;
+  /* 44px held 9px text. At the 12px badge floor the widest levels this
+     renders — STDERR, STDOUT — need ~58px, and a min-width the content
+     exceeds stops aligning the message column at all. */
+  min-width: 60px;
 }
 
-.dc-log-msg { color: #e4e4e7; }
+.dc-log-msg { color: #e4e4df; }
 
-.dc-log-log   .dc-log-level { background: #27272a; color: #a1a1aa; }
-.dc-log-info  .dc-log-level { background: #1e3a5f; color: #93c5fd; }
-.dc-log-debug .dc-log-level { background: #27272a; color: #6e6e8a; }
-.dc-log-warn  .dc-log-level { background: #78350f; color: #fde68a; }
-.dc-log-warn  .dc-log-msg   { color: #fcd34d; }
-.dc-log-error .dc-log-level { background: #7f1d1d; color: #fecaca; }
-.dc-log-error .dc-log-msg   { color: #fca5a5; }
+/* The panel is `bg-zinc-950` unconditionally (features/dev-console/
+   index.tsx), so this surface is dark in BOTH themes — that is the
+   argued exemption, and it is why these rules take one value each
+   rather than a light/dark pair. The exemption covers the ABSENCE of a
+   split, not the hues: the log/debug rows were already on the tuned
+   warm neutrals while info, warn and error sat on stock Tailwind
+   (blue-300 on a stock navy, amber-300, red-300/red-200). Each is now
+   the 200 step of its tuned ramp, on the 900/950 step of the same ramp
+   where it needs a chip ground. Measured on the #0E0E0B pane with
+   APCA-W3 0.1.9: info chip -61.3 -> -76.8, error chip -70.5 -> -77.1,
+   error message -66.2 -> -81.7; warn is unchanged in effect (-78.7 ->
+   -77.6 and -82.1 -> -82.0) and moves only to stop being stock. */
+.dc-log-log   .dc-log-level { background: #2d2d28; color: #97968e; }
+.dc-log-info  .dc-log-level { background: #0D3757; color: #BCDDF7; }
+.dc-log-debug .dc-log-level { background: #2d2d28; color: #86857c; }
+.dc-log-warn  .dc-log-level { background: #462505; color: #F8D0A7; }
+.dc-log-warn  .dc-log-msg   { color: #F8D0A7; }
+.dc-log-error .dc-log-level { background: #55150C; color: #F7CDC6; }
+.dc-log-error .dc-log-msg   { color: #F7CDC6; }
 
 #dev-console-log::-webkit-scrollbar { width: 8px; }
 #dev-console-log::-webkit-scrollbar-track { background: transparent; }
-#dev-console-log::-webkit-scrollbar-thumb { background: #2e2e50; border-radius: 4px; }
-#dev-console-log { scrollbar-width: thin; scrollbar-color: #2e2e50 transparent; }
+#dev-console-log::-webkit-scrollbar-thumb { background: #3c3c36; border-radius: 4px; }
+#dev-console-log { scrollbar-width: thin; scrollbar-color: #3c3c36 transparent; }
 
 /* ── Group chat messages ───────────────────────────────── */
 
@@ -4856,7 +5456,7 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 
 .gc-msg-time {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
@@ -4911,7 +5511,7 @@ span.gc-vote-btn-icon { cursor: default; }
    edited. Muted like the time; the full edit timestamp is in its title
    tooltip (revealed on hover/tap). */
 .gc-msg-edited {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   font-style: italic;
   cursor: default;
@@ -4938,7 +5538,10 @@ span.gc-vote-btn-icon { cursor: default; }
   border-radius: 8px;
   padding: 6px 8px;
   background: var(--bg-tertiary);
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  /* The fallback never fires (--border is declared unconditionally on :root),
+     but it spelled a pure-neutral 127/127/127 next to a warm ramp; zinc-500's
+     triple, alpha unchanged, so a dead branch cannot teach the wrong grey. */
+  border: 1px solid var(--border, rgba(89, 89, 83, 0.3));
   color: var(--text-primary, var(--text-secondary));
 }
 .gc-edit-textarea:focus {
@@ -4955,21 +5558,26 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-edit-cancel {
   font-size: 12px;
   padding: 3px 10px;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   border: 1px solid transparent;
 }
 .gc-edit-save {
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-fill);
+  color: var(--accent-ink);
 }
 .gc-edit-cancel {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
 }
+/* --danger is declared NOWHERE in this file or any consumer, so this was
+   not a fallback — it was a live stock red-500 with no theme split at
+   all, rendering the same mid-saturation red on the white card and on
+   the near-black one. --state-blocked is the file's own token for
+   exactly this meaning and is themed on both sides. */
 .gc-edit-notice {
-  font-size: 11px;
-  color: var(--danger, #ef4444);
+  font-size: 12px;
+  color: var(--state-blocked);
 }
 
 .gc-mention {
@@ -4977,7 +5585,7 @@ span.gc-vote-btn-icon { cursor: default; }
   font-weight: 500;
 }
 .gc-mention-self {
-  background: rgba(31, 134, 255, 0.18);
+  background: rgba(29, 129, 205, 0.18);
   padding: 0 4px;
   border-radius: 4px;
   color: var(--accent-light, var(--accent));
@@ -4996,7 +5604,7 @@ span.gc-vote-btn-icon { cursor: default; }
   align-items: center;
   padding: 0 5px;
   border-radius: 5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.92em;
   font-weight: 600;
   cursor: pointer;
@@ -5004,14 +5612,17 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 /* Violet — matches the drawer's existing PR#N anchors. */
 .gc-ref-pr {
-  color: rgb(90, 169, 255);
-  background: rgba(31, 134, 255, 0.12);
+  color: var(--accent);
+  background: var(--quiet-tint);
 }
-/* Emerald — clearly distinct from the PR violet (amber already signals
-   bounties/warnings in the panel). */
+/* Green — clearly distinct from the PR accent (amber already signals
+   bounties/warnings in the panel). The ink was a single stock
+   emerald-400 serving both themes, which meant it was tuned for the
+   dark one: Lc -61.7 on the dark card but 28.7 on the white one, the
+   non-content tier. --state-ok carries the split. */
 .gc-ref-issue {
-  color: rgb(52, 211, 153);
-  background: rgba(16, 185, 129, 0.12);
+  color: var(--state-ok);
+  background: rgba(105, 168, 85, 0.12);
 }
 @media (hover: hover) {
   .gc-ref:hover { filter: brightness(1.15); text-decoration: underline; }
@@ -5019,7 +5630,7 @@ span.gc-vote-btn-icon { cursor: default; }
 
 .gc-msg-system {
   padding: 4px 12px;
-  font-size: 11px;
+  font-size: 12px;
   text-align: center;
   color: var(--text-muted);
   overflow-wrap: anywhere;
@@ -5062,7 +5673,7 @@ span.gc-vote-btn-icon { cursor: default; }
 
 .gc-quoted-author,
 .gc-reply-preview-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--accent);
   white-space: nowrap;
@@ -5127,13 +5738,20 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-msg, .gc-msg-system, .gc-spec-card { -webkit-touch-callout: none; }
 
 /* Hover affordance to open the reaction bar (desktop only — touch uses
-   long-press). Hidden until the row is hovered. */
+   long-press). Hidden until the row is hovered.
+
+   20px, the mini-control ladder's smallest step — the same box .gc-msg-edit
+   and .gc-msg-save below already carry, and it is the SAME BUTTON as those:
+   one circular hover affordance in a message row. It was 22 here and 20 in
+   the header-row override below, i.e. the same control at two sizes for no
+   reason either rule gave. The header override now differs only in the things
+   it was written to differ in (flow position and the -2px nudge). */
 .gc-react-add {
   position: absolute;
   top: 2px;
   right: 6px;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: none;
   border-radius: 999px;
@@ -5154,8 +5772,8 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-msg-header .gc-react-add {
   position: static;
   align-self: center;
-  width: 20px;
-  height: 20px;
+  /* width/height dropped: the base rule is 20px now, so this override only
+     restates it. */
   margin-left: -2px;
 }
 
@@ -5191,7 +5809,7 @@ span.gc-vote-btn-icon { cursor: default; }
   border-radius: 999px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -5295,10 +5913,12 @@ span.gc-vote-btn-icon { cursor: default; }
   z-index: 1000;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
   padding: 4px 6px;
 }
+/* Dark mode drops the drop shadow — the 1px --border above is the edge here. */
+.dark .gc-react-bar { box-shadow: none; }
 .gc-react-bar.hidden { display: none; }
 .gc-react-bar-quick { display: flex; align-items: center; gap: 2px; }
 .gc-react-bar-emoji {
@@ -5353,6 +5973,8 @@ span.gc-vote-btn-icon { cursor: default; }
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* Dark mode drops the drop shadow — the 1px --border above is the edge here. */
+.dark .gc-mention-menu { box-shadow: none; }
 .gc-mention-menu.hidden { display: none; }
 .gc-mention-option {
   display: flex;
@@ -5387,7 +6009,7 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 .gc-mention-option-you {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -5410,7 +6032,7 @@ span.gc-vote-btn-icon { cursor: default; }
    (2px from the row + 4px from the dots) needs trimming. */
 .dc-activity-line { padding: 0 0 4px; }
 .dc-activity-line .dc-streaming-dots { padding: 2px 0; }
-.dc-activity-label { font-size: 11px; color: var(--text-muted); }
+.dc-activity-label { font-size: 12px; color: var(--text-muted); }
 
 @keyframes dc-dot-bounce {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
@@ -5433,13 +6055,20 @@ span.gc-vote-btn-icon { cursor: default; }
 /* Stop-turn affordance (#28): red button with a square glyph, replaces
    the emerald Send button while the turn is interruptible (mayor1 / cc
    phases). Phase-2 falls back to the spinner state above. */
-.dc-btn-stop { background: #dc2626 !important; cursor: pointer; }
-.dc-btn-stop:hover { background: #b91c1c !important; }
+/* Fill role, so it takes a literal ramp step rather than
+   var(--state-blocked): that token goes pale in dark mode, which is
+   right for ink on a dark page and wrong under the white glyph this
+   carries. red-700 / red-800 replace stock red-600 / red-700; white on
+   the resting fill measures Lc -85.2 against the stock -77.0
+   (APCA-W3 0.1.9). One value each — a filled button is self-contained
+   and reads the same on both grounds. */
+.dc-btn-stop { background: #B42D18 !important; cursor: pointer; }
+.dc-btn-stop:hover { background: #882212 !important; }
 .dc-stop-icon {
   width: 12px;
   height: 12px;
   background: #fff;
-  border-radius: 2px;
+  border-radius: 4px;
   display: inline-block;
 }
 
@@ -5466,18 +6095,18 @@ span.gc-vote-btn-icon { cursor: default; }
    and it sits before the row's timestamp span (which claims margin-left:
    auto), so a plain inline-block with a little breathing room is enough. */
 .dc-force-stop-btn {
-  background: #dc2626;
+  background: #B42D18;
   color: #fff;
   border: none;
   border-radius: 4px;
   padding: 2px 8px;
   margin-left: 8px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   flex-shrink: 0;
 }
-.dc-force-stop-btn:hover { background: #b91c1c; }
+.dc-force-stop-btn:hover { background: #882212; }
 .dc-force-stop-btn:disabled {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
@@ -5559,10 +6188,15 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 
 .dc-active-dot-active {
-  background: rgb(16 185 129); /* emerald-500 */
+  /* Was stock Tailwind emerald-500 (rgb 16 185 129) — a hue that exists
+     nowhere else in the product, sitting one line above a sibling that
+     already reads a --state-* token. `active` IS the `ok` meaning, so it
+     takes the same token and inherits its light/dark split; the stock value
+     had none. */
+  background: var(--state-ok);
 }
 .dc-active-dot-promoted {
-  background: rgb(139 92 246); /* violet-500 */
+  background: var(--state-progress);
 }
 .dc-active-dot-paused {
   background: var(--text-faint); /* zinc-400-ish */
@@ -5577,14 +6211,28 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 
 @keyframes dc-active-pulse-emerald {
-  0%   { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45); }
-  70%  { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+  /* The halo matches the dot. This was stock emerald-500 (16/185/129), the
+     last of the stock-hue shadow cluster; 105/168/85 is meadow-500, the same
+     rgb triple --state-ok-bg and --state-ok-fill carry, so the wash reads in
+     both themes. Exactly the treatment the sibling keyframe below got, and
+     like that one the keyframe NAME keeps its stale `emerald` because
+     .dc-active-dot-busy.dc-active-dot-active references it by name — read the
+     hex, not the key. */
+  0%   { box-shadow: 0 0 0 0 rgba(105, 168, 85, 0.45); }
+  70%  { box-shadow: 0 0 0 6px rgba(105, 168, 85, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(105, 168, 85, 0); }
 }
 @keyframes dc-active-pulse-violet {
-  0%   { box-shadow: 0 0 0 0 rgba(31, 134, 255, 0.45); }
-  70%  { box-shadow: 0 0 0 6px rgba(31, 134, 255, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(31, 134, 255, 0); }
+  /* The halo matches the dot. This was rgba(255,201,58,…) — CTA yellow left
+     behind when --state-progress moved off stock violet, the same defect the
+     .app-version-pill dot halo fixed (yellow only means "the one action").
+     48/144/225 is the azure brand hex, the same rgb --state-progress-bg
+     uses, so it reads in both themes. The keyframe NAME keeps its stale
+     `violet` because .dc-active-dot-busy.dc-active-dot-promoted references
+     it by name — read the hex, not the key. */
+  0%   { box-shadow: 0 0 0 0 rgba(48, 144, 225, 0.45); }
+  70%  { box-shadow: 0 0 0 6px rgba(48, 144, 225, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(48, 144, 225, 0); }
 }
 
 /* Primary action button (Pause/Resume). Tinted by intent —
@@ -5593,7 +6241,7 @@ span.gc-vote-btn-icon { cursor: default; }
  * the user is restoring it back to). */
 .dc-active-action {
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: 12px;
   background: transparent;
   border: 1px solid transparent;
   padding: 2px 8px;
@@ -5612,12 +6260,18 @@ span.gc-vote-btn-icon { cursor: default; }
   outline: none;
 }
 .dc-active-action-resume {
-  color: rgb(16 185 129); /* emerald-500 */
-  border-color: rgba(16, 185, 129, 0.4);
+  /* "Matches the active-dot color the user is restoring it back to" — so it
+     follows that dot off stock emerald-500 and onto the same --state-ok
+     token, which also gives the INK a light/dark split it did not have (the
+     stock mid-green measured Lc 49.1 on white and -50.9 on the #1F1F1B card,
+     the large-headline tier, on a 12px control; --state-ok is 82.8 / -82.9,
+     APCA-W3 0.1.9). The wash keeps its alpha and takes meadow-500's triple. */
+  color: var(--state-ok);
+  border-color: rgba(105, 168, 85, 0.4);
 }
 .dc-active-action-resume:hover,
 .dc-active-action-resume:focus-visible {
-  background: rgba(16, 185, 129, 0.1);
+  background: rgba(105, 168, 85, 0.1);
   outline: none;
 }
 .dc-active-action:disabled {
@@ -5630,7 +6284,7 @@ span.gc-vote-btn-icon { cursor: default; }
  * background unless the user actively reaches for it. */
 .dc-active-archive {
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-faint);
   background: transparent;
   border: none;
@@ -5641,8 +6295,13 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 .dc-active-archive:hover,
 .dc-active-archive:focus-visible {
-  color: rgb(239 68 68); /* red-500 */
-  background: rgba(239, 68, 68, 0.08);
+  /* Stock Tailwind red-500 (239/68/68) — Lc 63.8 on white and -35.9 on the
+     #1F1F1B card, so the destructive hover was the NON-CONTENT tier in dark.
+     --state-blocked is the `blocks the merge / destructive` token and is at
+     80.0 / -80.0 parity by construction. Wash alpha unchanged, on the tuned
+     red-500 triple 227/70/46. */
+  color: var(--state-blocked);
+  background: rgba(227, 70, 46, 0.08);
   outline: none;
 }
 .dc-active-archive:disabled {
@@ -5668,7 +6327,7 @@ span.gc-vote-btn-icon { cursor: default; }
   border-radius: 999px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5684,20 +6343,34 @@ span.gc-vote-btn-icon { cursor: default; }
 /* ── Inline spec preview card (in chat timeline) ──────── */
 
 .dc-spec-preview-card {
-  margin: 4px 12px 8px;
+  /* Vertical rhythm only — the horizontal 12px was this card self-insetting
+     to the keyline its scroller now carries. Same edit as .dc-pr-card above,
+     and they are siblings in that scroller, so they had to move together.
+
+     The 3px border-left in --state-progress is GONE, and the call is that it
+     was DECORATIVE, not semantic: transcript.tsx renders exactly one class
+     with no status variant, so the rail was unconditional and said nothing
+     about the spec's lifecycle — it spent a state token on ornament. It also
+     cost 2px of alignment, putting this card's text off its sibling's edge
+     even after both margins were zeroed. The `border` shorthand's own 1px now
+     stands on all four sides, and the hover below still recolours all four,
+     so the affordance survives the rail. */
+  margin: 4px 0 8px;
   padding: 10px 12px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
-  border-left: 3px solid rgb(139 92 246); /* violet-500 */
-  border-radius: 6px;
-  background: var(--bg-secondary, #18181b);
+  border: 1px solid var(--border, #cfcfc8);
+  border-radius: 8px;
+  background: var(--bg-secondary, #f7f7f3);
   cursor: pointer;
   transition: border-color 120ms ease, background 120ms ease;
 }
 
 .dc-spec-preview-card:hover,
 .dc-spec-preview-card:focus-visible {
-  border-color: rgb(139 92 246);
-  background: rgba(31, 134, 255, 0.06);
+  border-color: var(--state-progress);
+  /* Was a raw CTA yellow (rgba(255, 201, 58, 0.06)) under a BLUE border — a
+     hover is neither an action nor a state, which is the exact reason
+     --accent-tint was renamed --quiet-tint and made neutral. */
+  background: var(--quiet-tint);
   outline: none;
 }
 
@@ -5711,19 +6384,19 @@ span.gc-vote-btn-icon { cursor: default; }
 .dc-spec-preview-title {
   font-size: 12px;
   font-weight: 500;
-  color: var(--text-primary, #e4e4e7);
+  color: var(--text-primary, #0e0e0b);
 }
 
 .dc-spec-preview-cta {
   margin-left: auto;
-  font-size: 11px;
-  color: rgb(139 92 246);
+  font-size: 12px;
+  color: var(--state-progress);
 }
 
 .dc-spec-preview-snippet {
   font-size: 12px;
   line-height: 1.45;
-  color: var(--text-secondary, #a1a1aa);
+  color: var(--text-secondary, #3c3c36);
   max-height: 6em;
   overflow: hidden;
   position: relative;
@@ -5741,7 +6414,7 @@ span.gc-vote-btn-icon { cursor: default; }
   right: 0;
   bottom: 0;
   height: 1.5em;
-  background: linear-gradient(to bottom, transparent, var(--bg-secondary, #18181b));
+  background: linear-gradient(to bottom, transparent, var(--bg-secondary, #f7f7f3));
   pointer-events: none;
 }
 
@@ -5777,8 +6450,8 @@ span.gc-vote-btn-icon { cursor: default; }
 .dc-spec-viewer {
   display: none;
   flex-direction: column;
-  background: var(--bg-primary, #0b0b0e);
-  color: var(--text-primary, #e4e4e7);
+  background: var(--bg-primary, #ffffff);
+  color: var(--text-primary, #0e0e0b);
 }
 
 /* Wide viewports: side panel beside the chat. The width is set
@@ -5822,14 +6495,14 @@ span.gc-vote-btn-icon { cursor: default; }
   width: 4px;
   flex-shrink: 0;
   cursor: col-resize;
-  background: var(--border, rgba(255,255,255,0.12));
+  background: var(--border, #cfcfc8);
   transition: background 120ms ease;
   touch-action: none;
 }
 
 .dc-spec-resizer:hover,
 .dc-spec-resizer-active {
-  background: rgb(139 92 246);
+  background: var(--state-progress);
 }
 
 @media (min-width: 1024px) {
@@ -5864,14 +6537,14 @@ span.gc-vote-btn-icon { cursor: default; }
   width: 4px;
   flex-shrink: 0;
   cursor: col-resize;
-  background: var(--border, rgba(255,255,255,0.12));
+  background: var(--border, #cfcfc8);
   transition: background 120ms ease;
   touch-action: none;
 }
 
 .dc-staging-resizer:hover,
 .dc-staging-resizer-active {
-  background: rgb(139 92 246);
+  background: var(--state-progress);
 }
 
 @media (min-width: 1024px) {
@@ -5887,7 +6560,7 @@ span.gc-vote-btn-icon { cursor: default; }
 #staging-overlay.staging-overlay-docked {
   inset: auto;
   z-index: 30;
-  border-left: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-left: 1px solid var(--border, #cfcfc8);
 }
 
 /* Fullscreen, the overlay is `inset: 0` — it covers the status bar, so
@@ -5960,7 +6633,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   gap: 8px;
   row-gap: 6px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-bottom: 1px solid var(--border, #cfcfc8);
   flex-shrink: 0;
 }
 
@@ -5979,13 +6652,13 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-secondary, #a1a1aa);
+  color: var(--text-secondary, #3c3c36);
   cursor: pointer;
 }
 
 .dc-spec-viewer-close:hover {
-  color: var(--text-primary, #e4e4e7);
-  background: var(--bg-secondary, #18181b);
+  color: var(--text-primary, #0e0e0b);
+  background: var(--bg-secondary, #f7f7f3);
 }
 
 /* Let the version dropdown shrink and ellipsise rather than forcing the
@@ -6030,7 +6703,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   display: flex;
   gap: 2px;
   margin-bottom: 12px;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-bottom: 1px solid var(--border, #cfcfc8);
 }
 
 .dc-spec-viewer-tab {
@@ -6039,18 +6712,18 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   padding: 6px 10px;
   border: none;
   background: transparent;
-  color: var(--text-secondary, #a1a1aa);
+  color: var(--text-secondary, #3c3c36);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
 }
 
 .dc-spec-viewer-tab:hover {
-  color: var(--text-primary, #e4e4e7);
+  color: var(--text-primary, #0e0e0b);
 }
 
 .dc-spec-viewer-tab-active {
-  color: var(--accent);
+  color: var(--text-primary);
   border-bottom-color: currentColor;
   font-weight: 600;
 }
@@ -6058,7 +6731,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 .dc-spec-tab-empty {
   font-size: 12px;
   font-style: italic;
-  color: var(--text-secondary, #a1a1aa);
+  color: var(--text-secondary, #3c3c36);
 }
 
 /* Footer bar reminding the user that a spec is a plan, not a built
@@ -6072,16 +6745,16 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   padding: 8px 12px calc(8px + var(--platform-safe-bottom));
   font-size: 12px;
   line-height: 1.4;
-  color: var(--text-secondary, #a1a1aa);
-  border-top: 1px solid var(--border, rgba(255,255,255,0.12));
-  background: var(--bg-secondary, #18181b);
+  color: var(--text-secondary, #3c3c36);
+  border-top: 1px solid var(--border, #cfcfc8);
+  background: var(--bg-secondary, #f7f7f3);
 }
 
 .dc-spec-viewer-body {
   font-size: 13px;
   line-height: 1.55;
   word-break: break-word;
-  color: var(--text-primary, #e4e4e7);
+  color: var(--text-primary, #0e0e0b);
 }
 
 .dc-spec-viewer-body > :first-child { margin-top: 0; }
@@ -6095,23 +6768,23 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 .dc-spec-viewer-body .dc-blockquote {
   margin: 8px 0;
   padding: 4px 10px;
-  border-left: 3px solid var(--border, rgba(255,255,255,0.18));
-  color: var(--text-secondary, #a1a1aa);
+  border-left: 3px solid var(--border, #cfcfc8);
+  color: var(--text-secondary, #3c3c36);
 }
 
 .dc-spec-action-btn {
   font-size: 12px;
   padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
-  background: var(--bg-secondary, #18181b);
-  color: var(--text-primary, #e4e4e7);
+  border-radius: 8px;
+  border: 1px solid var(--border, #cfcfc8);
+  background: var(--bg-secondary, #f7f7f3);
+  color: var(--text-primary, #0e0e0b);
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease;
 }
 
 .dc-spec-action-btn:hover:not(:disabled) {
-  border-color: rgb(139 92 246);
+  border-color: var(--state-progress);
 }
 
 .dc-spec-action-btn:disabled {
@@ -6142,11 +6815,14 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   flex-direction: column;
   gap: 6px;
   padding: 10px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  border: 1px solid var(--border, #cfcfc8);
   border-radius: 8px;
-  background: var(--bg-primary, #09090b);
+  background: var(--bg-primary, #ffffff);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
+
+/* Dark mode drops the drop shadow — the 1px --border above is the edge here. */
+.dark .dc-spec-share-pop { box-shadow: none; }
 
 .dc-spec-share-pop.hidden {
   display: none;
@@ -6155,15 +6831,15 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 .dc-spec-share-input {
   font-size: 12px;
   padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
-  background: var(--bg-secondary, #18181b);
-  color: var(--text-primary, #e4e4e7);
+  border-radius: 8px;
+  border: 1px solid var(--border, #cfcfc8);
+  background: var(--bg-secondary, #f7f7f3);
+  color: var(--text-primary, #0e0e0b);
   outline: none;
 }
 
 .dc-spec-share-input:focus {
-  border-color: rgb(139 92 246);
+  border-color: var(--state-progress);
 }
 
 .dc-spec-share-suggestions {
@@ -6180,17 +6856,21 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-primary, #e4e4e7);
+  color: var(--text-primary, #0e0e0b);
   cursor: pointer;
 }
 
 .dc-spec-share-sug:hover {
-  background: var(--bg-secondary, #18181b);
+  background: var(--bg-secondary, #f7f7f3);
 }
 
 .dc-spec-share-error {
-  font-size: 11px;
-  color: rgb(248 113 113);
+  font-size: 12px;
+  /* Was stock Tailwind red-400 with no dark partner at all: Lc 52.8 on white
+     and -47.2 on the #1F1F1B card (APCA-W3 0.1.9), so an error message read
+     below the body minimum in BOTH themes. --state-blocked is the token for
+     this meaning and is solved to 80.0 / -80.0. */
+  color: var(--state-blocked);
 }
 
 .dc-spec-share-error.hidden {
@@ -6207,10 +6887,10 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   max-width: min(560px, 100%);
   margin: 6px 0;
   padding: 10px 12px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
-  border-left: 3px solid rgb(139 92 246);
-  border-radius: 6px;
-  background: var(--bg-secondary, #18181b);
+  border: 1px solid var(--border, #cfcfc8);
+  border-left: 3px solid var(--state-progress);
+  border-radius: 8px;
+  background: var(--bg-secondary, #f7f7f3);
 }
 
 .gc-spec-card-header {
@@ -6225,7 +6905,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 .gc-spec-card-icon { font-size: 14px; }
 
 .gc-spec-card-title {
-  color: var(--text-primary, #e4e4e7);
+  color: var(--text-primary, #0e0e0b);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -6234,8 +6914,8 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 }
 
 .gc-spec-card-attribution {
-  font-size: 11px;
-  color: var(--text-secondary, #a1a1aa);
+  font-size: 12px;
+  color: var(--text-secondary, #3c3c36);
   margin-bottom: 8px;
 }
 
@@ -6246,7 +6926,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
      the truncation seam against the card's own background. */
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-secondary, #a1a1aa);
+  color: var(--text-secondary, #3c3c36);
   margin-bottom: 8px;
   word-break: break-word;
   max-height: 7em;
@@ -6273,29 +6953,29 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   right: 0;
   bottom: 0;
   height: 1.4em;
-  background: linear-gradient(to bottom, transparent, var(--bg-secondary, #18181b));
+  background: linear-gradient(to bottom, transparent, var(--bg-secondary, #f7f7f3));
   pointer-events: none;
 }
 
 .gc-spec-card-actions { display: flex; gap: 6px; }
 
 .gc-spec-card-view {
-  font-size: 11px;
+  font-size: 12px;
   padding: 4px 10px;
   border-radius: 4px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  border: 1px solid var(--border, #cfcfc8);
   background: transparent;
-  color: var(--text-primary, #e4e4e7);
+  color: var(--text-primary, #0e0e0b);
   cursor: pointer;
 }
 
 .gc-spec-card-view:hover:not(:disabled) {
-  border-color: rgb(139 92 246);
-  color: rgb(139 92 246);
+  border-color: var(--state-progress);
+  color: var(--state-progress);
 }
 
 .gc-spec-pr {
-  color: rgb(139 92 246);
+  color: var(--state-progress);
   text-decoration: none;
 }
 .gc-spec-pr:hover { text-decoration: underline; }
@@ -6320,8 +7000,8 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 .gc-spec-side-panel {
   display: none;
   flex-direction: column;
-  background: var(--bg-primary, #0a0a0a);
-  color: var(--text-primary, #e4e4e7);
+  background: var(--bg-primary, #ffffff);
+  color: var(--text-primary, #0e0e0b);
 }
 
 /* Wide viewports: side panel beside the chat. Width can be inline-
@@ -6333,7 +7013,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   min-width: 280px;
   max-width: calc(100vw - 320px);
   flex-shrink: 0;
-  border-left: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-left: 1px solid var(--border, #cfcfc8);
 }
 
 @media (max-width: 1023px) {
@@ -6363,7 +7043,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 .gc-panel-resizer {
   flex-shrink: 0;
   height: 1px;
-  background: var(--border, rgba(255,255,255,0.12));
+  background: var(--border, #cfcfc8);
 }
 
 .gc-panel-resizer-draggable {
@@ -6375,7 +7055,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 
 .gc-panel-resizer-draggable:hover,
 .gc-panel-resizer-active {
-  background: rgb(139 92 246);
+  background: var(--state-progress);
 }
 
 /* Draggable divider between chat pane and spec panel. Hidden by
@@ -6387,14 +7067,14 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   width: 4px;
   flex-shrink: 0;
   cursor: col-resize;
-  background: var(--border, rgba(255,255,255,0.12));
+  background: var(--border, #cfcfc8);
   transition: background 120ms ease;
   touch-action: none;
 }
 
 .gc-spec-resizer:hover,
 .gc-spec-resizer-active {
-  background: rgb(139 92 246);
+  background: var(--state-progress);
 }
 
 @media (min-width: 1024px) {
@@ -6406,7 +7086,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   align-items: flex-start;
   gap: 10px;
   padding: 12px 14px;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-bottom: 1px solid var(--border, #cfcfc8);
   flex-shrink: 0;
 }
 
@@ -6414,28 +7094,28 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 .gc-spec-panel-title {
   font-weight: 600;
   font-size: 15px;
-  color: var(--text-primary, #e4e4e7);
+  color: var(--text-primary, #0e0e0b);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .gc-spec-panel-subtitle {
-  font-size: 11px;
-  color: var(--text-secondary, #a1a1aa);
+  font-size: 12px;
+  color: var(--text-secondary, #3c3c36);
   margin-top: 2px;
 }
 
 .gc-spec-panel-close {
   background: transparent;
   border: none;
-  color: var(--text-secondary, #a1a1aa);
+  color: var(--text-secondary, #3c3c36);
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
   padding: 0 6px;
   flex-shrink: 0;
 }
-.gc-spec-panel-close:hover { color: var(--text-primary, #e4e4e7); }
+.gc-spec-panel-close:hover { color: var(--text-primary, #0e0e0b); }
 
 /* (#1012) "Copy markdown" in the shared-spec panel header. Matches
    .dc-spec-action-btn so the two spec surfaces read as one family; the
@@ -6443,10 +7123,10 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 .gc-spec-panel-copy {
   font-size: 12px;
   padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
-  background: var(--bg-secondary, #18181b);
-  color: var(--text-primary, #e4e4e7);
+  border-radius: 8px;
+  border: 1px solid var(--border, #cfcfc8);
+  background: var(--bg-secondary, #f7f7f3);
+  color: var(--text-primary, #0e0e0b);
   cursor: pointer;
   flex-shrink: 0;
   min-width: 108px;
@@ -6454,7 +7134,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   transition: background 120ms ease, border-color 120ms ease;
 }
 
-.gc-spec-panel-copy:hover { border-color: rgb(139 92 246); }
+.gc-spec-panel-copy:hover { border-color: var(--state-progress); }
 
 .gc-spec-panel-body {
   flex: 1 1 auto;
@@ -6467,7 +7147,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   font-size: 13px;
   line-height: 1.6;
   word-break: break-word;
-  color: var(--text-primary, #e4e4e7);
+  color: var(--text-primary, #0e0e0b);
 }
 
 /* Markdown styling — same spacing as the dev-chat spec viewer. */
@@ -6481,13 +7161,13 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 .gc-spec-panel-body .dc-blockquote {
   margin: 8px 0;
   padding: 4px 10px;
-  border-left: 3px solid var(--border, rgba(255,255,255,0.18));
-  color: var(--text-secondary, #a1a1aa);
+  border-left: 3px solid var(--border, #cfcfc8);
+  color: var(--text-secondary, #3c3c36);
 }
 
 .gc-spec-panel-error {
   font-size: 13px;
-  color: var(--text-secondary, #a1a1aa);
+  color: var(--text-secondary, #3c3c36);
   font-style: italic;
 }
 
@@ -6502,8 +7182,8 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 0 4px;
-  font-size: 10px;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 /* ── Scrollbar styling ─────────────────────────────────── */
@@ -6549,8 +7229,8 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   border-radius: 999px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   text-decoration: none;
   line-height: 1;
   border: 1px solid var(--border-light);
@@ -6594,8 +7274,9 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
+  background: var(--state-ok);
+  /* Halo re-derived from meadow-500, the ramp's wash hue, alpha held. */
+  box-shadow: 0 0 0 2px rgba(105, 168, 85, 0.18);
 }
 .app-version-pill-label {
   letter-spacing: 0.02em;
@@ -6619,24 +7300,39 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
    two non-idle states the platform pill can be in. */
 
 /* "A new deploy is currently rolling out." Yellow tint + spinner. */
+/* This was the worst ink in the file: a pale stock yellow-400 label on a
+   12% stock yellow-500 wash, with NO dark counterpart, so the one value
+   had to serve both grounds. On the white card it measured Lc 18.9 —
+   the "barely visible" tier, one step above invisible — while on the
+   dark card the identical declaration read -73.4. That asymmetry is the
+   whole argument for a split: a pale ink is the readable one on a dark
+   ground and unreadable on a light one, which is why the tuned yellow
+   ramp has a dark-gold ink half (violet-700) as well as a bright half
+   (violet-300). Washes and hairlines are re-derived from violet-500,
+   alphas held. Measured 76.1 light / -88.9 dark, APCA-W3 0.1.9. */
 .app-version-pill--deploying {
-  background: rgba(234, 179, 8, 0.12);
-  border-color: rgba(234, 179, 8, 0.45);
-  color: #facc15;
+  background: rgba(255, 216, 77, 0.12);
+  border-color: rgba(255, 216, 77, 0.45);
+  color: #8A5B0B;
 }
 .app-version-pill--deploying:hover {
-  background: rgba(234, 179, 8, 0.18);
-  border-color: rgba(234, 179, 8, 0.6);
-  color: #fde047;
+  background: rgba(255, 216, 77, 0.18);
+  border-color: rgba(255, 216, 77, 0.6);
+  color: #6E4809;
 }
+.dark .app-version-pill--deploying { color: #FFEE6F; }
+.dark .app-version-pill--deploying:hover { color: #FFF09B; }
 .app-version-pill-spinner {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  border: 1.5px solid rgba(234, 179, 8, 0.25);
-  border-top-color: #facc15;
+  border: 1.5px solid rgba(255, 216, 77, 0.25);
+  border-top-color: #8A5B0B;
   animation: app-version-pill-spin 0.9s linear infinite;
 }
+/* The spinner's leading arc is an ink-weight mark, so it follows the
+   label rather than staying at one value across both grounds. */
+.dark .app-version-pill-spinner { border-top-color: #FFEE6F; }
 @keyframes app-version-pill-spin {
   to { transform: rotate(360deg); }
 }
@@ -6644,20 +7340,29 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 /* "Platform has rolled past the SHA this tab loaded against — reload to
    pick up the new client code." Click to reload; styled as a button. */
 .app-version-pill--stale {
-  background: rgba(31, 134, 255, 0.12);
-  border-color: rgba(31, 134, 255, 0.45);
+  background: rgba(29, 129, 205, 0.12);
+  border-color: rgba(29, 129, 205, 0.45);
   color: var(--accent);
   cursor: pointer;
   font: inherit;
 }
 .app-version-pill--stale:hover {
-  background: rgba(31, 134, 255, 0.2);
-  border-color: rgba(31, 134, 255, 0.65);
+  background: rgba(29, 129, 205, 0.2);
+  border-color: rgba(29, 129, 205, 0.65);
   color: var(--accent-light);
 }
+/* This override said "the GOLD hairlines above are near-invisible on the
+   dark page", and carried rgba(255,216,77) to compensate. The hairlines
+   above are not gold any more — the accent sweep moved this pill's wash
+   and border to azure-700 and left the dark half behind, so a blue pill
+   in light mode became a yellow-outlined one in dark. Same azure, one
+   step brighter for the darker ground. */
+.dark .app-version-pill--stale { border-color: rgba(92, 172, 232, 0.45); }
+.dark .app-version-pill--stale:hover { border-color: rgba(92, 172, 232, 0.65); }
 .app-version-pill--stale .app-version-pill-dot {
   background: var(--accent);
-  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.22);
+  /* Likewise left behind: a CTA-yellow halo around a blue dot. */
+  box-shadow: 0 0 0 2px rgba(48, 144, 225, 0.22);
   animation: app-version-pill-pulse 1.6s ease-in-out infinite;
 }
 @keyframes app-version-pill-pulse {
@@ -6828,8 +7533,8 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
      the platform's own expectText checks). Inline flow keeps it a
      single string and lays out identically here. */
   display: inline-block;
-  font-size: 11.5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   line-height: 1.4;
   letter-spacing: 0.01em;
   text-decoration: none;
@@ -6863,7 +7568,7 @@ a.drawer-meter:hover .drawer-meter-strong {
    value looking like a stray word rather than a version. */
 .drawer-ver-label {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
 }
@@ -6885,7 +7590,7 @@ a.drawer-meter:hover .drawer-meter-strong {
   background: none;
   font-size: 12px;
   font-weight: 500;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   line-height: 1.3;
   letter-spacing: 0.02em;
   color: var(--text-secondary);
@@ -6908,19 +7613,27 @@ a.drawer-ver:hover {
 /* "A new deploy is currently rolling out" — amber + the shared spinner
    glyph, same signal vocabulary as .app-version-pill--deploying (which
    still dresses the home-tile pills) minus the pill chrome. */
+/* Stock amber-600 / yellow-400 -> the tuned amber ramp's ink pair. The
+   light half was the defect: 58.5 on white, below the body minimum on a
+   12px label. Now 80.1 / -82.0 (APCA-W3 0.1.9), which also puts it at
+   the same tier as --state-attention, the token that carries this
+   meaning elsewhere. */
 .drawer-ver--deploying {
-  color: #d97706;
+  color: #95500B;
 }
 .dark .drawer-ver--deploying {
-  color: #facc15;
+  color: #F8D0A7;
 }
-/* "Platform rolled past the SHA this tab loaded against" — a violet
+/* "Platform rolled past the SHA this tab loaded against" — a BLUE
    reload button, borderless like its siblings but underlined on hover
-   so it still reads as actionable. */
+   so it still reads as actionable. (The word was "violet" when the accent
+   was one. `--accent` / `--accent-light` are the azure pair now — #186ba9 /
+   #2589d9 light, #bcddf7 / #8fc6ef dark — and blue is what carries a text
+   button. The yellow is reserved for the one filled action on a screen.) */
 button.drawer-ver--stale {
   color: var(--accent-light);
   cursor: pointer;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .dark button.drawer-ver--stale {
   color: var(--accent);
@@ -6928,18 +7641,24 @@ button.drawer-ver--stale {
 button.drawer-ver--stale:hover {
   text-decoration: underline;
 }
-/* The same "you are behind" violet, while the new build is still coming
+/* The same "you are behind" BLUE, while the new build is still coming
    down — a SPAN, not a button, because a reload before the shell cache holds
    the update is the exact click that used to serve the old document back.
    Same class as the button so ImproveStatus.refreshDeployDot still lights the
    Improve dot: the platform HAS moved on, only the offer to switch is
-   waiting. */
+   waiting.
+
+   The mono stack fronts with 'Geist Mono' like the other ten in this file.
+   This rule arrived from a base that had no vendored face, so it named the
+   bare `ui-monospace` fallback — which would have rendered this span in a
+   DIFFERENT face from the .drawer-ver--stale button it stands in for, in the
+   same row position, two lines apart. */
 .drawer-ver--fetching {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   color: var(--accent-light);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .dark .drawer-ver--fetching {
   color: var(--accent);
@@ -6954,24 +7673,26 @@ button.drawer-ver--stale:hover {
    it's a name, not a hash. */
 .drawer-ver--fork {
   font-family: inherit;
-  font-size: 11px;
-  color: #b45309;
+  font-size: 12px;
+  color: #95500B;
 }
 .dark .drawer-ver--fork {
-  color: #fbbf24;
+  color: #F8D0A7;
 }
 a.drawer-ver--fork:hover {
-  color: #92400e;
+  color: #713C08;
 }
 .dark a.drawer-ver--fork:hover {
-  color: #fcd34d;
+  color: #FCECDB;
 }
 .drawer-ver-spinner {
   flex-shrink: 0;
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  border: 1.5px solid rgba(234, 179, 8, 0.3);
+  /* The track follows the label's hue (amber-500, the ramp's wash step);
+     the leading arc is currentColor, so it already does. */
+  border: 1.5px solid rgba(238, 136, 34, 0.3);
   border-top-color: currentColor;
   animation: app-version-pill-spin 0.9s linear infinite;
 }
@@ -7063,8 +7784,8 @@ a.drawer-ver--fork:hover {
     max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
     border-left-width: 0;
     border-top-width: 1px;
-    border-top-left-radius: 1rem;
-    border-top-right-radius: 1rem;
+    border-top-left-radius: 1.25rem;
+    border-top-right-radius: 1.25rem;
     transform: translateY(100%);
   }
   #improve-panel[data-open] {
@@ -7131,8 +7852,8 @@ a.drawer-ver--fork:hover {
     max-height: min(80dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem));
     border-left-width: 0;
     border-top-width: 1px;
-    border-top-left-radius: 1rem;
-    border-top-right-radius: 1rem;
+    border-top-left-radius: 1.25rem;
+    border-top-right-radius: 1.25rem;
     transform: translateY(100%);
   }
   #apps-switcher-sheet[data-open] {
@@ -7200,8 +7921,8 @@ a.drawer-ver--fork:hover {
     height: min(66dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem));
     border-left-width: 0;
     border-top-width: 1px;
-    border-top-left-radius: 1rem;
-    border-top-right-radius: 1rem;
+    border-top-left-radius: 1.25rem;
+    border-top-right-radius: 1.25rem;
     transform: translateY(100%);
   }
   #notifications-sheet[data-open],
@@ -7248,6 +7969,9 @@ a.drawer-ver--fork:hover {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   cursor: default;
 }
+/* Dark mode drops the raised-face shadow — the background/ink step off the
+   track already carries "this one is selected". */
+.dark .theme-seg.theme-seg-active { box-shadow: none; }
 /* The header App/Dev switch (#app-mode-switch) used to be styled here, in
    the same recessed-track / raised-face system as .theme-seg above. THE UI
    OVERHAUL retired the control, so the rules went with it — the theme
@@ -7313,6 +8037,11 @@ a.drawer-ver--fork:hover {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   cursor: default;
 }
+/* Dark mode drops the raised-face shadow — the background/ink step carries it. */
+.dark #create-card[data-mode="new"]    .create-mode-pill[data-mode-pill="new"],
+.dark #create-card[data-mode="import"] .create-mode-pill[data-mode-pill="import"] {
+  box-shadow: none;
+}
 
 /* Visibility segmented pills (create modal + members modal). Active
    state is a JS-toggled .active class — unlike the mode pills there are
@@ -7333,6 +8062,9 @@ a.drawer-ver--fork:hover {
   color: var(--text-primary);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
+/* Dark mode drops the raised-face shadow — the background/ink step carries it. */
+.dark .create-vis-pill.active,
+.dark .members-vis-pill.active { box-shadow: none; }
 .create-vis-pill:disabled,
 .members-vis-pill:disabled {
   opacity: 0.45;
@@ -7357,18 +8089,21 @@ a.drawer-ver--fork:hover {
    red text on failure. JS sets the text + adds an --ok / --err
    modifier on #import-status. */
 #import-status:empty { display: none; }
-#import-status.import-status--ok  { color: #10b981; }
-#import-status.import-status--err { color: #f87171; }
+/* Both halves were single stock values used unchanged in both themes —
+   emerald-500 at Lc 49.1 light and red-400 at 47.2 light. The tokens
+   carry the split. */
+#import-status.import-status--ok  { color: var(--state-ok); }
+#import-status.import-status--err { color: var(--state-blocked); }
 /* The Members modal's invite status line reuses the same ok/err tones. */
-#members-invite-status.import-status--ok  { color: #10b981; }
-#members-invite-status.import-status--err { color: #f87171; }
+#members-invite-status.import-status--ok  { color: var(--state-ok); }
+#members-invite-status.import-status--err { color: var(--state-blocked); }
 #import-status .import-spinner {
   display: inline-block;
   width: 12px;
   height: 12px;
   margin-right: 6px;
   border-radius: 50%;
-  border: 2px solid rgba(10, 124, 255, 0.25);
+  border: 2px solid var(--border);
   border-top-color: var(--accent);
   animation: import-spin 0.8s linear infinite;
   vertical-align: -2px;
@@ -7395,8 +8130,8 @@ a.drawer-ver--fork:hover {
   gap: 2px;
   height: 20px;
   padding: 0 6px;
-  border-radius: 6px;
-  font-size: 10.5px;
+  border-radius: 8px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
@@ -7410,7 +8145,7 @@ button.dev-badge { cursor: pointer; }
 .dev-badge-name {
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 11ch;
+  max-width: 9.5ch;
 }
 
 /* NOTE the property here is `font-family`, NOT the `font` shorthand. The
@@ -7467,6 +8202,8 @@ button.attr-chip { cursor: pointer; }
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
   padding: 4px;
 }
+/* Dark mode drops the drop shadow — the 1px --border above is the edge here. */
+.dark .attr-popover { box-shadow: none; }
 .attr-pop-head {
   font-size: 0.9375rem;
   font-weight: 600;
@@ -7488,7 +8225,7 @@ button.attr-chip { cursor: pointer; }
   cursor: pointer;
   text-align: left;
 }
-.attr-opt:hover { background: var(--accent-tint); }
+.attr-opt:hover { background: var(--quiet-tint); }
 /* #780: custom category labels are free text up to 24 chars, so clip rather
    than wrap inside the 260px-max-width popover. The dot is a flex child and
    keeps its size; only the text span truncates. */
@@ -7505,7 +8242,7 @@ button.attr-chip { cursor: pointer; }
 .attr-pop-head-divided { border-top: 1px solid var(--border-light); margin-top: 4px; }
 .attr-opt-right { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .attr-opt-count {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   background: var(--bg-secondary);
   border-radius: 9999px;
@@ -7531,11 +8268,11 @@ button.attr-chip { cursor: pointer; }
   font-weight: 500;
   border: 0;
   border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-fill);
+  color: var(--accent-ink);
   cursor: pointer;
 }
-.attr-pop-addbtn:hover { background: var(--accent-light); }
+.attr-pop-addbtn:hover { background: var(--accent-fill-hover); }
 .attr-pop-suggest {
   margin-top: 4px;
   border: 1px solid var(--border-light);
@@ -7553,7 +8290,7 @@ button.attr-chip { cursor: pointer; }
   color: var(--text-secondary);
   cursor: pointer;
 }
-.attr-suggest-item:hover { background: var(--accent-tint); }
+.attr-suggest-item:hover { background: var(--quiet-tint); }
 
 /* "How voting works" explainer — the circular "?" button + inline link in
    the focused proposal view, and the popover they open. The popover reuses
@@ -7569,13 +8306,13 @@ button.attr-chip { cursor: pointer; }
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
   vertical-align: middle;
 }
-.voting-help-btn:hover { background: var(--accent-tint); color: var(--accent); border-color: var(--accent); }
+.voting-help-btn:hover { background: var(--quiet-tint); color: var(--accent); border-color: var(--accent); }
 .voting-help-link {
   border: 0;
   background: transparent;
@@ -7605,6 +8342,8 @@ button.attr-chip { cursor: pointer; }
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
   padding: 8px 10px 10px;
 }
+/* Dark mode drops the drop shadow — the 1px --border above is the edge here. */
+.dark .voting-help-popover { box-shadow: none; }
 /* Keep the title anchored while the rules list scrolls under it. */
 .voting-help-popover .attr-pop-head {
   position: sticky;
@@ -7620,14 +8359,14 @@ button.attr-chip { cursor: pointer; }
   background: var(--bg-secondary);
 }
 .vh-live-title {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
   margin-bottom: 3px;
 }
-.vh-live-body { font-size: 12.5px; color: var(--text-primary); line-height: 1.4; }
+.vh-live-body { font-size: 12px; color: var(--text-primary); line-height: 1.4; }
 .vh-rules { font-size: 12px; color: var(--text-secondary); }
 .voting-help-rules { list-style: disc; padding-left: 16px; margin: 0; display: flex; flex-direction: column; gap: 5px; line-height: 1.4; }
 .voting-help-rules strong { color: var(--text-primary); font-weight: 600; }
@@ -7716,7 +8455,7 @@ button.attr-chip { cursor: pointer; }
 .st-section {
   margin-top: 8px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bg-card-alt);
   overflow: hidden;
 }
@@ -7748,7 +8487,7 @@ button.attr-chip { cursor: pointer; }
 
 .st-readonly-tag {
   margin-left: auto;
-  font-size: 10px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
@@ -7765,7 +8504,7 @@ button.attr-chip { cursor: pointer; }
    what distinguishes the two speakers. */
 .st-msg { max-width: 100%; }
 .st-msg-who { color: var(--text-secondary); font-weight: 600; }
-.st-msg-when { color: var(--text-muted); font-size: 10px; }
+.st-msg-when { color: var(--text-muted); font-size: 12px; }
 
 .st-agent-details { margin: 2px 0 2px 2px; }
 .st-agent-body { padding: 2px 0 4px 8px; border-left: 1px solid var(--border-light); margin-left: 6px; }
@@ -7789,7 +8528,7 @@ button.attr-chip { cursor: pointer; }
 .st-truncated,
 .st-empty,
 .st-error {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   font-style: italic;
   padding: 4px 0;
@@ -7814,32 +8553,37 @@ button.attr-chip { cursor: pointer; }
   gap: 0.375rem;
   padding: 0.125rem 0.5rem;
   border-radius: 9999px;
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
 #admin-status-root .pill .dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; }
-#admin-status-root .pill-running { background: rgba(16, 185, 129, 0.1); color: #34d399; }
-#admin-status-root .pill-running .dot { background: #10b981; box-shadow: 0 0 6px #10b981; }
-#admin-status-root .pill-stopped { background: rgba(245, 158, 11, 0.1); color: #fbbf24; }
-#admin-status-root .pill-stopped .dot { background: #f59e0b; }
-#admin-status-root .pill-missing { background: rgba(239, 68, 68, 0.1); color: #f87171; }
-#admin-status-root .pill-missing .dot { background: #ef4444; }
-#admin-status-root .pill-creating { background: rgba(99, 102, 241, 0.1); color: #818cf8; }
-#admin-status-root .pill-creating .dot { background: #6366f1; }
-
-/* Light-mode pill overrides — topochain's badge tints (50-shade bg,
-   700-shade text). The shell toggles `.dark` on <html>, so target the
-   light state via html:not(.dark). Dots stay solid and saturated. */
-html:not(.dark) #admin-status-root .pill-running { background: #ecfdf5; color: #047857; }
-html:not(.dark) #admin-status-root .pill-stopped { background: #fffbeb; color: #b45309; }
-html:not(.dark) #admin-status-root .pill-missing { background: #fef2f2; color: #b91c1c; }
-html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: #4338ca; }
+/* These four pills carried TWELVE stock Tailwind hexes and a whole
+   parallel light/dark override block: stock emerald/amber/red for three
+   of them and stock INDIGO (#6366f1 / #818cf8 / #4338ca / #eef2ff) for
+   the fourth — a scale AGENTS.md says appears nowhere in the product,
+   invisible to tests/admin-ui-registry.test.js because that guard scans
+   class NAMES and these were raw values. They are the same four
+   meanings the --state-* vocabulary above already names, so they route
+   through it: running=ok, stopped=attention, missing=blocked,
+   creating=progress. The tokens carry their own theme split, which is
+   what retires the html:not(.dark) block that used to sit here — one
+   declaration per pill instead of two, and no way for the two halves to
+   drift apart again. The dot keeps its solid fill and its glow; only
+   the hue source moved. */
+#admin-status-root .pill-running { background: var(--state-ok-bg); color: var(--state-ok); }
+#admin-status-root .pill-running .dot { background: var(--state-ok); box-shadow: 0 0 6px var(--state-ok); }
+#admin-status-root .pill-stopped { background: var(--state-attention-bg); color: var(--state-attention); }
+#admin-status-root .pill-stopped .dot { background: var(--state-attention); }
+#admin-status-root .pill-missing { background: var(--state-blocked-bg); color: var(--state-blocked); }
+#admin-status-root .pill-missing .dot { background: var(--state-blocked); }
+#admin-status-root .pill-creating { background: var(--state-progress-bg); color: var(--state-progress); }
+#admin-status-root .pill-creating .dot { background: var(--state-progress); }
 
 #admin-status-root .mono,
 #admin-node-root .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 /* The admin-only progressive-disclosure flag. On the standalone page this
@@ -7874,19 +8618,19 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
   height: 1rem;
   margin-left: 0.4rem;
   border-radius: 9999px;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1;
   font-weight: 700;
   cursor: help;
   user-select: none;
   vertical-align: middle;
-  background: rgba(31, 134, 255, 0.18);
+  background: rgba(29, 129, 205, 0.18);
   color: var(--accent);
 }
 #admin-analytics-root .dc-info:hover,
 #admin-analytics-root .dc-info:focus,
 #admin-estimator-root .dc-info:hover,
-#admin-estimator-root .dc-info:focus { background: rgba(31, 134, 255, 0.32); outline: none; }
+#admin-estimator-root .dc-info:focus { background: var(--bg-tertiary); outline: none; box-shadow: 0 0 0 2px var(--text-primary); }
 
 /* ── Merge debug (was public/debug.html) ─────────────────────────────── */
 
@@ -7923,7 +8667,15 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
   padding: 1rem;
   text-align: center;
   background-color: var(--bg-primary);
+  /* subtle-y2k: the launch moment carries a soft aura-sky glow behind the
+     tile — the brand kit's blue radial at whisper opacity, centred where
+     the icon sits. Decorative only; the cover's ground is still the token
+     above, so the fade-out composites exactly as before. */
+  background-image: radial-gradient(70% 55% at 50% 42%, rgba(52, 132, 252, 0.10), rgba(27, 186, 253, 0.05), rgba(2, 240, 253, 0));
   transition: opacity 160ms linear;
+}
+.dark .app-launch-cover {
+  background-image: radial-gradient(70% 55% at 50% 42%, rgba(52, 132, 252, 0.14), rgba(27, 186, 253, 0.06), rgba(2, 240, 253, 0));
 }
 .app-launch-cover--out {
   opacity: 0;
@@ -7996,10 +8748,12 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
   white-space: nowrap;
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(34, 197, 94, 0.35);
-  background: rgba(34, 197, 94, 0.12);
+  /* Border and wash re-derived from meadow-500, the ramp's wash hue,
+     with both alphas held — stock green-500 out. */
+  border: 1px solid rgba(105, 168, 85, 0.35);
+  background: rgba(105, 168, 85, 0.12);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .dc-runner-chip::before {
@@ -8007,7 +8761,7 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #22c55e;
+  background: var(--state-ok);
   flex: none;
 }
 
@@ -8048,14 +8802,14 @@ body.is-offline #offline-banner {
   padding-bottom: 0.375rem;
   /* Opaque: it now floats over content instead of displacing it, and a
      translucent amber wash over a scrolling form is unreadable. */
-  background-color: #fef3c7;
-  color: #92400e;
+  background-color: #FCECDB;
+  color: #462505;
 }
 /* darkMode: 'class' — the flag lives on <html>, put there before first paint
    by the inline window.Theme module in frontend/src/head.html. */
 .dark body.is-offline #offline-banner {
-  background-color: #451a03;
-  color: #fcd34d;
+  background-color: #2B1703;
+  color: #FCECDB;
 }
 
 /* The auth screens' corner Back link is pinned with an inline `top`, so
@@ -8198,11 +8952,11 @@ body.is-offline [data-offline-disabled] {
   max-width: min(45%, 14rem);
   padding: 0.1rem 0.4rem;
   border: 1px solid var(--border);
-  border-radius: 0.375rem;
+  border-radius: 0.5rem;
   background: none;
   color: var(--text-muted);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   cursor: pointer;
 }
@@ -8214,7 +8968,7 @@ body.is-offline [data-offline-disabled] {
 
 .dc-venue-select:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.35);
+  box-shadow: 0 0 0 2px var(--text-primary);
 }
 
 /* Mid-turn the venue cannot change — the running turn is already in one.
@@ -8263,7 +9017,11 @@ body.is-offline [data-offline-disabled] {
    and nothing else — empty on every session that got the venue it asked
    for, and collapsed rather than left as a gap above the composer. */
 .dc-venue-slot {
-  padding: 0.25rem 0.1rem 0.35rem;
+  /* 0.1rem is 1.6px — not a keyline, not an interior, just noise a rounded
+     value left behind. Zeroed, exactly as .dc-venue-detail-inline below
+     already does for the same reason; the strip inherits its horizontal
+     position from the container that owns the gutter. Vertical kept. */
+  padding: 0.25rem 0 0.35rem;
 }
 
 .dc-venue-slot:empty {
@@ -8276,7 +9034,7 @@ body.is-offline [data-offline-disabled] {
    in the header control that names the venue. */
 .dc-venue-note {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -8288,7 +9046,10 @@ body.is-offline [data-offline-disabled] {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
-  padding: 0 0.1rem 0.25rem;
+  /* Same 1.6px of nothing as .dc-venue-slot above; zeroed to match, which
+     also makes this rule and .dc-venue-detail-inline below differ only in
+     the block padding they were actually written to differ in. */
+  padding: 0 0 0.25rem;
 }
 
 /* …except Claude's, which shares the status strip with the runner and the
@@ -8303,8 +9064,8 @@ body.is-offline [data-offline-disabled] {
   max-width: min(100%, 30rem);
   overflow: hidden;
   color: var(--text-primary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8317,7 +9078,7 @@ body.is-offline [data-offline-disabled] {
   background: none;
   color: var(--accent-light);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -8330,7 +9091,7 @@ body.is-offline [data-offline-disabled] {
 .dc-openrouter-model-change:focus-visible {
   outline: none;
   border-radius: 3px;
-  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.35);
+  box-shadow: 0 0 0 2px var(--text-primary);
 }
 
 .dc-openrouter-model-change:disabled {
@@ -8349,10 +9110,10 @@ body.is-offline [data-offline-disabled] {
   flex: none;
   max-width: 12rem;
   padding: 0.05rem 0.35rem;
-  border-radius: 0.375rem;
+  border-radius: 0.5rem;
   background: var(--bg-code);
   color: var(--text-muted);
-  font-size: 0.65rem;
+  font-size: 12px;
   line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
@@ -8393,18 +9154,24 @@ body.is-offline [data-offline-disabled] {
    card's corner; the padding compensates for its 3px so the content of a
    merged row still lines up with the row above it. */
 #dev-feed .dev-feed-entry > .gc-vote-item[data-completed] {
-  background: rgb(236 253 245); /* emerald-50 */
-  border-left: 3px solid rgb(16 185 129); /* emerald-500 */
+  background: #F2F8ED; /* meadow-50 */
+  border-left: 3px solid #427A36; /* meadow-600 */
   padding-left: calc(0.875rem - 3px); /* px-3.5, less the edge */
 }
 .dark #dev-feed .dev-feed-entry > .gc-vote-item[data-completed] {
-  background: rgba(6, 78, 59, 0.28); /* emerald-900 at low alpha */
+  background: rgba(20, 39, 17, 0.28); /* meadow-950 at low alpha */
 }
 #dev-feed .dev-feed-entry > .gc-vote-item[data-completed]:hover {
-  background: rgb(209 250 229); /* emerald-100 */
+  /* Completes the base rules above: they moved to meadow (meadow-50 ground,
+     meadow-600 edge) but both hovers were left on stock emerald, so the row
+     jumped from a warm green to a cool mint the moment the pointer arrived.
+     Same hue as the base, one step darker. */
+  background: #E4F0DB; /* meadow-100 */
 }
 .dark #dev-feed .dev-feed-entry > .gc-vote-item[data-completed]:hover {
-  background: rgba(6, 78, 59, 0.42);
+  /* Was emerald-900 at .42; the base is meadow-950 at .28, so the hover is
+     the same hue with the alpha raised. */
+  background: rgba(20, 39, 17, 0.42); /* meadow-950, alpha up from .28 */
 }
 
 /* ── Inline comments ───────────────────────────────────────────
@@ -8419,15 +9186,15 @@ body.is-offline [data-offline-disabled] {
 #dev-feed .dev-feed-comment {
   font-size: 0.75rem;
   line-height: 1.5;
-  color: rgb(82 82 91); /* zinc-600 */
+  color: rgb(75 74 68); /* zinc-600 */
   padding: 0.15rem 0;
 }
-.dark #dev-feed .dev-feed-comment { color: rgb(212 212 216); /* zinc-300 */ }
+.dark #dev-feed .dev-feed-comment { color: rgb(207 207 200); /* zinc-300 */ }
 #dev-feed .dev-feed-comment-author {
   font-weight: 500;
-  color: rgb(63 63 70); /* zinc-700 */
+  color: rgb(60 60 54); /* zinc-700 */
 }
-.dark #dev-feed .dev-feed-comment-author { color: rgb(228 228 231); }
+.dark #dev-feed .dev-feed-comment-author { color: rgb(228 228 223); /* zinc-200 */ }
 /* The body sits INLINE after the author, like a chat line. Its markdown
    arrives as block elements, so they are flattened back to inline here —
    a paragraph per comment would otherwise put the text on its own line and
@@ -8435,9 +9202,79 @@ body.is-offline [data-offline-disabled] {
 #dev-feed .dev-feed-comment-body { display: inline; }
 #dev-feed .dev-feed-comment-body > * { display: inline; margin: 0; }
 #dev-feed .dev-feed-comment-more {
-  font-size: 0.6875rem;
-  color: rgb(161 161 170); /* zinc-400 */
+  font-size: 0.75rem;
+  color: rgb(151 150 142); /* zinc-400 */
   padding: 0.15rem 0;
+}
+
+/* ── Improve rows: the state dot, in the brand's own gradients ──────────
+   The four radials from the Brand Kit (node 503-20261) at FULL vibrancy —
+   the same four the app tiles wear as a whisper (.app-icon-tile[data-aura]).
+   A change's state is exactly what a brand's colour language should be
+   allowed to say out loud, and this is the surface where it says it.
+
+   Stops are the Figma ones verbatim, so these and the aura utilities in
+   tailwind.config.js stay one family. `background-size` is set here because
+   the working state ANIMATES it (below); `closest-side` recomputes against
+   that size, which is what makes the bright core swell rather than the whole
+   dot resize. Each glow is its own gradient's key hue.
+
+   The state → gradient mapping is decided in improve-controller.js
+   (stateKey), never re-derived from the display label. */
+.improve-state-dot {
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 130% 130%;
+}
+.improve-state-dot--working {
+  background-image: radial-gradient(closest-side, #6717FB 0%, #4E4DFC 25%, #3484FC 50%, #1BBAFD 75%, #02F0FD 100%);
+  box-shadow: 0 0 0 3px rgba(52, 132, 252, 0.22);
+}
+.improve-state-dot--needs-you {
+  background-image: radial-gradient(closest-side, #FB179D 0%, #FC5750 50%, #FD9602 100%);
+  box-shadow: 0 0 0 3px rgba(252, 87, 80, 0.24);
+}
+.improve-state-dot--ready {
+  background-image: radial-gradient(closest-side, #41B24A 0%, #8BD669 50%, #D6FA87 100%);
+  box-shadow: 0 0 0 3px rgba(65, 178, 74, 0.22);
+}
+.improve-state-dot--paused {
+  background-image: radial-gradient(closest-side, #FFAE2B 0%, #FFCE4D 50%, #FFEE6F 100%);
+  box-shadow: 0 0 0 3px rgba(255, 174, 43, 0.22);
+}
+
+/* "Working…" is ALIVE, and it has to be perceivable at 14px in a list you
+   are scanning. The first attempt animated only `background-size` — the
+   gradient's core swelling inside a fixed circle — which is invisible at
+   this size because the dot's SILHOUETTE never moves and the eye catches
+   motion at edges, not fills. So there are two animations doing two jobs:
+
+     breathe  the dot itself scales 1 → 1.22, so the outline moves, and its
+              gradient core spreads with it
+     ping     a ring expands out of the edge and fades, the same "this is
+              live" gesture the deploy dot uses
+
+   1.5s, not the 2.4s of the first pass: slow enough to stay ambient rather
+   than urgent, fast enough that a row scanned for two seconds is visibly
+   moving. Both are decoration — the gradient alone still says which state
+   the row is in, which is what makes the reduced-motion branch safe. */
+@keyframes improve-state-breathe {
+  0%, 100% { transform: scale(1);    background-size: 120% 120%; }
+  50%      { transform: scale(1.22); background-size: 205% 205%; }
+}
+@keyframes improve-state-ping {
+  0%       { box-shadow: 0 0 0 2px rgba(52, 132, 252, 0.55); }
+  70%      { box-shadow: 0 0 0 11px rgba(52, 132, 252, 0); }
+  100%     { box-shadow: 0 0 0 11px rgba(52, 132, 252, 0); }
+}
+.improve-state-dot--working {
+  animation: improve-state-breathe 1.5s ease-in-out infinite,
+             improve-state-ping 1.5s ease-out infinite;
+}
+/* Motion is decoration here — the gradient alone still says which state this
+   is, so there is nothing to replace when it is switched off. */
+@media (prefers-reduced-motion: reduce) {
+  .improve-state-dot--working { animation: none; }
 }
 
 /* ── The Activity feed's inline discussion ─────────────────────────────

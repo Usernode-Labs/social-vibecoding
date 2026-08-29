@@ -18,6 +18,23 @@ import { cn } from '@/lib/utils';
  *                   #agent-files-form's inline card do.
  */
 
+/**
+ * ── KNOWN, DELIBERATELY UNFIXED: SectionHeading's margins have no root ──
+ *
+ * SectionHeading returns a FRAGMENT, so its `mb-1` and `mb-3` land directly in
+ * each of the eighteen callers' block flow with no element of this component's
+ * own to own them. That is the same disease as a caller hand-writing a margin
+ * on an invocation, only pointing the other way, and it is invisible to every
+ * scan — there is no `<SectionHeading className="mb-3">` anywhere to find.
+ *
+ * It is recorded rather than fixed because both fixes cost more than the
+ * defect. Wrapping the pair in a `<div>` is a rendered-DOM change at eighteen
+ * call sites, and `space-y-*`'s selector is `> :not([hidden]) ~ :not([hidden])`
+ * — collapsing two children into one silently changes spacing under any parent
+ * that uses it. Moving the margins to the callers puts eighteen hand-written
+ * utilities back, which is the thing this pass is removing. The real fix is a
+ * root element landed with the settings sections, not ahead of them.
+ */
 export interface SectionHeadingProps {
   /** Rendered into the `<h3>`. */
   title: React.ReactNode;
@@ -34,7 +51,7 @@ function SectionHeading({ title, children, blurbClassName }: SectionHeadingProps
         {title}
       </h3>
       {children === undefined ? null : (
-        <p className={cn('text-xs text-zinc-500 dark:text-zinc-500 mb-3', blurbClassName)}>
+        <p className={cn('text-xs text-zinc-500 dark:text-zinc-300 mb-3', blurbClassName)}>
           {children}
         </p>
       )}
@@ -100,13 +117,27 @@ export interface FieldProps extends React.LabelHTMLAttributes<HTMLLabelElement> 
    * reproduced rather than tidied because chunk D changes no bytes.)
    */
   startHidden?: boolean;
+  /**
+   * The gap under a Field that STACKS above the next one. Both fields in
+   * #agent-files-form's inline card spelled `className="mb-2"` by hand, which
+   * is the caller reaching into this component's layout; the rhythm is named
+   * here instead. `none` is the default — a lone Field has no sibling to
+   * separate from and takes no margin.
+   */
+  spacing?: 'none' | 'stacked';
 }
 
 // `{...props}` is spread BEFORE className: the one Field with an id
 // (#agent-files-desc-wrap) writes `id` ahead of `class`. Label, in label.tsx,
 // does the reverse — its hand-written strings write `class` ahead of `for`.
-function Field({ className, label, children, startHidden, ...props }: FieldProps) {
-  const base = cn('block text-zinc-600 dark:text-zinc-400', className);
+function Field({ className, label, children, startHidden, spacing, ...props }: FieldProps) {
+  // `'mb-2'` is a complete literal, not a lookup: Tailwind's extractor is a
+  // regex over source text and a computed class name compiles to nothing.
+  const base = cn(
+    'block text-zinc-600 dark:text-zinc-300',
+    spacing === 'stacked' && 'mb-2',
+    className,
+  );
   return (
     <label {...props} className={startHidden ? `${base} hidden` : base}>
       {label}
