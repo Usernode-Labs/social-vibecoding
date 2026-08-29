@@ -126,7 +126,7 @@ export const AdminUI = Object.freeze({
   // No fill on the head: the column labels are already uppercase and muted,
   // and a tinted band inside a floating card reads as a second surface.
   thead: 'border-b border-zinc-200 dark:border-zinc-800',
-  th: 'px-6 py-3 text-left align-middle text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400',
+  th: 'px-6 py-3 text-left align-middle font-mono text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400',
   td: 'px-6 py-4 align-middle',
   trHover: 'border-b border-zinc-100 dark:border-zinc-800/60 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50',
   // Buttons — topochain's canonical button strings.
@@ -875,7 +875,7 @@ const AdminConsole = {
       return `
       <div class="${i === 0 ? '' : 'mt-6'}">
         ${AdminConsole._groupToggleHtml(g.name, domId, collapsed,
-          'flex items-center gap-1.5 w-full text-left px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors')}
+          'flex items-center gap-1.5 w-full text-left px-3 py-1.5 font-mono text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors')}
         <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}"${collapsed ? ' class="hidden"' : ''}>
           ${g.items.map(itemHtml).join('')}
         </div>
@@ -908,7 +908,7 @@ const AdminConsole = {
       return `
       <div class="mb-5">
         ${AdminConsole._groupToggleHtml(g.name, domId, collapsed,
-          'flex items-center gap-1.5 w-full text-left px-4 pb-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500')}
+          'flex items-center gap-1.5 w-full text-left px-4 pb-1.5 font-mono text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500')}
         <div id="${domId}" data-admin-group="${AdminConsole.esc(g.name)}"
              class="${AdminUI.card} overflow-hidden
                     [&>button:last-child]:border-b-0${collapsed ? ' hidden' : ''}">

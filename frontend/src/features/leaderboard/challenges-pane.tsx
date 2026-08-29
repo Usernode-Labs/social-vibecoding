@@ -126,9 +126,9 @@ const CARD = 'tc-se-card bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zi
   + 'dark:hover:border-violet-600 transition-colors';
 const CARD_FEATURED = ' ring-1 ring-violet-500/40';
 const CARD_DONE = ' opacity-60';
-const CARD_LABEL = 'text-[10px] uppercase tracking-wide text-violet-700  dark:text-violet-400'
+const CARD_LABEL = 'text-xs uppercase tracking-wide text-violet-700  dark:text-violet-400'
   + 'dark:text-violet-400 font-semibold';
-const DONE_CHIP = 'shrink-0 inline-block px-2 py-0.5 rounded-full text-[0.65rem] font-semibold '
+const DONE_CHIP = 'shrink-0 inline-block px-2 py-0.5 rounded-full text-xs font-semibold '
   + 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400';
 const MINE_NOTE = 'text-xs text-emerald-700 dark:text-emerald-400 mt-2 font-medium';
 const GROUP_HEADING = 'text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-6 mb-2';

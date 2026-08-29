@@ -324,20 +324,20 @@ const Secrets = {
     const isGithubRow = s.source === 'github-actions';
     const isProposed = s.state === 'proposed';
     const requiredBadge = s.required
-      ? `<span class="text-[0.65rem] uppercase font-bold text-red-700 dark:text-red-400">required</span>`
+      ? `<span class="text-xs uppercase font-bold text-red-700 dark:text-red-400">required</span>`
       : '';
     const sensitiveBadge = s.sensitive && !isGithubRow
-      ? `<span class="text-[0.65rem] uppercase font-bold text-amber-800 dark:text-amber-300" title="value never shown after save">sensitive</span>`
+      ? `<span class="text-xs uppercase font-bold text-amber-800 dark:text-amber-300" title="value never shown after save">sensitive</span>`
       : '';
     const orphanBadge = s.orphan
-      ? `<span class="text-[0.65rem] uppercase font-bold text-zinc-500 dark:text-zinc-400">orphan</span>`
+      ? `<span class="text-xs uppercase font-bold text-zinc-500 dark:text-zinc-400">orphan</span>`
       : '';
     // Present only on the platform-variables view; ordinary app secrets
     // send no `state` and keep exactly the badges they always had — except
     // a 'proposed' row, which needs its badge in both scopes.
     const badge = s.state && Secrets.STATE_BADGES[s.state];
     const stateBadge = badge
-      ? `<span class="rounded px-1.5 py-0.5 text-[0.6rem] font-medium ${badge.cls}">${badge.label}</span>`
+      ? `<span class="rounded px-1.5 py-0.5 text-xs font-medium ${badge.cls}">${badge.label}</span>`
       : '';
 
     let valueDisplay;

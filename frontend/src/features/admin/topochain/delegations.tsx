@@ -113,7 +113,7 @@ function Avatar({ user }: { user: Delegator | null }) {
     ? 'bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300'
     : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400';
   return (
-    <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${tone}`}>
+    <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${tone}`}>
       {(name[0] || '?').toUpperCase()}
     </span>
   );
@@ -161,7 +161,7 @@ function Delegatee() {
     <PartyChip
       party="delegatee"
       avatar={(
-        <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-600 text-[11px] font-semibold text-white">
+        <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-600 text-xs font-semibold text-white">
           P
         </span>
       )}

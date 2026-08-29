@@ -510,7 +510,7 @@ function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
   }
   // The topic-view-only admin claim list, with its per-claim clear control.
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-1 px-0.5 text-[0.65rem] text-zinc-500 dark:text-zinc-400">
+    <div className="mt-1 flex flex-wrap items-center gap-1 px-0.5 text-xs text-zinc-500 dark:text-zinc-400">
       {'Claims:'}
       {x.claims.map((c) => (
         <span key={c.userId} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-700 dark:text-sky-400">

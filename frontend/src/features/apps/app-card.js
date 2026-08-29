@@ -173,8 +173,8 @@ export function appPillsFor(app) {
 // tint measured 2.3:1, which is a colour you can see but not read. The tint
 // behind it is unchanged — it is the same 10% wash in both themes, and it is
 // the ink that has to move.
-export const CHIP_BASE_CLS = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
-export const VIS_CHIP_CLS = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-700 dark:text-violet-400';
+export const CHIP_BASE_CLS = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium';
+export const VIS_CHIP_CLS = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-violet-500/10 text-violet-700 dark:text-violet-400';
 // Heroicons v1 outline paths, drawn as inline currentColor SVGs (rather than
 // emoji) so the glyphs tint violet with the chip in both themes.
 export const VIS_CHIP_PATHS = {

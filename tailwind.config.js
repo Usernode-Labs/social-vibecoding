@@ -258,6 +258,78 @@ module.exports = {
       sans: ['Geist', 'ui-sans-serif', 'system-ui', 'sans-serif', '"Apple Color Emoji"', '"Segoe UI Emoji"', '"Segoe UI Symbol"', '"Noto Color Emoji"'],
       mono: ['"Geist Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', '"Liberation Mono"', '"Courier New"', 'monospace'],
     },
+    // ── The type scale. SEVEN owned steps, in the TUPLE form so a size
+    //    CARRIES its leading ──────────────────────────────────────────────
+    //
+    // THE PRODUCT SHIPS 23 DISTINCT FONT SIZES AND CHOSE ABOUT SIX OF THEM.
+    // This config overrode no `fontSize` at all until now, so every size was
+    // either one of Tailwind's stock steps or an arbitrary `text-[...]`: 8
+    // named steps, 13 arbitrary spellings across 147 utilities, and 5 values
+    // that exist only as raw `font-size:` in app.css (9, 11.5, 12.5, 13.5 and
+    // 32px). Nobody weighed 12.5px against 13px. The second one just never had
+    // a name to be spelled with, and an unnamed size is decided by whoever
+    // typed last.
+    //
+    // The tuple form is the load-bearing part, not decoration. `text-lg` with
+    // no owned scale means 18px over 28px leading, and the 28 is INVISIBLE at
+    // the call site — so anyone who wants a tighter heading reaches for
+    // `leading-snug`, the leading moves into a second class, and the next call
+    // site forgets it. Binding leading to size makes the ramp one decision in
+    // one place. A `leading-*` utility still wins where a site genuinely needs
+    // to override, because Tailwind emits lineHeight after fontSize.
+    //
+    // WHAT THIS DELIBERATELY DOES NOT MOVE: xs/sm/base/xl/2xl are restated at
+    // Tailwind's exact values (12/16, 14/20, 16/24, 20/28, 24/32) because 868
+    // `text-xs` and 675 `text-sm` sites render from them. This pass is a
+    // scale, not a restyle. Two steps DO move, both on purpose:
+    //
+    //   lg   18px, leading 28 -> 24. A 1.56 ratio is a PARAGRAPH value, and
+    //        this size is used almost exclusively for single-line headings
+    //        and icon buttons. 51 sites spell `text-lg` across the scanned
+    //        sources; 6 already pin `leading-none` and are untouched (4 in
+    //        the product, and both of the kit demo's), so 45 tighten by 4px.
+    //
+    //   3xl  30px -> 32px, leading held at 36. 30 is a point on TAILWIND's
+    //        ramp, not a size this product ever asked for; 32 is one it did
+    //        ask for, twice, as a bare `font-size: 32px` in app.css. Giving
+    //        the product's own display size the ordinal name is the whole
+    //        point — otherwise 30 and 32 sit adjacent and the scale is not a
+    //        scale. 6 class sites move +2px: 4 emoji glyphs with
+    //        `leading-none` in fixed `overflow-hidden` tiles (tightest is the
+    //        browse row's w-11/44px, still clear at 32px), 1 landing h1 and 1
+    //        wallet balance, both in flow.
+    //
+    // 12PX IS THE FLOOR and the ramp has no step beneath it — the same number
+    // tests/dev-chip-geometry.test.js pins for badges. That floor governs the
+    // NAMED ladder only: 90 arbitrary utilities still spell 9.6–11.2px, and
+    // arbitrary values keep compiling on purpose (tailwind-build.test.js's
+    // sentinel list requires `text-[11px]` and `text-[0.65rem]` to). Raising
+    // them is a call-site pass, not a config one.
+    //
+    // NO STEPS FOR 13/15/17/22/34PX, though 50 utilities spell them. That is
+    // the iOS system ramp, and the shell components that mimic native metrics
+    // (feed, chat, chip, grouped-list, icon-tile) sit on it DELIBERATELY — it
+    // is the ladder public/usernode-native/v1/ publishes as a frozen contract.
+    // Naming those sizes here would invite two ladders to be read as one and
+    // drift into each other.
+    //
+    // letterSpacing appears ONCE, on 3xl, at Tailwind's own `tracking-tight`
+    // value — so the display sites that already hand-write that class render
+    // identically and the class simply goes redundant. Body sizes get none;
+    // adding tracking there would have moved every site at that size.
+    //
+    // 4xl and up are left at stock Tailwind, unowned. One site uses `text-4xl`
+    // (the profile points numeral) and one spells `text-[2.75rem]`; both fold
+    // into this ladder in the call-site pass, not here.
+    fontSize: {
+      xs:    ['0.75rem',  { lineHeight: '1rem' }],     // 12/16  Tailwind's own
+      sm:    ['0.875rem', { lineHeight: '1.25rem' }],  // 14/20  Tailwind's own
+      base:  ['1rem',     { lineHeight: '1.5rem' }],   // 16/24  Tailwind's own
+      lg:    ['1.125rem', { lineHeight: '1.5rem' }],   // 18/24  was 18/28
+      xl:    ['1.25rem',  { lineHeight: '1.75rem' }],  // 20/28  Tailwind's own
+      '2xl': ['1.5rem',   { lineHeight: '2rem' }],     // 24/32  Tailwind's own
+      '3xl': ['2rem',     { lineHeight: '2.25rem', letterSpacing: '-0.025em' }], // 32/36, was 30/36
+    },
     // The language is markedly rounder than the shell was. Remapping the
     // scale rather than editing call sites rounds every existing
     // `rounded-lg`/`rounded-xl` up one step at once, with no class churn.

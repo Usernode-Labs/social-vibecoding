@@ -144,7 +144,7 @@ const DOT = <span className="text-zinc-500 dark:text-zinc-500">·</span>;
 function Chip({ state, reason }: { state?: string; reason?: string }) {
   const chip = (state && CHIP[state]) || CHIP_UNKNOWN;
   return (
-    <span className={`text-[0.65rem] px-1.5 py-0.5 rounded ${chip.cls}`} title={reason || undefined}>
+    <span className={`text-xs px-1.5 py-0.5 rounded ${chip.cls}`} title={reason || undefined}>
       {chip.label}
     </span>
   );

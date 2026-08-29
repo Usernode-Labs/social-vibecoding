@@ -41,9 +41,13 @@ import { ChevronRightIcon } from './icons';
  */
 
 export function SectionHeader({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
+  // subtle-y2k: section labels wear the brand kit's technical-label voice —
+  // Geist Mono, uppercase, tracked — one size down from the sentence-case
+  // 0.9375rem they replaced, because a mono uppercase line runs wider than
+  // the same words in the text face.
   return (
     <h2
-      className={cn('px-4 pb-2 pt-6 text-[0.9375rem] font-normal text-zinc-500 dark:text-zinc-500', className)}
+      className={cn('px-4 pb-2 pt-6 font-mono text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-500', className)}
       {...props}
     />
   );

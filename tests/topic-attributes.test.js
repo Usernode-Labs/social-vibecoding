@@ -1001,5 +1001,11 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
   const badge = css.slice(css.indexOf('.dev-badge {'), css.indexOf('button.dev-badge'));
   assert.match(badge, /height:\s*20px/, 'one fixed chip height');
   assert.match(badge, /box-sizing:\s*border-box/);
-  assert.match(badge, /font-size:\s*10\.5px/);
+  // 10.5px is gone: the named type ladder has no step below 12px, and that is
+  // the badge floor — under it APCA's readability matrix has no row at all, so
+  // no ink colour makes the chip conformant and the fix has to be type rather
+  // than hue. The exact value's OWNER is dev-chip-geometry.test.js, which
+  // pins a 12–12.5px band inside the 20px box; match the band rather than a
+  // competing literal the two files could drift apart on.
+  assert.match(badge, /font-size:\s*12(\.5)?px/);
 });

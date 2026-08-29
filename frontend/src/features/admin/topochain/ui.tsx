@@ -486,7 +486,7 @@ const BADGE_TONES: Record<string, string> = {
 
 export function Badge({ label, tone }: { label: ReactNode; tone?: string }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${BADGE_TONES[tone || 'zinc'] || BADGE_TONES.zinc}`}>
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${BADGE_TONES[tone || 'zinc'] || BADGE_TONES.zinc}`}>
       {label}
     </span>
   );

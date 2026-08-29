@@ -239,7 +239,7 @@ function Completed({ completed }: { completed: any }): ReactNode {
               </div>
               <span
                 className={
-                  'shrink-0 px-2 py-0.5 rounded-full text-[0.65rem] font-semibold '
+                  'shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold '
                   + 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
                 }
               >

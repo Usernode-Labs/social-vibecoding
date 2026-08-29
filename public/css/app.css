@@ -296,7 +296,7 @@ html.un-kb .platform-safe-sheet {
   border-radius: 9999px;
   color: var(--text-muted);
   background: var(--bg-secondary);
-  font-size: 10px;
+  font-size: 12px;
 }
 .messages-unread {
   flex: 0 0 auto;
@@ -306,7 +306,7 @@ html.un-kb .platform-safe-sheet {
   border-radius: 9999px;
   background: var(--accent);
   color: white;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 18px;
   text-align: center;
@@ -3445,7 +3445,7 @@ a.dc-flow-action {
 .dc-qa-chip-selected:hover { background: var(--accent-light); }
 
 .dc-qa-chip-hint {
-  font-size: 9px;
+  font-size: 12px;
   margin-left: 6px;
   opacity: 0.6;
   text-transform: uppercase;
@@ -3682,7 +3682,7 @@ a.dc-flow-action {
   white-space: nowrap;
 }
 
-.dc-attach-size { color: var(--text-muted); font-size: 11px; }
+.dc-attach-size { color: var(--text-muted); font-size: 12px; }
 
 /* Kind badge on zip/binary chips ("ZIP · 214 files", "BIN"). */
 .dc-attach-kind {
@@ -3690,7 +3690,7 @@ a.dc-flow-action {
   background: var(--bg-tertiary);
   border-radius: 4px;
   padding: 1px 4px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.03em;
   white-space: nowrap;
@@ -4025,7 +4025,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   height: 24px;
   padding: 0 10px;
   border-radius: 9999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
@@ -4102,7 +4102,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
   /* Theme-following. This rule used to hard-code an opaque white with
@@ -4597,7 +4597,7 @@ span.gc-vote-btn-icon { cursor: default; }
   overflow: hidden;
   padding: 2px 9px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   /* Theme-following. This rule used to hard-code an opaque white with
      no `.dark` override, so the tally pill sat as a white box on an
@@ -4672,7 +4672,7 @@ span.gc-vote-btn-icon { cursor: default; }
   margin-left: 4px;
   padding: 2px 7px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--state-neutral);
   background: var(--state-neutral-bg);
@@ -4690,7 +4690,7 @@ span.gc-vote-btn-icon { cursor: default; }
   margin-left: 4px;
   padding: 2px 7px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-attention);
   background: var(--state-attention-bg);
@@ -4705,7 +4705,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   /* #405 recoloured this emerald -> amber; the semantic-token pass moves
      it to `progress` (violet): "working toward a merge" is something
@@ -4720,7 +4720,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-neutral);
   white-space: nowrap;
@@ -4733,7 +4733,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -4746,7 +4746,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
   padding: 2px 8px;
@@ -4768,7 +4768,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-blocked);
   white-space: nowrap;
@@ -4780,7 +4780,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-attention);
   white-space: nowrap;
@@ -4792,7 +4792,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-blocked);
   white-space: nowrap;
@@ -4803,7 +4803,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-ok);
   white-space: nowrap;
@@ -4817,7 +4817,7 @@ span.gc-vote-btn-icon { cursor: default; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--state-ok);
   white-space: nowrap;
@@ -4847,19 +4847,22 @@ span.gc-vote-btn-icon { cursor: default; }
 
 .dc-log-time {
   color: #86857c;
-  font-size: 10px;
+  font-size: 12px;
   align-self: center;
 }
 
 .dc-log-level {
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   padding: 1px 5px;
   border-radius: 3px;
   align-self: center;
   text-align: center;
-  min-width: 44px;
+  /* 44px held 9px text. At the 12px badge floor the widest levels this
+     renders — STDERR, STDOUT — need ~58px, and a min-width the content
+     exceeds stops aligning the message column at all. */
+  min-width: 60px;
 }
 
 .dc-log-msg { color: #e4e4df; }
@@ -5755,7 +5758,7 @@ span.gc-vote-btn-icon { cursor: default; }
   border-radius: 999px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6589,7 +6592,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 0 4px;
-  font-size: 10px;
+  font-size: 12px;
   font-family: 'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace;
 }
 
@@ -6636,7 +6639,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   border-radius: 999px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   text-decoration: none;
   line-height: 1;
@@ -7483,7 +7486,7 @@ a.drawer-ver--fork:hover {
   height: 20px;
   padding: 0 6px;
   border-radius: 6px;
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
@@ -7592,7 +7595,7 @@ button.attr-chip { cursor: pointer; }
 .attr-pop-head-divided { border-top: 1px solid var(--border-light); margin-top: 4px; }
 .attr-opt-right { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .attr-opt-count {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   background: var(--bg-secondary);
   border-radius: 9999px;
@@ -7835,7 +7838,7 @@ button.attr-chip { cursor: pointer; }
 
 .st-readonly-tag {
   margin-left: auto;
-  font-size: 10px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
@@ -7901,7 +7904,7 @@ button.attr-chip { cursor: pointer; }
   gap: 0.375rem;
   padding: 0.125rem 0.5rem;
   border-radius: 9999px;
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -8094,7 +8097,7 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
   border: 1px solid rgba(34, 197, 94, 0.35);
   background: rgba(34, 197, 94, 0.12);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .dc-runner-chip::before {
@@ -8447,7 +8450,7 @@ body.is-offline [data-offline-disabled] {
   border-radius: 0.375rem;
   background: var(--bg-code);
   color: var(--text-muted);
-  font-size: 0.65rem;
+  font-size: 12px;
   line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;

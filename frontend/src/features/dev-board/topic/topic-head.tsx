@@ -111,7 +111,7 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
         </span>
         {` ${r.name} `}
         {r.path ? <span className="opacity-60 font-mono">{r.path}</span> : null}
-        {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">advisory</span> : null}
+        {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-xs opacity-70">advisory</span> : null}
       </li>
       {!r.pass ? (
         <>

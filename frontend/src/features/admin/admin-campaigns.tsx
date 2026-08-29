@@ -138,7 +138,7 @@ const APP_BADGE: Record<string, [string, string]> = {
 function AppBadge({ state }: { state?: string }) {
   const [cls, label] = (state && APP_BADGE[state]) || ['bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', state || '—'];
   return (
-    <span className={`text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cls} shrink-0`}>
+    <span className={`text-xs font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cls} shrink-0`}>
       {label}
     </span>
   );

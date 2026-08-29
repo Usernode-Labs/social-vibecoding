@@ -122,7 +122,7 @@ function Badge({ status }: { status?: string }) {
   const b = (status && BADGES[status])
     || { label: status || '—', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300', spin: false };
   return (
-    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}`}>
+    <span className={`text-xs font-semibold px-2 py-0.5 rounded ${b.cls}`}>
       {b.spin ? <span className="inline-block w-2 h-2 mr-1 rounded-full bg-current spin align-middle" /> : null}
       {b.label}
     </span>
@@ -172,7 +172,7 @@ function StepRow({ s }: { s: Step }) {
             <span className="text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400 font-mono">{s.phase || ''}</span>
             <span className="text-[10px] text-zinc-500 dark:text-zinc-400">{fmtTime(s.created_at)}</span>
             {ms == null ? null : (
-              <span className="text-[10px] font-mono px-1 rounded bg-zinc-200/70 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">
+              <span className="text-xs font-mono px-1 rounded bg-zinc-200/70 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">
                 {ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`}
               </span>
             )}

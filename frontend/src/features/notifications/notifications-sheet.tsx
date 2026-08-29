@@ -193,7 +193,7 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
       */}
       {view.count && view.count > 1 ? (
         <span
-          className={'shrink-0 min-w-[1.25rem] px-1.5 h-5 rounded-full text-[0.65rem] font-semibold '
+          className={'shrink-0 min-w-[1.25rem] px-1.5 h-5 rounded-full text-xs font-semibold '
             + 'flex items-center justify-center '
             + (view.unread
               ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400'

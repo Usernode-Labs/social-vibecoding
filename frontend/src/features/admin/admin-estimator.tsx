@@ -430,7 +430,7 @@ function EstimatorCard({ e }: { e: any }) {
                   <td className="py-1 text-zinc-600 dark:text-zinc-300">
                     {`v${fmtInt(v.promptVersion)}`}
                     {v.promptVersion === CANDIDATE_PROMPT_VERSION
-                      ? <> <span className="text-[10px] uppercase tracking-wide text-violet-700 dark:text-violet-400">candidate</span></>
+                      ? <> <span className="text-xs uppercase tracking-wide text-violet-700 dark:text-violet-400">candidate</span></>
                       : null}
                   </td>
                   <td className="py-1 text-right">{fmtInt(v.scored)}</td>

@@ -72,7 +72,7 @@ function SetupStep({ n, title, children }: {
 }) {
   return (
     <li className="flex gap-2.5">
-      <span aria-hidden="true" className="mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-zinc-200 dark:bg-zinc-700 text-[10px] font-semibold leading-none text-zinc-600 dark:text-zinc-300">
+      <span aria-hidden="true" className="mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-zinc-200 dark:bg-zinc-700 text-xs font-semibold leading-none text-zinc-600 dark:text-zinc-300">
         {n}
       </span>
       <span className="min-w-0 text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">

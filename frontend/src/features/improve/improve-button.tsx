@@ -167,7 +167,7 @@ function ImproveGlyph({ versionState, appDeploying }: {
 // test diffs them as such.
 const AI_BADGE_CLS =
   'absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full '
-  + 'bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center';
+  + 'bg-emerald-500 text-white text-xs font-bold flex items-center justify-center';
 
 /**
  * What changed while you were not looking — three corners of one control.

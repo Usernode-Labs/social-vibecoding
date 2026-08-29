@@ -213,7 +213,7 @@ export function StagingOverlay(): ReactNode {
           <TerminalIcon className="w-5 h-5" />
           <span
             id="staging-dev-console-badge"
-            className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
+            className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center"
           >
           </span>
         </button>

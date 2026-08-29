@@ -50,10 +50,19 @@ test('.dev-badge sets the small label size the row was designed around', () => {
   const size = badge.match(/font-size:\s*([\d.]+)px/);
   assert.ok(size, '.dev-badge declares its own font-size');
   const px = parseFloat(size[1]);
-  // The pre-collapse chips were `text-[0.65rem]` (10.4px). Anything near the
-  // card's 13.5px title or the 14px body is the regression coming back.
-  assert.ok(px >= 9.5 && px <= 11.5,
-    `chip label should stay ~10.5px, got ${px}px — too large for a 20px box`);
+  // The pre-collapse chips were `text-[0.65rem]` (10.4px), and this read
+  // 9.5-11.5 to keep them off the card's 13.5px title and 14px body.
+  //
+  // 12px now, and the band moved on purpose: the product adopted a 12px FLOOR
+  // for badges, because below 12px APCA's readability matrix has no row at all
+  // — there is no ink colour that makes a 10.4px chip conformant, so the fix
+  // has to be type. 12px still clears the 13.5px title, and it fits the 20px
+  // box with 4px of leading either side at `line-height: 1`.
+  //
+  // The floor is the reason this is still a BAND and not a ban: 12 is the
+  // bottom of it, and the top still guards the original regression.
+  assert.ok(px >= 12 && px <= 12.5,
+    `chip label should be 12px (the badge floor), got ${px}px`);
   assert.match(badge, /line-height: 1/);
   assert.match(badge, /font-weight: 500/);
 });

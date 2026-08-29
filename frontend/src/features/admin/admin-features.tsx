@@ -78,7 +78,7 @@ function FeatureCard({ f, rank }: { f: Feature; rank: number }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold">{f.title}</span>
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}`}>{b.label}</span>
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded ${b.cls}`}>{b.label}</span>
           </div>
           {f.description ? (
             <div className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 whitespace-pre-wrap break-words">{f.description}</div>

@@ -759,7 +759,7 @@ function StatusSection() {
         <div className="flex items-center gap-3">
           <h2 className={AdminUI.cardTitle}>Health &amp; status</h2>
           <span id="admin-status-version" className="text-xs mono text-zinc-500 dark:text-zinc-400">{d.version || ''}</span>
-          <span id="admin-status-badge" className="admin-only text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-700/30 text-violet-700 dark:text-violet-300">admin view</span>
+          <span id="admin-status-badge" className="admin-only text-xs uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-700/30 text-violet-700 dark:text-violet-300">admin view</span>
         </div>
         <div className="flex items-center gap-4 text-xs text-zinc-500 dark:text-zinc-400">
           <label className="flex items-center gap-2">

@@ -145,7 +145,7 @@ type BodyView =
 const controller = () => (window as { Leaderboard?: any }).Leaderboard;
 
 /** The one badge table. Every `{tone,label}` the module builds reads from it. */
-const BADGE = 'px-1.5 py-0.5 rounded text-[10px] font-semibold';
+const BADGE = 'px-1.5 py-0.5 rounded text-xs font-semibold';
 
 const TONES: Record<Tone, string> = {
   emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
