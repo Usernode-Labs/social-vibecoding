@@ -34,7 +34,7 @@ import { panelsStore, type HomePanelsState, type PanelStamps } from '../panels-s
 import { ChallengesPanel } from './challenges';
 import { CreatePanel } from './create';
 import { DiscoverPanel } from './discover';
-import { SectionHeading, stampProps } from './ui';
+import { BrowseLink, LeaderboardLink, PanelMenuButton, SectionHeading, stampProps } from './ui';
 
 /**
  * One host. `slot` names WHICH block it is for — it rides along from the grid
@@ -53,12 +53,13 @@ import { SectionHeading, stampProps } from './ui';
  * its label down with it rather than leaving a label over a gap.
  */
 function Section({
-  id, slot, label, trailing, painted, stamps, children,
+  id, slot, label, trailing, action, painted, stamps, children,
 }: {
   id: string;
   slot: string;
   label: string;
   trailing?: ReactNode;
+  action?: ReactNode;
   painted: boolean;
   stamps?: PanelStamps;
   children: ReactNode;
@@ -70,7 +71,7 @@ function Section({
       className={painted && !children ? 'hidden px-3 pb-3' : 'px-3 pb-3'}
       {...stampProps(stamps)}
     >
-      <SectionHeading>
+      <SectionHeading action={action}>
         {label}
         {trailing}
       </SectionHeading>
@@ -94,6 +95,11 @@ export function DiscoverSectionView({ painted, discover }: HomePanelsState) {
       id="home-discover-section"
       slot="discover"
       label="Discover"
+      // CONSTANT, like the label: both are rendered in the prerender and by
+      // the first client render, so neither can disagree with the document
+      // the shell ships. Nothing here reads the view model — the ⋮ names its
+      // block by key and the link goes to a fixed hash.
+      action={<><BrowseLink /><PanelMenuButton panelKey="discover" /></>}
       painted={painted}
       stamps={discover
         ? { featured: discover.featured.length, popular: discover.popular.length }
@@ -116,9 +122,16 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
       // "1 of 6 · 3,900 pts left" — the counter that used to ride the block's
       // own title, following the title out of the card. Null between seasons,
       // which is also its prerendered state.
+      // SMALLER THAN THE NAME. The counter rode the block's own title at the
+      // title's size, which was fine when the title had a bar to itself; in a
+      // heading that also carries the block's controls, 15px of "· 1 of 6 ·
+      // 3,900 pts left" pushed the whole label into an ellipsis on a phone.
+      // 12px is the shell's caption size, it fits, and the hierarchy it makes
+      // — the area's NAME, then how far through it you are — is the right one.
       trailing={challenges?.summary
-        ? <span className="whitespace-nowrap">{` \u00b7 ${challenges.summary}`}</span>
+        ? <span className="whitespace-nowrap text-[12px]">{` \u00b7 ${challenges.summary}`}</span>
         : null}
+      action={<><LeaderboardLink /><PanelMenuButton panelKey="challenges" /></>}
       painted={painted}
     >
       {challenges ? <ChallengesPanel view={challenges} /> : null}

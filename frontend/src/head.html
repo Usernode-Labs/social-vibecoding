@@ -1,7 +1,15 @@
 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>dApps</title>
+  <!-- THE PLATFORM'S NAME, not "dApps". This is the title the SERVICE WORKER
+       serves: public/index.html is precached, so a cached load shows it in the
+       tab, the task switcher and the native AppBar until the SPA routes and
+       calls App.setHeaderTitle('Social Vibecoding'). "dApps" is the name this
+       shell had before the platform had one, and every other surface —
+       manifest.webmanifest, the header on home, the landing page — says
+       Social Vibecoding. A cached document that names the product something
+       nothing else calls it is the discontinuity, not just the delay. -->
+  <title>Social Vibecoding</title>
   <!-- The browser-chrome colour, and the ground the shell paints on before
        any stylesheet has loaded. Both live UP HERE, ahead of the theme
        module, because that module rewrites the meta from the resolved theme

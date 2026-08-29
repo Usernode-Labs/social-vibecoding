@@ -665,23 +665,28 @@ test('expanding stops the rows list clipping, and there is no cap left to lift',
   assert.doesNotMatch(css, /--home-panel-max-h:/);
 });
 
-test('render: the title bar carries the title, the counter and the ⋮ menu — no extra rows', () => {
+test('render: the heading carries the label, the counter and the ⋮ menu — the card carries content', () => {
   const { html } = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 6, done: 1, points_remaining: 3900 })],
   });
-  assert.match(html, /home-panel-bar/);
+  // All three are the SECTION HEADING's now. The block's title bar held them
+  // until the title moved out to become that heading; what was left was a
+  // strip of card with one shrink-0 link floating at the right of it, so the
+  // controls followed the title out and the card opens on its own content.
+  assert.match(html, /home-area-label/);
   assert.match(html, /Challenges/);
-  assert.match(html, /1 of 6 · 3,900 pts left/, 'the summary folds into the bar');
+  assert.match(html, /1 of 6 · 3,900 pts left/, 'the summary folds into the heading');
   assert.match(html, /home-panel-menu[^>]*data-panel-key="challenges"/);
-  // The bar is flex-none so the ROWS list is what the cap compresses.
-  assert.match(html, /home-panel-bar flex-none/);
+  assert.doesNotMatch(html, /home-panel-bar[^-]/, 'no bar left inside the card');
+  // …and the ⋮ is in the heading, not in the article it names.
+  assert.match(html, /home-panel-menu[\s\S]*?<\/h2>/);
 });
 
 // The area LABEL is the section's own, not the block's (see SectionHeading in
 // panels/ui.tsx), so it is always in the host's markup — what "nothing at all"
 // means is that no BLOCK is drawn and the host carries `hidden`, which takes
 // the label down with it. Anything else here would be a label over a gap.
-const blocksOf = (html) => html.replace(/<h2 class="home-section-header[\s\S]*?<\/h2>/g, '');
+const blocksOf = (html) => html.replace(/<h2 class="home-area-label[\s\S]*?<\/h2>/g, '');
 
 test('render: nothing at all when signed out, unloaded, or hidden', () => {
   // Signed out. Every host stays blockless AND hidden — an empty <section>
@@ -720,10 +725,11 @@ test('render: the empty state renders for EVERY viewer, compact and footer-less'
     // Exactly one row, and no footer: nothing to expand, nothing to count.
     assert.equal((out.html.match(/home-panel-row\b/g) || []).length, 1, `${who}: one line`);
     assert.doesNotMatch(out.html, /home-panel-footer/, `${who}: no footer`);
-    // The ⋮ menu sits at the right edge, same as the populated branch. The
-    // title's `flex-1` used to do that; the bar holds controls only now, so
-    // its own justify-end does.
-    assert.match(out.html, /home-panel-bar[^"]*justify-end/, `${who}: the ⋮ is at the right edge`);
+    // The ⋮ sits at the right edge of the SECTION HEADING, same as the
+    // populated branch — the label takes the row (`flex-1`) and the controls
+    // are what is left at the end of it.
+    assert.match(out.html, /home-area-label[^"]*flex items-center/, `${who}: the heading is a row`);
+    assert.match(out.html, /min-w-0 flex-1 truncate[^>]*>Challenges/, `${who}: the label takes it`);
     assert.match(out.html, /data-rows="0"/, `${who}: stamped`);
     // No `panel.leaderboard` in this payload, so there is nothing to fill
     // with — the stamp says so rather than claiming rows nobody drew.
@@ -790,15 +796,15 @@ test('render: each panel is its own bordered article, in its own host', () => {
 
   // Every host draws, and each draws exactly ONE block — never one shared
   // card, never two stacked in the same section. Discover and Challenges are
-  // bordered articles with their own title bars; Create is the dashed tile
-  // it has always been (its label IS its title, so a bar above it would say
-  // "Create app" twice).
+  // bordered articles under their own section label; Create is the dashed
+  // tile it has always been (and it now carries a label above it like the
+  // rest, so the stack reads as one list of labelled areas).
   for (const key of ['discover', 'challenges']) {
     const host = out.host(key);
     assert.equal((host.innerHTML.match(/<article class="home-panel /g) || []).length, 1,
       `${key}: one bordered block`);
-    assert.equal((host.innerHTML.match(/home-panel-bar/g) || []).length, 1,
-      `${key}: its OWN title bar`);
+    assert.equal((host.innerHTML.match(/home-area-label/g) || []).length, 1,
+      `${key}: its OWN label row`);
     assert.ok(!host._classes.has('hidden'), `${key}: shown`);
   }
   const create = out.host('create');
@@ -858,7 +864,12 @@ test('every text node in a row is single-line — no wrapping anywhere', () => {
   // The goal specifically: truncate (ellipsis) rather than clip-with-no-hint.
   assert.match(html, /home-panel-goal[^"]*min-w-0 truncate whitespace-nowrap/);
   // The reward chip is the one most likely to wrap — multi-word and shrink-0.
-  assert.match(html, /shrink-0 whitespace-nowrap text-\[11px\] font-semibold/);
+  // It is a TINTED PILL now rather than bold accent text: a column of blue
+  // "250 pts" read down the card before any of the goals beside them did, and
+  // the goal is what a row is about. `rounded-full` sits between the two
+  // classes this line has always been about, so it is matched loosely.
+  assert.match(html, /shrink-0 whitespace-nowrap[^"]*text-\[11px\] font-medium text-violet-700/);
+  assert.match(html, /bg-violet-500\/10/, 'the tint is what makes it findable at all');
   // The count.
   assert.match(html, /shrink-0 whitespace-nowrap text-\[11px\] tabular-nums/);
 });
@@ -875,7 +886,10 @@ test('the title bar and the footer controls are single-line too', () => {
   // widget language labels a group in sentence case at reading size, so there
   // is no small caps left to undo. `whitespace-nowrap` is the load-bearing
   // half and is what this line has always been about.
-  assert.match(html, /home-section-header[^"]*">Challenges<span class="whitespace-nowrap"> · /);
+  assert.match(html, /min-w-0 flex-1 truncate[^>]*>Challenges<span class="whitespace-nowrap text-\[12px\]"> · /,
+    'the counter is a caption beside the name, not the name\'s own size — a '
+    + '15px "· 1 of 6 · 3,900 pts left" ellipsised the whole label on a phone '
+    + 'once the heading also carried the block\'s controls');
   // The bar carries the way out (#968, now the leaderboard link of #980).
   // Nothing competes with it for the row any more — the summary that used to
   // is one level up — but it stays shrink-0 and nowrap: the label used to
@@ -1164,11 +1178,12 @@ test('the grab cursor is gone from app.css, and stays gone', () => {
   // the one mention that should survive.
   assert.doesNotMatch(css, /cursor:\s*grab(bing)?;/,
     'nothing on this screen is grabbable by its title bar any more');
-  // user-select: none STAYS — the bar is not a text surface, and a
-  // double-click selecting "CHALLENGES · 1 of 6" is noise either way.
-  assert.match(css.match(/\.home-panel-bar \{[^}]*\}/)[0], /user-select:\s*none/);
-  // A control is still a control.
-  assert.match(css, /\.home-panel-bar button \{[^}]*cursor:\s*pointer/);
+  // The bar itself is GONE — its title became the section's label and its
+  // controls followed — so the `user-select: none` that kept a double-click
+  // from selecting "CHALLENGES · 1 of 6" has nothing left to guard.
+  assert.doesNotMatch(css, /\.home-panel-bar \{/);
+  // A control is still a control, in the row the bar became.
+  assert.match(css, /\.home-area-label button \{[^}]*cursor:\s*pointer/);
 });
 
 test('the block wires no drag recognizer of its own', () => {
@@ -1439,7 +1454,8 @@ test('each block is a full-width child of the section, not separately bounded', 
     // and the card is left holding only its content.
     assert.match(html, /<article class="home-panel home-panel-card /,
       `${name}: the block is the article itself`);
-    assert.match(html, /home-panel-bar/, `${name}: its own control bar`);
+    assert.doesNotMatch(html, /home-panel-bar[^-]/,
+      `${name}: no control bar inside the card — the heading carries them`);
     assert.match(html, /<\/h2><article class="home-panel home-panel-card /,
       `${name}: the label is the block's immediate previous sibling`);
   }
@@ -1590,16 +1606,18 @@ test('Discover draws the Popular lane at every width', () => {
   assert.doesNotMatch(PANELS_TSX, /currentCols/);
 });
 
-test('Discover never draws a footer; the browse control is in the title bar', () => {
+test('Discover draws no chrome of its own; its control is in the section heading', () => {
   const html = renderDiscover();
   assert.doesNotMatch(html, /home-panel-footer/);
-  // The button is inside the bar. Discover has ONE destination, so it belongs
-  // beside the title rather than in 27px of chrome under two lanes.
-  assert.match(html, /home-panel-bar[\s\S]*?id="home-browse-btn"[\s\S]*?home-panel-menu/,
-    'browse sits between the title and the ⋮');
+  assert.doesNotMatch(html, /home-panel-bar[^-]/, 'and no bar — the card is two lanes');
+  // The button sits in the heading, between the label and the ⋮. Discover has
+  // ONE destination, so it belongs beside the area's name rather than in 27px
+  // of chrome above two lanes.
+  assert.match(html, /home-area-label[\s\S]*?id="home-browse-btn"[\s\S]*?home-panel-menu[\s\S]*?<\/h2>/,
+    'browse sits between the label and the ⋮, inside the heading');
   // ...and in the empty branch too — it is THE discovery path.
   const empty = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
-  assert.match(empty, /home-panel-bar[\s\S]*?id="home-browse-btn"/);
+  assert.match(empty, /home-area-label[\s\S]*?id="home-browse-btn"/);
 });
 
 test('Discover’s degenerate states: which lane, which note', () => {
@@ -1782,7 +1800,11 @@ test('the Discover lanes fit the cells their footprint buys', () => {
   // Six explicit tracks, one per tile either lane can produce. auto-fill
   // followed the pixel width and wrapped to a second (clipped) row in a
   // 640-800px window.
-  assert.match(css, /\.home-discover-tiles \{[^}]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)/);
+  // ONE TRACK PER TILE, floored at four (discover.tsx sets --lane-tracks) —
+  // still explicit, still never fewer tracks than tiles, so a lane is still
+  // exactly one row. Six is the fallback and the ceiling.
+  assert.match(css,
+    /\.home-discover-tiles \{[\s\S]*?grid-template-columns: repeat\(var\(--lane-tracks, 6\), minmax\(0, 1fr\)\)/);
   assert.match(HOME, /FEATURED_LIMIT: 6/);
   assert.match(HOME, /POPULAR_LIMIT: 6/, 'the lane cap equals the track count');
   // Both lanes split anything spare instead of the first one taking it — but
@@ -1820,11 +1842,14 @@ test('the Discover lanes fit the cells their footprint buys', () => {
   // Kept because the terms are still real tokens that can drift apart, and
   // because a lane that stops summing (a zero flex basis, say) collapses the
   // article and clips the tiles — which is exactly what shipped once.
-  const bar = 27;      // py-1 8 + 18 line + 1px rule
-  const lane = 72;     // 8 + 40 icon + 4 gap + 12 caption + 8
+  // No title bar in the sum any more: it became the section's label row,
+  // OUTSIDE the card (frontend/src/features/home/panels/ui.tsx). The caption
+  // lane grew by one line at the same time — a tile name gets two, because a
+  // 55px track had been rendering most of them as "Opinio…".
+  const lane = 84;     // 8 + 40 icon + 4 gap + 24 two-line caption + 8
   const divider = 19;  // 1px rule + the ~18px "Popular" caption row
-  assert.equal(2 + bar + lane + divider + lane, 192);
-  assert.match(css, /\+ second lane\s+=\s+72px/, 'and app.css shows the same sum');
+  assert.equal(2 + lane + divider + lane, 189);
+  assert.match(css, /second lane\s+=\s+84px/, 'and app.css shows the same sum');
   // No ceiling either lane could be clipped by.
   assert.doesNotMatch(css, /--home-panel-max-h:/);
 });
@@ -2144,11 +2169,13 @@ test('the block draws all four rows, its footer and its toggle — at any width'
   assert.match(html, /home-panel-expand[^>]*data-panel-key="challenges"/);
   assert.match(html, /See all 8 challenges/);
   assert.match(html, /home-panel-open[^>]*aria-label="Open challenges"/,
-    'the footer keeps the Challenges-tab door; the bar carries the leaderboard');
-  // The bar's leaderboard link (#980) with the LONG label — the compact
-  // "Leaderboard" existed only for the one-cell bar.
-  assert.match(html, /home-panel-bar[\s\S]*?home-panel-lb-browse[\s\S]*?home-panel-menu/,
-    'inside the bar, before the ⋮ menu');
+    'the footer keeps the Challenges-tab door; the heading carries the leaderboard');
+  // The leaderboard link (#980) with the LONG label — the compact
+  // "Leaderboard" existed only for the one-cell bar. It is in the SECTION
+  // HEADING now, before the ⋮, which is where every block's chrome went when
+  // the title left the card.
+  assert.match(html, /home-area-label[\s\S]*?home-panel-lb-browse[\s\S]*?home-panel-menu[\s\S]*?<\/h2>/,
+    'inside the heading, before the ⋮ menu');
   assert.match(html, /home-panel-lb-browse[^>]*title="Open the Leaderboard screen"/);
   assert.match(html, /<span class="whitespace-nowrap">Open leaderboard<\/span>/);
   const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));

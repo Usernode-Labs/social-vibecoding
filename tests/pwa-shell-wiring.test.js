@@ -162,6 +162,65 @@ test('manifest.webmanifest is valid and installable', () => {
   assert.ok(purposes.includes('maskable'), 'manifest needs a maskable icon');
 });
 
+// ── What the PRECACHED document paints, vs what a loaded page shows ─────
+//
+// public/index.html is precached (SHELL_ASSETS above) and served on a 200ms
+// deadline, so on most loads it is what the viewer sees FIRST — for the whole
+// parse-and-hydrate window, before auth, routing or any fetch has answered.
+// Everything it states that the loaded page then contradicts is a visible
+// discontinuity, and each of the three below was one.
+
+test('the precached document names the platform, and does not guess a theme', () => {
+  const html = readPublic('index.html');
+  const head = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'head.html'), 'utf8'
+  );
+
+  // 1. THE NAME. Both the tab title and the header chip said "dApps" — the
+  //    name this shell carried before the platform had one — until routing
+  //    replaced it with "Social Vibecoding". Nothing else in the product says
+  //    "dApps": not the manifest, not the header on home, not the landing
+  //    page. The neutral starting value and the right one are the same
+  //    string, so there is no reason for it to be the wrong one.
+  assert.match(head, /<title>Social Vibecoding<\/title>/);
+  // Comments stripped: the note in head.html explains the very string it is
+  // banning, and prose about a name is not a name.
+  const shipped = html.replace(/<!--[\s\S]*?-->/g, ' ');
+  assert.doesNotMatch(shipped, /dApps/,
+    'the cached document must not name the product something no other surface calls it');
+  const store = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'header-title-store.js'),
+    'utf8'
+  );
+  assert.match(store, /text: 'Social Vibecoding'/,
+    "the chip's INITIAL is what the prerender renders — they are one constant");
+
+  // 2. THE THEME. `<html class="dark">` was hardcoded into the artifact, so
+  //    the precached document was a DARK document for everybody. The theme is
+  //    a per-viewer decision (localStorage, else the OS preference) and the
+  //    head-blocking module is the only thing that can make it; an artifact
+  //    that asserts one is wrong for every reader that does not run scripts,
+  //    and it is the one fact the file cannot know.
+  assert.match(html, /<html lang="en">/);
+  assert.doesNotMatch(html, /<html[^>]*class="[^"]*dark/);
+  // The module still decides, before first paint, exactly as it did.
+  assert.match(head, /document\.documentElement\.classList\.add\('dark'\)/);
+
+  // 3. THE LAUNCHER'S SPACE. The prerendered #app-list is empty, so the areas
+  //    below it — and the account row at the foot — sat near the top of the
+  //    page and slid down two rows when the bundle hydrated and the grid drew
+  //    its skeleton. The reservation is CSS, so it holds from the very first
+  //    paint, and it is keyed on the `data-view` that app-grid.tsx sets on its
+  //    first ready render — so it never pads a loaded grid, including the
+  //    empty one a brand new account has.
+  assert.match(readPublic('index.html'), /id="app-list"[^>]*><\/div>/,
+    'the prerendered grid is empty, which is what the reservation is for');
+  assert.doesNotMatch(readPublic('index.html'), /id="app-list"[^>]*data-view=/,
+    'and carries no data-view until the grid has rendered once');
+  assert.match(readPublic('css/app.css'),
+    /#app-list:not\(\[data-view\]\) \{[^}]*min-height: calc\(2 \* var\(--home-cell-h\)\)/);
+});
+
 test('index.html wires up the manifest, the banner, and the React bundle', () => {
   const html = readPublic('index.html');
   assert.match(html, /<link rel="manifest" href="\/manifest\.webmanifest">/);

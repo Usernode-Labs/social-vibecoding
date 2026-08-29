@@ -581,10 +581,9 @@
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-submit:not(:disabled)"
     },
     {
-      "name": "Challenges widget: metered rows plus the title bar's leaderboard link (#911, #980)",
+      "name": "Challenges: metered rows in the card, its leaderboard link in the heading (#911, #980)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column article.home-panel:has(.home-panel-bar .home-panel-lb-browse[aria-label=\"Open leaderboard\"]) .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
-      "expectText": "Open leaderboard"
+      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
     },
     {
       "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
@@ -869,7 +868,7 @@
     {
       "name": "Each home area is introduced by its own label (#1478)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body #home-apps-section > h2.home-section-header",
+      "expectSelector": "#home-body #home-apps-section > h2.home-area-label",
       "expectText": "Your apps"
     },
     {
@@ -1974,7 +1973,7 @@
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section .home-panel-bar .home-panel-lb-browse[aria-label=\"Open leaderboard\"]",
+      "expectSelector": "#home-challenges-section > h2.home-area-label .home-panel-lb-browse[aria-label=\"Open leaderboard\"]",
       "expectText": "Open leaderboard"
     },
     {

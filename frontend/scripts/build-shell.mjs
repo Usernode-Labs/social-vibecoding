@@ -172,8 +172,18 @@ const entryTag = '  <!-- React shell entry. A deferred module on purpose: it hyd
 // too. Docker's shell stage forwards the GIT_SHA build arg into this process.
 const buildSha = normalizeBuildSha(process.env.GIT_SHA);
 
+// NO `class="dark"` ON <html>. It was hardcoded here, which made the document
+// the service worker precaches a DARK document for everybody: the theme is a
+// per-viewer decision (localStorage, else the OS preference) and the only
+// thing that can make it is the head-blocking module in src/head.html, which
+// adds or removes the class before first paint. Asserting one in the artifact
+// meant every reader of the cached file that runs BEFORE that module — a
+// stylesheet keyed on `.dark`, the critical background rule in that same head,
+// a WebView that defers scripts, anything rendering the document without
+// running it — got dark as the answer whatever the viewer had chosen. The
+// module is unchanged and still decides; the artifact just stops guessing.
 const html = `<!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
   ${formatHtmlStamp(stamp)}
   ${formatBuildMeta(buildSha)}

@@ -229,9 +229,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // lightbulb because idle is the cold document's state, the spinner arc
     // because other surfaces draw it.
     'M16.023 9.348h4.992V4.356m-4.992 4.992l3.181-3.183a8.25 8.25 0 00-13.803 3.7M4.031 9.865v4.99m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7',
-    // TrophyOutlineIcon — the Challenges bar's leaderboard link and its
-    // standings footer.
-    'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
+    // TrophyOutlineIcon PRERENDERS NOW and is off this list. It was the
+    // Challenges block's leaderboard link, and the block is fetched — so the
+    // glyph only existed once /api/home-panels had answered. The link moved
+    // into the SECTION HEADING with the rest of that block's chrome
+    // (features/home/panels/ui.tsx), and a heading is constant markup: it is
+    // in the cold document, so its glyph is too. Same move put SearchIcon's
+    // second call site — #home-browse-btn — in the document, though that one
+    // already prerendered from the home search field.
     // ChatIcon — and it is BACK on this list, one round after leaving it. It
     // prerendered while the Improve panel's quick actions were icon-led; the
     // labels did not fit beside a glyph in the 320px DESKTOP panel ("New

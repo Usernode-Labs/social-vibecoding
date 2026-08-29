@@ -1513,18 +1513,19 @@ html, body {
   flex-direction: column;
 }
 
-/* THE TITLE BAR WAS THE DRAG HANDLE (#911) and is not one any more. It
-   carried `cursor: grab` (scoped to the in-grid host, `grabbing` for the span
-   of a lift) and a "Drag to move this widget" tooltip, because the whole bar
-   was the grab surface of a grid item. THE UI OVERHAUL fixed the three blocks
-   into sections, so there is nothing to grab and a grab cursor here would be
-   a lie. `user-select: none` stays: the bar is not a text surface, and a
-   double-click that selects "CHALLENGES · 1 of 6" is noise either way. */
-.home-panel-bar {
-  user-select: none;
-  -webkit-user-select: none;
-}
-.home-panel-bar button {
+/* THE TITLE BAR IS GONE (and it WAS the drag handle, #911). It carried
+   `cursor: grab` and a "Drag to move this widget" tooltip while these blocks
+   were grid items; THE UI OVERHAUL fixed them into sections and took the grip
+   with it, leaving a `user-select: none` strip that held a title. The title is
+   the section's own label above the card now and the block's controls went
+   with it (frontend/src/features/home/panels/ui.tsx), so there is no bar left
+   to style — a card opens on its content.
+
+   The label row it became is `.home-area-label`, and it needs no rule here:
+   it is utilities all the way down, and DELIBERATELY not `.home-section-header`
+   above, which is the 12px caption the widget strip and the search-results
+   heading use. */
+.home-area-label button {
   cursor: pointer;
 }
 
@@ -1750,6 +1751,21 @@ html, body {
   position: relative;
   grid-auto-rows: var(--home-cell-h);
 }
+/* HOLD THE LAUNCHER'S SPACE UNTIL THE GRID HAS RENDERED ONCE.
+   The document the service worker serves is the PRERENDER, and the prerender's
+   #app-list is empty — so a cached load paints the header, five area labels
+   and the account row stacked at the top of the page, and everything below the
+   grid then slides down by two rows the moment the bundle hydrates and the
+   skeleton appears. That is the largest single jump between the cached paint
+   and the loaded one, and it is pure CSS to remove: reserve the two-row
+   default (HomeLayout.DEFAULT_ROWS) that the grid is about to draw anyway.
+   Keyed on `data-view`, which app-grid.tsx sets on its first READY render and
+   the prerender therefore lacks — so this applies for exactly the parse-to-
+   hydrate window and never to a loaded grid, including the empty one a brand
+   new account has (which would otherwise be padded with two blank rows). */
+#app-list:not([data-view]) {
+  min-height: calc(2 * var(--home-cell-h));
+}
 #app-list[data-view="search"] {
   grid-auto-rows: auto;
 }
@@ -1907,40 +1923,32 @@ html, body {
 }
 
 /* ── Discover widget ────────────────────────────────────────
-   ONE SHAPE PER BREAKPOINT (#949 — registry sizes 4x1 / 2x2 in
-   src/routes/home-panels.js). The block is ~366px wide on a phone and
-   ~397px on a wide desktop.
-
-   PHONE — one grid row, spent on the title bar and one lane:
+   The block is ~366px wide on a phone and ~397px on a wide desktop, and it
+   draws two lanes and the caption between them — no title bar and no footer:
 
      border            1px top + 1px bottom          =   2px
-     title bar         py-1 8 + 18 line + 1 rule     =  27px
-     tile lane         8 + 40 icon + 4 gap + 12 name + 8
-                                                     =  72px
+     tile lane         8 + 40 icon + 4 gap + 24 name + 8
+                                                     =  84px
+     divider/"Popular" caption (1 rule + ~18)        =  19px
+     second lane                                     =  84px
                                                        -------
-                                                        101px
+                                                        189px
 
-   against --home-cell-h 7.25rem (116px) — ~15px of headroom, which is what
-   absorbs a larger system text size before the lane starts to clip. That
-   27px title bar is why Discover's browse control lives IN the bar and it
-   draws no footer: a .home-panel-footer is 27px more and the lane has
-   nowhere to give it.
+   TWO TERMS OF THAT SUM CHANGED TOGETHER. The 27px TITLE BAR is gone: the
+   block's title is the section's own label above the card now and its browse
+   link went with it, so the card starts on its first lane (see
+   frontend/src/features/home/panels/ui.tsx). The NAME lane doubled, 12px to
+   24px, because a lane is one track per tile and a track is ~55px on a phone
+   — one line rendered most of these as "Opinio…", "ClearS…", "Watch…", which
+   is a poor advertisement for an area called Discover. The bar's 27px paid
+   for most of the 24px the second line costs.
 
-   DESKTOP — two rows, unchanged from before the issue, with the second one
-   earned rather than trimmed:
-
-     border 2 + title bar 27 + lane 72
-     + divider/"Popular" caption (1 rule + ~18)      =  19px
-     + second lane                                   =  72px
-                                                       -------
-                                                        192px
-
-   which was measured against a 256px height cap while the block was a 2x2
-   tile. There is no cap now — the section is as tall as its two lanes — so
-   the sum is a description rather than a constraint, and the slack it used to
-   leave is simply not claimed. Both lanes stay `flex: 1 1 auto`, so anything
-   spare is still split evenly and each lane centres its single row of tiles
-   in its own band.
+   It was measured against a 256px height cap while the block was a 2x2 tile,
+   and against --home-cell-h while it was a 4x1 one. There is no cap now — the
+   section is as tall as its two lanes — so the sum is a description rather
+   than a constraint. Both lanes stay `flex: 1 1 auto`, so anything spare is
+   still split evenly and each lane centres its single row of tiles in its own
+   band.
 
    SIX EXPLICIT TRACKS, NOT auto-fill. Each lane must be exactly one row:
    with a lane budgeted at one row, anything that wraps is clipped by
@@ -1956,7 +1964,14 @@ html, body {
    unchanged and a narrow desktop window shrinks instead of clipping. */
 .home-discover-tiles {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  /* The track count is the LANE'S OWN (discover.tsx sets --lane-tracks from
+     the number of tiles, floored at four); the six above is the fallback and
+     still the ceiling, since six is Home.FEATURED_LIMIT / POPULAR_LIMIT. The
+     invariant the paragraph above is about — one track per tile, so a lane is
+     always exactly one row — is unchanged: it just comes from the data now
+     instead of from a constant that had to assume the worst case, which is
+     what made a five-tile lane squeeze five names to fit six columns. */
+  grid-template-columns: repeat(var(--lane-tracks, 6), minmax(0, 1fr));
   gap: 0.375rem;
   padding: 0.5rem 0.625rem;
   /* One row inside a band that is taller than it needs: centre it rather
@@ -2027,6 +2042,32 @@ html, body {
   background: var(--border-light);
   pointer-events: none;
 }
+/* THE TILE NAME GETS TWO LINES, exactly as the launcher tile's label does.
+   A lane is six explicit tracks at every width (see .home-discover-tiles), so
+   a track is ~55px on a phone — and a single truncated line rendered most of
+   these as "Opinio…", "ClearS…", "Watch…". A lane of unreadable names is a
+   poor advertisement for an area called Discover, and the height cap that
+   made one line the only affordable answer is gone (see .home-panel above):
+   a section is as tall as its content, so the second line simply costs 12px.
+   The clamp is here rather than in the component because `line-clamp` is
+   three properties and two of them are prefixed. */
+.home-discover-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  /* A FIXED two-line box, not a max — the launcher label's own reasoning
+     (.app-card-title above): a one-line name and a two-line name must occupy
+     the same height or the tiles in a lane sit on different baselines. 24px is
+     exactly two of the 12px lines `leading-tight` gives this 9.6px type. */
+  height: 1.5rem;
+  /* Same as the launcher label: a single unbroken name (a slug-style one, or
+     just "Crowdfunding" in a 55px track) stays inside its tile rather than
+     overflowing it. */
+  overflow-wrap: anywhere;
+}
+
 /* The empty state: no tile lane at all, one centred line in its place, so
    the block reads as a compact strip rather than a mostly-blank box. */
 .home-discover-empty {
