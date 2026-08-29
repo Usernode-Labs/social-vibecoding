@@ -867,6 +867,12 @@
       "expectText": "Show all"
     },
     {
+      "name": "Each home area is introduced by its own label (#1478)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body #home-apps-section > h2.home-section-header",
+      "expectText": "Your apps"
+    },
+    {
       "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
       "path": "/?demo=1&shot=home-apps",
       "expectSelector": "#app-list .app-card[data-yours=\"true\"][style*=\"grid-row\"] .app-card-title",

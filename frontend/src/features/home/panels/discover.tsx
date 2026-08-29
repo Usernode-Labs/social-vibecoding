@@ -36,7 +36,7 @@ import { CheckIcon, PlusWideIcon, SearchIcon } from '@/components/ui/icons';
 
 import type { IconView } from '../grid-store';
 import type { DiscoverTileView, DiscoverView } from '../panels-store';
-import { PanelShell, PanelTitle } from './ui';
+import { PanelShell } from './ui';
 
 function home(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
@@ -139,9 +139,8 @@ export function DiscoverPanel({ view }: { view: DiscoverView }) {
       panelKey={view.key}
       expanded={false}
       stamps={{ featured: view.featured.length, popular: view.popular.length }}
-      title={
+      controls={
         <>
-          <PanelTitle>{view.title}</PanelTitle>
           <button
             type="button"
             id="home-browse-btn"

@@ -677,23 +677,29 @@ test('render: the title bar carries the title, the counter and the ⋮ menu — 
   assert.match(html, /home-panel-bar flex-none/);
 });
 
+// The area LABEL is the section's own, not the block's (see SectionHeading in
+// panels/ui.tsx), so it is always in the host's markup — what "nothing at all"
+// means is that no BLOCK is drawn and the host carries `hidden`, which takes
+// the label down with it. Anything else here would be a label over a gap.
+const blocksOf = (html) => html.replace(/<h2 class="home-section-header[\s\S]*?<\/h2>/g, '');
+
 test('render: nothing at all when signed out, unloaded, or hidden', () => {
-  // Signed out. Every host stays empty AND hidden — an empty <section> with
-  // its px-3 pb-3 padding would still be a gap in the stack.
+  // Signed out. Every host stays blockless AND hidden — an empty <section>
+  // with its px-3 pb-3 padding would still be a gap in the stack.
   const out = renderWith({ registry: [], hidden: [], panels: [panel()] },
     { user: null });
-  assert.equal(out.html, '');
+  assert.equal(blocksOf(out.html), '');
   for (const host of out.hosts) {
     assert.ok(host._classes.has('hidden'), `${host.dataset.panelSlot} host hidden`);
   }
 
   // Data not loaded yet — absent, never a skeleton flash.
   const unloaded = renderWith(null);
-  assert.equal(unloaded.html, '');
+  assert.equal(blocksOf(unloaded.html), '');
 
   // Dismissed by this viewer: the server omits it from `panels`.
   const hiddenOut = renderWith({ registry: [{ key: 'challenges', title: 'Challenges' }], hidden: ['challenges'], panels: [] });
-  assert.equal(hiddenOut.html, '');
+  assert.equal(blocksOf(hiddenOut.html), '');
   assert.ok(hiddenOut.host('challenges')._classes.has('hidden'));
 });
 
@@ -714,8 +720,10 @@ test('render: the empty state renders for EVERY viewer, compact and footer-less'
     // Exactly one row, and no footer: nothing to expand, nothing to count.
     assert.equal((out.html.match(/home-panel-row\b/g) || []).length, 1, `${who}: one line`);
     assert.doesNotMatch(out.html, /home-panel-footer/, `${who}: no footer`);
-    // The ⋮ menu sits at the right edge, same as the populated branch.
-    assert.match(out.html, /home-panel-title[^"]*flex-1/, `${who}: title takes the bar`);
+    // The ⋮ menu sits at the right edge, same as the populated branch. The
+    // title's `flex-1` used to do that; the bar holds controls only now, so
+    // its own justify-end does.
+    assert.match(out.html, /home-panel-bar[^"]*justify-end/, `${who}: the ⋮ is at the right edge`);
     assert.match(out.html, /data-rows="0"/, `${who}: stamped`);
     // No `panel.leaderboard` in this payload, so there is nothing to fill
     // with — the stamp says so rather than claiming rows nobody drew.
@@ -861,20 +869,18 @@ test('the title bar and the footer controls are single-line too', () => {
     panels: [panel({ total: 9, done: 2, points_remaining: 24300 })],
   };
   const { html } = renderWith(data, AT_DESKTOP);
-  // Title + counter: the counter must not push the title to a second line.
-  assert.match(html, /home-panel-title[^"]*truncate whitespace-nowrap/);
-  // The summary run appended after the separator. It used to carry
-  // `normal-case tracking-normal` to undo the title's small caps; the widget
-  // language labels a group in sentence case at reading size, so there is no
-  // small caps left to undo. `whitespace-nowrap` is the load-bearing half and
-  // is what this line has always been about.
-  assert.match(html, /<span class="whitespace-nowrap"> · /);
-  // The bar carries the way out BESIDE that title (#968, now the leaderboard
-  // link of #980), so it is the one place a long summary and a control
-  // compete for the same row: the control is shrink-0 and nowrap, and the
-  // title truncates around it. The label used to shorten to "Leaderboard" in
-  // the one-cell phone shape; a section's bar fits the full one at every
-  // width, so _leaderboardLink no longer takes a flag.
+  // Title + counter: the counter rides the SECTION HEADING now, appended
+  // after the separator, and must not be broken across lines. It used to
+  // carry `normal-case tracking-normal` to undo the title's small caps; the
+  // widget language labels a group in sentence case at reading size, so there
+  // is no small caps left to undo. `whitespace-nowrap` is the load-bearing
+  // half and is what this line has always been about.
+  assert.match(html, /home-section-header[^"]*">Challenges<span class="whitespace-nowrap"> · /);
+  // The bar carries the way out (#968, now the leaderboard link of #980).
+  // Nothing competes with it for the row any more — the summary that used to
+  // is one level up — but it stays shrink-0 and nowrap: the label used to
+  // shorten to "Leaderboard" in the one-cell phone shape, and a section's bar
+  // fits the full one at every width, so _leaderboardLink takes no flag.
   assert.match(html, /home-panel-lb-browse shrink-0[^"]*whitespace-nowrap/);
   assert.match(html, /<span class="whitespace-nowrap">Open leaderboard<\/span>/);
   // Both footer labels — the expand toggle and the "Open challenges" button.
@@ -1427,13 +1433,15 @@ test('each block is a full-width child of the section, not separately bounded', 
   for (const [name, html] of [['populated', populated], ['empty state', empty]]) {
     assert.doesNotMatch(html, /home-section-block/,
       `${name}: the column is the only width cap now`);
-    // The bordered block IS the article — no wrapper, and the title lives
-    // inside it (N widgets can't share one heading above the section).
+    // The bordered block IS the article — no wrapper. The heading is a
+    // SIBLING of it, not a box around it: one block per section since the
+    // widgets became fixed areas, so the label has exactly one thing to name
+    // and the card is left holding only its content.
     assert.match(html, /<article class="home-panel home-panel-card /,
       `${name}: the block is the article itself`);
-    assert.match(html, /home-panel-bar/, `${name}: its own title bar`);
-    assert.doesNotMatch(html, /class="home-section-header/,
-      `${name}: the title moved inside the block`);
+    assert.match(html, /home-panel-bar/, `${name}: its own control bar`);
+    assert.match(html, /<\/h2><article class="home-panel home-panel-card /,
+      `${name}: the label is the block's immediate previous sibling`);
   }
   const css = read('public/css/app.css');
   assert.doesNotMatch(css, /\.home-section-block\b/, 'the class really is gone');

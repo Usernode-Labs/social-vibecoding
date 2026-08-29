@@ -478,6 +478,22 @@ const AppView = {
     // after this fetch resolves, on the same lifecycle as the drawer's
     // app-scoped rows. Nothing to toggle here any more.
 
+    // WARM THE DEV CACHES WHILE THE APP TAB IS WHAT THE VIEWER IS LOOKING AT.
+    // Everything the Dev area draws — the Activity feed, the board's four
+    // columns, the topic pages, the session lists, the category vocabulary —
+    // comes out of the one parallel fetch in _loadDevData, and until now that
+    // fetch did not START until the viewer asked for a Dev surface. Every
+    // first hop into Dev therefore paid for it in full, behind a skeleton, and
+    // so did the first hop BACK from a topic or a session.
+    //
+    // Being in the app is the signal: an app's Dev area is a handful of
+    // requests against the app you already opened, so issuing them now buys
+    // an instant board later at the cost of a load the session was very
+    // likely to make anyway. Fire-and-forget on purpose — nothing awaits it
+    // and nothing renders from it; _loadDevFeed's own call either joins this
+    // one in flight or finds the caches already filled.
+    AppView.prefetchDevData(slug);
+
     await tokenReady;
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
@@ -4083,6 +4099,39 @@ const AppView = {
     return changed;
   },
 
+  // ── The dev-data preload ───────────────────────────────────────────
+  //
+  // `_devDataInflight` is the run currently in flight and `_devDataInflightFor`
+  // the slug it belongs to. Together they turn the several callers that can
+  // ask for this data within a few hundred milliseconds of each other — the
+  // preload below, renderDevView's own _loadDevFeed, a WS event that lands
+  // during the open — into ONE round of requests whose answer they all share.
+  //
+  // Deliberately not a TTL cache: every existing caller means "give me the
+  // current state" (a pull-to-refresh, a merge broadcast, a vote), and
+  // serving those from a stale snapshot would be a behaviour change nobody
+  // asked for. Sharing a run that has not finished yet changes nothing about
+  // freshness — the answer is the same answer.
+  _devDataInflight: null,
+  _devDataInflightFor: null,
+
+  /**
+   * Start (or join) a dev-data load for `slug` without rendering anything.
+   *
+   * Called when an app opens, so the Dev surfaces have their caches by the
+   * time the viewer asks for one. Silent about failure: nothing is on screen
+   * to report it to, and the real load repeats the request.
+   */
+  prefetchDevData(slug) {
+    if (!slug || AppView.appData?.slug !== slug) return;
+    // Already loaded for this app — the caches are warm and re-fetching here
+    // would be a request nobody is waiting for.
+    if (AppView._devDataReady) return;
+    try {
+      Promise.resolve(AppView._loadDevData()).catch(() => {});
+    } catch (err) { /* never let a preload break an app open */ }
+  },
+
   // Fetch + cache everything the dev surfaces render from (the same
   // four endpoints the old tabs used): GitHub issues, governance
   // proposals, open PR proposals, merged PRs, plus voteState for the
@@ -4102,9 +4151,40 @@ const AppView = {
   //
   // `!ok` is still true for null, so the one other caller that reads this
   // (the topic sub-view's fall-back-to-the-board branch) is unchanged.
-  async _loadDevData() {
-    if (!AppView.appData) return null;
+  _loadDevData() {
+    if (!AppView.appData) return Promise.resolve(null);
     const slug = AppView.appData.slug;
+    // Join the run already going for this app rather than opening a second
+    // set of the same six requests beside it.
+    if (AppView._devDataInflight && AppView._devDataInflightFor === slug) {
+      return AppView._devDataInflight;
+    }
+    const run = AppView._fetchDevData(slug).then(
+      (ok) => {
+        if (AppView._devDataInflight === run) {
+          AppView._devDataInflight = null;
+          AppView._devDataInflightFor = null;
+        }
+        return ok;
+      },
+      (err) => {
+        if (AppView._devDataInflight === run) {
+          AppView._devDataInflight = null;
+          AppView._devDataInflightFor = null;
+        }
+        throw err;
+      }
+    );
+    AppView._devDataInflight = run;
+    AppView._devDataInflightFor = slug;
+    return run;
+  },
+
+  // The body of the load, unshared. Everything above is the de-duplication;
+  // this is verbatim what `_loadDevData` was, with the slug passed in rather
+  // than re-read — the caller resolved it once and a shared run has to answer
+  // for the app it was started for.
+  async _fetchDevData(slug) {
     try {
       const [ghRes, issuesRes, promotedRes, mergedRes, orderRes] = await Promise.all([
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),

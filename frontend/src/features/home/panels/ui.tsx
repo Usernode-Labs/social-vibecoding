@@ -53,25 +53,67 @@ export function stampProps(stamps: PanelStamps | undefined) {
 }
 
 /**
- * The bordered block: title bar, body, optional footer.
+ * A home-screen area's LABEL, above the block it names.
+ *
+ * ── Why the title moved back out of the card ──────────────────────────
+ *
+ * It lived inside the block's own bar, on the reasoning that N widgets could
+ * not share one heading above a section — true while these were draggable grid
+ * items and a section could hold several. THE UI OVERHAUL ended that: there is
+ * exactly one block per section now, in a fixed order, so the heading has
+ * exactly one thing to name.
+ *
+ * What that bought is the shape the owner's reference screen has: a quiet grey
+ * label, then the white card it introduces, repeated down the page. A title
+ * printed INSIDE the card competes with the card's own content for the same
+ * surface and gives every area a second, smaller header bar; the label outside
+ * lets each card be nothing but what it holds. Home's areas — Your apps,
+ * Discover, Challenges, Create app, You — read as one list of labelled things
+ * rather than four differently-chromed boxes.
+ *
+ * NO `id`, deliberately: nothing selects these, and an id would have to be
+ * recorded in tests/baselines/shell-markup.json for no one's benefit.
+ *
+ * Sized and coloured as the block titles it replaces (`text-[0.9375rem]`,
+ * zinc-500 — the shell's secondary ink), so this is a MOVE, not a restyle of
+ * the type itself.
+ */
+export function SectionHeading({ children }: { children: ReactNode }) {
+  return (
+    <h2 className="home-section-header pt-4 pb-1.5 text-[0.9375rem] leading-tight text-zinc-500 dark:text-zinc-500">
+      {children}
+    </h2>
+  );
+}
+
+/**
+ * The bordered block: control bar, body, optional footer.
  *
  * `flex-none` on the bar/footer and `.home-panel-rows` on the list are what
  * make app.css's height cap clip rather than grow;
  * `.home-panel--expanded` lifts the cap entirely.
  *
- * THE TITLE BAR IS NOT A DRAG HANDLE. It was one while these blocks were grid
+ * THE BAR HOLDS CONTROLS ONLY. It was the title bar until the heading moved
+ * out above the card (see `SectionHeading`), and what is left is the block's
+ * own affordances — Discover's "Browse all apps", Challenges' "Open
+ * leaderboard", and the ⋮ that every block carries. They stay in the card
+ * rather than following the title out: they act on THIS block, and a control
+ * row floating beside a section label would not say which. `justify-end` is
+ * what the title's `flex-1` used to do — hold the ⋮ against the right edge.
+ *
+ * THE BAR IS NOT A DRAG HANDLE. It was one while these blocks were grid
  * items — the whole bar was the grab surface, and `_wire` had to stop the ⋮
  * button's pointerdown before the recognizer saw it. THE UI OVERHAUL fixed
  * them into sections; the grip, the cursor, the tooltip and that guard all
  * went together.
  */
 export function PanelShell({
-  panelKey, expanded, stamps, title, footer, children,
+  panelKey, expanded, stamps, controls, footer, children,
 }: {
   panelKey: string;
   expanded: boolean;
   stamps?: PanelStamps;
-  title: ReactNode;
+  controls?: ReactNode;
   footer?: ReactNode;
   children: ReactNode;
 }) {
@@ -83,8 +125,8 @@ export function PanelShell({
       data-panel={panelKey}
       {...stampProps(stamps)}
     >
-      <div className="home-panel-bar flex-none flex items-center gap-2 px-3.5 pt-2.5 pb-1">
-        {title}
+      <div className="home-panel-bar flex-none flex items-center justify-end gap-2 px-3.5 pt-2.5 pb-1">
+        {controls}
         <button
           type="button"
           className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none dark:text-zinc-400"
@@ -103,15 +145,6 @@ export function PanelShell({
       {children}
       {footer || null}
     </article>
-  );
-}
-
-/** The block's own title text, truncating so a control beside it survives. */
-export function PanelTitle({ children }: { children: ReactNode }) {
-  return (
-    <span className="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[0.9375rem] text-zinc-500 dark:text-zinc-500">
-      {children}
-    </span>
   );
 }
 

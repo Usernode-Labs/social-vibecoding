@@ -26,7 +26,7 @@
 
 import type { ChallengeRowView, ChallengesView, FillView } from '../panels-store';
 import {
-  FillFooter, LeaderboardLink, PanelFooter, PanelShell, PanelTitle, panels,
+  FillFooter, LeaderboardLink, PanelFooter, PanelShell, panels,
 } from './ui';
 
 /**
@@ -175,14 +175,11 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
         panelKey={view.key}
         expanded={false}
         stamps={{ rows: 0, fill: fillRows }}
-        title={
-          // flex-1 so the ⋮ sits at the right edge, same as the populated
-          // branch — this state is on every home screen now, so its chrome has
-          // to match the one beside it.
-          <>
-            <PanelTitle>{view.title}</PanelTitle>
-            <LeaderboardLink />
-          </>
+        controls={
+          // The same one control as the populated branch — this state is on
+          // every home screen now, so its chrome has to match the one beside
+          // it. The bar's own justify-end keeps the ⋮ at the right edge.
+          <LeaderboardLink />
         }
         footer={view.fill && fillRows ? <FillFooter kind={view.fill.kind} /> : null}
       >
@@ -205,22 +202,7 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       panelKey={view.key}
       expanded={view.expanded}
       stamps={{ rows: view.rows.length, fill: fillRows }}
-      title={
-        // truncate (which carries white-space: nowrap) plus an explicit nowrap
-        // on the counter: it must never push the title onto a second line, it
-        // gets clipped with an ellipsis instead. The leaderboard link is a
-        // shrink-0 sibling, so a long summary truncates rather than pushing
-        // the control off the bar.
-        <>
-          <PanelTitle>
-            {view.title}
-            {view.summary ? (
-              <span className="whitespace-nowrap">{` · ${view.summary}`}</span>
-            ) : null}
-          </PanelTitle>
-          <LeaderboardLink />
-        </>
-      }
+      controls={<LeaderboardLink />}
       footer={<PanelFooter panelKey={view.key} total={view.total} expanded={view.expanded} />}
     >
       <div className="home-panel-body">

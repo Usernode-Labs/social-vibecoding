@@ -60,6 +60,14 @@ const Home = {
       return;
     }
     Home._probeShortcutSupport();
+    // The header's standing action, from the remembered row, BEFORE the
+    // fetch below rather than after it. render() is the call every path
+    // funnels through and stays the authority, but on a cold boot at `/` it
+    // does not run until /api/apps answers — which is exactly the window the
+    // Improve button was missing from. A no-op once anything real is
+    // published; see publishImproveTarget for what it does and does not do
+    // with the cache.
+    Home.publishImproveTarget();
     // Home-screen widgets (#911, ./home-panels.js) and the viewer's stored
     // grid layout (./home-layout.js). Both are TTL-guarded / de-duped
     // inside, so the dozen WS/event paths that call load() don't turn into a
@@ -763,6 +771,28 @@ const Home = {
   // nothing here has to know the flag or the slug. It also means the button
   // appears for everyone the moment public voting is switched on, with no
   // second change.
+  // Where the last-published platform target is remembered, so the next cold
+  // boot can put the button up before /api/apps answers. See
+  // publishImproveTarget's "the gap on a cold boot" note.
+  IMPROVE_TARGET_KEY: 'platform-improve-target',
+
+  /** The remembered target, or null. Shape-checked: a stale key is not a target. */
+  _cachedImproveTarget() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(Home.IMPROVE_TARGET_KEY));
+      if (!raw || typeof raw !== 'object' || typeof raw.slug !== 'string' || !raw.slug) {
+        return null;
+      }
+      return raw;
+    } catch (err) { return null; }
+  },
+
+  _rememberImproveTarget(target) {
+    try {
+      localStorage.setItem(Home.IMPROVE_TARGET_KEY, JSON.stringify(target));
+    } catch (err) { /* private mode / quota — the cache is an optimisation */ }
+  },
+
   publishImproveTarget() {
     if (!window.Improve) return;
     // An app is open (or opening): its target is the one that belongs in the
@@ -780,11 +810,34 @@ const Home = {
     if (window.App && typeof App._isScreenVisible === 'function'
         && App._isScreenVisible('app-view')) return;
     const self = (Home._apps || []).find((a) => a && a.self_hosted);
-    // No row in this viewer's payload → leave the target exactly as
-    // navigateHome's setAppOpen(false) left it: cleared, no button. NOT a
-    // setTarget(null) call, which would fight whatever else published.
-    if (!self || !self.slug) return;
-    window.Improve.setTarget({
+    // ── THE GAP ON A COLD BOOT ─────────────────────────────────────
+    //
+    // Everything below reads the self-hosted row out of GET /api/apps, and
+    // that request is the whole boot's slowest. Until it lands `_apps` is
+    // empty, this returns, and the header's standing action is simply MISSING
+    // — for as long as the fetch takes, on home and on every other platform
+    // screen (they all route through here via _enterScreenChrome). It then
+    // pops in, which is the "the Improve button shows up a few seconds late"
+    // report: not a stale button, an absent one.
+    //
+    // So publish the LAST ONE first. The row is the same object visit after
+    // visit — it is the platform's own app — so a remembered copy is right
+    // far more often than "nothing" is, and the real payload overwrites it a
+    // moment later either way (improveStore.set is a no-op when nothing
+    // changed, so the common case is invisible). Only while the payload is
+    // genuinely not here yet: once `_appsLoaded` is true the list is the
+    // truth, including the truth that this viewer is not served the row.
+    //
+    // It cannot leak the row's existence to someone who may not see it: the
+    // cache is written only from a successful publish below, i.e. only in a
+    // browser profile that was already served the row.
+    if (!self || !self.slug) {
+      if (Home._appsLoaded) return;
+      const cached = Home._cachedImproveTarget();
+      if (cached) window.Improve.setTarget(cached);
+      return;
+    }
+    const target = {
       kind: 'platform',
       slug: self.slug,
       name: self.name || self.slug,
@@ -802,7 +855,9 @@ const Home = {
       // Nothing to share: the platform row has no per-slug app URL, which is
       // also why opening it lands on Dev rather than the App tab.
       canShare: false,
-    });
+    };
+    window.Improve.setTarget(target);
+    Home._rememberImproveTarget(target);
   },
 
   // Per-visit only, like the widgets' own expand flag: a viewer who opened

@@ -962,16 +962,17 @@
       const inSection = Settings._isMobile() && Settings._level === 2;
       // #1036: the header control is a real anchor — inside a section
       // the chevron pops to the settings menu, so that is its href.
-      // ALWAYS an arrow — level 2 goes up to the section list, level 1 goes to
-      // PROFILE. `'home'` means "hidden" to setBackIcon, and a hidden back
-      // slot on level 1 was survivable only while the hamburger carried the
-      // nav. Profile rather than home because Profile is this screen's parent
-      // now: the drawer that used to link Settings from anywhere is retired,
-      // and the one way in is Home → Profile → Settings. A back arrow that
-      // skipped the middle step would drop you a level below where you came
-      // from, which is the "back went somewhere I wasn't" problem the sheets
-      // exist to avoid.
-      if (App.setBackIcon) App.setBackIcon('arrow', inSection ? '#settings' : '#profile');
+      //
+      // LEVEL 2 ONLY. The mobile drill-in keeps its chevron because that is
+      // not a way BACK to another screen, it is the only way up a level
+      // INSIDE this one — without it a phone viewer is stranded in a section.
+      // Level 1 no longer draws one: Settings is one of the three account
+      // screens the owner asked to lose the arrow (see the note beside
+      // App.navigateToProfile), reached from the Home account row and left
+      // through it, with the header's own title saying where you are. A
+      // second affordance pointing at the row you just came from was chrome.
+      // `'home'` means "hidden" to setBackIcon.
+      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? '#settings' : undefined);
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const s = Settings._visibleSections().find((x) => x.key === Settings._section);

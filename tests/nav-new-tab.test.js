@@ -234,19 +234,20 @@ test('every screen entry refreshes the href through the one choke point', () => 
 });
 
 test('the three up-one-level screens pass their own target', () => {
-  // Each is ALWAYS an arrow since the hamburger went, and each names its own
-  // parent. Settings and Admin name PROFILE at level 1, not home: the drawer
-  // that used to link them from anywhere is retired and the one way in is
-  // Home → Profile → Settings, so a back arrow that skipped the middle step
-  // would drop you below where you came from.
+  // Browse's detail view is a level INSIDE that screen and always draws the
+  // arrow. Settings and Admin draw one at level 2 only — the mobile drill-in,
+  // which is likewise a level inside the screen and would strand a phone
+  // viewer without it. Their ROOTS draw none: those two and Profile are the
+  // account screens, reached from the Home account row and left through it,
+  // and an arrow repeating that row was chrome (see App.navigateToProfile).
   assert.match(browseJs, /App\.setBackIcon\(\s*'arrow',[\s\S]{0,160}?'#apps'/,
     'browse detail goes up to the list…');
   assert.match(browseJs, /Browse\._detailOrigin !== 'home'/,
     '…except when it was opened from a home card, where handleBack goes home');
-  assert.match(adminConsoleJs, /setBackIcon\('arrow', inSection \? '#admin' : '#profile'\)/,
-    'the admin section chevron pops to the console menu, its root to Profile');
-  assert.match(settingsJs, /setBackIcon\('arrow', inSection \? '#settings' : '#profile'\)/,
-    'the settings section chevron pops to the settings menu');
+  assert.match(adminConsoleJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
+    'the admin section chevron pops to the console menu; its root has none');
+  assert.match(settingsJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#settings' : undefined\)/,
+    'the settings section chevron pops to the settings menu; its root has none');
 });
 
 // ── The converted back controls ────────────────────────────────────────

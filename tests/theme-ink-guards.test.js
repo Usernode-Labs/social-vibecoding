@@ -170,6 +170,29 @@ test('no unpaired zinc-400 ink outside the always-dark chrome', () => {
     + `text-zinc-500 dark:text-zinc-400:\n  ${bad.slice(0, 8).join('\n  ')}`);
 });
 
+// ── 2b-bis. A FILL that is the page ground, on the page ground ──────────
+//
+// The same failure as rule 1, one property along: `bg-zinc-100` is #eaeaea in
+// this shell's ramp, so a control filled with it and sitting on the light page
+// ground has no surface at all. The Activity feed's reply box was exactly
+// that — the thread renders BESIDE the row card, not inside it, so its
+// composer was a placeholder and a caret floating on nothing, with no edge to
+// say where the field was. (Inside a white card the same fill is a legitimate
+// recessed well, which is why this is a named case rather than a blanket ban.)
+//
+// The fix is the one #home-search-input already uses on that ground: the card
+// surface plus a real border.
+
+test('the Activity feed reply box is not filled with the page ground', () => {
+  const src = SOURCES.find((f) => f.path.endsWith('dev-board/card/feed-thread.tsx')).text;
+  const input = src.slice(src.indexOf('<input'), src.indexOf('placeholder="Reply'));
+  assert.doesNotMatch(input, /\bbg-zinc-100\b/,
+    'zinc-100 IS the light page ground (#eaeaea) and this box sits on it');
+  assert.match(input, /\bbg-white\b/, 'the field takes the card surface in light mode');
+  assert.match(input, /border border-zinc-300 dark:border-zinc-700/,
+    '…and a real edge, so it reads as something to type into');
+});
+
 // ── 2c. A paired ink handed to classList, which takes TOKENS ────────────
 //
 // Pairing rule 2b's inks was a mechanical pass over string literals, and a

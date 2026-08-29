@@ -194,9 +194,20 @@ export function FeedThread({
               scope — so a feed of twenty rows cannot each host one. This is
               deliberately the smaller thing: type a line, press enter. Anything
               that wants attachments, mentions or history opens the item. */}
+          {/* WHITE, NOT `bg-zinc-100`. The thread renders BESIDE the row card,
+              directly on the page ground — and `zinc-100` is #eaeaea in this
+              shell's ramp (tailwind.config.js), which is that ground byte for
+              byte. The box was therefore invisible: a placeholder and a caret
+              floating on nothing, with no edge to say where the field was.
+              Same bug, same fix as the header's control discs, one step
+              further: those lift to zinc-50, and an input that a viewer is
+              meant to type into takes the card surface plus a real border —
+              the treatment #home-search-input already uses on the same
+              ground. */}
           <input
             type="text"
-            className={'min-w-0 flex-1 rounded-full bg-zinc-100 dark:bg-zinc-800 px-3 py-1 '
+            className={'min-w-0 flex-1 rounded-full border border-zinc-300 dark:border-zinc-700 '
+              + 'bg-white dark:bg-zinc-800 px-3 py-1 '
               + 'text-xs text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 '
               + 'dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-violet-500'}
             placeholder="Reply…"

@@ -662,11 +662,10 @@ const AdminConsole = {
     if (!window.App || AdminConsole._chromeSuspended) return;
     const inSection = AdminConsole._isMobile() && AdminConsole._level === 2;
     // #1036: the header control is a real anchor — inside a section the
-    // chevron pops to the console's own menu, so that is its href.
-    // Always an arrow, and at the root it points at PROFILE — see the same
-    // call in features/settings/settings.js for why the parent is Profile and
-    // not home.
-    if (App.setBackIcon) App.setBackIcon('arrow', inSection ? '#admin' : '#profile');
+    // chevron pops to the console's own menu, so that is its href. LEVEL 2
+    // ONLY, exactly as in features/settings/settings.js: see the note there
+    // and beside App.navigateToProfile.
+    if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? '#admin' : undefined);
     if (!App.setHeaderTitle) return;
     if (inSection) {
       const s = AdminConsole._visibleSections().find((x) => x.key === AdminConsole._section);

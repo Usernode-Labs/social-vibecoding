@@ -264,6 +264,50 @@ export function adoptKitSurface(options: AdoptKitSurfaceOptions): KitAdoption | 
     handle,
     contentEl,
     restore: undo,
-    dismiss: () => handle.dismiss(),
+    dismiss: () => {
+      releaseFocus(contentEl, handle.el);
+      handle.dismiss();
+    },
   };
+}
+
+/**
+ * Let go of the on-screen keyboard at the START of a surface's exit.
+ *
+ * ── The bug this is the whole of ──────────────────────────────────────
+ *
+ * A dialog that focuses a field on open — create-app, rename, fork, share,
+ * close-issue — raises the keyboard, and that field KEEPS FOCUS for the whole
+ * exit: the kit removes its shell only after the animation finishes, so the
+ * blur that finally retracts the keyboard happens when the node is destroyed,
+ * i.e. AFTER the surface has visually gone. The viewer therefore watches the
+ * dialog animate away and THEN watches the page behind it resize as ~300px of
+ * keyboard retracts: `--un-kb-inset` unwinds `.un-modal`'s own `top` (a 250ms
+ * transition) and `html.un-kb` releases `.un-kb-avoid`'s padding (150ms) while
+ * the browser re-clamps the scroller. That second act is the reported "closing
+ * it makes the screen flicker for a second", and it is why the dialog that
+ * does NOT autofocus — Give feedback — has never had it.
+ *
+ * Blurring here moves the retraction UNDER the exit animation instead of after
+ * it: the two motions overlap, the backdrop is still dimming the page while it
+ * reflows, and the surface is gone by the time anything settles. It costs
+ * nothing on desktop and on a surface with nothing focused.
+ *
+ * Deliberately in `dismiss()` rather than in the dialogs' hook: sheets and
+ * panels adopt through the same seam and carry composers of their own.
+ */
+function releaseFocus(contentEl: HTMLElement, shellEl?: HTMLElement | null): void {
+  try {
+    const active = document.activeElement as HTMLElement | null;
+    if (!active || active === document.body) return;
+    // The shell as well as the card: the kit focuses its own container on
+    // present (`(auto || card).focus()` in presentModal), so on a surface the
+    // viewer never typed into the focused node is the SHELL, and blurring only
+    // the card's descendants would leave the kit's own element focused with a
+    // node that is about to be removed.
+    const inSurface = contentEl.contains(active) || !!shellEl?.contains(active);
+    if (inSurface) active.blur?.();
+  } catch {
+    /* a detached or cross-origin activeElement — nothing to release */
+  }
 }
