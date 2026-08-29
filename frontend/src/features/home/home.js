@@ -2885,8 +2885,8 @@ const Home = {
         ctx.arcTo(inset, inset, inset + box, inset, radius);
         ctx.closePath();
       }
-      // Light: #ffffff face / #eeead1 hairline. Dark: #1e1c16 face /
-      // #2d2b24 hairline — the tokens `.dark .app-icon-tile` resolves
+      // Light: #ffffff face / #e4e4df hairline. Dark: #1f1f1b face /
+      // #2d2d28 hairline — the tokens `.dark .app-icon-tile` resolves
       // to. The hairline is what keeps the tile shape legible against
       // iOS's own dark widget material, so it must not be dropped in
       // the dark palette.
