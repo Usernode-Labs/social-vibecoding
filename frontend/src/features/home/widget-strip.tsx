@@ -27,6 +27,7 @@ import { useEffect, useRef } from 'react';
 
 import { CheckIcon, InfoCircleIcon } from '@/components/ui/icons';
 
+import { auraFor } from '../apps/app-card.js';
 import { useStoreState } from '../../lib/use-store-state';
 import { chromeStore, type WidgetStripState, type WidgetTileView } from './chrome-store';
 import type { IconView } from './grid-store';
@@ -75,6 +76,7 @@ export function WidgetTile({ tile }: { tile: WidgetTileView }) {
       <div
         className="app-icon-tile w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base"
         data-icon={tile.icon.kind}
+        data-aura={tile.slug ? auraFor(tile.slug) : undefined}
       >
         <TileIcon icon={tile.icon} />
       </div>

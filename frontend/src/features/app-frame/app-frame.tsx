@@ -49,6 +49,7 @@ const ALLOW = 'clipboard-write; pointer-lock; geolocation';
 function LaunchCover({
   iconKind,
   iconHtml,
+  aura,
   name,
   note,
   spinner,
@@ -56,6 +57,7 @@ function LaunchCover({
 }: {
   iconKind: string;
   iconHtml: string;
+  aura: string;
   name: string;
   note: string;
   spinner: boolean;
@@ -76,6 +78,7 @@ function LaunchCover({
       <div
         className="app-icon-tile app-launch-cover-icon"
         data-icon={iconKind}
+        data-aura={aura || undefined}
         dangerouslySetInnerHTML={{ __html: iconHtml }}
       >
       </div>
@@ -128,6 +131,7 @@ const AppFrame = memo(function AppFrame(_props: { slug: string }): ReactNode {
         <LaunchCover
           iconKind={cover.iconKind}
           iconHtml={cover.iconHtml}
+          aura={cover.aura}
           name={cover.name}
           note={cover.note}
           spinner={cover.spinner}

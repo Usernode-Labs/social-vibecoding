@@ -715,7 +715,10 @@ export function LandingScreen() {
       */}
       <div id="auth-landing-scroll" className="flex-1 min-h-0 overflow-y-auto platform-safe-scroll">
         <div className="max-w-3xl mx-auto px-6 py-12">
-          <div className="text-center mb-10">
+          {/* subtle-y2k: the title floats on one large, whisper-quiet
+              aura-lemon glow — the landing's single gradient moment. A
+              before: pseudo so no new box enters the markup. */}
+          <div className="relative isolate before:content-[''] before:absolute before:-inset-x-10 before:-inset-y-8 before:-z-10 before:rounded-full before:bg-aura-lemon before:opacity-[0.18] before:blur-2xl text-center mb-10">
             <h1 className="text-3xl font-bold mb-2">
               Usernode Social Vibecoding
             </h1>

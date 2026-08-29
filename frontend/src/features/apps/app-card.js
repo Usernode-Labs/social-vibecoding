@@ -56,6 +56,27 @@ export function iconViewFor(app) {
   return { kind: 'letter', letter: (app.name || '?').charAt(0).toUpperCase() };
 }
 
+// The subtle-y2k v2 aura rotation: every app deterministically wears ONE of
+// the brand kit's four radial gradients on its icon tile (soft, behind the
+// glyph — `.app-icon-tile[data-aura]` in app.css draws it, and the canvas
+// widget tile in features/home/home.js paints the same stops). Slug-hashed
+// so the assignment is stable across surfaces and sessions.
+//
+// This knowingly reverses the retired six-pastel per-app tint (see the note
+// in app.css beside .app-icon-tile): Lukas's call, on the grounds that four
+// auras from one gradient family read as one shelf where six unrelated
+// pastels did not. `data-tint` stays a forbidden name — the attribute is
+// data-aura, and tests/home-card-icon.test.js still bans the old one.
+const AURAS = ['sky', 'meadow', 'sunset', 'lemon'];
+export function auraFor(appOrSlug) {
+  const slug = typeof appOrSlug === 'string'
+    ? appOrSlug
+    : String((appOrSlug && (appOrSlug.slug || appOrSlug.name)) || '');
+  let h = 0;
+  for (let i = 0; i < slug.length; i += 1) h = ((h * 31) + slug.charCodeAt(i)) | 0;
+  return AURAS[Math.abs(h) % AURAS.length];
+}
+
 export function iconTileFor(app) {
   if (app.icon_url) {
     return {
@@ -174,7 +195,7 @@ export function renderAppPillsHtml(app) {
 }
 
 export const AppCard = {
-  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor,
+  iconTileFor, renderAppPillsHtml, iconViewFor, appPillsFor, auraFor,
 };
 
 // Published for the legacy half of the split. Both in-bundle consumers

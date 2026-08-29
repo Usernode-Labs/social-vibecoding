@@ -34,6 +34,7 @@ import { useEffect, useRef } from 'react';
 
 import { CheckIcon, PlusWideIcon, SearchIcon } from '@/components/ui/icons';
 
+import { auraFor } from '../../apps/app-card.js';
 import type { IconView } from '../grid-store';
 import type { DiscoverTileView, DiscoverView } from '../panels-store';
 import { PanelShell, PanelTitle } from './ui';
@@ -83,6 +84,7 @@ function DiscoverTile({ tile }: { tile: DiscoverTileView }) {
         <div
           className="app-icon-tile home-discover-icon rounded-lg overflow-hidden flex items-center justify-center font-bold text-base"
           data-icon={tile.icon.kind}
+          data-aura={auraFor(tile.slug)}
         >
           <TileIcon icon={tile.icon} />
         </div>

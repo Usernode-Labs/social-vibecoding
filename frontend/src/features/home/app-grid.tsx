@@ -62,6 +62,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Bars3Icon } from '@/components/ui/icons';
 
+import { auraFor } from '../apps/app-card.js';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { gridStore, type GridItem, type HomeAppView, type IconView } from './grid-store';
@@ -213,15 +214,16 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
             against it, so growing it to the deck's 4rem is a layout change,
             not a reskin, and belongs in its own commit.
 
-            No `data-tint`: the reskin gave every tile a slug-derived identity
-            colour, and a launcher of six pastels reads as six unrelated
-            things rather than as one shelf. `.app-icon-tile` alone is the
-            single off-white face with a hairline — the same one on every
-            surface, which is the point.
+            `data-aura`, not the retired `data-tint`: the reskin's six-pastel
+            slug tint read as six unrelated things, and the subtle-y2k v2
+            aura rotation is its owner-sanctioned successor — four gradients
+            from ONE family (AppCard.auraFor), drawn as a soft wash by
+            app.css, on the same face-with-hairline every surface shares.
         */}
         <div
           className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
           data-icon={app.icon.kind}
+          data-aura={auraFor(app)}
         >
           <AppIcon icon={app.icon} />
         </div>

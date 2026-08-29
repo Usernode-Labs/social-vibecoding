@@ -27,6 +27,7 @@ import type { ReactNode } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
 import { ListRow } from '@/components/ui/grouped-list';
+import { auraFor } from './app-card.js';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
@@ -100,6 +101,7 @@ function Row({ view }: { view: RowView }): ReactNode {
         <div
           className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
           data-icon={appIconKind(view.app)}
+          data-aura={auraFor(view.app)}
           // The same slug-derived identity tint the launcher grid draws. An
           // app that is a lilac tile on Home was a blank white square here,
           // which is the one thing a launcher icon must never be: different

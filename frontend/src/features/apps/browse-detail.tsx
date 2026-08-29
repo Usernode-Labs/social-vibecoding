@@ -31,6 +31,7 @@ import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { ArrowRightShortIcon, ChevronRightIcon } from '@/components/ui/icons';
 
+import { auraFor } from './app-card.js';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type ContributorRowView = {
@@ -176,10 +177,14 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
   const warm = () => controller()?.warmDetailApp(view.slug);
   return (
     <>
-      <div className="flex items-start gap-4">
+      {/* subtle-y2k: the hero row floats on a soft aura-sky glow — a
+          before: pseudo so the gradient never becomes a box of its own and
+          the markup keeps exactly these elements. */}
+      <div className="relative isolate before:content-[''] before:absolute before:-inset-x-4 before:-inset-y-3 before:-z-10 before:rounded-3xl before:bg-aura-sky before:opacity-[0.06] flex items-start gap-4">
         <div
           className="app-icon-tile w-16 h-16 shrink-0 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-2xl"
           data-icon={appIconKind(view.app)}
+          data-aura={auraFor(view.app)}
         >
           <AppIconContent app={view.app} />
         </div>

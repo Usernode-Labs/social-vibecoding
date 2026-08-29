@@ -1198,6 +1198,10 @@ const AppView = {
       : { kind: 'letter', html: escapeHtml(((record && record.name) || '?').charAt(0).toUpperCase()) };
     return {
       iconKind: tile.kind,
+      // The per-app aura (subtle-y2k v2). Guarded: AppCard is a bundle
+      // export republished on window for exactly this kind of legacy read.
+      aura: (window.AppCard && typeof AppCard.auraFor === 'function')
+        ? AppCard.auraFor(record || {}) : '',
       iconHtml: tile.html,
       name: (record && record.name) || '',
       note: 'Opening…',
@@ -1214,7 +1218,7 @@ const AppView = {
   _coverHtml(cover, { id = 'app-launch-cover', pinned = false } = {}) {
     return `
       <div id="${id}" class="app-launch-cover"${pinned ? ' data-pinned="true"' : ''} aria-hidden="true">
-        <div class="app-icon-tile app-launch-cover-icon" data-icon="${cover.iconKind}">${cover.iconHtml}</div>
+        <div class="app-icon-tile app-launch-cover-icon" data-icon="${cover.iconKind}"${cover.aura ? ` data-aura="${cover.aura}"` : ''}>${cover.iconHtml}</div>
         <p class="app-launch-cover-name">${escapeHtml(cover.name)}</p>
         <p class="app-launch-cover-note" id="${id}-note">${escapeHtml(cover.note)}</p>
         <div class="dc-status-spinner-arc app-launch-cover-spinner hidden" id="${id}-spinner"></div>

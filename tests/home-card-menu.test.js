@@ -60,6 +60,16 @@ function fakeCtx(paints) {
     beginPath() {}, closePath() {}, moveTo() {}, arcTo() {}, roundRect() {},
     fill: rec('fill'), stroke: rec('stroke'),
     fillRect: rec('fill'), fillText: rec('fill'),
+    // Recordable gradient stub: without it the letter tile's aura-wash
+    // branch in _widgetIconDataUrl short-circuits on its own guard and the
+    // suite never executes the code the WIDGET_ICON_GEN bump exists for.
+    // fillStyle becomes the gradient object, so a wash fill records
+    // { op:'fill', color:{ gradient:[...] } } — distinguishable from faces.
+    createRadialGradient() {
+      const g = { gradient: [] };
+      g.addColorStop = (offset, color) => { g.gradient.push([offset, color]); };
+      return g;
+    },
   };
   return ctx;
 }
@@ -1081,8 +1091,8 @@ test('widget tile PNG paints the light palette in light appearance', () => {
   const hairline = paints.find((p) => p.op === 'stroke');
   const glyph = paints.filter((p) => p.op === 'fill').pop();
   assert.equal(face.color, '#ffffff', 'white face');
-  assert.equal(hairline.color, '#e4e4e7', 'faint light-grey hairline');
-  assert.equal(glyph.color, '#a1a1aa', 'faint grey letter (--text-faint)');
+  assert.equal(hairline.color, '#e4e4df', 'faint grey hairline');
+  assert.equal(glyph.color, '#97968e', 'faint grey letter (--text-faint)');
 });
 
 test('widget tile PNG paints the dark palette in dark appearance', () => {
@@ -1097,9 +1107,9 @@ test('widget tile PNG paints the dark palette in dark appearance', () => {
   const face = paints.find((p) => p.op === 'fill');
   const hairline = paints.find((p) => p.op === 'stroke');
   const glyph = paints.filter((p) => p.op === 'fill').pop();
-  assert.equal(face.color, '#1a1a30', 'dark face (--bg-secondary)');
-  assert.equal(hairline.color, '#2e2e50', 'hairline kept, stepped to --border');
-  assert.equal(glyph.color, '#9898b0', 'faint letter (--text-faint, dark)');
+  assert.equal(face.color, '#1f1f1b', 'dark face (--bg-secondary)');
+  assert.equal(hairline.color, '#2d2d28', 'hairline kept, stepped to --border');
+  assert.equal(glyph.color, '#97968e', 'faint letter (--text-faint, dark)');
   // The hairline is what keeps the tile legible against iOS's own dark
   // widget material — a dark face with no ring would vanish.
   assert.notEqual(hairline.color, face.color);
@@ -1316,8 +1326,8 @@ test('payload: capable shell gets both faces, light first', async () => {
   // Face fills, in render order: light tile first, then the dark one.
   const faces = paints.filter((p) => p.op === 'fill').map((p) => p.color);
   assert.ok(faces.includes('#ffffff'), 'light face painted');
-  assert.ok(faces.includes('#1a1a30'), 'dark face painted');
-  assert.ok(faces.indexOf('#ffffff') < faces.indexOf('#1a1a30'),
+  assert.ok(faces.includes('#1f1f1b'), 'dark face painted');
+  assert.ok(faces.indexOf('#ffffff') < faces.indexOf('#1f1f1b'),
     'icon_url is the LIGHT asset — a shell that renders only it stays sane');
 });
 
@@ -1339,7 +1349,7 @@ test('payload: the pair does not move with the system appearance', async () => {
 });
 
 test('payload: non-capable shell keeps the single per-appearance face', async () => {
-  for (const [dark, face] of [[false, '#ffffff'], [true, '#1a1a30']]) {
+  for (const [dark, face] of [[false, '#ffffff'], [true, '#1f1f1b']]) {
     const { Home, sandbox } = makeHomeEnv({ id: ME });
     stubCapability(sandbox, false);
     stubScheme(sandbox, dark);
