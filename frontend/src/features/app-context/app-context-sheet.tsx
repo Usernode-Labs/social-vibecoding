@@ -61,6 +61,19 @@
  * viewport they give way rather than clip. Nothing here is ever unreachable,
  * at any app count and any height.
  *
+ * ── Where it comes from, per surface ───────────────────────────────────
+ *
+ * Three presentations, one always-mounted element, all of them in app.css
+ * (the `#apps-switcher-sheet` block): a kit bottom sheet on touch, a CSS
+ * bottom sheet below `sm`, and at `sm`+ for a mouse a DROPDOWN hanging under
+ * the chip that opened it. That last one was a right-edge rail like the
+ * Improve panel and the notifications sheet, and it is the one thing about
+ * this surface that is not like them: those two are lists with no natural
+ * end, this is a menu, and a menu that answers from the far edge of a wide
+ * display leaves its trigger a foot away. Nothing in here changes with the
+ * presentation — the markup is one panel and the CSS decides where it is,
+ * which is why the desktop change is a media query and not a branch.
+ *
  * First render is the prerender: closed, no apps, no app-scoped rows.
  */
 

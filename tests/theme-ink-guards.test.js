@@ -289,6 +289,12 @@ test('the light and dark palettes declare the same variables', () => {
     // height read, so that the space held open and the space drawn cannot
     // drift apart. A height does not invert with the page.
     '--install-strip-h',
+    // The authored top bar's height, for the same reason and on the same
+    // terms: a length, not a colour, and the one number a surface hanging off
+    // the bottom of the bar can be positioned from. The bar is `py-3` around a
+    // 28px content row in both themes — nothing about the dark palette moves
+    // it — so a `.dark` counterpart could only ever restate this one.
+    '--platform-header-h',
   ]);
   const missing = [...light].filter((n) => !dark.has(n) && !THEME_INVARIANT.has(n)).sort();
   assert.deepEqual(missing, [],
