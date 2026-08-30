@@ -1929,6 +1929,11 @@
       "expectSelector": "#notifications-sheet[data-open] #notifications-screen-tabs #notifications-tab-messages"
     },
     {
+      "name": "The tab strip reads Unread, Messages, All \u2014 the archive last",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child + #notifications-tab-messages + #notifications-tab-all"
+    },
+    {
       "name": "The messages deep link lands on the Messages tab",
       "path": "/?shot=notifications-messages&demo=1",
       "expectSelector": "#notifications-sheet[data-open] #notifications-tab-messages[aria-selected=\"true\"]"

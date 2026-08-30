@@ -344,6 +344,117 @@ const Home = {
     return HomeLayout.columnsForWidth();
   },
 
+  // ── How much of the screen the launcher may take ───────────────────
+  //
+  // The collapsed grid used to be two rows at every viewport, full stop. Two
+  // is the right FLOOR — a phone has three fixed sections under this grid and
+  // an eight-row canvas would push Discover, Challenges and Create app off the
+  // bottom, which is the failure the four-area design exists to prevent — but
+  // it was also the ceiling, so a tall desktop window drew two rows of tiles,
+  // a "Show all" button, and then a lot of nothing before the next section.
+  //
+  // The rule now: the launcher may fill the first two-thirds of the screen,
+  // and never less than the two-row contract. The bottom third is what keeps
+  // the section under the grid visible without scrolling, which is the whole
+  // point of capping the launcher at all — so the cap is stated as the thing
+  // it is protecting rather than as a row count that only happened to protect
+  // it at one viewport.
+  APPS_VIEWPORT_FRACTION: 2 / 3,
+
+  // The row count that fraction buys, measured rather than assumed.
+  //
+  // Everything it needs is already on the page and already in pixels: the
+  // scroller's own visible height, the grid's offset inside that scroller's
+  // CONTENT (so the answer does not change as the viewer scrolls), and the
+  // computed `grid-auto-rows` / `row-gap` — which is how the phone's shorter
+  // --home-cell-h and the grid's `gap-1.5` / `sm:gap-3` are honoured without
+  // this file knowing either number.
+  //
+  // The measurement is deliberately of the ROW's own geometry rather than of
+  // what the grid currently draws: reading back the rendered height would make
+  // the budget a function of its own output, and a grid one row short would
+  // then stay one row short.
+  //
+  // Anything unmeasurable — the home screen is not the visible one, so
+  // clientHeight is 0; `grid-auto-rows` is `auto` in the search view; no
+  // layout has happened yet — answers with the LAST good budget rather than
+  // the floor, so navigating away and back does not collapse the grid to two
+  // rows for one paint.
+  visibleRowBudget() {
+    const floor = HomeLayout.DEFAULT_ROWS;
+    const last = Home._rowBudget || floor;
+    if (typeof document === 'undefined') return last;
+    // ONE try/catch around the whole measurement, not one per read. Every
+    // line below is a layout or style query, and the hosts that lack any of
+    // them lack most of them: the vm this module is unit-tested in, a
+    // detached node, a WebView mid-teardown. The answer in all of those is
+    // the same — keep the last good budget — so branching per call would be
+    // three ways of writing one fallback.
+    try {
+      const grid = document.getElementById('app-list');
+      const screen = document.getElementById('home-screen');
+      if (!grid || !screen) return last;
+      const viewport = screen.clientHeight;
+      if (!viewport) return last;
+      const cs = getComputedStyle(grid);
+      const cell = parseFloat(cs.gridAutoRows) || 0;
+      const gap = parseFloat(cs.rowGap) || 0;
+      if (!cell) return last;
+      // The resting scroll position parks the hidden search bar out of sight
+      // (see _searchReveal), so the grid's top AT REST is its offset in the
+      // scroller's content minus that bar. Measuring the live rect alone
+      // would hand a viewer who has scrolled down a bigger budget than the
+      // one they see when they scroll back.
+      const bar = document.getElementById('home-search-bar');
+      const resting = (bar && bar.offsetHeight) || 0;
+      const top = grid.getBoundingClientRect().top
+        - screen.getBoundingClientRect().top
+        + screen.scrollTop
+        - resting;
+      const room = (viewport * Home.APPS_VIEWPORT_FRACTION) - top;
+      // n rows occupy n cells and the n-1 gaps between them.
+      const rows = Math.floor((room + gap) / (cell + gap));
+      return Math.max(floor, Math.min(HomeLayout.MAX_ROWS, rows));
+    } catch (err) {
+      return last;
+    }
+  },
+
+  // The budget the last render used, and the reason a resize is worth a
+  // re-render: a window that grew or shrank past a whole row changes what the
+  // collapsed grid should show. Anything smaller than that changes nothing, so
+  // it is compared rather than rendered through — a drag-resize would
+  // otherwise rebuild the grid on every frame.
+  _rowBudget: 0,
+  _rowBudgetWired: false,
+  _rowBudgetPending: 0,
+
+  _wireRowBudget() {
+    if (Home._rowBudgetWired) return;
+    // Not `typeof window === 'undefined'`: this module is unit-tested inside a
+    // vm whose `window` is a plain object with the handful of properties the
+    // tests need, and render() runs there. A host without listeners simply
+    // never gets a resize re-render — the budget it measured at render time is
+    // still correct for the layout it measured.
+    if (typeof window === 'undefined'
+      || typeof window.addEventListener !== 'function') return;
+    Home._rowBudgetWired = true;
+    const run = () => {
+      Home._rowBudgetPending = 0;
+      // Same deferral the other re-render paths take: never yank the grid out
+      // from under a live drag. The gesture's own end re-runs load().
+      if (Home._dragActive) return;
+      if (Home.visibleRowBudget() === Home._rowBudget) return;
+      Home.render();
+    };
+    window.addEventListener('resize', () => {
+      if (Home._rowBudgetPending) return;
+      Home._rowBudgetPending = typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(run)
+        : setTimeout(run, 16);
+    }, { passive: true });
+  },
+
   // `_renderedCols`, `_wireViewport()` and `_applyColumnCount()` lived here:
   // a resize + matchMedia watcher that re-rendered the grid whenever a window
   // crossed 640px. Every item's cell is an INLINE grid-column/grid-row this
@@ -513,6 +624,7 @@ const Home = {
     const canCreate = Home.canCreate();
     const apps = Home._apps || [];
     Home._wireSearch();
+    Home._wireRowBudget();
 
     const query = (Home._query || '').trim();
     // Home is "Your apps" only now — every other app lives on the
@@ -526,7 +638,7 @@ const Home = {
     // The grid's explicit row tracks (#975). Empty string in the search view,
     // which clears any template a previous render left behind.
     let rowTemplate = '';
-    // Non-zero only when the two-row default is holding tiles back; the count
+    // Non-zero only when the collapsed grid is holding tiles back; the count
     // is every app the viewer has, which is what the button offers to show.
     let moreCount = 0;
 
@@ -552,21 +664,27 @@ const Home = {
       // order in this array.
       const cols = Home.currentCols();
       const layout = Home.currentLayout(cols);
-      // TWO ROWS BY DEFAULT (HomeLayout.DEFAULT_ROWS). The cap is on what is
-      // SHOWN, never on what a viewer may have or where they may put it: the
-      // canvas is still eight rows, a drag can still place a tile on any of
-      // them, and "Show all" below reveals the rest for the rest of the visit.
+      // AS MANY ROWS AS THE FIRST TWO-THIRDS OF THE SCREEN HOLDS, AND NEVER
+      // FEWER THAN TWO (HomeLayout.DEFAULT_ROWS). The cap is on what is SHOWN,
+      // never on what a viewer may have or where they may put it: the canvas
+      // is still eight rows, a drag can still place a tile on any of them, and
+      // "Show all" below reveals the rest for the rest of the visit.
       //
-      // It exists because the home screen has three fixed sections under this
-      // grid now. An eight-row canvas would push Discover, Challenges and
-      // Create app off the bottom of a phone for anyone with a lot of apps —
-      // which is the failure the whole four-area design is meant to prevent.
+      // A cap exists at all because the home screen has three fixed sections
+      // under this grid. An eight-row canvas would push Discover, Challenges
+      // and Create app off the bottom of a phone for anyone with a lot of apps
+      // — which is the failure the whole four-area design is meant to prevent.
+      // Reserving the bottom THIRD is what protects them; two flat rows both
+      // over-protected a tall window (two rows of tiles and then a gulf) and
+      // said nothing about a short one. See Home.visibleRowBudget.
       const canvas = HomeLayout.canvasItems(layout);
-      // The bound is "two rows that actually hold apps", not "row index < 2"
+      const rowBudget = Home.visibleRowBudget();
+      Home._rowBudget = rowBudget;
+      // The bound is "N rows that actually hold apps", not "row index < N"
       // — see HomeLayout.defaultRowBound. On a packed canvas the two are the
       // same number; on one with a hole on row 1 the old form collapsed the
       // two-row default down to a single visible row of tiles.
-      const rowBound = HomeLayout.defaultRowBound(layout, cols);
+      const rowBound = HomeLayout.defaultRowBound(layout, cols, rowBudget);
       const hiddenRows = !Home._appsExpanded
         && canvas.some((it) => it.row > rowBound);
       const shown = hiddenRows
@@ -864,12 +982,12 @@ const Home = {
   // the full grid once should not have every later visit start scrolled past
   // three sections, and a preference this cheap is not worth a write.
   // Whether "Show all N apps" has been pressed this visit. Per-visit state,
-  // deliberately not persisted: the two-row default is the contract, and an
+  // deliberately not persisted: the collapsed grid is the contract, and an
   // expansion the viewer forgot about would quietly eat the fold forever —
   // the same reasoning as HomePanels._expanded.
   //
   // `?shot=home-apps` pins it ON before the first paint. Every row past the
-  // second is unreachable to a still frame and to a declared check otherwise,
+  // budget is unreachable to a still frame and to a declared check otherwise,
   // because the only way in is a tap; ungated and read-only, like every other
   // shot link here, so the production "before" side works the moment it ships.
   _appsExpanded: (() => {

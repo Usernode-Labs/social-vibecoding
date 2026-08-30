@@ -1,5 +1,5 @@
 /**
- * `#home-apps-more` — "Show all N apps", the two-row default's way out.
+ * `#home-apps-more` — "Show all N apps", the collapsed grid's way out.
  *
  * It has always lived OUTSIDE `#app-list` so the grid's re-render could not
  * take the button away mid-click. That is still why it is a separate host;

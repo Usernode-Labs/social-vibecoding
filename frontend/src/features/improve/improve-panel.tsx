@@ -535,9 +535,18 @@ export function ImprovePanel() {
               Settings rows are two readers of one fact rather than one
               reading the other.
           */}
+          {/*
+              NO `pt-2`. The hairline is the footer's top edge and the rows
+              below it are `min-h-[44px] items-center`, so each row already
+              centres its own glyph with ~12px of clear air either side. The
+              8px of padding on top of that put "View on GitHub" 20px below the
+              rule and 12px above whatever came next — the row read as sitting
+              low in its own band rather than centred in it. Spacing inside the
+              footer is the ROW's, once, not the row's plus the container's.
+          */}
           <div
             id="improve-footer"
-            className="shrink-0 pt-2 border-t border-zinc-100 dark:border-zinc-800 platform-safe-scroll"
+            className="shrink-0 border-t border-zinc-100 dark:border-zinc-800 platform-safe-scroll"
           >
             {state.repoUrl ? (
               <ImproveRow
