@@ -925,8 +925,31 @@ const Home = {
     // through while still refusing to fire over an open app: the currentApp
     // check above and this one are the two halves of that, because a repaint
     // can land either side of the transition.
+    //
+    // ── AND WHY IT ASKS THE ROUTER TOO ─────────────────────────────
+    //
+    // #app-view being painted does NOT mean an app is on screen while the
+    // viewer is on their way off one. navigateHome hides every other root but
+    // deliberately keeps that one alive — `_showOnlyScreen('home-screen',
+    // ['app-view'])` — because the shrinking card of the zoom-out IS that
+    // element, and it has to keep showing the app's content until it lands.
+    // So for the length of that animation the DOM answers "the app view is on
+    // show" about a screen the router left, and this gate rejected the very
+    // re-publish navigateHome makes two lines later to swap home's target in
+    // the same frame. The later publish out of Home.render() lost the same
+    // race — /api/apps usually answers before a ~300ms transition ends — so
+    // the target stayed null and the header's standing action vanished for
+    // the rest of the visit. Only on a leave that ANIMATES: from the App tab
+    // the kit falls back to type 'none', which runs fn + after as one
+    // synchronous mutation, which is why this read as a Board-only bug.
+    //
+    // App._revealedScreen is the router's own answer, set by the same
+    // _showOnlyScreen call that starts the leave, so "painted, but no longer
+    // the revealed screen" is exactly that window and nothing else. Both
+    // halves still have to agree before this refuses to publish.
     if (window.App && typeof App._isScreenVisible === 'function'
-        && App._isScreenVisible('app-view')) return;
+        && App._isScreenVisible('app-view')
+        && App._revealedScreen === 'app-view') return;
     const self = (Home._apps || []).find((a) => a && a.self_hosted);
     // ── THE GAP ON A COLD BOOT ─────────────────────────────────────
     //
