@@ -3178,8 +3178,23 @@ const App = {
       App._setScreenVisible(id, false);
     }
     App._setScreenVisible(revealId, true);
+    // Which root the router has REVEALED, as opposed to which roots happen to
+    // be painted. `keepAlso` is the whole reason the two can differ: a screen
+    // named there stays on screen after this call deliberately, so that a
+    // leaving animation still has something to animate (navigateHome keeps
+    // #app-view for the length of the zoom-out — the shrinking card IS that
+    // element). For the whole of that window the DOM says the app view is on
+    // show and the router says home is, and the router is the one that is
+    // right. See Home.publishImproveTarget, whose gate reads both.
+    App._revealedScreen = revealId;
     App.setBackIcon('home');
   },
+
+  // The screen root _showOnlyScreen last revealed, or null before the first
+  // screen swap of the session. Deliberately NOT a visibility fact: it is the
+  // route's answer, so it is correct from the first frame of a transition
+  // rather than from the frame the outgoing screen is finally hidden on.
+  _revealedScreen: null,
 
   // ── The React seam (#1078) ─────────────────────────────────────────
   // Screen roots whose markup React owns. For these, visibility is
