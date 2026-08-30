@@ -2936,7 +2936,8 @@ async function listOpenWorkOrders(pool, userId) {
   try {
     const { rows } = await pool.query(
       `SELECT t.id, t.issue_number, t.branch_name, t.brief, t.client_id,
-              t.created_at, a.slug AS app_slug, a.name AS app_name
+              t.created_at, a.slug AS app_slug, a.name AS app_name,
+              a.icon_url AS app_icon_url, a.icon_emoji AS app_icon_emoji
          FROM external_agent_tasks t
          JOIN apps a ON t.app_id = a.id
         WHERE t.user_id = $1

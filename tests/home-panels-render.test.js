@@ -401,10 +401,26 @@ test('visibleSlots: tolerates an empty/absent challenge list', () => {
 
 // ── Rendering ─────────────────────────────────────────────────────
 
-test('render: a binary not-done row is one line — hollow glyph, no bar', () => {
+test('render: a binary not-done row draws an EMPTY two-state track, not nothing', () => {
+  // It used to draw no bar at all, and the panel reserved a 14px lane on every
+  // row anyway so the goals would still share a baseline — which left this row
+  // with a hole where its numeric neighbours had progress, and pushed every
+  // goal in the list 7px above its row's centre. A two-state track (0 of 1) is
+  // what removes the mixed list: there is no row without a bar any more.
   const { html } = renderWith({ registry: [], hidden: [], panels: [panel()] });
-  assert.match(html, /home-panel-glyph[^"]*rounded-full border/, 'hollow ring, not a chip');
-  assert.doesNotMatch(html, /role="progressbar"/);
+  assert.match(html, /home-panel-glyph[^"]*rounded-full/, 'the well, not a chip');
+  assert.match(html, /role="progressbar"/, 'every row has one now');
+  assert.match(html, /aria-valuenow="0"[^>]*aria-valuemin="0"[^>]*aria-valuemax="1"/);
+  assert.match(html, /width:0%/);
+  // …and the ROW prints no count. "0/1" beside the goal of a challenge nobody
+  // counted reads as a measurement that was taken; the empty track says the
+  // same thing without claiming one. Scoped to the row, because the ring above
+  // it prints its own fraction and that one is the point of the ring.
+  const row = html.slice(html.indexOf('home-panel-row '), html.indexOf('home-panel-footer'));
+  // As a TEXT NODE (`>0/1<`), not a bare substring: `bg-violet-500/10` carries
+  // the characters `0/1` in the middle of a class name, and the ring above the
+  // row prints its own fraction — which is what the ring is for.
+  assert.doesNotMatch(row, />0\/1</, 'a binary row carries no count');
   assert.doesNotMatch(html, /Not done yet/, 'the wordy chip is gone at this density');
   assert.match(html, /250 pts/);
   assert.match(html, /Report a reproducible bug/);
@@ -444,16 +460,16 @@ test('render: a numeric row gets a progressbar with truthful aria values', () =>
   // stays one line.
   assert.match(html, /3\/8/);
   assert.match(html, /aria-label="[^"]*3 of 8 Apps tested"/);
-  // The bar hugs the row's bottom edge — that's what keeps rows uniform —
-  // and is OUTLINED so an empty track still reads as a bar. Its geometry
-  // is in app.css now (pinned in "the bar gets a lane…" below), derived
-  // from the meter lane, so the markup carries only `absolute`.
-  assert.match(html, /home-panel-bar-track absolute rounded-full/);
+  // The track is the row's SECOND LINE and spans the text column by layout —
+  // `w-full` inside the flex child that holds both lines — rather than by an
+  // absolute inset copied out of the row's own padding. That is what retired
+  // `left: 1.75rem` (px-2.5 + glyph + gap-2, restated as a literal), which had
+  // to be edited by hand whenever the gutter or the glyph moved.
+  assert.match(html, /home-panel-bar-track block h-1\.5 w-full rounded-full/);
+  assert.doesNotMatch(html, /home-panel-bar-track[^"]*absolute/,
+    'the bar no longer rides the row\'s bottom edge');
   assert.doesNotMatch(html, /bottom-\[3px\]/,
     'the cramped 3px-from-the-divider geometry is gone, and is no longer a utility class');
-  // A FAINT outline: it describes the bar's extent without competing with
-  // the violet fill, which is the actual signal.
-  assert.match(html, /home-panel-bar-track[^"]*border border-zinc-300\/60/);
 });
 
 test('render: a numeric row at zero still renders an (empty) bar', () => {
@@ -466,71 +482,80 @@ test('render: a numeric row at zero still renders an (empty) bar', () => {
   const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
   assert.match(html, /width:0%/);
   assert.match(html, /0\/5/);
-  // The 0/5 case is exactly why the track is outlined: with no fill at all,
-  // the border + light interior are the only thing distinguishing an empty
-  // bar from the row's hairline divider.
-  assert.match(html, /home-panel-bar-track[^"]*border border-zinc-300\/60 dark:border-zinc-600\/60 bg-white dark:bg-zinc-900/);
+  // A SOLID rail, not an outline. The outline existed because an empty track
+  // in a 14px lane was otherwise indistinguishable from the row's own hairline
+  // divider. On its own line at full width the outline is the problem: an
+  // empty container spanning the card asks to be looked at, and a challenge
+  // nobody has started is the last row on the list worth looking at.
+  assert.match(html, /home-panel-bar-track[^"]*bg-zinc-200 overflow-hidden dark:bg-zinc-800/);
+  assert.doesNotMatch(html, /home-panel-bar-track[^"]*border/,
+    'no hairline around an empty track');
 });
 
 // ── The bar's breathing room ──────────────────────────────────────
 //
 // The bar used to be centred-text-with-a-bar-jammed-underneath: half a
 // pixel of line-box clearance above it, three pixels to the row divider
-// below. The fix is a LANE — a strip reserved along the bottom of every
-// row in the panel, which the text is padded clear of — rather than a
-// taller row, because the height cap only had ~16px to give.
+// below. The first fix was a LANE — a 14px strip reserved along the bottom of
+// every row in the panel, which the text was padded clear of — because the
+// height cap only had ~16px to give.
+//
+// The cap is gone (a section grows to its content), so the second fix is the
+// one the first could not afford: a second LINE. The lane, its three tokens
+// and the bar geometry derived from them are retired with it.
 
-test('the bar gets a lane, and the lane is what holds the text off it', () => {
-  const css = read('public/css/app.css');
-  // The lane, and the bar's geometry derived from it. Both are variables
-  // so the two clearances move together instead of drifting apart.
-  assert.match(css, /--home-panel-meter-lane:\s*0\.875rem/);
-  const laneRule = css.match(/\.home-panel-rows--metered \.home-panel-row \{[^}]*\}/)[0];
-  assert.match(laneRule, /padding-bottom:\s*var\(--home-panel-meter-lane\)/,
-    'padding on the row is what moves the TEXT up — flex centres in what is left');
-  const barRule = css.match(/\.home-panel-bar-track \{[^}]*\}/)[0];
-  assert.match(barRule, /bottom:\s*var\(--home-panel-bar-gap\)/);
-  assert.match(barRule, /height:\s*var\(--home-panel-bar-h\)/);
-  // Clear of the divider below by more than the 3px that read as cramped.
-  const gapPx = parseFloat(css.match(/--home-panel-bar-gap:\s*([\d.]+)rem/)[1]) * 16;
-  assert.ok(gapPx >= 5, `the bar must clear the row divider (${gapPx}px)`);
-  // And the lane must be taller than the bar, or there is no gap ABOVE it.
-  const lanePx = parseFloat(css.match(/--home-panel-meter-lane:\s*([\d.]+)rem/)[1]) * 16;
-  const barPx = parseFloat(css.match(/--home-panel-bar-h:\s*([\d.]+)rem/)[1]) * 16;
-  assert.ok(lanePx > barPx + gapPx - 1,
-    `the lane (${lanePx}px) must hold the bar (${barPx}px + ${gapPx}px) clear of the text`);
-  // Sideways it spans the row's TEXT column — the goal's left edge — and
-  // stops short of the right corner rather than running flush into it.
-  assert.match(barRule, /left:\s*1\.75rem/);
-  assert.match(barRule, /right:\s*0\.75rem/);
+test('the lane is gone: a row is two lines and every row draws a track', () => {
+  // COMMENTS STRIPPED. The rules that replaced the lane explain it by name —
+  // that is the point of them — so a raw grep would find the very tokens this
+  // test exists to prove are gone. What must not come back is a DECLARATION.
+  const css = read('public/css/app.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  // The tokens, the rule that reserved the lane, and the bar geometry derived
+  // from it — all three, or the lane comes back one piece at a time.
+  assert.doesNotMatch(css, /--home-panel-meter-lane/);
+  assert.doesNotMatch(css, /--home-panel-bar-h/);
+  assert.doesNotMatch(css, /--home-panel-bar-gap/);
+  assert.doesNotMatch(css, /\.home-panel-rows--metered/);
+  assert.doesNotMatch(css, /\.home-panel-bar-track \{/,
+    'the track carries no rules of its own — it is utilities on the element');
+  // 56px, and still a variable so the budget comment beside it has one number
+  // to check.
+  assert.match(css, /--home-panel-row-h:\s*3\.5rem/);
+
+  // …and the panel no longer publishes a `metered` flag for the list, because
+  // a meter is a property of every row.
+  const { HP } = makeHomePanels({ slots: [] });
+  const view = HP.challengesView(panel({
+    challenges: [
+      challenge({ id: 1 }),
+      challenge({
+        id: 2,
+        metric: { kind: 'count', label: 'Kudos', target: 5 },
+        progress: { done: false, current: 2, target: 5 },
+      }),
+    ],
+  }));
+  assert.equal(view.metered, undefined, 'the flag is retired, not merely unset');
+  assert.ok(view.rows.every((r) => r.meter), 'every row carries a meter');
+  // The binary one is two-state and says so; the counted one is not.
+  assert.equal(view.rows[0].meter.binary, true);
+  assert.equal(view.rows[0].meter.target, 1);
+  assert.equal(view.rows[1].meter.binary, false);
+  assert.equal(view.rows[1].meter.target, 5);
 });
 
-test('the lane is reserved per PANEL, so every goal sits on one baseline', () => {
-  // A row with no bar still gets the lane when a SIBLING has one —
-  // otherwise the goals in a mixed list float at two different heights,
-  // which reads as a rendering slip rather than as "this one has no bar".
-  const mixed = renderWith({
-    registry: [], hidden: [],
-    panels: [panel({
-      challenges: [
-        challenge({ id: 1 }),
-        challenge({
-          id: 2,
-          metric: { kind: 'count', label: 'Kudos', target: 5 },
-          progress: { done: false, current: 2, target: 5 },
-        }),
-      ],
-    })],
-  }).html;
-  assert.match(mixed, /home-panel-rows home-panel-rows--metered/);
-
-  // …but a widget with no numeric challenge at all reserves nothing: an
-  // empty strip under every row, for a bar that will never come, is just
-  // a row that looks top-heavy.
-  const binaryOnly = renderWith({
-    registry: [], hidden: [], panels: [panel({ challenges: [challenge({ id: 1 })] })],
-  }).html;
-  assert.doesNotMatch(binaryOnly, /home-panel-rows--metered/);
+test('a binary meter is 0 or 100, and follows the row\'s done flag', () => {
+  const { HP } = makeHomePanels({ slots: [] });
+  const meterFor = (done) => HP.challengeRowView(
+    challenge({ id: 1, progress: { done, current: null, target: null } }),
+  ).meter;
+  assert.deepEqual(
+    { ...meterFor(false) },
+    { current: 0, target: 1, label: '', pct: 0, binary: true },
+  );
+  assert.deepEqual(
+    { ...meterFor(true) },
+    { current: 1, target: 1, label: '', pct: 100, binary: true },
+  );
 });
 
 test('a numeric challenge at full target draws a full bar AND the ✓', () => {
@@ -554,11 +579,15 @@ test('a numeric challenge at full target draws a full bar AND the ✓', () => {
   assert.match(html, /home-panel-glyph[^>]*text-emerald-700[^>]*>✓</);
 });
 
-test('both glyph states occupy the same 10px box the bar aligns to', () => {
-  // The bar's left: 1.75rem (28px) is px-2.5 (10) + glyph (10) + gap-2 (8). A ✓
-  // that sized itself intrinsically would shift the goal text and
-  // desynchronise the bar from it on precisely the done rows, so both
-  // glyphs are pinned to w-2.5 here.
+test('both well states occupy the same 28px box, so the goal never shifts', () => {
+  // A ✓ that sized itself intrinsically would move the goal text between an
+  // open row and a done one, which is visible as a jitter down a list where
+  // some rows are done. Both states are pinned to w-7 h-7.
+  //
+  // The bar no longer has a stake in this. Its `left: 1.75rem` used to be
+  // px-2.5 (10) + glyph (10) + gap-2 (8) restated as a literal, so the well's
+  // width was load-bearing for TWO things; the track spans its own line by
+  // layout now, and only the goal's left edge depends on this.
   const rows = ({ done, current }) => renderWith({
     registry: [], hidden: [], panels: [panel({
       challenges: [challenge({
@@ -567,11 +596,9 @@ test('both glyph states occupy the same 10px box the bar aligns to', () => {
       })],
     })],
   }).html;
-  assert.match(rows({ done: false, current: 0 }), /home-panel-glyph shrink-0 w-2\.5 h-2\.5 rounded-full/);
-  assert.match(rows({ done: true, current: 5 }), /home-panel-glyph shrink-0 w-2\.5 h-2\.5 flex/);
-  // The row's own gutter and gap are the other two terms — if either
-  // moves, the bar's 28px left inset has to move with it.
-  assert.match(rows({ done: false, current: 0 }), /home-panel-row flex items-center gap-2 px-2\.5/);
+  assert.match(rows({ done: false, current: 0 }), /home-panel-glyph shrink-0 w-7 h-7 rounded-full/);
+  assert.match(rows({ done: true, current: 5 }), /home-panel-glyph shrink-0 w-7 h-7 rounded-full/);
+  assert.match(rows({ done: false, current: 0 }), /home-panel-row flex items-center gap-2\.5 px-2\.5/);
 });
 
 test('render: the row drops the category, task and CTA — task becomes the tooltip', () => {
@@ -665,21 +692,57 @@ test('expanding stops the rows list clipping, and there is no cap left to lift',
   assert.doesNotMatch(css, /--home-panel-max-h:/);
 });
 
-test('render: the heading carries the label, the counter and the ⋮ menu — the card carries content', () => {
+test('render: the heading names its area and carries the ⋮ — the counter is the ring', () => {
   const { html } = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 6, done: 1, points_remaining: 3900 })],
   });
-  // All three are the SECTION HEADING's now. The block's title bar held them
-  // until the title moved out to become that heading; what was left was a
-  // strip of card with one shrink-0 link floating at the right of it, so the
-  // controls followed the title out and the card opens on its own content.
+  // The label and the controls are the SECTION HEADING's. The block's title bar
+  // held them until the title moved out to become that heading; what was left
+  // was a strip of card with one shrink-0 link floating at the right of it, so
+  // the controls followed the title out and the card opens on its own content.
   assert.match(html, /home-area-label/);
   assert.match(html, /Challenges/);
-  assert.match(html, /1 of 6 · 3,900 pts left/, 'the summary folds into the heading');
   assert.match(html, /home-panel-menu[^>]*data-panel-key="challenges"/);
-  assert.doesNotMatch(html, /home-panel-bar[^-]/, 'no bar left inside the card');
-  // …and the ⋮ is in the heading, not in the article it names.
-  assert.match(html, /home-panel-menu[\s\S]*?<\/h2>/);
+  assert.match(html, /home-panel-menu[\s\S]*?<\/h2>/,
+    'the ⋮ is in the heading, not in the article it names');
+
+  // THE COUNTER IS NOT. "· 1 of 6 · 3,900 pts left" rode here at 12px —
+  // shrunk from the label's own size because at 15px it ellipsised
+  // "Challenges" on a phone, in a heading that also carries a link and the ⋮.
+  // It is the season ring inside the card now: the same three fields, drawn
+  // as the first thing in the block rather than a footnote above it.
+  const heading = html.match(/<h2 class="home-area-label[\s\S]*?<\/h2>/)[0];
+  assert.doesNotMatch(heading, /1 of 6/, 'no counter left in the heading');
+  assert.doesNotMatch(heading, /3,900/);
+  assert.match(html, /home-panel-season/);
+  assert.match(html, /3,900 pts left/, 'the points lead the ring');
+  assert.match(html, /1 of 6 challenges done/, 'and the count sits under them');
+  assert.match(html, /aria-label="1 of 6 challenges done, 3,900 points left"/);
+  // The ring's arc, from twelve o'clock. `pct` is the same rounded integer the
+  // bars use (progressPercent), so a sixth is 17% of the 94.25 circumference —
+  // the ring and a row's fill can never disagree about what a fraction means.
+  assert.match(html, /stroke-dasharray="16\.0225 94\.25"/);
+  assert.match(html, /transform="rotate\(-90 19 19\)"/);
+});
+
+test('the ring omits its arc at zero, and drops the second line with no points', () => {
+  // A round-capped stroke of length 0 still paints its two caps, which is a
+  // violet dot at twelve o'clock on a season nobody has started.
+  const zero = renderWith({
+    registry: [], hidden: [], panels: [panel({ total: 6, done: 0, points_remaining: 3900 })],
+  }).html;
+  assert.match(zero, /home-panel-season/);
+  assert.doesNotMatch(zero, /stroke-dasharray/, 'no arc at all rather than a zero-length one');
+  assert.match(zero, />0\/6</);
+
+  // With no points to name, the count leads and there is no second line to
+  // repeat it — the same rule summaryLine follows for its own clause.
+  const nopoints = renderWith({
+    registry: [], hidden: [], panels: [panel({ total: 6, done: 2, points_remaining: null })],
+  }).html;
+  assert.match(nopoints, /2 of 6 challenges done/);
+  assert.doesNotMatch(nopoints, /pts left/);
+  assert.match(nopoints, /aria-label="2 of 6 challenges done"/);
 });
 
 // The area LABEL is the section's own, not the block's (see SectionHeading in
@@ -853,15 +916,18 @@ test('every text node in a row is single-line — no wrapping anywhere', () => {
   const spans = rowHtml.match(/<span class="[^"]*"/g) || [];
   assert.ok(spans.length >= 3, 'goal + count + reward at least');
   for (const span of spans) {
-    // The glyph, the bar's track and its fill carry no text; every span
-    // that CAN hold text must opt out of wrapping.
-    if (/home-panel-glyph|home-panel-bar-(fill|track)/.test(span)) continue;
+    // The well, the pip inside it, and the bar's track and fill carry no
+    // text; every span that CAN hold text must opt out of wrapping.
+    if (/home-panel-glyph|home-panel-bar-(fill|track)|rounded-full border-2/.test(span)) continue;
     assert.match(span, /whitespace-nowrap|truncate/,
       `a row span may not wrap: ${span}`);
   }
 
   // The goal specifically: truncate (ellipsis) rather than clip-with-no-hint.
   assert.match(html, /home-panel-goal[^"]*min-w-0 truncate whitespace-nowrap/);
+  // Line two is the track and holds no text, so it is exempt above — but it
+  // must be the row's LAST child, or a chip would render under the bar.
+  assert.match(html, /home-panel-bar-track[\s\S]*?<\/span><\/div><\/div>/);
   // The reward chip is the one most likely to wrap — multi-word and shrink-0.
   // It is a TINTED PILL now rather than bold accent text: a column of blue
   // "250 pts" read down the card before any of the goals beside them did, and
@@ -879,16 +945,18 @@ test('the title bar and the footer controls are single-line too', () => {
     panels: [panel({ total: 9, done: 2, points_remaining: 24300 })],
   };
   const { html } = renderWith(data, AT_DESKTOP);
-  // Title + counter: the counter rides the SECTION HEADING now, appended
-  // after the separator, and must not be broken across lines. It used to
-  // carry `normal-case tracking-normal` to undo the title's small caps; the
-  // widget language labels a group in sentence case at reading size, so there
-  // is no small caps left to undo. `whitespace-nowrap` is the load-bearing
-  // half and is what this line has always been about.
-  assert.match(html, /min-w-0 flex-1 truncate[^>]*>Challenges<span class="whitespace-nowrap text-\[12px\]"> · /,
-    'the counter is a caption beside the name, not the name\'s own size — a '
-    + '15px "· 1 of 6 · 3,900 pts left" ellipsised the whole label on a phone '
-    + 'once the heading also carried the block\'s controls');
+  // The heading is the area's NAME and nothing else. It carried the counter
+  // after a separator, shrunk to 12px because at the label's own size a
+  // "· 2 of 9 · 24,300 pts left" ellipsised "Challenges" on a phone — and the
+  // heading still had a link and the ⋮ after that. The counter is the season
+  // ring inside the card now, so the label has the row to itself and needs no
+  // caption slot to keep off its own name.
+  assert.match(html, /min-w-0 flex-1 truncate[^>]*>Challenges<\/span>/);
+  assert.doesNotMatch(html, /whitespace-nowrap text-\[12px\]"> · /,
+    'no counter appended to the area label');
+  // The ring says it instead, and its two lines do not wrap either.
+  assert.match(html, /home-panel-season[\s\S]*?truncate whitespace-nowrap[^>]*>24,300 pts left</);
+  assert.match(html, /truncate whitespace-nowrap[^>]*>2 of 9 challenges done</);
   // The bar carries the way out (#968, now the leaderboard link of #980).
   // Nothing competes with it for the row any more — the summary that used to
   // is one level up — but it stays shrink-0 and nowrap: the label used to
@@ -1302,9 +1370,11 @@ test('the block sizes to its content — no height cap to clip it', () => {
   // variable so the budget comment beside them has one number to check.
   assert.match(css.match(/\.home-panel-row \{[^}]*\}/)[0],
     /height:\s*var\(--home-panel-row-h\)/);
-  assert.match(css, /--home-panel-row-h:\s*2\.5rem/);
-  // The collapsed block a viewer actually gets — four challenge rows and the
-  // footer — is what a re-introduced 16rem cap would start cutting into.
+  assert.match(css, /--home-panel-row-h:\s*3\.5rem/);
+  // The collapsed block a viewer actually gets — the season ring, four
+  // challenge rows and the footer — is what a re-introduced 16rem cap would
+  // start cutting into. Two lines per row made it taller, not shorter, so the
+  // cap is further out of the question than it was.
   const rowPx = parseFloat(css.match(/--home-panel-row-h:\s*([\d.]+)rem/)[1]) * 16;
   const footerPx = parseFloat(
     css.match(/\.home-panel-footer \{[^}]*min-height:\s*([\d.]+)rem/)[1]) * 16;

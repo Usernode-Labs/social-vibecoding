@@ -42,6 +42,7 @@
  * kit-adopted root uses.
  */
 
+import { iconViewFor } from '../apps/app-card.js';
 import { adoptKitSurface } from '../../lib/kit-surface';
 import { improveStore } from './improve-store.js';
 import { saveShellSnapshot } from '../../lib/shell-snapshot';
@@ -88,6 +89,21 @@ function timeOf(value) {
   return Number.isFinite(t) ? t : 0;
 }
 
+/**
+ * The app's artwork for a row's leading tile, in the shape AppCard already
+ * publishes (image / emoji / letter). Built HERE rather than in the component
+ * so the row renders facts: the two `app_icon_*` columns both list endpoints
+ * now carry are a detail of the payload, and a letter derived from the app's
+ * name is the fallback whichever of them is missing.
+ */
+function iconOf(row, appNameFallback) {
+  return iconViewFor({
+    icon_url: row.app_icon_url || null,
+    icon_emoji: row.app_icon_emoji || null,
+    name: row.app_name || appNameFallback || row.app_slug || '',
+  });
+}
+
 function toRow(session, appNameFallback) {
   return {
     key: `s${session.id}`,
@@ -95,6 +111,7 @@ function toRow(session, appNameFallback) {
     id: session.id,
     appSlug: session.app_slug || null,
     appName: session.app_name || appNameFallback || session.app_slug || '',
+    icon: iconOf(session, appNameFallback),
     // THE SAME PRECEDENCE THE RETIRED WORK DRAWER USED (#971): the human
     // title a session was given, then the PR it opened, then the branch it
     // works on — a dev name is the last thing worth showing, and `id` is the
@@ -135,6 +152,7 @@ function taskToRow(task, appNameFallback) {
     id: task.id,
     appSlug: task.app_slug || null,
     appName: task.app_name || appNameFallback || task.app_slug || '',
+    icon: iconOf(task, appNameFallback),
     title: task.title || `Work order #${task.id}`,
     href: task.issue_number
       ? `#app/${task.app_slug}/dev/issues/${task.issue_number}`

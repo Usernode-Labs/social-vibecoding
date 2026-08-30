@@ -1214,7 +1214,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.check_state, cs.check_phase, cs.check_error_detail,
                 cs.agent_backend, cs.agent_model,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
-                a.slug AS app_slug, a.name AS app_name
+                a.slug AS app_slug, a.name AS app_name,
+                -- The app's own artwork, for the leading tile on the Improve
+                -- panel's change rows (#1191 slice 6). The join is already
+                -- here for the slug and the name, so this costs two columns
+                -- rather than a query; without them the tile can only draw a
+                -- letter from the name, which is the fallback, not the point.
+                a.icon_url AS app_icon_url, a.icon_emoji AS app_icon_emoji
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          LEFT JOIN LATERAL (
@@ -1397,6 +1403,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           created_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
           app_slug: config.selfAppSlug,
           app_name: 'Usernode',
+          // The demo row carries an icon too, or the ONE work-order row a
+          // preview can show is the one row whose tile falls back to a letter
+          // — which is exactly the state a reviewer would read as the bug.
+          app_icon_emoji: '\u{1F6E0}\u{FE0F}',
         });
       }
       // Per-viewer denominators for the "(x/y)" header — full admins get

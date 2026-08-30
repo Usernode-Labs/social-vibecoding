@@ -156,6 +156,18 @@ function loadImprove(kitSurface) {
       // no-op here rather than a localStorage stub: what this file tests is
       // when `platform-sheet-adopted` rises and falls.
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
+      // The change rows carry the app's own artwork, resolved from the two
+      // `app_icon_*` columns the list endpoints send. Also irrelevant here,
+      // and stubbed with the real function's SHAPE rather than a bare
+      // `() => ({})`: a stub that returns something a caller cannot use turns
+      // a future adoption bug into a confusing one about icons.
+      '../apps/app-card.js': {
+        iconViewFor: (app) => (app.icon_url
+          ? { kind: 'image', src: app.icon_url }
+          : app.icon_emoji
+            ? { kind: 'emoji', emoji: app.icon_emoji }
+            : { kind: 'letter', letter: String(app.name || '?').charAt(0).toUpperCase() }),
+      },
     },
   });
   return { Improve: sandbox.Improve, store, log };

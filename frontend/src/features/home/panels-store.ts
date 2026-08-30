@@ -60,6 +60,20 @@ export interface DiscoverView {
 
 // ── Challenges ────────────────────────────────────────────────────────
 
+export interface ChallengeMeterView {
+  current: number;
+  target: number;
+  /** " Apps tested" — the metric's name, for the bar's announcement only. */
+  label: string;
+  pct: number;
+  /**
+   * A yes-or-no challenge, drawn as a two-state track (0 of 1, or 1 of 1).
+   * It prints no count: the ✓ and the full track already say it, and "1/1"
+   * on a challenge that was never counted reads as a measurement.
+   */
+  binary: boolean;
+}
+
 export interface ChallengeRowView {
   id: string;
   goal: string;
@@ -67,20 +81,38 @@ export interface ChallengeRowView {
   tip: string;
   done: boolean;
   reward: string;
-  /** Null on a non-numeric challenge, which reserves no meter. */
-  meter: { current: number; target: number; label: string; pct: number } | null;
+  /** NEVER null: every row draws a track, so no row reserves space for one. */
+  meter: ChallengeMeterView;
+}
+
+/** The ring at the top of the card — how far through the season you are. */
+export interface SeasonView {
+  /** 0-100, the ring's arc. */
+  pct: number;
+  /** "1/6", inside the ring. */
+  fraction: string;
+  /** "3,900 pts left" — what is still on the table, or the count if none. */
+  lead: string;
+  /** "1 of 6 challenges done", or null when `lead` already says it. */
+  sub: string | null;
+  /** The whole fact in one string, for the ring's accessible name. */
+  label: string;
 }
 
 export interface ChallengesView {
   key: string;
   title: string;
-  /** "1 of 6 · 3,900 pts left", or null between seasons. */
+  /**
+   * "1 of 6 · 3,900 pts left", or null between seasons. The block's one-line
+   * summary — no longer rendered in the section heading, where it pushed the
+   * area's own label into an ellipsis on a phone. `season` draws it now.
+   */
   summary: string | null;
+  /** Null between seasons, and on the empty block. */
+  season: SeasonView | null;
   total: number;
   expanded: boolean;
   rows: ChallengeRowView[];
-  /** Does the LIST reserve the meter lane? A property of the list, not a row. */
-  metered: boolean;
 }
 
 // ── Create app ────────────────────────────────────────────────────────

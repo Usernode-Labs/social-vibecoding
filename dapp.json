@@ -581,9 +581,14 @@
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-submit:not(:disabled)"
     },
     {
-      "name": "Challenges: metered rows in the card, its leaderboard link in the heading (#911, #980)",
+      "name": "Challenges: EVERY row draws a track, and the card holds them (#911, #980)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
+      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
+    },
+    {
+      "name": "Challenges: the season ring leads the card, and a yes-or-no row still draws a track",
+      "path": "/?demo=1",
+      "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-panel-row:not(:has(.tabular-nums)) .home-panel-bar-track[role=progressbar][aria-valuemax=\"1\"]"
     },
     {
       "name": "Challenges: with nothing running it says so, and shows only that (#947)",
@@ -1901,9 +1906,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-layout .messages-thread-pane.messages-no-selection"
     },
     {
-      "name": "The notifications sheet opens on Unread, which leads the strip",
+      "name": "The notifications strip reads Unread, Messages, All \u2014 and opens on Unread",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"]"
+      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-messages + #notifications-tab-all"
     },
     {
       "name": "A filtered tab's footer link goes to All rather than paging the filter",
@@ -1927,11 +1932,6 @@
       "name": "The notifications sheet offers a Messages tab",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-sheet[data-open] #notifications-screen-tabs #notifications-tab-messages"
-    },
-    {
-      "name": "The tab strip reads Unread, Messages, All \u2014 the archive last",
-      "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child + #notifications-tab-messages + #notifications-tab-all"
     },
     {
       "name": "The messages deep link lands on the Messages tab",
