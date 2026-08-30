@@ -2930,6 +2930,11 @@ function workOrderTitle(brief, issueNumber) {
   return issueNumber ? `Request #${issueNumber}` : 'Work order';
 }
 
+// The app's artwork rides along for the Improve panel's leading tile, in the
+// same two fields the sessions list sends (routes/sessions.js), so a work-order
+// row and a session row hand the panel one shape. `icon_image_id`, NOT
+// `icon_url`: the table stores the id and the server builds the path — see the
+// derivation in routes/apps.js and the longer note at the sessions query.
 async function listOpenWorkOrders(pool, userId) {
   const id = Number(userId);
   if (!Number.isSafeInteger(id) || id <= 0) return [];
@@ -2937,7 +2942,9 @@ async function listOpenWorkOrders(pool, userId) {
     const { rows } = await pool.query(
       `SELECT t.id, t.issue_number, t.branch_name, t.brief, t.client_id,
               t.created_at, a.slug AS app_slug, a.name AS app_name,
-              a.icon_url AS app_icon_url, a.icon_emoji AS app_icon_emoji
+              a.icon_emoji AS app_icon_emoji,
+              CASE WHEN a.icon_image_id IS NOT NULL
+                   THEN '/app-icons/' || a.icon_image_id END AS app_icon_url
          FROM external_agent_tasks t
          JOIN apps a ON t.app_id = a.id
         WHERE t.user_id = $1

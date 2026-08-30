@@ -1647,7 +1647,8 @@ html, body {
    element itself, so it spans the text column by LAYOUT rather than by a
    number copied out of a sibling's padding. `.home-panel-bar-track` and
    `.home-panel-bar-fill` remain as the names dapp.json's declared checks and
-   tests/home-panels-render.js select on; they carry no rules of their own.
+   tests/home-panels-render.test.js select on; they carry no rules of their
+   own. */
 
 /* THE SEASON RING's own hairline, inset like the row rules above it — the
    ring is the card's first band and the rows follow it, so the seam between
