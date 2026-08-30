@@ -63,7 +63,28 @@ function dismissForNav(): void {
 // Sentence case, not uppercase: the board's own labels read "Changes in
 // progress", and the app name above them is the app's name as written.
 const SECTION_LABEL_CLASS =
-  'px-4 pt-2.5 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400';
+  'px-4 pt-2.5 pb-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400';
+
+/**
+ * THE GROUP the change rows sit in — the widget language's grouped list
+ * (@/components/ui/grouped-list), which is how every other list of RECORDS in
+ * the deck is drawn: a label, then a card of hairline-separated rows.
+ *
+ * A hairline border rather than that component's figure/ground card, and the
+ * difference is the surface, not a preference. `GroupedList` is a white card
+ * floating on the page's grey ground; this panel IS white, so the same card
+ * here would be an invisible rectangle. The border is what states the same
+ * thing on a surface that cannot use contrast to state it.
+ *
+ * The point of it is what it stops the rows being mistaken for. Below this
+ * list sit the footer's action rows — "View on GitHub", "Share app" — and
+ * edge-to-edge rows in a panel of edge-to-edge rows all read as one menu. A
+ * bordered group says these four are a SET, and a different kind of thing from
+ * the entries under them.
+ */
+const GROUP_CLASS =
+  'mx-3 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800 '
+  + '[&>a+a]:border-t [&>a+a]:border-zinc-200 dark:[&>a+a]:border-zinc-800';
 
 const ROW_BASE =
   'w-full flex items-center gap-3 px-4 min-h-[44px] text-left';
@@ -436,14 +457,18 @@ export function ImprovePanel() {
                 Loading…
               </div>
             ) : null}
-            {sessions.map((session) => (
-              <SessionRow
-                key={session.key}
-                session={session}
-                showApp={false}
-                onNavigate={dismissForNav}
-              />
-            ))}
+            {sessions.length ? (
+              <div className={GROUP_CLASS}>
+                {sessions.map((session) => (
+                  <SessionRow
+                    key={session.key}
+                    session={session}
+                    showApp={false}
+                    onNavigate={dismissForNav}
+                  />
+                ))}
+              </div>
+            ) : null}
             {/*
                 NOTHING RUNNING ANYWHERE — the one state with room to spare, so
                 it gets some. Everything else in this panel is tuned for a
@@ -481,14 +506,16 @@ export function ImprovePanel() {
                 <div className={SECTION_LABEL_CLASS}>
                   Changes in other apps
                 </div>
-                {otherSessions.map((session) => (
-                  <SessionRow
-                    key={session.key}
-                    session={session}
-                    showApp={true}
-                    onNavigate={dismissForNav}
-                  />
-                ))}
+                <div className={GROUP_CLASS}>
+                  {otherSessions.map((session) => (
+                    <SessionRow
+                      key={session.key}
+                      session={session}
+                      showApp={true}
+                      onNavigate={dismissForNav}
+                    />
+                  ))}
+                </div>
               </>
             ) : null}
 
@@ -496,7 +523,7 @@ export function ImprovePanel() {
               <button
                 id="improve-row-terminal"
                 type="button"
-                className={ROW_BASE + ROW_REST}
+                className={ROW_BASE + ROW_REST + ' mt-2'}
                 onClick={() => Improve.openTerminal()}
               >
                 <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5" aria-hidden="true">
@@ -535,9 +562,18 @@ export function ImprovePanel() {
               Settings rows are two readers of one fact rather than one
               reading the other.
           */}
+          {/*
+              NO `pt-2`. The hairline is the footer's top edge and the rows
+              below it are `min-h-[44px] items-center`, so each row already
+              centres its own glyph with ~12px of clear air either side. The
+              8px of padding on top of that put "View on GitHub" 20px below the
+              rule and 12px above whatever came next — the row read as sitting
+              low in its own band rather than centred in it. Spacing inside the
+              footer is the ROW's, once, not the row's plus the container's.
+          */}
           <div
             id="improve-footer"
-            className="shrink-0 pt-2 border-t border-zinc-100 dark:border-zinc-800 platform-safe-scroll"
+            className="shrink-0 border-t border-zinc-100 dark:border-zinc-800 platform-safe-scroll"
           >
             {state.repoUrl ? (
               <ImproveRow

@@ -54,6 +54,11 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {number} id
  * @property {string} appSlug
  * @property {string} appName
+ * @property {{kind:'image',src:string}|{kind:'emoji',emoji:string}|{kind:'letter',letter:string}} icon
+ *   The app's artwork for the row's leading tile, in the shape
+ *   AppCard.iconViewFor publishes. Resolved by the controller from the two
+ *   `app_icon_*` columns both list endpoints carry, so the row renders a fact
+ *   rather than deciding one; a letter from the app's name is the fallback.
  * @property {string} title
  * @property {string} href        Where the row goes when clicked.
  * @property {string|null} status Display label ("Working…", "Paused"), or null.

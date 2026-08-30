@@ -160,7 +160,15 @@ const HomeLayout = {
   // a one-row default the moment somebody used the feature the canvas exists
   // for.
   //
-  // So the bound is "far enough down to include DEFAULT_ROWS rows that
+  // `rows` — how many rows the caller wants shown — defaults to DEFAULT_ROWS
+  // and is passed in by Home.render() as the VIEWPORT's answer instead
+  // (Home.visibleRowBudget): two rows is the floor everywhere, and a screen
+  // with room for three or four in its first two-thirds shows them rather
+  // than parking the rest behind a button it did not need. Nothing else about
+  // this function changes — it still widens a window over cells the viewer
+  // chose, and still re-places nothing.
+  //
+  // So the bound is "far enough down to include `rows` rows that
   // actually HOLD something", never less than the naive answer. Two
   // properties matter:
   //
@@ -173,7 +181,10 @@ const HomeLayout = {
   //
   // In the common case — apps packed onto rows 0 and 1 — this returns 1, byte
   // for byte the old behaviour.
-  defaultRowBound(layout, cols) {
+  defaultRowBound(layout, cols, rows) {
+    // A caller that asks for fewer than the two-row contract gets the two-row
+    // contract: this widens the default window, it never narrows it.
+    const want = Math.max(HomeLayout.DEFAULT_ROWS, Math.trunc(Number(rows)) || 0);
     const occupied = new Set();
     for (const item of layout || []) {
       if (!item || item.row >= HomeLayout.MAX_ROWS) continue;
@@ -184,12 +195,12 @@ const HomeLayout = {
       }
     }
     // Never narrower than the naive window, so a sparse canvas still offers
-    // the two rows' worth of empty cells a viewer can drop onto.
-    let bound = HomeLayout.DEFAULT_ROWS - 1;
+    // the requested rows' worth of empty cells a viewer can drop onto.
+    let bound = want - 1;
     let seen = 0;
     for (const row of [...occupied].sort((a, b) => a - b)) {
       seen += 1;
-      if (seen >= HomeLayout.DEFAULT_ROWS) {
+      if (seen >= want) {
         if (row > bound) bound = row;
         break;
       }

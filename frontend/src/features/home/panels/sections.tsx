@@ -45,20 +45,21 @@ import { BrowseLink, LeaderboardLink, PanelMenuButton, SectionHeading, stampProp
  * It is a CONSTANT per section, never read off the view model: this host is
  * prerendered with `children` null, so anything data-derived in the heading
  * would differ between the built document and the first client render, which
- * is a hydration mismatch and a console error on `#home`. Data may still
- * appear beside it — `trailing` does exactly that for the challenges summary —
- * because its null state matches the prerender's by construction.
+ * is a hydration mismatch and a console error on `#home`. A `trailing` slot
+ * used to sit beside it, carrying the challenges counter on the one condition
+ * that its null state matched the prerender's; the counter is the season ring
+ * inside the card now (see ./challenges.tsx), and with no second caller the
+ * slot went with it. Every heading is constants again.
  *
  * The heading lives INSIDE the section, so a block with nothing to show takes
  * its label down with it rather than leaving a label over a gap.
  */
 function Section({
-  id, slot, label, trailing, action, painted, stamps, children,
+  id, slot, label, action, painted, stamps, children,
 }: {
   id: string;
   slot: string;
   label: string;
-  trailing?: ReactNode;
   action?: ReactNode;
   painted: boolean;
   stamps?: PanelStamps;
@@ -73,7 +74,6 @@ function Section({
     >
       <SectionHeading action={action}>
         {label}
-        {trailing}
       </SectionHeading>
       {children}
     </section>
@@ -119,18 +119,18 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
       id="home-challenges-section"
       slot="challenges"
       label="Challenges"
-      // "1 of 6 · 3,900 pts left" — the counter that used to ride the block's
-      // own title, following the title out of the card. Null between seasons,
-      // which is also its prerendered state.
-      // SMALLER THAN THE NAME. The counter rode the block's own title at the
-      // title's size, which was fine when the title had a bar to itself; in a
-      // heading that also carries the block's controls, 15px of "· 1 of 6 ·
-      // 3,900 pts left" pushed the whole label into an ellipsis on a phone.
-      // 12px is the shell's caption size, it fits, and the hierarchy it makes
-      // — the area's NAME, then how far through it you are — is the right one.
-      trailing={challenges?.summary
-        ? <span className="whitespace-nowrap text-[12px]">{` \u00b7 ${challenges.summary}`}</span>
-        : null}
+      // NO TRAILING COUNTER. "· 1 of 6 · 3,900 pts left" rode here, shrunk to
+      // 12px because at the label's own size it pushed "Challenges" into an
+      // ellipsis on a phone — a fix that left a heading carrying the area's
+      // name, a counter, a leaderboard link and the ⋮, four things deep, with
+      // the counter the only one of them that was about the DATA.
+      //
+      // It is the season ring at the top of the card now (see
+      // ./challenges.tsx). That is a better home for it on both counts: the
+      // heading goes back to naming its area, and the fact the block exists to
+      // state becomes the first thing inside the block rather than a footnote
+      // above it. Nothing data-derived is left in this heading, which also
+      // means there is nothing here that could disagree with the prerender.
       action={<><LeaderboardLink /><PanelMenuButton panelKey="challenges" /></>}
       painted={painted}
     >

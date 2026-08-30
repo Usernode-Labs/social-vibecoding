@@ -1,30 +1,55 @@
 /**
- * A row — the compact shape the cog drawer used, minus the app column.
+ * A change in flight, as a row — the Improve panel's "Changes in progress"
+ * and "Changes in other apps" lists.
  *
- * Extracted from improve-panel.tsx (Streamlined Concept) for the app-context
- * sheet's "Changes in progress" / "Changes in other apps" lists. One row,
- * one implementation — the same rule that unified the notification rows in
- * #1191 slice 6.
+ * ── Why it stopped being one line ──────────────────────────────────────
  *
- * The Figma board's change row reads: [busy dot] title … relative time,
- * unread dot, chevron. The unread dot means "a session-kind notification
- * about this change is unread" and comes from the notifications store's
- * `sessionUnreadIds` (published by Notifications._renderBadge), so it clears
- * live when the notification is read anywhere.
+ * It was a 44px anchor: `[dot] (app) title (status) (time) (unread dot)`, one
+ * line, everything in much the same grey. The problem was not the row, it was
+ * the row's NEIGHBOURS: `ImproveRow` — "View on GitHub", "Share app",
+ * "Developer terminal" — is `flex items-center gap-3 px-4 min-h-[44px]`, and so
+ * was this. A running change and a menu entry were the same shape, in the same
+ * ink, one after the other, and the only thing separating them was the colour
+ * of a 10px dot. The list read as more menu.
  *
- * Serves both kinds (#1417). The destination arrives on the row as `href`
- * rather than being built here from an id: a session's id addresses a session
- * page, a work order's addresses nothing the browser can open, and a
- * component that assumed the first would send every task row to a 404.
+ * Three things fix that, and each is something no action row has:
  *
- * `onNavigate` is the host surface's own dismissal (AppContext.dismissForNav):
- * a row that navigates has to take its modal host down first, and only the
- * host knows which sheet that is.
+ *   * A SECOND LINE. The title leads; the app, the state and the time follow
+ *     underneath in the caption size. Nothing else in this panel is two lines.
+ *   * A LEADING TILE, not a dot. The app's own artwork at 32px, with the state
+ *     as a badge on its corner. It answers "which app" by looking rather than
+ *     by spending up to 35% of the row's width on a truncated name.
+ *   * A STATUS PILL. Tinted, on the trailing edge — the one loud element in a
+ *     row, and the thing a viewer is actually scanning for.
+ *
+ * The rows then sit in a bordered group (see improve-panel.tsx), because a
+ * group says "these are records" where edge-to-edge rows say "these are
+ * destinations".
+ *
+ * ── What did NOT change ────────────────────────────────────────────────
+ *
+ * `data-improve-row` and the `href` shape are what dapp.json's declared checks
+ * select on, and `data-session-unread` is the notifications store's live hook —
+ * all three are carried through untouched. The destination still arrives on the
+ * row as `href` rather than being built here from an id (#1417): a session's id
+ * addresses a session page, a work order's addresses nothing the browser can
+ * open, and a component that assumed the first would send every task row to a
+ * 404.
+ *
+ * `onNavigate` is the host surface's own dismissal (Improve.dismissForNav): a
+ * row that navigates has to take its modal host down first, and only the host
+ * knows which sheet that is.
  */
 
 
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from '../notifications/notifications-store.js';
+
+/** The app artwork, in the shape AppCard.iconViewFor publishes. */
+export type SessionIconView =
+  | { kind: 'image'; src: string }
+  | { kind: 'emoji'; emoji: string }
+  | { kind: 'letter'; letter: string };
 
 export type SessionRowView = {
   key: string;
@@ -32,6 +57,7 @@ export type SessionRowView = {
   id: number;
   appSlug: string | null;
   appName: string;
+  icon: SessionIconView;
   title: string;
   href: string;
   status: string | null;
@@ -52,6 +78,88 @@ function relTime(iso: string | null | undefined): string | null {
   return `${Math.floor(seconds / (86400 * 30))}mo ago`;
 }
 
+/**
+ * THE STATE, as a word rather than as a colour alone.
+ *
+ * The dot said all of this already, and said it only to someone who had
+ * learned the code. Three states, because with paused rows filtered out of
+ * these lists (see isParked in ./improve-controller.js) three is all there is:
+ *
+ *   - WORKING, amber and pulsing while an AI turn is in flight — the
+ *     platform's own "something is building" colour, borrowed from the
+ *     header's deploy dot.
+ *   - READY, solid emerald once it stops: the success green that says the
+ *     change is back with you.
+ *   - HANDED OFF, outlined, for a work order (#1417). Its agent runs on the
+ *     user's own machine, where the platform cannot see whether a turn is in
+ *     flight, so the row states what it knows instead of borrowing a liveness
+ *     claim this side has no way to make.
+ */
+function stateOf(session: SessionRowView): { label: string; pill: string; badge: string } {
+  if (session.busy) {
+    return {
+      label: 'Working',
+      pill: 'bg-amber-400/20 text-amber-700 dark:text-amber-300',
+      badge: 'bg-amber-400 animate-pulse',
+    };
+  }
+  if (session.kind === 'task') {
+    return {
+      label: 'Handed off',
+      pill: 'border border-zinc-200 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400',
+      badge: 'bg-white dark:bg-zinc-900 ring-1 ring-inset ring-zinc-400 dark:ring-zinc-500',
+    };
+  }
+  return {
+    label: 'Ready',
+    pill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+    badge: 'bg-emerald-500',
+  };
+}
+
+/**
+ * The 32px app tile. `xs` in the widget language's own scale
+ * (@/components/ui/icon-tile), hand-rolled here for one reason: the badge has
+ * to be positioned against it, and IconTile takes children rather than a
+ * corner slot. Everything else about it — the neutral face, the hairline, the
+ * rounding — is that component's, deliberately, so a change to the launcher's
+ * tiles is a change to these.
+ */
+function AppTile({ session }: { session: SessionRowView }) {
+  const { icon } = session;
+  const state = stateOf(session);
+  return (
+    <span className="relative shrink-0">
+      <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800">
+        {icon.kind === 'image' ? (
+          <img
+            src={icon.src}
+            alt=""
+            loading="lazy"
+            draggable={false}
+            className="h-full w-full object-cover"
+          />
+        ) : icon.kind === 'emoji' ? (
+          <span className="text-base leading-none" aria-hidden="true">{icon.emoji}</span>
+        ) : (
+          <span className="text-sm font-semibold leading-none text-zinc-600 dark:text-zinc-300">
+            {icon.letter}
+          </span>
+        )}
+      </span>
+      {/* The state, again, at a glance — the pill spells it out, and this is
+          what makes a column of tiles scannable without reading any of them.
+          `border-2` in the panel's own surface colour is what cuts it out of
+          the tile rather than sitting on top of it. */}
+      <span
+        className={'absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full '
+          + 'border-2 border-white dark:border-zinc-900 ' + state.badge}
+        aria-hidden="true"
+      />
+    </span>
+  );
+}
+
 export function SessionRow({
   session,
   showApp,
@@ -66,66 +174,45 @@ export function SessionRow({
   };
   const unread = sessionUnreadIds.includes(session.id);
   const time = relTime(session.lastActivityAt);
+  const state = stateOf(session);
+
+  // The caption line. `showApp` is the "other apps" list, where which app a
+  // change belongs to is the thing being said; on the focused list the tile
+  // has already answered it, so the line spends its width on the status the
+  // controller wrote (`session.status`) instead — "3 commits", the agent
+  // holding a work order, whatever it knows.
+  const caption = [
+    showApp ? session.appName : null,
+    session.status,
+    time,
+  ].filter(Boolean).join(' · ');
 
   return (
     <a
       href={session.href}
       data-improve-row={session.kind}
-      className="flex items-center gap-2 px-4 min-h-[44px] text-left hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+      className="flex items-center gap-3 px-3 min-h-[60px] text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
       onClick={onNavigate}
     >
-      {/*
-          THE STATE DOT (owner review) — the reason a change row is worth
-          scanning, so it is bright and big enough to find at a glance rather
-          than a grey speck.
-
-          Two states for a session, because with paused rows filtered out of
-          these lists (see isParked in ../improve/improve-controller.js) two
-          is all there is: AMBER PULSING while an AI turn is in flight — the
-          platform's own "something is building" colour, borrowed from the
-          header's deploy dot — and SOLID EMERALD once it stops, which is the
-          success green that says the change is back with you. The halo ring
-          is what makes either readable against a busy row at arm's length.
-
-          A work order (#1417) is never busy: its agent runs on the user's
-          own machine, where the platform cannot see whether a turn is in
-          flight. It keeps the HOLLOW dot, so the row reads as "handed off,
-          state unknown here" instead of borrowing a liveness claim this side
-          has no way to make.
-
-          Announced exactly once: the dot carries the label only when the row
-          renders no status text of its own.
-      */}
-      <span
-        className={
-          session.busy
-            ? 'w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-amber-400/30 shrink-0 animate-pulse'
-            : session.kind === 'task'
-              ? 'w-2.5 h-2.5 rounded-full border border-zinc-400 dark:border-zinc-500 shrink-0'
-              : 'w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/25 shrink-0'
-        }
-        {...(session.status
-          ? { 'aria-hidden': 'true' as const }
-          : { role: 'img', 'aria-label': 'Ready for you' })}
-      />
-      {showApp ? (
-        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[35%] truncate">
-          {session.appName}
+      <AppTile session={session} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+          {session.title}
         </span>
-      ) : null}
-      <span className="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">
-        {session.title}
+        {/* The caption can be empty — a session with no status, no time and no
+            app name to show — and an empty line would still take its height,
+            leaving the title floating above nothing. */}
+        {caption ? (
+          <span className="mt-0.5 block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+            {caption}
+          </span>
+        ) : null}
       </span>
-      {session.status ? (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
-          {session.status}
-        </span>
-      ) : null}
-      {time ? (
-        <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
-          {time}
-        </span>
-      ) : null}
+      <span
+        className={'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ' + state.pill}
+      >
+        {state.label}
+      </span>
       {unread ? (
         <span
           className="w-2 h-2 rounded-full bg-violet-500 shrink-0"
@@ -134,7 +221,7 @@ export function SessionRow({
           data-session-unread={session.id}
         />
       ) : null}
-      {/* NO CHEVRON. The whole row is an anchor and the status dot already
+      {/* NO CHEVRON. The whole row is an anchor and the state pill already
           says this is a live thing you can open; an affordance glyph on every
           row only bought a redundant hint, and it bought it with the width a
           change's TITLE needs — which is the one part of the row a reader

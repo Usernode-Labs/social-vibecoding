@@ -409,24 +409,25 @@ const HomePanels = {
         key: panel.key,
         title: panel.title || 'Challenges',
         summary: null,
+        season: null,
         total,
         expanded: false,
         rows: [],
-        metered: false,
       };
     }
     const { rows } = HomePanels.visibleSlots(panel, { slots: HomePanels.ROW_SLOTS });
     return {
       key: panel.key,
       title: panel.title || 'Challenges',
+      // Still computed, and still the one-line form of the same three fields
+      // the ring draws — it is the block's accessible summary and what the ⋮
+      // menu and the tests read. It is no longer rendered in the section
+      // heading; `season` is where it shows.
       summary: HomePanels.summaryLine(panel),
+      season: HomePanels.seasonView(panel),
       total,
       expanded,
       rows: rows.map((c) => HomePanels.challengeRowView(c)),
-      // The meter lane is a property of the LIST, not of the row that draws a
-      // bar: reserving it on every row is what keeps the goals on one
-      // baseline. A block with no numeric challenge reserves nothing.
-      metered: rows.some((c) => HomePanels.hasMeter(c)),
     };
   },
 
@@ -541,39 +542,81 @@ const HomePanels = {
     };
   },
 
-  // Does this challenge draw a progress bar? One definition, used by the
-  // row (to draw one) and by the panel (to reserve the lane every row
-  // shares), so the two can't disagree and leave a bar in a row with no
-  // room for it.
+  // Is this challenge COUNTED — "3 of 8 apps tested" — rather than a plain
+  // yes-or-no? It no longer decides whether a bar is drawn (every row draws
+  // one, see challengeRowView); it decides whether that bar has a count to
+  // print beside it and real numbers to announce.
   hasMeter(c) {
     return !!(c && c.metric && c.progress && c.progress.target != null);
   },
 
-  // One 40px line: glyph · goal · count · reward, plus a 9px progress bar
-  // in the meter lane along the row's bottom edge on numeric rows.
-  // Category, task, the organiser CTA and the earned-points line are
-  // deliberately absent — they don't fit at this density and all four live
-  // one tap away on the Challenges screen.
+  // TWO LINES, 56px: the well, then goal · count · reward on line one and the
+  // track on line two. Category, task, the organiser CTA and the earned-points
+  // line are deliberately absent — they don't fit at this density and all four
+  // live one tap away on the Challenges screen.
+  //
+  // EVERY ROW HAS A METER. A yes-or-no challenge gets a two-state one — 0 of 1
+  // or 1 of 1 — so the list is one repeated shape rather than some rows with a
+  // bar and some rows with a gap where a bar would be. `binary` is what tells
+  // the row not to print "1/1" beside it: the ✓ and the full track already say
+  // it, and a count on a challenge that was never counted is noise.
   challengeRowView(c) {
     const numeric = HomePanels.hasMeter(c);
-    const current = numeric ? (Number(c.progress.current) || 0) : 0;
-    const target = numeric ? Number(c.progress.target) : 0;
+    const done = !!(c.progress && c.progress.done);
+    const current = numeric ? (Number(c.progress.current) || 0) : (done ? 1 : 0);
+    const target = numeric ? Number(c.progress.target) : 1;
     return {
       id: String(c.id),
       goal: String(c.goal || ''),
       // The task is the row's tooltip — the one place the dropped detail still
       // surfaces without costing height.
       tip: c.task ? `${c.goal || ''}: ${c.task}` : (c.goal || ''),
-      done: !!(c.progress && c.progress.done),
+      done,
       reward: HomePanels.formatReward(c.reward),
-      meter: numeric
-        ? {
-          current,
-          target,
-          label: c.metric.label ? ` ${c.metric.label}` : '',
-          pct: HomePanels.progressPercent(current, target),
-        }
-        : null,
+      meter: {
+        current,
+        target,
+        label: (numeric && c.metric.label) ? ` ${c.metric.label}` : '',
+        // A binary challenge is 0 or 100 by construction; progressPercent
+        // would answer the same thing, and does, but saying so here is what
+        // keeps a target of 1 from looking like a coincidence.
+        pct: numeric ? HomePanels.progressPercent(current, target) : (done ? 100 : 0),
+        binary: !numeric,
+      },
+    };
+  },
+
+  // ── The season ring ────────────────────────────────────────────────
+  //
+  // The counter that used to ride the section HEADING as "· 1 of 6 · 3,900 pts
+  // left", drawn as a ring at the top of the card instead. Two reasons it
+  // moved. The heading already carries the area's name, the leaderboard link
+  // and the ⋮, and 15px of counter after all that pushed the label into an
+  // ellipsis on a phone — its own comment said so. And the fact it states is
+  // the one a challenges block exists to state, which makes it content rather
+  // than chrome.
+  //
+  // Everything here comes off the panel payload: `done`, `total` and
+  // `points_remaining` are the same three fields summaryLine reads. Nothing is
+  // invented — there is no season NAME on this payload, so the ring says how
+  // far through the set you are and what is still on the table, which is what
+  // a viewer opens the block to find out.
+  seasonView(panel) {
+    const total = Number(panel && panel.total) || 0;
+    if (!total) return null;
+    const done = Math.max(0, Math.min(total, Number(panel.done) || 0));
+    const remaining = panel && panel.points_remaining;
+    const hasPoints = typeof remaining === 'number'
+      && Number.isFinite(remaining) && remaining > 0;
+    const counted = `${done} of ${total} challenges done`;
+    return {
+      pct: HomePanels.progressPercent(done, total),
+      fraction: `${done}/${total}`,
+      // The points lead when there are any: "what is left to win" is the
+      // motivating number, and the ring is already showing the fraction.
+      lead: hasPoints ? `${remaining.toLocaleString('en-US')} pts left` : counted,
+      sub: hasPoints ? counted : null,
+      label: hasPoints ? `${counted}, ${remaining.toLocaleString('en-US')} points left` : counted,
     };
   },
 

@@ -202,10 +202,12 @@ export function HomeScreen() {
             greps both files.
 
             `grid-auto-rows` and `position: relative` (needed by the
-            drag-time grid overlay) live in app.css. The two-row default is
-            HomeLayout.DEFAULT_ROWS: a cap on what is SHOWN, never on what a
-            viewer may have — a ninth app grows the grid rather than being
-            stranded.
+            drag-time grid overlay) live in app.css. How many rows the
+            collapsed grid draws is Home.visibleRowBudget: as many as fit in
+            the first two-thirds of the screen, floored at
+            HomeLayout.DEFAULT_ROWS. Either way it is a cap on what is SHOWN,
+            never on what a viewer may have — a ninth app grows the grid
+            rather than being stranded.
 
             NO TOP PADDING ON THIS SECTION. It used to carry `pt-1.5 sm:pt-2`
             on top of the `pt-1.5 sm:pt-2` #app-list already has, so the first
@@ -230,7 +232,7 @@ export function HomeScreen() {
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the
-              viewer has more than the default two rows hold. Ships hidden
+              viewer has more than the visible rows hold. Ships hidden
               and empty; it is React's now (chromeStore), which is what lets
               its listener be attached once instead of on every paint.
           */}

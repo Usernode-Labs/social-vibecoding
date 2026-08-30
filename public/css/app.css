@@ -1478,17 +1478,30 @@ html, body {
      calc() because every track in that template has to stay a single
      space-free token — see rowTemplate. */
   --home-blank-row-h: calc(var(--home-cell-h) / 2);
-  --home-panel-row-h: 2.5rem; /* 40px — see the budget above */
-  /* The METER LANE: the strip along the bottom of every row in a panel
-     that has at least one progress bar. The bar lives in it and the row's
-     text is pushed clear of it (padding-bottom on the row, so the flex
-     centring happens in what's left). Before this, the text was centred in
-     the whole row and the bar was jammed underneath it — half a pixel of
-     line-box clearance, three pixels to the divider — which read as one
-     cramped smear rather than "a goal, and how far along it is". */
-  --home-panel-meter-lane: 0.875rem; /* 14px */
-  --home-panel-bar-h: 0.5625rem;     /* 9px — the bar itself */
-  --home-panel-bar-gap: 0.3125rem;   /* 5px — bar to the row divider */
+  /* A CHALLENGE ROW IS TWO LINES NOW (56px, was 40).
+
+     The METER LANE is gone with the third line of tokens that used to sit
+     here (--home-panel-meter-lane / -bar-h / -bar-gap). That lane was a 14px
+     strip reserved along the bottom of every row in a panel that had at
+     least one numeric challenge, with the row's text padded clear of it — so
+     the bar had somewhere to ride and every goal still sat on one baseline.
+
+     It worked, and it cost two things nobody chose. Reserving the lane on
+     EVERY row put all the text 7px above the row's true centre; and on a row
+     with no bar to draw, the reserved strip was simply a hole, so a mixed
+     list read as some rows aligned and some rows not.
+
+     Both go away by giving the row a second LINE instead of a reserved strip:
+     the goal, its count and its reward take line one, the track takes line
+     two and runs the full width of the text column, and every challenge draws
+     one — a yes-or-no challenge gets a two-state track (empty or full) rather
+     than nothing. There is no shared baseline to protect because there is no
+     row that lacks a bar, and the flex centring is over the whole row again.
+
+     The track's own geometry is Tailwind utilities on the element (see
+     panels/challenges.tsx) rather than derived rules here: it is an ordinary
+     block in the row's second line now, so there is nothing left to derive. */
+  --home-panel-row-h: 3.5rem; /* 56px — see the budget above */
 }
 
 /* NO HEIGHT CAP. `max-height: var(--home-panel-max-h)` lived here, and the
@@ -1576,25 +1589,23 @@ html, body {
   pointer-events: none;
 }
 
-/* 44px rows: the native kit's minimum touch target, and the whole row is
-   a tap target into the Challenges screen. Uniform height is what makes
-   the 4-slot budget above exact, which is why a numeric row's progress
-   bar rides the row's bottom EDGE (absolutely positioned) instead of
-   taking a second line. */
-/* STRICTLY ONE LINE PER ROW. `nowrap` here is the belt to the per-element
-   `whitespace-nowrap` braces in home-panels.js: a fixed-height row HIDES a
-   wrap (the second line just overflows the box and gets clipped by the
-   panel), so relying on the goal's `truncate` alone and on flex to keep
-   the chips honest is how a two-line row ships unnoticed. Declaring it on
+/* Uniform height is what makes the 4-slot budget above exact. Each row is
+   TWO LINES — goal/count/reward, then the track — and both are fixed, so a
+   row with a long goal and a row with a short one occupy the same box.
+
+   STRICTLY ONE LINE PER LINE. `nowrap` here is the belt to the per-element
+   `whitespace-nowrap` braces in panels/challenges.tsx: a fixed-height row
+   HIDES a wrap (the extra line just overflows the box and gets clipped by
+   the panel), so relying on the goal's `truncate` alone and on flex to keep
+   the chips honest is how a three-line row ships unnoticed. Declaring it on
    the row means every present and future child inherits it, and
    `overflow: hidden` clips rather than letting a chip spill over the
    neighbouring row.
 
-   40px, not 44: the whole row is the tap target and it spans the column
-   (~366px on a phone), so its hit AREA is far past what the 44px
-   minimum-dimension guideline protects — that rule is about small icon
-   controls, and the one of those here (the ⋮ menu) keeps
-   .un-touch-target. */
+   The whole row is the tap target into the Challenges screen and it spans
+   the column, so its hit AREA is far past what the 44px minimum-dimension
+   guideline protects — that rule is about small icon controls, and the one
+   of those here (the ⋮ menu) keeps .un-touch-target. */
 .home-panel-row {
   position: relative;
   height: var(--home-panel-row-h);
@@ -1624,32 +1635,40 @@ html, body {
   pointer-events: none;
 }
 
-/* The meter lane is reserved on EVERY row of a metered panel, not only on
-   the rows that draw a bar, so all the goals sit on one baseline — rows
-   whose text floated 7px lower than their neighbours' read as a rendering
-   slip, not as "this one has no bar". It is scoped to the panel (the
-   class goes on the rows list, from renderChallengesPanel) so an
-   all-binary widget keeps plain centring instead of reserving a lane
-   nothing will ever fill. */
-.home-panel-rows--metered .home-panel-row {
-  padding-bottom: var(--home-panel-meter-lane);
-}
-/* The bar's own geometry lives here rather than in utility classes so it
-   is derived from the lane it sits in: 5px + 9px fills the 14px lane
-   exactly, which is what puts the bar's top edge at the bottom of the
-   text's box rather than under it. The visible gap above the bar is then
-   the row's own centring slack — ~3px of line box, ~7px of ink — and the
-   gap below it is the 5px to the divider.
+/* `.home-panel-rows--metered` and the `.home-panel-bar-track` geometry rule
+   lived here. The first reserved the meter lane on every row of a panel that
+   had any numeric challenge; the second derived the bar's inset, height and
+   clearance from that lane, including a `left: 1.75rem` that was the row's
+   own `px-2.5 + glyph + gap-2` restated as a literal — so moving the gutter
+   or the glyph silently desynchronised the bar from the text it measured.
 
-   Horizontally it spans the row's TEXT column — its left edge is the
-   goal's (px-2.5 10 + glyph 10 + gap-2 8 = 28px), and it stops 12px short
-   on the right so it clears the reward chip's edge rather than running
-   flush into the row's corner. */
-.home-panel-bar-track {
-  left: 1.75rem;   /* 28px — the goal text's left edge */
-  right: 0.75rem;  /* 12px */
-  bottom: var(--home-panel-bar-gap);
-  height: var(--home-panel-bar-h);
+   Both are gone with the lane (see --home-panel-row-h above). The track is an
+   ordinary block on the row's second line, sized by Tailwind utilities on the
+   element itself, so it spans the text column by LAYOUT rather than by a
+   number copied out of a sibling's padding. `.home-panel-bar-track` and
+   `.home-panel-bar-fill` remain as the names dapp.json's declared checks and
+   tests/home-panels-render.test.js select on; they carry no rules of their
+   own. */
+
+/* THE SEASON RING's own hairline, inset like the row rules above it — the
+   ring is the card's first band and the rows follow it, so the seam between
+   them has to read as the same kind of seam as the ones between rows. It is a
+   ::after (the band's own bottom) rather than a ::before on the first row,
+   because the rows list draws no leading rule by design: with no ring above
+   it — the between-seasons block — a rule at the top of row one would be a
+   line against the card's own edge. */
+.home-panel-season {
+  position: relative;
+}
+.home-panel-season::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0.625rem;
+  right: 0;
+  height: 1px;
+  background: var(--border-light);
+  pointer-events: none;
 }
 
 /* The footer bar: the expand/collapse toggle and the way out to the

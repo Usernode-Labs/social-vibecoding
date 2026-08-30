@@ -139,9 +139,78 @@ test('the two-row default counts rows that HOLD apps, not row indices (#1367)', 
   // The renderer bounds INCLUSIVELY on this value, and re-places nothing —
   // widening the window must never move a tile off the cell its owner chose.
   const HOME = read('frontend/src/features/home/home.js');
-  assert.match(HOME, /defaultRowBound\(layout, cols\)/);
+  assert.match(HOME, /defaultRowBound\(layout, cols, rowBudget\)/);
   assert.match(HOME, /canvas\.filter\(\(it\) => it\.row <= rowBound\)/);
   assert.match(HOME, /canvas\.some\(\(it\) => it\.row > rowBound\)/);
+});
+
+test('the row bound widens to the viewport budget, and never below two', () => {
+  const app = (slug, col, row) => ({ type: 'app', slug, col, row });
+  const packed = [
+    app('a', 0, 0), app('b', 0, 1), app('c', 0, 2), app('d', 0, 3), app('e', 0, 4),
+  ];
+
+  // The default argument IS the two-row contract: omitting it and passing
+  // DEFAULT_ROWS have to agree, or the viewport budget would be changing
+  // behaviour for callers that never asked for one.
+  assert.equal(
+    HomeLayout.defaultRowBound(packed, 4),
+    HomeLayout.defaultRowBound(packed, 4, HomeLayout.DEFAULT_ROWS),
+  );
+
+  // A taller screen buys whole rows: four occupied rows asked for bounds at
+  // index 3, and "Show all" still has row 4 to reveal.
+  assert.equal(HomeLayout.defaultRowBound(packed, 4, 3), 2);
+  assert.equal(HomeLayout.defaultRowBound(packed, 4, 4), 3);
+
+  // It still counts rows that HOLD apps rather than row indices, so a hole
+  // widens the window exactly as it does at the two-row floor.
+  assert.equal(
+    HomeLayout.defaultRowBound([app('a', 0, 0), app('b', 0, 2), app('c', 0, 5)], 4, 3),
+    5,
+  );
+
+  // NARROWING IS NOT ON OFFER. A budget below the contract — a garbage value,
+  // a screen measured mid-transition at nearly zero height — floors at two
+  // rows rather than collapsing the launcher to one.
+  for (const bad of [1, 0, -3, NaN, null, undefined, 'two']) {
+    assert.equal(
+      HomeLayout.defaultRowBound(packed, 4, bad),
+      HomeLayout.defaultRowBound(packed, 4),
+      `a budget of ${String(bad)} floors at DEFAULT_ROWS`,
+    );
+  }
+
+  // A sparse canvas still offers the budget's worth of empty cells to drop on.
+  assert.equal(HomeLayout.defaultRowBound([], 4, 4), 3);
+});
+
+test('the visible row budget is measured from the screen, floored and capped', () => {
+  const HOME = read('frontend/src/features/home/home.js');
+  // Two-thirds of the screen, as a named constant rather than a number in the
+  // middle of render().
+  assert.match(HOME, /APPS_VIEWPORT_FRACTION: 2 \/ 3,/);
+  // Floored at the two-row contract and capped by the canvas itself, so no
+  // measurement can strand a tile or draw a row the model does not have.
+  assert.match(
+    HOME,
+    /Math\.max\(floor, Math\.min\(HomeLayout\.MAX_ROWS, rows\)\)/,
+  );
+  // Measured against the row's OWN geometry (the computed track and gap), not
+  // against what the grid currently draws — a budget read back from its own
+  // output could never grow.
+  assert.match(HOME, /cs\.gridAutoRows/);
+  assert.match(HOME, /cs\.rowGap/);
+  // The grid's offset inside the scroller's CONTENT, less the parked search
+  // bar: the answer must not change as the viewer scrolls.
+  assert.match(HOME, /screen\.scrollTop/);
+  assert.match(HOME, /- resting;/);
+  // A resize is the one thing that changes the budget, and it re-renders only
+  // when a WHOLE row's worth of it changed.
+  assert.match(HOME, /addEventListener\('resize'/);
+  assert.match(HOME, /if \(Home\.visibleRowBudget\(\) === Home\._rowBudget\) return;/);
+  // …and never mid-drag, the same deferral load() and render() take.
+  assert.match(HOME, /if \(Home\._dragActive\) return;/);
 });
 
 test('two rows by default — a cap on what is shown, not on what exists', () => {

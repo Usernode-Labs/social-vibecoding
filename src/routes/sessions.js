@@ -1197,6 +1197,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // card list sorts session rows by this ("most recent activity"),
       // not by creation order.
       //
+      // The app's artwork rides along for the Improve panel's leading tile.
+      // NOT `a.icon_url` — no such column: the table stores `icon_image_id`
+      // and the server builds the path, as routes/apps.js does. And the note
+      // is here rather than a `--` comment in the query, which reaches
+      // scripts/check-sql.js as one flattened line that eats the statement.
+      //
       // `source` is carried so a caller can tell where a proposal's head lives
       // (#1054) — an imported pull request usually follows a branch in its
       // author's own fork, everything else a branch only the platform can
@@ -1214,7 +1220,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.check_state, cs.check_phase, cs.check_error_detail,
                 cs.agent_backend, cs.agent_model,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
-                a.slug AS app_slug, a.name AS app_name
+                a.slug AS app_slug, a.name AS app_name,
+                a.icon_emoji AS app_icon_emoji,
+                CASE WHEN a.icon_image_id IS NOT NULL
+                     THEN '/app-icons/' || a.icon_image_id END AS app_icon_url
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          LEFT JOIN LATERAL (
@@ -1397,6 +1406,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           created_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
           app_slug: config.selfAppSlug,
           app_name: 'Usernode',
+          // The demo row carries an icon too, or the ONE work-order row a
+          // preview can show is the one row whose tile falls back to a letter
+          // — which is exactly the state a reviewer would read as the bug.
+          app_icon_emoji: '\u{1F6E0}\u{FE0F}',
         });
       }
       // Per-viewer denominators for the "(x/y)" header — full admins get

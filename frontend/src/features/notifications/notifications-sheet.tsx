@@ -1,7 +1,7 @@
 /**
  * The Notifications SHEET (#notifications-sheet) — Streamlined Concept.
  *
- * Unread | All | Messages tabs, TODAY / EARLIER sections, one row per
+ * Unread | Messages | All tabs, TODAY / EARLIER sections, one row per
  * notification with an avatar-initial chip, the source app + relative time as
  * the subtitle, an unread dot and a trailing chevron.
  *
@@ -13,6 +13,12 @@
  * the strip and is the initial tab, and All is the archive you step sideways
  * into — which is what the footer link at the bottom of a filtered tab now
  * does, rather than paging more rows into a filter you are trying to empty.
+ *
+ * All is LAST for the same reason it is not first. The strip reads as a
+ * narrowing: the count you came for, then the one conversation kind you answer
+ * rather than read, then the archive that holds both. With All in the middle
+ * the two filtered tabs sat either side of the unfiltered one, so stepping
+ * from Unread to Messages meant passing through everything.
  *
  * "Mark all read" went with it. It sat at the far right of the same row as
  * the tabs, in the same ink, and read as a fourth tab you could not select —
@@ -304,21 +310,13 @@ export function NotificationsSheetView() {
         >
           {unreadCount ? `Unread (${unreadCount})` : 'Unread'}
         </button>
-        <button
-          id="notifications-tab-all"
-          role="tab"
-          aria-selected={tab === 'all'}
-          className={tabCls(tab === 'all')}
-          onClick={() => setTab('all')}
-        >
-          All
-        </button>
         {/*
-            Messages. One place to catch up on conversations regardless of how
-            busy the rest of the feed is: a message sinks fast in a flat
+            Messages, SECOND. One place to catch up on conversations regardless
+            of how busy the rest of the feed is: a message sinks fast in a flat
             chronological list that also carries every session, proposal and
             kudos notification, and it is the one kind you answer rather than
-            just read.
+            just read. It sits next to Unread because both are filters on what
+            still wants something from you; All is the archive behind them.
         */}
         <button
           id="notifications-tab-messages"
@@ -328,6 +326,15 @@ export function NotificationsSheetView() {
           onClick={() => setTab('messages')}
         >
           Messages
+        </button>
+        <button
+          id="notifications-tab-all"
+          role="tab"
+          aria-selected={tab === 'all'}
+          className={tabCls(tab === 'all')}
+          onClick={() => setTab('all')}
+        >
+          All
         </button>
         <span className="flex-1">
         </span>
