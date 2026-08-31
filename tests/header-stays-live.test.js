@@ -39,8 +39,20 @@ const CSS = read('public/css/app.css');
 const CONTROLLER = read('frontend/src/lib/sheet-controller.js');
 const IMPROVE = read('frontend/src/features/improve/improve-controller.js');
 
-/** The offset both panels and both backdrops start at. */
+/** The offset every panel the bar opens, and every backdrop, starts at. */
 const UNDER_HEADER = 'calc(var(--platform-header-h) + var(--platform-safe-top))';
+
+/**
+ * Every backdrop belonging to a panel the header opens.
+ *
+ * `#messages-sheet-overlay` is in the rule and matches nothing: Messages went
+ * back to being a screen, so the id is dead in the document and alive only in
+ * app.css. It stays in the list because the RULE lists it — a test that
+ * quietly knew better than the stylesheet would hide the discrepancy instead
+ * of leaving it where the next reader trips over it.
+ */
+const BACKDROPS = ['#improve-overlay', '#apps-switcher-overlay',
+  '#notifications-sheet-overlay', '#messages-sheet-overlay'];
 
 function rule(selector) {
   const i = CSS.indexOf(`\n${selector} {`);
@@ -85,19 +97,37 @@ test('the Improve rail starts where the app menu does, under the bar', () => {
     'and it is the same offset, not a second copy of the arithmetic');
 });
 
-test('both backdrops stop at the bar, in one rule so they cannot drift', () => {
+test('every backdrop stops at the bar, in one rule so they cannot drift', () => {
   const hit = mediaBlocks('min-width: 640px')
-    .filter((b) => b.includes('#improve-overlay') && b.includes('#apps-switcher-overlay'));
+    .filter((b) => BACKDROPS.every((id) => b.includes(id)));
   assert.equal(hit.length, 1,
-    'one desktop rule covers both backdrops — a rule each is how they diverge');
+    'ONE desktop rule covers all of them. A rule each is how they diverge, and '
+    + 'a subset is worse than none: "the header stays live" is only true if it '
+    + 'is true whichever panel is open');
   assert.ok(hit[0].includes(`top: ${UNDER_HEADER}`),
     'and it is the header offset, matching the panels above it');
 
   // The dim itself is untouched: this moves where it starts, not what it is.
-  for (const id of ['#improve-overlay', '#apps-switcher-overlay']) {
-    assert.match(rule(`${id}[data-open]`), /pointer-events:\s*auto/,
+  // Looked up through the id rather than by exact selector text, because some
+  // of these share a rule with a sibling and some do not.
+  for (const id of BACKDROPS) {
+    const at = CSS.indexOf(`${id}[data-open]`);
+    assert.ok(at > 0, `${id} has an open state`);
+    const body = CSS.slice(CSS.indexOf('{', at), CSS.indexOf('\n}', at));
+    assert.match(body, /pointer-events:\s*auto/,
       `${id} still catches the dismissing click below the bar`);
   }
+});
+
+test('the notifications rail hangs from the bar too', () => {
+  // The one the first round left behind. With it at `top: 0` the sheet itself
+  // covered the header — elementFromPoint at the Improve button returned
+  // #notifications-screen-tabs — so the backdrop offset alone would not have
+  // made the bar clickable while this panel was the open one.
+  const rail = rule('#notifications-sheet,\n#messages-sheet');
+  assert.ok(rail.includes(`top: ${UNDER_HEADER}`),
+    'the rail starts under the bar, like the other two');
+  assert.match(rail, /bottom:\s*0/, 'and still reaches the floor');
 });
 
 test('the phone is untouched — it is a sheet over the page there', () => {
@@ -110,8 +140,8 @@ test('the phone is untouched — it is a sheet over the page there', () => {
   assert.match(improve[0], /top:\s*auto/,
     'which resets the desktop offset rather than inheriting it');
 
-  assert.equal(small.filter((b) => b.includes('-overlay')).length, 0,
-    'and no phone rule touches either backdrop: they still cover the viewport');
+  assert.equal(small.filter((b) => BACKDROPS.some((id) => b.includes(id))).length, 0,
+    'and no phone rule touches any backdrop: they still cover the viewport');
 });
 
 // ── The behaviour ──────────────────────────────────────────────────────

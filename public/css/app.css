@@ -7164,13 +7164,24 @@ a.drawer-ver--fork:hover {
    panel is about. What it gains is that the bar reads as still-live — which
    is now true, and is the point.
 
+   EVERY PANEL THE BAR OPENS, not a chosen two. This began as Improve and the
+   app menu, and stopping there would have left the bell dimming and covering
+   the header while its two neighbours did not — the same half-applied rule
+   that made the app menu's dim look wrong beside the Improve panel's one
+   round ago. The interaction argument settles it rather than the visual one:
+   "the header stays live" is only true if it is true whichever panel is open,
+   and with the notifications rail at `top: 0` a click on Improve landed on
+   #notifications-screen-tabs instead.
+
    Desktop only. Below `sm` these are bottom sheets over the page, and on
    touch the kit draws its own backdrop over everything; a phone header
    half-lit above a sheet would be a different decision, and one nobody has
-   asked for. Both ids in one rule so they cannot drift apart. */
+   asked for. One rule for all of them so they cannot drift apart. */
 @media (min-width: 640px) {
   #improve-overlay,
-  #apps-switcher-overlay {
+  #apps-switcher-overlay,
+  #notifications-sheet-overlay,
+  #messages-sheet-overlay {
     top: calc(var(--platform-header-h) + var(--platform-safe-top));
   }
 }
@@ -7382,9 +7393,16 @@ a.drawer-ver--fork:hover {
    opened from a control in the middle of the bar belongs under that control.
    These take the same near-full-height cap the Improve panel does and let
    their own scroller take over. */
+/* Under the bar, like the Improve rail and the app menu — the bar opens all
+   three and none of them may cover it. See the backdrop block above.
+   `#messages-sheet` is DEAD in this selector and is left alone rather than
+   quietly removed here: Messages went back to being a screen (#messages-screen,
+   see tests/shell-id-inventory.test.js), so the id matches nothing in the
+   document any more. It survives in this file and nowhere else. Retiring it is
+   a tidy-up of its own, not something to smuggle into a geometry change. */
 #notifications-sheet,
 #messages-sheet {
-  top: 0;
+  top: calc(var(--platform-header-h) + var(--platform-safe-top));
   right: 0;
   bottom: 0;
   width: 24rem;
