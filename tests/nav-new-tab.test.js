@@ -347,30 +347,45 @@ test('"back out of a dev session" rides the header back anchor, with a real targ
   assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,900}?App\.switchTab\('dev'\)/);
 });
 
-// The topic back link, split the same way by #1191: the anchor is JSX in
-// frontend/src/features/dev-board/topic-frame.tsx, and the plain-click handler
-// is the onBackClick prop AppView._renderTopicSubView passes in. Both
-// assertions are anchored on the mount call rather than on the bare
-// `onBackClick`, because app-view.js now passes two of them.
-test('"back out of an issue / proposal / governance topic" is a real anchor with a real target', () => {
-  assert.match(topicFrameTsx, /<a\s+id="dev-topic-back"/,
-    'topic-frame.tsx: the control must be an <a>');
-  assert.ok(!/<button[^>]*id="dev-topic-back"/.test(topicFrameTsx + appViewJs),
-    'the old <button> tag is gone from both the component and app-view.js');
-  assert.match(topicFrameTsx, /href=\{backHref\}/,
-    'topic-frame.tsx: the anchor must carry the href prop, not a bare "#"');
-  assert.match(appViewJs, /mountTopicSubView\(content, \{\s*\n\s*backHref: AppView\._devPageHref\(\),/,
-    'app-view.js must resolve that href through the same shared helper as before');
+// The topic page's back bar is retired too, and it was the LAST one. It was a
+// full-width bar with a hairline whose entire content was `← Back`, sitting
+// directly under a platform header that — since the back/home rule — carries a
+// chevron to the same Board on this very route. Two back controls one row
+// apart, and the page opened with a strip of chrome instead of the proposal
+// you came to read.
+//
+// Nothing #1036 bought that anchor is lost: the header's chevron is a real
+// `<a href>` with the same NavLink guard, provided once instead of twice.
+test('"back out of an issue / proposal / governance topic" rides the header anchor', () => {
+  assert.ok(!/dev-topic-back/.test(topicFrameTsx),
+    'topic-frame.tsx: the back anchor is retired');
+  // Code only: the file's header explains what was removed and names both
+  // props while doing it, which is prose worth keeping.
+  const topicCode = topicFrameTsx.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/backHref|onBackClick/.test(topicCode),
+    'and the two props that existed only for it went with it — a prop left '
+    + 'behind is the bar growing back with nothing to stop it');
+  assert.match(appViewJs, /mountTopicSubView\(content\);/,
+    'app-view.js hands the host over and nothing else, exactly as the general '
+    + 'chat mount already did');
+
+  // The header IS the back control on this route, by route derivation rather
+  // than by an imperative call — pinned properly in tests/header-back-home.js;
+  // named here so this file's map of "who owns back" stays complete.
+  assert.match(read('frontend/src/features/header/platform-header.tsx'),
+    /subTab === 'chat' \|\| subTab === 'topic'\) return `#app\/\$\{slug\}\/board`/,
+    'the header points a topic page at its Board');
 });
 
-test('"back out of an issue / proposal / governance topic" leaves a modified click to the browser', () => {
-  const body = handlerAfter(appViewJs, 'mountTopicSubView(content, {', 600);
-  const guard = body.indexOf('NavLink.isNativeClick(e)');
-  const prevent = body.indexOf('e.preventDefault()');
-  assert.ok(guard !== -1, 'app-view.js: the modified-click guard went missing');
-  assert.ok(prevent !== -1, 'app-view.js: a plain click must still be intercepted');
-  assert.ok(guard < prevent,
-    'app-view.js: preventDefault ahead of the guard swallows the new tab');
+test('no in-page back control is left anywhere in the Dev area', () => {
+  // The three retired one at a time and each left the others in place, so the
+  // count is the assertion: a fourth surface growing its own is the shape of
+  // this regression, not any single id coming back.
+  for (const [name, src] of [['chat-frame.tsx', chatFrameTsx],
+    ['topic-frame.tsx', topicFrameTsx], ['session-header.tsx', sessionHeaderTsx]]) {
+    assert.ok(!/id="d(c|ev)-[a-z-]*back"/.test(src),
+      `${name} must carry no in-page back control — the header has it`);
+  }
 });
 
 test('the app-wide dev chat mounts without back-bar props', () => {

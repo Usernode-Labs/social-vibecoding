@@ -367,7 +367,7 @@ export function AppsSwitcherSheet(): ReactNode {
             times the gap above. It reads as balanced at `pb-0`. */}
         <div
           id="apps-switcher-list"
-          className="shrink-0 flex gap-4 px-5 pt-4 pb-0 overflow-x-auto overscroll-contain"
+          className="shrink-0 flex gap-4 px-5 pt-4 pb-0 overflow-x-auto overscroll-contain platform-no-scrollbar"
         >
           {rows.map((app) => (
             <AppTile key={app.slug} app={app} current={app.slug === slug} />
@@ -397,7 +397,7 @@ export function AppsSwitcherSheet(): ReactNode {
         {/* THE ONLY VERTICAL SCROLLER. Everything above is `shrink-0`. */}
         <nav
           id="switcher-nav"
-          className="flex-1 min-h-0 overflow-y-auto border-t border-zinc-100 dark:border-zinc-800 pb-2 platform-safe-sheet"
+          className="flex-1 min-h-0 overflow-y-auto pb-2 platform-safe-sheet"
         >
           {/* The one group that had no label. Apps and the viewer's own rows
               each announced themselves; Home, Discover and Messages opened

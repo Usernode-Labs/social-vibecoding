@@ -1,14 +1,25 @@
 /**
- * The Dev topic sub-view's frame — the back bar and the thread's host —
+ * The Dev topic sub-view's frame — the thread's host, and nothing above it —
  * converted from `AppView._renderTopicSubView()`'s `innerHTML` template.
  *
- * It is the sibling of ./chat-frame.tsx and reads almost the same, which is
- * the point: both are a slim back-button header over a host something else
- * mounts into. The differences are the ones the two pages actually have — this
- * bar carries a hairline and a wider `← Back` label, and its host is
- * `#dev-topic-thread`, which `GroupChat.mountThread` fills with the thread
- * panel (and, inside that, the topic card app-view.js paints into
- * `#gc-thread-head`).
+ * ── THE BACK BAR IS GONE, AND THIS IS THE LAST ONE ────────────────────
+ *
+ * It was a full-width bar with a hairline whose entire content was `← Back`,
+ * sitting directly under a platform header that, since the back/home rule,
+ * carries a chevron to the same Board on this very route. Two back controls
+ * one row apart, and the page opened with a strip of chrome instead of the
+ * proposal you came to read.
+ *
+ * ./chat-frame.tsx retired its own for the same reason ("Activity is a row,
+ * the header's title tab names it"), and the dev session's strip retired its
+ * `←` too — see features/dev-chat/session-header.tsx, whose note reads "one
+ * back control, in the bar the board draws it in". This page was the one that
+ * kept its copy; it does not any more, and there is no in-page back left in
+ * the Dev area to find.
+ *
+ * What is left is `#dev-topic-thread`, which `GroupChat.mountThread` fills
+ * with the thread panel (and, inside that, the topic card app-view.js paints
+ * into `#gc-thread-head`).
  *
  * ── Why this was the LAST hand-written #app-content in Dev ────────────
  *
@@ -19,10 +30,11 @@
  * in the document. Mounting a portal instead is what retires that branch: the
  * root is re-rendered rather than torn out from under.
  *
- * `#dev-topic-back` stays a real `<a href>` (#1036), so a modified click is
- * left to the browser and only a plain click is intercepted. The `href` comes
- * from `AppView._devPageHref()` — it depends on `App.currentApp` and the
- * self-app's hash-routing rules, which are the router's business.
+ * The frame takes NO props now. It had two, both only for the retired anchor
+ * (`backHref` from `AppView._devPageHref()` and the plain-click handler), and
+ * the header's own chevron is a real `<a href>` with the same modified-click
+ * guard — so what #1036 bought that anchor is not lost, it is simply provided
+ * once instead of twice.
  */
 
 import { skeletonListHtml } from './card/skeleton';
@@ -42,30 +54,9 @@ import { skeletonListHtml } from './card/skeleton';
  */
 const THREAD_INITIAL = { __html: skeletonListHtml(1) };
 
-export interface DevTopicSubViewProps {
-  /** `AppView._devPageHref()`. */
-  backHref: string;
-  /**
-   * Plain-click handler. The caller keeps the `NavLink.isNativeClick(e)` guard
-   * and the `App.switchTab('dev')` call, so the behaviour is the template's.
-   */
-  onBackClick: (event: React.MouseEvent<HTMLAnchorElement>) => void;
-}
-
-export function DevTopicSubView({ backHref, onBackClick }: DevTopicSubViewProps) {
+export function DevTopicSubView() {
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-        <a
-          id="dev-topic-back"
-          className="inline-flex items-center gap-1 text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0 dark:text-zinc-400"
-          title="Back to the dev page"
-          href={backHref}
-          onClick={onBackClick}
-        >
-          ← Back
-        </a>
-      </div>
       {/*
           The thread panel's host. `GroupChat.mountThread` mounts
           features/group-chat/thread-shell.tsx into it, so React renders it as

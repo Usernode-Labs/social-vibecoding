@@ -2346,26 +2346,19 @@ const AppView = {
     // A no-op when the owner hasn't published the chat:
     // `_transcriptSectionView` returns null in that case.
     if (ref.kind === 'session') AppView._transcriptOpen = ref.id;
-    // #363: only the back bar is pinned here. The topic card/body no longer
-    // sits in its own capped, separately scrolling box — it's painted into the
-    // mounted thread's in-scroll header slot (#gc-thread-head) so the header
-    // and the discussion scroll as ONE area (matching the general chat, where
-    // only the composer is pinned). The topic's icon, title and number live on
-    // that header card, so repeating them up here would be pure duplication.
-    // <DevTopicSubView/> — the back bar plus `#dev-topic-thread`, which
-    // GroupChat.mountThread fills. This was the LAST hand-written
-    // `#app-content.innerHTML` on the Dev screen; the back link's click
-    // handler moved into the component's onClick prop rather than being bound
-    // after the fact, with the guard and the target unchanged.
-    AppView._reactDevBoard()?.mountTopicSubView(content, {
-      backHref: AppView._devPageHref(),
-      onBackClick: (e) => {
-        // #1036: real anchor — leave a modified click to the browser.
-        if (window.NavLink && NavLink.isNativeClick(e)) return;
-        e.preventDefault();
-        App.switchTab('dev');
-      },
-    });
+    // #363: NOTHING is pinned here now. The topic card/body does not sit in
+    // its own capped, separately scrolling box — it's painted into the mounted
+    // thread's in-scroll header slot (#gc-thread-head) so the header and the
+    // discussion scroll as ONE area (matching the general chat, where only the
+    // composer is pinned). The topic's icon, title and number live on that
+    // header card, so repeating them up here would be pure duplication.
+    //
+    // The back bar that used to be pinned is gone with its props: the platform
+    // header carries a chevron to this page's Board on this route, so the bar
+    // was a second back control one row under the first. Its `_devPageHref()`
+    // and the NavLink-guarded click both live on that chevron instead — see
+    // features/dev-board/topic-frame.tsx.
+    AppView._reactDevBoard()?.mountTopicSubView(content);
 
     const ok = await AppView._loadDevData();
     // The view may have been replaced (or retargeted) while the fetch

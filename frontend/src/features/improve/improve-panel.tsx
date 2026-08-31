@@ -109,16 +109,27 @@ const ROW_REST =
  * So they are buttons, shaped like the control that opens this panel:
  * `h-9 rounded-full`, the same pill #improve-btn is.
  *
- * ── And they are the SAME button ───────────────────────────────────────
+ * ── They are the SAME button, and it is the FILLED one ─────────────────
  *
- * "New change" carried the filled violet for a while, on the argument that it
- * is the thing this panel is FOR, with Feedback in the tinted rest state so
- * the pair read as primary-and-secondary. Neither is more special than the
- * other: describing a problem and starting a change are two ways into the
- * same work, and which one a person wants is about what they have to say, not
- * about which the panel prefers. A filled pill also put a second solid violet
- * control immediately under #improve-btn's own, which is what made the panel
- * open with an accent competing with the button that opened it.
+ * Neither is more special than the other: describing a problem and starting a
+ * change are two ways into the same work, and which one a person wants is
+ * about what they have to say, not about which the panel prefers. So they
+ * match — that part has not changed.
+ *
+ * WHICH of the two shared states they match in has. They spent a round in
+ * `bg-violet-500/10`, a 10% tint, chosen because a solid pill put a second
+ * filled violet control under #improve-btn's own and read as an accent
+ * competing with the button that opened it. In use the tint went the other
+ * way: at a tenth opacity these are the palest things in a panel whose every
+ * other row is a real surface, and the two controls the panel EXISTS for read
+ * as the least pressable things in it — closer to a disabled state than to an
+ * action.
+ *
+ * `bg-violet-600` is the fill "New change" carried before that round, and it
+ * is the platform's ordinary primary button. The competing-accent worry is
+ * real and it is the smaller cost: #improve-btn is in the HEADER, outside the
+ * panel and behind its backdrop once the panel is up, so the two are rarely
+ * read together — whereas these two are read every single time it opens.
  *
  * Every id is the one it has always had: `#improve-row-feedback` is what the
  * outbox dot's writer selects and `#improve-row-new-session` has named
@@ -129,7 +140,7 @@ const ACTION_BASE =
   + 'rounded-full text-sm font-semibold transition-colors un-touch-target';
 
 const ACTION_FILL =
-  'bg-violet-500/10 hover:bg-violet-500/20 text-violet-700 dark:text-violet-400';
+  'bg-violet-600 hover:bg-violet-500 text-white';
 
 function QuickAction({ id, label, onClick }: {
   id: string;
@@ -368,8 +379,7 @@ export function ImprovePanel() {
               category label sitting next to an action. The two labels are the
               same part of speech now. It still leads, because it is the one
               action that needs nothing of the viewer — no collaborator bit, no
-              session, no repo. New change carries the fill, because starting
-              one is what this panel is for.
+              session, no repo. Both carry the same fill; see QuickAction.
 
               Share was the third segment and is not here any more: it is a
               fact ABOUT the app rather than something you do to it, so it
