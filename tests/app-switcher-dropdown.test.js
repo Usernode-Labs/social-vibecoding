@@ -39,6 +39,20 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const CSS = read('public/css/app.css');
 const HEADER = read('frontend/src/features/header/platform-header.tsx');
 const SHEET = read('frontend/src/features/app-context/app-context-sheet.tsx');
+const TABS = read('frontend/src/features/improve/view-tabs.tsx');
+const TW = read('tailwind.config.js');
+
+/** A Tailwind spacing step in px — the scale is 0.25rem per unit. */
+const step = (n) => n * 4;
+
+/** A radius from the config's OVERRIDDEN scale, in px. Never the stock one. */
+function radius(name) {
+  const scale = TW.match(/borderRadius:\s*\{([^}]*)\}/);
+  assert.ok(scale, 'tailwind.config.js declares a borderRadius scale');
+  const hit = scale[1].match(new RegExp(`'?${name}'?:\\s*'([\\d.]+)rem'`));
+  assert.ok(hit, `the scale declares ${name}`);
+  return Number(hit[1]) * 16;
+}
 
 /** A rule's body, by exact selector text. */
 function rule(selector) {
@@ -227,4 +241,130 @@ test('the sheet markup is one panel — the presentation is entirely CSS', () =>
     'the panel does not ask how wide the window is');
   assert.match(SHEET, /id="apps-switcher-sheet"[\s\S]{0,600}?className="fixed z-50/,
     'one root, one constant class string');
+});
+
+// ── The panel's contents ───────────────────────────────────────────────
+
+test('the panel is the width the shell\'s other two panels already are', () => {
+  const block = switcherDesktopBlock();
+  const closed = block.slice(block.indexOf('#apps-switcher-sheet {'),
+    block.indexOf('#apps-switcher-sheet[data-open]'));
+  const mine = closed.match(/\n\s*width:\s*([\d.]+)rem/);
+  assert.ok(mine, 'the dropdown states a width');
+
+  // #notifications-sheet and #messages-sheet share one rule and one number.
+  const sheets = rule('#notifications-sheet,\n#messages-sheet');
+  const theirs = sheets.match(/\n\s*width:\s*([\d.]+)rem/);
+  assert.ok(theirs, 'the notifications/messages rail states a width');
+  assert.equal(mine[1], theirs[1],
+    'one number for "how wide is a panel here", not two — if the rail moves, '
+    + 'this moves with it or the reason for the number is gone');
+});
+
+test('the panel meets the header rather than floating under it', () => {
+  const block = switcherDesktopBlock();
+  const closed = block.slice(block.indexOf('#apps-switcher-sheet {'),
+    block.indexOf('#apps-switcher-sheet[data-open]'));
+  const top = closed.match(/top:\s*calc\(([^;]*)\);/);
+  assert.ok(top, 'the dropdown states its top');
+  assert.doesNotMatch(top[1], /\+\s*[\d.]+rem/,
+    'the header height and the safe-area inset, and nothing added to them: '
+    + 'the chip is IN the bar, so a gap is a seam through one object');
+});
+
+test('the Apps label is the same label as In this app, not a heading', () => {
+  // The row it sits in cannot use SECTION — it holds Create New and the close
+  // button too — so the type half is shared as a constant and the row states
+  // SECTION's own padding. Both halves have to hold for "the same as In this
+  // app" to be true.
+  assert.match(SHEET, /const SECTION_TYPE = 'text-\[0\.7rem\] font-semibold uppercase tracking-wide '/,
+    'the type half is a constant of its own');
+  assert.match(SHEET, /const SECTION = 'px-5 pt-4 pb-1 ' \+ SECTION_TYPE;/,
+    'and SECTION is that constant plus the row it owns');
+  assert.match(SHEET, /className=\{'flex-1 min-w-0 block ' \+ SECTION_TYPE\}/,
+    'the Apps label reads as a label…');
+  assert.match(SHEET, /className="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0"/,
+    '…in a row carrying SECTION\'s own padding');
+  assert.doesNotMatch(SHEET, /text-lg font-semibold text-zinc-900/,
+    'the heading it used to be is gone');
+});
+
+test('every group in the menu announces itself', () => {
+  // Apps, the app's own views, the platform's destinations, the viewer's own.
+  // Home/Discover/Messages were the one group without a label, which read as
+  // rows left over above "You".
+  for (const label of ['Apps', 'In this app', 'Platform', 'You']) {
+    assert.ok(SHEET.includes('>' + label + '<') || SHEET.includes('\n            ' + label + '\n'),
+      `the ${label} group is labelled`);
+  }
+  // It goes INSIDE #switcher-nav, above Home — which keeps Home and Discover
+  // adjacent siblings, and dapp.json selects on exactly that.
+  const nav = SHEET.slice(SHEET.indexOf('id="switcher-nav"'));
+  const label = nav.indexOf('>Platform<');
+  const home = nav.indexOf('id="switcher-row-home"');
+  assert.ok(label > 0 && label < home, 'the label precedes the rows it names');
+  assert.doesNotMatch(nav.slice(label, home), /id="switcher-row-/,
+    'and nothing sits between it and Home, so #switcher-row-home + '
+    + '#switcher-row-discover still resolves (dapp.json)');
+});
+
+test('equal air above and below the app strip, which is not equal padding', () => {
+  const strip = SHEET.match(/id="apps-switcher-list"[\s\S]{0,200}?className="([^"]*)"/);
+  assert.ok(strip, 'the strip states its padding');
+  const pt = strip[1].match(/\bpt-(\d+)\b/);
+  const pb = strip[1].match(/\bpb-(\d+)\b/);
+  assert.ok(pt && pb, 'both paddings are explicit');
+
+  // Every term, read from the source rather than restated, because the whole
+  // point is that the four of them do not cancel out the way they look like
+  // they should.
+  const labelRow = SHEET.match(/className="flex items-center gap-3 px-5 pt-\d+ pb-(\d+) shrink-0"/);
+  assert.ok(labelRow, 'the Apps label row states its bottom padding');
+  const section = SHEET.match(/const SECTION = 'px-5 pt-(\d+) pb-\d+ ' \+ SECTION_TYPE;/);
+  assert.ok(section, 'SECTION states the padding it opens with');
+
+  // The selected tile's ring paints outside its own box: ring-2 ring-offset-2.
+  const tile = SHEET.match(/ring-(\d+) ring-offset-(\d+)/);
+  assert.ok(tile, 'the selected tile states its ring');
+  const RING = Number(tile[1]) + Number(tile[2]);
+
+  // What the EYE measures, on each side of the tiles:
+  //   above — the label row's own bottom padding, plus the strip's top
+  //           padding, LESS the ring that paints up into it
+  //   below — the strip's bottom padding, plus the padding the next label
+  //           opens with
+  const above = step(Number(labelRow[1])) + step(Number(pt[1])) - RING;
+  const below = step(Number(pb[1])) + step(Number(section[1]));
+  assert.equal(above, below,
+    `the tiles read ${above}px above and ${below}px below — the ring outset `
+    + "and the next label's own padding are why symmetric padding is not "
+    + 'symmetric air');
+  assert.ok(step(Number(pt[1])) >= RING,
+    'and the top padding still clears the ring, or its top arc is sliced flat');
+});
+
+// ── The segmented control's pill ───────────────────────────────────────
+
+test('the tab pill is concentric with the track it sits in', () => {
+  // THE BUG THIS PINS: a rounded box nested in a rounded box has exactly one
+  // correct radius — the outer one less the gap. The pill was `0.625rem`,
+  // which is `xl - 2px` in STOCK Tailwind, where xl is 12px. This config
+  // overrides the whole radius scale, so the track is 16px and the pill was
+  // 4px too tight, leaving a crescent of track at each end of the strip.
+  const track = TABS.match(/const TRACK =\s*\n?\s*'([^']*)'/);
+  assert.ok(track, 'the track states its classes');
+  const tr = track[1].match(/\brounded-(\w+)\b/);
+  const pad = track[1].match(/\bp-(\d+(?:\.\d+)?)\b/);
+  assert.ok(tr && pad, 'the track states a radius and a padding');
+
+  const seg = TABS.match(/const SEG =\s*\n?\s*'([^']*)'/);
+  assert.ok(seg, 'the pill states its classes');
+  const sr = seg[1].match(/rounded-\[([\d.]+)rem\]/);
+  assert.ok(sr, 'the pill states an explicit radius');
+
+  const inner = radius(tr[1]) - (Number(pad[1]) * 4);
+  assert.equal(Number(sr[1]) * 16, inner,
+    `the track is ${radius(tr[1])}px with ${Number(pad[1]) * 4}px of padding, `
+    + `so the pill must be ${inner}px — read the radius off tailwind.config.js, `
+    + 'never off what Tailwind ships by default');
 });

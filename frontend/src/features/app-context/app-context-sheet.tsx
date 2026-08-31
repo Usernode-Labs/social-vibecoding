@@ -108,8 +108,22 @@ const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
   + 'transition-colors';
 
-const SECTION = 'px-5 pt-4 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide '
+/**
+ * A section label's TYPE, without the row it sits in.
+ *
+ * Split out because the Apps label cannot use SECTION: it shares its row with
+ * Create New and the close button, so the row owns the padding and the label
+ * owns only how it reads. Two constants rather than one string repeated, so
+ * "the same as In this app" stays true by construction — it was a `text-lg
+ * font-semibold` title until #1443's menu grew three more labels underneath
+ * it, and a heading above a list of labels reads as a different kind of thing
+ * from the labels themselves.
+ */
+const SECTION_TYPE = 'text-[0.7rem] font-semibold uppercase tracking-wide '
   + 'text-zinc-400 dark:text-zinc-500';
+
+/** A section label that owns its whole row. */
+const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
 
 /**
  * One destination. An ANCHOR, always — whether clean-path or fragment-routed,
@@ -281,8 +295,12 @@ export function AppsSwitcherSheet(): ReactNode {
         {...(open ? { 'data-open': '' } : {})}
         className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl app-context-transition"
       >
-        <div className="flex items-center gap-3 px-5 pt-5 pb-3 shrink-0">
-          <span className="flex-1 min-w-0 block text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+        {/* The Apps label's row. `pt-4 pb-1` is SECTION's own padding, applied
+            here because the row holds two controls beside the label — so the
+            spacing is the same as every other label in this menu even though
+            the class string cannot be. */}
+        <div className="flex items-center gap-3 px-5 pt-4 pb-1 shrink-0">
+          <span className={'flex-1 min-w-0 block ' + SECTION_TYPE}>
             Apps
           </span>
           <button
@@ -331,16 +349,26 @@ export function AppsSwitcherSheet(): ReactNode {
         {/* The apps, as a horizontal strip — vertically BOUNDED, which is what
             keeps every row below reachable at any app count. See the header.
 
-            `pt-1` is not spacing, it is CLEARANCE. `overflow-x-auto` makes this
+            THE PADDING IS NOT SYMMETRIC AND IT LOOKS IT. Equal air above and
+            below the tiles takes 16px above and none below, for two reasons
+            that pull the same way:
+
+            4px OF THE TOP PADDING PAINTS NOTHING. `overflow-x-auto` makes this
             a scroll container on BOTH axes (overflow-y computes to `auto`), so
             anything drawn above the content box is clipped — and the current
             app's tile carries `ring-2 ring-offset-2`, which paints 4px outside
-            its border box. With no top padding the selected tile's ring came
-            back with its top arc sliced flat. 4px = pt-1 is exactly that
-            outset; the row below is unmoved because pb-5 absorbs it. */}
+            its border box. That 4px is clearance, not gap: with `pt-1`, which
+            is exactly the outset and was all this used to carry, the ring was
+            saved from being sliced flat and the tiles sat hard against the
+            label. `pt-4` is that same clearance plus 12px that the eye reads.
+
+            AND THE LABEL BELOW BRINGS ITS OWN. Whatever follows the strip
+            opens with SECTION's `pt-4`, so 16px under the tiles is already
+            there — `pb-5` on top of it made the gap below more than three
+            times the gap above. It reads as balanced at `pb-0`. */}
         <div
           id="apps-switcher-list"
-          className="shrink-0 flex gap-4 px-5 pt-1 pb-5 overflow-x-auto overscroll-contain"
+          className="shrink-0 flex gap-4 px-5 pt-4 pb-0 overflow-x-auto overscroll-contain"
         >
           {rows.map((app) => (
             <AppTile key={app.slug} app={app} current={app.slug === slug} />
@@ -372,6 +400,16 @@ export function AppsSwitcherSheet(): ReactNode {
           id="switcher-nav"
           className="flex-1 min-h-0 overflow-y-auto border-t border-zinc-100 dark:border-zinc-800 pb-2 platform-safe-sheet"
         >
+          {/* The one group that had no label. Apps, the app's own views and
+              the viewer's own rows each announced themselves; Home, Discover
+              and Messages opened straight off the hairline, which read as
+              rows left over above "You" rather than as a group of their own.
+
+              "Platform" because that is what they are — the places that are
+              not inside an app — and it is the counterpart the menu already
+              implies with "In this app" two blocks above. Not "You": that
+              label means the viewer's own things, and Home is nobody's. */}
+          <div className={SECTION}>Platform</div>
           <MenuRow
             id="switcher-row-home"
             href="/"

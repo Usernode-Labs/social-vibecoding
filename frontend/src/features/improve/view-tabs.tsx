@@ -66,8 +66,27 @@ import { Improve } from './improve-controller.js';
 const TRACK =
   'shrink-0 flex items-stretch gap-0.5 rounded-xl p-0.5 bg-zinc-100 dark:bg-white/5';
 
+/*
+ * THE PILL'S RADIUS IS THE TRACK'S INNER RADIUS, AND IT IS NOT THE STOCK ONE.
+ *
+ * A rounded box nested in a rounded box has one correct radius: the outer
+ * radius less the gap between them. TRACK is `rounded-xl p-0.5`, so the well
+ * the pill sits in has a 2px inset and the pill's corner has to be
+ * `xl - 2px`. Anything tighter leaves a crescent of track showing at each end
+ * of the strip, which is what "the white box overlaps the grey weirdly" was.
+ *
+ * This read `0.625rem` — 10px, which is exactly `xl - 2` in stock Tailwind,
+ * where `xl` is 12px. It is not 12px here: tailwind.config.js overrides the
+ * whole radius scale (`lg: 0.75rem, xl: 1rem, 2xl: 1.25rem, 3xl: 1.5rem`), so
+ * the track is 16px and the pill needed 14px all along. The arithmetic was
+ * right and the constant it was done against was not, which is the failure
+ * mode a hard-coded arbitrary value has and a token does not.
+ *
+ * If TRACK's radius or padding ever moves, this moves with it —
+ * tests/app-switcher-dropdown.test.js recomputes it from both.
+ */
 const SEG =
-  'flex flex-1 basis-0 min-w-0 items-center justify-center h-8 px-1 rounded-[0.625rem] '
+  'flex flex-1 basis-0 min-w-0 items-center justify-center h-8 px-1 rounded-[0.875rem] '
   + 'text-sm font-medium transition-colors un-touch-target';
 
 /*

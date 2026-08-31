@@ -7195,15 +7195,25 @@ a.drawer-ver--fork:hover {
        "Header height invariant" block above derives (py-3 around a 28px
        content row, no hairline since the reskin); --platform-safe-top is the
        status-bar inset the bar extends into via .un-safe-top-extend, and 0 in
-       a desktop browser. 0.5rem of daylight under it, so the panel reads as
-       floating rather than as a second bar. If the header's height ever
-       moves, this moves with it — tests/app-switcher-dropdown.test.js pins
-       the pair. */
-    top: calc(var(--platform-header-h) + var(--platform-safe-top) + 0.5rem);
+       a desktop browser. If the header's height ever moves, this moves with
+       it — tests/app-switcher-dropdown.test.js pins the pair.
+
+       FLUSH, NOT FLOATING. There were 0.5rem of daylight here, on the
+       argument that a gap makes the panel read as its own surface. It reads
+       better hanging off the bar: the chip that opens it is IN that bar, so
+       the two are one piece of chrome and a seam between them was a seam in
+       the middle of one object. The panel's own border and shadow do the
+       separating. */
+    top: calc(var(--platform-header-h) + var(--platform-safe-top));
     left: 50%;
     right: auto;
     bottom: auto;
-    width: 20rem;
+    /* The width #notifications-sheet and #messages-sheet already use. It was
+       20rem, which is narrow for a strip of 56px tiles — four fitted before
+       the scroll began, where this fits five — and picking the number the
+       shell's other two panels carry means the answer to "how wide is a
+       panel here" stays one number rather than becoming two. */
+    width: 24rem;
     max-width: calc(100vw - 1.5rem);
     max-height: calc(100dvh - var(--platform-header-h) - var(--platform-safe-top) - 1.5rem);
     border-width: 1px;
