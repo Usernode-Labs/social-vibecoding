@@ -7208,12 +7208,21 @@ a.drawer-ver--fork:hover {
     left: 50%;
     right: auto;
     bottom: auto;
-    /* The width #notifications-sheet and #messages-sheet already use. It was
-       20rem, which is narrow for a strip of 56px tiles — four fitted before
-       the scroll began, where this fits five — and picking the number the
-       shell's other two panels carry means the answer to "how wide is a
-       panel here" stays one number rather than becoming two. */
-    width: 24rem;
+    /* THE WIDEST PANEL IN THE SHELL, ON PURPOSE. It was 20rem, then 24rem to
+       match #notifications-sheet and #messages-sheet — and that match is what
+       this gives up, so it is worth saying what was bought. The app strip is
+       the only part of this menu that uses width: four of nine tiles are
+       fully visible at 24rem and seven at 36rem. The rails it no longer
+       matches hold rows and nothing else, so width does nothing for them.
+       What it costs is on the destination rows below, which are an icon, a
+       word and a chevron pinned to the right edge: the run from the end of
+       "Home" to its chevron goes from 253px to 445px, on six rows. Measured,
+       chosen with those numbers in hand, and the reason a future edit should
+       not "restore consistency" without re-reading them.
+       max-width is load-bearing at this size in a way it was not at 20rem:
+       576px inside the 640px breakpoint leaves 32px a side, and the guard is
+       what keeps a narrow desktop window from a panel touching both edges. */
+    width: 36rem;
     max-width: calc(100vw - 1.5rem);
     max-height: calc(100dvh - var(--platform-header-h) - var(--platform-safe-top) - 1.5rem);
     border-width: 1px;
@@ -7276,18 +7285,20 @@ a.drawer-ver--fork:hover {
   opacity: 1;
   pointer-events: auto;
 }
-/* A DROPDOWN DIMS NOTHING. The backdrop still has to be there — it is what
-   catches the click that dismisses the menu — but a 40% scrim behind a panel
-   hanging off a header control says "modal", and this is the least modal
-   thing in the shell: one tap opens it, one tap anywhere leaves it. The kit
-   draws its own desktop menus with no backdrop at all for exactly this
-   reason (the .un-popover block in native.css). Below `sm` it is a bottom
-   sheet over the page and keeps the dim. */
-@media (min-width: 640px) {
-  #apps-switcher-overlay {
-    background-color: transparent;
-  }
-}
+/* THE BACKDROP DIMS, AT EVERY WIDTH, AND IT IS THE IMPROVE PANEL'S EXACTLY.
+   It went transparent on desktop for one round, on the argument that a 40%
+   scrim behind a panel hanging off a header control says "modal" and this is
+   the least modal thing in the shell — the kit draws its own desktop menus
+   with no backdrop at all (the .un-popover block in native.css). Overruled on
+   review, and the reason is worth more than the argument was: the two panels
+   in this bar are opened the same way and dismissed the same way, so one
+   dimming the page and the other not made them read as two different KINDS of
+   surface, which is a distinction the shell does not otherwise draw. Sameness
+   beat the popover precedent.
+   There is nothing to write here to achieve it — #improve-overlay and
+   #apps-switcher-overlay ship the same `fixed inset-0 z-40 bg-black/40` and
+   share the opacity rules above, so deleting the override is the whole change
+   and the two cannot drift apart by construction. */
 /* Below `sm` it is a bottom sheet, and these are its own geometry rather than
    overrides of the block above: the two media queries are disjoint now that
    the dropdown states its own, so nothing here is undoing anything. */

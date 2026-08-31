@@ -207,16 +207,26 @@ test('the panel follows the chip when the title is not centred', () => {
 
 // ── The backdrop ───────────────────────────────────────────────────────
 
-test('the desktop backdrop stops dimming but keeps catching the click', () => {
-  const overlay = blockWith('min-width: 640px', '#apps-switcher-overlay {');
-  assert.match(overlay, /background-color:\s*transparent/,
-    'a menu hanging off a header control is not a modal');
+test('the backdrop dims exactly as the Improve panel\'s does', () => {
+  // These two panels open from the same bar and dismiss the same way, so one
+  // dimming the page and the other not made them read as two different KINDS
+  // of surface. The desktop transparency override that did that is gone.
+  const hit = mediaBlocks('min-width: 640px').filter((b) => b.includes('#apps-switcher-overlay'));
+  assert.deepEqual(hit, [],
+    'no desktop-only rule may touch the backdrop — it dims at every width');
 
-  // It is still there and still armed: dismissing by clicking away is what
-  // the element exists for, at every width.
+  // Sameness by construction rather than by two copies of a value: both
+  // overlays ship one class string and share one pair of opacity rules.
+  const IMPROVE = read('frontend/src/features/improve/improve-panel.tsx');
+  const cls = /id="improve-overlay"[\s\S]{0,200}?className="([^"]*)"/.exec(IMPROVE);
+  assert.ok(cls, 'the Improve panel states its backdrop classes');
+  assert.ok(SHEET.includes(`className="${cls[1]}"`),
+    `the switcher's backdrop must carry the same run: ${cls[1]}`);
+
+  // And it is still the thing that catches the dismissing click.
   assert.match(rule('#apps-switcher-overlay[data-open]'), /pointer-events:\s*auto/);
   assert.match(SHEET, /id="apps-switcher-overlay"[\s\S]{0,400}?onClick=\{close\}/,
-    'and clicking it still closes the sheet');
+    'clicking it closes the sheet');
 });
 
 // ── The other two presentations are untouched ──────────────────────────
@@ -245,20 +255,34 @@ test('the sheet markup is one panel — the presentation is entirely CSS', () =>
 
 // ── The panel's contents ───────────────────────────────────────────────
 
-test('the panel is the width the shell\'s other two panels already are', () => {
+test('the panel is deliberately wider than the rails, and still fits', () => {
   const block = switcherDesktopBlock();
   const closed = block.slice(block.indexOf('#apps-switcher-sheet {'),
     block.indexOf('#apps-switcher-sheet[data-open]'));
   const mine = closed.match(/\n\s*width:\s*([\d.]+)rem/);
   assert.ok(mine, 'the dropdown states a width');
 
-  // #notifications-sheet and #messages-sheet share one rule and one number.
+  // It matched #notifications-sheet / #messages-sheet for one round. It does
+  // not any more, and that is a decision rather than drift: the app strip is
+  // the only part of this menu that uses width, and those two hold rows only.
+  // Pinned as an INEQUALITY so the departure is deliberate in both directions
+  // — restoring parity should fail here and be argued for, not slip in.
   const sheets = rule('#notifications-sheet,\n#messages-sheet');
   const theirs = sheets.match(/\n\s*width:\s*([\d.]+)rem/);
   assert.ok(theirs, 'the notifications/messages rail states a width');
-  assert.equal(mine[1], theirs[1],
-    'one number for "how wide is a panel here", not two — if the rail moves, '
-    + 'this moves with it or the reason for the number is gone');
+  assert.ok(Number(mine[1]) > Number(theirs[1]),
+    'the menu is the wider of the two on purpose — see the comment for the '
+    + 'measurements that bought it and what they cost');
+
+  // At this size the guard is load-bearing: the panel has to stay inside the
+  // narrowest viewport the desktop rule applies to, with air on both sides.
+  const guard = closed.match(/max-width:\s*calc\(100vw\s*-\s*([\d.]+)rem\)/);
+  assert.ok(guard, 'and it caps itself against the viewport');
+  const SM = 640;
+  const px = Number(mine[1]) * 16;
+  assert.ok(px <= SM - (Number(guard[1]) * 16),
+    `${px}px must fit inside ${SM}px less the ${Number(guard[1]) * 16}px guard, `
+    + 'or the panel touches both edges the moment the desktop rule engages');
 });
 
 test('the panel meets the header rather than floating under it', () => {
