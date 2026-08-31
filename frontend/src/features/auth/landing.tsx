@@ -49,6 +49,7 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
+import { TileSkeleton } from '../apps/tile-skeleton';
 import { waitlistOptions } from './waitlist-shared';
 
 const LANDING_TITLE = 'Usernode Social Vibecoding';
@@ -814,9 +815,22 @@ export function LandingScreen() {
             {/* Same launcher-grid shape as the authed homescreen (#app-list). */}
             <div id="landing-apps" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
               {apps.kind === 'loading' ? (
-                <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  Loading&hellip;
-                </p>
+                /* The directory's LOADING state, at the tile geometry rather
+                   than as the word "Loading…".
+                   This is the shipped document's own first paint — the landing
+                   screen is what a signed-out visitor lands on, served from
+                   cache — so eleven characters of grey text in the top-left of
+                   an empty grid was the platform's first impression, and it is
+                   the same "content loads without you realising it's loading"
+                   the board's skeleton was built for. Six tiles: three rows at
+                   the 2-column phone width, two at `md`, and never so many
+                   that a directory of four watches placeholders evaporate. */
+                <TileSkeleton
+                  n={6}
+                  label="Loading apps"
+                  className={'col-span-full grid grid-cols-2 md:grid-cols-3 '
+                    + 'lg:grid-cols-4 xl:grid-cols-5 gap-2'}
+                />
               ) : apps.kind === 'error' ? (
                 <p className="text-sm text-zinc-500 dark:text-zinc-400 col-span-full">Could not load apps right now.</p>
               ) : apps.apps.length === 0 ? (

@@ -241,33 +241,49 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
   // re-renders the frame on every tab click, which turned each switch into
   // "Loading…" forever: _repaintDevBody() painted, then React's commit
   // clobbered the paint.
+  //
+  // There are TWO of those constants now — one per view mode — and the object
+  // handed to React is still one of them, picked ONCE per mount by
+  // `useBodyInitial`. The reference rule is unchanged and is the reason the
+  // choice is frozen in a ref rather than followed live: re-reading the mode
+  // would hand React a different object on a view toggle, and React would
+  // assign `innerHTML` straight over the board the module had just painted.
   assert.match(
     FRAME,
-    /id="dev-body"[\s\S]{0,200}dangerouslySetInnerHTML=\{DEV_BODY_INITIAL\}/,
-    '#dev-body is filled from a module-constant {__html} object, not an inline literal'
+    /id="dev-body"[\s\S]{0,200}dangerouslySetInnerHTML=\{bodyInitial\}/,
+    '#dev-body is filled from a per-mount constant {__html} object'
   );
-  assert.match(
-    FRAME,
-    /^const DEV_BODY_INITIAL = \{ __html: DEV_BODY_INITIAL_HTML \};$/m,
-    'the wrapper object is module-level, so its identity is stable across renders'
-  );
-  // Constant means constant: the string is a module-level const with no
-  // interpolation, so React writes it once and never looks inside again.
-  const decl = /^const DEV_BODY_INITIAL_HTML =\n([\s\S]*?);$/m.exec(FRAME);
-  assert.ok(decl, 'DEV_BODY_INITIAL_HTML is a module-level constant');
-  assert.ok(!decl[1].includes('${'), 'no interpolation — the string never changes');
-  // Byte-for-byte what the template put there.
-  assert.ok(decl[1].includes('<div id="dev-feed">'), 'still ships #dev-feed');
-  // The placeholder is a SKELETON now, not the word "Loading…". Eleven
-  // characters of grey in the corner of an empty screen is not a state a
-  // reader notices, and the blank beside it reads as an empty board rather
-  // than a pending one — which is the report this answers. The rows are built
-  // by card/skeleton.tsx so the string here and the components the board
-  // paints a moment later cannot drift apart.
-  assert.ok(decl[1].includes('skeletonListHtml('),
-    'the placeholder rows come from the shared builder');
-  assert.ok(!decl[1].includes('Loading…'),
-    'the bare "Loading…" text is not what stands in for the feed any more');
+  assert.match(FRAME, /const DEV_BODY_FEED_INITIAL = \{ __html:/,
+    'the feed form is a module constant');
+  assert.match(FRAME, /const DEV_BODY_KANBAN_INITIAL = \{ __html: skeletonKanbanHtml\(\) \}/,
+    'and so is the kanban form — evaluated once, never per render');
+  assert.match(FRAME, /const chosen = useRef<\{ __html: string \} \| null>\(null\);/,
+    'the CHOICE is frozen at mount: a ref, not the live store value');
+
+  // Constant means constant: both are module-level consts with no
+  // interpolation, so React writes each once and never looks inside again.
+  const feed = /^const DEV_BODY_FEED_INITIAL = (.*);$/m.exec(FRAME);
+  const kanban = /^const DEV_BODY_KANBAN_INITIAL = (.*);$/m.exec(FRAME);
+  assert.ok(feed && kanban, 'both forms are module-level constants');
+  for (const [name, decl] of [['feed', feed[1]], ['kanban', kanban[1]]]) {
+    assert.ok(!decl.includes('${'), `${name}: no interpolation — the string never changes`);
+  }
+  // Byte-for-byte what the template put there, on the feed side.
+  assert.ok(feed[1].includes('<div id="dev-feed">'), 'the feed form still ships #dev-feed');
+  // The placeholder is a SKELETON, not the word "Loading…". Eleven characters
+  // of grey in the corner of an empty screen is not a state a reader notices,
+  // and the blank beside it reads as an empty board rather than a pending one.
+  // Both forms are built by card/skeleton.tsx so the strings here and the
+  // components the board paints a moment later cannot drift apart.
+  assert.ok(feed[1].includes('skeletonListHtml('),
+    'the feed rows come from the shared builder');
+  assert.ok(kanban[1].includes('skeletonKanbanHtml('),
+    'and the columns from the same file');
+  // On the DECLARATIONS, not the file: two comments here name the string
+  // while explaining what replaced it, and prose about a placeholder is not
+  // one.
+  assert.ok(!feed[1].includes('Loading…') && !kanban[1].includes('Loading…'),
+    'the bare "Loading…" text is not what stands in for either view');
   const SKELETON = read('frontend/src/features/dev-board/card/skeleton.tsx');
   assert.match(SKELETON, /role="status"/,
     'the skeleton carries one live-region label for the decorative rows');
@@ -277,7 +293,7 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
   // into the Feed's own stream (AppView._feedItems), so the second node the
   // template used to ship — the "Completed" block parked below the feed — is
   // gone. The kanban Done column renders its own.
-  assert.ok(!decl[1].includes('gc-merged'),
+  assert.ok(!feed[1].includes('gc-merged') && !kanban[1].includes('gc-merged'),
     'the retired Completed block must not come back as a second host');
   // The module still owns it.
   assert.match(APP_VIEW, /_repaintDevBody\(\)/, '_repaintDevBody is still the swap owner');
@@ -359,8 +375,19 @@ test('the view toggle is real React state, and the className writer is gone', ()
   // never asks which view is on screen.
   assert.match(FRAME, /const mode = useDevViewMode\(\);[\s\S]{0,220}mode !== 'kanban'/,
     'the frame reads the mode only to decide whether the discussion card draws');
-  assert.equal((FRAME.match(/useDevViewMode\(\)/g) || []).length, 1,
-    'and reads it in exactly that one place');
+  // TWO readers now, and the second is not a control either: `useBodyInitial`
+  // asks which view is coming so `#dev-body` can open with a skeleton of the
+  // right SHAPE — four columns on a board route, a list on the feed. It used
+  // to open with the list on both, so a cold board load painted one column and
+  // then became four. What must stay true is that the frame renders no view
+  // SWITCH, which the retired ids and the absent data-view-segment below
+  // assert; not that it never asks which view is on screen.
+  // Counted on comment-stripped source: `useBodyInitial`'s own note names the
+  // call while explaining why it does NOT follow it live, and prose about a
+  // hook is not a call to it.
+  const frameCode = FRAME.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.equal((frameCode.match(/useDevViewMode\(\)/g) || []).length, 2,
+    'the discussion card and the body skeleton, and nothing else');
   assert.ok(!PANEL.includes('id="improve-board-layouts"'),
     'the Kanban|Feed sub-strip under the Board row is retired');
   assert.ok(!FRAME.includes('id="dev-view-toggle"'),
