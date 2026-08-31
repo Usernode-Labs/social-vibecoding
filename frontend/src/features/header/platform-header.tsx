@@ -477,28 +477,20 @@ export function PlatformHeader() {
               control and a dropdown tab announcing the same three
               destinations would be two owners of one decision.
           */}
-          <ImproveButton />
-          {/*
-              THE BELL IS LAST, i.e. hard against the header's right padding.
-
-              It sat to Improve's LEFT until now, which put the one control
-              that is identical on every route in the middle of the group and
-              the one that changes with the route on the outside. That is
-              backwards for the corner every phone UI reserves for the
-              standing alert: a badge you are meant to notice out of the
-              corner of your eye should not move when the screen does, and
-              Improve's word-width DOES move it — the button clears when a
-              screen carries no target, and the bell slid sideways with it.
-
-              Pinned to the edge, the badge is the one thing in this bar with
-              a fixed address. Improve keeps its place beside the chip, which
-              is the thing it acts on.
-          */}
           {/*
               MESSAGES and NOTIFICATIONS, as the board's app-opened bar draws
               them: a glyph each, carrying its own unread badge. Only the
               bell survives here — see the #1443 note in RETIRED_IDS for
               where the chat bubble went.
+
+              IT SITS TO IMPROVE'S LEFT, which is the arrangement the board
+              draws and the one this bar has always had. It was moved to the
+              far right for a round on the argument that a standing alert
+              wants a fixed address and Improve's width moves it; the
+              arrangement was preferred as it was, so the alert reads inward
+              from the edge and the ACTION owns the corner your thumb reaches
+              for. Both orders are defensible — this is the one we ship, and
+              a declared check pins it so it does not drift back by accident.
 
               THE UI OVERHAUL folded both into the hamburger and the
               Streamlined Concept takes that back, for a reason the drawer
@@ -541,6 +533,7 @@ export function PlatformHeader() {
             >
             </span>
           </a>
+          <ImproveButton />
           {/*
               The "Create new app" entry point used to live here in the header
               as a "+" pill; it's been moved into the home-screen feed itself,

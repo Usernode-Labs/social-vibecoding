@@ -290,21 +290,22 @@ test('the accessor the click path reads is published on the controller', () => {
     'one source of truth for the href and the click');
 });
 
-// ── 7. The bell is the bar's right edge ────────────────────────────────
+// ── 7. The order of the right group ────────────────────────────────────
 
-test('the bell renders LAST in the right group, after Improve', () => {
-  // It sat to Improve's left, which put the one control that is identical on
-  // every route in the middle of the group and the one that CHANGES with the
-  // route on the outside. Improve's width moves with its label — the button
-  // clears entirely on a screen with no target — so the bell slid sideways
-  // with it. A standing alert badge should have a fixed address.
+test('the bell renders BEFORE Improve, to its left', () => {
+  // The bell was moved to the far right for a round, on the argument that a
+  // standing alert wants a fixed address and Improve's width (which clears
+  // entirely on a screen with no target) moves it. The arrangement was
+  // preferred as it had always been: the alert reads inward from the edge and
+  // the ACTION owns the corner. Both are defensible, which is exactly why the
+  // one we ship is pinned — an order nobody asserts is an order that drifts.
   const group = HEADER.slice(HEADER.indexOf('<div ref={rightGroupRef}'));
   const body = group.slice(0, group.indexOf('</div>\n      </header>'));
   const bell = body.indexOf('id="notifications-btn"');
   const improve = body.indexOf('<ImproveButton />');
   assert.ok(bell > 0 && improve > 0, 'both controls are in the right group');
-  assert.ok(improve < bell,
-    'Improve first, then the bell — DOM order is visual order in this flex row');
+  assert.ok(bell < improve,
+    'the bell first, then Improve — DOM order is visual order in this flex row');
 
   // The bell must stay INSIDE this group. rightGroupRef is what
   // use-header-layout.ts measures as the title's right-hand clearance, so a

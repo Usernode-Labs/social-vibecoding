@@ -2726,9 +2726,9 @@
       "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/board\"]"
     },
     {
-      "name": "The bar's two edges: nothing to leave by on Home, and the bell hard right",
+      "name": "The bar's two edges: nothing to leave by on Home, and the bell left of Improve",
       "path": "/?demo=1",
-      "expectSelector": "#platform-header:has(#improve-btn ~ #notifications-btn) a#back-btn.hidden"
+      "expectSelector": "#platform-header:has(#notifications-btn ~ #improve-btn) a#back-btn.hidden"
     },
     {
       "name": "The session bar carries the lifecycle pill's seat beside the back arrow (Streamlined Concept)",
