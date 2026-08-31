@@ -179,14 +179,25 @@ test('the header back/home control is a real anchor', () => {
   assert.match(tag, /\binline-flex\b/, 'the anchor keeps the icon block-level');
   assert.match(tag, /\bitems-center\b/, 'and centred in the 28px row');
   assert.match(tag, /\bhidden\b/, 'it still ships hidden — app.js toggles that class');
-  // ONE icon lives inside it now. #back-icon-home retired in #1443 — Home is
-  // a row of the chip's menu, so a house glyph an inch to the chip's left was
-  // the second control answering one question. With one child the anchor's own
-  // `hidden` is the whole of the visibility state.
+  // TWO icons live inside it, exactly one shown. #back-icon-home retired in
+  // #1443 and is back: that retirement left the app itself, Profile,
+  // Settings, Admin and Messages with nothing in this bar at all, and the
+  // rule is "every page has a back or a home button, except Home" now.
+  //
+  // Both ship in the COLD DOCUMENT rather than one being rendered at a time,
+  // because an id that comes and goes with the route is an id that dapp.json
+  // selectors and the shell inventory cannot rely on.
   const inner = html.slice(html.indexOf('<a id="back-btn"'), html.indexOf('</a>', html.indexOf('<a id="back-btn"')));
-  assert.ok(!inner.includes('id="back-icon-home"'),
-    'the house icon is retired — the chevron or nothing');
+  assert.match(inner, /id="back-icon-home"/, 'the house');
   assert.match(inner, /id="back-icon-arrow"/, 'the chevron');
+  // …and the document ships showing exactly one of them. Which one does not
+  // matter here (the router publishes the real state on the first screen
+  // swap); that BOTH or NEITHER is visible is the broken state.
+  const shownHome = !/id="back-icon-home"[^>]*class="[^"]*\bhidden\b/.test(inner);
+  const shownArrow = !/id="back-icon-arrow"[^>]*class="[^"]*\bhidden\b/.test(inner);
+  assert.notEqual(shownHome, shownArrow,
+    'one glyph is hidden and the other is not — two glyphs in one 28px disc '
+    + 'is what a wrong `hidden` looks like');
   // 28x28 now, not 20x28: the slot holds the app glyph as well as the arrow
   // (features/header/header-app-icon.tsx), and they never draw together. What
   // matters to the header-layout hook is that the width is FIXED, and it is.
@@ -234,20 +245,29 @@ test('every screen entry refreshes the href through the one choke point', () => 
 });
 
 test('the three up-one-level screens pass their own target', () => {
-  // Browse's detail view is a level INSIDE that screen and always draws the
-  // arrow. Settings and Admin draw one at level 2 only — the mobile drill-in,
-  // which is likewise a level inside the screen and would strand a phone
-  // viewer without it. Their ROOTS draw none: those two and Profile are the
-  // account screens, reached from the Home account row and left through it,
-  // and an arrow repeating that row was chrome (see App.navigateToProfile).
-  assert.match(browseJs, /App\.setBackIcon\(\s*'arrow',[\s\S]{0,160}?'#apps'/,
-    'browse detail goes up to the list…');
-  assert.match(browseJs, /Browse\._detailOrigin !== 'home'/,
-    '…except when it was opened from a home card, where handleBack goes home');
+  // Browse's detail view is a level INSIDE that screen and draws the arrow.
+  // Settings and Admin draw one at level 2 only — the mobile drill-in, which
+  // is likewise a level inside the screen and would strand a phone viewer
+  // without it.
+  //
+  // THEIR ROOTS DRAW THE HOUSE, which is what changed: 'home' used to be a
+  // synonym for hidden, so these three said "no level above me" and rendered
+  // nothing. They still have no level above them — the arrow does not come
+  // back — but "nothing above this" is exactly the screen that should offer
+  // home, and that is the glyph 'home' draws now.
+  //
+  // Browse's ROOT moved with them for the same reason, and it is the clearer
+  // case: it passed 'arrow' with no href, which RESOLVED to home. A chevron
+  // promising a level above where there is none, going home anyway — the
+  // right destination drawn as the wrong glyph.
+  assert.match(browseJs, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/,
+    'browse names the one state with a list above it…');
+  assert.match(browseJs, /setBackIcon\(upToList \? 'arrow' : 'home', upToList \? '#apps' : undefined\)/,
+    '…and that state alone gets the chevron; the rest get the house');
   assert.match(adminConsoleJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
-    'the admin section chevron pops to the console menu; its root has none');
+    'the admin section chevron pops to the console menu; its root gets home');
   assert.match(settingsJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#settings' : undefined\)/,
-    'the settings section chevron pops to the settings menu; its root has none');
+    'the settings section chevron pops to the settings menu; its root gets home');
 });
 
 // ── The converted back controls ────────────────────────────────────────

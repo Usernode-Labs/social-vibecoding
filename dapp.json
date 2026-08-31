@@ -1529,9 +1529,9 @@
       "expectSelector": "#improve-views [data-context-row=\"board\"][aria-current=\"page\"]"
     },
     {
-      "name": "The chip's menu carries the app's three views too",
+      "name": "The chip's menu is the app picker only — no view strip in it",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#apps-switcher-sheet #switcher-views [data-context-row=\"board\"]"
+      "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #switcher-row-home"
     },
     {
       "name": "The kanban carries the app's general discussion as a card above its columns",
@@ -2724,6 +2724,11 @@
       "name": "Back from a dev session is the header's own arrow, a real link at the Board (#1036, Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/board\"]"
+    },
+    {
+      "name": "The bar's two edges: nothing to leave by on Home, and the bell hard right",
+      "path": "/?demo=1",
+      "expectSelector": "#platform-header:has(#improve-btn ~ #notifications-btn) a#back-btn.hidden"
     },
     {
       "name": "The session bar carries the lifecycle pill's seat beside the back arrow (Streamlined Concept)",

@@ -95,7 +95,6 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { improveStore } from '../improve/improve-store.js';
-import { AppViewTabs, SWITCHER_VIEW_IDS } from '../improve/view-tabs';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse, sortByRecency } from './app-recency';
@@ -114,10 +113,10 @@ const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
  * Split out because the Apps label cannot use SECTION: it shares its row with
  * Create New and the close button, so the row owns the padding and the label
  * owns only how it reads. Two constants rather than one string repeated, so
- * "the same as In this app" stays true by construction — it was a `text-lg
- * font-semibold` title until #1443's menu grew three more labels underneath
- * it, and a heading above a list of labels reads as a different kind of thing
- * from the labels themselves.
+ * "the same as the other section labels" stays true by construction — it was
+ * a `text-lg font-semibold` title until #1443's menu grew more labels
+ * underneath it, and a heading above a list of labels reads as a different
+ * kind of thing from the labels themselves.
  */
 const SECTION_TYPE = 'text-[0.7rem] font-semibold uppercase tracking-wide '
   + 'text-zinc-400 dark:text-zinc-500';
@@ -379,36 +378,37 @@ export function AppsSwitcherSheet(): ReactNode {
             </span>
           ) : null}
         </div>
-        {/* The open app's own three views. Gated on there BEING an app: a
-            target-less sheet would otherwise draw three segments that go
-            nowhere. See ../improve/view-tabs.tsx.
+        {/* THE APP'S THREE VIEWS ARE NOT HERE ANY MORE.
 
-            ONE shrink-0 block, not two loose flex items, so the caption and
-            the strip keep their spacing above the nav's opening hairline. */}
-        {slug ? (
-          <div className="shrink-0 pb-2">
-            <div className={SECTION}>In this app</div>
-            <AppViewTabs
-              ids={SWITCHER_VIEW_IDS}
-              onNavigate={() => AppContext.dismissForNav()}
-              className="mx-5"
-            />
-          </div>
-        ) : null}
+            An "In this app" caption over an App | Board | Activity strip sat
+            between the app list and the platform rows. It answered a
+            different question from the one this menu is for: this menu picks
+            WHICH APP, and the strip picked which part of the app you are
+            already in — so opening it to switch apps meant reading past a
+            control about the app you were leaving.
+
+            The strip is not gone, it is single-homed. The Improve panel
+            renders it (`#improve-views`, ../improve/view-tabs.tsx), which is
+            where the rest of "what can I do to this app" lives, and the
+            header's own back arrow is the fast path out of a Board or an
+            Activity feed now — see ../header/platform-header.tsx. Two copies
+            of one control was the thing view-tabs.tsx's own header called
+            "two owners of one decision"; this leaves one. */}
         {/* THE ONLY VERTICAL SCROLLER. Everything above is `shrink-0`. */}
         <nav
           id="switcher-nav"
           className="flex-1 min-h-0 overflow-y-auto border-t border-zinc-100 dark:border-zinc-800 pb-2 platform-safe-sheet"
         >
-          {/* The one group that had no label. Apps, the app's own views and
-              the viewer's own rows each announced themselves; Home, Discover
-              and Messages opened straight off the hairline, which read as
-              rows left over above "You" rather than as a group of their own.
+          {/* The one group that had no label. Apps and the viewer's own rows
+              each announced themselves; Home, Discover and Messages opened
+              straight off the hairline, which read as rows left over above
+              "You" rather than as a group of their own.
 
               "Platform" because that is what they are — the places that are
-              not inside an app — and it is the counterpart the menu already
-              implies with "In this app" two blocks above. Not "You": that
-              label means the viewer's own things, and Home is nobody's. */}
+              not inside an app — which is the distinction this whole menu is
+              organised on now that the app's own views have left it. Not
+              "You": that label means the viewer's own things, and Home is
+              nobody's. */}
           <div className={SECTION}>Platform</div>
           <MenuRow
             id="switcher-row-home"

@@ -82,6 +82,7 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {boolean} readOnly
  * @property {boolean} showTerminal
  * @property {boolean} canShare
+ * @property {string|null} sessionOrigin
  * @property {'app'|'dev'|'other'} tab
  * @property {ImproveSession[]} sessions
  * @property {ImproveSession[]} otherSessions
@@ -215,6 +216,22 @@ const INITIAL = {
    * the header's eye needs to know whether it is looking at a SESSION.
    */
   subTab: null,
+  /**
+   * WHERE THE OPEN DEV SESSION WAS ENTERED FROM, as an href — or null.
+   *
+   * The header's back arrow on a session route points here. It used to point
+   * unconditionally at `#app/<slug>/board`, which was right for the common
+   * case and wrong for every other one: a session opened from the app itself,
+   * or from a proposal card, or from another app's board, sent you to a Board
+   * you had not been looking at.
+   *
+   * Captured by `Improve.setTab` at the moment the route BECOMES a session,
+   * from the route it is leaving — see the note there for why that is the one
+   * place with both halves in hand. Null on a cold deep link (there is no
+   * screen behind it), and the header falls back to the Board, which is where
+   * the session's own card lives.
+   */
+  sessionOrigin: null,
   /**
    * The open session's staging PREVIEW, or null when there is none.
    *

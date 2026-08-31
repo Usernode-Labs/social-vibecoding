@@ -7279,9 +7279,26 @@ const DevChat = {
     // The title marker describes the session we just left — drop it
     // so the forum doesn't claim to be thinking / done.
     DevChat.setTitleStatus(null);
-    // Forum revision: backing out of a session returns to the dev
-    // forum page (there is no session-list screen anymore).
-    if (typeof App !== 'undefined' && App.switchTab) {
+    // BACK GOES WHERE YOU CAME FROM, not to a fixed screen.
+    //
+    // This unconditionally ran `App.switchTab('dev')` — the Board — which was
+    // right for a session opened from a card there and wrong for one opened
+    // from the app itself or from another app's board. The header's arrow
+    // already points at the captured origin
+    // (features/improve/improve-store.js, `sessionOrigin`), and this is the
+    // click path for that same arrow, so the two have to agree: a control
+    // whose href says one thing and whose handler does another is the bug
+    // that made the href "decorative" on this bar once before.
+    //
+    // `window.Improve` rather than an import: a dozen test files run this
+    // source as a SCRIPT in a `vm` context, where a top-level import is a
+    // syntax error — see the note at the top of this file.
+    const origin = window.Improve?.sessionOrigin?.();
+    if (origin && typeof location !== 'undefined') {
+      location.hash = origin;
+    } else if (typeof App !== 'undefined' && App.switchTab) {
+      // No origin: a cold deep link straight into the session. The Board is
+      // where its own card lives, which is the honest fallback.
       App.switchTab('dev');
     } else {
       DevChat.renderChatView();

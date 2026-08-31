@@ -52,12 +52,23 @@ if (typeof window !== 'undefined') {
   bridge.shellSnapshot = { clear: clearShellSnapshot };
   bridge.backButton = {
     /**
-     * @param mode 'arrow' shows the anchor, anything else hides it.
+     * @param mode 'arrow' (a level up), 'home' (the house) or 'none' (hidden).
      * @param href The resolved destination — setBackIcon defaults it to home.
+     *
+     * THREE modes, and the narrowing here has to know that. This read
+     * `mode === 'arrow' ? 'arrow' : 'home'`, which was right while 'home'
+     * meant hidden and is a bug the moment it means "draw a house": a
+     * setBackIcon('none') from Home arrived as 'home' and put a house on the
+     * one screen that must not have one. It cost a browser trace to find,
+     * because every layer above was correct — app.js computed 'none',
+     * published 'none', and this line quietly turned it into 'home'.
+     *
+     * Anything unrecognised still collapses to 'home' rather than 'none': an
+     * unknown mode should leave a way OFF the screen, not remove one.
      */
     set(mode: string, href: string | null) {
       backButtonStore.set({
-        mode: mode === 'arrow' ? 'arrow' : 'home',
+        mode: mode === 'arrow' ? 'arrow' : (mode === 'none' ? 'none' : 'home'),
         href: href || null,
       });
     },
