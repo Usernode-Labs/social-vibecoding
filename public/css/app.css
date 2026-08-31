@@ -1072,10 +1072,42 @@ html.un-kb .platform-safe-sheet {
    version row 88px off the bottom (34 + 20 + 34) instead of 54. Measured,
    not estimated — the duplicate is this one.
 
-   `!important` because .platform-safe-scroll uses it; the descendant
-   selector is what wins the tie. */
-.platform-sheet-adopted #improve-footer,
-.platform-panel-adopted #improve-footer {
+   IT WAS NEVER ONLY #improve-footer, AND THAT IS WHY THIS IS BY CLASS.
+   Every adoptable sheet has an element carrying one of these classes, and
+   measured on a 34px indicator all three double-counted it:
+
+     #improve-footer      .platform-safe-scroll   34 + 20 + 34 =  88px
+     #switcher-nav        .platform-safe-sheet    54 + 20 + 34 = 108px
+     the notifications
+       scroller           .platform-safe-scroll   34 + 20 + 34 =  88px
+
+   The app menu's is worst because .platform-safe-sheet adds 1.25rem on top
+   of the inset. And the notifications scroller HAS NO ID — an id-based rule
+   could not have reached it however many ids were listed, which is the
+   argument for writing the rule the comment above already states: inside an
+   adopted surface the inset is the kit's job, wherever it appears.
+
+   THE GAP IS ALSO HEIGHT. A bottom sheet is as tall as its content, so
+   every one of those pixels pushed the sheet further up the screen. The
+   report was "extra white space at the bottom, which means it doesn't have
+   to come up as much" — exactly the mechanism: the sheet rose to make room
+   for padding nobody could see. Zeroing it drops the app menu from 82% of a
+   390x844 phone to 75%.
+
+   What is left under the last row is the kit's own 20px plus the indicator,
+   which is what .platform-safe-sheet's comment asks for anyway ("real
+   padding under it whether or not the device reports an inset"). Ours is
+   the copy that goes, and only on this path: with no kit, nothing else
+   reserves that strip and both classes keep doing their job.
+
+   `!important` because both classes use it; the descendant selector is what
+   wins the tie. Descendants only — no adopted root carries either class
+   itself today, and one that did would want its own answer rather than this
+   one applied silently. */
+.platform-sheet-adopted .platform-safe-scroll,
+.platform-sheet-adopted .platform-safe-sheet,
+.platform-panel-adopted .platform-safe-scroll,
+.platform-panel-adopted .platform-safe-sheet {
   padding-bottom: 0 !important;
 }
 

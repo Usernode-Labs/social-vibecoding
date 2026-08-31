@@ -371,12 +371,19 @@ test('the fullscreen staging overlay clears the notch, docked does not', () => {
 
 // ── 6. The review deep link ──────────────────────────────────────────
 
+/** The body of the synthetic-inset applier, for the three tests below. */
+function safeAreaShotFn() {
+  const idx = APP_JS.indexOf('_applySafeAreaShot() {');
+  assert.ok(idx > 0, 'app.js must define _applySafeAreaShot');
+  return APP_JS.slice(idx, idx + 700);
+}
+
 test('?shot=safe-bottom paints synthetic insets on the shell', () => {
   assert.match(APP_JS, /_applySafeAreaShot\(\)\s*\{/,
     'app.js must handle the ?shot=safe-bottom state link');
-  const idx = APP_JS.indexOf('_applySafeAreaShot() {');
-  const fn = APP_JS.slice(idx, idx + 700);
-  assert.match(fn, /shot !== 'safe-bottom'/, 'it must gate on the exact shot name');
+  const fn = safeAreaShotFn();
+  assert.match(fn, /qs\.get\('shot'\) === 'safe-bottom'/,
+    'the original spelling keeps working — capture routes already use it');
   // The KIT properties, not our own tokens: ours are defined as
   // var(--un-safe-inset-X, env(...)), so setting the kit property drives
   // the platform utilities AND every .un-safe-* class from one place.
@@ -385,6 +392,23 @@ test('?shot=safe-bottom paints synthetic insets on the shell', () => {
   assert.match(fn, /setProperty\('--un-safe-inset-bottom'/);
   assert.ok(!/--platform-safe-bottom/.test(fn),
     'write the kit property, not our token — the token reads through it');
+});
+
+test('and it COMPOSES, because the surfaces worth reviewing need two', () => {
+  // `shot` holds one value — every reader in the shell is an equality test
+  // against `.get('shot')` — so `?shot=safe-bottom` excludes the shot that
+  // OPENS the thing you want to look at. The app menu, Improve and
+  // notifications only reserve the home-indicator strip once open, so with
+  // one param a capture can have the device or the surface and never both.
+  const fn = safeAreaShotFn();
+  assert.match(fn, /qs\.get\('safe-bottom'\) === '1'/,
+    'a second param, so ?shot=app-context&safe-bottom=1 is expressible. '
+    + 'Splitting a comma list would mean teaching every one of those '
+    + 'equality tests about lists, which is a far larger change');
+
+  // Strict '1', not truthiness: `?safe-bottom=0` must not paint a notch.
+  assert.ok(!/get\('safe-bottom'\)\s*\)/.test(fn),
+    "gate on the value, not on the param's presence");
 });
 
 test('the shot link runs before any screen paints, for both shells', () => {
