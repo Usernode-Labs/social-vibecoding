@@ -39,6 +39,26 @@ import { adoptKitSurface } from './kit-surface';
 const REGISTRY = new Set();
 
 /**
+ * Dismiss every sheet built here, sparing `except`.
+ *
+ * Exported because the Improve panel needs it and is not built here: it has
+ * its own controller (features/improve/improve-controller.js), so the
+ * courtesy the registry pays automatically between sheets has to be asked
+ * for by name in one direction.
+ *
+ * That asymmetry used to cost nothing, because the backdrop covered the
+ * header: with a panel open there was no way to press another header control
+ * in the first place, so nothing could stack. The backdrop starts below the
+ * bar now, which makes the bar live and turns "Improve does not close the
+ * others" from unreachable into one click away.
+ */
+export function dismissRegisteredSheets(except) {
+  for (const other of REGISTRY) {
+    if (other !== except) other.dismissForNav();
+  }
+}
+
+/**
  * @param {object} opts
  * @param {string} opts.elementId      The sheet root's id, as the kit adopts it.
  * @param {object} opts.store          A plain-store with an `open` boolean.
@@ -129,9 +149,7 @@ export function createSheetController({
     _closeSiblings() {
       // The Improve panel predates the registry and is not built here.
       window.Improve?.dismissForNav?.();
-      for (const other of REGISTRY) {
-        if (other !== controller) other.dismissForNav();
-      }
+      dismissRegisteredSheets(controller);
     },
 
     _afterDismiss() {

@@ -156,6 +156,12 @@ function loadImprove(kitSurface) {
       // no-op here rather than a localStorage stub: what this file tests is
       // when `platform-sheet-adopted` rises and falls.
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
+      // open() dismisses the sheets built on lib/sheet-controller.js, so that
+      // pressing Improve from a live header does not leave two panels up. No
+      // sheet is registered in this sandbox and none of these tests opens
+      // one, so the real function would sweep an empty set — the stub says
+      // that out loud rather than pulling the registry in.
+      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
       // The change rows carry the app's own artwork, resolved from the two
       // `app_icon_*` columns the list endpoints send. Also irrelevant here,
       // and stubbed with the real function's SHAPE rather than a bare
