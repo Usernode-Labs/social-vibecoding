@@ -67,6 +67,7 @@ function loadNativeChrome({
     logout: 0,
     admission: [],
     events: [],
+    eventDetails: [],
   };
   const windowListeners = {};
   const documentListeners = {};
@@ -113,6 +114,7 @@ function loadNativeChrome({
     addEventListener(type, listener) { add(windowListeners, type, listener); },
     dispatchEvent(event) {
       calls.events.push(event.type);
+      calls.eventDetails.push({ type: event.type, detail: event.detail });
       for (const listener of windowListeners[event.type] || []) listener(event);
     },
     setTimeout(fn, delay) {
@@ -275,6 +277,44 @@ test('a terminal native redemption drops only attempt metadata for a later fresh
     const recovered = await loaded.NativeChrome.recoverSessionAdmission();
     assert.equal(recovered.identity.participantId, '41');
     assert.notEqual(loaded.calls.establish[1].attemptId, expiredAttemptId);
+  });
+
+test('pool exhaustion offers legacy recovery and preserves the exact attempt for replay',
+  async () => {
+    let exhaustedAttemptId = null;
+    const loaded = loadNativeChrome({
+      establishImpl: (payload, count) => {
+        if (count === 1) {
+          exhaustedAttemptId = payload.attemptId;
+          const error = new Error('No seeded wallet is available.');
+          error.usernodeCode = 'native_session_wallet_pool_exhausted';
+          return Promise.reject(error);
+        }
+        return establishResult(payload, '41');
+      },
+    });
+    loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+    loaded.sandbox.App.user = { id: 41 };
+
+    assert.equal(await loaded.NativeChrome.establishCurrentSession(), null);
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+    assert.equal(loaded.NativeChrome.lastSessionFailure().code,
+      'native_session_wallet_pool_exhausted');
+    assert.equal(JSON.parse(loaded.storage.get(
+      loaded.NativeChrome._ATTEMPT_STORAGE_KEY)).attemptId, exhaustedAttemptId,
+    'pool exhaustion is recoverable, so the exact attempt must survive');
+
+    const offers = loaded.calls.eventDetails.filter(
+      (event) => event.type === 'usernode:wallet-recovery-required');
+    assert.deepEqual(JSON.parse(JSON.stringify(offers)), [{
+      type: 'usernode:wallet-recovery-required',
+      detail: { userId: '41' },
+    }]);
+
+    const recovered = await loaded.NativeChrome.recoverSessionAdmission();
+    assert.equal(recovered.identity.participantId, '41');
+    assert.equal(loaded.calls.establish[1].attemptId, exhaustedAttemptId);
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
   });
 
 test('logout is terminal despite a throwing UI sink and late publication',

@@ -31,6 +31,22 @@
       code === 'native_session_credential_expired';
   }
 
+  function offerWalletRecovery(userId, error) {
+    if (!error ||
+        error.usernodeCode !== 'native_session_wallet_pool_exhausted' ||
+        typeof window.dispatchEvent !== 'function' ||
+        typeof window.CustomEvent !== 'function') return;
+    try {
+      window.dispatchEvent(new CustomEvent(
+        'usernode:wallet-recovery-required',
+        { detail: { userId: String(userId) } }
+      ));
+    } catch (dispatchError) {
+      console.warn('[native-chrome] wallet recovery event failed:',
+        dispatchError);
+    }
+  }
+
   const NativeChrome = {
     _infoPromise: null,
 
@@ -388,6 +404,7 @@
               ? 'update-required' : 'native-establish',
             error
           );
+          offerWalletRecovery(userId, error);
         }
         return null;
       }).finally(() => {
