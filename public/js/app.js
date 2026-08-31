@@ -777,10 +777,29 @@ const App = {
   // insets in portrait — the frame the captures use (390x844).
   SAFE_AREA_SHOT_INSETS: { top: '47px', bottom: '34px' },
 
+  //
+  // IT IS ALSO ITS OWN PARAM, `?safe-bottom=1`, AND THAT IS THE USEFUL ONE.
+  // `shot` holds a single value — every reader is an equality test against
+  // `.get('shot')` — so `?shot=safe-bottom` cannot be combined with the shot
+  // that opens the surface you want to look at. That is fine for a screen a
+  // plain route reaches, and useless for the ones that need BOTH: the app
+  // menu, the Improve panel and notifications only reserve the home-indicator
+  // strip once they are open, so `?shot=app-context` alone renders them with
+  // zero insets — i.e. shows nothing of the thing being reviewed.
+  //
+  // A second param rather than a comma list because these are two different
+  // kinds of thing: `shot` SELECTS a state (one at a time, by construction),
+  // this PAINTS the device the state is drawn on (composes with any of them).
+  // `?un-native-webview=1` above is the same shape for the same reason, and
+  // teaching twenty equality tests to split a list would be a much larger
+  // change than the one this exists to make reviewable.
   _applySafeAreaShot() {
-    let shot = null;
-    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'safe-bottom') return;
+    let on = false;
+    try {
+      const qs = new URLSearchParams(location.search);
+      on = qs.get('shot') === 'safe-bottom' || qs.get('safe-bottom') === '1';
+    } catch (err) { /* ignore */ }
+    if (!on) return;
     try {
       const root = document.documentElement;
       root.style.setProperty('--un-safe-inset-top', App.SAFE_AREA_SHOT_INSETS.top);
