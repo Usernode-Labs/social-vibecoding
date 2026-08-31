@@ -62,6 +62,17 @@
      drift into a gap or into covered content. */
   --install-strip-h: 3rem;
 
+  /* The authored top bar's height, WITHOUT the status-bar inset it extends
+     into (that is --platform-safe-top, added by whoever needs the total).
+     Not a new fact: it is the 52px the "Header height invariant" block near
+     #header-title.is-centered derives from the markup — py-3 around a 28px
+     content row, and no hairline since the reskin — restated once so a
+     surface that hangs off the bottom of the bar can say so rather than
+     hard-code a number that quietly stops matching. #apps-switcher-sheet's
+     desktop dropdown is the reader; tests/app-switcher-dropdown.test.js pins
+     this against the header's own classes so the two cannot drift. */
+  --platform-header-h: 3.25rem;
+
   /* ── Semantic state tokens (dev board) ───────────────────
      ONE meaning per hue, so the same lifecycle stage never reads two
      ways depending on which helper drew it. Every dev-card status
@@ -982,12 +993,21 @@ html.un-kb .platform-safe-sheet {
    `max-width: 639px` block: it is a short list of destinations, and a menu
    that climbs to the status bar reads as a screen you have navigated to
    rather than something laid over the page.
-   Only the sheet. The desktop presentation is a right-edge rail that reaches
-   floor to ceiling and has nothing to take from the page, so it keeps its
-   full height — the cap is about how much of the page a sheet coming UP from
-   the bottom covers. */
+   Only the sheet. The desktop presentation is a dropdown under the header
+   chip, capped against the fold by its own rule.
+
+   THE TWO VISIBILITY PROPERTIES ARE RESET HERE ON PURPOSE. That dropdown
+   hides with `opacity: 0; visibility: hidden` rather than by sliding off an
+   edge, and the generic `.platform-sheet-adopted` block above — which flattens
+   position, transform, transition, border and shadow — covers neither. A
+   touch device WIDER than 639px (a tablet) matches the desktop rule and the
+   kit adoption at once, so without this the kit's sheet could present an
+   invisible panel. It is not merely theoretical insurance for the open state
+   either: the kit measures the content at present time. */
 .platform-sheet-adopted#apps-switcher-sheet {
   max-height: min(80dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem)) !important;
+  opacity: 1 !important;
+  visibility: visible !important;
 }
 
 /* THE BELL IS A FIXED TWO THIRDS, and that is the whole point of it.
@@ -1205,10 +1225,46 @@ html, body {
    anonymous landing scroller (the inner wrapper, not the fixed overlay
    — see index.html #auth-landing-scroll) carries its own kit
    pull-to-refresh (auth-screens.js _wireLanding) and needs the same
-   containment. */
+   containment.
+
+   ── AND THE FEED SCROLLS ONE WAY ───────────────────────────────────
+   `overflow-x: hidden` is not belt and braces, it is the whole of a fix.
+   Both of these are `overflow-y-auto` and NOTHING else, and CSS turns that
+   into a scroller on BOTH axes: `overflow` computes `visible` to `auto` on
+   one axis as soon as the other is not `visible`. So the home feed has
+   always been a horizontal scroll container by accident, waiting for
+   something inside it to be one pixel too wide — and on a phone something
+   is. `.un-touch-target` (native.css) grows any control to a 44px hit box
+   with an absolutely-positioned ::after CENTRED on it, so the ⋮ that opens
+   an area's menu — `w-4`, 16px, and the last thing in the row — reaches
+   14px past itself on each side. The section's gutter is `px-3`. 12 < 14,
+   so the box lands 2px beyond the viewport, and a 390px home screen
+   measured 392px of scrollWidth: enough to drag the whole feed sideways and
+   rubber-band it back, on every phone, for the sake of a tap area nobody
+   can see.
+   Clipping is right rather than merely convenient. That overhang is a HIT
+   AREA, not content: it is meant to hang off its control, and this is the
+   only thing that decides whether hanging off becomes geometry. The 2px it
+   costs comes off the outside of a target that still extends 12px past a
+   16px button on that side. Nothing else in the feed is expected to escape
+   it — the ⋮ menu itself is a kit popover, fixed and parented to <body>, as
+   is the drag-to-rearrange ghost (.un-reorder-ghost) — so a lift can still
+   be carried to the screen edge and past it.
+   `hidden` AND NOT `clip`, AND THAT IS NOT A BROWSER-SUPPORT HEDGE.
+   `clip` reads like the better answer — it makes the box no scroll container
+   on that axis at all, so there is not even an overflow region left — and it
+   is simply not available here: CSS Overflow 3 says a `clip` sitting beside
+   an `auto` on the other axis COMPUTES TO `hidden`, the same way `visible`
+   beside it computes to `auto`. Written either way this box ends up
+   `overflow-x: hidden`, which was measured, not assumed. So the axis keeps a
+   2px overflow region that `element.scrollLeft = n` could still move; no
+   GESTURE reaches it, which is the whole of the reported bug, and nothing in
+   the shell scrolls a feed sideways on purpose.
+   tests/home-vertical-scroll-only.test.js pins the pair. */
 #home-screen,
 #auth-landing-scroll {
   overscroll-behavior-y: contain;
+  overflow-x: hidden;
 }
 
 /* ── App cards ─────────────────────────────────────────── */
@@ -7110,33 +7166,113 @@ a.drawer-ver--fork:hover {
   }
 }
 /* ── App-context sheet (Streamlined Concept) ──────────────────────
-   The surface behind the header's "app name ⌄" tab. Same dual idiom as
-   #improve-panel above — right-edge slide-over at `sm`+ for a mouse, a
-   bottom sheet below it, a real kit sheet on touch — and the same
-   always-mounted / data-open mechanics; read that block's comment for
-   the reasoning, which transfers wholesale. */
-/* A FULL-HEIGHT RAIL, and it stays one. This is the desktop presentation: the
-   panel slides in from the right edge and reaches floor to ceiling, which is
-   what a side rail is and what every other slide-over here does.
-   It was briefly content-height, as part of fixing the blank space under the
-   BOTTOM SHEET. That was the wrong scope: on a phone the sheet rises over the
-   page and its height is a statement about how much of the page it is taking,
-   while on desktop the rail occupies a column that is otherwise empty and has
-   nothing to take. The cap belongs to the presentation that comes up from the
-   bottom — see the media query and the kit-adopted rule for where it lives
-   now. */
-#apps-switcher-sheet {
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 20rem;
-  max-width: 85vw;
-  border-left-width: 1px;
-  transform: translateX(100%);
+   The surface behind the header's "app name ⌄" tab. THREE presentations,
+   one always-mounted element with the same `data-open` mechanics: a real kit
+   sheet on touch, a bottom sheet below `sm`, and — at `sm`+ for a mouse — a
+   DROPDOWN under the chip that opened it. Only the last of those differs from
+   #improve-panel above; read that block's comment for the mechanics, which
+   transfer wholesale. */
+/* IT DROPS FROM THE CHIP; IT IS NOT A RAIL.
+   It was a right-edge slide-over reaching floor to ceiling, the same idiom as
+   #improve-panel and the notifications/messages sheets. Those three earn it:
+   an inbox and a workbench are surfaces you DWELL in, they hold as many rows
+   as there are, and a full-height column is the right shape for a list with
+   no natural end.
+   This one is a MENU — a strip of apps and six destinations — opened from a
+   control that sits in the middle of the top bar. Answering from the opposite
+   edge of the screen made the eye travel the width of a 27" display away from
+   the thing it had just clicked, and the panel arrived nowhere near it; on a
+   wide window the two were a foot apart. A menu belongs under its trigger, so
+   this one hangs off the chip and the connection is visible without having to
+   be remembered.
+   The height cap comes with the shape. A rail occupies a column that is
+   otherwise empty and has nothing to take; a panel hanging in the middle of
+   the page is over content, so it stops at the fold and lets its own scroller
+   (`#switcher-nav`, the one `flex-1 min-h-0` child) take the rest. */
+@media (min-width: 640px) {
+  #apps-switcher-sheet {
+    /* THE HEADER'S HEIGHT, RESTATED ONCE. --platform-header-h is the 52px the
+       "Header height invariant" block above derives (py-3 around a 28px
+       content row, no hairline since the reskin); --platform-safe-top is the
+       status-bar inset the bar extends into via .un-safe-top-extend, and 0 in
+       a desktop browser. If the header's height ever moves, this moves with
+       it — tests/app-switcher-dropdown.test.js pins the pair.
+
+       FLUSH, NOT FLOATING. There were 0.5rem of daylight here, on the
+       argument that a gap makes the panel read as its own surface. It reads
+       better hanging off the bar: the chip that opens it is IN that bar, so
+       the two are one piece of chrome and a seam between them was a seam in
+       the middle of one object. The panel's own border and shadow do the
+       separating. */
+    top: calc(var(--platform-header-h) + var(--platform-safe-top));
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    /* THE WIDEST PANEL IN THE SHELL, ON PURPOSE. It was 20rem, then 24rem to
+       match #notifications-sheet and #messages-sheet — and that match is what
+       this gives up, so it is worth saying what was bought. The app strip is
+       the only part of this menu that uses width: four of nine tiles are
+       fully visible at 24rem and seven at 36rem. The rails it no longer
+       matches hold rows and nothing else, so width does nothing for them.
+       What it costs is on the destination rows below, which are an icon, a
+       word and a chevron pinned to the right edge: the run from the end of
+       "Home" to its chevron goes from 253px to 445px, on six rows. Measured,
+       chosen with those numbers in hand, and the reason a future edit should
+       not "restore consistency" without re-reading them.
+       max-width is load-bearing at this size in a way it was not at 20rem:
+       576px inside the 640px breakpoint leaves 32px a side, and the guard is
+       what keeps a narrow desktop window from a panel touching both edges. */
+    width: 36rem;
+    max-width: calc(100vw - 1.5rem);
+    max-height: calc(100dvh - var(--platform-header-h) - var(--platform-safe-top) - 1.5rem);
+    border-width: 1px;
+    /* The kit's own desktop menu radius (--un-radius-card, native.css), which
+       is what this surface now is. */
+    border-radius: 0.75rem;
+    /* CLOSED IS OPACITY, NOT AN EDGE. A rail hides by sliding off the side it
+       is attached to; a dropdown's edge is the header, and the panel paints
+       ABOVE that (the bar is `z-10`, this is `z-50`), so sliding under it
+       would hide nothing. `visibility` is what takes the invisible panel out
+       of hit-testing — opacity alone leaves a 320px click-eater over the page
+       — and it is transitioned at 0s so it lands after the fade on the way
+       out and before it on the way in. */
+    opacity: 0;
+    visibility: hidden;
+    transform: translate(-50%, -0.5rem);
+    transition: transform 180ms ease-out, opacity 140ms ease-out,
+      visibility 0s linear 180ms;
+  }
+  #apps-switcher-sheet[data-open] {
+    opacity: 1;
+    visibility: visible;
+    transform: translate(-50%, 0);
+    transition: transform 180ms ease-out, opacity 140ms ease-out,
+      visibility 0s linear 0s;
+  }
+  /* THE CHIP IS NOT ALWAYS IN THE MIDDLE, so neither is the panel.
+     #header-title is viewport-centred only while it fits without touching
+     either side group — features/header/use-header-layout.ts measures that
+     and toggles `.is-centered`, and a long app name in a narrow window fails
+     it, leaving the chip left-aligned in flex flow beside the back button.
+     Following the class keeps the menu under its trigger in BOTH modes,
+     rather than under it in one and adrift in the other. 1rem is the header's
+     own `px-4`, so the panel opens on the bar's content edge — where the chip
+     itself starts, give or take the lead group on the screens that show a
+     back arrow. */
+  body:has(#header-title:not(.is-centered)) #apps-switcher-sheet {
+    left: 1rem;
+    transform: translate(0, -0.5rem);
+  }
+  body:has(#header-title:not(.is-centered)) #apps-switcher-sheet[data-open] {
+    transform: translate(0, 0);
+  }
 }
-#apps-switcher-sheet[data-open] {
-  transform: translateX(0);
-}
+/* The BOTTOM SHEET's motion, and only its: the dropdown states a transition of
+   its own (transform, opacity and the stepped visibility together), and an id
+   selector outranks this class whatever the order. Kept on the element rather
+   than folded into the `max-width: 639px` block because the kit-adopted path
+   reads it too — `.platform-sheet-adopted` sets `transition: none`, which has
+   to have something to turn off. */
 .app-context-transition {
   transition: transform 200ms ease-out;
 }
@@ -7149,14 +7285,29 @@ a.drawer-ver--fork:hover {
   opacity: 1;
   pointer-events: auto;
 }
+/* THE BACKDROP DIMS, AT EVERY WIDTH, AND IT IS THE IMPROVE PANEL'S EXACTLY.
+   It went transparent on desktop for one round, on the argument that a 40%
+   scrim behind a panel hanging off a header control says "modal" and this is
+   the least modal thing in the shell — the kit draws its own desktop menus
+   with no backdrop at all (the .un-popover block in native.css). Overruled on
+   review, and the reason is worth more than the argument was: the two panels
+   in this bar are opened the same way and dismissed the same way, so one
+   dimming the page and the other not made them read as two different KINDS of
+   surface, which is a distinction the shell does not otherwise draw. Sameness
+   beat the popover precedent.
+   There is nothing to write here to achieve it — #improve-overlay and
+   #apps-switcher-overlay ship the same `fixed inset-0 z-40 bg-black/40` and
+   share the opacity rules above, so deleting the override is the whole change
+   and the two cannot drift apart by construction. */
+/* Below `sm` it is a bottom sheet, and these are its own geometry rather than
+   overrides of the block above: the two media queries are disjoint now that
+   the dropdown states its own, so nothing here is undoing anything. */
 @media (max-width: 639px) {
   #apps-switcher-sheet {
     top: auto;
     left: 0;
     right: 0;
     bottom: 0;
-    width: auto;
-    max-width: none;
     /* GROWS WITH ITS CONTENT, up to a cap. A short sheet is short; a long one
        climbs to this cap and then its own scroller takes over (see
        .nav-sheet-scroll below). `dvh`, not `vh`: a mobile browser's collapsing
@@ -7167,7 +7318,6 @@ a.drawer-ver--fork:hover {
        `min()` keeps that safe-area subtraction as a ceiling while holding the
        sheet to 80% of the viewport, so the page behind it stays visible. */
     max-height: min(80dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem));
-    border-left-width: 0;
     border-top-width: 1px;
     border-top-left-radius: 1rem;
     border-top-right-radius: 1rem;
@@ -7179,16 +7329,18 @@ a.drawer-ver--fork:hover {
 }
 
 /* ── Notifications and Messages sheets ────────────────────────────────
-   The bell and the speech bubble present the same way the title tab's
-   app-context sheet does — right-edge slide-over at `sm`+ for a mouse, a
-   bottom sheet below it, a real kit sheet on touch — because they stopped
-   being screens. A screen reachable from every route has to answer "back to
-   where?", and both of these answered "home", which was wrong every time
-   they were opened from somewhere else.
+   The bell and the speech bubble present as #improve-panel does — right-edge
+   slide-over at `sm`+ for a mouse, a bottom sheet below it, a real kit sheet
+   on touch — because they stopped being screens. A screen reachable from
+   every route has to answer "back to where?", and both of these answered
+   "home", which was wrong every time they were opened from somewhere else.
 
-   Taller than the app-context sheet on purpose: that one holds one row of
-   app tiles and a pair of buttons, these hold as many rows as there are, so
-   they take the same near-full-height cap the Improve panel does and let
+   THEY ARE RAILS AND THE APP MENU IS NOT, which is the one place these three
+   surfaces part company. Read the #apps-switcher-sheet block above for why:
+   an inbox is a surface you dwell in and holds as many rows as there are, so
+   a full-height column is the right shape for it; a menu of six destinations
+   opened from a control in the middle of the bar belongs under that control.
+   These take the same near-full-height cap the Improve panel does and let
    their own scroller take over. */
 #notifications-sheet,
 #messages-sheet {
