@@ -2711,6 +2711,7 @@ const App = {
           // Without this the title can be stuck on a previous app's
           // name if document.title was set elsewhere (e.g. a stale
           // value persisted across a Flutter WebView session).
+          App._ensureHomeVisible();
           App.setHeaderTitle('Social Vibecoding');
           Home.load();
         }
@@ -2727,6 +2728,7 @@ const App = {
           || App._inAdmin || App._inSettings || App._inBrowse) {
           App.navigateHome();
         } else {
+          App._ensureHomeVisible();
           App.setHeaderTitle('Social Vibecoding');
           Home.load();
         }
@@ -3276,6 +3278,34 @@ const App = {
     // `false`, so a converted region can fall back to whatever its
     // markup shipped with rather than flashing hidden on first render.
     read(id) { return App.Visibility._store().visible[id]; },
+  },
+
+  /**
+   * The two "we are STAYING on home" branches of restoreFromHash say so
+   * rather than assuming it.
+   *
+   * Both deliberately skip navigateHome() — it would pushState and close the
+   * app view, neither of which is right when nothing is moving — and both
+   * therefore relied on `#home-screen` already being visible, which was true
+   * only because the prerendered document ships it that way.
+   *
+   * `_applyBootScreen` retired that guarantee: it hides home the moment the
+   * address names anywhere else, and a guess it is allowed to get wrong (the
+   * device's session record is display-only and can be stale) landed exactly
+   * here — signed out by the record, signed in by the cookie, so the boot
+   * screen revealed the landing page, enterAuthed's hideAll() took it away
+   * again, and this branch left a blank document behind. Fourteen home checks
+   * failed at once, which is what a shared assumption looks like when it
+   * stops holding.
+   *
+   * A no-op on every path that was already correct, and the repair on the one
+   * that was not. Cheaper than navigateHome() in exactly the way those
+   * branches wanted.
+   */
+  _ensureHomeVisible() {
+    if (App._revealedScreen === 'home-screen') return;
+    App._setScreenVisible('home-screen', true);
+    App._revealedScreen = 'home-screen';
   },
 
   // Show/hide one screen root through whichever half owns it.
