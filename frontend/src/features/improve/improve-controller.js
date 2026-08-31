@@ -44,6 +44,7 @@
 
 import { iconViewFor } from '../apps/app-card.js';
 import { adoptKitSurface } from '../../lib/kit-surface';
+import { dismissRegisteredSheets } from '../../lib/sheet-controller.js';
 import { improveStore } from './improve-store.js';
 import { saveShellSnapshot } from '../../lib/shell-snapshot';
 
@@ -410,8 +411,18 @@ const Improve = {
     if (!state.slug) return;
     const panel = document.getElementById('improve-panel');
     if (!panel) return;
-    // One surface at a time: opening this closes the hamburger, the same
-    // courtesy the cog and bell drawers paid each other.
+    // ONE SURFACE AT A TIME, and this end of it had gone missing. The line
+    // here used to close the hamburger and retired with it, leaving the
+    // comment and a gap: every sheet built on lib/sheet-controller.js closes
+    // this panel when it opens (its `_closeSiblings` names window.Improve
+    // directly), and this panel closed none of them back.
+    //
+    // Nothing could see that while the backdrop covered the header — with a
+    // panel already open there was no way to press the chip or the bell, so
+    // two surfaces could not both be up. The backdrop starts below the bar
+    // now, so the bar is live and the gap is one click wide: open the app
+    // menu, press Improve, and both panels are on screen.
+    dismissRegisteredSheets();
 
     if (!Improve._sheet) {
       // Publish `open` BEFORE presenting: the kit sheet measures the content's

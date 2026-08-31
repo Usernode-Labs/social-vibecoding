@@ -211,9 +211,20 @@ test('the backdrop dims exactly as the Improve panel\'s does', () => {
   // These two panels open from the same bar and dismiss the same way, so one
   // dimming the page and the other not made them read as two different KINDS
   // of surface. The desktop transparency override that did that is gone.
-  const hit = mediaBlocks('min-width: 640px').filter((b) => b.includes('#apps-switcher-overlay'));
-  assert.deepEqual(hit, [],
-    'no desktop-only rule may touch the backdrop — it dims at every width');
+  // Narrowed from "no desktop rule may touch the backdrop at all". That was
+  // the right guard when the only reason to reach for one was to turn the dim
+  // off, and too broad the moment a desktop rule moved where the dim STARTS
+  // (it now begins under the header, so the bar stays lit and clickable — see
+  // tests/header-stays-live.test.js). What must not come back is the
+  // transparency, so that is what this forbids: the geometry is free to move,
+  // the paint is not.
+  for (const block of mediaBlocks('min-width: 640px')) {
+    if (!block.includes('#apps-switcher-overlay')) continue;
+    assert.doesNotMatch(block, /#apps-switcher-overlay[^}]*background/,
+      'no desktop rule may repaint the backdrop — it dims at every width');
+    assert.doesNotMatch(block, /#apps-switcher-overlay[^}]*opacity/,
+      'nor fade it out: opacity is the open/closed switch, not a width choice');
+  }
 
   // Sameness by construction rather than by two copies of a value: both
   // overlays ship one class string and share one pair of opacity rules.

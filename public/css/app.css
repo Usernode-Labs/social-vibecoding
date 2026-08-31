@@ -7110,8 +7110,18 @@ a.drawer-ver--fork:hover {
    The overlay never uses `hidden`: opacity carries the fade and
    pointer-events is what stops a transparent backdrop from eating clicks
    while the panel is closed. */
+/* IT HANGS FROM THE HEADER, IT DOES NOT COVER IT. This was `top: 0`, so the
+   rail slid up over the bar and the chip, bell and Improve button went under
+   it — the control you had just pressed disappeared beneath the thing it
+   opened. The app chip's menu already starts at the bar's underside; this is
+   the same offset, so the two panels in that bar begin on the same line.
+   `--platform-header-h` is the bar's own height (see :root) and
+   --platform-safe-top the status-bar inset it extends into; `bottom: 0`
+   still takes it to the floor, so all that changes is where it starts.
+   Below `sm` the block further down resets `top` for the bottom sheet, and
+   `.platform-sheet-adopted` neutralises inset entirely on the kit path. */
 #improve-panel {
-  top: 0;
+  top: calc(var(--platform-header-h) + var(--platform-safe-top));
   right: 0;
   bottom: 0;
   width: 20rem;
@@ -7133,6 +7143,36 @@ a.drawer-ver--fork:hover {
 #improve-overlay[data-open] {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* ── THE HEADER STAYS LIT, AND STAYS LIVE ──────────────────────────────
+   Both backdrops ship `inset-0`, so they dimmed the whole viewport — the
+   bar included — and, being `z-40` over its `z-10`, they also SWALLOWED
+   every click on it. That second part is the one that cost something: with
+   a panel open, pressing the bell hit the backdrop instead, which dismissed
+   the panel and did nothing else, so moving between the two panels in this
+   bar took two clicks and the first one appeared to do nothing.
+
+   Starting the dim at the bar's underside fixes both at once, and it is
+   geometry rather than z-order: the backdrop no longer reaches the header,
+   so a click there lands on the control it looks like it landed on. The
+   panels themselves already begin on that line (the app menu since #1483,
+   the Improve rail in this change), so nothing above it is covered by
+   anything.
+
+   What the page loses is the dim over 52px of chrome that is not what the
+   panel is about. What it gains is that the bar reads as still-live — which
+   is now true, and is the point.
+
+   Desktop only. Below `sm` these are bottom sheets over the page, and on
+   touch the kit draws its own backdrop over everything; a phone header
+   half-lit above a sheet would be a different decision, and one nobody has
+   asked for. Both ids in one rule so they cannot drift apart. */
+@media (min-width: 640px) {
+  #improve-overlay,
+  #apps-switcher-overlay {
+    top: calc(var(--platform-header-h) + var(--platform-safe-top));
+  }
 }
 
 /* Below `sm` (640px — the same boundary HomeLayout.BREAKPOINT_PX and the
