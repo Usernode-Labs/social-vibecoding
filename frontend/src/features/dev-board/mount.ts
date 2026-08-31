@@ -190,14 +190,11 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(DevChatSubView));
   },
 
-  mountTopicSubView(host, options) {
-    mountLegacyPortal(
-      host,
-      createElement(DevTopicSubView, {
-        backHref: options.backHref,
-        onBackClick: (event) => options.onBackClick(event as unknown as MouseEvent),
-      }),
-    );
+  // Like the chat sub-view above, and now for the same reason: the topic
+  // page's own back bar retired in favour of the platform header's chevron,
+  // so this takes no back-bar props either.
+  mountTopicSubView(host) {
+    mountLegacyPortal(host, createElement(DevTopicSubView));
   },
 
   // The metadata picker a card's chip opens. Its host is created and removed

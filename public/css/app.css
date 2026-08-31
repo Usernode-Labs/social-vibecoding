@@ -3541,6 +3541,31 @@ a.dc-flow-action {
   display: none; /* WebKit: hide the scrollbar */
 }
 
+/* A horizontal strip that scrolls without DRAWING a scrollbar over itself.
+   Generalised from `.dc-quick-replies` directly above, which has done exactly
+   this since it shipped; the app menu's tile strip is the second caller and
+   the reason it is a named class rather than a third copy.
+
+   IT IS A DESKTOP PROBLEM, not a phone one. Overlay scrollbars (iOS, Android,
+   macOS with the default "when scrolling" setting) fade out and take no
+   layout — but a classic scrollbar is ~15px of permanent gutter INSIDE the
+   content box, drawn across the bottom of the very row it scrolls. On the app
+   menu that landed on the app NAMES under each tile.
+
+   The affordance is not lost with it: a strip that scrolls shows a partial
+   tile at its edge, which is what says "there is more" on every touch device
+   already, where the bar was never visible at rest either.
+
+   Scrolling itself is untouched — wheel, trackpad, drag and keyboard all
+   still work; only the painted bar goes. */
+.platform-no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* old Edge */
+}
+.platform-no-scrollbar::-webkit-scrollbar {
+  display: none; /* WebKit / Blink */
+}
+
 .dc-quick-pill {
   flex: 0 0 auto;
   min-height: 34px;

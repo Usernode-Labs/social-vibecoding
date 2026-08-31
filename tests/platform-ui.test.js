@@ -499,20 +499,24 @@ test('the Improve panel leads with its two actions, shaped like the button that 
   // They are shaped like #improve-btn, the control that opens this panel: a
   // rounded-full pill.
   //
-  // BOTH TAKE THE SAME FILL, and that is the change. "New change" wore the
-  // solid violet for a while, on the argument that starting one is what the
-  // panel is FOR, with Feedback tinted so the pair read
-  // primary-and-secondary. Neither is more special than the other —
-  // describing a problem and starting a change are two ways into the same
-  // work, and which one somebody wants is about what they have to say. The
-  // solid pill also sat directly under #improve-btn's own, so the panel
-  // opened with an accent competing with the button that opened it.
+  // BOTH TAKE THE SAME FILL, and it is the SOLID one. That they match is the
+  // settled part: describing a problem and starting a change are two ways
+  // into the same work, so neither is the primary.
+  //
+  // Which shared state they match in moved. They spent a round at
+  // `bg-violet-500/10` — a tenth opacity, chosen so a solid pill would not
+  // sit under #improve-btn's own and compete with the button that opened the
+  // panel. At that opacity they became the palest things in a panel of real
+  // surfaces: the two controls the panel EXISTS for read closer to disabled
+  // than to actionable. #improve-btn is in the header, outside the panel and
+  // behind its backdrop once it is up, so the competition is rarely seen —
+  // and these two are seen every time.
   assert.match(button, /rounded-full[\s\S]{0,80}bg-violet-600 hover:bg-violet-500/,
     'the header button is a filled violet pill');
   assert.match(panel, /rounded-full text-sm font-semibold/,
     'and the two actions are the same pill shape');
-  assert.match(panel, /const ACTION_FILL =\n\s+'bg-violet-500\/10 hover:bg-violet-500\/20/,
-    'both wearing the tinted fill');
+  assert.match(panel, /const ACTION_FILL =\n\s+'bg-violet-600 hover:bg-violet-500 text-white';/,
+    'both wearing the platform\'s ordinary primary fill');
   assert.ok(!/ACTION_PRIMARY/.test(panel),
     'there is no primary-and-secondary pair here any more');
   assert.ok(!/\bprimary\b/.test(panel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),

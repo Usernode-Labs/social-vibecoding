@@ -179,7 +179,9 @@ test('no portal outlives its surface', () => {
   // and with it the one Dev navigation that threw the board frame's state
   // away.
   assert.doesNotMatch(APP_VIEW, /subTab === 'topic' && ref && ref\.kind && ref\.id\) AppView\._teardownDevRoots/);
-  assert.match(APP_VIEW, /mountTopicSubView\(content, \{/, 'the topic sub-view is mounted');
+  // `mountTopicSubView(content)` — no options object any more: the back bar
+  // the two props fed retired in favour of the platform header's chevron.
+  assert.match(APP_VIEW, /mountTopicSubView\(content\);/, 'the topic sub-view is mounted');
 
   // What replaces it for every host a caller is NOT in a position to know
   // about: a sub-view swap re-renders `#app-content`'s portal, and React
