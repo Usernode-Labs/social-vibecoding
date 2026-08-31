@@ -1225,10 +1225,46 @@ html, body {
    anonymous landing scroller (the inner wrapper, not the fixed overlay
    — see index.html #auth-landing-scroll) carries its own kit
    pull-to-refresh (auth-screens.js _wireLanding) and needs the same
-   containment. */
+   containment.
+
+   ── AND THE FEED SCROLLS ONE WAY ───────────────────────────────────
+   `overflow-x: hidden` is not belt and braces, it is the whole of a fix.
+   Both of these are `overflow-y-auto` and NOTHING else, and CSS turns that
+   into a scroller on BOTH axes: `overflow` computes `visible` to `auto` on
+   one axis as soon as the other is not `visible`. So the home feed has
+   always been a horizontal scroll container by accident, waiting for
+   something inside it to be one pixel too wide — and on a phone something
+   is. `.un-touch-target` (native.css) grows any control to a 44px hit box
+   with an absolutely-positioned ::after CENTRED on it, so the ⋮ that opens
+   an area's menu — `w-4`, 16px, and the last thing in the row — reaches
+   14px past itself on each side. The section's gutter is `px-3`. 12 < 14,
+   so the box lands 2px beyond the viewport, and a 390px home screen
+   measured 392px of scrollWidth: enough to drag the whole feed sideways and
+   rubber-band it back, on every phone, for the sake of a tap area nobody
+   can see.
+   Clipping is right rather than merely convenient. That overhang is a HIT
+   AREA, not content: it is meant to hang off its control, and this is the
+   only thing that decides whether hanging off becomes geometry. The 2px it
+   costs comes off the outside of a target that still extends 12px past a
+   16px button on that side. Nothing else in the feed is expected to escape
+   it — the ⋮ menu itself is a kit popover, fixed and parented to <body>, as
+   is the drag-to-rearrange ghost (.un-reorder-ghost) — so a lift can still
+   be carried to the screen edge and past it.
+   `hidden` AND NOT `clip`, AND THAT IS NOT A BROWSER-SUPPORT HEDGE.
+   `clip` reads like the better answer — it makes the box no scroll container
+   on that axis at all, so there is not even an overflow region left — and it
+   is simply not available here: CSS Overflow 3 says a `clip` sitting beside
+   an `auto` on the other axis COMPUTES TO `hidden`, the same way `visible`
+   beside it computes to `auto`. Written either way this box ends up
+   `overflow-x: hidden`, which was measured, not assumed. So the axis keeps a
+   2px overflow region that `element.scrollLeft = n` could still move; no
+   GESTURE reaches it, which is the whole of the reported bug, and nothing in
+   the shell scrolls a feed sideways on purpose.
+   tests/home-vertical-scroll-only.test.js pins the pair. */
 #home-screen,
 #auth-landing-scroll {
   overscroll-behavior-y: contain;
+  overflow-x: hidden;
 }
 
 /* ── App cards ─────────────────────────────────────────── */
