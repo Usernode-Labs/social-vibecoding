@@ -15,13 +15,20 @@
  * restoreFromHash), the sub-strip retired, and what is left is a flat
  * three-way choice — which is a segmented control, not a list of rows.
  *
- * ── One strip, two surfaces ────────────────────────────────────────────
+ * ── One strip, ONE surface ─────────────────────────────────────────────
  *
- * Rendered by BOTH the Improve panel and the header chip's menu, which is why
- * it is its own module. The chip's menu answers WHICH APP and the Improve
- * panel answers what you can do to it; "which part of this app am I looking
- * at" is a fair question to be able to answer from either, and answering it
- * differently in the two places would be two owners of one decision.
+ * The Improve panel renders it, and nothing else does. The header chip's menu
+ * carried a second copy for a while, on the reasoning that "which part of
+ * this app am I looking at" is fair to answer from either surface. In use it
+ * was the wrong question in that place: the chip's menu is the APP PICKER, so
+ * a strip about the app you are already in sat between you and the list you
+ * opened it for. It also made the menu the only surface where two different
+ * kinds of navigation shared one panel.
+ *
+ * What replaced it is not another copy — it is the header's back arrow, which
+ * leads OUT of a Board or an Activity feed to the app itself (see
+ * ../header/platform-header.tsx). One way in, from the panel; one way out,
+ * from the bar.
  *
  * ── Anchors, not the Tabs primitive ────────────────────────────────────
  *
@@ -47,12 +54,11 @@
  * checks select on. The keys named rows and now name segments; the key says
  * WHICH DESTINATION, which has not changed.
  *
- * The ELEMENT ids cannot be shared, because two surfaces render this strip and
- * both are mounted at once — the Improve panel is always in the document, slid
- * off-screen. So each caller passes its own `idPrefix`: `improve-` keeps the
- * panel's `#improve-views` / `#app-context-row-*` exactly as they were, and the
- * chip's menu uses `switcher-`. `getElementById` and the declared checks go on
- * resolving to the panel's copy, which is the one they always meant.
+ * The ids stay a PARAMETER even with one caller left. They were parameterised
+ * because two surfaces rendered the strip at once and element ids cannot be
+ * shared; with the chip's copy retired, `IMPROVE_VIEW_IDS` is the only map and
+ * it holds `#improve-views` / `#app-context-row-*` exactly as they were, which
+ * is what every declared check and `getElementById` already names.
  */
 
 import type { ReactNode } from 'react';
@@ -115,14 +121,6 @@ export const IMPROVE_VIEW_IDS = {
   app: 'app-context-row-app',
   board: 'app-context-row-board',
   activity: 'app-context-row-activity',
-} as const;
-
-/** The chip menu's copy of the same strip. */
-export const SWITCHER_VIEW_IDS = {
-  root: 'switcher-views',
-  app: 'switcher-view-app',
-  board: 'switcher-view-board',
-  activity: 'switcher-view-activity',
 } as const;
 
 /**

@@ -325,10 +325,17 @@ test('the Apps label is the same label as In this app, not a heading', () => {
 });
 
 test('every group in the menu announces itself', () => {
-  // Apps, the app's own views, the platform's destinations, the viewer's own.
-  // Home/Discover/Messages were the one group without a label, which read as
-  // rows left over above "You".
-  for (const label of ['Apps', 'In this app', 'Platform', 'You']) {
+  // Apps, the platform's destinations, the viewer's own. Home/Discover/
+  // Messages were the one group without a label, which read as rows left
+  // over above "You".
+  //
+  // "In this app" is NOT in this list any more, and its absence is the point:
+  // the App | Board | Activity strip it captioned has left this menu. The
+  // menu picks WHICH APP, so a control about the app you are already inside
+  // sat between you and the list you opened it for. The Improve panel keeps
+  // the strip and the header's back arrow is the way out of a Board — see
+  // the assertion below, which is what stops it drifting back.
+  for (const label of ['Apps', 'Platform', 'You']) {
     assert.ok(SHEET.includes('>' + label + '<') || SHEET.includes('\n            ' + label + '\n'),
       `the ${label} group is labelled`);
   }
@@ -341,6 +348,19 @@ test('every group in the menu announces itself', () => {
   assert.doesNotMatch(nav.slice(label, home), /id="switcher-row-/,
     'and nothing sits between it and Home, so #switcher-row-home + '
     + '#switcher-row-discover still resolves (dapp.json)');
+});
+
+test('the menu is the APP PICKER — the view strip is not in it', () => {
+  // The regression this guards: the strip is one module rendered from a
+  // caller-supplied id map, so a second surface is one import away, and a
+  // duplicated navigation control is the kind of thing that reads as
+  // harmless in a diff. Two owners of one decision is what view-tabs.tsx's
+  // own header warned about; the chip's copy was it.
+  assert.ok(!/AppViewTabs/.test(SHEET),
+    'no view strip in the chip menu');
+  assert.ok(!/In this app/.test(SHEET.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')),
+    'and no caption left behind for it — comments explaining the removal '
+    + 'are fine, rendered text is not');
 });
 
 test('equal air above and below the app strip, which is not equal padding', () => {

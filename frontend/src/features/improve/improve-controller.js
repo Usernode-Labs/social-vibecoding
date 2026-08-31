@@ -291,17 +291,100 @@ const Improve = {
    * published is dropped rather than stored against nothing.
    */
   setTab(tab, subTab) {
-    if (!improveStore.get().slug) return;
+    const prev = improveStore.get();
+    if (!prev.slug) return;
     // #1406's 'other' value survives in the store's type but has no publisher
     // since the Streamlined Concept took platform screens back to a plain
     // title; anything unrecognised still collapses to 'app' exactly as before.
     const next = tab === 'dev' ? 'dev' : (tab === 'other' ? 'other' : 'app');
+    const nextSubTab = next === 'dev' ? (subTab || 'forum') : null;
     improveStore.set({
       tab: next,
       // Which dev sub-view: the header's eye is a PREVIEW control on a
       // session and a back-to-the-app control everywhere else.
-      subTab: next === 'dev' ? (subTab || 'forum') : null,
+      subTab: nextSubTab,
+      sessionOrigin: Improve._sessionOriginFor(prev, next, nextSubTab),
     });
+  },
+
+  /**
+   * Where a session's back arrow should point, given the route being left.
+   *
+   * THIS IS THE ONE PLACE WITH BOTH HALVES IN HAND. `setTab` runs before the
+   * store has been updated, so `prev` is the route being left and the
+   * arguments are the route being entered — and the answer is only ever
+   * computed on the transition INTO a session, never re-derived afterwards.
+   * Anywhere later the outgoing route is already gone.
+   *
+   * Three cases, in order:
+   *
+   *   entering a session from elsewhere  →  serialise the route being left
+   *   already on a session (a hop inside it, a re-publish, a preview open)
+   *                                      →  keep what we captured
+   *   anywhere else                      →  null, so a stale origin cannot
+   *                                         outlive the session it belonged to
+   *
+   * A cold deep link straight to a session yields null twice over: `setTab`
+   * returns early before the slug is published, and there is no previous app
+   * route to serialise. The header falls back to the Board, which is where
+   * the session's own card lives.
+   */
+  /**
+   * The captured origin, for the click path that mirrors the header's arrow.
+   *
+   * DevChat reads it through `window.Improve` rather than importing the
+   * store: a dozen test files run dev-chat.js as a script in a `vm` context,
+   * where a top-level import is a syntax error.
+   */
+  sessionOrigin() {
+    return improveStore.get().sessionOrigin;
+  },
+
+  _sessionOriginFor(prev, next, nextSubTab) {
+    const entering = next === 'dev' && nextSubTab === 'sessions';
+    const first = !Improve._routed;
+    Improve._routed = true;
+    if (!entering) return null;
+    const wasSession = prev.tab === 'dev' && prev.subTab === 'sessions';
+    if (wasSession) return prev.sessionOrigin;
+    // A COLD DEEP LINK HAS NO PREVIOUS SCREEN, and the store cannot say so by
+    // itself: its INITIAL is `tab: 'app'`, which is indistinguishable from
+    // having actually been on the app tab. Reading it as one sent a shared
+    // session link's back arrow to `#app/<slug>/app` — a screen this tab had
+    // never shown, and on the platform's own self-hosted app one that does
+    // not exist. "The last screen you were on" requires there to have been
+    // one, so the first routing pass of a page load captures nothing.
+    if (first) return null;
+    return Improve._routeHref(prev);
+  },
+
+  /** Whether setTab has run at all in this page load. See above. */
+  _routed: false,
+
+  /**
+   * An app route as an href, or null when it does not name one.
+   *
+   * Deliberately NOT App._appUrl: that serialises PATHS (`/app/<slug>/board`)
+   * for the address bar, and this feeds an anchor in the header, where every
+   * other destination is a hash. Both forms route — `_deepLinkTarget` reads
+   * either — but mixing them inside one control means a copied link differs
+   * by which screen you copied it from.
+   */
+  _routeHref(route) {
+    const slug = route.slug;
+    if (!slug) return null;
+    // The platform's own app has no App tab — App.switchTab coerces a request
+    // for one back to the dev forum — so it can never be an origin.
+    if (route.tab !== 'dev') return route.selfHosted ? null : `#app/${slug}/app`;
+    if (route.subTab === 'forum' || route.subTab === 'topic') {
+      // Board and Activity are one screen in two layouts, and the layout IS
+      // the route (see the alias block in app.js's restoreFromHash), so the
+      // origin has to name the one that was on screen.
+      const feed = window.AppView?._getViewMode?.() === 'feed';
+      return `#app/${slug}/${feed ? 'activity' : 'board'}`;
+    }
+    if (route.subTab === 'chat') return `#app/${slug}/dev/chat`;
+    return null;
   },
 
   /**

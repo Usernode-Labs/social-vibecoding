@@ -552,22 +552,28 @@ test("the Board owns the view control; the header's label is the chip", () => {
   assert.ok(!/matchMedia|innerWidth/.test(frameCode),
     'the frame must not measure the viewport');
 
-  // The three views are a SEGMENTED CONTROL now, in ../improve/view-tabs.tsx,
-  // rendered by the Improve panel AND the chip's menu. They spent one round of
-  // #1443 in the menu and one back in the panel; the menu answers WHICH APP
-  // and these three answer WHICH PART OF IT, and either is a fair place to ask
-  // the second question, so the strip is one module drawn on both surfaces.
-  //
-  // Three rows with muted detail lines plus an indented Kanban|Feed pair under
+  // The three views are a SEGMENTED CONTROL, in ../improve/view-tabs.tsx —
+  // three rows with muted detail lines plus an indented Kanban|Feed pair under
   // the middle one became three equal segments, because Kanban and Feed WERE
-  // Board and Activity — the same cards, one by column and one newest-first.
+  // Board and Activity: the same cards, one by column and one newest-first.
+  //
+  // THE IMPROVE PANEL IS THE ONLY SURFACE THAT DRAWS IT. The chip's menu
+  // carried a second copy for two rounds of #1443 on the reasoning that
+  // either surface is a fair place to ask "which part of this app". It is
+  // not: that menu is the APP PICKER, so a strip about the app you are
+  // already in sat between you and the list you opened it for. The way OUT
+  // of a Board is the header's back arrow now, not a second copy of the way
+  // in — which is why this asserts the menu renders no strip at all.
   const viewTabs = read('frontend/src/features/improve/view-tabs.tsx');
   const panel = read('frontend/src/features/improve/improve-panel.tsx');
   const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(panel, /<AppViewTabs\n\s+ids=\{IMPROVE_VIEW_IDS\}/,
     'the panel renders the strip under the panel ids');
-  assert.match(menu, /<AppViewTabs\n\s+ids=\{SWITCHER_VIEW_IDS\}/,
-    'and the chip menu renders the same component under its own');
+  assert.ok(!/<AppViewTabs/.test(menu),
+    'the chip menu renders no view strip — it answers WHICH APP only');
+  assert.ok(!/SWITCHER_VIEW_IDS/.test(viewTabs),
+    'and the id map its copy needed is retired with it, so a second surface '
+    + 'cannot reappear by importing a map that is still lying around');
   // The first segment still names where it GOES: the platform's reads "Home",
   // an app's reads "App". (It read the app's NAME as a row; a segment one
   // third of a 320pt panel wide cannot, and the name is already on the chip

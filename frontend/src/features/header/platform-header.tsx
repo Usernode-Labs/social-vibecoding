@@ -33,6 +33,7 @@ import { useRef } from 'react';
 import {
   BellIcon,
   ChevronLeftIcon,
+  HomeIcon,
 } from '@/components/ui/icons';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -103,6 +104,60 @@ const BACK_BTN_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-
   + ' bg-zinc-50 text-zinc-900 hover:bg-white'
   + ' dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 un-touch-target';
 
+/** Where the header's home glyph points. NavLink owns the spelling. */
+function homeHref(): string {
+  const nav = (window as unknown as { NavLink?: { homeHref?(): string } }).NavLink;
+  return nav?.homeHref?.() || '/';
+}
+
+/**
+ * The level ABOVE an app route, as an href — or null when the route has no
+ * level above it (so the slot falls back to the plain home glyph).
+ *
+ * ── Why this is derived and not published ──────────────────────────────
+ *
+ * These are the four screens whose parent is another screen INSIDE the same
+ * app, and the answer is a pure function of the route. Publishing it would
+ * mean an imperative call per sub-view hop — and sub-view hops never pass
+ * `App._showOnlyScreen`, the usual single owner of the back-slot reset, which
+ * is precisely how the session's arrow used to linger on the Board.
+ *
+ * ── The ladder ─────────────────────────────────────────────────────────
+ *
+ *   Board / Activity   →  the app itself. They are the app's dev surface, and
+ *                         the app is what you were looking at before it.
+ *   The general chat   →  the Board. It is reached from a card there.
+ *   A topic (issue,    →  the Board. `activeAppView` already counts a topic
+ *   proposal, gov,        as the Board for the view strip's purposes; a card
+ *   shared session)       opened full-screen is still the board's content.
+ *   A dev session      →  wherever it was opened from — see `sessionOrigin`
+ *                         in ../improve/improve-store.js — falling back to
+ *                         the Board on a cold deep link, which is where the
+ *                         session's own card lives.
+ *
+ * ── The self-hosted exception ──────────────────────────────────────────
+ *
+ * The platform's own app has no App tab: `App.switchTab` coerces a request
+ * for one straight back to the dev forum, because its iframe target does not
+ * resolve. So "up from the Board" cannot be the app there — it would bounce
+ * back to the Board it just left. Returning null hands the slot to the home
+ * glyph, which is the honest parent of the platform's own board.
+ */
+function appRouteUpHref(
+  slug: string | null,
+  tab: string | null,
+  subTab: string | null,
+  selfHosted: boolean,
+  sessionOrigin: string | null,
+): string | null {
+  if (!slug || tab !== 'dev') return null;
+  if (subTab === 'sessions') return sessionOrigin || `#app/${slug}/board`;
+  if (subTab === 'chat' || subTab === 'topic') return `#app/${slug}/board`;
+  // The Board and the Activity feed themselves: up is the app.
+  if (subTab === 'forum') return selfHosted ? null : `#app/${slug}/app`;
+  return null;
+}
+
 export function PlatformHeader() {
   // The four elements the centering measurement needs. Passing them as refs
   // replaces the classic script's document.querySelector('header') +
@@ -117,23 +172,28 @@ export function PlatformHeader() {
   // The back slot's state (see ./back-button-store.js): App.setBackIcon
   // publishes here rather than writing `hidden` into React-owned DOM.
   const { mode: backMode, href: backHref } = useStoreState(backButtonStore);
-  // …and ON A DEV SESSION the slot is derived from the ROUTE, not from the
+  // …and INSIDE AN APP the slot is derived from the ROUTE, not from the
   // imperative call. <AppSwitcherChip/> already gates on exactly this
   // condition — it is what swaps the chip's subtitle for the lifecycle pill —
   // so leaving the back slot to an ordering-dependent setBackIcon() call was
   // the odd one out, and it is the one that kept coming up hidden on staging
   // while the rest were right. Components agreeing by construction beats call
-  // sites agreeing by convention: a session bar is `←` on the left, the app
-  // chip carrying the lifecycle in the middle, and the doing/seeing pair on
-  // the right, wherever the route says session.
-  const { slug: backSlug, tab: backTab, subTab: backSubTab } = useStoreState(improveStore);
-  const onSession = backTab === 'dev' && backSubTab === 'sessions';
-  const backArrow = backMode === 'arrow' || onSession;
-  // The session's own destination is deterministic — the Board it was opened
-  // from — so it wins over whatever href the last imperative call left.
-  const resolvedBackHref = (onSession && backSlug)
-    ? `#app/${backSlug}/board`
-    : backHref;
+  // sites agreeing by convention.
+  const {
+    slug: backSlug, tab: backTab, subTab: backSubTab,
+    selfHosted, sessionOrigin,
+  } = useStoreState(improveStore);
+  const routeUp = appRouteUpHref(
+    backSlug, backTab, backSubTab, selfHosted, sessionOrigin,
+  );
+  // An app route that has a level above it wins over the imperative call;
+  // everything else keeps whatever the last setBackIcon() published, which on
+  // a platform screen is 'home' by default and 'arrow' where that screen owns
+  // a sub-level of its own (a Settings section, a Browse detail, a thread).
+  const mode = routeUp ? 'arrow' : backMode;
+  const backArrow = mode === 'arrow';
+  const resolvedBackHref = routeUp
+    || (mode === 'home' ? homeHref() : backHref);
 
   // A LAYOUT effect, and that is load-bearing: it runs inside main.tsx's
   // flushSync(hydrateRoot), which is after hydration has adopted these nodes
@@ -262,10 +322,13 @@ export function PlatformHeader() {
             now that isn't used" was. `#back-btn` is a direct child now, so
             `hidden` collapses it and the chip moves to the edge.
 
-            The house glyph went with it. Both occupants of that box were
-            about where you are NOT: a hamburger with no label, then a home
-            icon an inch from the chip's own Home row. The chevron is the
-            only survivor, and it means one thing — back a level.
+            The house glyph went with it, on the same reasoning — and came
+            back, because the box going away is what made it affordable: the
+            group is `hidden` when the slot is empty, so the house occupies
+            space only on the screens that have somewhere to send you, rather
+            than reserving an inch at the top-left of every one. The slot
+            means one thing either way — leave this screen upward — and the
+            glyph says how far: a level, or all the way home.
         */}
         {/*
             `hidden` when it holds nothing, and that is not cosmetic: the
@@ -281,7 +344,7 @@ export function PlatformHeader() {
         <div
           ref={leftGroupRef}
           className={'h-7 shrink-0 flex items-center gap-1.5 min-w-0'
-            + (backArrow || onSession ? '' : ' hidden')}
+            + (mode === 'none' ? ' hidden' : '')}
         >
           {/*
                 #1036: a real anchor, not a button, so cmd/ctrl-click,
@@ -304,18 +367,39 @@ export function PlatformHeader() {
                 render, so the legacy write was being undone. The store is
                 ./back-button-store.js; setBackIcon publishes into it.
 
-                The chevron's own className is a CONSTANT now: with the house
-                glyph retired the anchor has one child, so the anchor's
-                `hidden` is the whole of the visibility state. One node
-                toggles, not three.
+                THE HOUSE IS BACK, so the anchor has two children again and
+                its `hidden` is no longer the whole of the visibility state.
+                #1443 retired the house on the grounds that the chip's menu
+                carries a Home row an inch to its right — true, and the cost
+                was that the app itself, Profile, Settings, Admin and Messages
+                offered nothing in the bar at all. "Every page should have a
+                back or a home button, except Home" is the rule now, and this
+                anchor is the whole of it: chevron where there is a level
+                above, house where there is not, hidden only on Home.
             */}
           <a
             id="back-btn"
-            className={BACK_BTN_CLASS + (backArrow ? '' : ' hidden')}
-            aria-label="Back"
+            className={BACK_BTN_CLASS + (mode === 'none' ? ' hidden' : '')}
+            aria-label={backArrow ? 'Back' : 'Home'}
             {...(resolvedBackHref ? { href: resolvedBackHref } : {})}
           >
-            <ChevronLeftIcon id="back-icon-arrow" className="w-5 h-5" />
+            {/*
+                BOTH GLYPHS SHIP, exactly one is shown. Rendering only the
+                active one would take `#back-icon-arrow` out of the cold
+                document whenever the initial mode is not 'arrow' — and the
+                shipped markup's id inventory is a contract
+                (tests/shell-id-inventory.test.js, and dapp.json selectors
+                written against it). Two nodes toggling a class is cheaper
+                than an id that comes and goes.
+            */}
+            <ChevronLeftIcon
+              id="back-icon-arrow"
+              className={backArrow ? 'w-5 h-5' : 'hidden w-5 h-5'}
+            />
+            <HomeIcon
+              id="back-icon-home"
+              className={backArrow ? 'hidden w-5 h-5' : 'w-5 h-5'}
+            />
           </a>
         </div>
         {/*
@@ -395,8 +479,18 @@ export function PlatformHeader() {
           */}
           {/*
               MESSAGES and NOTIFICATIONS, as the board's app-opened bar draws
-              them: two glyphs to the left of Improve, each carrying its own
-              unread badge.
+              them: a glyph each, carrying its own unread badge. Only the
+              bell survives here — see the #1443 note in RETIRED_IDS for
+              where the chat bubble went.
+
+              IT SITS TO IMPROVE'S LEFT, which is the arrangement the board
+              draws and the one this bar has always had. It was moved to the
+              far right for a round on the argument that a standing alert
+              wants a fixed address and Improve's width moves it; the
+              arrangement was preferred as it was, so the alert reads inward
+              from the edge and the ACTION owns the corner your thumb reaches
+              for. Both orders are defensible — this is the one we ship, and
+              a declared check pins it so it does not drift back by accident.
 
               THE UI OVERHAUL folded both into the hamburger and the
               Streamlined Concept takes that back, for a reason the drawer
@@ -440,14 +534,6 @@ export function PlatformHeader() {
             </span>
           </a>
           <ImproveButton />
-          {/*
-              The bell (#notifications-btn) used to sit here, then THE UI
-              OVERHAUL merged it into the hamburger — and the Streamlined
-              Concept moved the hamburger itself to the LEFT group, badges
-              and all, mirroring the drawer it opens. What remains on the
-              right is the one contextual action: Improve (or the eye that
-              returns to the app — see improve-button.tsx).
-          */}
           {/*
               The "Create new app" entry point used to live here in the header
               as a "+" pill; it's been moved into the home-screen feed itself,

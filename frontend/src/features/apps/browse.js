@@ -255,13 +255,17 @@ const Browse = {
     // target handleBack() would take — up to the list, or all the way
     // home when the detail page was opened from a home card's "App
     // details" entry (there is no list behind it to go up to).
-    // ALWAYS an arrow — the list is a root screen and home is its parent.
-    // `'home'` means "hidden" to setBackIcon, which was only survivable while
-    // the hamburger carried the nav rows.
-    App.setBackIcon(
-      'arrow',
-      onDetail && Browse._detailOrigin !== 'home' ? '#apps' : undefined
-    );
+    // AN ARROW ONLY ON THE DETAIL PAGE, and only when a list is behind it.
+    //
+    // Both states used to pass 'arrow': the list is a root screen whose
+    // parent is home, and 'arrow' with no href resolved there. That drew a
+    // chevron promising a level above where there is none — and a detail page
+    // opened from a home card has no list behind it either, so it took the
+    // same fallback. Both are the HOUSE now ('home' draws one rather than
+    // meaning hidden — see features/header/back-button-store.js), which is
+    // the same destination named honestly.
+    const upToList = onDetail && Browse._detailOrigin !== 'home';
+    App.setBackIcon(upToList ? 'arrow' : 'home', upToList ? '#apps' : undefined);
     if (onDetail) {
       const app = Browse.appBySlug(Browse._slug);
       App.setHeaderTitle(app?.name || Browse._slug);

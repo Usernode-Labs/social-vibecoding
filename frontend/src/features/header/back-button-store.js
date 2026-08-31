@@ -21,29 +21,46 @@
  * from this bundle. It goes through `window.UsernodeReact.backButton`
  * (published in ./mount.ts) and lands here, exactly the header-title shape.
  *
+ * ── THREE modes now, and 'home' finally means what it says ─────────────
+ *
+ * `mode` used to be a boolean wearing three names: only 'arrow' showed the
+ * anchor, and 'home' meant HIDDEN — a leftover from #1443, which retired the
+ * house glyph on the grounds that the chip's menu carries a Home row an inch
+ * to its right. The slot was empty on most screens as a result: the app
+ * itself, Profile, Settings, Admin and Messages all had no way off them in
+ * the bar at all.
+ *
+ * "Every page should have a back or a home button, except Home." So the
+ * modes are now genuinely three:
+ *
+ *   'none'   the anchor is hidden. Home only — you are already there.
+ *   'home'   the house, linking to home. The DEFAULT, which is what makes
+ *            this safe: `_showOnlyScreen` publishes it on every screen swap,
+ *            so a screen gets a way out by existing rather than by
+ *            remembering to ask for one.
+ *   'arrow'  the chevron, linking one level UP to `href`.
+ *
+ * Redefining 'home' rather than adding a fourth name is deliberate: ~40 call
+ * sites already spell the default that way, and every one of them meant "no
+ * level above this" — which is exactly the screen that should offer home.
+ * The ones that must NOT (only Home itself) are the ones that changed.
+ *
  * ── The initial value is the prerender ─────────────────────────────────
  *
- * `mode: 'home'` with no href renders precisely the anchor the hand-written
- * shell shipped: `hidden` on the anchor, `#back-icon-home` visible,
- * `#back-icon-arrow` hidden, `aria-label="Home"`, and NO href attribute at
- * all. A first client render that disagrees with the prerendered document is
- * a hydration mismatch, and a console error on any route fails proposal
- * checks.
- *
- * ── 'home' means HIDDEN, which reads wrong and is right ────────────────
- *
- * `mode` is really a boolean: only 'arrow' shows the anchor. The slot belongs
- * to the app glyph otherwise (features/header/header-app-icon.tsx), so the
- * home mode is "there is nothing to go back to here" rather than "draw a
- * house". The house glyph survives because setBackIcon's two modes are still
- * spelled that way at ~40 call sites.
+ * `mode: 'none'` with no href renders precisely the anchor the shipped
+ * document has: `hidden` on the anchor and NO href attribute at all. A first
+ * client render that disagrees with the prerendered document is a hydration
+ * mismatch, and a console error on any route fails proposal checks. It is
+ * 'none' and not 'home' for a second reason too: the cold document is most
+ * often Home, and a house that paints for one frame before the router says
+ * otherwise is a flicker on the most-visited screen.
  */
 
 import { createStore } from '../../lib/plain-store.js';
 
 /**
  * @typedef {object} BackButtonState
- * @property {'home'|'arrow'} mode  'arrow' shows the anchor; anything else hides it.
+ * @property {'none'|'home'|'arrow'} mode  Which glyph, or none at all.
  * @property {string|null} href     The resolved destination, or null before
  *                                  the first setBackIcon() — which is the one
  *                                  state that renders no href attribute, so
@@ -52,7 +69,7 @@ import { createStore } from '../../lib/plain-store.js';
 
 /** @type {BackButtonState} */
 const INITIAL = {
-  mode: 'home',
+  mode: 'none',
   href: null,
 };
 

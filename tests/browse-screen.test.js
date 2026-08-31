@@ -848,9 +848,12 @@ test('showDetail / showList publish the level, which drives both containers', ()
 
   Browse.showList();
   assert.equal(state.level, 'list');
-  // The list keeps the arrow too — it just points home rather than at
-  // #apps. Nothing else on this screen goes back since the hamburger went.
-  assert.equal(chrome.backIcon, 'arrow');
+  // THE LIST GETS THE HOUSE, not the chevron. It used to pass 'arrow' with no
+  // href, which resolved to home — the right destination drawn as the wrong
+  // glyph, a chevron promising a level above a root screen that has none.
+  // 'home' draws a house and goes to the same place
+  // (features/header/back-button-store.js).
+  assert.equal(chrome.backIcon, 'home');
   assert.equal(chrome.backHref, undefined, 'and with no href, which means home');
   assert.equal(chrome.title, 'All apps');
 });

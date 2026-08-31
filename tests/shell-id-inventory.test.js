@@ -47,10 +47,32 @@ const RETIRED_IDS = {
   'waitlist-discovery-detail': 'The "Which one?" follow-up under the discovery chips. It asked people to type a second answer to a question they had just answered with a tap, and no screen or export read the free text.',
   'waitlist-referrer': 'The "did someone refer you?" handle on the join form. A typed handle is a claim nobody can resolve; the stage-2 invite link records the same relationship as a row reference (`invite_code` / `invited_by`), which is what the admin screen actually counts.',
   'more-referrer': 'The same question on the stage-2 form, retired for the same reason and doubly redundant there — it sat directly beneath the invite link that attributes the relationship properly.',
+  // ── The chip's menu is the APP PICKER, and only that ─────────────
+  // Its copy of the App | Board | Activity strip went. The strip is one
+  // module rendered from a caller-supplied id map, and the Improve panel's
+  // map (#improve-views / #app-context-row-*) is the one every declared
+  // check and getElementById already named — so nothing moved, a second
+  // rendering of it stopped. See frontend/src/features/improve/view-tabs.tsx.
+  'switcher-views': 'The chip menu\'s copy of the three-view strip. The menu answers WHICH APP; a control about the app you are already in sat between you and the list you opened the menu for. The Improve panel keeps the strip, and the header\'s back arrow is the way OUT of a Board now.',
+  'switcher-view-app': 'Its App segment. `#app-context-row-app` in the Improve panel is the surviving one.',
+  'switcher-view-board': 'Its Board segment; `#app-context-row-board` survives.',
+  'switcher-view-activity': 'Its Activity segment; `#app-context-row-activity` survives.',
   // ── #1443: one control names where you are ──────────────────────
   // The chip's menu lists every destination with its own page, so the header
   // stopped needing a second, third and fourth way to say the same thing.
-  'back-icon-home': 'The house glyph inside #back-btn. Home is a row of the chip\'s menu, immediately reachable from every screen, so a house icon an inch to the chip\'s left was the second control answering one question. #back-btn keeps #back-icon-arrow and means one thing now — back a level — which is why its own `hidden` is the whole of the visibility state.',
+  //
+  // #back-icon-home WAS retired here and is NOT any more — it is back in the
+  // document, so it belongs to neither map: the baseline already lists it.
+  // The reason it came back is the cost that retirement turned out to carry.
+  // "Home is a row of the chip's menu" is true, and what it left behind was
+  // five screens — the app itself, Profile, Settings, Admin, Messages — with
+  // nothing in the bar at all, because 'home' had quietly come to mean
+  // HIDDEN rather than "draw a house". The rule is now "every page has a
+  // back or a home button, except Home", and the slot is still only one
+  // control: chevron where there is a level above, house where there is not.
+  // What made it affordable is the OTHER half of #1443 — the fixed 28px box
+  // is still gone, so the glyph takes space only on screens that have
+  // somewhere to send you.
   // ── Streamlined Concept: the drawer became the APP's surface ──────
   // The Figma board draws ONE app-scoped drawer (the app, its Board, its
   // Activity, "+ New change", the changes here and elsewhere, over a

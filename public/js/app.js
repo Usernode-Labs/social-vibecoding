@@ -3054,7 +3054,13 @@ const App = {
         if (App._inSettings) App._exitSettings();
             if (App._inBrowse) App._exitBrowse();
         App._showOnlyScreen('home-screen');
-        document.getElementById('back-btn').classList.add('hidden');
+        // Home is the one screen with no way out in the bar, and this is the
+        // branch a COLD BOOT at `/` takes (an empty hash is an unrecognised
+        // one), not just a bad address — so it is as load-bearing as the one
+        // in navigateHome. Same reason it is not a classList write any more:
+        // #back-btn's className is React's, and _showOnlyScreen has just
+        // published the 'home' default that would draw a house here.
+        App.setBackIcon('none');
         App.setHeaderTitle('Social Vibecoding');
         // Home has no Improve target: clear whatever screen published one, or
         // the header button would outlive the app it was about (the lingering
@@ -3312,8 +3318,10 @@ const App = {
   // Same ordering rule as _showOnlyScreen: inside the transition
   // callback only.
   _enterScreenChrome() {
-    // #back-btn visibility is setBackIcon's alone now (arrow mode only) —
-    // the blanket reveal that lived here showed the retired home icon.
+    // #back-btn visibility is setBackIcon's alone — the blanket reveal that
+    // lived here fought it. Three modes now, and the default DRAWS a house,
+    // so a screen entering through here gets its way out from the
+    // setBackIcon('home') in _showOnlyScreen rather than from anything here.
     // The GitHub and Share drawer rows were hidden by hand here. Both are
     // Improve panel rows now, and setAppOpen(false) below clears the panel's
     // target — which retires them for the same reason and in one move.
@@ -3389,9 +3397,14 @@ const App = {
       // NO DEAD ENDS: every screen the viewer can reach shows a way back.
       // The hamburger used to be that way — it was on every bar, and it held
       // the nav rows — so these screens shipped with the back slot hidden.
-      // With the hamburger gone the slot IS the way back, and `arrow` with no
-      // href resolves to home, which is the honest parent of a root screen.
-      App.setBackIcon('arrow');
+      //
+      // This was `arrow` with no href, which RESOLVED to home: the right
+      // destination drawn as the wrong glyph, a chevron promising a level
+      // above where there is none. The house says the same thing honestly,
+      // and it is the default, so the explicit call goes entirely — see the
+      // 'home' publish in _showOnlyScreen. Left here as a comment because
+      // "why does this screen not set its own back state" is a fair question
+      // to have an answer to.
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inLeaderboard = true;
     App._routeLeaderboard(sub, profileUser, challengeTarget);
@@ -3482,19 +3495,20 @@ const App = {
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
       App.setHeaderTitle(username ? `@${username}` : 'Profile');
-      // NO BACK ARROW ON THE ACCOUNT SCREENS. Profile, Settings and Admin &
-      // moderation are the three screens the owner asked to lose it, and the
-      // "no dead ends" note in navigateToLeaderboard is what this is a
-      // deliberate exception to rather than an oversight: those three form a
-      // stack of their own (Home → Profile → Settings/Admin) whose OWN rows
-      // are the way back up, they are reachable from the Home account row on
-      // every visit, and the platform header's title already names where you
-      // are. An arrow that duplicates a row one tap below it reads as chrome.
-      // The leaderboard and browse screens keep theirs — they are leaves with
-      // no such rows.
+      // A HOUSE ON THE ACCOUNT SCREENS, not nothing and not a chevron.
       //
-      // `'home'` means HIDDEN to setBackIcon (see back-button-store.js); the
-      // slot is then free for the app glyph exactly as it is on Home.
+      // Profile, Settings and Admin & moderation lost the arrow once, on the
+      // reasoning that they form a stack of their own (Home → Profile →
+      // Settings/Admin) whose own rows are the way back up. What that left
+      // was three screens with nothing in the bar at all — and "every page
+      // should have a back or a home button, except Home" is the rule now.
+      //
+      // The arrow does not come back: these screens have no level above them
+      // that is not home, and a chevron would promise one. The house is the
+      // honest glyph, and it is what `'home'` DRAWS now rather than a synonym
+      // for hidden (see features/header/back-button-store.js). The call is
+      // kept explicit even though _showOnlyScreen publishes the same default
+      // a moment earlier: this is the screen where the question was asked.
       App.setBackIcon('home');
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inProfile = true;
@@ -4192,7 +4206,15 @@ const App = {
     PlatformUI.transition(() => {
       AppView.close();
       App._showOnlyScreen('home-screen', ['app-view']);
-      document.getElementById('back-btn').classList.add('hidden');
+      // HOME IS THE ONE SCREEN WITH NO BUTTON. _showOnlyScreen publishes the
+      // 'home' default a line above — right for every other screen and wrong
+      // for this one — so this is the single 'none' caller in the shell.
+      //
+      // It was a raw `classList.add('hidden')` on #back-btn until now, which
+      // is a write into React-owned DOM: it held only until the header island
+      // next rendered from its own props, and it could not express the new
+      // three-state slot at all.
+      App.setBackIcon('none');
       // …and the GitHub / Share rows retire with the panel's target, rather
       // than being hidden one by one as drawer rows were. This clears the
       // app's target; the line below immediately republishes home's own.
@@ -4251,6 +4273,13 @@ const App = {
   // stale — same reasoning that makes the icon itself reliable.
   setBackIcon(mode, href) {
     const arrow = mode === 'arrow';
+    // THREE modes now (features/header/back-button-store.js): 'arrow' is a
+    // level up, 'home' is the house, and 'none' hides the slot outright.
+    // 'none' has exactly one caller — navigateHome — because Home is the one
+    // screen with nowhere to go. Everything else keeps the default it always
+    // passed, and the default now DRAWS something, which is the whole change:
+    // a screen gets a way out by existing rather than by remembering to ask.
+    const slot = arrow ? 'arrow' : (mode === 'none' ? 'none' : 'home');
     const target = href || (window.NavLink ? NavLink.homeHref() : '/');
     // The slot is React's (features/header/platform-header.tsx), so its
     // appearance is PUBLISHED, not written: a rendered className belongs to
@@ -4259,7 +4288,7 @@ const App = {
     // below the moment the header gained state (the app glyph, the session
     // status pill). See features/header/back-button-store.js.
     const published = typeof window.UsernodeReact?.backButton?.set === 'function';
-    window.UsernodeReact?.backButton?.set?.(arrow ? 'arrow' : 'home', target);
+    window.UsernodeReact?.backButton?.set?.(slot, target);
     // ONE OWNER, and once the bridge exists it is React's. The writes below
     // were kept as a belt-and-braces fallback on the theory that they would
     // agree with the render — and they do not always, which is worse than
@@ -4277,13 +4306,13 @@ const App = {
     // and the first navigation's back state would otherwise be dropped.
     const btn = document.getElementById('back-btn');
     if (btn) {
-      // `mode` is really a boolean: 'arrow' shows the anchor, anything else
-      // hides it — and since the house glyph retired (#1443) the anchor is
-      // the whole of the state. There is no second icon to swap to, and no
-      // other occupant of the slot: hidden means the chip sits flush left,
-      // because the group collapses with it.
-      btn.classList.toggle('hidden', !arrow);
+      // Only 'none' hides the anchor now; the other two both draw a glyph and
+      // differ in WHICH. Hidden means the chip sits flush left, because the
+      // group collapses with it.
+      btn.classList.toggle('hidden', slot === 'none');
       btn.setAttribute('href', target);
+      document.getElementById('back-icon-arrow')?.classList.toggle('hidden', !arrow);
+      document.getElementById('back-icon-home')?.classList.toggle('hidden', arrow);
     }
   },
 
