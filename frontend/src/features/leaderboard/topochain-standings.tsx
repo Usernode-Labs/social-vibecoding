@@ -30,6 +30,8 @@
 
 import type { ReactNode } from 'react';
 
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+
 import { useStoreState } from '../../lib/use-store-state';
 import { topochainStandingsStore } from './topochain-standings-store.js';
 
@@ -230,10 +232,53 @@ function Pagination(
   );
 }
 
+/**
+ * The standings' loading state, at the TABLE's own shape.
+ *
+ * This is the pane the bare `#leaderboard` address lands on, so it is the
+ * first thing the screen shows — and it was the word "Loading…" on an
+ * otherwise blank panel.
+ *
+ * The container is the table's own (`rounded-lg` + the hairline), with a
+ * header strip in the same `bg-zinc-50` the real `<thead>` uses, so the table
+ * arrives INSIDE an outline that is already the right size rather than
+ * replacing a line of text.
+ *
+ * Four columns rather than `view.columns.length`, because the columns are not
+ * known until the payload that is still in flight arrives — the one thing a
+ * skeleton for this table genuinely cannot predict. Four is what every event
+ * type draws at minimum (rank, who, and two figures), and the cells are
+ * proportional so a fifth arriving does not shift the row heights.
+ */
+function StandingsSkeleton(): ReactNode {
+  return (
+    <SkeletonGroup
+      label="Loading the standings"
+      className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800"
+    >
+      <div className="bg-zinc-50 dark:bg-zinc-900 px-3 py-2.5 flex items-center gap-3">
+        <Skeleton shape="muted" className="w-8" />
+        <Skeleton shape="muted" className="w-20" />
+        <Skeleton shape="muted" className="ml-auto w-12" />
+        <Skeleton shape="muted" className="w-12" />
+      </div>
+      {Array.from({ length: 6 }, (_, i) => (
+        <div
+          key={i}
+          className="border-t border-zinc-100 dark:border-zinc-800 px-3 py-2.5 flex items-center gap-3"
+        >
+          <Skeleton shape="muted" className="w-4" />
+          <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
+          <Skeleton shape="muted" className="ml-auto w-10" />
+          <Skeleton shape="muted" className="w-14" />
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
+}
+
 function Body({ view }: { view: BodyView | null }): ReactNode {
-  if (!view || view.state === 'loading') {
-    return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>;
-  }
+  if (!view || view.state === 'loading') return <StandingsSkeleton />;
   if (view.state === 'error') {
     return (
       <div className="rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm">

@@ -16,6 +16,7 @@
 import { type ReactNode } from 'react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   buildProfileView,
@@ -311,14 +312,58 @@ function TokenCard({ token }: { token: any }): ReactNode {
   );
 }
 
+/**
+ * The profile's loading state, at the SCREEN's own shape.
+ *
+ * It was the words "Loading profile…" centred in an otherwise empty screen —
+ * the emptiest of the three this pass fixed, because unlike a list there is
+ * no chrome around it to say what is coming. What arrives is an identity card,
+ * a large points figure, and a breakdown list, and this stands in for all
+ * three at their own geometry: the card's `rounded-2xl … p-4 mb-5` face, the
+ * 44px avatar beside a name and handle, the `text-4xl` figure with its label
+ * under it, and three list rows in the same `rounded-2xl` card.
+ *
+ * The Edit button's shape is here too. It sits at the card's right end and is
+ * the widest thing in that row; leaving it out would let the name line run to
+ * an edge the real card never reaches.
+ */
+function ProfileSkeleton(): ReactNode {
+  return (
+    <SkeletonGroup label="Loading your profile">
+      <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4 mb-5">
+        <div className="flex items-center gap-4">
+          <Skeleton shape="circle" className="w-11 h-11" />
+          <div className="flex-1 min-w-0">
+            <Skeleton className="w-40 h-4" />
+            <Skeleton shape="muted" className="mt-2 w-24" />
+          </div>
+          <Skeleton shape="block" className="w-24 h-8 rounded-full" />
+        </div>
+      </div>
+      {/* The rank + points header: one big figure over its label. */}
+      <div className="mb-5 flex flex-col items-center">
+        <Skeleton shape="block" className="w-24 h-9" />
+        <Skeleton shape="muted" className="mt-2 w-12" />
+      </div>
+      {/* The points breakdown, in the card the real rows are drawn in. */}
+      <div className="rounded-2xl bg-white dark:bg-zinc-900">
+        {Array.from({ length: 3 }, (_, i) => (
+          <div key={i} className="flex items-center gap-3 px-3 py-2.5">
+            <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
+            <Skeleton shape="muted" className="ml-auto w-14" />
+          </div>
+        ))}
+      </div>
+    </SkeletonGroup>
+  );
+}
+
 export function ProfileRoot(): ReactNode {
   const state = useStoreState(profileStore);
   const view = buildProfileView(state);
 
   if (view.kind === 'empty') return null;
-  if (view.kind === 'loading') {
-    return <div className="text-sm text-zinc-500 py-8 text-center dark:text-zinc-400">Loading profile…</div>;
-  }
+  if (view.kind === 'loading') return <ProfileSkeleton />;
   // signedOut is checked BEFORE error — see buildProfileView. A lapsed session
   // is a normal state, and the connection-error copy blames the network for it.
   if (view.kind === 'signedOut') {

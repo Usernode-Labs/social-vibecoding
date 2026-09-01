@@ -58,12 +58,14 @@
  * exists on the Dev route. Chunk H (#1085) folds it into the main tree.
  */
 
+import { useRef } from 'react';
+
 import { ChatIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
-import { skeletonListHtml } from './card/skeleton';
+import { skeletonKanbanHtml, skeletonListHtml } from './card/skeleton';
 import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
@@ -129,27 +131,49 @@ const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
  * reads, and the eye takes the blank area for an empty board rather than a
  * pending one.
  *
- * Deliberately ONE constant and not a per-mode pair. The prop's identity has
- * to stay stable (see `DEV_BODY_INITIAL` below), and swapping it on a
- * view-toggle would rewrite `#dev-body` out from under whatever
- * `_repaintDevBody` had just painted there. Card-shaped rows are a fair
- * first frame for either mode: the Feed keeps them, and the board replaces
- * the whole host with its own four columns of the same rows the moment it
- * paints (card/skeleton.tsx renders both).
+ * TWO constants, one per mode, CHOSEN ONCE PER MOUNT — see `useBodyInitial`
+ * below. It was one constant on the argument that "card-shaped rows are a
+ * fair first frame for either mode", and they are not: a cold load of
+ * `/app/<slug>/board` painted this single column and then became four columns
+ * when <DevKanban/> mounted. A skeleton exists to predict the shape of what is
+ * coming, so predicting the wrong one is the one thing it must not do.
  *
- * Concatenation of literals and one call to the shared builder, evaluated
- * ONCE at module scope — never a template with a live value in it. What the
- * constant has to be is the same bytes on every render; see `DEV_BODY_INITIAL`
- * below for what happens when it is not.
+ * What made this look unavoidable is real and is handled a different way: the
+ * prop's identity has to stay stable, because React 19 assigns `innerHTML`
+ * whenever the object differs and would rewrite `#dev-body` out from under
+ * whatever `_repaintDevBody` had just painted there. So these stay
+ * module-scope constants — the same bytes on every render — and the CHOICE
+ * between them is frozen at mount rather than followed live. A view toggle
+ * does not re-pick: by then the real board owns the node.
  *
- * The second node this used to carry — `#gc-merged`, the Completed block —
- * is gone: completed work is ordinary activity in the Feed's own stream now
- * (see `AppView._feedItems`), and the kanban Done column renders its own.
+ * The second node the feed form used to carry — `#gc-merged`, the Completed
+ * block — is gone: completed work is ordinary activity in the Feed's own
+ * stream now (see `AppView._feedItems`), and the kanban Done column renders
+ * its own.
  */
-const DEV_BODY_INITIAL_HTML =
-  '<div id="dev-feed">' + skeletonListHtml(3) + '</div>';
+const DEV_BODY_FEED_INITIAL = { __html: '<div id="dev-feed">' + skeletonListHtml(3) + '</div>' };
+const DEV_BODY_KANBAN_INITIAL = { __html: skeletonKanbanHtml() };
 
-const DEV_BODY_INITIAL = { __html: DEV_BODY_INITIAL_HTML };
+/**
+ * Which of the two this mount opens with, decided ONCE.
+ *
+ * The mode is known by now: `restoreFromHash` applies `boardView` BEFORE it
+ * dispatches, precisely so "a cold entry paints the right layout on the
+ * board's first frame" — this is the frame that note is about.
+ *
+ * A ref rather than the live `useDevViewMode()` value, because the object
+ * identity is the contract: re-reading it would hand React a different object
+ * the moment somebody toggled the view, and React would assign `innerHTML`
+ * over the real board.
+ */
+function useBodyInitial(): { __html: string } {
+  const mode = useDevViewMode();
+  const chosen = useRef<{ __html: string } | null>(null);
+  if (!chosen.current) {
+    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL : DEV_BODY_FEED_INITIAL;
+  }
+  return chosen.current;
+}
 
 /**
  * The General-discussion card — the kanban's door to the app's general chat.
@@ -225,6 +249,7 @@ export function DevBoardFrame({
   cardHoverCls,
 }: DevBoardFrameProps) {
   const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
+  const bodyInitial = useBodyInitial();
   return (
     <div className="flex flex-col h-full min-h-0">
       {/*
@@ -406,7 +431,7 @@ export function DevBoardFrame({
         <div
           id="dev-body"
           className="px-3 py-2"
-          dangerouslySetInnerHTML={DEV_BODY_INITIAL}
+          dangerouslySetInnerHTML={bodyInitial}
         />
       </div>
     </div>

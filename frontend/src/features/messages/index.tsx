@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { ChevronLeftInsetIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { MessageComposer } from './composer';
@@ -58,6 +59,47 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
   );
 }
 
+/**
+ * The conversation list's loading state, at the ROW's own geometry.
+ *
+ * It was a spinner beside the words "Loading conversations…" — a fixed mark
+ * that says "busy, somewhere" over an empty pane. These say where the
+ * conversations are going and roughly how many, so the arriving rows land on
+ * their own outlines instead of replacing a centred line of grey text.
+ *
+ * The wrapper IS `.messages-conversation-row`, not an imitation of it: that
+ * class owns the 66px minimum height, the 12px padding, the 10px gap and the
+ * inset separator, all in app.css. Borrowing it means the placeholder cannot
+ * drift from the row the first time any of those move — and the separator
+ * between placeholders is drawn for free, which is most of what makes a list
+ * read as a list.
+ *
+ * Six, because the pane is taller than that on every phone and a list that
+ * stops halfway reads as a short list rather than a loading one.
+ */
+function ConversationRowSkeleton() {
+  return (
+    <SkeletonGroup label="Loading conversations">
+      {Array.from({ length: 6 }, (_, i) => (
+        <div key={i} className="messages-conversation-row">
+          {/* The `lg` UserAvatar's 44px box. */}
+          <Skeleton shape="circle" className="w-11 h-11" />
+          <div className="min-w-0 flex-1">
+            {/* The name line, with the timestamp's short bar pushed right —
+                the real row's `ml-auto` <time>. */}
+            <div className="flex items-center gap-2">
+              <Skeleton className={i % 2 ? 'w-28' : 'w-36'} />
+              <Skeleton shape="muted" className="ml-auto w-8" />
+            </div>
+            {/* The preview line under it. */}
+            <Skeleton shape="muted" className={`mt-1.5 ${i % 3 ? 'w-3/5' : 'w-2/5'}`} />
+          </div>
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
+}
+
 function ConversationList() {
   const snap = useMessagesSnapshot();
   return (
@@ -68,7 +110,7 @@ function ConversationList() {
       </div>
       {!snap.online ? <div className="messages-network-banner">Offline. Queued messages retry when you reconnect.</div> : null}
       <div className="messages-list-scroll platform-safe-scroll">
-        {snap.loadingList && !snap.listLoaded ? <div className="messages-state"><span className="messages-spinner" />Loading conversations…</div> : null}
+        {snap.loadingList && !snap.listLoaded ? <ConversationRowSkeleton /> : null}
         {snap.error ? <div className="messages-state messages-state-error"><p>{snap.error}</p><button type="button" onClick={() => void loadConversations(true)}>Try again</button></div> : null}
         {!snap.loadingList && !snap.error && snap.listLoaded && !snap.conversations.length ? <div className="messages-empty"><span aria-hidden="true">✦</span><h3>No messages yet</h3><p>Start a direct conversation or bring a group together.</p><button type="button" onClick={() => openDialog('messagesCreate')}>New conversation</button></div> : null}
         {snap.conversations.map((conversation) => <ConversationRow key={conversation.id} conversation={conversation} active={snap.route.conversationId === conversation.id} />)}

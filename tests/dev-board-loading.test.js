@@ -260,20 +260,37 @@ test('_loadDevData distinguishes not-ready from failed, and the feed respects it
 
 // ── the launcher ───────────────────────────────────────────────────────
 
-test('the home grid draws placeholders, but only after hydration', () => {
+test('the home grid draws placeholders from the FIRST paint, prerender included', () => {
   const GRID = read('frontend/src/features/home/app-grid.tsx');
-  // INITIAL_GRID.ready is false with no items and renders NOTHING on purpose:
-  // that is the empty <div id="app-list"> the shell prerenders. Rendering the
-  // placeholders on the first pass would be a hydration mismatch, which
-  // console.errors, which fails proposal checks.
-  assert.match(GRID, /const \[mounted, setMounted\] = useState\(false\);/,
-    'a post-hydration flag gates them');
-  assert.match(GRID, /useEffect\(\(\) => \{ setMounted\(true\); \}, \[\]\);/,
-    'set from an effect, so the first render still matches the prerender');
-  assert.match(GRID, /!state\.ready && mounted && !state\.notice/,
-    'placeholders only while unready, mounted, and with no notice to show instead');
-  // A placeholder must not answer the queries a real tile answers.
-  const tile = GRID.slice(GRID.indexOf('function SkeletonTile()'), GRID.indexOf('const SKELETON_TILES'));
+  // They used to wait one effect tick behind a `mounted` flag, so the first
+  // client render matched the empty <div id="app-list"> the shell prerendered
+  // — anything else is a hydration mismatch, which console.errors, which fails
+  // proposal checks. The cost was written off as one frame.
+  //
+  // It is not one frame: public/sw.js serves that document to every navigation
+  // it can win, and the bundle does not hydrate until it has parsed and run
+  // (~2.2s on a 4x-throttled cold load). For all of it the launcher was blank,
+  // which does not read as "loading", it reads as "you have no apps".
+  //
+  // So they render in NODE too. renderToStaticMarkup walks this same branch
+  // with the same INITIAL store, the shipped document carries the
+  // placeholders, and the first client render produces the identical tree —
+  // the agreement is kept by making both sides draw them, not neither.
+  // Comment-stripped: the block above the placeholders names the retired flag
+  // twice while explaining why it went, which is the point of that comment.
+  const gridCode = GRID.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/\bmounted\b/.test(gridCode),
+    'the post-hydration gate is gone — nothing is left to delay them');
+  assert.match(GRID, /!state\.ready && !state\.notice/,
+    'placeholders while unready, unless there is a notice to show instead');
+  assert.match(read('public/index.html'), /id="app-list"[\s\S]{0,400}?animate-pulse/,
+    'and the shipped document proves it: the prerendered grid pulses');
+
+  // A placeholder must not answer the queries a real tile answers. The tile
+  // lives in the shared module now — the signed-out directory draws the same
+  // one (features/auth/landing.tsx), so there is one copy to keep honest.
+  const tile = read('frontend/src/features/apps/tile-skeleton.tsx')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.ok(!tile.includes('app-card'),
     'no .app-card on a placeholder — the kit placement recognizer and '
     + 'App._tileFor(slug) both select on it, and neither has an app to find');

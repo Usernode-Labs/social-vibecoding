@@ -95,8 +95,25 @@ test('the snapshot is display-only — it is never treated as a credential', () 
   // do; the cookie stays the sole credential and the server stays the
   // sole judge. The only consumers are the boot screen choice and the
   // reconcile that replaces it.
+  // TWO reads, which is what the note above already describes: the boot
+  // SCREEN choice (`_applyBootScreen`, which picks the root a cold document
+  // reveals before the router can) and `init`'s fallback when /api/auth/me
+  // never answers. Both are display-only and both are self-correcting. The
+  // count is asserted rather than left open because a third reader is how a
+  // display-only record turns into a credential by accident.
   const uses = [...APP.matchAll(/App\.readSessionSnapshot\(\)/g)];
-  assert.equal(uses.length, 1, 'the snapshot should be read exactly once, at boot');
+  assert.equal(uses.length, 2,
+    'the snapshot is read at boot twice: which screen to show, and whether to '
+    + 'enter authed when the server said nothing');
+  // Located by its ASSIGNMENT, not appMethod: like `App._foregroundResync`
+  // above it, this one hangs off App after the literal, because the call that
+  // runs it at module scope has to come after the object exists.
+  const at = APP.indexOf('App._applyBootScreen = function');
+  assert.ok(at > -1, 'App._applyBootScreen not found');
+  const bootScreen = APP.slice(at, APP.indexOf('\n};', at));
+  assert.match(bootScreen, /!!App\.readSessionSnapshot\(\)/,
+    'the boot-screen read is coerced to a BOOLEAN at the call site — it asks '
+    + 'whether this device was signed in, never who it was signed in as');
   assert.ok(!/snapshot[^\n]*isAdmin|isAdmin[^\n]*snapshot/i.test(APP),
     'no privilege decision may be derived from the snapshot');
 });

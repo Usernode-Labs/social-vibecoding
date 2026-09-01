@@ -206,15 +206,24 @@ test('the precached document names the platform, and does not guess a theme', ()
   // The module still decides, before first paint, exactly as it did.
   assert.match(head, /document\.documentElement\.classList\.add\('dark'\)/);
 
-  // 3. THE LAUNCHER'S SPACE. The prerendered #app-list is empty, so the areas
-  //    below it — and the account row at the foot — sat near the top of the
-  //    page and slid down two rows when the bundle hydrated and the grid drew
-  //    its skeleton. The reservation is CSS, so it holds from the very first
-  //    paint, and it is keyed on the `data-view` that app-grid.tsx sets on its
-  //    first ready render — so it never pads a loaded grid, including the
-  //    empty one a brand new account has.
-  assert.match(readPublic('index.html'), /id="app-list"[^>]*><\/div>/,
-    'the prerendered grid is empty, which is what the reservation is for');
+  // 3. THE LAUNCHER'S SPACE, and what now fills it. The prerendered #app-list
+  //    used to be EMPTY: the areas below it slid down two rows when the bundle
+  //    hydrated and the grid finally drew its skeleton, and for the whole
+  //    parse-and-hydrate window — ~2.2s on a 4x-throttled cold load — the home
+  //    screen showed a blank launcher, which does not read as "loading", it
+  //    reads as "you have no apps".
+  //
+  //    The placeholders are in the PRERENDER now (app-grid.tsx renders them
+  //    from the INITIAL store, so Node and the first client render produce the
+  //    same tree and nothing mismatches). The CSS reservation stays: it is
+  //    keyed on the `data-view` app-grid.tsx sets on its first ready render, so
+  //    it still holds the height for the states that draw no tiles — a notice,
+  //    or a document whose bundle never arrives — and it never pads a loaded
+  //    grid, including the empty one a brand new account has.
+  assert.match(readPublic('index.html'), /id="app-list"[^>]*>\s*<div class="sr-only" role="status">Loading your apps<\/div>/,
+    'the prerendered grid ships the placeholders, not a blank');
+  assert.match(readPublic('index.html'), /id="app-list"[\s\S]{0,400}?animate-pulse/,
+    'and they pulse, so the first painted frame says the grid is coming');
   assert.doesNotMatch(readPublic('index.html'), /id="app-list"[^>]*data-view=/,
     'and carries no data-view until the grid has rendered once');
   assert.match(readPublic('css/app.css'),

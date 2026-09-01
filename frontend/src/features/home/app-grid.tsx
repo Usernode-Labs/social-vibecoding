@@ -64,6 +64,7 @@ import { Bars3Icon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { TileSkeleton } from '../apps/tile-skeleton';
 import { gridStore, type GridItem, type HomeAppView, type IconView } from './grid-store';
 
 function controller(): any {
@@ -99,39 +100,28 @@ function AppIcon({ icon }: { icon: IconView }) {
 const wired = new WeakSet<Element>();
 
 /**
- * One placeholder tile, at the real card's geometry: the same 3.5rem
- * `rounded-2xl` icon box and the same fixed 26px title lane, so the arriving
- * grid lands on its own outlines instead of pushing the placeholders aside.
- *
- * `.app-card` is deliberately NOT on these. It carries the hover transition
- * and — more to the point — it is what the kit's placement recognizer and
- * `App._tileFor(slug)` select on; a placeholder answering either of those
- * queries is a tile that can be long-pressed, dragged, or zoomed into, and
- * it has no app behind it.
- */
-function SkeletonTile() {
-  return (
-    <div className="relative rounded-xl p-3 flex flex-col items-center text-center gap-1.5">
-      <div className="w-14 h-14 rounded-2xl bg-zinc-200 dark:bg-zinc-800 shrink-0"></div>
-      <div className="w-full h-[26px] flex justify-center pt-1">
-        <div className="h-2.5 w-2/3 rounded bg-zinc-200/70 dark:bg-zinc-800/70"></div>
-      </div>
-    </div>
-  );
-}
-
-/**
  * The launcher's loading state.
  *
- * ── Why it may not render on the FIRST pass ───────────────────────────
+ * ── It is in the PRERENDER now, and that is the whole point ───────────
  *
- * `INITIAL_GRID.ready` is false with no items, and that renders NOTHING on
- * purpose: it is the empty `<div id="app-list">` the shell prerenders (see
- * ./grid-store.ts), and hydrating anything else is a mismatch — which
- * `console.error`s, which fails proposal checks. So the placeholders wait one
- * effect tick behind `mounted`. The cost is one frame of the same blank the
- * prerender already shows; the payoff is that every frame after it says the
- * grid is coming instead of saying there is nothing here.
+ * These used to wait one effect tick behind a `mounted` flag, so that the
+ * first client render matched the empty `<div id="app-list">` the shell
+ * prerendered — hydrating anything else is a mismatch, which `console.error`s,
+ * which fails proposal checks. The cost was written off as "one frame of the
+ * same blank the prerender already shows".
+ *
+ * It is not one frame. public/sw.js serves that prerendered document to every
+ * navigation it can win, and the React bundle does not hydrate until it has
+ * parsed and executed — measured at ~2.2s on a 4x-throttled cold load. For all
+ * of that time the home screen showed an EMPTY launcher, which does not read
+ * as "loading", it reads as "you have no apps".
+ *
+ * The fix is not to render them earlier on the client but to render them in
+ * NODE as well: `renderToStaticMarkup(<Shell/>)` walks this same branch with
+ * the same INITIAL store, so the placeholders are baked into the shipped
+ * document and the first client render produces the identical tree. Same
+ * agreement, one less blank screen — and the `mounted` gate goes with it,
+ * because what it was protecting against no longer exists.
  *
  * ── Why eight ─────────────────────────────────────────────────────────
  *
@@ -297,11 +287,6 @@ export function AppGrid() {
     return () => { N._detachGridPlacement?.(); };
   }, [canDrag, state.items.length, state.rowTemplate]);
 
-  // See SKELETON_TILES: the placeholders may only appear on a render AFTER
-  // hydration, so the first pass still matches the prerendered empty grid.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
-
   // Everything below runs AFTER the grid has painted, exactly where the tail
   // of the old Home.render() ran it.
   useEffect(() => {
@@ -339,13 +324,12 @@ export function AppGrid() {
       {state.resultsHeading ? (
         <div className="home-section-header col-span-full">{state.resultsHeading}</div>
       ) : null}
-      {!state.ready && mounted && !state.notice ? (
-        <>
-          <div className="sr-only" role="status">Loading your apps</div>
-          <div className="col-span-full grid grid-cols-4 gap-1.5 sm:gap-2 animate-pulse" aria-hidden="true">
-            {Array.from({ length: SKELETON_TILES }, (_, i) => <SkeletonTile key={i} />)}
-          </div>
-        </>
+      {!state.ready && !state.notice ? (
+        <TileSkeleton
+          n={SKELETON_TILES}
+          label="Loading your apps"
+          className="col-span-full grid grid-cols-4 gap-1.5 sm:gap-2"
+        />
       ) : null}
       {state.items.map((item) => (
         <AppCardTile

@@ -49,6 +49,8 @@
 
 import { Fragment, type ReactNode } from 'react';
 
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+
 import { useStoreState } from '../../lib/use-store-state';
 import { kudosPaneStore } from './kudos-pane-store.js';
 
@@ -186,8 +188,42 @@ function Dot(): ReactNode {
   return <span className="text-zinc-500 dark:text-zinc-400">·</span>;
 }
 
+/**
+ * The list's loading state, at the ROW's own geometry.
+ *
+ * It was the word "Loading…" centred in eight rows of empty space — which
+ * says nothing about what is coming and, on a screen whose lists are its
+ * whole content, reads as a screen with nothing on it.
+ *
+ * The wrapper is `ROW` itself, the constant all four of this pane's lists
+ * draw with, so the placeholders carry the real border, radius and padding
+ * and cannot drift from the rows they stand in for. The three columns are
+ * the row's own: the fixed rank lane, the 36px avatar, and the title/meta
+ * pair — plus the kudos pill's shape at the right end, because a row whose
+ * right edge is empty and then suddenly is not is the jump this exists to
+ * avoid.
+ *
+ * Five rows: enough to fill the fold on a phone, few enough that a short
+ * board does not watch placeholders evaporate.
+ */
 function Loading(): ReactNode {
-  return <div className={HINT}>Loading…</div>;
+  return (
+    <SkeletonGroup label="Loading the leaderboard" className="space-y-2">
+      {Array.from({ length: 5 }, (_, i) => (
+        <div key={i} className={ROW}>
+          <div className="w-7 flex justify-center">
+            <Skeleton shape="muted" className="w-3" />
+          </div>
+          <Skeleton shape="circle" className="w-9 h-9" />
+          <div className="flex-1 min-w-0">
+            <Skeleton className={i % 2 ? 'w-24' : 'w-32'} />
+            <Skeleton shape="muted" className={`mt-1.5 ${i % 3 ? 'w-2/5' : 'w-1/3'}`} />
+          </div>
+          <Skeleton shape="block" className="w-12 h-6 rounded-full" />
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
 }
 
 /**

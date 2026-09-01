@@ -97,6 +97,91 @@ export function CountSkeleton(): ReactNode {
 }
 
 /**
+ * The board's four columns, which are FIXED and therefore knowable before any
+ * fetch: `AppView._repaintDevBody` builds this same list every time.
+ *
+ * The skeleton names them rather than drawing four grey bars, and that is the
+ * difference between "something is coming" and "this board has an Issues
+ * column and it is filling". Only the counts are unknown, so only the counts
+ * pulse — see `COUNT_BAR` below, the string form of <CountSkeleton/>.
+ */
+const KANBAN_COLS = ['Issues', 'Underway', 'In review', 'Done'];
+
+/** <CountSkeleton/> as a string, for the HTML builders below. */
+const COUNT_BAR =
+  '<span class="inline-block align-middle w-4 h-3 rounded bg-zinc-200 '
+  + 'dark:bg-zinc-800 animate-pulse" aria-hidden="true"></span>';
+
+/** One card's markup, shared by both string builders. */
+function cardHtml(i: number): string {
+  return `<div class="${SKELETON_CARD_CLS}">`
+    + `<div class="${SKELETON_TILE_CLS}"></div>`
+    + '<div class="min-w-0 flex-1 space-y-2">'
+    + `<div class="${SKELETON_LINE_CLS} ${TITLE_W[i % TITLE_W.length]}"></div>`
+    + `<div class="${SKELETON_SUBLINE_CLS} ${SUB_W[i % SUB_W.length]}"></div>`
+    + '</div></div>';
+}
+
+/**
+ * The KANBAN's loading state as an HTML string, for `#dev-body`'s initial
+ * content on a board route.
+ *
+ * ── Why this exists at all ────────────────────────────────────────────
+ *
+ * `#dev-body` opened with `skeletonListHtml` on every route, so a cold load
+ * of `/app/<slug>/board` painted a single column of three cards and THEN
+ * became four columns when <DevKanban/> mounted — measured at ~270ms apart on
+ * a throttled desktop, longer on a phone. A skeleton whose whole job is to
+ * predict the shape of what is coming was predicting the wrong shape.
+ *
+ * ── It reuses the REAL classes, and that is the point ─────────────────
+ *
+ * `.dev-kanban-col` and the `#dev-kanban` wrapper carry their layout in
+ * app.css, behind media queries: at >=640px every column sits in one row, and
+ * below that all but `.dev-kanban-col-active` are `display:none` with a tab
+ * strip above instead. Borrowing the classes means the skeleton is responsive
+ * for free and CANNOT disagree with the real board about how many columns a
+ * given width shows — which a hand-rolled grid would, the first time those
+ * breakpoints moved.
+ *
+ * The first column carries `dev-kanban-col-active` for exactly that reason:
+ * without it a phone would show no columns at all.
+ *
+ * No ids. The real board's `#dev-kanban` / `#dev-kanban-col-*` arrive when
+ * <DevKanban/> replaces this, and two live elements answering one
+ * `getElementById` for even a frame is not worth the tidiness.
+ */
+export function skeletonKanbanHtml(): string {
+  const tabs = KANBAN_COLS.map((title, i) => (
+    '<div class="dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 '
+    + 'flex flex-col items-center justify-center border-b-2 '
+    + (i === 0
+      ? 'border-violet-500 text-violet-700 font-semibold dark:text-violet-400'
+      : 'border-transparent text-zinc-500 dark:text-zinc-400')
+    + '">'
+    + `<span class="text-xs leading-tight truncate max-w-full">${title}</span>`
+    + `<span class="font-mono text-[11px] leading-tight">${COUNT_BAR}</span>`
+    + '</div>'
+  )).join('');
+
+  const cols = KANBAN_COLS.map((title, i) => (
+    `<div class="dev-kanban-col${i === 0 ? ' dev-kanban-col-active' : ''}">`
+    + '<div class="dev-kanban-col-head text-[0.9375rem] font-semibold '
+    + 'text-zinc-500 dark:text-zinc-400 mb-2 px-0.5">'
+    + `${title} <span class="text-zinc-500 dark:text-zinc-500 font-mono">· ${COUNT_BAR}</span>`
+    + '</div>'
+    + '<div class="space-y-2 animate-pulse" aria-hidden="true">'
+    + cardHtml(i) + cardHtml(i + 1)
+    + '</div></div>'
+  )).join('');
+
+  return '<div class="sr-only" role="status">Loading the board</div>'
+    + '<div class="sm:hidden flex items-stretch gap-1 mb-2 border-b '
+    + `border-zinc-200 dark:border-zinc-800" aria-hidden="true">${tabs}</div>`
+    + `<div class="flex gap-3 overflow-x-auto pb-2" aria-hidden="true">${cols}</div>`;
+}
+
+/**
  * The same rows as an HTML STRING, for `#dev-body`'s initial content —
  * board-frame.tsx writes that through `dangerouslySetInnerHTML` before any
  * of these components can mount, and this keeps the two from drifting
@@ -104,14 +189,7 @@ export function CountSkeleton(): ReactNode {
  */
 export function skeletonListHtml(n: number): string {
   let rows = '';
-  for (let i = 0; i < n; i += 1) {
-    rows += `<div class="${SKELETON_CARD_CLS}">`
-      + `<div class="${SKELETON_TILE_CLS}"></div>`
-      + '<div class="min-w-0 flex-1 space-y-2">'
-      + `<div class="${SKELETON_LINE_CLS} ${TITLE_W[i % TITLE_W.length]}"></div>`
-      + `<div class="${SKELETON_SUBLINE_CLS} ${SUB_W[i % SUB_W.length]}"></div>`
-      + '</div></div>';
-  }
+  for (let i = 0; i < n; i += 1) rows += cardHtml(i);
   return '<div class="sr-only" role="status">Loading</div>'
     + `<div class="space-y-2 animate-pulse" aria-hidden="true">${rows}</div>`;
 }

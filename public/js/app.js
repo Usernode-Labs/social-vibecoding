@@ -2711,6 +2711,7 @@ const App = {
           // Without this the title can be stuck on a previous app's
           // name if document.title was set elsewhere (e.g. a stale
           // value persisted across a Flutter WebView session).
+          App._ensureHomeVisible();
           App.setHeaderTitle('Social Vibecoding');
           Home.load();
         }
@@ -2727,6 +2728,7 @@ const App = {
           || App._inAdmin || App._inSettings || App._inBrowse) {
           App.navigateHome();
         } else {
+          App._ensureHomeVisible();
           App.setHeaderTitle('Social Vibecoding');
           Home.load();
         }
@@ -3276,6 +3278,34 @@ const App = {
     // `false`, so a converted region can fall back to whatever its
     // markup shipped with rather than flashing hidden on first render.
     read(id) { return App.Visibility._store().visible[id]; },
+  },
+
+  /**
+   * The two "we are STAYING on home" branches of restoreFromHash say so
+   * rather than assuming it.
+   *
+   * Both deliberately skip navigateHome() — it would pushState and close the
+   * app view, neither of which is right when nothing is moving — and both
+   * therefore relied on `#home-screen` already being visible, which was true
+   * only because the prerendered document ships it that way.
+   *
+   * `_applyBootScreen` retired that guarantee: it hides home the moment the
+   * address names anywhere else, and a guess it is allowed to get wrong (the
+   * device's session record is display-only and can be stale) landed exactly
+   * here — signed out by the record, signed in by the cookie, so the boot
+   * screen revealed the landing page, enterAuthed's hideAll() took it away
+   * again, and this branch left a blank document behind. Fourteen home checks
+   * failed at once, which is what a shared assumption looks like when it
+   * stops holding.
+   *
+   * A no-op on every path that was already correct, and the repair on the one
+   * that was not. Cheaper than navigateHome() in exactly the way those
+   * branches wanted.
+   */
+  _ensureHomeVisible() {
+    if (App._revealedScreen === 'home-screen') return;
+    App._setScreenVisible('home-screen', true);
+    App._revealedScreen = 'home-screen';
   },
 
   // Show/hide one screen root through whichever half owns it.
@@ -4562,5 +4592,126 @@ if (typeof document !== 'undefined' && document.addEventListener) {
 if (typeof window !== 'undefined' && window.addEventListener) {
   window.addEventListener('focus', App._foregroundResync);
 }
+
+// ── The FIRST screen, decided before anything hydrates ─────────────────
+//
+// The prerendered document ships `#home-screen` visible and every other root
+// hidden, because a static render has no route to read. public/sw.js then
+// serves that document to every navigation it can win, so the home feed was
+// the first thing painted on EVERY address — a board deep link, a settings
+// link, a signed-out visitor headed for the marketing page.
+//
+// Measured on a 4x-throttled cold load of `/app/<slug>/board`: home visible at
+// 263ms and the app view finally taking over at 2225ms. Two seconds of
+// watching the wrong page, and home's own skeleton filling in halfway through
+// made it worse — a screen that is visibly working is a screen you believe.
+//
+// THIS RUNS AT MODULE SCOPE, NOT ON DOMContentLoaded, and that is the whole
+// point. app.js is a classic script at the end of <body>; the React entry is a
+// deferred module, so everything here happens BEFORE the first React render.
+// Hydration is the real floor — it landed at ~2000ms in that same trace — so a
+// correction applied after it (the seam lib/shell-snapshot-apply.ts uses)
+// would buy almost nothing. This is the earliest moment the roots exist.
+//
+// BOTH HALVES, ALWAYS: the store publish AND the class. Publishing alone would
+// leave React rendering `hidden` over a document that still says visible,
+// which is a hydration mismatch — a console error, and a console error on any
+// route fails proposal checks. Writing the class alone would be a write into
+// React-owned DOM that its first render reconciles away. Doing both means the
+// DOM and React's first render agree, which is exactly what the shared store
+// exists for (features/header/../lib/visibility-store.ts).
+App._applyBootScreen = function _applyBootScreen() {
+  let target = null;
+  try {
+    target = App._bootScreenFor(
+      location.hash, location.pathname, !!App.readSessionSnapshot()
+    );
+  } catch (err) { return; }
+  if (!target || target === 'home-screen') return;
+  App._revealBootScreen('home-screen', false);
+  App._revealBootScreen(target, true);
+};
+
+/**
+ * Show or hide one root through BOTH owners — see the note above.
+ * `_setScreenVisible` cannot be reused here: it deliberately picks one half.
+ */
+App._revealBootScreen = function _revealBootScreen(id, visible) {
+  if (App.REACT_SCREEN_IDS.includes(id)) App.Visibility.publish(id, visible);
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('hidden', !visible);
+};
+
+/**
+ * The screen root an address lands on, or null to leave the prerender alone.
+ *
+ * A COARSE mirror of restoreFromHash, deliberately not a second copy of it: it
+ * answers one question — which of the roots ends up visible — and every
+ * sub-route inside a screen resolves to that screen. Anything it has not heard
+ * of returns null and keeps today's behaviour rather than inventing a guess.
+ *
+ * It is ALLOWED TO BE WRONG. The session record is display-only and can be
+ * stale (an expired cookie), so a signed-out viewer may see the app view for
+ * the moment before the router sends them to the landing screen — which is
+ * what happens today anyway, from home instead. A wrong guess costs what every
+ * route already costs; a right one, which is the common case since people
+ * return to where they were, costs nothing.
+ */
+App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
+  const frag = String(hash || '').replace(/^#/, '');
+  const head = frag.split('/')[0] || '';
+  // An app address is a fragment OR a clean path — the router reads both
+  // (`_appRouteFromPath`), and it folds them into ONE `hash` before deciding
+  // anything, so this has to as well. Reading only the fragment sent a
+  // signed-out visitor opening `/app/<slug>` to the marketing page, because
+  // an empty fragment looked like the bare root.
+  const appPath = /^\/app\/[^/]/.test(String(pathname || ''));
+
+  // A PUBLIC profile needs no session and is the one address that resolves to
+  // the same screen either way, so it is answered before the split.
+  if (head === 'profile' && frag.split('/')[1]) return 'profile-screen';
+
+  // The anonymous shell owns the whole document when there is no session, so
+  // it outranks the route — and the four cases below are restoreFromHash's
+  // own, in its order. The last one is the easy one to get wrong: a signed-out
+  // DEEP LINK does not land on the marketing page, it lands on LOGIN, with the
+  // address remembered for after ("'/' → landing, deeper paths → login", which
+  // is the parity with the old static documents the router notes).
+  if (!signedIn) {
+    if (head === 'login' || head === 'signup') return 'auth-login-screen';
+    if (head === 'register') return 'auth-register-screen';
+    if (head === 'waitlist') return 'auth-waitlist-screen';
+    // No route at all, and 'waiting' — which the router redirects to landing
+    // for a viewer with no session to be waiting on. `appPath` is why this
+    // asks about the ROUTE and not the fragment.
+    if ((head === '' && !appPath) || head === 'waiting') return 'auth-landing-screen';
+    return 'auth-login-screen';
+  }
+
+  if (head === 'app' || appPath) return 'app-view';
+
+  switch (head) {
+    case '': return null;                    // home: the prerender is right
+    case 'apps': return 'browse-screen';
+    case 'profile': return 'profile-screen';
+    case 'settings': return 'settings-screen';
+    case 'admin': return 'admin-screen';
+    case 'messages': return 'messages-screen';
+    case 'leaderboard': return 'leaderboard-screen';
+    default: return null;                    // #notifications is a sheet over home
+  }
+};
+
+// GUARDED, because this is a module-scope side effect in a file a dozen test
+// harnesses load as a plain script into a `vm` context with a stub document.
+// Those stubs are not obliged to have `getElementById`, and a throw here would
+// take the whole file down before `App` was ever published — which is exactly
+// what happened the first time this shipped unguarded. A boot screen is a
+// nicety; the router is not.
+try {
+  if (typeof document !== 'undefined' && typeof document.getElementById === 'function') {
+    App._applyBootScreen();
+  }
+} catch (err) { /* no usable DOM — the router still routes, one paint later */ }
 
 document.addEventListener('DOMContentLoaded', () => App.init());
