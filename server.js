@@ -4,7 +4,7 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 const { load: loadConfig } = require('./src/config');
 const { migrate } = require('./src/db/migrate');
-const { shellAssetCacheControl } = require('./src/services/static-cache');
+const { shellAssetCacheControl, applyShellBuildHeader } = require('./src/services/static-cache');
 const { authMiddleware } = require('./src/middleware/auth');
 const { authRoutes } = require('./src/routes/auth');
 const { appRoutes } = require('./src/routes/apps');
@@ -726,6 +726,10 @@ app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
     const cc = shellAssetCacheControl(filePath);
     if (cc) res.setHeader('Cache-Control', cc);
+    // Which build these bytes belong to, so the service worker can tell a
+    // cached copy that is still current from one a deploy has superseded.
+    // Same asset set as the Cache-Control above — see static-cache.js.
+    if (cc) applyShellBuildHeader(res);
   },
 }));
 
@@ -771,6 +775,9 @@ app.get('*', (req, res) => {
     // policy as the static handler so a redeployed index.html (which pulls
     // in fresh /js/*.js) is never pinned in a WebView cache.
     res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
+    // The document carries the build id too — it is the reference the
+    // worker compares every cached asset against on this load.
+    applyShellBuildHeader(res);
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   } else {
     res.status(404).json({ error: 'Not found' });

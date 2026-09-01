@@ -589,6 +589,42 @@ if (typeof module !== 'undefined' && module.exports) {
   // that fails.
   let shellFromCacheThisLoad = false;
 
+  // ── Which build the document being parsed belongs to ─────────────────
+  //
+  // The flag above is the answer to "was the connection bad?", and it was
+  // being used as a proxy for "are the cached assets safe to serve?". Those
+  // are not the same question, and using one for the other put the shortcut
+  // on the wrong side of the trade: the document only loses its race on a
+  // link slower than 200ms, so the shortcut fired only when the network was
+  // BAD, and the ~34 shell assets each paid a 200ms deadline whenever it was
+  // GOOD. Measured warm on a 150ms link, every asset was answered from cache
+  // — after 459ms of waiting to find that out. 483ms for the set, on a load
+  // where nothing had been deployed.
+  //
+  // The real question is build identity, and the server now answers it
+  // directly: X-Platform-Build on the document and on every shell asset (see
+  // src/services/static-cache.js). A cached asset stamped with the same build
+  // as the document being parsed is not stale by any definition — the network
+  // would answer 304 — so it is served on this tick and revalidated behind.
+  // A DIFFERENT stamp means a deploy landed, and that asset races exactly as
+  // it did before, which is what keeps a redeploy reaching a WebView on the
+  // next load.
+  //
+  // Null in three cases, all of which fall back to the race rather than to
+  // something that can be wrong: a checkout (no GIT_SHA, so no header — an
+  // edit to public/js/app.js must still show up), a worker restarted
+  // mid-load, and a document served before this shipped.
+  let documentBuildThisLoad = null;
+
+  const SHELL_BUILD_HEADER = 'x-platform-build';
+
+  function buildIdOf(response) {
+    try {
+      const id = response && response.headers && response.headers.get(SHELL_BUILD_HEADER);
+      return id || null;
+    } catch { return null; }
+  }
+
   // Stamp a response copy with the cached-at time so activate() can prune
   // stale entries. Only used for the API cache. Takes an already-cloned
   // response (cloning must happen synchronously, before the page starts
@@ -716,6 +752,24 @@ if (typeof module !== 'undefined' && module.exports) {
       // through: there is nothing cached to prefer.
     }
 
+    // Same build as the document being parsed: the cached copy IS the
+    // current copy, so there is nothing to race for. See
+    // documentBuildThisLoad for why this is a different question from the
+    // flag above, and why it is the one worth asking.
+    //
+    // The revalidation still goes out, behind the response — that is what
+    // repairs a cache entry the server has since changed under the same
+    // build id, and it costs the page nothing.
+    if (documentBuildThisLoad) {
+      const hit = await cache.match(event.request, { ignoreSearch: true });
+      if (hit && buildIdOf(hit) === documentBuildThisLoad) {
+        event.waitUntil(fetchAndCache().catch(() => {}));
+        return hit;
+      }
+      // Either nothing cached, or cached from a DIFFERENT build. Both mean
+      // the network has something to say; fall through and let it race.
+    }
+
     const { response, pending } = await raceNetworkAndCache({
       startFetch: fetchAndCache,
       matchCache: () => cache.match(event.request, { ignoreSearch: true }),
@@ -774,6 +828,12 @@ if (typeof module !== 'undefined' && module.exports) {
     // Publish the verdict for the ~38 shell assets this document is about
     // to request. See shellFromCacheThisLoad.
     shellFromCacheThisLoad = fromCache;
+    // And WHICH BUILD they should be measured against. Read off the
+    // response actually served, so a cached document publishes the build it
+    // was cached at rather than the one the network is still fetching —
+    // those assets have to match the document being parsed, not the one
+    // that will be parsed next time. See documentBuildThisLoad.
+    documentBuildThisLoad = buildIdOf(response);
     if (pending) event.waitUntil(pending.catch(() => {}));
     return response;
   }
