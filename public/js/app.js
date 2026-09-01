@@ -326,7 +326,7 @@ const App = {
       App._sessionFromSnapshot = true;
       App.enterAuthed(snap.user);
       // NOT awaited: it is the whole point that the shell is already up.
-      App._reconcileSession();
+      App._reconcileSession({ fromBoot: true });
       return;
     }
 
@@ -397,7 +397,7 @@ const App = {
   // Uses the same deadline'd read as the boot (_fetchSession): an
   // open-but-stalled socket must not hold this open forever either, and on
   // the boot path this IS the boot's read.
-  async _reconcileSession() {
+  async _reconcileSession({ fromBoot = false } = {}) {
     if (!App._sessionFromSnapshot) return;
     let res;
     try {
@@ -458,7 +458,22 @@ const App = {
     // (features/settings/terms-first-run.js), so it has to be re-offered
     // once there is a verified one.
     try { window.TermsFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
-    try { App.resyncCurrentView(); } catch (err) { /* ignore */ }
+    // resyncCurrentView is the DISCONNECT-RECOVERY sweep: reload home,
+    // re-pull notifications, resync session state, re-read the version. It
+    // belongs to the reconnect path, where the screen has been sitting on
+    // cached data through an outage and everything on it may have moved.
+    //
+    // On a BOOT promotion none of that is true. The screen was painted
+    // moments ago from this same session's data, so the sweep re-runs half a
+    // dozen loads that just ran — and it lands ~300ms in, on top of whatever
+    // the first paint put on screen. That is not only waste: it reopened a
+    // real defect in the ?shot=feedback-capture-failed route, where the
+    // sweep arrived while the shot's dialog was open and took it back down,
+    // leaving the status line written but the modal closed. Two proposal
+    // checks failed on exactly that.
+    if (!fromBoot) {
+      try { App.resyncCurrentView(); } catch (err) { /* ignore */ }
+    }
   },
 
   // ── Staged boot (fold-auth-pages-into-SPA) ──────────────────────────
@@ -1014,14 +1029,26 @@ const App = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'notif-permissions') return;
-    setTimeout(() => {
+    // Retried for the same reason the feedback shot above is: this used to
+    // give up silently the moment NativeChrome had not wired up yet, and the
+    // optimistic boot moved this tick ~250ms earlier relative to it.
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
       if (!window.NativeChrome ||
-          typeof NativeChrome.presentPermissionsSheet !== 'function') return;
+          typeof NativeChrome.presentPermissionsSheet !== 'function') {
+        if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+        return;
+      }
       const sheet = NativeChrome.presentPermissionsSheet({
         perms: { platform: 'ios', exactAlarmGranted: false },
         isAndroid: false,
       });
-      if (!sheet) return;
+      // Present refused (the kit is there but not ready to show one yet):
+      // also worth another go rather than ending the shot.
+      if (!sheet) {
+        if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+        return;
+      }
       // After the entrance spring has settled — a ghost arrives at a
       // presented sheet, not one still sliding in — and still well inside
       // the kit's guard window. A bare .click() with no preceding
@@ -1032,7 +1059,8 @@ const App = {
         const el = document.querySelector('.un-sheet');
         if (el) el.setAttribute('data-un-ghost-click', 'dispatched');
       }, 150);
-    }, 50);
+    };
+    setTimeout(attempt, 50);
   },
 
   // Screenshot-state deep links `?shot=terms-consent` (issue #1297) and
@@ -1139,6 +1167,16 @@ const App = {
     // the draft is typed into the field, never stashed (the stash skips any
     // ?shot= route on purpose) and never filed.
     const captureFailed = shot === 'feedback-capture-failed';
+    // ONCE PER DOCUMENT. _applyRouteShots dedupes on the hash, not on the
+    // applier, so a fragment that changes after boot re-runs this one — and
+    // this shot is not idempotent the way the others are. Its
+    // ?shot=feedback-capture-failed branch drives a real capture round trip,
+    // which SUSPENDS the dialog (hidden, draft cleared) and resumes it when
+    // the attempt fails; two rounds interleaving leave it suspended, which
+    // reads exactly like a dialog that closed itself. Both #1284 checks
+    // photographed that state.
+    if (App._feedbackShotApplied) return;
+    App._feedbackShotApplied = true;
     // Seed and pin synchronously, BEFORE enterAuthed() reaches its
     // FeedbackQueue.flush('signin') call below. Delaying all of this with the
     // modal used to leave a 50 ms window where the real persisted queue could
@@ -1158,8 +1196,33 @@ const App = {
       try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
     }
     // One tick after restoreFromHash so the screen it navigated to has
-    // painted and the dialog opens over a settled shell.
-    setTimeout(() => {
+    // painted and the dialog opens over a settled shell — and then RETRIES,
+    // on the same budget as the Improve / app-context shots above.
+    //
+    // Waits for the ISLAND, not for App.openFeedbackModal.
+    //
+    // The function is published by feedback-controller.js's init(); the
+    // island is registered separately, by useDialog('feedback') on hydration.
+    // Between those two moments openFeedbackModal EXISTS and falls back to
+    // the legacy open — and then the island hydrates, React reconciles
+    // `hidden` back on, and the dialog it just opened is taken down again,
+    // form reset. That is precisely what a failing check photographed: the
+    // status line written, the modal closed, the draft gone.
+    //
+    // feedback-controller.js's own header already names the ordering this
+    // depends on — "hydration normally publishes this AFTER /api/auth/me has
+    // already run enterAuthed, and a slow bundle reverses it". The optimistic
+    // boot removes that round trip, so the reversal is no longer the slow
+    // case; on a loaded container it is the ordinary one. Waiting on the
+    // island is the fix that does not care which way the race goes.
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      // The same lookup dialogController() makes (use-dialog.ts registers it).
+      const island = window.UsernodeReact?.dialogs?.feedback;
+      if (!island || typeof App.openFeedbackModal !== 'function') {
+        if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+        return;
+      }
       try {
         if (spent && window.Kudos?.Budget) {
           const limit = Kudos.Budget.state?.limit || 20;
@@ -1178,13 +1241,26 @@ const App = {
           // title generation, and a display-only shot must not call the LLM.
           if (text) text.value = 'The board scrolls back to the top when I drag a card.';
           // One more tick so the dialog has settled (and its own open-time
-          // resets have run) before the failing attempt starts.
-          setTimeout(() => {
+          // resets have run) before the failing attempt starts — and then the
+          // same retry the open above gets, for the same reason one level
+          // down. runCapture suspends the dialog, awaits the attempt and
+          // resumes it with the notice; fired once into a shell that is still
+          // settling it can land before the dialog's own open-time reset,
+          // which then wipes the status line it just wrote. What the check
+          // asserts is the notice being VISIBLE, so that is what this waits
+          // for rather than a fixed number of milliseconds.
+          let capTries = App.IMPROVE_SHOT_TRIES;
+          const runFailure = () => {
+            const status = document.getElementById('feedback-status');
+            if (status && !status.classList.contains('hidden')) return;
             try { App._simulateFeedbackCaptureFailure?.(); } catch (err) { /* ignore */ }
-          }, 50);
+            if (--capTries > 0) setTimeout(runFailure, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(runFailure, 50);
         }
       } catch (err) { /* ignore */ }
-    }, 50);
+    };
+    setTimeout(attempt, 50);
   },
 
   renderAdminButton() {

@@ -177,11 +177,15 @@ test('the queued shot seeds the store before it pins connectivity', () => {
     'seed first, then pin — otherwise the offline-change read races the seed',
   );
   assert.ok(
-    shot.indexOf('seedDisplayOnly?.(') < shot.indexOf('setTimeout(() =>'),
+    // The deferred presentation is a named `attempt` that retries until the
+    // dialog island has hydrated, rather than one anonymous setTimeout — but
+    // the ordering it must not cross is unchanged: everything address-driven
+    // is installed synchronously, and only the PRESENTATION waits.
+    shot.indexOf('seedDisplayOnly?.(') < shot.indexOf('const attempt = () =>'),
     'the display-only store must be installed before enterAuthed starts the sign-in flush',
   );
   assert.ok(
-    shot.indexOf('window.Offline?.forceOffline()') < shot.indexOf('setTimeout(() =>'),
+    shot.indexOf('window.Offline?.forceOffline()') < shot.indexOf('const attempt = () =>'),
     'the offline body state is address state, not delayed modal presentation',
   );
 });

@@ -173,7 +173,7 @@ test('a device that has booted here before paints before it asks', () => {
   assert.ok(snapAt !== -1 && readAt !== -1);
   assert.ok(snapAt < readAt, 'the snapshot is consulted before the network is');
   assert.match(init.slice(snapAt),
-    /if \(snap\) \{\s*App\._sessionFromSnapshot = true;\s*App\.enterAuthed\(snap\.user\);[\s\S]{0,200}?App\._reconcileSession\(\);\s*return;/,
+    /if \(snap\) \{\s*App\._sessionFromSnapshot = true;\s*App\.enterAuthed\(snap\.user\);[\s\S]{0,200}?App\._reconcileSession\(\{ fromBoot: true \}\);\s*return;/,
     'and the verification runs BEHIND the painted shell, not in front of it');
   // Not awaited — that is the whole point.
   assert.doesNotMatch(init, /await App\._reconcileSession\(\)/);
@@ -214,7 +214,7 @@ test('the unverified-session guards are what make an optimistic boot safe', () =
 });
 
 test('every held-back call is started again when the session is verified', () => {
-  const rec = APP.slice(APP.indexOf('async _reconcileSession()'),
+  const rec = APP.slice(APP.indexOf('async _reconcileSession({'),
     APP.indexOf('// ── Staged boot'));
   assert.match(rec, /App\.connectEvents\(\);/);
   assert.match(rec, /Kudos\.Budget\.init\(\)/);
@@ -227,13 +227,17 @@ test('every held-back call is started again when the session is verified', () =>
   assert.match(rec, /TermsFirstRun\?\.maybePrompt\?\.\(\)/,
     'terms-first-run bails on an unverified session, and its sv:authed '
     + 'listener is { once: true } — so it never gets a second chance by itself');
-  assert.match(rec, /App\.resyncCurrentView\(\)/);
+  // The disconnect-recovery sweep belongs to the RECONNECT path. On a boot
+  // promotion the screen was painted moments ago from this same session's
+  // data, so re-running half a dozen loads over it is waste — and it landed
+  // on top of the ?shot= dialog two proposal checks photograph.
+  assert.match(rec, /if \(!fromBoot\) \{\s*try \{ App\.resyncCurrentView\(\); \}/);
   assert.match(rec, /App\._publishBootSession\(\{ user \}\)/,
     'and this is where the verified answer reaches everyone who joined');
 });
 
 test('reconciling handles all four answers, and only one of them is a reload loop risk', () => {
-  const rec = APP.slice(APP.indexOf('async _reconcileSession()'),
+  const rec = APP.slice(APP.indexOf('async _reconcileSession({'),
     APP.indexOf('// ── Staged boot'));
   // 401/403 — the session really did end. The snapshot MUST be dropped
   // before the reload, or the next boot paints the same dead shell and
