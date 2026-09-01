@@ -154,6 +154,131 @@ test('a snapshot boot skips the calls that can only fail offline', () => {
   assert.match(body, /!App\._sessionFromSnapshot && window\.AiCredit/);
 });
 
+// ── The boot session read is published, not repeated ─────────────────────
+//
+// GET /api/auth/me was fetched TWICE on every document, 16ms apart, and the
+// boot queued behind the copy it did not make. Settings.init() mounts from a
+// React layout effect at document load on EVERY screen — the byok dot rides
+// the Profile screen and DevChat's budget indicator, so its state really is
+// needed before #settings is opened — and it read the same endpoint for the
+// same fields already on the `user` object App.init was about to fetch.
+// Measured on a 150ms link: one read ~250ms, the pair ~420ms.
+
+const vm = require('node:vm');
+
+// settings.js is a classic script with no imports that publishes
+// window.Settings, so the REAL shipped source runs here rather than a copy.
+function loadSettings({ boot, fetchImpl }) {
+  const noop = () => {};
+  const sandbox = {
+    console, setTimeout, clearTimeout, setInterval, clearInterval,
+    Promise, JSON, URL, URLSearchParams, Date, Math, Object, Array,
+    String, Number, Boolean, RegExp, Error,
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  sandbox.location = { search: '', hash: '', origin: 'http://x', href: 'http://x/' };
+  sandbox.localStorage = { getItem: () => null, setItem: noop, removeItem: noop };
+  sandbox.document = {
+    getElementById: () => null, querySelector: () => null, querySelectorAll: () => [],
+    addEventListener: noop, removeEventListener: noop, readyState: 'complete',
+  };
+  sandbox.navigator = { userAgent: 'node', onLine: true };
+  sandbox.calls = [];
+  sandbox.fetch = (url) => {
+    sandbox.calls.push(String(url));
+    return Promise.resolve(fetchImpl ? fetchImpl(String(url)) : { ok: false });
+  };
+  if (boot !== undefined) sandbox.App = { bootSession: () => Promise.resolve(boot) };
+  vm.createContext(sandbox);
+  vm.runInContext(SETTINGS, sandbox, { filename: 'settings.js' });
+  return sandbox;
+}
+
+// Objects built inside the vm carry that realm's Object.prototype, so
+// deepStrictEqual (what node:assert/strict gives you) rejects them on
+// identity rather than on content. Compare the values, not the realm.
+const plain = (v) => JSON.parse(JSON.stringify(v));
+
+test('a verified boot session is joined, not re-fetched', async () => {
+  const s = loadSettings({ boot: { user: { hasApiKey: true, keyLast4: '9xyz' } } });
+  const j = await s.Settings._readMe('');
+  assert.deepEqual(plain(j), { user: { hasApiKey: true, keyLast4: '9xyz' } });
+  assert.deepEqual(s.calls, [], 'joining the boot read means asking nobody');
+});
+
+test('a boot that answered 401 ends it — asking again gets the same 401', async () => {
+  const s = loadSettings({ boot: { signedOut: true } });
+  assert.equal(await s.Settings._readMe(''), null);
+  assert.deepEqual(s.calls, [], 'a definitive no is an answer, not a reason to retry');
+});
+
+test('a boot that never landed falls back to its own read', async () => {
+  // `unknown` is the snapshot boot: the stored record is { id, username } and
+  // reading it for hasApiKey / walletLinkEnabled would silently answer false
+  // for every one. Offline the worker serves this from cache — /api/auth/me is
+  // in IMMUNE_API_PATHS — which is exactly what happened before this existed.
+  const s = loadSettings({
+    boot: { unknown: true },
+    fetchImpl: () => ({ ok: true, json: () => Promise.resolve({ user: { hasApiKey: true } }) }),
+  });
+  const j = await s.Settings._readMe('');
+  assert.deepEqual(plain(j), { user: { hasApiKey: true } });
+  assert.deepEqual(s.calls, ['/api/auth/me']);
+});
+
+test('?demo=1 always reads for itself — it is a different answer, not a stale one', async () => {
+  // Staging answers the demo request with a FIXTURE key (`demoKey`), so the
+  // boot's plain answer is the wrong answer here, not an older copy of the
+  // right one.
+  const s = loadSettings({
+    boot: { user: { hasApiKey: false } },
+    fetchImpl: () => ({ ok: true, json: () => Promise.resolve({ user: { demoKey: true } }) }),
+  });
+  const j = await s.Settings._readMe('?demo=1');
+  assert.deepEqual(plain(j), { user: { demoKey: true } });
+  assert.deepEqual(s.calls, ['/api/auth/me?demo=1']);
+});
+
+test('a shell with no App at all still reads, rather than hanging', async () => {
+  const s = loadSettings({
+    boot: undefined,
+    fetchImpl: () => ({ ok: true, json: () => Promise.resolve({ user: {} }) }),
+  });
+  assert.deepEqual(plain(await s.Settings._readMe('')), { user: {} });
+  assert.deepEqual(s.calls, ['/api/auth/me']);
+});
+
+test('every boot path settles the published read', () => {
+  // Settled from enterAuthed / enterAnonymous rather than from init(),
+  // because every boot path ends in one of those two — INCLUDING the ?shot=
+  // early returns, which never reach the session read at all and would
+  // otherwise leave a joiner waiting forever.
+  assert.match(APP, /bootSession\(\) \{[\s\S]*?App\._bootSession = new Promise/,
+    'the promise is created lazily, so a joiner may arrive before init()');
+  const anon = APP.slice(APP.indexOf('async enterAnonymous()'));
+  assert.match(anon.slice(0, 600), /App\._publishBootSession\(\{ signedOut: true \}\)/);
+  const authed = APP.slice(APP.indexOf('enterAuthed(user) {'));
+  assert.match(authed.slice(0, 900),
+    /App\._publishBootSession\(\s*App\._sessionFromSnapshot \? \{ unknown: true \} : \{ user \}\s*\)/,
+    'a snapshot boot must publish `unknown`, never its thin user record');
+  // Settled once. A reload-free login calls enterAuthed again later and a
+  // joiner that already resolved is not listening — which is exactly the
+  // pre-existing behaviour, not a regression this introduced.
+  assert.match(APP, /App\._settleBootSession = null;\s*settle\(outcome\);/);
+});
+
+test('Settings no longer opens the boot read a second time', () => {
+  // The whole point: exactly one place in settings.js may reach for
+  // /api/auth/me at boot, and it is the fallback inside _readMe.
+  const body = SETTINGS.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const reads = body.match(/fetch\(`?\/api\/auth\/me/g) || [];
+  assert.equal(reads.length, 1,
+    `settings.js reaches for /api/auth/me ${reads.length} times; only _readMe's fallback may`);
+  assert.match(body, /const j = await this\._readMe\(meDemoQ\);/,
+    'refresh() goes through the join rather than fetching directly');
+});
+
 test('reconnecting reconciles the snapshot against the real session', () => {
   const body = appMethod('_reconcileSession');
   // 401 → the session really ended.

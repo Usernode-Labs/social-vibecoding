@@ -43,7 +43,9 @@ const {
   SHELL_TIMEOUT_MS,
   API_TIMEOUT_MS,
   apiTimeoutFor,
+  isBootReadRequest,
   BOOT_READ_PATHS,
+  BOOT_READ_PATTERNS,
   BOOT_API_TIMEOUT_MS,
 } = require('../public/sw.js');
 
@@ -467,44 +469,88 @@ test('the boot session wait stays just past the API deadline', () => {
     'on a cold load');
 });
 
-// ── The three reads that gate the first paint ────────────────────────────
+// ── The reads that gate a first paint ────────────────────────────────────
 
 test('the boot reads answer from cache immediately; everything else waits', () => {
   const O = 'https://example.test';
-  // These three ARE the launcher: the app list, its layout, the home panels.
-  // Every app icon and avatar on the screen is a URL inside one of their
-  // answers, so nothing below the header can paint until they land — which is
-  // why a warm second load still arrived in three waves with the icons last.
-  assert.deepEqual(BOOT_READ_PATHS, ['/api/apps', '/api/home-layout', '/api/home-panels']);
+  // The exact list is what has no slug in it: the launcher (the app list, its
+  // layout, the home panels) and the viewer's own running sessions, which the
+  // dev board renders as its "In progress" rows.
+  assert.deepEqual(BOOT_READ_PATHS, [
+    '/api/apps', '/api/home-layout', '/api/home-panels', '/api/me/active-sessions',
+  ]);
   assert.equal(BOOT_API_TIMEOUT_MS, 0, 'a cached copy is served on this tick');
   for (const p of BOOT_READ_PATHS) {
     assert.equal(apiTimeoutFor(`${O}${p}`, O), BOOT_API_TIMEOUT_MS, p);
     assert.equal(apiTimeoutFor(`${O}${p}?demo=1`, O), BOOT_API_TIMEOUT_MS,
       `${p} with a query string is the same read`);
   }
-  // EXACT pathname match. An app's issues, its messages, its board order all
-  // live under /api/apps/… and a stale answer there is wrong content, not an
-  // old launcher — they keep the patient deadline.
+
+  // The per-app half. These are the dev board's whole first paint, and the
+  // app record in front of them is the SERIAL GATE — AppView._loadDevData
+  // cannot ask for any of the rest until it answers, so leaving it out would
+  // have left the chain a round trip long and bought nothing.
   for (const p of [
-    '/api/apps/demo/issues',
-    '/api/apps/demo/promoted',
+    '/api/apps/usernode-2d5619',
+    '/api/apps/usernode-2d5619/github-issues',
+    '/api/apps/usernode-2d5619/issues',
+    '/api/apps/usernode-2d5619/promoted',
+    '/api/apps/usernode-2d5619/merged',
+    '/api/apps/usernode-2d5619/board-order',
+    '/api/apps/usernode-2d5619/sessions',
+    '/api/apps/usernode-2d5619/shared-sessions',
+    '/api/apps/usernode-2d5619/topic-categories',
+  ]) {
+    assert.equal(apiTimeoutFor(`${O}${p}`, O), BOOT_API_TIMEOUT_MS, p);
+    assert.equal(apiTimeoutFor(`${O}${p}?demo=1`, O), BOOT_API_TIMEOUT_MS,
+      `${p} with a query string is the same read`);
+  }
+
+  // What stays on the patient deadline. `/messages` is the one that matters:
+  // it is paginated, so a scroll-back mints a new key per page and none of
+  // them is a screen's standing state. The patterns are anchored at both
+  // ends, and this is what proves it.
+  for (const p of [
+    '/api/apps/usernode-2d5619/messages',
+    '/api/apps/usernode-2d5619/promoted/9',
+    '/api/apps/usernode-2d5619/issues/12/comments',
     '/api/notifications',
-    '/api/auth/me',
+    '/api/conversations',
     '/api/home-layouts',
+    // Never. It gates the whole boot and its cached copy can be
+    // affirmatively wrong — a session that has since ended answers 401, and
+    // an error response is never cached, so a cached 200 would paint the
+    // signed-in shell with nothing left to correct it.
+    '/api/auth/me',
   ]) {
     assert.equal(apiTimeoutFor(`${O}${p}`, O), API_TIMEOUT_MS, p);
   }
+
   // A URL the parser cannot make sense of must not fall into the fast lane.
   assert.equal(apiTimeoutFor('::::', undefined), API_TIMEOUT_MS);
+  assert.equal(isBootReadRequest('::::', undefined), false);
+  // Pathname-only, like its sibling isImmuneApiRequest: both are reached
+  // only from networkFirstApi, which classifyRequest has already narrowed to
+  // same-origin GETs. Asserted so the narrowing stays where it is rather
+  // than being assumed here.
+  assert.match(SW_SRC, /if \(u\.origin !== selfOrigin\) return 'bypass';/);
+
+  // Every pattern is anchored, so none of them can match a longer path by
+  // accident. Asserted structurally as well as by example above, because an
+  // unanchored regex here is a silent widening of the lane.
+  for (const re of BOOT_READ_PATTERNS) {
+    assert.ok(re.source.startsWith('^') && re.source.endsWith('$'),
+      `${re} must be anchored at both ends`);
+  }
 });
 
 test('serving a stale boot read is only safe because the page is told', () => {
-  // The whole trade — paint the previous session's grid now, correct it when
-  // the network answers — rests on this notify path and on App._onApiUpdated
-  // re-running the visible screen's loader. If either goes, BOOT_READ_PATHS
-  // must go with it.
+  // The whole trade — paint the previous session's screen now, correct it
+  // when the network answers — rests on this notify path and on
+  // App._onApiUpdated re-running the visible screen's loader. If either
+  // goes, the fast lane must go with it.
   const body = strategyBody('networkFirstApi');
-  assert.match(body, /timeoutMs: apiTimeoutFor\(event\.request\.url, ORIGIN\)/,
+  assert.match(body, /const timeoutMs = laned \? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS/,
     'the deadline is chosen per request');
   assert.match(body, /notifyClients\(\{ type: 'api-updated'/,
     'a late answer that disagrees is announced');
@@ -513,4 +559,70 @@ test('serving a stale boot read is only safe because the page is told', () => {
   const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
   assert.match(app, /_onApiUpdated\(\)/, 'the page listens for it');
   assert.match(app, /App\.refreshActiveScreen/, 'and re-runs the visible screen\'s loader');
+  // Both screens the fast lane is for have a branch in that loader. Without
+  // one, a corrected answer would sit in the cache until the next reload and
+  // "instant" would just mean "wrong sooner".
+  // Bounded by the DEFINITION that follows, not by the call inside this
+  // function — `App._refreshLeaderboard();` is one of its own branches, and
+  // slicing at that cut the last two branches (home's among them) off.
+  const loader = app.slice(app.indexOf('refreshActiveScreen()'),
+    app.indexOf('_refreshLeaderboard() {'));
+  assert.match(loader, /AppView\.refreshDevData\('api-update'\)/, 'the board repaints');
+  assert.match(loader, /Home\.load\(\)/, 'and so does home');
+});
+
+test('a correction does not answer itself from the cache it is correcting', () => {
+  // The loop this guards: serve stale → notify → the page re-pulls → serve
+  // the same stale copy → notify → … at about 600ms a lap, forever. Any
+  // endpoint whose body varies per request does it the moment its deadline
+  // reaches zero — staging's ?demo=1 fixtures re-derive timestamps on every
+  // call, and so would a server-stamped `now` or a signed asset URL. Under
+  // the 1s deadline the network simply won every lap and it never armed.
+  // Declared beside the strategy rather than inside it — it has to outlive
+  // one request to mean anything.
+  assert.match(SW_SRC, /const correcting = new Set\(\);/);
+  const body = strategyBody('networkFirstApi');
+  // Consumed on read: exactly one lane-skipped request per correction.
+  assert.match(body, /const laned = !correcting\.delete\(event\.request\.url\)/,
+    'the mark is consumed when the deadline is chosen');
+  assert.match(body, /if \(laned\) \{[\s\S]*?correcting\.add\(event\.request\.url\)/,
+    'and set only by a LANE serve — a slow answer on the 1s deadline is not a loop');
+  assert.match(body, /correcting\.size >= CORRECTING_MAX/, 'and the set is bounded');
+});
+
+test('a full API cache evicts ordinary entries before a screen\'s standing state', async () => {
+  // Same 300-entry budget; only the ORDER changes. Reading one busy chat is
+  // enough to matter: /api/apps/:slug/messages?before=… mints a new key per
+  // page, so a long scroll-back walks the whole budget, and insertion order
+  // alone would evict the board the reader is scrolling back inside of —
+  // dropping that screen out of the fast lane with nothing on screen to
+  // explain why it stopped being instant.
+  const src = SW_SRC.slice(SW_SRC.indexOf('async function trimApiCache('));
+  const body = src.slice(0, src.indexOf('\n  }\n') + 4);
+  assert.match(body, /!isBootReadRequest\(k\.url, ORIGIN\)/);
+  assert.match(body, /\.concat\(evictable\.filter\(\(k\) => isBootReadRequest\(k\.url, ORIGIN\)\)\)/,
+    'boot reads go to the BACK of the eviction queue');
+  // The immune entry still comes out of the queue entirely, before either
+  // class — an offline session must outlive a full cache whatever else does.
+  assert.match(body, /!isImmuneApiRequest\(k\.url, ORIGIN\)/);
+});
+
+test('the board does not wait on a token it never uses', () => {
+  // /api/iframe-token is a short-lived credential and is hard-bypassed by
+  // the worker, so it always costs a full round trip. It used to hide behind
+  // the GET /api/apps/:slug it ran alongside; putting that read in the fast
+  // lane made it the longest thing between a cached board and the screen.
+  const view = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+  assert.match(view, /async open\(slug, \{ needsToken = true \} = \{\}\)/,
+    'defaults to waiting, so every other caller is unchanged');
+  assert.match(view, /if \(needsToken\) await tokenReady;/);
+  const app = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  // `!!tab` is load-bearing. Without an explicit tab the route came from the
+  // launcher's CACHED record, and a record that still says self-hosted for an
+  // app that no longer is lands on the App tab — which would then build its
+  // iframe token-less.
+  assert.match(app,
+    /AppView\.open\(slug, \{ needsToken: !\(tab && initialRoute\.tab === 'dev'\) \}\)/);
 });

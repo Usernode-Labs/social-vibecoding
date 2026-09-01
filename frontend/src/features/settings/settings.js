@@ -452,9 +452,8 @@
     async refresh() {
       try {
         const meDemoQ = this._cliTokensDemo() ? '?demo=1' : '';
-        const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
-        if (!r.ok) return;
-        const j = await r.json();
+        const j = await this._readMe(meDemoQ);
+        if (!j) return;
         this.state.hasApiKey = !!j.user?.hasApiKey;
         // Staging only, and only under ?demo=1: the key reported above is a
         // fixture, not something anything can be billed to. Carried so the
@@ -485,6 +484,37 @@
         this._renderDevFlowSection();
         this._renderNavIfOpen();
       } catch {}
+    },
+
+    /**
+     * The /api/auth/me payload, JOINING the boot read rather than repeating
+     * it. Returns the parsed body, or null when there is no usable answer.
+     *
+     * This runs from init(), which a React layout effect fires at document
+     * load on EVERY screen — the byok dot rides the Profile screen and
+     * DevChat's budget indicator, so the state is genuinely needed before
+     * #settings is ever opened. It just does not need its own request:
+     * every field read above is on the same `user` object App.init is
+     * fetching 16ms later, and the two were queueing behind each other for
+     * ~130ms on the first paint of every screen. See App.bootSession.
+     *
+     * `?demo=1` still reads for itself, and must: staging answers that
+     * request differently (the fixture key behind `demoKey`), so the boot's
+     * plain answer is the wrong one — not a stale copy of the right one.
+     */
+    async _readMe(meDemoQ) {
+      if (!meDemoQ && typeof window.App?.bootSession === 'function') {
+        const boot = await window.App.bootSession();
+        if (boot?.user) return { user: boot.user };
+        // Answered 401/403. A second ask gets the same answer.
+        if (boot?.signedOut) return null;
+        // `unknown` — the boot read never landed and the shell is on the
+        // snapshot, which carries none of these fields. Read for ourselves;
+        // offline the worker answers it from cache, as it always has.
+      }
+      const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
+      if (!r.ok) return null;
+      return await r.json();
     },
 
     _renderIndicator() {

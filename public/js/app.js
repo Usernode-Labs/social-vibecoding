@@ -186,6 +186,64 @@ const App = {
   // and the events socket) and cleared by _reconcileSession.
   _sessionFromSnapshot: false,
 
+  // ── The boot session read, published ────────────────────────────────
+  //
+  // GET /api/auth/me was being fetched TWICE on every document, 16ms apart,
+  // and the boot queued behind the copy it did not make. Settings.init()
+  // mounts from a React layout effect at document load — on every screen,
+  // not just #settings, because the byok dot it publishes rides the Profile
+  // screen and DevChat's budget indicator — and it read the same endpoint
+  // for the same fields that are already on the `user` object App.init is
+  // about to fetch. Whichever went first, the other waited behind it on the
+  // connection: measured on a 150ms link, one read is ~250ms and the pair
+  // was ~420ms, which is ~130ms off the first paint of EVERY screen.
+  //
+  // So the boot read is published rather than repeated. Three outcomes,
+  // because "no" and "we could not tell" are not the same answer and a
+  // caller has to be able to act differently on them:
+  //
+  //   { user }          — a verified session; use it, ask nothing.
+  //   { signedOut }     — /api/auth/me answered 401/403. Asking again gets
+  //                       the same 401, so callers stop rather than spend a
+  //                       request rediscovering it.
+  //   { unknown: true } — the read never landed and the shell is running on
+  //                       the localStorage snapshot, whose thin user record
+  //                       carries none of these fields. A caller that needs
+  //                       them reads for itself; the worker answers that
+  //                       from cache offline (/api/auth/me is IMMUNE there),
+  //                       which is what it did before this existed.
+  //
+  // Settled from enterAuthed / enterAnonymous rather than from init(),
+  // because EVERY boot path ends in one of those two — including the three
+  // ?shot= early returns, which never reach the session read at all and
+  // would otherwise leave a joiner waiting forever.
+  //
+  // Deliberately settled ONCE, on the first of them. A reload-free login
+  // (auth-screens.js) calls enterAuthed again later; a joiner that already
+  // resolved `signedOut` is not listening by then, and that is exactly the
+  // pre-existing behaviour — Settings ran once per document and its 401
+  // ended it. Making a later login re-publish is a real improvement and a
+  // separate one; it is not what this is fixing.
+  _bootSession: null,
+  _settleBootSession: null,
+
+  bootSession() {
+    if (!App._bootSession) {
+      App._bootSession = new Promise((resolve) => {
+        App._settleBootSession = resolve;
+      });
+    }
+    return App._bootSession;
+  },
+
+  _publishBootSession(outcome) {
+    App.bootSession();
+    if (!App._settleBootSession) return;
+    const settle = App._settleBootSession;
+    App._settleBootSession = null;
+    settle(outcome);
+  },
+
   async init() {
     // FIRST, before any screen paints: the synthetic-inset shot state.
     // Runs here rather than beside the other ?shot= handlers below
@@ -335,6 +393,10 @@ const App = {
   _authedBooted: false,
 
   async enterAnonymous() {
+    // No session, or a ?shot= link that boots the anonymous shell without
+    // reading one. Either way nobody joining bootSession() should spend a
+    // request finding that out.
+    App._publishBootSession({ signedOut: true });
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
       await NativeChrome.enterAnonymous();
     }
@@ -457,6 +519,14 @@ const App = {
 
   enterAuthed(user) {
     App.user = user;
+    // A snapshot-derived boot publishes `unknown`, not this user: the
+    // stored record is { id, username } and a joiner reading it for
+    // hasApiKey / walletLinkEnabled would silently get false for every one.
+    // _sessionFromSnapshot is set immediately before that call, so it is
+    // already true here.
+    App._publishBootSession(
+      App._sessionFromSnapshot ? { unknown: true } : { user }
+    );
     // "View as non-admin" admin tool. We mask `App.user.isAdmin`
     // for client-side UI gating (admin buttons, retry, delete, lock,
     // app-secrets edit, etc. — see grep for App.user?.isAdmin) so
@@ -4154,7 +4224,12 @@ const App = {
     // The display name lands once the await below resolves (see the
     // `AppView.appData?.name` block).
 
-    await AppView.open(slug);
+    // A route that NAMES a dev tab is not going to build the app iframe, so
+    // it does not wait for the token mint (AppView.open's `needsToken`).
+    // `!!tab` is load-bearing: without an explicit tab, `initialRoute.tab`
+    // came from the launcher's cached record above, and a stale record must
+    // never be what decides that an App-tab render can skip its token.
+    await AppView.open(slug, { needsToken: !(tab && initialRoute.tab === 'dev') });
 
     // The user can navigate away (back to home, into a different app,
     // to the leaderboard) while `AppView.open(slug)` is still resolving

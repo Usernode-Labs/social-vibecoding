@@ -114,48 +114,108 @@ const NAVIGATE_TIMEOUT_MS = 200;
 const SHELL_TIMEOUT_MS = 200;
 const API_TIMEOUT_MS = 1000;
 
-// ── The three reads that gate the first paint ────────────────────────
+// ── The reads that gate a first paint ────────────────────────────────
 //
-// The staging a returning visitor sees on home is NOT an asset problem. A
-// warm second load requests all ~38 shell assets in one batch at ~35ms — the
+// The staging a returning visitor sees is NOT an asset problem. A warm
+// second load requests all ~38 shell assets in one batch at ~35ms — the
 // precache list below is complete and the sync test keeps it that way. What
-// arrives in stages is DATA: /api/apps, /api/home-layout and /api/home-panels
-// answer around 240ms on a warm local link, the widgets appear when they do,
-// and every app icon and avatar starts loading only THEN, because its URL is
-// a field inside those answers. So the launcher paints in three waves and the
-// icons are last by construction, however well they are cached.
+// arrives in stages is DATA, and it arrives in SERIAL stages: on home,
+// /api/apps, /api/home-layout and /api/home-panels answer around 240ms on a
+// warm local link and every app icon and avatar starts loading only THEN,
+// because its URL is a field inside those answers. On an app's dev board it
+// is worse, because the requests form a chain — GET /api/apps/:slug has to
+// answer before AppView._loadDevData can ask for the board at all, and the
+// board is nine more requests whose slowest one (/promoted) is the content.
+// Measured warm, under a 4x CPU throttle: the session check lands at ~870ms,
+// the app record at ~1130ms, the last board read at ~1550ms, the first real
+// card at ~2430ms. Three of those milestones are round trips stacked
+// end to end, and on a phone each is worth several hundred ms, not the
+// ~100ms a loopback charges.
 //
-// These three get a zero deadline, which means: if there is a cached copy,
+// These reads get a ZERO deadline, which means: if there is a cached copy,
 // serve it on this tick and let the network answer land behind it. The
-// previous session's grid paints on the first frame, complete with its icons
-// (cache-first '/app-icons' and '/avatars' already hold them), and a change
-// is corrected in place by the api-updated path below.
+// previous session's launcher paints on the first frame, complete with its
+// icons (cache-first '/app-icons' and '/avatars' already hold them), and the
+// board paints its previous cards instead of a skeleton — then both are
+// corrected in place by the api-updated path below.
 //
-// Why these three and not the API tier at large: they are the user's OWN
-// launcher — the app list, its layout and the home panels. Being one load
-// stale on your own grid self-corrects within the second and is the same
-// trade the navigate and shell tiers already take. A stale ANSWER elsewhere
-// (a vote count, a proposal's checks) is wrong content with no such excuse,
-// which is what the 1s above is protecting and why this stays a short,
-// explicit list rather than a lower global.
+// Why THESE and not the API tier at large: each one is a screen's own
+// standing state, on a screen this device has already rendered once, with a
+// live correction path that repaints it in place. The board's repaint is
+// AppView._repaintDevBody — it swaps the cards under the filter bar and
+// never puts the skeleton back, so a correction reads as the row updating,
+// not as the screen reloading. What is deliberately NOT here is everything
+// whose staleness has no such repaint or no such second look: an app's
+// message pages, a proposal's detail, anything paginated. Those keep the 1s
+// deadline above.
+//
+// The board does cross a line this list used to draw at the launcher: a
+// cached /promoted carries VOTE COUNTS and CHECK STATES, and for the first
+// moments of a warm load those are last-visit's numbers. That is accepted
+// deliberately and is bounded by three things — the correction below fires
+// on exactly the bytes that changed, every vote and every promotion is
+// re-validated server-side (a tap on a stale row cannot double-count), and
+// the alternative on a weak link is not "the right number", it is a
+// skeleton. Being one load behind on a board you are looking at is the same
+// trade the navigate and shell tiers already take.
 //
 // The correction is not optional: it is what makes this safe. networkFirstApi
 // posts `api-updated` when the copy it served disagrees with the answer that
-// arrives, and App._onApiUpdated re-runs the visible screen's own loader. If
-// that path is ever removed, remove this list with it.
-const BOOT_READ_PATHS = ['/api/apps', '/api/home-layout', '/api/home-panels'];
+// arrives, and App._onApiUpdated re-runs the visible screen's own loader
+// (App.refreshActiveScreen → Home.load / AppView.refreshDevData). If that
+// path is ever removed, remove this list with it.
+//
+// NOT in the lane on purpose: /api/auth/me. It gates the whole boot
+// (App._fetchSession) and it is the one read whose cached copy can be
+// affirmatively WRONG rather than merely old — a session that has since
+// ended answers 401, error responses are never cached, so a cached 200
+// would paint the signed-in shell with nothing left to correct it. The
+// snapshot path (App.readSessionSnapshot / _reconcileSession) is where that
+// case is already handled, and moving boot onto it is an auth change, not a
+// caching one.
+const BOOT_READ_PATHS = [
+  // Home: the launcher's own list, its layout, its widgets.
+  '/api/apps',
+  '/api/home-layout',
+  '/api/home-panels',
+  // The dev board's "In progress" rows. Global rather than per-app, so it
+  // belongs to the exact list even though the board is what waits on it.
+  '/api/me/active-sessions',
+];
+
+// Per-app reads with a slug in the path, so an exact match cannot express
+// them. Anchored at both ends and one segment wide on purpose: this must
+// admit `/api/apps/:slug/promoted` and refuse `/api/apps/:slug/messages`,
+// which is paginated and stays on the ordinary deadline.
+//
+// The first is the app record itself — it is not board content, it is the
+// SERIAL GATE in front of the board's nine requests, so leaving it out would
+// have left the chain one round trip long and bought nothing.
+const BOOT_READ_PATTERNS = [
+  /^\/api\/apps\/[^/]+$/,
+  /^\/api\/apps\/[^/]+\/(?:github-issues|issues|promoted|merged|board-order|sessions|shared-sessions|topic-categories)$/,
+];
+
 const BOOT_API_TIMEOUT_MS = 0;
 
 /**
+ * Is this one of the reads that gates a screen's first paint? Pure and
+ * exported: apiTimeoutFor reads it for the deadline, and trimApiCache reads
+ * it to decide what a full cache evicts LAST.
+ */
+function isBootReadRequest(url, selfOrigin) {
+  let p;
+  try { p = new URL(url, selfOrigin).pathname; } catch { return false; }
+  if (BOOT_READ_PATHS.includes(p)) return true;
+  return BOOT_READ_PATTERNS.some((re) => re.test(p));
+}
+
+/**
  * The deadline for one API request: 0 for a boot read, API_TIMEOUT_MS
- * otherwise. Exact pathname match, so `/api/apps/:slug/...` — an app's
- * issues, its messages, its board order — keeps the ordinary deadline; only
- * the launcher's own list is in the fast lane.
+ * otherwise.
  */
 function apiTimeoutFor(url, selfOrigin) {
-  let p;
-  try { p = new URL(url, selfOrigin).pathname; } catch { return API_TIMEOUT_MS; }
-  return BOOT_READ_PATHS.includes(p) ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
+  return isBootReadRequest(url, selfOrigin) ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 }
 
 // Same-origin shell assets precached on install so the very next offline
@@ -489,7 +549,9 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     classifyRequest,
     apiTimeoutFor,
+    isBootReadRequest,
     BOOT_READ_PATHS,
+    BOOT_READ_PATTERNS,
     BOOT_API_TIMEOUT_MS,
     API_TIMEOUT_MS,
     isImmuneApiRequest,
@@ -589,8 +651,22 @@ if (typeof module !== 'undefined' && module.exports) {
     try {
       const keys = await cache.keys();
       const evictable = keys.filter((k) => !isImmuneApiRequest(k.url, ORIGIN));
-      for (let i = 0; i < evictable.length - API_CACHE_MAX_ENTRIES; i++) {
-        await cache.delete(evictable[i]);
+      // Same 300-entry budget, but ORDINARY ENTRIES GO FIRST. A boot read is
+      // the last known state of a screen — the launcher grid, an app's board
+      // — and losing one silently drops that screen out of the fast lane
+      // above and back onto the network, which is the exact regression the
+      // lane exists to prevent, arriving as "it used to be instant" with
+      // nothing on screen to explain it. Reading one busy chat is enough to
+      // do it: /api/apps/:slug/messages?before=… mints a NEW key per page,
+      // so a long scroll-back walks the whole budget, and insertion order
+      // alone would evict the board the user is scrolling back inside of.
+      //
+      // Insertion order still decides within each class, so this only ever
+      // changes WHICH entry goes when the cache is full, never how many.
+      const queue = evictable.filter((k) => !isBootReadRequest(k.url, ORIGIN))
+        .concat(evictable.filter((k) => isBootReadRequest(k.url, ORIGIN)));
+      for (let i = 0; i < queue.length - API_CACHE_MAX_ENTRIES; i++) {
+        await cache.delete(queue[i]);
       }
     } catch { /* best-effort */ }
   }
@@ -702,6 +778,31 @@ if (typeof module !== 'undefined' && module.exports) {
     return response;
   }
 
+  // URLs we have just told the page were wrong. The VERY NEXT request for
+  // one is the page re-pulling on that message (App._onApiUpdated →
+  // refreshActiveScreen → the screen's own loader), so answering it from the
+  // cache we are in the middle of correcting closes a loop: serve stale →
+  // notify → re-pull → serve stale → notify, forever, at about 600ms a lap.
+  //
+  // That loop is not hypothetical and it is not a demo-mode artefact — it is
+  // what ANY endpoint whose body varies per request does the moment its
+  // deadline reaches zero. Staging's `?demo=1` fixtures re-derive their
+  // timestamps on every call, which is exactly that; so would a signed asset
+  // URL, a server-stamped `now`, or a genuinely busy board. Under the 1s
+  // deadline the network simply won every lap and the loop never armed.
+  //
+  // The rule this expresses: the fast lane answers a BOOT, not a REFRESH. A
+  // refresh means "give me the current state", so it gets the network and the
+  // ordinary deadline. Consumed on read, so it costs exactly one lane-skipped
+  // request per correction and nothing after — a second tab booting later
+  // pays for one request, not for the lane.
+  const correcting = new Set();
+  // A URL corrected and then never requested again would sit here forever.
+  // The live set is one entry per boot read per app visited; this only ever
+  // trips on a pathological session, and dropping it wholesale is harmless —
+  // the worst an empty set costs is one extra correction lap.
+  const CORRECTING_MAX = 200;
+
   async function networkFirstApi(event) {
     const cache = await caches.open(API_CACHE);
     // Did we answer this request from cache while the network was still in
@@ -716,6 +817,12 @@ if (typeof module !== 'undefined' && module.exports) {
     // just-missed response found it still false.
     const served = { fromCache: false };
 
+    // Consume the correction mark, if any: this request pays the ordinary
+    // deadline once and the next one is back in the lane.
+    const laned = !correcting.delete(event.request.url)
+      && apiTimeoutFor(event.request.url, ORIGIN) === BOOT_API_TIMEOUT_MS;
+    const timeoutMs = laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
+
     const { response, pending } = await raceNetworkAndCache({
       startFetch: () => fetch(event.request).then((res) => {
         // Only genuine successes are worth replaying offline; 401/403/500
@@ -728,6 +835,14 @@ if (typeof module !== 'undefined' && module.exports) {
               { detectChange: served.fromCache });
             await trimApiCache(cache);
             if (served.fromCache && changed) {
+              // Only a LANE serve arms the guard. A stale answer on the
+              // ordinary 1s deadline means the network was slow, not that
+              // this URL is in a correction loop, and it re-races honestly
+              // next time.
+              if (laned) {
+                if (correcting.size >= CORRECTING_MAX) correcting.clear();
+                correcting.add(event.request.url);
+              }
               await notifyClients({ type: 'api-updated', url: event.request.url });
             }
           })());
@@ -739,7 +854,7 @@ if (typeof module !== 'undefined' && module.exports) {
         if (hit) served.fromCache = true;
         return hit;
       },
-      timeoutMs: apiTimeoutFor(event.request.url, ORIGIN),
+      timeoutMs,
       schedule: swSchedule,
     });
     if (pending) event.waitUntil(pending.catch(() => {}));

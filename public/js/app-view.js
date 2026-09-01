@@ -430,7 +430,16 @@ const AppView = {
   // sees an expired JWT during a long reading/editing session.
   TOKEN_REFRESH_MS: 45 * 60 * 1000,
 
-  async open(slug) {
+  /**
+   * Load an app's record and stand its view up.
+   *
+   * `needsToken` is the iframe-token wait below. It defaults to TRUE, so
+   * every caller that does not pass it behaves exactly as before; only
+   * App.navigateToApp sets it false, and only when the route it was handed
+   * NAMES a dev surface. See the await for why that distinction is the
+   * whole of the option.
+   */
+  async open(slug, { needsToken = true } = {}) {
     // #931: the token mint runs ALONGSIDE the detail fetch, not after it.
     // These used to be strictly sequential, which cost a full extra round
     // trip before the app iframe could even be built — the thing that made
@@ -494,7 +503,33 @@ const AppView = {
     // one in flight or finds the caches already filled.
     AppView.prefetchDevData(slug);
 
-    await tokenReady;
+    // The app iframe cannot be built without this token, so an open heading
+    // for the App tab waits for it here — that is what this await has always
+    // been for, and skipping it there would mount a token-less frame and
+    // rebuild it a moment later.
+    //
+    // An open heading for a DEV surface waits for nothing: the board, the
+    // activity feed and the topic pages never touch the token, and the four
+    // calls below don't read it either (startTokenRefresh only arms a
+    // 45-minute interval). It used to cost nothing to wait anyway, because
+    // the mint and the GET /api/apps/:slug above ran concurrently and the
+    // fetch was the slower of the two. Putting that fetch in the service
+    // worker's boot fast lane (public/sw.js) reversed that: the app record
+    // now answers from cache in single-digit ms and this await became the
+    // longest thing between a cached board and the screen — a full round
+    // trip, unremovable, because /api/iframe-token is a short-lived
+    // credential and is hard-bypassed by the worker on purpose.
+    //
+    // The mint still STARTS here and is single-flight, so the App tab a
+    // viewer reaches later joins it already resolved.
+    //
+    // Why the caller's flag rather than `appData.self_hosted`, which is in
+    // hand by now: navigateToApp only clears it for a route that explicitly
+    // named a dev tab. Inferring the destination from the launcher's cached
+    // record instead would be wrong on the one case that matters — a record
+    // that says self-hosted for an app that no longer is lands on the App
+    // tab, and would land there token-less.
+    if (needsToken) await tokenReady;
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
     if (window.DevConsole) DevConsole.setCurrentApp(slug);
