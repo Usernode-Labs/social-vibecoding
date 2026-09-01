@@ -3825,6 +3825,9 @@
       confirmTried: true,
       lastHealAt: 0,
       lastHealOutcome: 'sent 1',
+      urlHealAt: 0,
+      urlHealOutcome: 'migrated ledger',
+      pinLog: null,
       readError: {
         method: 'getBridgeInfo',
         kind: 'timeout',
@@ -3834,16 +3837,21 @@
       entries: [
         {
           id: 'demo-1', name: 'Weather', foreign: false, unknownApp: false,
+          url: '/app/weather/full', urlOk: true,
           hasIcon: true, hasIconDark: true,
           recorded: 'tile:5:dual:🌤', desired: 'tile:5:dual:🌤', matches: true,
         },
         {
           id: 'demo-2', name: 'Ledger', foreign: false, unknownApp: false,
+          url: '/app/ledger/full', urlOk: true,
           hasIcon: true, hasIconDark: false,
           recorded: 'tile:5:dual:', desired: 'tile:5:dual:', matches: true,
         },
         {
+          // Still on the pre-#1489 chromed address: the entry the URL row
+          // below counts as outstanding.
           id: 'demo-3', name: 'Notes', foreign: false, unknownApp: false,
+          url: '/app/notes', urlOk: false,
           hasIcon: true, hasIconDark: null,
           recorded: 'tile:5:light:📝', desired: 'tile:5:dual:📝', matches: false,
         },
@@ -4936,6 +4944,34 @@
         { text: `Last icon check: ${healedAt}` +
           (diag.lastHealOutcome ? `: ${diag.lastHealOutcome}` : ''), tone: 'muted' },
       ];
+      // #1489: the URL migration's own telemetry, on the same footing as the
+      // icon pass above.
+      const urlAt = diag.urlHealAt ? this._widgetIconTime(diag.urlHealAt) : 'never';
+      notes.push({
+        text: `Last address check: ${urlAt}` +
+          (diag.urlHealOutcome ? `: ${diag.urlHealOutcome}` : ''),
+        tone: 'muted',
+      });
+      // Android: there is no readable registry, so the shadow pin log is the
+      // only account of what this device pinned and with which address.
+      const pinLog = diag.pinLog;
+      if (pinLog) {
+        const staleCount = pinLog.pins.filter((p) => p.stale).length;
+        notes.push({
+          text: pinLog.seeded
+            ? `Launcher pins remembered: ${pinLog.pins.length}` +
+              (staleCount ? `, ${staleCount} on the old address` : ', all current')
+            : 'Launcher pins remembered: none yet',
+          tone: staleCount ? 'warn' : 'muted',
+        });
+        const answered = pinLog.dismissedAt || pinLog.actionedAt;
+        notes.push({
+          text: `Re-add prompt: ${answered
+            ? (pinLog.actionedAt ? 're-added' : 'dismissed')
+            : 'not answered yet'}`,
+          tone: 'muted',
+        });
+      }
       if (diag.readError) {
         notes.push({
           text: `${diag.readError.method}: ` +
@@ -4944,6 +4980,8 @@
           tone: 'warn',
         });
       }
+      const urlTotal = diag.entries.length;
+      const urlOk = diag.entries.filter((e) => e.urlOk).length;
       return {
         demo: !!this._widgetIconsDemo(),
         rows: [
@@ -4967,6 +5005,14 @@
               : (diag.verdict === 'unsupported' ? 'Single face only' : 'Not confirmed yet') },
           { id: 'settings-widget-sending-row', label: 'Sending',
             ok: diag.resolved === true, text: sending },
+          // #1489: without this row a migration stuck behind a rejecting
+          // bridge is invisible, because the symptom is "the app opens with
+          // two headers" and nothing logs that.
+          { id: 'settings-widget-url-row', label: 'Full-screen address',
+            ok: urlTotal > 0 && urlOk === urlTotal,
+            text: urlTotal
+              ? `${urlOk} of ${urlTotal} pinned entries use the full-screen address`
+              : 'No pinned entries to check' },
         ],
         notes,
         entries: this._widgetIconEntryViews(diag),
@@ -4990,7 +5036,8 @@
           : (entry.unknownApp
             ? 'app not loaded'
             : `icon ${flag(entry.hasIcon)} · dark ${flag(entry.hasIconDark)} · ` +
-              `sent ${entry.matches ? 'current' : 'stale'}`),
+              `sent ${entry.matches ? 'current' : 'stale'} · ` +
+              `address ${entry.urlOk ? 'full-screen' : 'old'}`),
         empty: null,
       }));
     },

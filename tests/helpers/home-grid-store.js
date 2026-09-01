@@ -56,6 +56,7 @@ const INITIAL_GRID = {
 const INITIAL_CHROME = {
   moreCount: 0,
   strip: { active: false, helpVisible: false, tiles: [] },
+  rePin: { active: false, kind: 'unknown', apps: [], helpVisible: false, busy: false },
 };
 
 /**

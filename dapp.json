@@ -1746,6 +1746,22 @@
       "expectSelector": "#chromeless-pill"
     },
     {
+      "name": "A pinned app opens with the platform header hidden (#1489)",
+      "path": "/#app/usernode-2d5619/full",
+      "expectSelector": "#platform-header.hidden"
+    },
+    {
+      "name": "Android launcher re-pin notice offers a one-tap re-add (#1489)",
+      "path": "/?shot=repin-android",
+      "expectSelector": "#home-repin-notice-action",
+      "expectText": "Re-add"
+    },
+    {
+      "name": "The generic re-pin notice points at the card menu (#1489)",
+      "path": "/?shot=repin-android-generic",
+      "expectSelector": "#home-repin-notice"
+    },
+    {
       "name": "Home feed renders with the app search bar",
       "path": "/",
       "expectSelector": "#home-search-input"
@@ -2109,6 +2125,12 @@
       "path": "/#settings/usernode?widgeticons=demo",
       "expectSelector": "#settings-widget-icon-entries > div:nth-child(3)",
       "expectText": "sent stale"
+    },
+    {
+      "name": "Widget icons: diagnostics report the pinned address (#1489)",
+      "path": "/#settings/usernode?widgeticons=demo",
+      "expectSelector": "#settings-widget-url-row",
+      "expectText": "full-screen address"
     },
     {
       "name": "The Allow notifications sheet survives its own opening tap's ghost click",

@@ -106,6 +106,16 @@ One additive **notification** capability extends v4 the same way:
 - `version` stays **4**: this is purely additive, and shells that don't
   know the field ignore it like any other unknown key in `args`.
 
+**The refresh is keyed on `url`, so a URL change is an add plus a remove,
+never an update.** A re-add carrying a *different* `url` does not move an
+existing entry to the new address; it creates a SECOND entry and leaves the
+first one pinned. Any caller migrating a pinned entry to a new address must
+therefore add the new one, read the registry back to learn its `id`, remove
+the old one, and reorder to put the replacement back where the original sat.
+SV does exactly that in `Home._healWidgetUrls()` (issue #1489), one entry per
+pass and always add-before-remove: an interruption then leaves a duplicate the
+next pass heals, rather than a pin the user has lost.
+
 `getHomeScreenShortcuts()` items carry `{ id, name, url, pinnedAtMs }`
 plus two icon-presence flags: `has_icon` (SV treats `false` as "the PNG
 never landed" and silently re-sends) and `has_icon_dark` (same, for the

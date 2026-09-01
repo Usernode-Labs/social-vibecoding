@@ -298,3 +298,72 @@ test('Caddyfile maps production hosts to a chromeless {applink} and intercepts 4
     'redirects to the applink carrying the original request URI as the final ?path= param');
   assert.match(caddy, /copy_response/, 'non-matching 401s pass through verbatim');
 });
+
+// ── 5. The pinned home-screen shortcut points at the chromeless route ───
+//
+// Issue #1489: 90da1306 pinned `${origin}/#app/${slug}` a day before #480
+// added /app/<slug>/full, and #1472 respelled the pin without changing what
+// it MEANT. A widget tap therefore opened the chromed route and the platform
+// header stacked above the app's own. These two guard the fix at its source,
+// because the symptom is only visible on a phone.
+
+test('the pinned shortcut URL is the chromeless full-screen route (#1489)', () => {
+  const vm = require('node:vm');
+  const { HOME_SRC } = require('./helpers/home-modules');
+  const sandbox = {
+    console,
+    document: { getElementById: () => null, querySelector: () => null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      addEventListener: () => {}, removeEventListener: () => {} },
+    // The trap this test exists to keep shut: App._appUrl copies
+    // location.search byte-for-byte, so building the pin through it would
+    // bake whatever query the tab happened to carry into a URL that then
+    // lives on the device for months.
+    location: { origin: 'https://sv.example', search: '?shot=card-menu&demo=1' },
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    URL, URLSearchParams,
+    addEventListener: () => {}, removeEventListener: () => {},
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  const Home = sandbox.__Home;
+  Home._iconTileDataUrl = () => 'data:image/png;base64,AA==';
+  const payload = Home._shortcutPayloadFor({ slug: 'weather', name: 'Weather', icon_emoji: '🌤' });
+  assert.equal(payload.url, 'https://sv.example/app/weather/full',
+    'pins the chromeless route, so the platform header stays hidden');
+  assert.ok(!payload.url.includes('?'),
+    'the pinned URL never carries the pinning tab’s query string');
+});
+
+test('_widgetSlugFor accepts the new spelling as well as the two hash forms (#1489)', () => {
+  const vm = require('node:vm');
+  const { HOME_SRC } = require('./helpers/home-modules');
+  const sandbox = {
+    console,
+    document: { getElementById: () => null, querySelector: () => null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      addEventListener: () => {}, removeEventListener: () => {} },
+    location: { origin: 'https://sv.example', search: '' },
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    URL, URLSearchParams,
+    addEventListener: () => {}, removeEventListener: () => {},
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  const Home = sandbox.__Home;
+  const slug = (url) => Home._widgetSlugFor({ id: 'x', url });
+  // Without the /full branch a pin made by THIS build reads as foreign: a
+  // letter tile in the strip, dropped from _widgetSlugs(), and the card menu
+  // offering to add an app that is already pinned.
+  assert.equal(slug('https://sv.example/app/weather/full'), 'weather');
+  assert.equal(slug('https://sv.example/app/weather/full/'), 'weather');
+  assert.equal(slug('https://sv.example/app/weather'), 'weather');
+  assert.equal(slug('https://sv.example/#app/weather'), 'weather');
+  assert.equal(slug('https://sv.example/#app/weather/app'), 'weather');
+  assert.equal(slug('https://elsewhere.example/app/weather/full'), null,
+    'another origin is another app’s pin');
+});

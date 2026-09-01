@@ -91,7 +91,19 @@ const MANIFEST_FILENAME = 'dapp.json';
 // 20-slot floor: the previous ceiling had no room for a single further
 // check, so any proposal declaring one at all was blocked. That is the
 // state this bump clears, not one feature's three checks.
-const MAX_DECLARED_TESTS = 480;
+//
+// Raised 480 → 530 (#1489) from the same state: the manifest reached 460,
+// the 20-slot floor under a 480 ceiling, and the four checks that fix the
+// double-header bug were what ran into it. Same arithmetic, one step
+// further along: 530 checks at ~3.9s over a pool of 8 is ~258s of ideal
+// work, so TESTS_DEADLINE_MS goes 470s → 520s in services/visuals.js (and
+// in capture/capture.js, which holds the container-side default). This
+// bump is the one the note above predicted would also have to move
+// RUN_TIMEOUT_MS: 520s + the 120s the media pass needs is 640s, past the
+// old 600s, so that goes to 650s. None of the three is a spend — a run
+// still ends when the suite ends. They only bound how long a wedged
+// container takes to look wedged.
+const MAX_DECLARED_TESTS = 530;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
