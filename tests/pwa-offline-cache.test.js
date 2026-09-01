@@ -607,6 +607,79 @@ test('a full API cache evicts ordinary entries before a screen\'s standing state
   assert.match(body, /!isImmuneApiRequest\(k\.url, ORIGIN\)/);
 });
 
+// ── Which BUILD a cached shell asset belongs to ──────────────────────────
+
+test('a shell asset carries the build it was served from', () => {
+  const { shellBuildId, SHELL_BUILD_HEADER, applyShellBuildHeader } =
+    require('../src/services/static-cache.js');
+  assert.equal(SHELL_BUILD_HEADER, 'X-Platform-Build');
+  // A real deploy identity, in the shape GIT_SHA actually arrives in.
+  assert.equal(shellBuildId({ GIT_SHA: 'A1B2C3D4E5F6' }), 'a1b2c3d4e5f6');
+  assert.equal(shellBuildId({ GIT_SHA: ' abc1234 ' }), 'abc1234');
+  // ABSENT, not "dev". `dev` never changes, so serving a cached asset on it
+  // would pin a checkout to whatever the worker cached first and an edit to
+  // public/js/app.js would stop showing up. No header means the worker falls
+  // back to the race — which is the right behaviour for a checkout.
+  assert.equal(shellBuildId({}), null);
+  assert.equal(shellBuildId({ GIT_SHA: 'dev' }), null);
+  assert.equal(shellBuildId({ GIT_SHA: 'not-a-sha' }), null);
+  assert.equal(shellBuildId({ GIT_SHA: '' }), null);
+  // And the setter only sets when there is something to set.
+  const set = [];
+  applyShellBuildHeader({ setHeader: (k, v) => set.push([k, v]) }, { GIT_SHA: 'abc1234' });
+  assert.deepEqual(set, [['X-Platform-Build', 'abc1234']]);
+  set.length = 0;
+  applyShellBuildHeader({ setHeader: (k, v) => set.push([k, v]) }, {});
+  assert.deepEqual(set, []);
+});
+
+test('the header rides the same assets the revalidation policy covers', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  // The static handler: only where a Cache-Control was set, i.e. exactly the
+  // html/js/css/webmanifest set shellAssetCacheControl matches.
+  assert.match(server, /const cc = shellAssetCacheControl\(filePath\);[\s\S]{0,400}?if \(cc\) applyShellBuildHeader\(res\);/);
+  // And the SPA fallback, which is the DOCUMENT — the reference every cached
+  // asset is compared against on a load.
+  assert.match(server,
+    /res\.setHeader\('Cache-Control', shellAssetCacheControl\('index\.html'\)\);[\s\S]{0,300}?applyShellBuildHeader\(res\);/);
+});
+
+test('a cached asset from the current build is served without a race', () => {
+  const body = strategyBody('networkFirstShell');
+  // The question the worker actually wants to ask. shellFromCacheThisLoad
+  // answers "was the connection bad?" and was standing in for this one,
+  // which put the shortcut on the wrong side of the trade: the document only
+  // loses its race on a link slower than 200ms, so the shortcut fired only
+  // when the network was BAD and ~34 assets each paid a deadline whenever it
+  // was GOOD.
+  assert.match(body, /if \(documentBuildThisLoad\) \{[\s\S]*?buildIdOf\(hit\) === documentBuildThisLoad/,
+    'a cached asset stamped with the document\'s own build is served on this tick');
+  assert.match(body, /event\.waitUntil\(fetchAndCache\(\)\.catch\(\(\) => \{\}\)\);\s*return hit;/,
+    'and still revalidated behind the response');
+  // A DIFFERENT stamp is a deploy, and must fall through to the race — that
+  // is what keeps a redeploy reaching a WebView on the next load, which is
+  // the whole reason src/services/static-cache.js exists.
+  assert.match(body, /timeoutMs: SHELL_TIMEOUT_MS/,
+    'the race is still there for everything the fast path does not claim');
+  // The comparison is against the CACHED entry, never against the request.
+  assert.doesNotMatch(body, /buildIdOf\(event\.request\)/);
+});
+
+test('the document publishes the build its own assets are measured against', () => {
+  const nav = strategyBody('networkFirstNavigate');
+  assert.match(nav, /documentBuildThisLoad = buildIdOf\(response\);/,
+    'read off the response actually SERVED — a cached document publishes the '
+    + 'build it was cached at, not the one the network is still fetching');
+  // Both per-load flags are set in the same place, from the same response, so
+  // they cannot describe two different loads.
+  assert.match(nav, /shellFromCacheThisLoad = fromCache;[\s\S]{0,600}?documentBuildThisLoad = buildIdOf\(response\);/);
+  assert.match(SW_SRC, /let documentBuildThisLoad = null;/,
+    'null is the safe default: no header, a restarted worker, or a document '
+    + 'served before this shipped all fall back to the race');
+  assert.match(SW_SRC, /const SHELL_BUILD_HEADER = 'x-platform-build';/,
+    'lower-case: Headers.get is case-insensitive but the constant is read by eye');
+});
+
 test('the board does not wait on a token it never uses', () => {
   // /api/iframe-token is a short-lived credential and is hard-bypassed by
   // the worker, so it always costs a full round trip. It used to hide behind

@@ -154,6 +154,128 @@ test('a snapshot boot skips the calls that can only fail offline', () => {
   assert.match(body, /!App\._sessionFromSnapshot && window\.AiCredit/);
 });
 
+// ── The shell boots on the snapshot and verifies behind it ───────────────
+//
+// The session read used to be the GATE: nothing painted until /api/auth/me
+// answered, which on a 150ms link was ~250ms of the ~1100ms to a usable
+// board and the last serial network wait in the boot chain. The snapshot
+// existed the whole time and could have answered it — it was wired as the
+// fallback for when the read FAILED rather than as the thing the shell
+// starts from. This is what a native app does: read the session out of the
+// keychain synchronously, render from the local store, discover auth lazily.
+
+test('a device that has booted here before paints before it asks', () => {
+  const init = APP.slice(APP.indexOf('async init()'), APP.indexOf('async _fetchSession()'));
+  // The snapshot read comes FIRST, and the boot returns on it without ever
+  // awaiting the session read.
+  const snapAt = init.indexOf('const snap = App.readSessionSnapshot();');
+  const readAt = init.indexOf('res = await App._fetchSession();');
+  assert.ok(snapAt !== -1 && readAt !== -1);
+  assert.ok(snapAt < readAt, 'the snapshot is consulted before the network is');
+  assert.match(init.slice(snapAt),
+    /if \(snap\) \{\s*App\._sessionFromSnapshot = true;\s*App\.enterAuthed\(snap\.user\);[\s\S]{0,200}?App\._reconcileSession\(\{ fromBoot: true \}\);\s*return;/,
+    'and the verification runs BEHIND the painted shell, not in front of it');
+  // Not awaited — that is the whole point.
+  assert.doesNotMatch(init, /await App\._reconcileSession\(\)/);
+});
+
+test('a device with no snapshot still waits for the answer', () => {
+  // Nothing to be optimistic WITH: the read is the only answer there is, and
+  // the three outcomes (#1021) are unchanged.
+  const init = APP.slice(APP.indexOf('async init()'), APP.indexOf('async _fetchSession()'));
+  const tail = init.slice(init.indexOf('res = await App._fetchSession();'));
+  assert.match(tail, /if \(res && res\.ok\)/);
+  assert.match(tail, /App\._dropCachedSession\(\);\s*await App\.enterAnonymous\(\);/,
+    'an answered 401 is still authoritative and still drops every cached trace');
+  assert.match(tail, /window\.Offline\?\.nudge\(\)[\s\S]{0,200}?await App\.enterAnonymous\(\);/,
+    'no answer and no snapshot is the offline anonymous boot');
+});
+
+test('the unverified-session guards are what make an optimistic boot safe', () => {
+  // _sessionFromSnapshot is now true on EVERY boot for a returning device,
+  // not just an offline one, so everything these guards hold back is held
+  // back far more often. Each one is a session-gated call that would be a
+  // guaranteed 401 against a session that has ended.
+  // Bounded by the sv:authed dispatch, which is unique and sits after every
+  // guard below. `App.restoreFromHash();` is NOT a bound — enterAuthed's
+  // waiting-room branch calls it early, and slicing there cut the guards off.
+  const authed = APP.slice(APP.indexOf('enterAuthed(user) {'),
+    APP.indexOf("new CustomEvent('sv:authed'"));
+  for (const held of [
+    /if \(!App\._sessionFromSnapshot\) App\.saveSessionSnapshot\(App\.user\);/,
+    /if \(!App\._sessionFromSnapshot\) App\.connectEvents\(\);/,
+    /if \(!App\._sessionFromSnapshot && window\.Kudos\?\.Budget\?\.init\)/,
+    /if \(!App\._sessionFromSnapshot && window\.AiCredit\?\.Budget\?\.init\)/,
+    /if \(!App\._sessionFromSnapshot && window\.SessionState\)/,
+  ]) assert.match(authed, held);
+  // And the boot session read is published only on the VERIFIED path — a
+  // last-known user is not an answer to "who is signed in".
+  assert.match(authed, /if \(!App\._sessionFromSnapshot\) App\._publishBootSession\(\{ user \}\);/);
+});
+
+test('every held-back call is started again when the session is verified', () => {
+  const rec = APP.slice(APP.indexOf('async _reconcileSession({'),
+    APP.indexOf('// ── Staged boot'));
+  assert.match(rec, /App\.connectEvents\(\);/);
+  assert.match(rec, /Kudos\.Budget\.init\(\)/);
+  assert.match(rec, /AiCredit\.Budget\.init\(\)/);
+  // These two were held by the same guard and had no restart at all. Missing
+  // them was invisible while this path was offline-only and would have been
+  // a session with no state on every load once it became the ordinary one.
+  assert.match(rec, /SessionState\.start\(\)/,
+    'session state has to start somewhere once the session is real');
+  assert.match(rec, /TermsFirstRun\?\.maybePrompt\?\.\(\)/,
+    'terms-first-run bails on an unverified session, and its sv:authed '
+    + 'listener is { once: true } — so it never gets a second chance by itself');
+  // The disconnect-recovery sweep belongs to the RECONNECT path. On a boot
+  // promotion the screen was painted moments ago from this same session's
+  // data, so re-running half a dozen loads over it is waste — and it landed
+  // on top of the ?shot= dialog two proposal checks photograph.
+  assert.match(rec, /if \(!fromBoot\) \{\s*try \{ App\.resyncCurrentView\(\); \}/);
+  assert.match(rec, /App\._publishBootSession\(\{ user \}\)/,
+    'and this is where the verified answer reaches everyone who joined');
+});
+
+test('reconciling handles all four answers, and only one of them is a reload loop risk', () => {
+  const rec = APP.slice(APP.indexOf('async _reconcileSession({'),
+    APP.indexOf('// ── Staged boot'));
+  // 401/403 — the session really did end. The snapshot MUST be dropped
+  // before the reload, or the next boot paints the same dead shell and
+  // reloads again, forever.
+  assert.match(rec, /if \(!res\.ok\) \{\s*App\._dropCachedSession\(\);[\s\S]{0,200}?location\.reload\(\);/);
+  const dropAt = rec.indexOf('App._dropCachedSession();');
+  const reloadAt = rec.indexOf('location.reload();');
+  assert.ok(dropAt !== -1 && dropAt < reloadAt, 'drop the trace BEFORE reloading');
+  // Another user — a shell painted for somebody else cannot be repaired.
+  assert.match(rec, /String\(user\.id\) !== String\(App\.user\?\.id\)[\s\S]{0,200}?clearSessionSnapshot\(\);\s*location\.reload\(\);/);
+  // Platform access decides WHICH SHELL is on screen (enterAuthed sends a
+  // viewer without it to the waiting room), so a snapshot that disagrees
+  // painted the wrong one. Saving the fresh record first is what stops THIS
+  // one looping: the next boot has the right answer.
+  assert.match(rec,
+    /!!user\.hasPlatformAccess !== !!App\.user\?\.hasPlatformAccess\) \{\s*App\.saveSessionSnapshot\(user\);\s*location\.reload\(\);/);
+  // No answer — offline. Stay on the snapshot; this is where the strip
+  // belongs, because the shell is up and readable and the thing the viewer
+  // needs to know is that it is not live.
+  assert.match(rec, /if \(!res\) \{[\s\S]{0,300}?Offline\?\.nudge\(\)/);
+  assert.match(rec, /if \(!res\) \{[\s\S]{0,400}?_publishBootSession\(\{ unknown: true \}\)/,
+    'and a joiner is told we could not tell, so it reads for itself');
+  // Same deadline'd read as the boot: on the boot path this IS the boot's
+  // read, and an open-but-stalled socket must not hold it open forever.
+  assert.match(rec, /res = await App\._fetchSession\(\);/);
+});
+
+test('the snapshot is the whole user record, which is why the shell it paints is right', () => {
+  // saveSessionSnapshot stores `user` entire, not an id — so an optimistic
+  // boot renders with the correct admin affordances, quota and platform
+  // access rather than a stub that would flicker when the read lands.
+  assert.match(APP, /localStorage\.setItem\(App\.SESSION_SNAPSHOT_KEY, JSON\.stringify\(\{\s*user, savedAt: Date\.now\(\),/);
+  // It is still display-only and still grants nothing: the cookie remains
+  // the sole credential, which is the property the whole optimistic boot
+  // rests on.
+  assert.match(APP, /DISPLAY-ONLY and grants nothing/);
+});
+
 // ── The boot session read is published, not repeated ─────────────────────
 //
 // GET /api/auth/me was fetched TWICE on every document, 16ms apart, and the
@@ -260,8 +382,9 @@ test('every boot path settles the published read', () => {
   assert.match(anon.slice(0, 600), /App\._publishBootSession\(\{ signedOut: true \}\)/);
   const authed = APP.slice(APP.indexOf('enterAuthed(user) {'));
   assert.match(authed.slice(0, 900),
-    /App\._publishBootSession\(\s*App\._sessionFromSnapshot \? \{ unknown: true \} : \{ user \}\s*\)/,
-    'a snapshot boot must publish `unknown`, never its thin user record');
+    /if \(!App\._sessionFromSnapshot\) App\._publishBootSession\(\{ user \}\);/,
+    'a snapshot boot publishes nothing here — the shell has a LAST-KNOWN '
+    + 'user, not a confirmed one, and _reconcileSession publishes the answer');
   // Settled once. A reload-free login calls enterAuthed again later and a
   // joiner that already resolved is not listening — which is exactly the
   // pre-existing behaviour, not a regression this introduced.
