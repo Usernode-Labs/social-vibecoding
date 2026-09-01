@@ -4154,7 +4154,12 @@ const App = {
     // The display name lands once the await below resolves (see the
     // `AppView.appData?.name` block).
 
-    await AppView.open(slug);
+    // A route that NAMES a dev tab is not going to build the app iframe, so
+    // it does not wait for the token mint (AppView.open's `needsToken`).
+    // `!!tab` is load-bearing: without an explicit tab, `initialRoute.tab`
+    // came from the launcher's cached record above, and a stale record must
+    // never be what decides that an App-tab render can skip its token.
+    await AppView.open(slug, { needsToken: !(tab && initialRoute.tab === 'dev') });
 
     // The user can navigate away (back to home, into a different app,
     // to the leaderboard) while `AppView.open(slug)` is still resolving
