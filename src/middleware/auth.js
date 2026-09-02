@@ -54,6 +54,13 @@ const PUBLIC_PATHS = [
   // and the service-worker precache fills with redirects. Static JS only, no
   // data access.
   '/shell/',
+  // Build-scoped shell assets (/b/<build sha>/js/app.js and so on): the same
+  // files as /js/, /css/, /vendor/ and /shell/ above, addressed per build so
+  // a deploy can serve them immutable (src/services/static-cache.js). Public
+  // for the same reason as every entry above it: a deployed document loads
+  // ALL of its scripts this way, on the anonymous screens too. Static assets
+  // only, no data access.
+  '/b/',
   // Vendored third-party browser libs (public/vendor/ — marked, DOMPurify,
   // qrcodejs). Same public tier as /css/ and /js/, and public for the same
   // reason: index.html loads them from its <head> on EVERY load including

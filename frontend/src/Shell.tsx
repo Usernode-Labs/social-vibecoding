@@ -35,6 +35,10 @@
 //    App.init() registers its DOMContentLoaded handler last and therefore runs
 //    after every other module's init. Adding or retiring one means updating
 //    public/sw.js's SHELL_ASSETS and tests/shell-script-order.test.js.
+//    Each src goes through lib/asset-url.ts: in a deployed document it is
+//    `/b/<build sha>/js/…`, the build-scoped address the server serves
+//    immutable; in a checkout it is the plain path. The prerender and the
+//    browser read the same build id, so the attribute hydrates clean.
 //
 // 3. CONVERSION IS LIKE-FOR-LIKE. Component boundaries, props and state are
 //    free; rendered output is not. Same ids, same class strings, same `hidden`
@@ -85,6 +89,7 @@ import { StagingOverlay, VisualCompareOverlay } from './features/staging';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 import { LegacyPortals } from './lib/legacy-portals';
 import { Island } from './lib/island-boundary';
+import { assetUrl } from './lib/asset-url';
 
 export function Shell() {
   return (
@@ -458,8 +463,8 @@ export function Shell() {
           features/home/home.js and features/leaderboard/leaderboard.js from
           inside the React bundle, so it loads ahead of the whole bundle.
       */}
-      <script src="/js/nav-link.js" />
-      <script src="/js/platform-ui.js" />
+      <script src={assetUrl('/js/nav-link.js')} />
+      <script src={assetUrl('/js/platform-ui.js')} />
       {/*
           /js/offline.js used to load here. #1078 retired it: the banner it
           owned is a React island (features/shell/banners.tsx), the
@@ -477,22 +482,22 @@ export function Shell() {
           features/header/use-header-layout.ts. All of them no-op outside the
           Usernode app webview.
       */}
-      <script src="/js/native-chrome.js" />
-      <script src="/js/dev-host.js" />
+      <script src={assetUrl('/js/native-chrome.js')} />
+      <script src={assetUrl('/js/dev-host.js')} />
       {/*
           #138: dev-chat completion alerts (chime + OS notification). Loaded
           before dev-chat.js, which references DevAlerts. The notifications
           module is in the React bundle now (#1079 chunk B) and runs later
           still, so it sees DevAlerts too.
       */}
-      <script src="/js/dev-alerts.js" />
-      <script src="/js/social-push.js" />
+      <script src={assetUrl('/js/dev-alerts.js')} />
+      <script src={assetUrl('/js/social-push.js')} />
       {/*
           Webview-safe replacement for window.confirm(). Loaded before any
           feature script that wants a "really?" gate (dev-chat archive,
           future settings/home destructive actions).
       */}
-      <script src="/js/confirm-modal.js" />
+      <script src={assetUrl('/js/confirm-modal.js')} />
       {/*
           The six build venues — the single list behind every "where should
           this be built?" surface. Pure data + copy + presentation; it reads
@@ -500,38 +505,38 @@ export function Shell() {
           dev-chat.js and app-view.js all read window.BuildVenues, so it must
           load before all four.
       */}
-      <script src="/js/build-venues.js" />
+      <script src={assetUrl('/js/build-venues.js')} />
       {/*
           Shared "you're out of daily AI credits — here's how to keep building"
           copy + destinations, used by the dev-chat card, the credits banner and
           the Generate-proposal modal. Loaded before its three consumers.
       */}
-      <script src="/js/credit-options.js" />
+      <script src={assetUrl('/js/credit-options.js')} />
       {/*
           #1281: the launchpad that replaces the composer when a session is
           being built somewhere else — the MCP connect command and the
           "tell your agent" prefill for `own-tools-pr`. Pure render + wire,
           no fetching; dev-chat.js reads window.Launchpad.
       */}
-      <script src="/js/launchpad.js" />
+      <script src={assetUrl('/js/launchpad.js')} />
       {/*
           #1049: the "how do you want to build this?" picker and its guided
           Claude Code / Codex walkthrough. Pure render + wire, no fetching —
           dev-chat.js owns the state and must load AFTER it.
       */}
-      <script src="/js/dev-flow-select.js" />
+      <script src={assetUrl('/js/dev-flow-select.js')} />
       {/*
           #1055: the "session and billing options" menu behind the ⋯ beside
           the dev-chat credit meter. Pure copy + gating + presentation;
           dev-chat.js owns the state and must load AFTER it.
       */}
-      <script src="/js/session-options.js" />
-      <script src="/js/group-chat.js" />
+      <script src={assetUrl('/js/session-options.js')} />
+      <script src={assetUrl('/js/group-chat.js')} />
       {/*
           Pure two-half spec splitter (#196). Must load BEFORE dev-chat.js,
           whose spec viewer calls window.splitSpecSections.
       */}
-      <script src="/js/spec-sections.js" />
+      <script src={assetUrl('/js/spec-sections.js')} />
       {/*
           Read-only renderer for a SHARED dev-chat transcript. Pure string
           builder; app-view.js's topic page calls SessionTranscript.renderHtml.
@@ -539,20 +544,20 @@ export function Shell() {
           DevChat.renderMarkdown at CALL time (and falls back to escaped text
           if it's missing), not at load time.
       */}
-      <script src="/js/session-transcript.js" />
+      <script src={assetUrl('/js/session-transcript.js')} />
       {/*
           Pure progress-indicator helpers (#50). Must load BEFORE dev-chat.js,
           whose elapsed ticker / live-activity summary call formatElapsed and
           summarizeCcProgress.
       */}
-      <script src="/js/cc-progress-summary.js" />
+      <script src={assetUrl('/js/cc-progress-summary.js')} />
       {/*
           Pure streaming/holdback helpers. Must load BEFORE dev-chat.js, whose
           live assistant bubble and spec-preview snippet call
           renderStreamingHtml / clipSpecSnippet to stop the task-checkbox
           flicker while output streams.
       */}
-      <script src="/js/streaming-markdown.js" />
+      <script src={assetUrl('/js/streaming-markdown.js')} />
       {/*
           #405: canonical merge-lifecycle helper (window.MergeStatus). Loaded
           before dev-chat.js / app-view.js so both derive and label proposal
@@ -560,7 +565,7 @@ export function Shell() {
           third consumer; it has never read MergeStatus, and it is in the React
           bundle as of #1083 chunk F either way.)
       */}
-      <script src="/js/merge-status.js" />
+      <script src={assetUrl('/js/merge-status.js')} />
       {/*
           #1038's live session working-state store (window.SessionState). It is
           a leaf — it reads window.App only at call time — but it must load
@@ -573,7 +578,7 @@ export function Shell() {
           reverse SHELL_ASSETS assertion in tests/pwa-shell-wiring.test.js,
           which now fails on a precached-but-unloaded /js/** entry.
       */}
-      <script src="/js/session-state.js" />
+      <script src={assetUrl('/js/session-state.js')} />
       {/*
           /js/dev-chat.js used to load here, last of the chat cluster, after
           every pure helper above that it consumes. #1084 chunk G moved it into
@@ -614,7 +619,7 @@ export function Shell() {
           that consumer is in the deferred bundle now, and it reads
           window.TopochainEvents at call time behind a guard either way.
       */}
-      <script src="/js/topochain-events.js" />
+      <script src={assetUrl('/js/topochain-events.js')} />
       {/*
           The profile screen's renderer (#profile hash route —
           profile-and-settings-to-web migration) used to be a classic script
@@ -677,8 +682,8 @@ export function Shell() {
           (features/home/home.js), and it reads `window.BuildLog` at click
           time, long after this script has run.
       */}
-      <script src="/js/build-log.js" />
-      <script src="/js/app-view.js" />
+      <script src={assetUrl('/js/build-log.js')} />
+      <script src={assetUrl('/js/app-view.js')} />
       {/*
           /js/app-secrets.js and /js/screenshot-select.js loaded here, in that
           order. #1078 chunk I moved both into the React bundle — the first as
@@ -712,15 +717,15 @@ export function Shell() {
           login / register / waiting logic. Must load before app.js so
           window.AuthScreens exists when App.init routes the boot.
       */}
-      <script src="/js/auth-screens.js" />
+      <script src={assetUrl('/js/auth-screens.js')} />
       {/*
           Offline feedback outbox (#1054): the durable queue behind the Send
           Feedback dialog. Loaded before app.js, which calls
           FeedbackQueue.init() while wiring the dialog and hands it a submit
           the network refused.
       */}
-      <script src="/js/feedback-queue.js" />
-      <script src="/js/app.js" />
+      <script src={assetUrl('/js/feedback-queue.js')} />
+      <script src={assetUrl('/js/app.js')} />
     </>
   );
 }

@@ -37,6 +37,7 @@ const ROOT = path.join(FRONTEND, '..');
 
 const {
   expectedStamp, formatHtmlStamp, formatJsStamp, formatBuildMeta, normalizeBuildSha,
+  buildScopedAssetUrl, prefixShellAssetUrls,
   HTML_OUTPUT, JS_OUTPUT,
 } = require(path.join(ROOT, 'scripts', 'shell-stamp.js'));
 
@@ -155,6 +156,23 @@ const BODY_ATTRS = 'class="bg-zinc-100 dark:bg-zinc-950 text-zinc-900 dark:text-
 
 const { stamp, files } = expectedStamp();
 
+// Which platform build this document IS, baked in at generation time. Read
+// back by public/js/app.js as its boot baseline — see the header over
+// formatBuildMeta in scripts/shell-stamp.js for why a server answer could not
+// be one. `dev` outside a deploy, which is what /api/version reports there
+// too. Docker's shell stage forwards the GIT_SHA build arg into this process.
+//
+// It is also what every asset URL below is scoped by. A document built for a
+// deploy loads its scripts and stylesheets from `/b/<sha>/…` (the
+// "Build-scoped asset URLs" note in scripts/shell-stamp.js), so the server can
+// answer them immutable; a `dev` document keeps the plain paths. The head's
+// tags are rewritten by prefixShellAssetUrls — a prefix on the path and
+// nothing else, so the order and every other attribute survive exactly as
+// src/head.html wrote them — and the <script> tags at the end of <body> come
+// out of the prerender already scoped, through frontend/src/lib/asset-url.ts
+// reading this same GIT_SHA.
+const buildSha = normalizeBuildSha(process.env.GIT_SHA);
+
 // The entry is the LAST thing in <head> and a module, therefore deferred:
 // it runs after the 47 classic <script> tags at the end of <body> and before
 // DOMContentLoaded. See the header comment in src/main.tsx for why that
@@ -163,14 +181,7 @@ const entryTag = '  <!-- React shell entry. A deferred module on purpose: it hyd
   + '       legacy /js/** scripts at the end of <body> have defined their globals and\n'
   + '       BEFORE DOMContentLoaded runs their init()s. frontend/src/main.tsx explains\n'
   + '       why that ordering — and the flushSync around hydration — is load-bearing. -->\n'
-  + '  <script type="module" src="/shell/assets/shell.js"></script>\n';
-
-// Which platform build this document IS, baked in at generation time. Read
-// back by public/js/app.js as its boot baseline — see the header over
-// formatBuildMeta in scripts/shell-stamp.js for why a server answer could not
-// be one. `dev` outside a deploy, which is what /api/version reports there
-// too. Docker's shell stage forwards the GIT_SHA build arg into this process.
-const buildSha = normalizeBuildSha(process.env.GIT_SHA);
+  + `  <script type="module" src="${buildScopedAssetUrl('/shell/assets/shell.js', buildSha)}"></script>\n`;
 
 // NO `class="dark"` ON <html>. It was hardcoded here, which made the document
 // the service worker precaches a DARK document for everybody: the theme is a
@@ -191,7 +202,7 @@ const html = `<!DOCTYPE html>
        Built from frontend/ by \`npm run build:shell\`; the markup lives in
        frontend/src/Shell.tsx and this <head> in frontend/src/head.html.
        Hand edits here are overwritten by the next build. -->
-${head.replace(/\s*$/, '\n')}${entryTag}</head>
+${prefixShellAssetUrls(head, buildSha).replace(/\s*$/, '\n')}${entryTag}</head>
 <body ${BODY_ATTRS}>${markup}</body>
 </html>
 `;
@@ -214,4 +225,4 @@ fs.rmSync(ssrDir, { recursive: true, force: true });
 
 console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes) and ${JS_OUTPUT} (${js.length} bytes)`);
 console.log(`[build-shell] stamped ${stamp.slice(0, 16)}… over ${files.length} input files`);
-console.log(`[build-shell] platform build id: ${buildSha}`);
+console.log(`[build-shell] platform build id: ${buildSha}${buildSha === 'dev' ? ' (plain asset paths)' : ' (assets scoped under /b/<sha>/)'}`);

@@ -352,10 +352,21 @@ test('sw.js answers prefetch-shell by refetching the whole shell', () => {
   const body = handler.slice(0, handler.indexOf("self.addEventListener('fetch'"));
   assert.match(body, /caches\.open\(SHELL_CACHE\)/,
     'into the cache the navigate/shell strategies read');
-  assert.match(body, /SHELL_ASSETS\.map/, 'every precached asset, not just the document');
-  assert.match(body, /cache:\s*'reload'/,
+  // The fetching itself is precacheShell — shared with install(), because a
+  // deployed document loads its assets from build-scoped URLs (/b/<sha>/…)
+  // that only the freshly fetched document can name. The prefetch hands it
+  // the cache and asks for the HTTP cache to be bypassed.
+  assert.match(body, /await precacheShell\(cache, \{ reload: true \}\)/,
+    'every precached asset, at the URLs the NEW document loads them from');
+  const precache = swJs.slice(swJs.indexOf('async function precacheShell('),
+    swJs.indexOf("self.addEventListener('install'"));
+  assert.match(precache, /const \[documentPath, \.\.\.assets\] = SHELL_ASSETS;/,
+    'the document first — its build id decides the asset URLs');
+  assert.match(precache, /assets\.map\(async \(path\)/, 'then every other precached asset');
+  assert.match(precache, /reload \? \{ cache: 'reload' \} : undefined/,
     "bypasses the HTTP cache — a 'no-cache' revalidation could 304 the old build back");
-  assert.match(body, /cache\.put\(path, res\.clone\(\)\)/);
+  assert.match(precache, /cache\.put\(documentPath, doc\.clone\(\)\)/);
+  assert.match(precache, /cache\.put\(url, res\.clone\(\)\)/);
   assert.match(body, /results\.every\(\(r\) => r\.status === 'fulfilled'\)/,
     'a PARTIAL refresh is the split-build state shellFromCacheThisLoad exists to prevent');
   assert.match(body, /type === 'prefetch-shell'/, 'reachable by message');

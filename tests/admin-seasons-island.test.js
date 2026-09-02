@@ -104,7 +104,9 @@ test('topochain-events.js stays a classic script, on all four registers', () => 
   // dependency into an admin island. Named explicitly in the brief.
   assert.ok(fs.existsSync(path.join(root, 'public/js/topochain-events.js')),
     'public/js/topochain-events.js must still exist');
-  assert.match(read('frontend/src/Shell.tsx'), /<script src="\/js\/topochain-events\.js" \/>/,
+  // Through assetUrl(): in a deployed document the src is the build-scoped
+  // /b/<sha>/js/topochain-events.js (frontend/src/lib/asset-url.ts).
+  assert.match(read('frontend/src/Shell.tsx'), /<script src=\{assetUrl\('\/js\/topochain-events\.js'\)\} \/>/,
     'Shell.tsx must still render its <script> tag');
   assert.ok(read('public/index.html').includes('/js/topochain-events.js'),
     'the generated shell must still carry it');

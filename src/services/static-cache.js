@@ -18,7 +18,36 @@
 //
 // Long-lived immutable assets (e.g. /visuals/:id, the versioned bridge URL)
 // set their own headers on their own routes and never reach this helper.
+const express = require('express');
+const { isBuildScopedAssetPath, parseBuildScopedPath } = require('../../scripts/shell-stamp');
+
 const REVALIDATE = 'no-cache, must-revalidate';
+
+// ── Build-scoped asset URLs: the one immutable lane for shell bytes ──────
+//
+// A deployed document loads its scripts and stylesheets from
+// `/b/<build sha>/…` (scripts/shell-stamp.js explains the scheme and why).
+// The URL names the build, so the bytes behind it never change — a deploy
+// changes the URL — and these responses may carry the policy the rest of
+// this file exists to forbid: a year-long `immutable`, which is what lets
+// the browser reuse V8's compiled-code cache for the shell across loads
+// instead of rebuilding it on every one.
+//
+// Only when the sha in the URL is THIS process's build. Any other sha is a
+// document asking a server that is not its build: the seconds of a
+// blue-green rollout where the document came from the new colour and the
+// asset request landed on the old one, or a cached document from a build
+// this server has since replaced. Answering `immutable` there would pin the
+// wrong bytes under the new build's URL — in the HTTP cache and, worse, in
+// the service worker's — for a year. So a mismatch serves the file it has
+// (a rollout must not 404 its own scripts) under the revalidate policy,
+// with its own build id in X-Platform-Build so public/sw.js can see the
+// disagreement and decline to cache the answer.
+//
+// The document, the manifest and the worker are never served here (a 404,
+// not a fallback): build-scoped is for what a build owns, and those are the
+// URLs that must stay fixed and fresh.
+const IMMUTABLE = 'public, max-age=31536000, immutable';
 
 // Returns the Cache-Control value for a shell asset path, or null if the
 // path isn't a revalidate-every-load shell asset (let the default apply).
@@ -72,10 +101,57 @@ function applyShellBuildHeader(res, env = process.env) {
   return id;
 }
 
+/**
+ * Express handler for `/b/<build sha>/<asset path>`. Serves the same file
+ * the plain path would, from `publicDir`, immutable when the sha is this
+ * process's build and revalidate-every-load when it is not.
+ */
+function buildScopedAssetHandler(publicDir, env = process.env) {
+  const common = { index: false, redirect: false, fallthrough: false, dotfiles: 'ignore' };
+  const immutable = express.static(publicDir, {
+    ...common,
+    maxAge: '1y',
+    immutable: true,
+    setHeaders(res) { applyShellBuildHeader(res, env); },
+  });
+  // serve-static writes its own Cache-Control before setHeaders runs, so the
+  // revalidate lane overrides it there — the same shape as the shell handler
+  // in server.js.
+  const revalidate = express.static(publicDir, {
+    ...common,
+    setHeaders(res) {
+      res.setHeader('Cache-Control', REVALIDATE);
+      applyShellBuildHeader(res, env);
+    },
+  });
+  return function buildScopedAssets(req, res, next) {
+    const scoped = parseBuildScopedPath(req.path);
+    if (!scoped) return next();
+    if ((req.method !== 'GET' && req.method !== 'HEAD') || !isBuildScopedAssetPath(scoped.path)) {
+      res.status(404).end();
+      return;
+    }
+    const current = shellBuildId(env);
+    const serve = current && scoped.build === current ? immutable : revalidate;
+    // The prefix is an address, not a directory: strip it and let serve-static
+    // resolve the plain path. A query string rides along unchanged.
+    req.url = scoped.path + req.url.slice(req.path.length);
+    serve(req, res, (err) => {
+      if (err && (err.status === 404 || err.statusCode === 404)) {
+        res.status(404).end();
+        return;
+      }
+      next(err);
+    });
+  };
+}
+
 module.exports = {
   shellAssetCacheControl,
+  buildScopedAssetHandler,
   shellBuildId,
   applyShellBuildHeader,
   SHELL_BUILD_HEADER,
   REVALIDATE,
+  IMMUTABLE,
 };

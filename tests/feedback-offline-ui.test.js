@@ -223,7 +223,9 @@ test('the dot travels through the visibility store, not a classList write', () =
 });
 
 test('the queue module loads before app.js and is precached', () => {
-  assert.match(shellTsx, /<script src="\/js\/feedback-queue\.js" \/>/);
+  // Through assetUrl(): the src is build-scoped in a deployed document
+  // (frontend/src/lib/asset-url.ts).
+  assert.match(shellTsx, /<script src=\{assetUrl\('\/js\/feedback-queue\.js'\)\} \/>/);
   const order = [
     indexHtml.indexOf('/js/feedback-queue.js'),
     indexHtml.lastIndexOf('/js/app.js'),

@@ -4,7 +4,7 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 const { load: loadConfig } = require('./src/config');
 const { migrate } = require('./src/db/migrate');
-const { shellAssetCacheControl, applyShellBuildHeader } = require('./src/services/static-cache');
+const { shellAssetCacheControl, applyShellBuildHeader, buildScopedAssetHandler } = require('./src/services/static-cache');
 const { authMiddleware } = require('./src/middleware/auth');
 const { authRoutes } = require('./src/routes/auth');
 const { appRoutes } = require('./src/routes/apps');
@@ -715,6 +715,18 @@ app.use('/usernode-bridge', (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-cache, must-revalidate');
   next();
 });
+
+// Build-scoped asset URLs — /b/<build sha>/js/app.js and so on. A deployed
+// document loads every script and stylesheet this way, and these are the one
+// set of shell responses that may be cached for a year: the URL IS the
+// build, so a deploy changes the URL rather than the bytes behind it, and the
+// browser gets to keep V8's compiled-code cache for the shell across loads.
+// A sha that is not this process's build (the seconds of a blue-green
+// rollout, or a document from a build this server has moved past) is served
+// under the revalidate policy instead and the worker declines to cache it.
+// Same files as the handler below serves at their plain paths; see
+// src/services/static-cache.js.
+app.use(buildScopedAssetHandler(path.join(__dirname, 'public')));
 
 // Serve the shell's static assets, but force HTML/JS/CSS to revalidate on
 // every load (see src/services/static-cache.js). Without this, mobile
