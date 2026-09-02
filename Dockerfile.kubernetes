@@ -37,7 +37,12 @@ COPY --chown=node:node . .
 # Generated assets must be copied after the source tree so ignored local
 # artifacts can never replace the outputs built from this image's revision.
 COPY --chown=node:node --from=shell /build/public/index.html ./public/index.html
-COPY --chown=node:node --from=shell /build/public/shell/assets/shell.js ./public/shell/assets/shell.js
+# The whole directory, not shell.js alone: the React build emits lazy route
+# chunks beside the entry (frontend/vite.config.ts — the admin console's
+# sections and the settings module). Naming one file left every other chunk
+# out of the image while every test passed locally, where the build output
+# is simply on disk. Same as the compose Dockerfile.
+COPY --chown=node:node --from=shell /build/public/shell/assets/ ./public/shell/assets/
 COPY --chown=node:node --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
 
 USER node

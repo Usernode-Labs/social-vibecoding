@@ -21,7 +21,8 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   const sourceCopy = dockerfile.lastIndexOf('COPY --chown=node:node . .');
   for (const asset of [
     '/build/public/index.html ./public/index.html',
-    '/build/public/shell/assets/shell.js ./public/shell/assets/shell.js',
+    // The directory: every lazy chunk the React build emits, not the entry alone.
+    '/build/public/shell/assets/ ./public/shell/assets/',
     '/build/public/css/tailwind.css ./public/css/tailwind.css',
   ]) {
     const assetCopy = dockerfile.lastIndexOf(asset);

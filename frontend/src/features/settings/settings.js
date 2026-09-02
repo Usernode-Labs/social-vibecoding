@@ -5106,7 +5106,20 @@
   // unguarded, and the bundle's entry runs before any of their init()s. The
   // typeof guard is for the SSG prerender pass, which evaluates this whole
   // module graph in Node (#1081 chunk D).
-  if (typeof window !== 'undefined') window.Settings = Settings;
+  //
+  // Since the module became a lazy chunk, ./facade.js has been window.Settings
+  // from the shell's boot: it read /api/auth/me into its `state` and answered
+  // isOpen()/close() while this file was still on its way. Take over SHARING
+  // that state object — a read still in flight lands in it — and its primed
+  // CLI-auth answer, so nothing that consulted the façade observes a reset.
+  if (typeof window !== 'undefined') {
+    const facade = window.Settings;
+    if (facade && facade.__facade) {
+      Settings.state = facade.state;
+      Settings._cliAuthPromise = facade._cliAuthPromise || null;
+    }
+    window.Settings = Settings;
+  }
 
   // The first-entry terms prompt lives in ./terms-first-run.js — the ONE
   // boot trigger that auto-presents showTermsSheet (issue #1361 was two

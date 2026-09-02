@@ -32,6 +32,8 @@
  *    would make an ungated section unreachable the moment its wrapper hid.
  */
 
+import { useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
+
 import { AboutSection } from './about';
 import { AdminPreviewSection } from './admin-preview';
 import { AgentFilesSection } from './agent-files';
@@ -51,6 +53,16 @@ import { UsernodeSection } from './usernode';
 import { WalletSection } from './wallet';
 
 export function SettingsSections() {
+  // init() binds every control below by id, ONCE, so it has to run when the
+  // panes exist and never again. This component mounts exactly once (the
+  // chassis gates it on a one-way flag), and a LAYOUT effect runs inside the
+  // same flush that committed the panes — before a Settings.open() that
+  // forced them in reads a single id. window.Settings is the module by now:
+  // the chunk that carries these panes evaluates ./settings.js first.
+  useIsomorphicLayoutEffect(() => {
+    window.Settings?.init?.();
+  }, []);
+
   return (
     <>
       {/* THE UI OVERHAUL moved Theme out of the hamburger drawer and made it

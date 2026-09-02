@@ -251,9 +251,12 @@ const SHELL_ASSETS = [
   // ── LAZY CHUNKS ARE DELIBERATELY NOT HERE ────────────────────────────
   //
   // The React build emits route chunks beside shell.js now
-  // (frontend/vite.config.ts) — today just assets/shell-sections.js, the
-  // admin console's twenty section modules, 421KB that a non-admin never
-  // downloads and nobody parses until the console is opened.
+  // (frontend/vite.config.ts) — assets/shell-sections.js, the admin
+  // console's twenty section modules, 421KB that a non-admin never
+  // downloads and nobody parses until the console is opened; and
+  // assets/shell-settings-chunk.js, the Settings controller and its sixteen
+  // panes, loaded on the first open or at idle for a signed-in viewer
+  // (frontend/src/features/settings/facade.js).
   //
   // Precaching one would hand that bandwidth straight back: install() would
   // fetch it for every visitor on every worker version, which is most of what
