@@ -36,6 +36,7 @@ const path = require('path');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const sw = require('../public/sw.js');
+const { MOUNT_ON_REVEAL, interiorHtmlFor } = require('./lib/lazy-interiors');
 const IMAGE_GENERATED_ASSETS = new Set([
   '/css/tailwind.css',
   '/shell/assets/shell.js',
@@ -308,20 +309,26 @@ test('sw.js and manifest.webmanifest get the revalidate-every-load header', () =
 });
 
 test('offline affordances only gate the anonymous auth screens (#1021)', () => {
+  // The auth screens' interiors mount on first reveal (lib/mount-on-reveal.ts),
+  // so the prerendered document carries NONE of these affordances — a
+  // stronger form of the rule this test has always pinned — and each lives
+  // in the interior of the screen that owns it.
   const html = readPublic('index.html');
+  assert.equal(html.match(/data-offline-disabled/g), null,
+    'data-offline-disabled in the prerendered document — the auth interiors mount on reveal');
   // Both places an offline visitor can land carry an explanation.
-  assert.ok(html.split('class="offline-only').length - 1 >= 2,
-    'the login and landing screens should each explain the offline state');
+  for (const id of ['auth-landing-screen', 'auth-login-screen']) {
+    assert.ok(interiorHtmlFor(id).includes('class="offline-only'),
+      `the ${id} interior should explain the offline state`);
+  }
   // data-offline-disabled greys a control out AND blocks its clicks, so a
   // stray one in the authed shell would silently break a working feature
   // for anyone whose probe is briefly failing. Keep them confined to the
   // auth overlays, whose actions genuinely cannot work offline.
-  const authStart = html.indexOf('id="auth-landing-screen"');
-  const authEnd = html.indexOf('id="auth-waitlist-screen"');
-  assert.ok(authStart > -1 && authEnd > authStart);
-  for (const m of html.matchAll(/data-offline-disabled/g)) {
-    assert.ok(m.index > authStart && m.index < authEnd,
-      `data-offline-disabled at index ${m.index} is outside the auth screens`);
+  for (const { id } of MOUNT_ON_REVEAL) {
+    if (id === 'auth-landing-screen' || id === 'auth-login-screen') continue;
+    assert.equal(interiorHtmlFor(id).match(/data-offline-disabled/g), null,
+      `data-offline-disabled in ${id}, outside the two screens that gate on it`);
   }
 });
 

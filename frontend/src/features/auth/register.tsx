@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
+import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
@@ -40,6 +41,12 @@ const AUTHFIELD = { box: 'auth', hint: 'muted', ring: 'seamless' } as const;
 export function RegisterScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.register, false);
+  // The screen's interior mounts on its first reveal, not in the prerender —
+  // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
+  // window.UsernodeReact.mount) before it wires or reveals the screen, so the
+  // hooks this component patches onto AuthScreens are installed and the
+  // interior's nodes exist by the time the on-show hook runs.
+  const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.register);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -112,6 +119,8 @@ export function RegisterScreen() {
       id="auth-register-screen"
       className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
     >
+      {mounted ? (
+        <>
       <a
         href="#"
         data-auth-back=""
@@ -203,6 +212,8 @@ export function RegisterScreen() {
           </p>
         </div>
       </div>
+        </>
+      ) : null}
     </main>
   );
 }

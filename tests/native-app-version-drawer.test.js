@@ -3,6 +3,7 @@
 // never substitutes the currently-open dApp SHA.
 
 const test = require('node:test');
+const { shellMarkup } = require('./lib/shell-markup');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,7 +17,7 @@ const source = fs.readFileSync(
 // imports and inits live there.
 const menuSource = fs.readFileSync(
   path.join(root, 'frontend/src/features/header/platform-header.tsx'), 'utf8');
-const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+const html = shellMarkup();
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 

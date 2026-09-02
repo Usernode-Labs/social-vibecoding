@@ -531,6 +531,21 @@
 
     isOpen() { return Settings._open; },
 
+    // The sixteen panes are not in the prerendered document any more: the
+    // island mounts them on the screen's first reveal (lib/mount-on-reveal.ts,
+    // #settings-section-content ships empty like #admin-section-content).
+    // Everything below open() reads their ids on its next line — _renderBody
+    // dereferences #settings-key-display outright — so the interior has to
+    // exist BEFORE a single pane renders. The bridge mounts it inside
+    // flushSync and returns with the nodes in the document; init() runs in
+    // that same flush, so the id-bound listeners are live too. Reached by
+    // name, not import: a dozen tests run this file as a script in a `vm`.
+    _ensureMounted() {
+      try {
+        window.UsernodeReact?.mount?.ensure?.('settings-screen');
+      } catch (err) { /* an absent bridge is the prerender pass */ }
+    },
+
     // Repaint every section's body. Cheap (they're all local state or a
     // small fetch) and it keeps the ONE render path — a section is never
     // rendered lazily on first reveal, so its controls are correct whether
@@ -571,6 +586,7 @@
     // snapshot of the page the user is leaving. The caller runs
     // Settings.syncChrome() inside the transition callback instead.
     open(section, opts) {
+      Settings._ensureMounted();
       Settings._open = true;
       Settings._pushedFromMenu = false;
       Settings._menuScrollTop = 0;
@@ -626,6 +642,7 @@
     // reason. A late capability change (a section appearing/disappearing)
     // repaints through refreshMenu(), not through here.
     route(section) {
+      Settings._ensureMounted();
       const visible = Settings._visibleSections();
       const valid = !!section && visible.some((s) => s.key === section);
       const mobile = Settings._isMobile();

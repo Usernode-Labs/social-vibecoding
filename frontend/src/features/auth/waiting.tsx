@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AUTH_SCREEN_IDS, fx, legacy, useAuthScreensPatch } from './shared';
 
@@ -35,6 +36,12 @@ interface MeUser {
 export function WaitingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.waiting, false);
+  // The screen's interior mounts on its first reveal, not in the prerender —
+  // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
+  // window.UsernodeReact.mount) before it wires or reveals the screen, so the
+  // hooks this component patches onto AuthScreens are installed and the
+  // interior's nodes exist by the time the on-show hook runs.
+  const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.waiting);
 
   const [who, setWho] = useState('');
   const [checkState, setCheckState] = useState('');
@@ -141,6 +148,8 @@ export function WaitingScreen() {
       id="auth-waiting-screen"
       className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
     >
+      {mounted ? (
+        <>
       <div className="min-h-full flex items-center justify-center">
         <div className="w-full max-w-sm px-6 py-16 text-center">
           <h1 className="text-2xl font-bold mb-1">
@@ -181,6 +190,8 @@ export function WaitingScreen() {
           </div>
         </div>
       </div>
+        </>
+      ) : null}
     </main>
   );
 }

@@ -38,6 +38,24 @@ const ROOT = path.join(__dirname, '..');
 const baseline = require('./baselines/shell-markup.json');
 const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
+// ── The interiors that mount on reveal ─────────────────────────────────
+//
+// public/index.html is no longer the whole inventory. #settings-screen's
+// sixteen panes and the six anonymous-shell screens render their interiors
+// on FIRST REVEAL (frontend/src/lib/mount-on-reveal.ts) rather than shipping
+// in the prerender: they were 681 of the document's 1,485 elements, parsed,
+// styled and hydrated on every load for screens most loads never open. Their
+// roots stay in the document exactly as they were; only the children wait.
+//
+// So the id inventory is resolved against the document PLUS each of those
+// interiors, rendered through the same component with its root marked
+// mounted (tests/lib/lazy-interiors.js). None of the 187 ids that left the
+// prerender is retired — every one is still here, in the interior that owns
+// it — and the test at the bottom pins the other half: that the prerender
+// really does not carry them any more, which is the whole point.
+const { MOUNT_ON_REVEAL, interiorHtmlFor, lazyInteriorsHtml } = require('./lib/lazy-interiors');
+const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
+
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
   // ── Andrea's 27 Aug 2026 waitlist review ────────────────────────
@@ -514,20 +532,21 @@ test('the shell still carries every id in the frozen baseline', () => {
     + 'refreshing it.',
   );
 
-  const actual = new Set(idsOf(after));
+  const actual = new Set(idsOf(withInteriors));
   const missing = baseline.ids.filter((id) => !actual.has(id) && !(id in RETIRED_IDS));
 
   assert.deepEqual(
     [...new Set(missing)], [],
-    `${new Set(missing).size} element id(s) disappeared from public/index.html. public/js/** looks `
-    + 'these up by getElementById and dapp.json selects on them, so each one is a broken screen. '
-    + 'If a removal is intentional, add it to RETIRED_IDS with a reason in the same commit.',
+    `${new Set(missing).size} element id(s) disappeared from public/index.html and from every `
+    + 'mount-on-reveal interior. public/js/** looks these up by getElementById and dapp.json '
+    + 'selects on them, so each one is a broken screen. If a removal is intentional, add it to '
+    + 'RETIRED_IDS with a reason in the same commit.',
   );
 });
 
 test('the shell has not grown ids nobody declared', () => {
   const expected = new Set(baseline.ids);
-  const added = [...new Set(idsOf(after))].filter((id) => !expected.has(id) && !(id in ADDED_IDS));
+  const added = [...new Set(idsOf(withInteriors))].filter((id) => !expected.has(id) && !(id in ADDED_IDS));
   assert.deepEqual(
     added, [],
     'public/index.html gained element id(s) the baseline does not have. A new id is fine, but '
@@ -538,7 +557,7 @@ test('the shell has not grown ids nobody declared', () => {
 test('a retired id is really gone, and an added id is really there', () => {
   // Keeps the two maps honest: a stale entry that no longer describes the
   // markup is a hole in the inventory, not a harmless leftover.
-  const actual = new Set(idsOf(after));
+  const actual = new Set(idsOf(withInteriors));
   for (const id of Object.keys(RETIRED_IDS)) {
     assert.ok(
       !actual.has(id),
@@ -567,12 +586,13 @@ const KNOWN_DUPLICATE_IDS = { 'wallet-status': 2 };
 
 test('no id is used twice beyond the duplicates that predate this migration', () => {
   const seen = new Map();
-  for (const id of idsOf(after)) seen.set(id, (seen.get(id) || 0) + 1);
+  for (const id of idsOf(withInteriors)) seen.set(id, (seen.get(id) || 0) + 1);
   const duplicates = Object.fromEntries([...seen.entries()].filter(([, n]) => n > 1));
 
   assert.deepEqual(
     duplicates, KNOWN_DUPLICATE_IDS,
-    'the set of duplicated element ids in public/index.html changed. getElementById returns the '
+    'the set of duplicated element ids in public/index.html plus the mount-on-reveal interiors '
+    + 'changed. getElementById returns the '
     + 'first match, so a NEW duplicate silently binds handlers to the wrong element — and JSX '
     + 'makes pasting a subtree easy. If you FIXED one, delete its entry from KNOWN_DUPLICATE_IDS.',
   );
@@ -629,6 +649,30 @@ test('the ids the dev-console and staging overlay bind are present', () => {
 // GUARDED — `?.`, or a `const el = …; if (el)` — because a module that
 // no-ops when its node is absent is exactly how a row gets re-homed without
 // touching it. What it may not be is dereferenced on the spot.
+// ── The prerender no longer carries the mount-on-reveal interiors ──────
+//
+// The union above says every id is still SOMEWHERE. This says where it is
+// not: each mount-on-reveal root ships in public/index.html as the empty
+// element the hand-written shell's converted siblings (#admin-screen,
+// #leaderboard-screen, …) always did, and none of the ids an interior owns
+// appears in the document. Without this the inventory would pass just as
+// happily if a screen quietly went back to prerendering, and the 681
+// elements would be back on every load without anyone noticing.
+test('a mount-on-reveal interior is rendered by its component, not by the prerender', () => {
+  const shipped = new Set(idsOf(after));
+  for (const { id } of MOUNT_ON_REVEAL) {
+    assert.ok(shipped.has(id), `#${id} — the ROOT — must still be in public/index.html`);
+    const interiorIds = idsOf(interiorHtmlFor(id)).filter((x) => x !== id);
+    assert.ok(interiorIds.length > 0, `#${id} renders an interior with ids once mounted`);
+    const leaked = interiorIds.filter((x) => shipped.has(x) && !(x in KNOWN_DUPLICATE_IDS));
+    assert.deepEqual(
+      leaked, [],
+      `#${id}'s interior is in the prerendered document. It mounts on first reveal — see `
+      + 'frontend/src/lib/mount-on-reveal.ts — so the document must carry only the root.',
+    );
+  }
+});
+
 test('no module dereferences a retired id without a guard', () => {
   const roots = [];
   const walk = (dir) => {

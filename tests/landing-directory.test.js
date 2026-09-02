@@ -21,9 +21,11 @@
 // Run with: node --test tests/landing-directory.test.js
 
 const test = require('node:test');
+const { interiorHtmlFor } = require('./lib/lazy-interiors');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -36,7 +38,7 @@ const WAITLIST_TSX = 'frontend/src/features/auth/waitlist.tsx';
 // ─── index.html: persistent header ────────────────────────────────
 
 test('landing CTAs: Sign in + Join waitlist only — no Create account', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const ctas = html.match(/id="landing-header-ctas"[\s\S]*?<\/div>/);
   assert.ok(ctas, 'landing-header-ctas block exists');
   assert.match(ctas[0], /href="#login"/);
@@ -46,7 +48,7 @@ test('landing CTAs: Sign in + Join waitlist only — no Create account', () => {
 });
 
 test('the landing header is a persistent, non-scrolling sibling of the scroller', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const header = html.match(/id="landing-header"[^>]*class="([^"]*)"/);
   assert.ok(header, 'landing-header exists');
   // shrink-0 keeps the header out of the flex free-space split, so the
@@ -84,7 +86,7 @@ test('the header keeps Sign in / Join waitlist while an app is open', () => {
 // ─── the landing CTA area vs the #waitlist screen ─────────────────
 
 test('the landing CTA area is a compact CTA + link, and carries no form', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const section = html.match(/id="landing-waitlist"[\s\S]*?<\/section>/);
   assert.ok(section, 'landing-waitlist section exists');
   const classes = html.match(/id="landing-waitlist"[^>]*class="([^"]*)"/);
@@ -101,7 +103,7 @@ test('the landing CTA area is a compact CTA + link, and carries no form', () => 
 });
 
 test('the header CTA is an anchor to #waitlist, not a scroll-to-form', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const cta = html.match(/<a[^>]*id="landing-waitlist-cta"[^>]*>/);
   assert.ok(cta, 'landing-waitlist-cta is an anchor');
   assert.match(cta[0], /href="#waitlist"/);
@@ -117,12 +119,13 @@ test('the header CTA is an anchor to #waitlist, not a scroll-to-form', () => {
 });
 
 test('the stage-1 survey lives on its own #waitlist screen', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   // Not anchored on indentation: public/index.html is generated from
   // frontend/src/Shell.tsx now and ships without the hand-written line
   // breaks. <main> cannot nest, so the first close tag is this screen's.
-  const screen = html.match(/id="auth-waitlist-screen"[\s\S]*?<\/main>/);
-  assert.ok(screen, 'auth-waitlist-screen exists');
+  // The screen's interior mounts on first reveal, so the document carries
+  // only its root; the interior is what a reveal puts inside it.
+  const interior = interiorHtmlFor('auth-waitlist-screen');
   const classes = html.match(/id="auth-waitlist-screen"[^>]*class="([^"]*)"/);
   // Same overlay shape as the other anonymous screens (#more, #login).
   for (const cls of ['hidden', 'fixed', 'inset-0', 'z-40', 'overflow-y-auto']) {
@@ -140,13 +143,13 @@ test('the stage-1 survey lives on its own #waitlist screen', () => {
     'waitlist-country', 'waitlist-discovery-chips', 'waitlist-submit',
     'waitlist-msg', 'waitlist-joined', 'waitlist-more-offer',
     'waitlist-more-link', 'waitlist-queued']) {
-    assert.match(screen[0], new RegExp(`id="${id}"`), `${id} is on the screen`);
+    assert.match(interior, new RegExp(`id="${id}"`), `${id} is on the screen`);
   }
   // Back goes to the landing page via the shared delegated handler.
-  assert.match(screen[0], /data-auth-back/);
+  assert.match(interior, /data-auth-back/);
   // NOT a <header>: the header-layout code used to measure document.querySelector
   // ('header') and must keep resolving to #platform-header.
-  assert.doesNotMatch(screen[0], /<header/);
+  assert.doesNotMatch(interior, /<header/);
 });
 
 test('#waitlist is a registered route ordered under landing, above #more', () => {
@@ -249,7 +252,7 @@ test('the stage-1 submit handler cannot be later than the first render', () => {
 // ─── index.html + landing.tsx: in-flow app viewer ─────────────────
 
 test('#app-viewer is an in-flow flex sibling, not a stacked overlay', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const viewer = html.match(/id="app-viewer"[^>]*class="([^"]*)"/);
   assert.ok(viewer, 'app-viewer exists');
   // Demoted from `fixed inset-0 z-50`: it now shares the overlay's column
@@ -378,7 +381,7 @@ test('landing scroller has kit pull-to-refresh with overscroll containment', () 
 });
 
 test('the landing overlay keeps its own scroll wrapper (pull-down backstop)', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   // The overlay itself must NOT be the scroller...
   const overlay = html.match(/id="auth-landing-screen"[^>]*class="([^"]*)"/);
   assert.ok(overlay, 'landing overlay exists');
@@ -396,7 +399,7 @@ test('the landing overlay keeps its own scroll wrapper (pull-down backstop)', ()
 // ─── index.html: directory grid ───────────────────────────────────
 
 test('landing directory uses the homescreen launcher-grid shape', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const grid = html.match(/id="landing-apps"[^>]*class="([^"]*)"/);
   assert.ok(grid, 'landing-apps grid exists');
   // Same column progression as the authed #app-list grid.

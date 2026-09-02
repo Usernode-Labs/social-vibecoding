@@ -14,6 +14,7 @@
 // Run with: node --test tests/nav-new-tab.test.js
 
 const test = require('node:test');
+const { shellMarkup } = require('./lib/shell-markup');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -22,7 +23,7 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const navLinkJs = read('public/js/nav-link.js');
-const html = read('public/index.html');
+const html = shellMarkup();
 const swJs = read('public/js/../sw.js');
 const appJs = read('public/js/app.js');
 const appViewJs = read('public/js/app-view.js');

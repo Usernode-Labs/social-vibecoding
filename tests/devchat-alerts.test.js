@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const read = (...p) => fs.readFileSync(path.join(PUBLIC, ...p), 'utf8');
@@ -357,7 +358,7 @@ test('each count falls to zero on its own', () => {
 });
 
 test('dev-alerts.js still loads before notifications, and index.html ships the settings UI', () => {
-  const html = read('index.html');
+  const html = shellMarkup();
   // #1079 chunk B moved notifications.js into the React bundle, so this is no
   // longer two classic tags to order. The guarantee got STRONGER rather than
   // weaker: /shell/assets/shell.js is a module (deferred), so everything it

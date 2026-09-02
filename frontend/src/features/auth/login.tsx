@@ -54,6 +54,7 @@ import { Button } from '@/components/ui/button';
 import { KeyIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 
+import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
@@ -136,6 +137,12 @@ const ADMIN_LEAD_WITH_EMAIL =
 export function LoginScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.login, false);
+  // The screen's interior mounts on its first reveal, not in the prerender —
+  // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
+  // window.UsernodeReact.mount) before it wires or reveals the screen, so the
+  // hooks this component patches onto AuthScreens are installed and the
+  // interior's nodes exist by the time the on-show hook runs.
+  const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.login);
 
   // Everything below starts at the value the prerendered markup shipped with:
   // the base view, no wallet, no errors, and the reset UI unbuilt.
@@ -731,6 +738,8 @@ export function LoginScreen() {
       id="auth-login-screen"
       className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
     >
+      {mounted ? (
+        <>
       {/*
           The corner Back link. `location.hash` rather than the anchor's own
           href: the href is '#' so the link is inert without JS, exactly as
@@ -1236,6 +1245,8 @@ export function LoginScreen() {
           ) : null}
         </div>
       </div>
+        </>
+      ) : null}
     </main>
   );
 }

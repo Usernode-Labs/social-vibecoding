@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const uaf = require('../src/services/user-agent-files.js');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -246,7 +247,7 @@ test('routes: demo mode is staging-gated and the POST uses a scoped body parser'
 });
 
 test('Settings UI: section markup + renderer are wired', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   assert.match(html, /id="agent-files-section"/);
   assert.match(html, /id="agent-files-instructions-list"/);
   assert.match(html, /id="agent-files-skills-list"/);

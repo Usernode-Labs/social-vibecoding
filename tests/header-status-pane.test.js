@@ -18,9 +18,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const root = path.join(__dirname, '..');
-const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+const html = shellMarkup();
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
 const appViewJs = fs.readFileSync(path.join(root, 'public/js/app-view.js'), 'utf8');
 const kudosJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/kudos.js'), 'utf8');
