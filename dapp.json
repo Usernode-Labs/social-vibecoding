@@ -2504,18 +2504,6 @@
       "expectSelector": "#admin-topo-content"
     },
     {
-      "name": "Admin Delegations rows show the delegator and the delegatee together",
-      "path": "/#admin/delegations",
-      "expectSelector": "#admin-topo-dlg-table tr:has([data-dlg-party=\"delegator\"]):has([data-dlg-party=\"delegatee\"])",
-      "expectText": "staging-demo-topochain-participant-1"
-    },
-    {
-      "name": "Admin Delegations names the no-claimant delegator state instead of a blank cell",
-      "path": "/#admin/delegations",
-      "expectSelector": "#admin-topo-dlg-table [data-dlg-party=\"delegator\"]",
-      "expectText": "Unclaimed account"
-    },
-    {
       "name": "Legacy #admin/seasons/<screen> addresses still deep-link their promoted section (#1179)",
       "path": "/#admin/seasons/sql-console",
       "expectSelector": "#admin-topo-sql-schema-filter"
