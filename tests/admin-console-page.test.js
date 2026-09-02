@@ -455,3 +455,51 @@ test('the section spells out post-export rotation guidance', () => {
   assert.match(dbExportTsx, /rotate/i, 'the section tells the admin what to rotate if the file leaks');
   assert.match(dbExportTsx, /JWT secret/i, 'naming the one rotation that invalidates every session');
 });
+
+
+// ── The lazy section chunk, and what must not pull it in ──────────────────
+
+test('the section modules are a lazy chunk, loaded on the first open', () => {
+  const consoleJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
+  // The import edge itself. Vite emits assets/shell-sections.js from this;
+  // frontend/vite.config.ts must keep inlineDynamicImports off for it to be
+  // a chunk at all (tests/shell-build.test.js pins that end).
+  assert.match(consoleJs, /import\('\.\/sections\.ts'\)/,
+    'the sections barrel is dynamic-imported, not statically bundled');
+  // _renderModule has to tell "not here YET" from "genuinely missing": the
+  // first is the ordinary first open and gets a Loading… line, the second
+  // keeps the failure copy it has always had.
+  const dispatch = consoleJs.slice(consoleJs.indexOf('  _renderModule(host, modName, key) {'));
+  assert.match(dispatch.slice(0, 1600), /_ensureSections\(\)/);
+  assert.match(dispatch.slice(0, 1600), /console module failed to load/);
+});
+
+test('the prefetch stays off ?shot= and ?demo= routes', () => {
+  // A screenshot route and a declared check exist to render ONE state
+  // deterministically. A 421KB chunk arriving mid-assertion is exactly the
+  // nondeterminism they are meant to be free of — and the checks runner
+  // signs in as an admin (src/services/visuals.js CAPTURE_ADMIN_USERNAME),
+  // so without this guard the prefetch would fire on every check route in
+  // the suite. Same guard, same reason, as TermsFirstRun.maybePrompt.
+  const consoleJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
+  const fn = consoleJs.slice(consoleJs.indexOf('  prefetchSections() {'));
+  const body = fn.slice(0, fn.indexOf('\n  },'));
+  assert.match(body, /q\.get\('shot'\) \|\| q\.get\('demo'\)/,
+    'a deterministic-state route must not pull the chunk in');
+  assert.ok(body.indexOf("q.get('shot')") < body.indexOf('requestIdleCallback'),
+    'the guard has to run BEFORE anything is scheduled');
+  // And it is genuinely idle work: the first version forced it through
+  // within 4s of boot, which on a phone is 421KB parsed against whatever
+  // the page is still doing.
+  const timeout = /timeout:\s*(\d+)/.exec(body);
+  assert.ok(timeout && Number(timeout[1]) >= 10000,
+    `the idle deadline must stay patient (found ${timeout && timeout[1]})`);
+
+  // The gate that decides an admin ever asks for it.
+  const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
+  const btn = appJs.slice(appJs.indexOf('  renderAdminButton() {'));
+  assert.match(btn.slice(0, 1800), /if \(isAdmin\) \{[\s\S]{0,300}?prefetchSections\?\.\(\)/,
+    'only a viewer who IS an admin warms the chunk');
+});

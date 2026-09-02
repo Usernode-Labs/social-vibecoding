@@ -1275,9 +1275,10 @@ const App = {
     const isAdmin = !!App.user?.isAdmin;
     App.Visibility.publish('switcher-row-admin', isAdmin);
     // The admin console's twenty section modules are a lazy chunk now
-    // (features/admin/sections.ts) — 422KB a non-admin never downloads. This
+    // (features/admin/sections.ts) — 421KB a non-admin never downloads. This
     // is the moment the viewer is known to BE one, so warm it at idle and the
     // first open is as instant as it was when everybody paid for it.
+    // prefetchSections itself declines on a ?shot= / ?demo= route.
     if (isAdmin) {
       try { window.AdminConsole?.prefetchSections?.(); } catch (err) { /* opens on demand anyway */ }
     }

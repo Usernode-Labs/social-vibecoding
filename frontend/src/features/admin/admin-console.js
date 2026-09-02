@@ -1186,9 +1186,25 @@ const AdminConsole = {
    * first paint. A non-admin never reaches it.
    */
   prefetchSections() {
+    // NOT on a ?shot= or ?demo= route. Those exist to render one state
+    // deterministically for a screenshot or a declared check, and a
+    // background chunk arriving mid-assertion is exactly the kind of
+    // nondeterminism they are supposed to be free of. Same guard, for the
+    // same reason, as TermsFirstRun.maybePrompt. Nothing is lost: the
+    // console still loads on demand, which is what the #admin checks
+    // exercise.
+    try {
+      const q = new URLSearchParams(location.search);
+      if (q.get('shot') || q.get('demo')) return;
+    } catch { /* no URL to read is not a reason to skip a real prefetch */ }
+    // Genuinely idle, and patient about it. The first version forced this
+    // through within 4s of boot, which on a phone means parsing 421KB
+    // against whatever the page is still doing. This chunk is worth having
+    // EVENTUALLY and worth nothing urgently — a first open that has to wait
+    // for it costs about as long as one navigation.
     const start = () => { AdminConsole._ensureSections(); };
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(start, { timeout: 4000 });
-    else setTimeout(start, 1200);
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(start, { timeout: 15000 });
+    else setTimeout(start, 8000);
   },
 
   // Hand a section host to a delegated module, and remember it so the next
