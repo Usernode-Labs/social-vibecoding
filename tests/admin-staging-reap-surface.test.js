@@ -136,7 +136,7 @@ test('the console section exists, is admin-visible, and its button is write-gate
     'wired into the section dispatch');
   assert.ok(!/case 'staging-reap'/.test(consoleJs),
     'and not ALSO on the retired switch, which would be two dispatch paths');
-  assert.match(read('frontend/src/features/admin/index.tsx'),
+  assert.match(read('frontend/src/features/admin/sections.ts'),
     /import '\.\/admin-staging-reap\.tsx';/, 'the console island imports the module');
   assert.match(reapTsx,
     /if \(typeof window !== 'undefined'\) \(window as any\)\.AdminStagingReap = AdminStagingReap;/,

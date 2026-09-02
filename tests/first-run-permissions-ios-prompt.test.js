@@ -458,3 +458,55 @@ test('Settings’ Allow notifications completes the grant the same way', () => {
   assert.ok(!/_unApply\(window\.usernode\.requestPermissions\(\)\)/.test(settingsJs),
     'the old single-read path must not survive anywhere');
 });
+
+// ── ?shot=notif-permissions dispatches its ghost click on a FRAME ──────────
+//
+// The kit refuses a backdrop click that arrives within GHOST_CLICK_MS of
+// presenting (450ms — decideBackdropDismiss in
+// public/usernode-native/v1/native.js), and this shot exists to photograph
+// that refusal. It used to dispatch on a 150ms setTimeout, which is a
+// request, not a guarantee: measured at an 8x CPU throttle the timer fired
+// anywhere from 274ms to 606ms, and past 450 the kit CORRECTLY closed the
+// sheet — so the declared check found no sheet and went red. It did that on
+// three unrelated proposals before anyone traced it.
+//
+// Frames are the fix. One frame after presenting is late enough that the
+// sheet is in the document and early enough that no plausible contention
+// pushes it past the guard: a frame at a 16x throttle is ~64ms against
+// 450ms. Verified 8 of 8 at 8x and 16x, where the timer version failed 3 of 8.
+
+test('the ghost click is scheduled by frame and checked against the real guard', () => {
+  const app = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const shot = app.slice(app.indexOf('  _applyNotifPermissionsShot() {'));
+  const body = shot.slice(0, shot.indexOf('\n  },'));
+
+  // No wall-clock timer deciding when the click lands.
+  assert.doesNotMatch(body, /\}, 150\);/,
+    'a 150ms timer is a request, not a guarantee — this must be frame-driven');
+  assert.match(body, /requestAnimationFrame/,
+    'the click is scheduled on a frame');
+  // The SCHEDULING CALL, not just the helper's definition: swapping
+  // `raf(fire)` for a timer while leaving the helper in place would
+  // otherwise slip past this test.
+  assert.match(body, /\n\s*raf\(fire\);/,
+    'the first dispatch goes through the frame scheduler');
+  assert.match(body, /if \(elapsed < 32\) \{ raf\(fire\); return; \}/,
+    'and so does the wait for the sheet to be in the document');
+  assert.match(body, /elapsed < 32/,
+    'and still gives the sheet a frame to be in the document');
+
+  // The guard is READ from the kit, not copied. native.js is centrally
+  // hosted and versioned separately, so a hard-coded 450 here would drift
+  // silently the day it changes.
+  assert.match(body, /window\.unNative\?\.physics\?\.GHOST_CLICK_MS/,
+    'the guard comes from the kit that enforces it');
+  assert.match(body, /\|\| 450/, 'with a fallback if the kit is not loaded');
+  assert.match(body, /elapsed > guard \* 0\.7/,
+    'and the dispatch is skipped if the window was somehow missed anyway');
+
+  // Missing the window must not leave a marked-but-dismissed sheet behind:
+  // the attempt starts over on the same try budget as every other retry.
+  assert.match(body, /sheet\.dismiss\(\)[\s\S]{0,200}?setTimeout\(attempt, App\.IMPROVE_SHOT_INTERVAL_MS\)/,
+    'a missed window re-presents rather than marking a sheet it just closed');
+});

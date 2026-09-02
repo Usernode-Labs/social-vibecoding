@@ -272,7 +272,7 @@ test('#898: the console registers the section, and the shell loads it', () => {
   // #1082 chunk E moved the module into the React bundle, so "the shell loads
   // it" is now an island import rather than a <script> tag plus a service-worker
   // precache entry — /shell/assets/shell.js carries both jobs.
-  assert.match(read('frontend/src/features/admin/index.tsx'), /import '\.\/admin-estimator\.tsx';/,
+  assert.match(read('frontend/src/features/admin/sections.ts'), /import '\.\/admin-estimator\.tsx';/,
     'the console island must import the module');
   assert.ok(!read('public/index.html').includes('/js/admin-estimator.js'),
     'the retired script tag must be gone from the shell');

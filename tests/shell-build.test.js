@@ -149,7 +149,7 @@ test('Docker builds the shell before Tailwind and copies both outputs into the r
     'COPY --from=shell /build/public/index.html ./public/index.html',
   );
   const runtimeJsCopy = dockerfile.indexOf(
-    'COPY --from=shell /build/public/shell/assets/shell.js ./public/shell/assets/shell.js',
+    'COPY --from=shell /build/public/shell/assets/ ./public/shell/assets/',
   );
   assert.ok(runtimeStage > -1 && sourceCopy > runtimeStage,
     'the production-only runtime stage must still copy the application sources');
@@ -159,18 +159,33 @@ test('Docker builds the shell before Tailwind and copies both outputs into the r
   assert.match(dockerfile,
     /COPY --from=shell \/build\/public\/index\.html \/opt\/usernode-shell-assets\/index\.html/,
     'the image must preserve generated HTML outside the dev public bind mount');
+  // The DIRECTORY, not the entry file. The React build emits lazy route
+  // chunks beside shell.js now, and naming one file is how a new chunk 404s
+  // in the image while every local test passes — locally the build output is
+  // simply on disk, so nothing notices what the image failed to copy.
   assert.match(dockerfile,
-    /COPY --from=shell \/build\/public\/shell\/assets\/shell\.js \/opt\/usernode-shell-assets\/shell\/assets\/shell\.js/,
-    'the image must preserve the generated bundle outside the dev public bind mount');
+    /COPY --from=shell \/build\/public\/shell\/assets\/ \/opt\/usernode-shell-assets\/shell\/assets\//,
+    'the image must preserve every generated chunk outside the dev public bind mount');
 });
 
-test('the untracked shell keeps its fixed single-chunk, no-CSS build contract', () => {
+test('the untracked shell keeps its fixed-name, no-CSS build contract', () => {
   assert.match(viteConfig, /emptyOutDir:\s*true/,
     'each image build must clear old shell outputs before emitting the bundle');
   assert.match(viteConfig, /entryFileNames:\s*'assets\/shell\.js'/,
     'the service worker depends on the fixed /shell/assets/shell.js URL');
-  assert.match(viteConfig, /inlineDynamicImports:\s*true/,
-    'the shell must remain one bundle so SHELL_ASSETS never misses a chunk');
+  // NOT one bundle any more. inlineDynamicImports folded every dynamic import
+  // back into the entry, which made a lazy route impossible — the admin
+  // console's twenty section modules were 421KB of the 1.75MB bundle that
+  // every visitor downloaded so an admin could open a console behind an
+  // isAdmin gate. What has to hold instead is that the names stay
+  // DETERMINISTIC, because SHELL_ASSETS is hand-maintained and a hashed name
+  // would churn it on every build.
+  assert.match(viteConfig, /inlineDynamicImports:\s*false/,
+    'lazy route chunks must be able to exist');
+  assert.match(viteConfig, /chunkFileNames:\s*'assets\/shell-\[name\]\.js'/,
+    'chunk names must stay unhashed and readable, like the entry');
+  assert.doesNotMatch(viteConfig, /\[hash\]/,
+    'a content hash anywhere here would churn SHELL_ASSETS on every build');
   assert.match(buildScript, /strayCss\.length/,
     'the build must reject CSS imports that would violate the stylesheet cascade');
 
@@ -178,12 +193,13 @@ test('the untracked shell keeps its fixed single-chunk, no-CSS build contract', 
   const dockerignore = fs.readFileSync(path.join(ROOT, '.dockerignore'), 'utf8').split(/\r?\n/);
   assert.ok(gitignore.includes('/public/index.html'),
     'the generated HTML must not be committed');
-  assert.ok(gitignore.includes('/public/shell/assets/shell.js'),
-    'the generated bundle must not be committed');
+  // The directory: every emitted chunk is generated, not just the entry.
+  assert.ok(gitignore.includes('/public/shell/assets/'),
+    'no generated chunk may be committed');
   assert.ok(dockerignore.includes('public/index.html'),
     'an ignored local HTML artifact must not enter the Docker build context');
-  assert.ok(dockerignore.includes('public/shell/assets/shell.js'),
-    'an ignored local bundle must not enter the Docker build context');
+  assert.ok(dockerignore.includes('public/shell/assets/'),
+    'no ignored local chunk may enter the Docker build context');
   assert.ok(dockerignore.includes('**/node_modules'),
     'the local frontend install used by tests must not enter the Docker build context');
 });

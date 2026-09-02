@@ -31,7 +31,14 @@ const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
 const consoleJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
 // The chassis (#admin-root and the two hosts inside it) is React-owned markup
 // since #1082 chunk E; the module renders only what hangs off it.
-const islandTsx = fs.readFileSync(path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
+// The section imports moved out of index.tsx into ./sections.ts, which the
+// console dynamic-imports on its first open (421KB of the shell bundle a
+// non-admin never downloads). Both files are the island's own source, so
+// the invariant these assertions protect — every section module is imported
+// somewhere in the island's graph, admin-console.js first — is unchanged;
+// only which file the import sits in moved.
+const islandTsx = fs.readFileSync(path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8')
+  + fs.readFileSync(path.join(root, 'frontend/src/features/admin/sections.ts'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 test('the icon action navigates to the #admin hash route, gate first', () => {
@@ -105,7 +112,8 @@ test('the console island imports every admin module, console first', () => {
   // slice 17. Six of the eight self-rendered sections are still inline in
   // admin-console.js; each will add a line here.
   const island = fs.readFileSync(
-    path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
+    path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8')
+    + fs.readFileSync(path.join(root, 'frontend/src/features/admin/sections.ts'), 'utf8');
   // `.tsx` as well as `.js`: sections are converting to React one at a time
   // (#1120), and the import order this pins is about module EVALUATION order,
   // which the file extension has nothing to do with.
@@ -228,7 +236,9 @@ test('the menu carries every section, grouped, with no external tools left', () 
 test('every folded-in section has a module, an island import and no stale wiring', () => {
   const sw = fs.readFileSync(path.join(root, 'public/sw.js'), 'utf8');
   const island = fs.readFileSync(
-    path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
+    path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8')
+    + fs.readFileSync(
+      path.join(root, 'frontend/src/features/admin/sections.ts'), 'utf8');
   const MODULES = {
     status: 'admin-status',
     node: 'admin-node',
@@ -444,4 +454,52 @@ test('history rows cannot render admin-controlled strings as markup', () => {
 test('the section spells out post-export rotation guidance', () => {
   assert.match(dbExportTsx, /rotate/i, 'the section tells the admin what to rotate if the file leaks');
   assert.match(dbExportTsx, /JWT secret/i, 'naming the one rotation that invalidates every session');
+});
+
+
+// ── The lazy section chunk, and what must not pull it in ──────────────────
+
+test('the section modules are a lazy chunk, loaded on the first open', () => {
+  const consoleJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
+  // The import edge itself. Vite emits assets/shell-sections.js from this;
+  // frontend/vite.config.ts must keep inlineDynamicImports off for it to be
+  // a chunk at all (tests/shell-build.test.js pins that end).
+  assert.match(consoleJs, /import\('\.\/sections\.ts'\)/,
+    'the sections barrel is dynamic-imported, not statically bundled');
+  // _renderModule has to tell "not here YET" from "genuinely missing": the
+  // first is the ordinary first open and gets a Loading… line, the second
+  // keeps the failure copy it has always had.
+  const dispatch = consoleJs.slice(consoleJs.indexOf('  _renderModule(host, modName, key) {'));
+  assert.match(dispatch.slice(0, 1600), /_ensureSections\(\)/);
+  assert.match(dispatch.slice(0, 1600), /console module failed to load/);
+});
+
+test('the prefetch stays off ?shot= and ?demo= routes', () => {
+  // A screenshot route and a declared check exist to render ONE state
+  // deterministically. A 421KB chunk arriving mid-assertion is exactly the
+  // nondeterminism they are meant to be free of — and the checks runner
+  // signs in as an admin (src/services/visuals.js CAPTURE_ADMIN_USERNAME),
+  // so without this guard the prefetch would fire on every check route in
+  // the suite. Same guard, same reason, as TermsFirstRun.maybePrompt.
+  const consoleJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
+  const fn = consoleJs.slice(consoleJs.indexOf('  prefetchSections() {'));
+  const body = fn.slice(0, fn.indexOf('\n  },'));
+  assert.match(body, /q\.get\('shot'\) \|\| q\.get\('demo'\)/,
+    'a deterministic-state route must not pull the chunk in');
+  assert.ok(body.indexOf("q.get('shot')") < body.indexOf('requestIdleCallback'),
+    'the guard has to run BEFORE anything is scheduled');
+  // And it is genuinely idle work: the first version forced it through
+  // within 4s of boot, which on a phone is 421KB parsed against whatever
+  // the page is still doing.
+  const timeout = /timeout:\s*(\d+)/.exec(body);
+  assert.ok(timeout && Number(timeout[1]) >= 10000,
+    `the idle deadline must stay patient (found ${timeout && timeout[1]})`);
+
+  // The gate that decides an admin ever asks for it.
+  const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
+  const btn = appJs.slice(appJs.indexOf('  renderAdminButton() {'));
+  assert.match(btn.slice(0, 1800), /if \(isAdmin\) \{[\s\S]{0,300}?prefetchSections\?\.\(\)/,
+    'only a viewer who IS an admin warms the chunk');
 });

@@ -236,6 +236,28 @@ const SHELL_ASSETS = [
   // churn on every build; freshness comes from `no-cache, must-revalidate`
   // (src/services/static-cache.js) plus this worker being network-first.
   '/shell/assets/shell.js',
+  // ── LAZY CHUNKS ARE DELIBERATELY NOT HERE ────────────────────────────
+  //
+  // The React build emits route chunks beside shell.js now
+  // (frontend/vite.config.ts) — today just assets/shell-sections.js, the
+  // admin console's twenty section modules, 421KB that a non-admin never
+  // downloads and nobody parses until the console is opened.
+  //
+  // Precaching one would hand that bandwidth straight back: install() would
+  // fetch it for every visitor on every worker version, which is most of what
+  // splitting it out was for. It does not need to be here. classifyRequest
+  // routes it to networkFirstShell like any other /shell/assets/*.js, so the
+  // first open caches it and every later one is served from that cache under
+  // the build-identity fast path.
+  //
+  // The one thing this costs is opening the admin console offline having
+  // never opened it online — which is not a scenario: every section polls a
+  // live endpoint (Health & status hits /api/status every 5s), so the chunk
+  // would arrive to render a screen with nothing to show.
+  //
+  // A future chunk that IS needed for a first paint belongs in this list.
+  // One reached by navigation does not.
+
   // Vendored third-party libs (public/vendor/README.md records provenance).
   '/vendor/qrcode-1.0.0.min.js',
   '/vendor/marked-15.0.12.min.js',
