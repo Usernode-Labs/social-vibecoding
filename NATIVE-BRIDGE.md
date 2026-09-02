@@ -71,6 +71,16 @@ One additive **notification** capability extends v4 the same way:
   full push support and simply never see the call. See "Homescreen icon
   badge" below for the producer contract it unlocks.
 
+One additive **presentation** capability extends v4 the same way:
+
+- `setAppearance`: the shell remembers the appearance SV resolved to and
+  opens its next cold launch in that appearance rather than guessing from
+  the OS. Advertise it only once a stored value actually reaches the
+  launch screen — SV treats the capability as "telling you has a visible
+  effect" and republishes on every theme change. Unprivileged, unlike the
+  notification and settings actions: see "Appearance" below for why, and
+  for the producer contract it unlocks.
+
 ## Methods
 
 ### Wallet / transactions (pre-existing, v1)
@@ -202,6 +212,59 @@ iOS applies `aps.badge` and Android launchers read
 `notification.notificationCount` while the app is closed. This method
 exists for the live half — updating and clearing the badge while the
 user is inside the app.
+
+### Appearance (additive; `setAppearance`)
+
+#### `setAppearance({ scheme, background })` → resolves when stored
+
+**Unprivileged**, unlike every other action in this document. It carries no
+account state, reveals nothing about the signed-in user, and the launch it
+exists to fix is the one *before* sign-in — a privileged envelope would make
+it unavailable in exactly the case it was added for.
+
+SV calls it from `public/js/native-chrome.js` on every shell boot and on
+every theme change (an explicit Light/Dark pick, and an OS flip while in
+system mode).
+
+- `scheme` — `"dark"` or `"light"`. The **resolved** appearance, never the
+  tri-state stored mode: SV has already folded `system` against the OS
+  preference, and the shell must not re-resolve it.
+- `background` — the page ground as `#rrggbb`, optional. SV reads it back
+  off the rendered document rather than repeating a literal, so it stays
+  the colour the shell actually paints. Absent when the read failed; a
+  build must then fall back to its own colour for `scheme`.
+
+**The problem it solves.** SV's theme lives in the WebView's localStorage
+and the app's in `app:theme_mode` (SharedPreferences). Nothing carried a
+value between them, so the app could only guess from the OS — and guessed
+wrong for everyone who had picked Dark on a light-mode phone, painting a
+full-screen **white** launch frame ahead of a near-black shell on every cold
+launch. No web-side fix reaches that frame: it is painted before any web
+code runs. The only way for the app to have the colour is to have been told
+last time.
+
+Producer requirements for a build that advertises the capability:
+
+- **Persist it, and open with it.** The value's whole purpose is the launch
+  *after* the one that published it. Store it (globally, not per-network —
+  appearance is not network state) and use it for the launch background, the
+  WebView's own background colour, and the shell's `ThemeMode`.
+- **Read it synchronously on the launch path.** A value fetched after the
+  first frame has already lost — the flash it prevents happens in that
+  frame. An async `SharedPreferences` read that corrects `ThemeMode` a beat
+  later trades a white flash for a light-to-dark repaint, which is the same
+  bug wearing a different colour.
+- **`scheme` is authoritative and the call idempotent** — last write wins,
+  re-applying the current value is a no-op rather than a flicker.
+- **Nothing else changes on receipt.** It is presentation state: it must not
+  affect auth, node lifecycle, or which code path runs.
+- **Until a device has published once, fall back to the OS preference** —
+  which is what a fresh install and every pre-`setAppearance` build get, and
+  is right more often than not.
+
+Builds without the capability lose only the improvement: SV feature-detects
+it via `getBridgeInfo().capabilities`, an unknown method is dropped
+silently, and the wrapper races a 4s timeout so nothing waits on the answer.
 
 ### Chrome data (v2 — the app-as-SV-chrome surface)
 

@@ -4809,6 +4809,12 @@
 
   var _SOCIAL_PUSH_TIMEOUT_MS = 12000;
   var _SOCIAL_PUSH_PERMISSION_TIMEOUT_MS = 120000;
+  // Shorter than the push timeouts because nothing waits on it: the
+  // appearance publish is fire-and-forget presentation state whose only
+  // consumer is the NEXT cold launch, and on a build that does not know the
+  // method the timeout IS the answer. Long enough to clear a cold-start
+  // stall, short enough that a boot-time probe never holds a handle open.
+  var _APPEARANCE_TIMEOUT_MS = 4000;
 
   window.usernode.getSocialPushState = function () {
     if (!window.usernode.isNative) return Promise.resolve(null);
@@ -4847,6 +4853,47 @@
   window.usernode.setSocialBadgeCount = function (count) {
     return callNativeChromeAction(
       "setSocialBadgeCount", { count: count }, _SOCIAL_PUSH_TIMEOUT_MS
+    );
+  };
+
+  // setAppearance({ scheme, background }) → tells the native shell which
+  // appearance the page settled on, so the NEXT cold launch can paint that
+  // colour before this document exists.
+  //
+  // WHY THIS IS A BRIDGE METHOD AND NOT A STYLESHEET. The shell's theme
+  // lives in this WebView's localStorage; the app's lives in its own
+  // SharedPreferences (`app:theme_mode`). Nothing carried a value between
+  // them, so the app could only guess from the OS — and guessed wrong for
+  // everyone who picked Dark on a light-mode phone, painting a white launch
+  // screen ahead of a near-black shell. The colour a launch screen needs is
+  // needed BEFORE any web code runs, so the only way to have it is to have
+  // been told last time.
+  //
+  //   scheme      "dark" | "light" — the RESOLVED appearance, never the
+  //               tri-state stored mode: the shell has already folded
+  //               `system` against the OS preference by the time this is
+  //               called, and the app must not re-resolve it.
+  //   background  the page ground as `#rrggbb`, so a shell build can match
+  //               the exact colour rather than approximating with black.
+  //
+  // UNPRIVILEGED ON PURPOSE. It carries no account state and reveals
+  // nothing, and the launch it is fixing is the one before sign-in — a
+  // privileged envelope would make it unavailable in exactly the case it
+  // exists for.
+  //
+  // Additive capability: feature-detect `setAppearance` via
+  // getBridgeInfo().capabilities before calling. Older builds drop the
+  // unknown method silently and lose only the improvement; producer
+  // requirements live in NATIVE-BRIDGE.md.
+  window.usernode.setAppearance = function (appearance) {
+    var scheme = appearance && appearance.scheme === "dark" ? "dark" : "light";
+    var background = appearance && appearance.background;
+    var args = { scheme: scheme };
+    if (typeof background === "string" && /^#[0-9a-fA-F]{6}$/.test(background)) {
+      args.background = background.toLowerCase();
+    }
+    return callNativeChromeAction(
+      "setAppearance", args, _APPEARANCE_TIMEOUT_MS
     );
   };
 
