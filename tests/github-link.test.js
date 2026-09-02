@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const githubLink = require('../src/services/github-link');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const SRC = fs.readFileSync(path.join(__dirname, '../src/services/github-link.js'), 'utf8');
 const ROUTE_SRC = fs.readFileSync(path.join(__dirname, '../src/routes/social-identities.js'), 'utf8');
@@ -191,7 +192,7 @@ test('social identity routes own GitHub independently of MCP and preserve review
   assert.match(SOCIAL_TSX, /target="_blank"[\s\S]{0,80}?rel="noopener noreferrer"/,
     'and it is still a top-level link — the shell is framed, github.com is not frameable');
 
-  const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  const html = shellMarkup();
   const section = html.slice(
     html.indexOf('id="github-link-section"'),
     html.indexOf('id="github-link-status"')

@@ -17,6 +17,9 @@ const PUBLIC_PATHS = [
   '/waiting.html',
   '/api/auth/login',
   '/api/auth/register',
+  // Email-code signup uses an HttpOnly continuation and creates the ordinary
+  // web session only after password setup; all three steps are pre-login.
+  '/api/auth/otp/',
   '/api/auth/wallet-check',
   '/api/auth/wallet-verify',
   // Self-service wallet password reset is pre-login by definition — the

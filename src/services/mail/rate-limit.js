@@ -2,7 +2,7 @@
 //
 // The two limits this exists for are different in kind:
 //
-//  - PER RECIPIENT. POST /api/v4/mobile/auth/otp/request is always-200 and
+//  - PER RECIPIENT. POST /api/auth/otp/request is always-200 and
 //    unauthenticated. Its express rate limiter is keyed by IP, so a
 //    distributed caller can still aim an unbounded stream of mail at ONE
 //    address — a mail-bomb with the platform as the amplifier. Capping per

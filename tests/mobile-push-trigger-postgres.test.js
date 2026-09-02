@@ -122,13 +122,16 @@ async function addRegistration(client, {
   userId, installationId, environment = 'production', platform = 'android',
   permission = 'authorized', expiresInMs = 60 * 60 * 1000,
 }) {
+  const credentialReference = `nsc_${String(userId).padStart(43, '0')}`;
   const { rows } = await client.query(
     `INSERT INTO mobile_push_registrations
-       (user_id, environment, installation_id, registration_hash,
-        registration_enc, platform, permission_status, session_expires_at)
-     VALUES ($1, $2, $3, $4, 'enc:opaque', $5, $6, NOW() + ($7 || ' milliseconds')::interval)
+       (user_id, native_session_credential_reference, environment, installation_id,
+        registration_hash, registration_enc, platform, permission_status, session_expires_at)
+     VALUES ($1, $2, $3, $4, $5, 'enc:opaque', $6, $7,
+             NOW() + ($8 || ' milliseconds')::interval)
      RETURNING id`,
-    [userId, environment, installationId, uniqueHash(), platform, permission, expiresInMs]
+    [userId, credentialReference, environment, installationId, uniqueHash(),
+      platform, permission, expiresInMs]
   );
   // BIGSERIAL comes back as a string; normalize for comparisons.
   return Number(rows[0].id);

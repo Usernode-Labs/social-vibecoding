@@ -122,6 +122,12 @@ const FULLY_READABLE_CONSOLE_TABLES = new Set([
   'mcp_auth_audit_events',
   'user_agent_files',
   'profile_reports',
+  // Lifecycle rows without bearer/envelope material. Opaque ids, public
+  // installation keys and state transitions remain useful for human-admin
+  // diagnosis; the credential-bearing sibling columns are masked below.
+  'native_session_web_incarnations',
+  'native_session_attempts',
+  'native_installation_key_generations',
   'conversations',
   'conversation_direct_pairs',
   'conversation_members',
@@ -170,6 +176,7 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // 6-digit code, and a token hash is a bearer credential in the
   // lookup-by-hash schemes these tables use.
   mobile_otp_codes: ['code_hash'],
+  web_signup_sessions: ['token_hash'],
   mobile_auth_tokens: ['token_hash'],
   // The waitlist's own email verification code, same shape and same
   // reasoning as mobile_otp_codes above: bcrypt, but a six-digit space is
@@ -177,10 +184,23 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // on the row — attempts, expires_at, consumed_at — is exactly what
   // debugging "my code did not work" needs, so only the hash is masked.
   waitlist_verification_codes: ['code_hash'],
+  native_session_handoffs: ['handoff_hash'],
+  native_session_tickets: ['ticket_hash', 'encrypted_response'],
+  native_session_credentials: [
+    'credential_reference', 'credential_generation', 'mobile_auth_token_id',
+  ],
+  native_session_credential_envelopes: [
+    'credential_reference', 'compact_jwe', 'encrypted_response',
+  ],
+  native_epoch_delegation_policies: [
+    'credential_reference', 'credential_generation',
+  ],
   // The encrypted FCM destination and its lookup hash. Every other
   // column (platform, permission_status, session_expires_at, last_seen_at)
   // is exactly what push debugging needs.
-  mobile_push_registrations: ['registration_enc', 'registration_hash'],
+  mobile_push_registrations: [
+    'native_session_credential_reference', 'registration_enc', 'registration_hash',
+  ],
   // Device-flow: the polled device code's hash, the user-visible pairing
   // code (live and typeable while pending), and the requester's IP —
   // masked for the same reason `users.waitlist_ip` is.

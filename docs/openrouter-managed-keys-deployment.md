@@ -1,7 +1,8 @@
 # Managed OpenRouter keys: deployment and operations
 
-Usernode can create one company-funded OpenRouter child key for each user who
-has verified a GitHub or X identity. Each child key receives a daily USD
+Usernode can create one company-funded OpenRouter child key for each account.
+By default, any authenticated user may claim one; deployments can optionally
+require a verified GitHub or X identity. Each child key receives a daily USD
 limit, is stored encrypted as that user's default session credential, and is
 shown in plaintext to the user only in the successful claim response.
 
@@ -37,11 +38,14 @@ In `Usernode-Labs/social-vibecoding`, open **Settings → Secrets and variables
 | Secret | `USERNODE_OPENROUTER_MANAGEMENT_API_KEY` | Yes for included keys | OpenRouter organization management key. |
 | Variable | `OPENROUTER_MANAGED_DAILY_LIMIT_USD` | Recommended | Positive USD amount per child key per day; deploy default is `1`. |
 | Variable | `OPENROUTER_MANAGED_WORKSPACE_ID` | Recommended | Dedicated funded OpenRouter workspace id. |
+| Variable | `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY` | Optional | Set `true` to require a verified GitHub or X identity before claiming. The deploy default is `false`, which allows any authenticated account. |
 | Variable | `OPENROUTER_DEFAULT_CODEX_MODEL` | Optional | Preferred model slug; deploy default is `z-ai/glm-5.3`. |
 
 `CODEX_OPENROUTER_ENABLED` remains `true` by default. An existing
 `CODEX_OPENROUTER_BETA_USER_IDS` allowlist still restricts eligibility when it
-is non-empty.
+is non-empty. Leave `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY` unset or set
+it to `false` for the initial open rollout. Set it to the lowercase value
+`true` only when every new claimant should first connect GitHub or X.
 
 After the values are saved, merge to `main` or manually run the normal deploy
 workflow. The deploy writes the management key into `/opt/usernode/.env`,
@@ -55,7 +59,9 @@ key remains available.
 
 ## Verification after deployment
 
-1. Sign in as a user with a connected/verified GitHub or X identity.
+1. Sign in as a regular authenticated user. If
+   `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=true`, first connect and
+   verify GitHub or X.
 2. Open **Settings → OpenRouter**. The included-key card should show the
    configured daily limit.
 3. Click **Create my included key** once. Save the displayed key immediately;
@@ -73,9 +79,12 @@ key remains available.
 - Creation is never automatically retried after an ambiguous provider
   response. The record changes to **Needs review** and admins are notified;
   this avoids accidentally creating duplicate billable keys.
-- Removing the user's last verified identity does not revoke the key. Admins
-  receive a manual-review notification and decide whether to block or delete
-  it.
+- The verification setting affects new claims only. Enabling it later does not
+  revoke keys that were already issued.
+- When identity verification is required, removing the user's last verified
+  identity does not revoke the key. Admins receive a manual-review notification
+  and decide whether to block or delete it. With the default-open policy, no
+  identity-loss review notification is generated.
 - Block/Enable calls OpenRouter first and then updates the local encrypted
   credential status. Delete removes the OpenRouter child key, clears the
   encrypted child secret locally, retains the one-key tombstone, and resets

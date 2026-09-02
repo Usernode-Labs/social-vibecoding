@@ -178,7 +178,7 @@ test('the console section exists, is admin-visible, and its button is write-gate
   assert.match(consoleJs, /rollover: 'AdminRollover',/, 'wired into the section dispatch');
   assert.ok(!/case 'rollover'/.test(consoleJs),
     'and not ALSO on the retired switch, which would be two dispatch paths');
-  assert.match(read('frontend/src/features/admin/index.tsx'),
+  assert.match(read('frontend/src/features/admin/sections.ts'),
     /import '\.\/admin-rollover\.tsx';/, 'the console island imports the module');
   assert.match(rolloverTsx,
     /if \(typeof window !== 'undefined'\) \(window as any\)\.AdminRollover = AdminRollover;/,

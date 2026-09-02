@@ -57,13 +57,18 @@ COPY . .
 # COPY generated assets after the source tree so a developer's ignored local
 # builds can never replace the artifacts generated from this image's sources.
 COPY --from=shell /build/public/index.html ./public/index.html
-COPY --from=shell /build/public/shell/assets/shell.js ./public/shell/assets/shell.js
+# The whole directory, not shell.js alone: the React build emits lazy route
+# chunks beside the entry now (frontend/vite.config.ts — today
+# assets/shell-sections.js, the admin console). Naming one file meant a new
+# chunk 404'd in the image while every test passed locally, where the build
+# output is simply on disk.
+COPY --from=shell /build/public/shell/assets/ ./public/shell/assets/
 COPY --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
 # docker-compose.dev.yml bind-mounts ./public for live source editing, which
 # hides the three generated files above on a clean checkout. Keep a protected
 # image copy that its startup helper can restore into that mount when missing.
 COPY --from=shell /build/public/index.html /opt/usernode-shell-assets/index.html
-COPY --from=shell /build/public/shell/assets/shell.js /opt/usernode-shell-assets/shell/assets/shell.js
+COPY --from=shell /build/public/shell/assets/ /opt/usernode-shell-assets/shell/assets/
 COPY --from=css /build/public/css/tailwind.css /opt/usernode-shell-assets/css/tailwind.css
 EXPOSE 3000
 CMD ["node", "server.js"]

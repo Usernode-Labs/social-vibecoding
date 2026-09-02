@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const root = path.resolve(__dirname, '..');
 const canonicalSkills = path.join(root, '.agents', 'skills');
@@ -165,7 +166,7 @@ test('machine-local agent setup artifacts are ignored', () => {
 test('authorization and token-management copy covers all configured coding agents', () => {
   const authorize = fs.readFileSync(path.join(root, 'public/cli-authorize.html'), 'utf8');
   const authorizeJs = fs.readFileSync(path.join(root, 'public/js/cli-authorize.js'), 'utf8');
-  const settings = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  const settings = shellMarkup();
   for (const source of [authorize, authorizeJs, settings]) {
     assert.match(source, /Codex/);
     assert.match(source, /Claude Code/);

@@ -8,7 +8,7 @@ node_modules
 runtime
 public/index.html
 public/css/tailwind.css
-public/shell/assets/shell.js
+public/shell/assets/
 SPEC.md
 TODO
 template/

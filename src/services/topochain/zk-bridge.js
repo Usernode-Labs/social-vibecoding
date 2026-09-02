@@ -38,6 +38,10 @@ function requireBridgeUrl(config) {
   return url.replace(/\/+$/, '');
 }
 
+// TODO(session-lifecycle): deployed zkpassport-bridge fa3f2c60 has no
+// `/verify` route and bypasses SDK verification. This is a placeholder, not
+// cryptographic verification; replace it with an authenticated durable
+// verifier/receipt contract.
 // POSTs the proof to the bridge's `/verify` endpoint and returns
 // `{ verified, completedAt }` on ANY well-formed reply (verified may be
 // false — that is a 422 the route reports, not a bridge failure). Throws

@@ -15,8 +15,8 @@
 // of every install.
 //
 // STABILITY CONTRACT: this value must never change for a user. Nothing in
-// this codebase updates `users.email` — it is written only at INSERT (the OTP
-// signup in src/routes/topochain/mobile-auth.js), which is what makes folding
+// this codebase updates `users.email` — it is written only at INSERT (including
+// the web signup in src/services/email-signup.js), which is what makes folding
 // it in safe. Adding a change-email flow without bumping VERSION and shipping
 // the app a migration would silently orphan the affected installs' local
 // accounts.

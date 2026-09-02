@@ -1,13 +1,6 @@
-// Profile on the web: the drawer row is no longer gated on the native
-// bridge, and a signed-out visitor gets a sign-in prompt instead of a
-// generic failure.
-//
-// The bug this pins: #profile worked perfectly in an ordinary browser —
-// /challenges-api/me/* scopes to the platform session server-side since
-// the topochain merge — but the drawer entry was revealed only when the
-// bridge reported the `getProfileInfo` capability. On the web the screen
-// therefore existed and was unreachable. The capability probe was the ONLY
-// thing hiding it.
+// Profile belongs to the authenticated Social session: the drawer row works
+// without a native bridge and a signed-out visitor gets a sign-in prompt
+// instead of a generic failure.
 //
 // Second half: those routes require a session (requireSessionUser), so an
 // anonymous visitor got an opaque `HTTP 401` funnelled into "Could not
@@ -102,7 +95,6 @@ test('the screen-host comments no longer describe an external leaderboard', () =
   const hosts = shellSource.slice(Math.max(0, shellAt - 1200), shellAt)
     + profileIsland.slice(0, islandAt + 400);
   assert.doesNotMatch(hosts, /public leaderboard service/);
-  assert.doesNotMatch(hosts, /using the bridge's\s*\n?\s*getProfileInfo participant id/);
   assert.match(hosts, /in-process/,
     'the comments should say where the data actually comes from');
 });

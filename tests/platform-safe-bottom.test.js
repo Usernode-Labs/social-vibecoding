@@ -32,6 +32,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { renderComponent } = require('./lib/render-tsx');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -151,8 +152,10 @@ const SAFE_SCROLL_IDS = [
 
 test('every top-level screen scroller carries platform-safe-scroll', () => {
   for (const id of SAFE_SCROLL_IDS) {
-    const m = new RegExp(`<(?:main|div) id="${id}"[^>]*>`).exec(INDEX);
-    assert.ok(m, `#${id} is missing from index.html`);
+    // #auth-landing-scroll is inside the landing screen's interior, which
+    // mounts on first reveal — so resolve against the markup the shell renders.
+    const m = new RegExp(`<(?:main|div) id="${id}"[^>]*>`).exec(shellMarkup());
+    assert.ok(m, `#${id} is missing from the shell`);
     assert.match(m[0], /platform-safe-scroll/,
       `#${id} must reserve the home-indicator strip for its last row`);
   }

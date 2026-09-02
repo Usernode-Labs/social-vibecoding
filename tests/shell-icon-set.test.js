@@ -27,12 +27,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 const ICONS = read('frontend/@/components/ui/icons.tsx');
-const HTML = read('public/index.html');
+// Document plus the interiors that mount on first reveal: a glyph in the
+// settings panes or the anonymous shell is still one the shell ships.
+const HTML = shellMarkup();
 const PKG = JSON.parse(read('frontend/package.json'));
 
 /** Every single-quoted string in the module that looks like SVG path data. */

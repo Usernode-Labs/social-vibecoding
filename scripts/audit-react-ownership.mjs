@@ -474,8 +474,11 @@ function nativeBridge() {
   const noop = async () => ({});
   window.NativeChrome = {
     getInfo: async () => ({
-      version: 4,
-      capabilities: ['getSettingsState', 'getWalletState', 'getNodeStatus'],
+      version: 5,
+      capabilities: [
+        'getSettingsState', 'getWalletState', 'getNodeStatus',
+        'submitTransaction',
+      ],
       appVersion: '0.4.0',
       buildNumber: '1223',
     }),
@@ -488,7 +491,7 @@ function nativeBridge() {
     }),
     getNodeStatus: async () => ({ state: 'online', peers: 8 }),
     getWalletState: async () => ({ address: 'un1qaudit', balance: '0' }),
-    getTransactionRecords: async () => ({ records: [] }),
+    getTransactionReceipts: async () => ({ items: [] }),
     manageStaking: noop,
     ...(window.usernode || {}),
   };

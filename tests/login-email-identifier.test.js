@@ -29,6 +29,7 @@ bcrypt.compare = (...args) => { compareCalls++; return realCompare(...args); };
 // ── Pool stub: a tiny in-memory users table ────────────────────────
 const poolMod = require('../src/db/pool');
 let users = []; // { id, username, password (bcrypt hash), email, is_admin, admin_readonly }
+let liveSessions = new Set();
 let capturedQueries = [];
 const USER_COLS = (u) => ({
   id: u.id, username: u.username, password: u.password,
@@ -37,6 +38,9 @@ const USER_COLS = (u) => ({
 poolMod.getPool = () => ({
   query: async (sql, params) => {
     capturedQueries.push({ sql, params });
+    if (sql.includes('FROM sessions') && sql.includes('expires_at > NOW()')) {
+      return { rows: liveSessions.has(params[0]) ? [{ '?column?': 1 }] : [] };
+    }
     if (sql.includes('FROM users WHERE lower(email) = lower($1)')) {
       const needle = String(params[0]).toLowerCase();
       return { rows: users.filter((u) => u.email && u.email.toLowerCase() === needle).map(USER_COLS) };
@@ -63,27 +67,39 @@ rateLimits.authLimiter = (_req, _res, next) => next();
 
 const { authRoutes } = require('../src/routes/auth');
 const express = require('express');
+const cookieParser = require('cookie-parser');
 
 function startApp() {
   const app = express();
   app.use(express.json());
+  app.use(cookieParser());
   app.use(authRoutes({ nodeRpcUrl: 'http://unused' }));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve(server));
   });
 }
 
-function login(server, username, password) {
+function login(
+  server,
+  username,
+  password,
+  sessionToken = null,
+  path = '/api/auth/login',
+) {
   const port = server.address().port;
-  return fetch(`http://127.0.0.1:${port}/api/auth/login`, {
+  return fetch(`http://127.0.0.1:${port}${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(sessionToken ? { cookie: `session=${sessionToken}` } : {}),
+    },
     body: JSON.stringify({ username, password }),
   }).then(async (res) => ({ res, body: await res.json().catch(() => ({})) }));
 }
 
 function reset() {
   users = [];
+  liveSessions = new Set();
   capturedQueries = [];
   logCalls = [];
   compareCalls = 0;
@@ -91,6 +107,44 @@ function reset() {
 
 const warned = (msg) => logCalls.some(([, , m]) => m === msg);
 const COST = 4; // low bcrypt cost: this file tests routing, not hashing
+
+test('every spelling and flow enforces logout before another session mint', async () => {
+  reset();
+  const hash = await bcrypt.hash('new-account-pw', COST);
+  users.push({
+    id: 1,
+    username: 'new-account',
+    password: hash,
+    email: null,
+  });
+  liveSessions.add('session-a');
+  const server = await startApp();
+  try {
+    for (const path of [
+      '/api/auth/login',
+      '/api/auth/login/',
+      '/API/AUTH/LOGIN',
+      '/api/auth/wallet-reset-verify',
+    ]) {
+      const r = await login(
+        server,
+        'new-account',
+        'new-account-pw',
+        'session-a',
+        path,
+      );
+      assert.strictEqual(r.res.status, 409, path);
+      assert.deepStrictEqual(r.body, {
+        error: 'Sign out before signing in again.',
+        code: 'logout_required',
+      });
+    }
+    assert.strictEqual(compareCalls, 0,
+      'the boundary is enforced before consuming new credentials');
+    assert.ok(!capturedQueries.some((q) => /INSERT INTO sessions/.test(q.sql)),
+      'no successor session is minted');
+  } finally { server.close(); }
+});
 
 test('email identifier matches case-insensitively (both input and stored casing) and echoes the real username', async () => {
   reset();

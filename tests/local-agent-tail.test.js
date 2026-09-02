@@ -73,7 +73,10 @@ test('a lease lookup failure downgrades to a worker rather than failing the turn
 
 test('a local run skips the worker image, the container and the volume', () => {
   assert.match(sessions, /if \(!runLocally\) await worker\.ensureWorkerImage\(\);/);
-  assert.match(sessions, /const containerName = runLocally \? null : await worker\.ensureWorker/);
+  // The bootstrap catch (#1501) turned the ternary into a guarded block, so
+  // the assertion moved with it. Same guarantee: no container is bootstrapped
+  // for a run happening on the user's own machine.
+  assert.match(sessions, /let containerName = null;\n  if \(!runLocally\) \{\n    try \{\n      containerName = await worker\.ensureWorker/);
   assert.match(sessions, /if \(!runLocally\) await worker\.syncUserAgentFiles/);
 });
 
@@ -203,7 +206,7 @@ test('a local scout skips the worker image, the container and the volume too', (
     sessions.indexOf('function describeMarkerlessExit')
   );
   assert.match(scout, /if \(!runLocally\) await worker\.ensureWorkerImage\(\);/);
-  assert.match(scout, /const containerName = runLocally \? null : await worker\.ensureWorker/);
+  assert.match(scout, /let containerName = null;\n  if \(!runLocally\) \{\n    try \{\n      containerName = await worker\.ensureWorker/);
   assert.match(scout, /if \(!runLocally\) await worker\.syncUserAgentFiles/);
   // A local scout never gets prod-debug: the credential is cloud-only, so the
   // prompt must not advertise a helper the machine cannot authenticate.

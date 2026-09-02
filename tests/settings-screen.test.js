@@ -34,8 +34,11 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const { renderComponent } = require('./lib/render-tsx');
+const { shellMarkup } = require('./lib/shell-markup');
 
-const html = read('public/index.html');
+// The markup the shell renders — document plus the settings panes, which
+// mount on first reveal (tests/lib/shell-markup.js).
+const html = shellMarkup();
 const appJs = read('public/js/app.js');
 const settingsJs = read('frontend/src/features/settings/settings.js');
 // #1079: #settings-usernode-section's markup moved to a component; its tests
@@ -1395,59 +1398,27 @@ test('the demo deep link is a declared test path', () => {
     'the screenshot state added this turn is exercised by dapp.json');
 });
 
-// ── Sign-out no longer dead-ends on a refused bridge ────────────────────
+// ── Protocol-2 sign-out boundary ────────────────────────────────────────
 
-test('a refused native latch confirms instead of aborting the sign-out', () => {
+test('sign-out closes once, then uses terminal protocol 2 or web navigation',
+  () => {
   const logout = settingsJs.slice(
     settingsJs.indexOf('    async logout() {'),
-    settingsJs.indexOf('    _confirmDegradedSignOut(preflight) {'),
+    settingsJs.indexOf('    _clearSwApiCache() {'),
   );
-  assert.ok(logout, 'logout() and its confirm helper exist');
-  assert.match(logout, /latch === 'unavailable'/);
-  assert.match(logout, /latch === 'inconclusive'/);
-  // The ordering that matters: the confirm happens BEFORE the web logout,
-  // and a refused latch no longer returns early.
-  const confirmAt = logout.indexOf('_confirmDegradedSignOut(preflight)');
+  const closeAt = logout.indexOf('NativeChrome.prepareWebLogout()');
+  const firstAwait = logout.indexOf('await ');
   const fetchAt = logout.indexOf("'/api/auth/logout'");
-  assert.ok(confirmAt > -1 && fetchAt > confirmAt,
-    'the user is asked before the web session is cleared, not instead of it');
-  assert.match(logout, /result === true/,
-    'a legacy boolean preflight is still understood');
-  const helper = settingsJs.slice(
-    settingsJs.indexOf('    _confirmDegradedSignOut(preflight) {'),
-  ).slice(0, 900);
-  assert.match(helper, /typeof PlatformUI\.confirm !== 'function'/);
-  assert.match(helper, /Promise\.resolve\(true\)/,
-    'no dialog to ask with is not a reason to trap someone in a session');
-  assert.match(helper, /danger: true/);
-});
-
-test('an unconfirmed app sign-out is named on the login screen, once', () => {
-  assert.match(settingsJs,
-    /NATIVE_SIGNOUT_NOTICE_KEY: 'sv:native_signout_incomplete'/);
-  const notice = settingsJs.slice(
-    settingsJs.indexOf('    _showIncompleteNativeSignOutNotice() {'),
-  ).slice(0, 900);
-  assert.match(notice, /removeItem\(this\.NATIVE_SIGNOUT_NOTICE_KEY\)/,
-    'one-shot: the flag is cleared as it is read');
-  assert.match(notice, /priority: true/);
-  const init = settingsJs.slice(
-    settingsJs.indexOf('    init() {'),
-    settingsJs.indexOf('    async logout() {'),
-  );
-  assert.match(init, /this\._showIncompleteNativeSignOutNotice\(\);/,
-    'the next document shows it');
-});
-
-test('the best-effort app logout cannot block leaving the app', () => {
-  const best = settingsJs.slice(
-    settingsJs.indexOf('    _bestEffortNativeLogout() {'),
-    settingsJs.indexOf("    NATIVE_SIGNOUT_NOTICE_KEY:"),
-  );
-  assert.ok(best, '_bestEffortNativeLogout exists');
-  assert.match(best, /NATIVE_SIGNOUT_BUDGET_MS/, 'it is time-boxed');
-  assert.match(best, /settle\(false\)/, 'a rejection resolves false, never throws');
-  assert.doesNotMatch(best, /throw /);
+  assert.ok(closeAt > -1 && closeAt < firstAwait,
+    'the native realm closes synchronously before the first await');
+  assert.ok(fetchAt > firstAwait,
+    'web-session deletion follows the closed native boundary');
+  assert.match(logout, /if \(preflight\.nativeTerminal\)/);
+  assert.match(logout, /return NativeChrome\.commitNativeLogout\(\)/);
+  assert.match(logout, /window\.location\.href = '\/'/);
+  assert.doesNotMatch(settingsJs,
+    /_confirmDegradedSignOut|_bestEffortNativeLogout|NATIVE_SIGNOUT_NOTICE_KEY/,
+    'legacy split/fallback logout machinery is removed, not maintained');
 });
 
 
@@ -1469,7 +1440,7 @@ test('the credential list renders its three host states', () => {
   // empty line would mismatch on hydration — a console error on #settings, and
   // a console error on any route fails proposal checks.
   assert.equal(cliRows({ phase: 'idle', tokens: [] }), '');
-  assert.equal(read('public/index.html').includes('<div id="cli-tokens-list" class="space-y-2"></div>'),
+  assert.equal(shellMarkup().includes('<div id="cli-tokens-list" class="space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   // The two the module used to write with `textContent`.
   assert.match(cliRows({ phase: 'loading', tokens: [] }), /Loading credentials…/);
@@ -1522,7 +1493,7 @@ const connectorRows = (state) => renderComponent(CONNECTORS_LIST, 'ConnectorsLis
 test('the connections list renders its three host states', () => {
   assert.equal(connectorRows({ phase: 'idle', connectors: [] }), '');
   assert.equal(
-    read('public/index.html').includes('<div id="connectors-list" class="space-y-2"></div>'),
+    shellMarkup().includes('<div id="connectors-list" class="space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   assert.match(connectorRows({ phase: 'loading', connectors: [] }), /Loading connections…/);
   assert.match(connectorRows({ phase: 'ready', connectors: [] }),
@@ -1579,7 +1550,7 @@ const socialBase = { phase: 'ready', message: null, tier: null, providers: [] };
 test('the social block renders its four host states', () => {
   assert.equal(socialHtml({ ...socialBase, phase: 'idle' }), '');
   assert.equal(
-    read('public/index.html').includes('<div id="github-link-body" class="space-y-2"></div>'),
+    shellMarkup().includes('<div id="github-link-body" class="space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   assert.match(socialHtml({ ...socialBase, phase: 'loading', message: 'Loading…' }), /Loading…/);
   assert.match(

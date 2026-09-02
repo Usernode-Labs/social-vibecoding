@@ -32,6 +32,7 @@ import { FeedbackDialog } from './feedback';
 import { ShareDialog } from './share';
 import { AppSecretsDialog } from './app-secrets';
 import { BoardFiltersDialog } from './board-filters';
+import { WalletRecoveryDialog } from './wallet-recovery';
 
 export function Dialogs() {
   return (
@@ -52,6 +53,11 @@ export function Dialogs() {
           byte positions in the prerendered document.
       */}
       <BoardFiltersDialog />
+      {/*
+          Native-only migration recovery. New markup appended last so every
+          existing dialog keeps its byte position in the built document.
+      */}
+      <WalletRecoveryDialog />
     </>
   );
 }
@@ -67,4 +73,5 @@ export {
   ShareDialog,
   AppSecretsDialog,
   BoardFiltersDialog,
+  WalletRecoveryDialog,
 };

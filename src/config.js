@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { bech32m } = require('bech32');
 const platformJwt = require('./services/platform-jwt');
 const { PRODUCTION_ORIGIN } = require('./services/cli-auth-constants');
 
@@ -32,6 +33,16 @@ const REQUIRED_PROD = [
   'IFRAME_JWT_PUBLIC_KEY',
   'WORKER_JWT_SECRET',
   'EDGE_JWT_SECRET',
+];
+
+// Canonical lifecycle deployment data. Kept separate from REQUIRED_PROD:
+// that list is also the key-separation deny-list for child containers, while
+// these values are operational configuration rather than host secrets as a
+// class (only the partner key is private).
+const REQUIRED_LIFECYCLE_PROD = [
+  'NODE_RPC_URL',
+  'TOPOCHAIN_PARTNER_API_KEY',
+  'NATIVE_SESSION_V2_TESTNET_CHAIN_ID',
 ];
 
 // HMAC keys below this are a self-hosting footgun, not a boot failure —
@@ -126,6 +137,28 @@ function canonicalOpenRouterApiBase(value, source) {
   return url.toString().replace(/\/$/, '');
 }
 
+// Protocol 2 is a closed deployment capability, not a caller-selectable
+// network switch. Rust's canonical ChainId is a lower-case bech32m string
+// with HRP `utc` and exactly 32 payload bytes (crates/core/src/chain_id.rs).
+// Returning null lets the staging self-preview omit native infrastructure.
+// Canonical deployments treat null as a boot error below: the chain identity
+// is required protocol data, never an enable/disable switch.
+// TODO(native-session-v3): authenticate network/genesis provenance. Protocol
+// 2 treats this operator config as consistency only and keeps ordinary
+// configured-origin HTTPS/TLS as the server-authenticity boundary.
+function canonicalNativeSessionV2Network(value) {
+  if (typeof value !== 'string' || !value || value !== value.toLowerCase()) return null;
+  try {
+    const decoded = bech32m.decode(value, 1023);
+    const bytes = Buffer.from(bech32m.fromWords(decoded.words));
+    if (decoded.prefix !== 'utc' || bytes.length !== 32) return null;
+    if (bech32m.encode('utc', bech32m.toWords(bytes), 1023) !== value) return null;
+    return { id: 'testnet', chainId: value };
+  } catch {
+    return null;
+  }
+}
+
 function load() {
   const staging = IS_STAGING();
   const appRuntime = process.env.APP_RUNTIME || 'docker';
@@ -140,7 +173,9 @@ function load() {
     process.env.DATA_ENCRYPTION_KEY = process.env.JWT_SECRET;
   }
 
-  const required = staging ? REQUIRED : REQUIRED.concat(REQUIRED_PROD);
+  const required = staging
+    ? REQUIRED
+    : REQUIRED.concat(REQUIRED_PROD, REQUIRED_LIFECYCLE_PROD);
   const missing = required.filter((k) => !process.env[k]);
   if (missing.length) {
     console.error(`[config] Missing required env vars: ${missing.join(', ')}`);
@@ -197,11 +232,27 @@ function load() {
   const openrouterManagedDailyLimitUsd = Number(
     process.env.OPENROUTER_MANAGED_DAILY_LIMIT_USD || '1',
   );
+
+  const nativeSessionV2Network = canonicalNativeSessionV2Network(
+    process.env.NATIVE_SESSION_V2_TESTNET_CHAIN_ID
+  );
+  if (!staging && !nativeSessionV2Network) {
+    console.error('[config] NATIVE_SESSION_V2_TESTNET_CHAIN_ID must be a canonical Rust ChainId.');
+    process.exit(1);
+  }
   if (!Number.isFinite(openrouterManagedDailyLimitUsd)
       || openrouterManagedDailyLimitUsd <= 0) {
     console.error('[config] OPENROUTER_MANAGED_DAILY_LIMIT_USD must be a positive dollar amount.');
     process.exit(1);
   }
+  const openrouterManagedRequireVerifiedIdentityValue =
+    process.env.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY || 'false';
+  if (!['true', 'false'].includes(openrouterManagedRequireVerifiedIdentityValue)) {
+    console.error('[config] OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY must be either true or false.');
+    process.exit(1);
+  }
+  const openrouterManagedRequireVerifiedIdentity =
+    openrouterManagedRequireVerifiedIdentityValue === 'true';
   let cliAuthOrigin = null;
   let cliAuthEnabled = !staging;
   if (cliAuthEnabled && cliLocalMode) {
@@ -246,6 +297,9 @@ function load() {
     // KDF input for services/secrets.js (AES-256-GCM at rest). Never
     // injected into a child container, never used to sign anything.
     dataEncryptionKey: staging ? stagingDataKey() : process.env.DATA_ENCRYPTION_KEY,
+    // Required protocol-2 deployment binding outside the self-app staging
+    // preview. There is one supported network mapping and no caller input.
+    nativeSessionV2Network,
     // Signing keys. Read straight from env by services/platform-jwt.js
     // at call time; mirrored here for the boot log and for the container
     // env builders that need the PUBLIC half.
@@ -272,6 +326,9 @@ function load() {
     openrouterManagementApiKey: process.env.OPENROUTER_MANAGEMENT_API_KEY || '',
     openrouterManagedDailyLimitUsd,
     openrouterManagedWorkspaceId: process.env.OPENROUTER_MANAGED_WORKSPACE_ID || '',
+    // Default-open claim policy. Operators may opt into requiring a linked
+    // GitHub or X identity before the one lifetime managed key is reserved.
+    openrouterManagedRequireVerifiedIdentity,
     // The former single shared JWT_SECRET is GONE. All four token
     // authorities (app identity RS256, worker, edge grant, edge cookie)
     // read their own key from env via services/platform-jwt.js, and a
@@ -466,7 +523,7 @@ function load() {
     // it at the sidecar pattern (rather than a public host that may
     // come and go) keeps the failure mode obvious — "no node reachable
     // at <name>" is clearly a setup issue, not a transient outage.
-    nodeRpcUrl: process.env.NODE_RPC_URL || 'http://usernode-node:3000',
+    nodeRpcUrl: process.env.NODE_RPC_URL || (staging ? 'http://usernode-node:3000' : ''),
     // App file storage (#752): the MinIO object-store sidecar
     // (docker-compose service `usernode-minio`, internal
     // `usernode-storage` network — reachable only from the platform).
@@ -511,12 +568,10 @@ function load() {
     // and turning this off puts that panel back behind admin-only
     // visibility.
     selfAppPublicVoting: process.env.SELF_APP_PUBLIC_VOTING !== 'false',
-    // Topochain partner API (plan Task 3; architecture decision #5): the
-    // shared secret compared against the partner group's X-API-Key header
-    // (src/middleware/topochain-auth.js#partnerApiKey). Deliberately
-    // OPTIONAL and NOT in REQUIRED — an unset key doesn't block boot, it
-    // makes every partner-group request 500 with "API key authentication
-    // not configured." until an operator sets TOPOCHAIN_PARTNER_API_KEY.
+    // Topochain partner and managed-policy API shared secret, compared
+    // against X-API-Key (src/middleware/topochain-auth.js#partnerApiKey).
+    // Canonical production requires it above; self-app staging may omit it
+    // and receives the existing fail-closed 500 on authenticated routes.
     topochainPartnerApiKey: process.env.TOPOCHAIN_PARTNER_API_KEY || '',
     // Topochain ingest write gate: the shared secret compared against the
     // X-Ingest-Key header on POST /api/v4/slot-outcomes and /epoch-stats
@@ -533,8 +588,8 @@ function load() {
     // Topochain zkPassport bridge (plan Task 10; SPEC §4.5 POST
     // /mobile/zkpassport/complete, lines 2092-2141): the external service
     // that actually verifies a zkPassport proof. Deliberately OPTIONAL and
-    // NOT in REQUIRED, same shape as TOPOCHAIN_PARTNER_API_KEY above — an
-    // unset URL doesn't block boot, it makes every zkpassport/complete
+    // NOT required — an unset URL doesn't block boot, it makes every
+    // zkpassport/complete
     // call 500 "The zkPassport bridge is not configured." (SPEC's own
     // error table row for this exact condition) until an operator sets
     // TOPOCHAIN_ZK_BRIDGE_URL. See src/services/topochain/zk-bridge.js.
@@ -619,6 +674,7 @@ function load() {
   console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
   console.log(`  OPENROUTER_MANAGEMENT_API_KEY=${mask(config.openrouterManagementApiKey)}`);
   console.log(`  OPENROUTER_MANAGED_DAILY_LIMIT_USD=${config.openrouterManagedDailyLimitUsd} OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
+  console.log(`  OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=${config.openrouterManagedRequireVerifiedIdentity}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
   console.log(`  IDENTITY_CREDIT_POLICY=${config.identityCreditPolicy}`);
   console.log(`  GITHUB_LINK=${config.githubLinkClientId && config.githubLinkClientSecret ? '(enabled)' : '(disabled)'}`);
@@ -661,6 +717,9 @@ function load() {
   console.log(`  TOPOCHAIN_PARTNER_API_KEY=${config.topochainPartnerApiKey ? mask(config.topochainPartnerApiKey) : '(not set — partner API returns 500)'}`);
   console.log(`  TOPOCHAIN_INGEST_API_KEY=${config.topochainIngestApiKey ? mask(config.topochainIngestApiKey) : '(not set — ingest writes return 500)'}`);
   console.log(`  TOPOCHAIN_ZK_BRIDGE_URL=${config.topochainZkBridgeUrl || '(not set — zkpassport/complete returns 500)'}`);
+  console.log(`  NATIVE_SESSION_PROTOCOL=${config.nativeSessionV2Network
+    ? `testnet/${config.nativeSessionV2Network.chainId}`
+    : 'unavailable in self-app staging'}`);
   console.log(`  MOBILE_PUSH=${config.mobilePushEnabled ? 'enabled' : 'disabled'} PUSH_ENV=${config.mobilePushEnvironment || '(not set)'}`);
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
@@ -690,5 +749,6 @@ module.exports = {
   usesMockGithubForImports,
   canonicalCliOrigin,
   canonicalOpenRouterApiBase,
+  canonicalNativeSessionV2Network,
   isLoopbackOrigin,
 };

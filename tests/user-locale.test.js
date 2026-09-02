@@ -36,6 +36,7 @@ poolMod.getPool = () => ({
 });
 
 const { authRoutes } = require('../src/routes/auth');
+const { shellMarkup } = require('./lib/shell-markup');
 
 let server, base;
 let user = null;
@@ -215,7 +216,7 @@ test('/api/auth/me payload exposes locale', () => {
 });
 
 test('Settings markup has the Language section', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   assert.match(html, /id="settings-locale"/);
   assert.match(html, /id="settings-locale-status"/);
   assert.match(html, /Auto: use device language/);

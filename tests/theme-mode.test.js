@@ -10,6 +10,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const ROOT = path.join(__dirname, '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -76,10 +77,18 @@ test('the ground is painted before any stylesheet, and the chrome follows the th
   //     light-mode viewer got a black band above a #eaeaea page in the
   //     address bar, the iOS status strip, the rubber-band area and a
   //     standalone install's window ground.
+  //
+  // `color-scheme` joined these two rules afterwards, for the third thing
+  // that has to be true with nothing loaded: the USER AGENT's own palette —
+  // the canvas under the document, the scrollbars, the default form
+  // controls. Same rules, same two selectors, because it answers the same
+  // question. tests/native-appearance.test.js pins that half, including
+  // that it is keyed off `.dark` rather than delegated to the OS; these two
+  // assertions still own the ground colours themselves.
   const src = themeSrc();
-  assert.match(src, /html \{ background-color: #eaeaea; \}/,
+  assert.match(src, /html \{ background-color: #eaeaea; color-scheme: light; \}/,
     'the light ground is painted with no stylesheet loaded');
-  assert.match(src, /html\.dark \{ background-color: #0b0b0c; \}/,
+  assert.match(src, /html\.dark \{ background-color: #0b0b0c; color-scheme: dark; \}/,
     'and the dark one, keyed off the class apply() has just written');
   // Written from the RESOLVED theme, not left to a prefers-color-scheme meta
   // pair: the shell's own Light/Dark override is a class on <html> that no
@@ -150,7 +159,7 @@ for (const page of THEMED_PAGES) {
 // Position is the whole point of each of those moves, so it stays pinned —
 // only to a different container.
 test('the theme control lives in its own Settings section', () => {
-  const src = read('index.html');
+  const src = shellMarkup();
   const pane = src.indexOf('data-settings-section="theme"');
   const track = src.indexOf('id="drawer-theme-track"');
   assert.ok(pane !== -1, 'the theme settings pane is missing');
@@ -170,7 +179,7 @@ test('the theme control lives in its own Settings section', () => {
 // its sliding caret off exactly these, and renaming them would have been a
 // restyle of the one control this change is not restyling.
 test('the moved control keeps the ids app.css draws it with', () => {
-  const src = read('index.html');
+  const src = shellMarkup();
   for (const id of ['drawer-theme-track', 'drawer-theme-caret-track', 'drawer-theme-caret']) {
     assert.ok(src.includes(`id="${id}"`), `#${id} survived the move`);
   }
@@ -191,7 +200,7 @@ test('theme leads the settings registry and is the default section', () => {
 });
 
 test('index.html exposes the three data-theme-mode buttons', () => {
-  const src = read('index.html');
+  const src = shellMarkup();
   for (const mode of ['light', 'dark', 'system']) {
     assert.ok(
       src.includes(`data-theme-mode="${mode}"`),
@@ -201,7 +210,7 @@ test('index.html exposes the three data-theme-mode buttons', () => {
 });
 
 test('the three modes render as a labelled radiogroup of segments', () => {
-  const src = read('index.html');
+  const src = shellMarkup();
   const track = src.match(/<div id="drawer-theme-track"[^>]*>/);
   assert.ok(track, 'drawer-theme-track missing');
   assert.match(track[0], /role="radiogroup"/, 'the segmented track is a radiogroup');
@@ -217,7 +226,7 @@ test('the three modes render as a labelled radiogroup of segments', () => {
 });
 
 test('the selection caret ships exactly once, inside the track', () => {
-  const src = read('index.html');
+  const src = shellMarkup();
   const carets = src.match(/id="drawer-theme-caret"/g) || [];
   assert.equal(carets.length, 1, 'exactly one #drawer-theme-caret');
   const track = src.indexOf('id="drawer-theme-track"');

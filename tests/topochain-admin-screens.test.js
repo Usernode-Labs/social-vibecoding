@@ -149,8 +149,14 @@ test('_renderSection dispatches every promoted screen to AdminTopochain via SECT
   assert.match(fn.slice(0, 1200), /_renderModule\(host, modName, key\)/,
     'the dispatcher hands the host to the mapped module');
   const dispatch = consoleJs.slice(consoleJs.indexOf('  _renderModule(host, modName, key) {'));
-  assert.match(dispatch.slice(0, 600), /mod\.render\(host\)/,
+  // Widened from 600: _renderModule grew a "the chunk is still loading" arm
+  // when the twenty section modules became a lazy import (see
+  // AdminConsole._ensureSections). The dispatch below it is unchanged.
+  assert.match(dispatch.slice(0, 1600), /mod\.render\(host\)/,
     'and _renderModule calls render(host) on it');
+  // The new arm must not swallow a genuinely missing module: a module that is
+  // absent once the chunk is in still gets the failure copy, not a spinner.
+  assert.match(dispatch.slice(0, 1600), /console module failed to load/);
   assert.match(consoleJs, /_teardownActiveSection\(\)/,
     'and tears the outgoing section down first');
 });
@@ -175,6 +181,8 @@ test('admin-topochain.js is imported by the console island, after admin-console.
   // AdminUI.card at module-evaluation time.
   const island = fs.readFileSync(
     path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8'
+  ) + fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/sections.ts'), 'utf8'
   );
   const order = [...island.matchAll(/from '\.\/(admin-[a-z]+)\.js'|import '\.\/(admin-[a-z]+)\.js'/g)]
     .map((m) => m[1] || m[2]);

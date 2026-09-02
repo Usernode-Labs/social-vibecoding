@@ -113,6 +113,7 @@ async function migrate(config) {
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingHeadlessFixtures(pool, config);
   await seedStagingSyncActivity(pool, config);
+  await seedStagingBootstrapFailure(pool, config);
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingLlmUsage(pool);
   await seedStagingSpendDistribution(pool);
@@ -1861,12 +1862,19 @@ async function seedStagingPushDeliveries(pool, config) {
 
   await pool.query(
     `INSERT INTO mobile_push_registrations
-       (user_id, environment, installation_id, provider, registration_hash,
+       (user_id, native_session_credential_reference, environment,
+        installation_id, provider, registration_hash,
         registration_enc, platform, permission_status, session_expires_at,
         last_seen_at)
-     VALUES
-       ($1, $2, $3::uuid, 'fcm', $4, $5, 'android', 'authorized',
-        NOW() + INTERVAL '7 days', NOW() - INTERVAL '20 minutes')
+     SELECT c.user_id::integer, c.credential_reference, $2, $3::uuid, 'fcm', $4, $5,
+            'android', 'authorized', c.expires_at,
+            NOW() - INTERVAL '20 minutes'
+       FROM native_session_credentials c
+      WHERE c.user_id = $1
+        AND c.state = 'valid'
+        AND c.expires_at > NOW()
+      ORDER BY c.created_at DESC
+      LIMIT 1
      ON CONFLICT (environment, installation_id) DO NOTHING`,
     [userId, ENVIRONMENT, LIVE_INSTALLATION, REGISTRATION_HASH, REGISTRATION_ENC]
   );
@@ -3994,6 +4002,118 @@ async function seedStagingSyncActivity(pool, config) {
     });
   } catch (err) {
     log.warn('db', 'Staging sync-activity seeding failed', { message: err.message });
+  }
+}
+
+// Worker-bootstrap failure fixture. A cold worker that never reaches
+// warm-ready now reports WHY — git's own stderr rides after the marker
+// prefix, and describeTurnError turns it into a card that says the
+// branch is untouched (see src/routes/sessions.js). None of that is
+// reachable on demand in staging: it needs a clone to actually fail
+// inside a container, so the only way a tester can see the new card is
+// to seed the rows a real failure would have persisted.
+//
+// Two rows, one per branch worth reviewing: the RETRYABLE clone failure
+// (the production case — three sessions on 2026-09-02 died this way and
+// all the user ever saw was the words "clone failed") and the
+// DETERMINISTIC checkout failure, whose card says retrying will not
+// help. Both carry the same metadata a real dispatch writes, so they
+// render as agent status rows rather than plain system text.
+//
+// Keyed off its own metadata marker so it seeds exactly once. Strict
+// no-op in production.
+async function seedStagingBootstrapFailure(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const { rows: appRows } = await pool.query(
+      'SELECT id FROM apps WHERE slug = $1',
+      [config.selfAppSlug]
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Staging bootstrap-failure fixture skipped: self-app row missing', {
+        slug: config.selfAppSlug,
+      });
+      return;
+    }
+
+    const { rows: userRows } = await pool.query(
+      `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 1`
+    );
+    if (!userRows.length) {
+      log.warn('db', 'Staging bootstrap-failure fixture skipped: no users');
+      return;
+    }
+    const owner = userRows[0];
+
+    const SESSION_ID = 900051;
+
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_title, status, created_at)
+       VALUES
+         ($1, $2, $3, 'staging-demo/bootstrap-failure',
+          '[staging fixture] Worker bootstrap failure cards', 'active', NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [SESSION_ID, appId, owner.id]
+    );
+
+    const { rows: existing } = await pool.query(
+      `SELECT 1 FROM chat_session_messages
+        WHERE session_id = $1 AND metadata->'bootstrapFailure' IS NOT NULL LIMIT 1`,
+      [SESSION_ID]
+    );
+    if (!existing.length) {
+      const agentMeta = { agentBackend: 'claude_code', agentModel: 'claude-opus-5' };
+
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'user', $2, '{}'::jsonb)`,
+        [SESSION_ID, 'Staging demo: add a dark-mode toggle to the settings screen.']
+      );
+      // Retryable branch. The detail is a real transient clone failure —
+      // the platform retried three times before giving up, which the card
+      // says so nobody re-runs it hoping for a different answer.
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [SESSION_ID,
+         'Setting up the coding agent failed while cloning the repository, so the agent never started and no code was changed.'
+           + ' Git reported: fatal: unable to access \'https://github.com/Usernode-Labs/social-vibecoding.git/\': Could not resolve host: github.com'
+           + ' The platform already retried this a few times, so if it keeps happening the repository or the network is genuinely unreachable rather than briefly flaky.',
+         JSON.stringify({
+           ...agentMeta,
+           durationMs: 4212,
+           bootstrapFailure: { phase: 'clone', attempts: 3, retryable: true, source: 'staging-seed' },
+         })]
+      );
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'user', $2, '{}'::jsonb)`,
+        [SESSION_ID, 'Staging demo: try that again.']
+      );
+      // Deterministic branch. One attempt, no retry, different advice.
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [SESSION_ID,
+         'Setting up the coding agent failed while checking out this session\'s branch, so the agent never started and no code was changed.'
+           + ' Git reported: fatal: a branch named \'staging-demo/bootstrap-failure\' already exists'
+           + ' Retrying will not help until the branch problem is resolved.',
+         JSON.stringify({
+           ...agentMeta,
+           durationMs: 3980,
+           bootstrapFailure: { phase: 'checkout', attempts: 1, retryable: false, source: 'staging-seed' },
+         })]
+      );
+    }
+
+    log.info('db', 'Staging bootstrap-failure fixture seeded', {
+      appId, owner: owner.username, sessionId: SESSION_ID,
+    });
+  } catch (err) {
+    log.warn('db', 'Staging bootstrap-failure seeding failed', { message: err.message });
   }
 }
 
@@ -10869,22 +10989,19 @@ async function seedStagingTopochain(pool, config) {
       [USERS.bpReleased]
     );
 
-    // ─── Account delegation periods (2) — one OPEN on the season-wide,
-    // claimed account (900500, participant-1) and one ENDED on the
-    // unclaimed event account (900503). Two rows on purpose, one per
-    // state the admin Delegations screen renders: the open one resolves
-    // a delegator identity (avatar/username/user id), the ended one
-    // exercises the Ended badge plus the "Unclaimed account" delegator
-    // fallback — with only the first, neither could be looked at in a
-    // preview. ──────────────────────────────────────────────────────────
+    // The epoch-policy cutover cannot carry these two historical staging
+    // catalogue rows: one is an open delegation for an account that is not a
+    // real managed producer. Retire only the exact reserved fixtures before
+    // cutover. Once any canonical cutover exists the predicate matches no
+    // rows, so the legacy-table freeze trigger is never invoked on reboot.
     await pool.query(
-      `INSERT INTO account_delegation_periods (id, account, started_at, ended_at, created_at, updated_at)
-       VALUES
-         (900500, 'ut1stagingdemotopochainacct000001', NOW() - INTERVAL '20 days',
-          NULL, NOW(), NOW()),
-         (900501, 'ut1stagingdemotopochainacct000004', NOW() - INTERVAL '15 days',
-          NOW() - INTERVAL '8 days', NOW(), NOW())
-       ON CONFLICT (id) DO NOTHING`
+      `DELETE FROM account_delegation_periods
+        WHERE ((id = 900500 AND account = 'ut1stagingdemotopochainacct000001')
+            OR (id = 900501 AND account = 'ut1stagingdemotopochainacct000004'))
+          AND NOT EXISTS (
+            SELECT 1 FROM native_epoch_delegation_fences
+             WHERE cutover_epoch IS NOT NULL
+          )`
     );
 
     // ─── Token allocation (3 users, matching the later leaderboard totals) ──

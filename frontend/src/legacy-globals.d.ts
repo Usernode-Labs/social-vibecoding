@@ -64,6 +64,8 @@ declare global {
     /** features/settings/settings.js */
     Settings?: {
       init(): void;
+      /** Reads /api/auth/me into Settings.state; runs at hydration on every route. */
+      refresh(): Promise<void>;
       open(section?: string | null, opts?: unknown): void;
       [key: string]: unknown;
     };

@@ -352,7 +352,8 @@ async function createSpecSharedNotification(pool, { recipientId, appId, sessionI
 
 // Company-funded OpenRouter keys are security/billing objects, so every
 // platform admin receives an ownership record when one is created and a
-// review nudge when its user loses their last verified identity. `detail`
+// review nudge when the optional verification policy is enabled and its user
+// loses their last verified identity. `detail`
 // carries only the local managed-key id; the raw child key never enters the
 // notification table, logs, WebSocket payload, or admin UI.
 async function createManagedOpenRouterAdminNotifications(pool, {

@@ -239,12 +239,17 @@
       "key": "TOPOCHAIN_PARTNER_API_KEY",
       "group": "Topochain",
       "private": true,
-      "description": "Shared secret compared against the partner group's X-API-Key header (src/middleware/topochain-auth.js#partnerApiKey). Generate with `openssl rand -hex 32` and hand it to partner API callers at their /api/v4 cutover. Unset doesn't block boot — every partner-group request returns 500 'API key authentication not configured.' until it is set. Rotates independently of TOPOCHAIN_INGEST_API_KEY."
+      "description": "Required shared secret compared against authenticated managed and partner API X-API-Key headers. Generate with `openssl rand -hex 32`. Missing canonical deployment configuration stops the server at boot. Rotates independently of TOPOCHAIN_INGEST_API_KEY."
     },
     {
       "key": "TOPOCHAIN_ZK_BRIDGE_URL",
       "group": "Topochain",
       "description": "Base URL of the external zkPassport bridge service that verifies proofs for POST /api/v4/mobile/zkpassport/complete (src/services/topochain/zk-bridge.js). Unset doesn't block boot — every zkpassport/complete call returns 500 'The zkPassport bridge is not configured.' until it is set. Not secret, so it stays visible in the console for is-it-pointed-at-the-right-host checks."
+    },
+    {
+      "key": "NATIVE_SESSION_V2_TESTNET_CHAIN_ID",
+      "group": "Topochain",
+      "description": "Required exact canonical Rust ChainId (lower-case utc bech32m, 32-byte payload) for the sole protocol-2 network mapping id=testnet. Missing or malformed canonical deployment configuration stops the server at boot; there is no alternate lifecycle. HTTPS/TLS remains the server-authenticity boundary."
     },
     {
       "key": "MOBILE_PUSH_ENABLED",
@@ -344,7 +349,7 @@
       "group": "AI & coding agents",
       "required": false,
       "private": true,
-      "description": "Deploy-owned OpenRouter Management API key used only by the platform server to create, block, enable, and delete limited child keys for verified users. It cannot be written from the admin UI and is never passed to a browser, worker, child app, or database. Configure the GitHub Actions secret USERNODE_OPENROUTER_MANAGEMENT_API_KEY."
+      "description": "Deploy-owned OpenRouter Management API key used only by the platform server to create, block, enable, and delete limited child keys for eligible users. It cannot be written from the admin UI and is never passed to a browser, worker, child app, or database. Configure the GitHub Actions secret USERNODE_OPENROUTER_MANAGEMENT_API_KEY."
     },
     {
       "key": "OPENROUTER_MANAGED_DAILY_LIMIT_USD",
@@ -358,6 +363,13 @@
       "group": "AI & coding agents",
       "required": false,
       "description": "Optional OpenRouter workspace id that owns newly-created company child keys. A dedicated funded Usernode workspace is recommended so aggregate spend is isolated and visible. Set the matching GitHub Actions variable."
+    },
+    {
+      "key": "OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY",
+      "group": "AI & coding agents",
+      "required": false,
+      "default": "false",
+      "description": "Eligibility gate for company-funded child keys. Leave false to let any authenticated Usernode account claim its one included key; set true to require a verified GitHub or X identity before claiming. Existing keys are never revoked automatically when this changes."
     },
     {
       "key": "OPENROUTER_DEFAULT_CODEX_MODEL",
@@ -2512,18 +2524,6 @@
       "name": "Admin Waitlist is a first-class menu section (#1179)",
       "path": "/#admin/waitlist",
       "expectSelector": "#admin-topo-content"
-    },
-    {
-      "name": "Admin Delegations rows show the delegator and the delegatee together",
-      "path": "/#admin/delegations",
-      "expectSelector": "#admin-topo-dlg-table tr:has([data-dlg-party=\"delegator\"]):has([data-dlg-party=\"delegatee\"])",
-      "expectText": "staging-demo-topochain-participant-1"
-    },
-    {
-      "name": "Admin Delegations names the no-claimant delegator state instead of a blank cell",
-      "path": "/#admin/delegations",
-      "expectSelector": "#admin-topo-dlg-table [data-dlg-party=\"delegator\"]",
-      "expectText": "Unclaimed account"
     },
     {
       "name": "Legacy #admin/seasons/<screen> addresses still deep-link their promoted section (#1179)",

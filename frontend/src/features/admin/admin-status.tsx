@@ -509,8 +509,20 @@ function Apps({ apps }: { apps: any[] }) {
   return (
     <>
       {apps.map((a) => {
-        const prodState = a.prod?.state || (a.dbStatus === 'creating' ? 'creating' : 'missing');
-        const prodLabel = a.prod?.state || a.dbStatus || 'missing';
+        // The self-hosted app is this platform, and the platform runs as the
+        // blue/green pair its deploy workflow manages, never as a
+        // `usernode-app-<slug>` container. So "missing" is the wrong word for
+        // it: the container was never supposed to exist. The summary counters
+        // already skip it (status.js `prodMissing`); say so on the row too,
+        // otherwise the one app that is definitely up reads as the one app
+        // that is down.
+        const selfHostedNoContainer = !!a.selfHosted && !a.prod;
+        const prodState = selfHostedNoContainer
+          ? 'running'
+          : (a.prod?.state || (a.dbStatus === 'creating' ? 'creating' : 'missing'));
+        const prodLabel = selfHostedNoContainer
+          ? 'self-hosted'
+          : (a.prod?.state || a.dbStatus || 'missing');
         let repoHost = '';
         if (a.repoUrl) {
           try { repoHost = new URL(a.repoUrl).pathname.replace(/^\//, ''); } catch { repoHost = a.repoUrl; }

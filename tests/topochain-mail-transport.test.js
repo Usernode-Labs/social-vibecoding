@@ -4,7 +4,7 @@
 // The bug this pins: `config.topochainMailTransport` was a hook nothing
 // ever filled, so BOTH senders generated a message and dropped it while
 // their endpoints still reported success. That is not a bug in the
-// endpoints — POST /api/v4/mobile/auth/otp/request is always-200 by
+// endpoints — POST /api/auth/otp/request is always-200 by
 // contract (SPEC 1667) precisely so it can't be used to enumerate
 // accounts, and the waitlist join has the same shape — which is exactly
 // why non-delivery was invisible.

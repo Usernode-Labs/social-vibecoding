@@ -78,8 +78,11 @@
   // Privileged chrome methods use a native-issued, per-realm capability. The
   // token is kept in this top-frame closure: child frames cannot read it, and
   // the relay below refuses both the bootstrap method and privileged calls.
-  // Old app builds do not advertise the capability and keep using the legacy
-  // wire shape, so the web half can deploy first.
+  //
+  // Native session authority is a separate, narrower claim. This document
+  // starts native-closed; only one successful protocol-2 establishment may
+  // install the opaque claim, and every session-bound call carries it
+  // automatically. There is no legacy lifecycle fallback.
   var _PRIVILEGED_CAPABILITY_METHOD = "getPrivilegedBridgeCapability";
   var _PRIVILEGED_NATIVE_METHODS = {
     addHomeScreenShortcut: true,
@@ -88,7 +91,6 @@
     reorderHomeScreenShortcuts: true,
     openNativeScreen: true,
     captureScreenshot: true,
-    getProfileInfo: true,
     getSettingsState: true,
     setNodeSleepEnabled: true,
     setDebugMode: true,
@@ -99,17 +101,9 @@
     requestNotificationPermission: true,
     requestAlarmPermissions: true,
     openNotificationSettings: true,
-    // Removed in bridge v4, but old v3 iOS builds still accept it. Keep the
-    // legacy action fenced so an embedded app cannot borrow the top frame's
-    // trusted origin through the relay.
-    setIosKeepAlive: true,
+    prepareForLogin: true,
     logout: true,
-    beginSessionHandoff: true,
-    enterAnonymousSession: true,
-    completeLogin: true,
-    startNode: true,
-    stopNode: true,
-    getAuthStatus: true,
+    establishNativeSession: true,
     markPrivilegedBridgeReady: true,
     getSocialPushState: true,
     setSocialPushEnabled: true,
@@ -118,18 +112,28 @@
     setSocialBadgeCount: true,
     manageStaking: true,
   };
-  var _SESSION_WALLET_METHODS = {
+  var _REALM_SESSION_METHODS = {
     getNodeAddress: true,
-    sendTransaction: true,
+    submitTransaction: true,
     signMessage: true,
-    txObserved: true,
     getWalletState: true,
-    getTransactionRecords: true,
+    getNodeStatus: true,
+    manageStaking: true,
+    setNodeSleepEnabled: true,
+    resetZkChallenge: true,
+    getSocialPushState: true,
+    setSocialPushEnabled: true,
+    claimPendingSocialNotification: true,
+    ackPendingSocialNotification: true,
+    setSocialBadgeCount: true,
   };
   var _privilegedCapability = null;
   var _privilegedCapabilityPromise = null;
   var _privilegedCapabilitySupported = null;
-  var _sessionWalletRelayAdmitted = true;
+  var _realmSession = null;
+  var _realmSessionGeneration = 0;
+  var _realmEstablishLease = null;
+  var _REALM_CLOSE_EVENT = "sv:native-realm-close";
 
   // ── Privileged-handshake outcome record ───────────────────────────────
   //
@@ -241,19 +245,39 @@
     return _PRIVILEGED_NATIVE_METHODS[method] === true;
   }
 
-  function isSessionWalletMethod(method) {
-    return _SESSION_WALLET_METHODS[method] === true;
+  function isRealmSessionMethod(method) {
+    return _REALM_SESSION_METHODS[method] === true;
   }
 
-  // NativeChrome closes this synchronously when `sv:session` announces a
-  // login or account change, then reopens it only after that participant's
-  // native handoff succeeds. The iframe's own bridge cannot change the
-  // parent closure; same-origin top-frame code is already trusted.
-  window.usernode._setSessionWalletRelayAdmission = function (admitted) {
-    if (_inIframe) return false;
-    _sessionWalletRelayAdmitted = admitted === true;
-    return _sessionWalletRelayAdmitted;
-  };
+  function closeNativeSessionRealm(reason) {
+    if (_inIframe) return;
+    _realmSession = null;
+    _realmEstablishLease = null;
+    _realmSessionGeneration++;
+    _socialReceiptObservers = {};
+
+    var pending = window.__usernodeBridge && window.__usernodeBridge.pending;
+    if (!pending) return;
+    Object.keys(pending).forEach(function (id) {
+      var entry = pending[id];
+      if (!entry || (entry.sessionBound !== true &&
+          entry.establishment !== true)) return;
+      delete pending[id];
+      entry.reject(taggedNativeError(
+        reason || "Native session request stopped because the session changed",
+        "session-changed"
+      ));
+    });
+  }
+
+  // Identity publication dispatches this event synchronously before mutating
+  // App.user. The closure is the sole writer of the opaque realm claim; no
+  // public setter can reopen it.
+  window.addEventListener(_REALM_CLOSE_EVENT, function () {
+    closeNativeSessionRealm(
+      "Native session request stopped because the session changed"
+    );
+  });
 
   // ── Configuration for QR/desktop mode ─────────────────────────────────
   // Apps call window.usernode.configure({ address: "ut1..." }) to set the
@@ -319,6 +343,14 @@
     var entry = window.__usernodeBridge.pending[id];
     if (!entry) return;
     delete window.__usernodeBridge.pending[id];
+    if (entry.sessionBound === true &&
+        entry.realmSessionGeneration !== _realmSessionGeneration) {
+      entry.reject(taggedNativeError(
+        "Native session request stopped because the session changed",
+        "session-changed"
+      ));
+      return;
+    }
     if (error) {
       var err = new Error(error);
       var code = (errorInfo && typeof errorInfo.code === "string")
@@ -345,6 +377,10 @@
   // restoring a Promise that can never receive its old response. Ordinary
   // embedded-dapp calls retain their existing lifecycle contract.
   window.addEventListener("pagehide", function () {
+    closeNativeSessionRealm(
+      "Usernode request was cancelled because the page changed"
+    );
+    _privilegedCapability = null;
     var pending = window.__usernodeBridge.pending;
     Object.keys(pending).forEach(function (id) {
       var entry = pending[id];
@@ -363,7 +399,19 @@
   // request — surface it as an actual error instead of an infinite hang.
   var _RELAY_TIMEOUT_MS = 15000;
 
-  function postNative(method, args, privilegedCapability) {
+  function postNative(
+    method, args, privilegedCapability, realmSessionClaim,
+    realmSessionGeneration
+  ) {
+    if (realmSessionClaim &&
+        (!_realmSession ||
+         _realmSession.claim !== realmSessionClaim ||
+         _realmSessionGeneration !== realmSessionGeneration)) {
+      return Promise.reject(taggedNativeError(
+        "Native session request stopped because the session changed",
+        "session-changed"
+      ));
+    }
     var id = String(Date.now()) + "-" + Math.random().toString(16).slice(2);
     return new Promise(function (resolve, reject) {
       window.__usernodeBridge.pending[id] = {
@@ -371,10 +419,16 @@
         reject: reject,
         privileged: method === _PRIVILEGED_CAPABILITY_METHOD ||
           !!privilegedCapability,
+        sessionBound: !!realmSessionClaim,
+        establishment: method === "establishNativeSession",
+        realmSessionGeneration: realmSessionGeneration,
       };
       var payload = { method: method, id: id, args: args || {} };
       if (privilegedCapability) {
         payload.privilegedCapability = privilegedCapability;
+      }
+      if (realmSessionClaim) {
+        payload.realmSessionClaim = realmSessionClaim;
       }
       console.log(_BRIDGE_TAG, "callNative", method, "id", id,
         "useIframeRelay=" + _useIframeRelay,
@@ -397,6 +451,9 @@
           resolve: function (v) { clearTimeout(timer); origEntry.resolve(v); },
           reject: function (e) { clearTimeout(timer); origEntry.reject(e); },
           privileged: origEntry.privileged,
+          sessionBound: origEntry.sessionBound,
+          establishment: origEntry.establishment,
+          realmSessionGeneration: origEntry.realmSessionGeneration,
         };
         try {
           console.log(_BRIDGE_TAG, "relay → parent:", method, "id", id);
@@ -493,16 +550,30 @@
   }
 
   function callNative(method, args) {
-    if (isSessionWalletMethod(method) && !_sessionWalletRelayAdmitted) {
-      return Promise.reject(new Error(
-        "Native wallet handoff is in progress"
+    var needsRealmSession = isRealmSessionMethod(method);
+    var needsRootCapability = isPrivilegedNativeMethod(method) ||
+      (!_inIframe && needsRealmSession);
+    var realmSession = (!_inIframe && needsRealmSession)
+      ? _realmSession : null;
+    if (!_inIframe && needsRealmSession && !realmSession) {
+      return Promise.reject(taggedNativeError(
+        "Native session is not established for this page",
+        "native-session-closed"
       ));
     }
-    if (!isPrivilegedNativeMethod(method)) {
-      return postNative(method, args);
+    if (!needsRootCapability) {
+      return postNative(
+        method, args, null,
+        realmSession && realmSession.claim,
+        realmSession && realmSession.generation
+      );
     }
     return ensurePrivilegedCapability().then(function (capability) {
-      return postNative(method, args, capability).catch(function (err) {
+      return postNative(
+        method, args, capability,
+        realmSession && realmSession.claim,
+        realmSession && realmSession.generation
+      ).catch(function (err) {
         // A full navigation replaces this JS realm. This path covers a
         // blocked/revoked navigation that leaves the old document alive:
         // discard its stale token so a later action can bootstrap again.
@@ -592,13 +663,6 @@
           );
         } catch (_) { /* iframe gone, ignore */ }
       }
-      if (isSessionWalletMethod(data.method) &&
-          !_sessionWalletRelayAdmitted) {
-        console.warn(_BRIDGE_TAG, "refusing wallet relay during handoff",
-          data.method, "from child iframe", origin);
-        reply(null, "Native wallet handoff is in progress");
-        return;
-      }
       // The native capability is delivered only into this top-frame JS
       // realm. Never let a child bootstrap it or ask the parent to exercise
       // a privileged method on its behalf; non-privileged dapp methods keep
@@ -611,6 +675,35 @@
           "Privileged Usernode methods are only available to the top-level page");
         return;
       }
+      if (isRealmSessionMethod(data.method) && !_realmSession) {
+        console.warn(_BRIDGE_TAG, "refusing session relay while closed",
+          data.method, "from child iframe", origin);
+        reply(null, "Native session is not established for this page");
+        return;
+      }
+      var nativeArgs = data.args || {};
+      if (data.method === "submitTransaction") {
+        try {
+          nativeArgs = requireExactTransactionSubmissionRequest(nativeArgs);
+        } catch (err) {
+          reply(null, (err && err.message) || String(err));
+          return;
+        }
+      }
+      var relayReceiptClaim = data.method === "submitTransaction"
+        ? claimSocialReceiptAdmission() : null;
+      if (data.method === "submitTransaction" && !relayReceiptClaim) {
+        reply(null, "Native session is not established for this page");
+        return;
+      }
+      var relayRealmSession = isRealmSessionMethod(data.method)
+        ? _realmSession : null;
+      if (relayRealmSession && !_privilegedCapability) {
+        reply(null, "Native root authority is not available for this session");
+        return;
+      }
+      var relayRealmGeneration = relayRealmSession
+        ? relayRealmSession.generation : null;
       var nativeId = "relay-" + String(Date.now()) + "-" +
         Math.random().toString(16).slice(2);
       console.log(_BRIDGE_TAG, "← relay request",
@@ -618,19 +711,53 @@
       window.__usernodeBridge.pending[nativeId] = {
         resolve: function (v) {
           console.log(_BRIDGE_TAG, "native resolve →", nativeId);
-          reply(v, null);
+          if (data.method !== "submitTransaction") {
+            reply(v, null);
+            return;
+          }
+          var accepted;
+          try {
+            accepted = requireExactTransactionSubmissionResult(v);
+          } catch (err) {
+            reply(null, (err && err.message) || String(err));
+            return;
+          }
+          try {
+            requireSocialReceiptAdmission(relayReceiptClaim);
+            var receipt = recordSocialTransactionReceipt(
+              nativeArgs, accepted, null, relayReceiptClaim
+            );
+            if (relayReceiptClaim.storageOwner) {
+              observeSocialTransactionReceipt(
+                receipt, null, relayReceiptClaim
+              ).catch(function () {
+                // One bounded observer owns this attempt. An outage leaves
+                // the authenticated Social receipt pending.
+              });
+            }
+            reply(accepted, null);
+          } catch (err) {
+            reply(null, (err && err.message) || String(err));
+          }
         },
         reject: function (err) {
           console.log(_BRIDGE_TAG, "native reject →", nativeId, err);
           reply(null, (err && err.message) || String(err));
         },
+        sessionBound: !!relayRealmSession,
+        realmSessionGeneration: relayRealmGeneration,
       };
       try {
-        window.Usernode.postMessage(JSON.stringify({
+        var relayPayload = {
           method: data.method,
           id: nativeId,
-          args: data.args || {},
-        }));
+          args: nativeArgs,
+        };
+        if (relayRealmSession) {
+          relayPayload.privilegedCapability = _privilegedCapability;
+          relayPayload.realmSessionClaim = relayRealmSession.claim;
+        }
+        window.Usernode.postMessage(JSON.stringify(relayPayload));
       } catch (err) {
         delete window.__usernodeBridge.pending[nativeId];
         reply(null, (err && err.message) || String(err));
@@ -724,66 +851,390 @@
     return null;
   }
 
-  // ── Native ack helper ─────────────────────────────────────────────────
+  // ── Social-owned transaction receipts ─────────────────────────────────
   //
-  // When the bridge confirms a tx is on-chain, notify the Flutter host so it
-  // can stamp the "dapp observed" latency separately from its own polling.
-  var _observedTxIds = {};
-  function _notifyNativeTxObserved(txId, matched) {
-    if (typeof txId !== "string") return;
-    var trimmed = txId.trim();
-    if (!trimmed) return;
-    if (!_sessionWalletRelayAdmitted) return;
-    if (_observedTxIds[trimmed]) return;
-    _observedTxIds[trimmed] = true;
+  // Native owns one operation only: submit an admitted transaction and return
+  // its authoritative id. Social owns everything after that boundary — the
+  // session-keyed receipt, explorer observation, persistence and presentation.
+  // No acknowledgement or receipt state is written back into Flutter.
+  var _SOCIAL_RECEIPT_STORAGE_PREFIX = "usernode:social-receipts:v1:";
+  var _SOCIAL_RECEIPT_LIMIT = 50;
+  var _SOCIAL_RECEIPT_OBSERVATION_TIMEOUT_MS = 180000;
+  var _SOCIAL_RECEIPT_MAX_POLL_INTERVAL_MS = 30000;
+  var _socialReceiptObservers = {};
+  var _socialExplorerChainPromise = null;
 
-    var channel = window.Usernode;
-    if (
-      !channel ||
-      typeof channel !== "object" ||
-      typeof channel.postMessage !== "function"
-    ) {
-      return;
+  function requirePlainObject(value, label) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(label + " must be an object");
     }
+    return value;
+  }
 
-    var blockHeight = null;
-    var blockTimestampMs = null;
-    if (matched && typeof matched === "object") {
-      var bh = matched.block_height;
-      if (typeof bh === "number" && Number.isFinite(bh)) blockHeight = bh;
-      var ts = matched.timestamp_ms != null
-        ? matched.timestamp_ms
-        : matched.block_timestamp_ms;
-      if (typeof ts === "number" && Number.isFinite(ts)) {
-        blockTimestampMs = ts;
-      } else if (typeof ts === "string" && ts.trim()) {
-        var parsed = Date.parse(ts);
-        if (!Number.isNaN(parsed)) blockTimestampMs = parsed;
+  function requireExactTransactionSubmissionRequest(value) {
+    var request = requirePlainObject(value, "submitTransaction request");
+    var keys = Object.keys(request).sort();
+    var allowed = ["amount", "confirmation", "destinationPubkey", "memo"];
+    for (var i = 0; i < keys.length; i++) {
+      if (allowed.indexOf(keys[i]) === -1) {
+        throw new Error("submitTransaction request has unknown field " + keys[i]);
       }
     }
-
-    try {
-      channel.postMessage(
-        JSON.stringify({
-          method: "txObserved",
-          id: "tx_observed_" + trimmed,
-          args: {
-            tx_id: trimmed,
-            observed_at_ms: Date.now(),
-            block_height: blockHeight,
-            block_timestamp_ms: blockTimestampMs,
-          },
-        })
+    if (typeof request.destinationPubkey !== "string" ||
+        !request.destinationPubkey.trim()) {
+      throw new Error("submitTransaction destinationPubkey must be a non-empty string");
+    }
+    if (!Number.isSafeInteger(request.amount) || request.amount <= 0) {
+      throw new Error("submitTransaction amount must be a positive safe integer");
+    }
+    if (typeof request.memo !== "string") {
+      throw new Error("submitTransaction memo must be a string");
+    }
+    var exact = {
+      destinationPubkey: request.destinationPubkey.trim(),
+      amount: request.amount,
+      memo: request.memo,
+    };
+    if (request.confirmation != null) {
+      var confirmation = requirePlainObject(
+        request.confirmation, "submitTransaction confirmation"
       );
-    } catch (e) {
-      console.warn("[usernode-bridge] tx_observed emit failed:", e);
+      var confirmationKeys = Object.keys(confirmation).sort();
+      for (var j = 0; j < confirmationKeys.length; j++) {
+        if (["subtitle", "title"].indexOf(confirmationKeys[j]) === -1) {
+          throw new Error(
+            "submitTransaction confirmation has unknown field " +
+            confirmationKeys[j]
+          );
+        }
+      }
+      var exactConfirmation = {};
+      if (confirmation.title != null) {
+        if (typeof confirmation.title !== "string") {
+          throw new Error("submitTransaction confirmation.title must be a string");
+        }
+        exactConfirmation.title = confirmation.title;
+      }
+      if (confirmation.subtitle != null) {
+        if (typeof confirmation.subtitle !== "string") {
+          throw new Error("submitTransaction confirmation.subtitle must be a string");
+        }
+        exactConfirmation.subtitle = confirmation.subtitle;
+      }
+      exact.confirmation = exactConfirmation;
+    }
+    return exact;
+  }
+
+  function transactionSubmissionRequest(destinationPubkey, amount, memo, opts) {
+    var request = {
+      destinationPubkey: destinationPubkey,
+      amount: amount,
+      memo: memo == null ? "" : String(memo),
+    };
+    if (opts && (opts.confirmTitle != null || opts.confirmSubtitle != null)) {
+      request.confirmation = {};
+      if (opts.confirmTitle != null) request.confirmation.title = opts.confirmTitle;
+      if (opts.confirmSubtitle != null) {
+        request.confirmation.subtitle = opts.confirmSubtitle;
+      }
+    }
+    return requireExactTransactionSubmissionRequest(request);
+  }
+
+  function requireExactTransactionSubmissionResult(value) {
+    var result = requirePlainObject(value, "submitTransaction result");
+    var keys = Object.keys(result);
+    if (keys.length !== 1 || keys[0] !== "txId") {
+      throw new Error("submitTransaction result must contain only txId");
+    }
+    if (typeof result.txId !== "string" || !result.txId ||
+        result.txId !== result.txId.trim()) {
+      throw new Error(
+        "submitTransaction result txId must be a canonical non-empty string"
+      );
+    }
+    return { txId: result.txId };
+  }
+
+  function requireNativeTransactionSubmissionCapability() {
+    if (!_inIframe && !_realmSession) {
+      return Promise.reject(new Error(
+        "Native session is not established for this page"
+      ));
+    }
+    return window.usernode.getBridgeInfo().then(function (info) {
+      if (!info || info.degraded === true) {
+        throw new Error("Could not verify native transaction submission support");
+      }
+      var capabilities = Array.isArray(info.capabilities)
+        ? info.capabilities : [];
+      if (capabilities.indexOf("submitTransaction") === -1) {
+        throw new Error("submitTransaction is not supported by this app build");
+      }
+    });
+  }
+
+  // App.user.id scopes product storage only. Admission comes from the private
+  // top-frame gate generation below; a localStorage key is never authority.
+  function socialReceiptStorageOwner() {
+    var app = window.App;
+    var user = app && app.user;
+    if (!user || user.id == null) return null;
+    var id = String(user.id).trim();
+    return id ? "user:" + id : null;
+  }
+
+  function claimSocialReceiptAdmission() {
+    if (_inIframe || !_realmSession) return null;
+    return {
+      generation: _realmSessionGeneration,
+      storageOwner: socialReceiptStorageOwner(),
+    };
+  }
+
+  function socialReceiptClaimAdmitted(claim) {
+    return !!claim && !_inIframe && !!_realmSession &&
+      claim.generation === _realmSessionGeneration &&
+      claim.storageOwner === socialReceiptStorageOwner();
+  }
+
+  function requireSocialReceiptAdmission(claim) {
+    if (!socialReceiptClaimAdmitted(claim)) {
+      throw new Error(
+        "Transaction operation stopped because the session changed"
+      );
+    }
+    return claim;
+  }
+
+  function socialReceiptStorageKey(owner) {
+    return _SOCIAL_RECEIPT_STORAGE_PREFIX + encodeURIComponent(owner);
+  }
+
+  function readSocialTransactionReceipts(owner) {
+    if (!owner) return [];
+    try {
+      var raw = window.localStorage.getItem(socialReceiptStorageKey(owner));
+      var parsed = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(function (receipt) {
+        return receipt && typeof receipt === "object" &&
+          typeof receipt.txId === "string" && receipt.txId.trim() &&
+          typeof receipt.destinationPubkey === "string" &&
+          Number.isSafeInteger(receipt.amount) && receipt.amount > 0 &&
+          typeof receipt.memo === "string" &&
+          typeof receipt.submittedAt === "number";
+      }).slice(0, _SOCIAL_RECEIPT_LIMIT);
+    } catch (_) {
+      return [];
     }
   }
 
-  window.usernode.acknowledgeTransaction = function acknowledgeTransaction(
-    txId
-  ) {
-    _notifyNativeTxObserved(txId);
+  function publishSocialTransactionReceipts(claim, receipts) {
+    if (!socialReceiptClaimAdmitted(claim) || !claim.storageOwner) return;
+    try {
+      window.dispatchEvent(new CustomEvent(
+        "usernode:transaction-receipts-changed",
+        { detail: { items: receipts.map(function (item) {
+          return Object.assign({}, item);
+        }) } }
+      ));
+    } catch (_) { /* a non-browser bridge host has no CustomEvent */ }
+  }
+
+  function writeSocialTransactionReceipts(claim, receipts) {
+    if (!socialReceiptClaimAdmitted(claim) || !claim.storageOwner) return false;
+    var bounded = receipts.slice(0, _SOCIAL_RECEIPT_LIMIT);
+    try {
+      window.localStorage.setItem(
+        socialReceiptStorageKey(claim.storageOwner), JSON.stringify(bounded)
+      );
+    } catch (_) {
+      return false;
+    }
+    publishSocialTransactionReceipts(claim, bounded);
+    return true;
+  }
+
+  function socialExplorerChainId() {
+    if (_socialExplorerChainPromise) return _socialExplorerChainPromise;
+    _socialExplorerChainPromise = fetch("/explorer-api/active_chain", {
+      credentials: "same-origin",
+      headers: { accept: "application/json" },
+    }).then(function (response) {
+      if (!response.ok) {
+        throw new Error("Explorer chain lookup failed (" + response.status + ")");
+      }
+      return response.json();
+    }).then(function (body) {
+      var id = body && typeof body.chain_id === "string"
+        ? body.chain_id.trim() : "";
+      if (!id) throw new Error("Explorer returned no chain_id");
+      return id;
+    }).catch(function (err) {
+      _socialExplorerChainPromise = null;
+      throw err;
+    });
+    return _socialExplorerChainPromise;
+  }
+
+  function fetchSocialTransactionPage(query, claim) {
+    try {
+      requireSocialReceiptAdmission(claim);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    return socialExplorerChainId().then(function (chainId) {
+      requireSocialReceiptAdmission(claim);
+      return fetch(
+        "/explorer-api/" + encodeURIComponent(chainId) + "/transactions",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(query || {}),
+        }
+      );
+    }).then(function (response) {
+      requireSocialReceiptAdmission(claim);
+      if (!response.ok) {
+        throw new Error("Explorer transaction lookup failed (" + response.status + ")");
+      }
+      return response.json();
+    }).then(function (body) {
+      requireSocialReceiptAdmission(claim);
+      return body;
+    }).catch(function (err) {
+      if (!socialReceiptClaimAdmitted(claim)) {
+        throw new Error(
+          "Transaction observation stopped because the session changed"
+        );
+      }
+      // Explorer outages are not transaction failures. Return an empty page so
+      // the existing bounded inclusion waiter retries until its timeout.
+      return { items: [] };
+    });
+  }
+
+  function confirmSocialTransactionReceipt(claim, receipt, transaction) {
+    requireSocialReceiptAdmission(claim);
+    if (!claim.storageOwner) return;
+    var receipts = readSocialTransactionReceipts(claim.storageOwner);
+    for (var i = 0; i < receipts.length; i++) {
+      if (receipts[i].txId !== receipt.txId) continue;
+      var height = transaction && transaction.block_height;
+      var timestamp = transaction &&
+        (transaction.timestamp_ms != null
+          ? transaction.timestamp_ms : transaction.block_timestamp_ms);
+      receipts[i] = Object.assign({}, receipts[i], {
+        status: "confirmed",
+        confirmedAt: Date.now(),
+        blockHeight: typeof height === "number" ? height : null,
+        blockTimestampMs: typeof timestamp === "number" ? timestamp : null,
+      });
+      writeSocialTransactionReceipts(claim, receipts);
+      return;
+    }
+  }
+
+  function observeSocialTransactionReceipt(receipt, opts, claim) {
+    try {
+      requireSocialReceiptAdmission(claim);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    var key = String(claim.generation) + ":" +
+      (claim.storageOwner || "anonymous") + ":" + receipt.txId;
+    if (_socialReceiptObservers[key]) return _socialReceiptObservers[key];
+    var requestedTimeout = opts && Number.isFinite(opts.timeoutMs) &&
+      opts.timeoutMs > 0 ? opts.timeoutMs : _SOCIAL_RECEIPT_OBSERVATION_TIMEOUT_MS;
+    var requestedPollInterval = opts && Number.isFinite(opts.pollIntervalMs) &&
+      opts.pollIntervalMs > 0 ? opts.pollIntervalMs : 3000;
+    var observerOpts = Object.assign({}, opts || {}, {
+      forcePolling: true,
+      timeoutMs: Math.min(
+        requestedTimeout, _SOCIAL_RECEIPT_OBSERVATION_TIMEOUT_MS
+      ),
+      pollIntervalMs: Math.min(
+        requestedPollInterval, _SOCIAL_RECEIPT_MAX_POLL_INTERVAL_MS
+      ),
+      limit: 1,
+      socialExplorer: true,
+      socialReceiptClaim: claim,
+      filterOptions: {
+        tx_id: receipt.txId,
+      },
+    });
+    delete observerOpts.serverCacheUrl;
+    var run = waitForTransactionVisible({
+      txId: receipt.txId,
+      requireExactTxId: true,
+    }, observerOpts).then(
+      function (matched) {
+        delete _socialReceiptObservers[key];
+        requireSocialReceiptAdmission(claim);
+        confirmSocialTransactionReceipt(claim, receipt, matched);
+        return matched;
+      },
+      function (err) {
+        delete _socialReceiptObservers[key];
+        throw err;
+      }
+    );
+    _socialReceiptObservers[key] = run;
+    return run;
+  }
+
+  function recordSocialTransactionReceipt(request, result, fromPubkey, claim) {
+    requireSocialReceiptAdmission(claim);
+    var exactRequest = requireExactTransactionSubmissionRequest(request);
+    var exactResult = requireExactTransactionSubmissionResult(result);
+    var receipt = {
+      txId: exactResult.txId,
+      destinationPubkey: exactRequest.destinationPubkey,
+      fromPubkey: typeof fromPubkey === "string" && fromPubkey.trim()
+        ? fromPubkey.trim() : null,
+      amount: exactRequest.amount,
+      memo: exactRequest.memo,
+      submittedAt: Date.now(),
+      status: "submitted",
+      confirmedAt: null,
+      blockHeight: null,
+      blockTimestampMs: null,
+    };
+    if (claim.storageOwner) {
+      var receipts = readSocialTransactionReceipts(
+        claim.storageOwner
+      ).filter(function (item) {
+        return item.txId !== receipt.txId;
+      });
+      receipts.unshift(receipt);
+      writeSocialTransactionReceipts(claim, receipts);
+    }
+    return receipt;
+  }
+
+  window.usernode.getTransactionReceipts = function (options) {
+    var claim = claimSocialReceiptAdmission();
+    var receipts = claim && claim.storageOwner
+      ? readSocialTransactionReceipts(claim.storageOwner) : [];
+    if (options && options.observePending === true && claim) {
+      receipts.forEach(function (receipt) {
+        if (receipt.status === "confirmed") return;
+        observeSocialTransactionReceipt(receipt, null, claim).catch(
+          function () {
+            // Explicit product entry points may start one new bounded attempt.
+          }
+        );
+      });
+    }
+    return Promise.resolve({ items: receipts.map(function (item) {
+      return Object.assign({}, item);
+    }) });
   };
 
   function txMatches(tx, expected) {
@@ -795,9 +1246,12 @@
         tx.id, tx.txid, tx.txId, tx.tx_id, tx.hash, tx.tx_hash, tx.txHash,
       ]
         .filter(function (v) { return typeof v === "string"; })
-        .map(function (v) { return v.trim(); })
+        .map(function (v) {
+          return expected.requireExactTxId === true ? v : v.trim();
+        })
         .filter(Boolean);
       if (txIdCandidates.indexOf(expected.txId) >= 0) return true;
+      if (expected.requireExactTxId === true) return false;
     }
 
     if (typeof expected.minCreatedAtMs === "number") {
@@ -839,6 +1293,9 @@
   }
 
   function _fetchInclusionPage(query, opts) {
+    if (opts && opts.socialExplorer === true) {
+      return fetchSocialTransactionPage(query, opts.socialReceiptClaim);
+    }
     var base = _serverCacheUrl(opts);
     if (!base) return window.getTransactions(query);
     return fetch(base + "/getTransactions", {
@@ -883,10 +1340,6 @@
 
     return _waitViaSse(expected, timeoutMs, opts).then(
       function (matched) {
-        _notifyNativeTxObserved(
-          extractTxId(matched) || (expected && expected.txId),
-          matched
-        );
         return matched;
       },
       function (err) {
@@ -1053,10 +1506,6 @@
         }
         if (found) {
           console.log("[usernode-bridge] tx found after", attempt, "polls,", Date.now() - startedAt, "ms (via " + transportLabel + ")");
-          _notifyNativeTxObserved(
-            extractTxId(found) || (expected && expected.txId),
-            found
-          );
           return found;
         }
 
@@ -3813,60 +4262,77 @@
       });
     };
 
-    function nativeSendTransaction(destination_pubkey, amount, memo, opts) {
-      var startedAt = Date.now();
+    function nativeSendTransaction(
+      destination_pubkey, amount, memo, opts, admittedReceiptClaim
+    ) {
+      var request = transactionSubmissionRequest(
+        destination_pubkey, amount, memo, opts
+      );
+      var receiptClaim = _inIframe ? null : admittedReceiptClaim;
+      if (!_inIframe && !receiptClaim) {
+        return Promise.reject(new Error(
+          "Native session is not established for this page"
+        ));
+      }
       var from_pubkey;
-      return window.getNodeAddress().then(function (v) {
+      return requireNativeTransactionSubmissionCapability().then(function () {
+        if (!_inIframe) requireSocialReceiptAdmission(receiptClaim);
+        return window.getNodeAddress();
+      }).then(function (v) {
+        if (!_inIframe) requireSocialReceiptAdmission(receiptClaim);
         from_pubkey = v == null ? null : String(v).trim();
-        return callNative("sendTransaction", {
-          destination_pubkey: destination_pubkey,
-          amount: amount,
-          memo: memo,
-          confirm_title: (opts && opts.confirmTitle) || undefined,
-          confirm_subtitle: (opts && opts.confirmSubtitle) || undefined,
-        });
+        return callNative("submitTransaction", request);
       }).then(function (sendResult) {
-        var sendError = sendResult && sendResult.error;
-        if (sendError) throw new Error(String(sendError));
+        var exactResult = requireExactTransactionSubmissionResult(sendResult);
+        // An iframe owns no Social receipt state. Its exact native call was
+        // relayed through the trusted top frame, which recorded and started
+        // the one Social-owned observer before returning this result.
+        if (_inIframe) {
+          if (opts && typeof opts.onSubmitted === "function") {
+            try { opts.onSubmitted(exactResult); } catch (e) {
+              console.warn("[usernode-bridge] onSubmitted threw:", e);
+            }
+          }
+          return exactResult;
+        }
+        requireSocialReceiptAdmission(receiptClaim);
+        var receipt = recordSocialTransactionReceipt(
+          request, exactResult, from_pubkey, receiptClaim
+        );
         // Native channel resolved: the user has accepted the wallet dialog and
-        // Flutter has begun broadcasting. Fire onSubmitted so callers can reset
-        // send-phase timers (parity with the QR-mode "scanned" moment).
+        // returned the authoritative transaction id. Fire onSubmitted so callers
+        // can reset send-phase timers (parity with the QR-mode "scanned" moment).
         if (opts && typeof opts.onSubmitted === "function") {
-          try { opts.onSubmitted(sendResult); } catch (e) {
+          try { opts.onSubmitted(exactResult); } catch (e) {
             console.warn("[usernode-bridge] onSubmitted threw:", e);
           }
         }
-        var sendFailed = sendResult && sendResult.queued === false;
         var shouldWait =
-          !sendFailed && (!opts || opts.waitForInclusion == null ? true : !!opts.waitForInclusion);
+          !opts || opts.waitForInclusion == null ? true : !!opts.waitForInclusion;
+        var observation =
+          receiptClaim.storageOwner || shouldWait
+            ? observeSocialTransactionReceipt(receipt, opts, receiptClaim)
+            : null;
         if (!shouldWait) {
-          if (!sendFailed) {
-            _openPassiveSseTelemetry({
-              txId: extractTxId(sendResult),
-              minCreatedAtMs: startedAt,
-              memo: memo == null ? null : String(memo),
-              destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
-              from_pubkey: from_pubkey || null,
-              amount: amount,
-            }, opts);
-          }
-          return sendResult;
+          if (observation) observation.catch(function () {
+            // One bounded attempt owns observation. The receipt remains
+            // pending after timeout; only an explicit product resume retries.
+          });
+          return exactResult;
         }
-        var txId = extractTxId(sendResult);
-        return waitForTransactionVisible({
-          txId: txId,
-          minCreatedAtMs: startedAt,
-          memo: memo == null ? null : String(memo),
-          destination_pubkey: destination_pubkey == null ? null : String(destination_pubkey),
-          from_pubkey: from_pubkey || null,
-          amount: amount,
-        }, opts).then(function (matchedTx) {
-          return attachMatchedTx(sendResult, matchedTx);
+        return observation.then(function (tx) {
+          return { txId: exactResult.txId, tx: tx };
         });
       });
     }
 
     window.sendTransaction = function sendTransaction(destination_pubkey, amount, memo, opts) {
+      // Capture top-frame receipt admission at the public API call, before the
+      // asynchronous mock probe. A close/reopen during that probe cannot move
+      // the operation into the successor session.
+      var admittedReceiptClaim =
+        window.usernode.isNative && !_inIframe
+          ? claimSocialReceiptAdmission() : null;
       return isMockEnabled().then(function (useMock) {
         var branch = useMock ? "mock" :
           (window.usernode.isNative ? "native" : "qr");
@@ -3874,7 +4340,11 @@
           "isNative=" + !!window.usernode.isNative,
           "useMock=" + useMock);
         if (useMock) return mockSendTransaction(destination_pubkey, amount, memo, opts);
-        if (window.usernode.isNative) return nativeSendTransaction(destination_pubkey, amount, memo, opts);
+        if (window.usernode.isNative) {
+          return nativeSendTransaction(
+            destination_pubkey, amount, memo, opts, admittedReceiptClaim
+          );
+        }
         return qrSendTransaction(destination_pubkey, amount, memo, opts);
       });
     };
@@ -4152,11 +4622,11 @@
   // =====================================================================
   //  Public API: native chrome data (bridge v2)
   //  (usernode.getBridgeInfo / getNodeStatus / getWalletState /
-  //   getTransactionRecords / openNativeScreen)
+  //   openNativeScreen)
   // =====================================================================
   //
-  // Data feeds for SV's web chrome (header node pill, wallet sheet,
-  // receipts) when running inside the Usernode app — the app-as-SV-chrome
+  // Data feeds for SV's web chrome (header node pill and wallet sheet)
+  // when running inside the Usernode app — the app-as-SV-chrome
   // migration. Versioned contract: NATIVE-BRIDGE.md in the
   // social-vibecoding repo. Same old-build hazard as the shortcut
   // methods (unknown methods are silently dropped), so every read
@@ -4276,6 +4746,8 @@
         ? location.origin : null,
       bridgeVersion: (info && typeof info.version === "number")
         ? info.version : 0,
+      sessionLifecycleProtocol:
+        (info && info.sessionLifecycleProtocol === 2) ? 2 : null,
       capabilities: (info && Array.isArray(info.capabilities))
         ? info.capabilities.slice() : [],
       appVersion: (info && info.appVersion) ? String(info.appVersion) : null,
@@ -4319,8 +4791,10 @@
     });
   }
 
-  // getBridgeInfo() → { version, capabilities: [...], appVersion?,
-  //   buildNumber? }. The optional release identifiers describe the installed
+  // getBridgeInfo() → { version, capabilities: [...],
+  //   sessionLifecycleProtocol?, appVersion?, buildNumber? }. The optional
+  // semantic protocol is deliberately separate from generic bridge version.
+  // The optional release identifiers describe the installed
   // Flutter binary and remain on this public probe so SV staging can render
   // them without privileged settings access. Resolves
   // { version: 0, capabilities: [] } outside the app and on old builds,
@@ -4381,16 +4855,6 @@
       ));
     }
     return callNative("manageStaking", {});
-  };
-
-  // getTransactionRecords() → { items: [...] } (newest first, capped at
-  // 100) or null. The app-side receipts for transactions sent from this
-  // webview — the same data behind the native receipts sheet.
-  window.usernode.getTransactionRecords = function () {
-    if (!window.usernode.isNative) return Promise.resolve(null);
-    return callNativeChromeRead(
-      "getTransactionRecords", {}, _CHROME_PROBE_TIMEOUT_MS, null
-    );
   };
 
   // openNativeScreen(screen) → true. Pushes an allowlisted native route
@@ -4479,15 +4943,13 @@
   };
 
   // =====================================================================
-  //  Public API: native profile & settings (bridge v3)
-  //  (usernode.getProfileInfo / getSettingsState / setNodeSleepEnabled /
+  //  Public API: native settings (bridge v3)
+  //  (usernode.getSettingsState / setNodeSleepEnabled /
   //   setDebugMode / setFacematchStrict / resetZkChallenge /
-  //   requestPermissions / openBatterySettings / setIosKeepAlive /
-  //   logout)
+  //   requestPermissions / openBatterySettings / logout)
   // =====================================================================
   //
-  // Backs SV's #profile screen and the "Usernode app" sections of the
-  // Settings modal (profile-and-settings-to-web migration). Contract:
+  // Backs the "Usernode app" sections of the Settings modal. Contract:
   // NATIVE-BRIDGE.md. Reads resolve null on old builds / outside the app
   // so callers can capability-gate UI; mutations REJECT on old builds —
   // a silent no-op would leave a toggle lying about its state. The app
@@ -4554,16 +5016,6 @@
     return callNativeChromeAction("captureScreenshot", {}, 15000);
   };
 
-  // getProfileInfo() → { participantId } or null (old build / outside
-  // the app). participantId is null when this install hasn't registered
-  // with the leaderboard yet.
-  window.usernode.getProfileInfo = function () {
-    if (!window.usernode.isNative) return Promise.resolve(null);
-    return callNativeChromeRead(
-      "getProfileInfo", {}, _CHROME_PROBE_TIMEOUT_MS, null
-    );
-  };
-
   // getSettingsState() → { buildInfo: { appVersion, buildNumber,
   //   nodeVersion, commitHash, branch }, nodeSleepEnabled, debugMode,
   //   facematchStrict, authStatus,
@@ -4606,14 +5058,6 @@
     return callNativeChromeAction(
       "setFacematchStrict", { enabled: !!enabled },
       _SETTINGS_STATE_TIMEOUT_MS
-    );
-  };
-
-  // setIosKeepAlive(enabled) → refreshed settings state. iOS only; the
-  // app ignores it elsewhere (state simply won't change).
-  window.usernode.setIosKeepAlive = function (enabled) {
-    return callNativeChromeAction(
-      "setIosKeepAlive", { enabled: !!enabled }, _SETTINGS_STATE_TIMEOUT_MS
     );
   };
 
@@ -4680,105 +5124,207 @@
     });
   };
 
-  // logout() → true. Confirm web-side; native owns the hard stop/drain and
-  // credential cleanup, then SV clears the web session and returns the user
-  // to the platform login page.
+  // prepareForLogin() -> true. Root-owned terminal preflight used only by an
+  // anonymous native shell before it asks Social to mint a web session. It is
+  // privileged but deliberately carries no realm-session claim: a recovered
+  // native A may predate this JavaScript document.
+  window.usernode.prepareForLogin = function () {
+    return callNativeChromeAction(
+      "prepareForLogin", {}, _PERMISSION_REQUEST_TIMEOUT_MS
+    );
+  };
+
+  // logout() → true. Social clears its web session and caches first, then
+  // invokes this terminal action. Native owns the hard stop/drain and
+  // identity/credential cleanup before replacing the old document.
   window.usernode.logout = function () {
     return callNativeChromeAction("logout", {}, _SETTINGS_STATE_TIMEOUT_MS);
   };
 
   // =====================================================================
-  //  Public API: platform login + node lifecycle (bridge v4)
-  //  (usernode.beginSessionHandoff / completeLogin / startNode / stopNode)
+  //  Public API: atomic native-session establishment (protocol 2)
   // =====================================================================
-  //
-  // Thin-shell migration: the platform (SV) is the ONLY sign-in surface
-  // and the node lifecycle is platform-controlled. After a web login, SV
-  // exchanges its session cookie for a mobile bearer token
-  // (POST /api/v4/mobile/auth/from-session) and hands it to the native
-  // app here; the app provisions/imports the custodial wallet and reports
-  // identity progress via `usernode:auth-status` CustomEvents on window
-  // (detail: { phase, address, participantId?, epoch? } — same convention as
-  // `usernode:node-status`). Node start/stop is then requested explicitly
-  // by SV chrome (public/js/native-chrome.js owns the orchestration).
-  //
-  // These methods reject on old builds / outside the app / from non-SV
-  // origins. Contract: NATIVE-BRIDGE.md (bridge v4).
+  // The opaque realm claim never leaves this closure. Callers receive only
+  // the committed receipt's non-secret public status; subsequent session-
+  // bound calls carry the claim automatically.
+  var _NATIVE_ESTABLISH_TIMEOUT_MS = 120000;
+  var _OPAQUE_ATTEMPT_RE = /^nsa_[A-Za-z0-9_-]{43}$/;
+  var _CANONICAL_U64_RE = /^(0|[1-9][0-9]*)$/;
+  var _MAX_U64 = "18446744073709551615";
+  var _VALIDATED_CODE_RE = /^[a-z0-9_]{1,64}$/;
 
-  // beginSessionHandoff() → { blocked: true }. New app builds close their
-  // native wallet-dispatch latch before the web session exchange, including
-  // raw Android child-frame channel messages that cannot be stopped by this
-  // JavaScript wrapper alone.
-  window.usernode.beginSessionHandoff = function () {
-    return callNativeChromeAction(
-      "beginSessionHandoff", {}, _CHROME_PROBE_TIMEOUT_MS
-    );
-  };
+  function requireExactObject(value, keys, label) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(label + " must be an object");
+    }
+    var actual = Object.keys(value).sort();
+    var expected = keys.slice().sort();
+    if (actual.length !== expected.length) {
+      throw new Error(label + " has unexpected fields");
+    }
+    for (var i = 0; i < expected.length; i++) {
+      if (actual[i] !== expected[i]) {
+        throw new Error(label + " has unexpected fields");
+      }
+    }
+    return value;
+  }
 
-  // enterAnonymousSession() → { admitted: true }. The trusted shell calls
-  // this only after it has confirmed that no web participant is signed in.
-  window.usernode.enterAnonymousSession = function () {
-    return callNativeChromeAction(
-      "enterAnonymousSession", {}, _CHROME_PROBE_TIMEOUT_MS
-    );
-  };
+  function requireCanonicalString(value, label) {
+    if (typeof value !== "string" || !value || value !== value.trim()) {
+      throw new Error(label + " must be a non-empty canonical string");
+    }
+    return value;
+  }
 
-  // completeLogin({ token, user }) → identity snapshot
-  //   { phase, address, participantId?, epoch? }, or { restarting: true }
-  //   for a cross-participant hard restart. `token` is the v4
-  //   mobile bearer from /from-session; `user` is that response's user
-  //   object. Generous timeout: provisioning round-trips the leaderboard
-  //   API and may import a wallet.
-  var _COMPLETE_LOGIN_TIMEOUT_MS = 120000;
-  window.usernode.completeLogin = function (payload) {
-    payload = payload || {};
-    return callNativeChromeAction(
-      "completeLogin",
-      { token: payload.token, user: payload.user || null },
-      _COMPLETE_LOGIN_TIMEOUT_MS
-    );
-  };
+  function requireNativeIdentity(value) {
+    requireExactObject(value, ["participantId", "accountId", "address"],
+      "native identity");
+    if (typeof value.participantId !== "string" ||
+        !/^[1-9][0-9]*$/.test(value.participantId)) {
+      throw new Error("native identity participantId is invalid");
+    }
+    return Object.freeze({
+      participantId: value.participantId,
+      accountId: requireCanonicalString(value.accountId,
+        "native identity accountId"),
+      address: requireCanonicalString(value.address,
+        "native identity address"),
+    });
+  }
 
-  // startNode({ address, participantId?, epoch? }) → { started, nodeStatus }
-  // (or rejects when the requested identity does not match the current
-  // native participant/epoch). The extra binding fields are additive and
-  // ignored by bridge v4 builds.
-  var _NODE_LIFECYCLE_TIMEOUT_MS = 60000;
-  window.usernode.startNode = function (payload) {
-    payload = payload || {};
-    return callNativeChromeAction(
-      "startNode", {
-        address: payload.address || null,
-        participantId: payload.participantId == null
-          ? null : payload.participantId,
-        epoch: payload.epoch == null ? null : payload.epoch,
-      },
-      _NODE_LIFECYCLE_TIMEOUT_MS
-    );
-  };
+  function requireRuntimeStatus(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("runtimeStatus is invalid");
+    }
+    if (value.state === "running") {
+      requireExactObject(value, ["state"], "runtimeStatus");
+      return Object.freeze({ state: "running" });
+    }
+    requireExactObject(value, ["state", "validatedCode"], "runtimeStatus");
+    if (value.state !== "startFailed" ||
+        typeof value.validatedCode !== "string" ||
+        !_VALIDATED_CODE_RE.test(value.validatedCode)) {
+      throw new Error("runtimeStatus is invalid");
+    }
+    return Object.freeze({
+      state: "startFailed",
+      validatedCode: value.validatedCode,
+    });
+  }
 
-  // stopNode() → { stopped }. Idempotent — resolves true-shaped even
-  // when the node wasn't running.
-  window.usernode.stopNode = function () {
-    return callNativeChromeAction(
-      "stopNode", {}, _NODE_LIFECYCLE_TIMEOUT_MS
-    );
-  };
+  function requireCanonicalU64(value) {
+    if (typeof value !== "string" || !_CANONICAL_U64_RE.test(value) ||
+        value.length > _MAX_U64.length ||
+        (value.length === _MAX_U64.length && value > _MAX_U64)) {
+      throw new Error("nativeRevision is not a canonical u64 string");
+    }
+    return value;
+  }
 
-  // getAuthStatus() → { phase, address, participantId?, epoch? } or null
-  // (old build / outside the app). Poll-style twin of the
-  // `usernode:auth-status` event for
-  // boot-time orchestration.
-  window.usernode.getAuthStatus = function () {
-    if (!window.usernode.isNative) return Promise.resolve(null);
-    return callNativeChromeRead(
-      "getAuthStatus", {}, _CHROME_PROBE_TIMEOUT_MS, null
-    );
+  function requireNativeEstablishResult(value, attemptId) {
+    requireExactObject(value, [
+      "protocol", "attemptId", "nativeRevision", "identity",
+      "runtimeStatus", "receiptStatus", "realmSessionClaim",
+    ], "native establishment result");
+    if (value.protocol !== 2 || value.attemptId !== attemptId ||
+        value.receiptStatus !== "committedReady") {
+      throw new Error("native establishment result does not match the request");
+    }
+    var identity = requireNativeIdentity(value.identity);
+    var runtimeStatus = requireRuntimeStatus(value.runtimeStatus);
+    var publicStatus = Object.freeze({
+      protocol: 2,
+      attemptId: attemptId,
+      nativeRevision: requireCanonicalU64(value.nativeRevision),
+      identity: identity,
+      runtimeStatus: runtimeStatus,
+      receiptStatus: "committedReady",
+    });
+    return {
+      claim: requireCanonicalString(value.realmSessionClaim,
+        "realmSessionClaim"),
+      publicStatus: publicStatus,
+    };
+  }
+
+  window.usernode.establishNativeSession = function (payload) {
+    try {
+      requireExactObject(payload, [
+        "attemptId", "desiredRuntime",
+      ], "native establishment request");
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    if (payload.desiredRuntime !== "running" ||
+        !_OPAQUE_ATTEMPT_RE.test(payload.attemptId)) {
+      return Promise.reject(new Error("native establishment request is invalid"));
+    }
+    var request = Object.freeze({
+      attemptId: payload.attemptId,
+      desiredRuntime: "running",
+    });
+    var requestKey = JSON.stringify(request);
+    var generation = _realmSessionGeneration;
+
+    if (_realmSession) {
+      if (_realmSession.attemptId === request.attemptId &&
+          _realmSession.requestKey === requestKey) {
+        return Promise.resolve(_realmSession.publicStatus);
+      }
+      return Promise.reject(taggedNativeError(
+        "A different native session is already established for this page",
+        "native-session-conflict"
+      ));
+    }
+    if (_realmEstablishLease) {
+      if (_realmEstablishLease.generation === generation &&
+          _realmEstablishLease.requestKey === requestKey) {
+        return _realmEstablishLease.promise;
+      }
+      return Promise.reject(taggedNativeError(
+        "A different native session establishment is already in progress",
+        "native-session-conflict"
+      ));
+    }
+
+    var lease = {
+      generation: generation,
+      attemptId: request.attemptId,
+      requestKey: requestKey,
+      promise: null,
+    };
+    _realmEstablishLease = lease;
+    lease.promise = callNativeChromeAction(
+      "establishNativeSession", request, _NATIVE_ESTABLISH_TIMEOUT_MS
+    ).then(function (raw) {
+      if (_realmEstablishLease !== lease ||
+          _realmSessionGeneration !== generation) {
+        throw taggedNativeError(
+          "Native session establishment was superseded",
+          "session-changed"
+        );
+      }
+      var accepted = requireNativeEstablishResult(raw, request.attemptId);
+      _realmSession = {
+        claim: accepted.claim,
+        generation: generation,
+        attemptId: request.attemptId,
+        requestKey: requestKey,
+        publicStatus: accepted.publicStatus,
+      };
+      _realmEstablishLease = null;
+      return accepted.publicStatus;
+    }).then(null, function (err) {
+      if (_realmEstablishLease === lease) _realmEstablishLease = null;
+      throw err;
+    });
+    return lease.promise;
   };
 
   // markPrivilegedBridgeReady() → { ready: true }. Social calls this only
   // after every native-event listener is installed. Native binds readiness to
-  // this exact JavaScript realm and replays current auth/node/push state; it
+  // this exact JavaScript realm and replays current native event state; it
   // deliberately does not infer listener readiness from WebView callbacks.
   window.usernode.markPrivilegedBridgeReady = function () {
     if (!window.usernode.isNative) return Promise.resolve({ ready: false });
@@ -4809,6 +5355,12 @@
 
   var _SOCIAL_PUSH_TIMEOUT_MS = 12000;
   var _SOCIAL_PUSH_PERMISSION_TIMEOUT_MS = 120000;
+  // Shorter than the push timeouts because nothing waits on it: the
+  // appearance publish is fire-and-forget presentation state whose only
+  // consumer is the NEXT cold launch, and on a build that does not know the
+  // method the timeout IS the answer. Long enough to clear a cold-start
+  // stall, short enough that a boot-time probe never holds a handle open.
+  var _APPEARANCE_TIMEOUT_MS = 4000;
 
   window.usernode.getSocialPushState = function () {
     if (!window.usernode.isNative) return Promise.resolve(null);
@@ -4847,6 +5399,47 @@
   window.usernode.setSocialBadgeCount = function (count) {
     return callNativeChromeAction(
       "setSocialBadgeCount", { count: count }, _SOCIAL_PUSH_TIMEOUT_MS
+    );
+  };
+
+  // setAppearance({ scheme, background }) → tells the native shell which
+  // appearance the page settled on, so the NEXT cold launch can paint that
+  // colour before this document exists.
+  //
+  // WHY THIS IS A BRIDGE METHOD AND NOT A STYLESHEET. The shell's theme
+  // lives in this WebView's localStorage; the app's lives in its own
+  // SharedPreferences (`app:theme_mode`). Nothing carried a value between
+  // them, so the app could only guess from the OS — and guessed wrong for
+  // everyone who picked Dark on a light-mode phone, painting a white launch
+  // screen ahead of a near-black shell. The colour a launch screen needs is
+  // needed BEFORE any web code runs, so the only way to have it is to have
+  // been told last time.
+  //
+  //   scheme      "dark" | "light" — the RESOLVED appearance, never the
+  //               tri-state stored mode: the shell has already folded
+  //               `system` against the OS preference by the time this is
+  //               called, and the app must not re-resolve it.
+  //   background  the page ground as `#rrggbb`, so a shell build can match
+  //               the exact colour rather than approximating with black.
+  //
+  // UNPRIVILEGED ON PURPOSE. It carries no account state and reveals
+  // nothing, and the launch it is fixing is the one before sign-in — a
+  // privileged envelope would make it unavailable in exactly the case it
+  // exists for.
+  //
+  // Additive capability: feature-detect `setAppearance` via
+  // getBridgeInfo().capabilities before calling. Older builds drop the
+  // unknown method silently and lose only the improvement; producer
+  // requirements live in NATIVE-BRIDGE.md.
+  window.usernode.setAppearance = function (appearance) {
+    var scheme = appearance && appearance.scheme === "dark" ? "dark" : "light";
+    var background = appearance && appearance.background;
+    var args = { scheme: scheme };
+    if (typeof background === "string" && /^#[0-9a-fA-F]{6}$/.test(background)) {
+      args.background = background.toLowerCase();
+    }
+    return callNativeChromeAction(
+      "setAppearance", args, _APPEARANCE_TIMEOUT_MS
     );
   };
 

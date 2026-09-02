@@ -26,6 +26,8 @@ const moduleSource = fs.readFileSync(
 );
 const islandSource = fs.readFileSync(
   path.join(ROOT, 'frontend/src/features/admin/index.tsx'), 'utf8'
+) + fs.readFileSync(
+  path.join(ROOT, 'frontend/src/features/admin/sections.ts'), 'utf8'
 );
 
 test('lookup accepts exact username/email/id text and rejects oversized input', () => {

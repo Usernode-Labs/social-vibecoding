@@ -208,6 +208,25 @@ test('delegation: without timing data every multiplier is 1 (never guessed)', ()
   assert.equal(mults.get(2), 1);
 });
 
+test('delegation: cutover makes the epoch ledger the sole authority from C onward', () => {
+  const t0 = 1_000_000_000_000;
+  const boundaries = new Map([
+    [9, { startMs: t0, endMs: t0 + HOUR }],
+    [10, { startMs: t0 + HOUR, endMs: t0 + 2 * HOUR }],
+    [11, { startMs: t0 + 2 * HOUR, endMs: t0 + 3 * HOUR }],
+  ]);
+  const mults = delegationMultipliers({
+    epochs: [9, 10, 11],
+    boundaries,
+    periods: [{ startedAtMs: t0, endedAtMs: null }],
+    cutoverEpoch: 10,
+    epochDelegated: new Map([[10, false], [11, true]]),
+  });
+  assert.equal(mults.get(9), 0.5);
+  assert.equal(mults.get(10), 1);
+  assert.equal(mults.get(11), 0.5);
+});
+
 // ─── computeChallengeScore (the golden vector and friends) ────────────
 
 const flatWeights = (epochs) => new Map(epochs.map((e) => [e, 1]));

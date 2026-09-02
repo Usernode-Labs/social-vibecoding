@@ -69,6 +69,7 @@ interface LegacyWindow {
     restoreFromHash?(): void;
   };
   Settings?: { logout?(): void };
+  NativeChrome?: { prepareForLogin?(): Promise<unknown> };
   AppView?: {
     mountViewerCover?(
       viewer: Element,
@@ -175,6 +176,29 @@ export function hasSession(): boolean {
 export function isNative(): boolean {
   const w = legacy();
   return !!(w.usernode && w.usernode.isNative);
+}
+
+/**
+ * Sends an ordinary session-mint request only after a native anonymous shell
+ * has closed, drained, and revoked any privately retained native session.
+ * Desktop browsers have no native authority, while an already-live web
+ * session is rejected centrally by the API and must use explicit logout.
+ */
+export async function fetchSessionMint(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const w = legacy();
+  if (w.usernode?.isNative === true) {
+    const chrome = w.NativeChrome;
+    if (!chrome || typeof chrome.prepareForLogin !== 'function') {
+      throw new Error(
+        'This Usernode app version must be updated for secure sign-in',
+      );
+    }
+    await chrome.prepareForLogin();
+  }
+  return fetch(input, init);
 }
 
 /**

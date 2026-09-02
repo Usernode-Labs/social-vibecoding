@@ -32,7 +32,7 @@ const nativeChromeSource = fs.readFileSync(
 
 // The sheet must reach signed-out users too: the OS notification prompt
 // (and the Android alarm/battery asks) are device-level, not
-// account-level, so the anonymous-session admission is also a trigger.
+// account-level, so entering the anonymous shell is also a trigger.
 
 function fakeNode(tag) {
   const node = {
@@ -67,8 +67,7 @@ function boot(opts) {
       : { toast() {}, platform: opts.kitPlatform || 'ios' },
     usernode: {
       isNative: true,
-      async getBridgeInfo() { return { version: 4, capabilities }; },
-      async enterAnonymousSession() { return { admitted: true }; },
+      async getBridgeInfo() { return { version: 5, capabilities }; },
       async getSettingsState() { return { permissions: opts.permissions }; },
       async getSocialPushState() {
         if (opts.socialPushState === undefined) return null;
@@ -303,18 +302,17 @@ test('iOS: a denial keeps the sheet open, un-granted, and unmarked', async () =>
   assert.notEqual(stored[MARKER], '1');
 });
 
-test('anonymous: a signed-out iOS device still gets the sheet once the ' +
-     'anonymous session is admitted', async () => {
+test('anonymous: native session stays closed while device permissions remain available',
+  async () => {
   const { sandbox, sheets } = boot({
     user: null,
-    capabilities: ['getSettingsState', 'getSocialPushState',
-      'enterAnonymousSession'],
+    capabilities: ['getSettingsState', 'getSocialPushState'],
     permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
     socialPushState: IOS_UNPROMPTED,
   });
   const admitted = await sandbox.NativeChrome.enterAnonymous();
-  assert.equal(admitted, true, 'the anonymous session was admitted');
-  // The admission fires the sheet itself — wait for that run, without
+  assert.equal(admitted, false, 'anonymous pages never receive session authority');
+  // Anonymous entry fires the device-only sheet itself — wait for that run, without
   // calling maybeShowFirstRunPermissions() here (that would mask a
   // missing trigger).
   if (sandbox.NativeChrome._firstRunPromise) {
@@ -322,24 +320,7 @@ test('anonymous: a signed-out iOS device still gets the sheet once the ' +
   }
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sheets.length, 1,
-    'the anonymous admission itself must trigger the sheet');
-});
-
-test('anonymous: a refused admission does not trigger the sheet', async () => {
-  const { sandbox, sheets } = boot({
-    user: null,
-    capabilities: ['getSettingsState', 'getSocialPushState',
-      'enterAnonymousSession'],
-    permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
-    socialPushState: IOS_UNPROMPTED,
-  });
-  sandbox.usernode.enterAnonymousSession = async () => ({ admitted: false });
-  const admitted = await sandbox.NativeChrome.enterAnonymous();
-  assert.equal(admitted, false);
-  // Let any stray microtask chain settle before counting.
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(sheets.length, 0,
-    'a fail-closed admission keeps the boot quiet');
+    'anonymous entry must still trigger device-only permissions');
 });
 
 test('Android: an unmarked device still gets the sheet', async () => {
@@ -457,4 +438,32 @@ test('Settings’ Allow notifications completes the grant the same way', () => {
     'the row repaints from the settled answer');
   assert.ok(!/_unApply\(window\.usernode\.requestPermissions\(\)\)/.test(settingsJs),
     'the old single-read path must not survive anywhere');
+});
+
+// ── ?shot=notif-permissions dispatches its ghost click synchronously ───────
+//
+// presentSheet appends the sheet/backdrop and wires the guard before it
+// returns. Dispatch there, while the opening gesture's ghost window is true
+// by construction; deferring to a timer or frame makes a headless/background
+// scheduler part of the assertion and has made unrelated proposals go red.
+
+test('the ghost click targets the synchronously presented sheet', () => {
+  const app = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const shot = app.slice(app.indexOf('  _applyNotifPermissionsShot() {'));
+  const body = shot.slice(0, shot.indexOf('\n  },'));
+
+  assert.doesNotMatch(body, /requestAnimationFrame|performance\.now/,
+    'no scheduler decides whether the synthetic ghost lands in time');
+  const presentAt = body.indexOf('const sheet = NativeChrome.presentPermissionsSheet');
+  const backdropAt = body.indexOf("const backdrop = document.querySelector('.un-backdrop')");
+  const clickAt = body.indexOf('backdrop.click()');
+  const markerAt = body.indexOf(
+    "sheet.el.setAttribute('data-un-ghost-click', 'dispatched')");
+  assert.ok(presentAt >= 0 && presentAt < backdropAt && backdropAt < clickAt && clickAt < markerAt,
+    'present, dispatch, and mark happen synchronously in that order');
+  assert.match(body, /if \(!backdrop\) return;/,
+    'a missing backdrop cannot produce a false-positive marker');
+  assert.doesNotMatch(body, /document\.querySelector\('\.un-sheet'\)/,
+    'the marker belongs to the exact returned sheet');
 });

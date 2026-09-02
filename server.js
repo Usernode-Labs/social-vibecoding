@@ -4,7 +4,7 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 const { load: loadConfig } = require('./src/config');
 const { migrate } = require('./src/db/migrate');
-const { shellAssetCacheControl } = require('./src/services/static-cache');
+const { shellAssetCacheControl, applyShellBuildHeader } = require('./src/services/static-cache');
 const { authMiddleware } = require('./src/middleware/auth');
 const { authRoutes } = require('./src/routes/auth');
 const { appRoutes } = require('./src/routes/apps');
@@ -147,18 +147,19 @@ app.use(mcpConnectGate(config));
 app.use(mcpPreAuthRoutes(config));
 
 // ── Explorer API passthrough ───────────────────────────────────────────────
-// The mobile app's in-webview "Transaction Log" panel resolves the explorer
-// against the origin it is loaded from and calls
+// Social owns transaction receipt observation. Its trusted top-frame bridge
+// observes both direct and relayed embedded-dapp submissions through
 // `GET /explorer-api/active_chain` + `POST /explorer-api/<chain>/transactions`
-// (usernode flutter `dapp_webview_screen.dart`). On the per-dApp subdomains
-// the dapp template server (usernode-dapp-homepage/server.js `proxyExplorer`)
-// proxies that prefix to the explorer; on the launcher origin the path used to
-// fall through the JWT gate and 302 to /login.html, so the webview got HTML
-// back and `jsonDecode` threw "Explorer fetch failed". Mounting the same
-// public passthrough here — before the JSON body parser so the raw body
-// streams through, and before authMiddleware so it isn't redirected — makes
-// the panel work without an app redeploy. Matches the documented
-// PUBLIC_PREFIXES = ['/explorer-api/'] convention (src/prompts/app-conventions.md).
+// after native submission returns an authoritative txId. On per-dapp
+// subdomains the dapp template server (`proxyExplorer`) proxies that prefix to
+// the explorer; on the launcher origin the path used to fall through the JWT
+// gate and 302 to /login.html, so observation received
+// HTML instead of explorer JSON. Mounting the same public passthrough here —
+// before the JSON body parser so the raw body streams through, and before
+// authMiddleware so it isn't redirected — makes receipt observation work
+// without giving Flutter explorer authority. Matches
+// the documented PUBLIC_PREFIXES = ['/explorer-api/'] convention
+// (src/prompts/app-conventions.md).
 const EXPLORER_UPSTREAM =
   process.env.EXPLORER_UPSTREAM || 'testnet-explorer.usernodelabs.org';
 const EXPLORER_UPSTREAM_BASE = process.env.EXPLORER_UPSTREAM_BASE || '/api';
@@ -726,6 +727,10 @@ app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
     const cc = shellAssetCacheControl(filePath);
     if (cc) res.setHeader('Cache-Control', cc);
+    // Which build these bytes belong to, so the service worker can tell a
+    // cached copy that is still current from one a deploy has superseded.
+    // Same asset set as the Cache-Control above — see static-cache.js.
+    if (cc) applyShellBuildHeader(res);
   },
 }));
 
@@ -771,6 +776,9 @@ app.get('*', (req, res) => {
     // policy as the static handler so a redeployed index.html (which pulls
     // in fresh /js/*.js) is never pinned in a WebView cache.
     res.setHeader('Cache-Control', shellAssetCacheControl('index.html'));
+    // The document carries the build id too — it is the reference the
+    // worker compares every cached asset against on this load.
+    applyShellBuildHeader(res);
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   } else {
     res.status(404).json({ error: 'Not found' });

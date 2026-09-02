@@ -1143,12 +1143,89 @@ const AdminConsole = {
     return AdminConsole._renderModule(host, 'AdminOverview', 'overview');
   },
 
+  // ── The sections arrive with the first open, not with the shell ──────
+  //
+  // ./sections.ts is the twenty section modules as one lazy chunk: 422KB of
+  // the shell's 1.75MB bundle that every visitor used to download so that an
+  // admin could open a console the isAdmin gate keeps everyone else out of.
+  //
+  // Splittable because the seam was already here. A section has never been in
+  // the document before it was opened — _renderSection hands it a host and
+  // calls mod.render(host) — so making its CODE arrive at the same moment
+  // changes no markup, no id and no baseline. The chassis (features/admin/
+  // index.tsx) stays static and prerendered exactly as before.
+  _sectionsPromise: null,
+  _sectionsReady: false,
+
+  /**
+   * Start (or join) the section-chunk load. Returns the promise while it is
+   * outstanding and null once the modules are in, so a caller can tell "not
+   * here yet" from "genuinely missing" — which is the distinction
+   * _renderModule's failure copy has always been about.
+   */
+  _ensureSections() {
+    if (AdminConsole._sectionsReady) return null;
+    if (!AdminConsole._sectionsPromise) {
+      AdminConsole._sectionsPromise = import('./sections.ts')
+        .then(() => { AdminConsole._sectionsReady = true; })
+        .catch((err) => {
+          // Leave _sectionsPromise set: a chunk that failed to load is not
+          // going to succeed on a retry loop driven by re-rendering, and
+          // _renderModule's own copy is the honest thing to show.
+          AdminConsole._sectionsReady = true;
+          console.warn('[admin] section modules failed to load', err);
+        });
+    }
+    return AdminConsole._sectionsPromise;
+  },
+
+  /**
+   * Warm the chunk for somebody who is going to want it. Called from
+   * App.renderAdminButton, which already runs exactly when the viewer is
+   * known to be an admin, and deferred to idle so it never competes with the
+   * first paint. A non-admin never reaches it.
+   */
+  prefetchSections() {
+    // NOT on a ?shot= or ?demo= route. Those exist to render one state
+    // deterministically for a screenshot or a declared check, and a
+    // background chunk arriving mid-assertion is exactly the kind of
+    // nondeterminism they are supposed to be free of. Same guard, for the
+    // same reason, as TermsFirstRun.maybePrompt. Nothing is lost: the
+    // console still loads on demand, which is what the #admin checks
+    // exercise.
+    try {
+      const q = new URLSearchParams(location.search);
+      if (q.get('shot') || q.get('demo')) return;
+    } catch { /* no URL to read is not a reason to skip a real prefetch */ }
+    // Genuinely idle, and patient about it. The first version forced this
+    // through within 4s of boot, which on a phone means parsing 421KB
+    // against whatever the page is still doing. This chunk is worth having
+    // EVENTUALLY and worth nothing urgently — a first open that has to wait
+    // for it costs about as long as one navigation.
+    const start = () => { AdminConsole._ensureSections(); };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(start, { timeout: 15000 });
+    else setTimeout(start, 8000);
+  },
+
   // Hand a section host to a delegated module, and remember it so the next
   // switch can tear it down. Extracted from _renderSection when `overview`
   // became a module: it is now reachable both by name and as the default.
   _renderModule(host, modName, key) {
     const mod = window[modName];
     if (!mod || typeof mod.render !== 'function') {
+      // Not here YET is the ordinary first open. Show the same skeleton the
+      // sections use while they fetch, then re-enter — via _renderSection,
+      // so a viewer who navigated to another section meanwhile gets the one
+      // they actually asked for rather than the one this call was for.
+      const pending = AdminConsole._ensureSections();
+      if (pending) {
+        host.innerHTML = `<p class="${AdminUI.muted} p-4">Loading…</p>`;
+        pending.then(() => {
+          const live = document.getElementById('admin-section-content');
+          if (live && AdminConsole._open) AdminConsole._renderSection();
+        });
+        return;
+      }
       host.innerHTML = `<p class="${AdminUI.muted} p-4">The ${AdminConsole.esc(key)} console module failed to load.</p>`;
       return;
     }

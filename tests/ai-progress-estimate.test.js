@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const llm = require('../src/services/llm.js');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -276,7 +277,7 @@ test('cc_estimate SSE payload carries remainingSeconds', () => {
 });
 
 test('settings modal has the experimental toggle wired to the endpoint', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   assert.match(html, /id="ai-progress-estimate"/, 'settings modal must have the checkbox');
   const settings = read('frontend/src/features/settings/settings.js');
   assert.match(settings, /\/api\/me\/ai-progress-estimate/, 'settings.js must POST the toggle');

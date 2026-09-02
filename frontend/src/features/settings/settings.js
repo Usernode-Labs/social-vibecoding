@@ -437,10 +437,6 @@
       // a modal. Leaving it is a real hash navigation (the header back
       // button, the device back gesture) — see handleBack / _exitSettings.
 
-      // A sign-out the app never acknowledged left a note for the next
-      // document; this is that document.
-      this._showIncompleteNativeSignOutNotice();
-
       this.refresh();
     },
 
@@ -452,9 +448,8 @@
     async refresh() {
       try {
         const meDemoQ = this._cliTokensDemo() ? '?demo=1' : '';
-        const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
-        if (!r.ok) return;
-        const j = await r.json();
+        const j = await this._readMe(meDemoQ);
+        if (!j) return;
         this.state.hasApiKey = !!j.user?.hasApiKey;
         // Staging only, and only under ?demo=1: the key reported above is a
         // fixture, not something anything can be billed to. Carried so the
@@ -487,6 +482,37 @@
       } catch {}
     },
 
+    /**
+     * The /api/auth/me payload, JOINING the boot read rather than repeating
+     * it. Returns the parsed body, or null when there is no usable answer.
+     *
+     * This runs from init(), which a React layout effect fires at document
+     * load on EVERY screen — the byok dot rides the Profile screen and
+     * DevChat's budget indicator, so the state is genuinely needed before
+     * #settings is ever opened. It just does not need its own request:
+     * every field read above is on the same `user` object App.init is
+     * fetching 16ms later, and the two were queueing behind each other for
+     * ~130ms on the first paint of every screen. See App.bootSession.
+     *
+     * `?demo=1` still reads for itself, and must: staging answers that
+     * request differently (the fixture key behind `demoKey`), so the boot's
+     * plain answer is the wrong one — not a stale copy of the right one.
+     */
+    async _readMe(meDemoQ) {
+      if (!meDemoQ && typeof window.App?.bootSession === 'function') {
+        const boot = await window.App.bootSession();
+        if (boot?.user) return { user: boot.user };
+        // Answered 401/403. A second ask gets the same answer.
+        if (boot?.signedOut) return null;
+        // `unknown` — the boot read never landed and the shell is on the
+        // snapshot, which carries none of these fields. Read for ourselves;
+        // offline the worker answers it from cache, as it always has.
+      }
+      const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
+      if (!r.ok) return null;
+      return await r.json();
+    },
+
     _renderIndicator() {
       // Published rather than written by id: the dot rides the Profile
       // screen's account group, which React renders only once profile data
@@ -500,6 +526,21 @@
     },
 
     isOpen() { return Settings._open; },
+
+    // The sixteen panes are not in the prerendered document any more: the
+    // island mounts them on the screen's first reveal (lib/mount-on-reveal.ts,
+    // #settings-section-content ships empty like #admin-section-content).
+    // Everything below open() reads their ids on its next line — _renderBody
+    // dereferences #settings-key-display outright — so the interior has to
+    // exist BEFORE a single pane renders. The bridge mounts it inside
+    // flushSync and returns with the nodes in the document; init() runs in
+    // that same flush, so the id-bound listeners are live too. Reached by
+    // name, not import: a dozen tests run this file as a script in a `vm`.
+    _ensureMounted() {
+      try {
+        window.UsernodeReact?.mount?.ensure?.('settings-screen');
+      } catch (err) { /* an absent bridge is the prerender pass */ }
+    },
 
     // Repaint every section's body. Cheap (they're all local state or a
     // small fetch) and it keeps the ONE render path — a section is never
@@ -541,6 +582,7 @@
     // snapshot of the page the user is leaving. The caller runs
     // Settings.syncChrome() inside the transition callback instead.
     open(section, opts) {
+      Settings._ensureMounted();
       Settings._open = true;
       Settings._pushedFromMenu = false;
       Settings._menuScrollTop = 0;
@@ -596,6 +638,7 @@
     // reason. A late capability change (a section appearing/disappearing)
     // repaints through refreshMenu(), not through here.
     route(section) {
+      Settings._ensureMounted();
       const visible = Settings._visibleSections();
       const valid = !!section && visible.some((s) => s.key === section);
       const mobile = Settings._isMobile();
@@ -2471,14 +2514,14 @@
             managedMessage.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
           } else if (managed?.status === 'needs_review' || managed?.status === 'provisioning') {
             managedMessage.textContent = 'This key needs admin review. Usernode did not retry the provider request, which prevents accidental duplicate keys.';
-          } else if (!provisioning.verified) {
+          } else if (provisioning.verificationRequired && !provisioning.verified) {
             managedMessage.textContent = 'Connect and verify GitHub or X in Social accounts & connectors to claim one limited company key.';
           } else if (!provisioning.available) {
             managedMessage.textContent = 'Included keys are not configured by the platform administrator yet.';
           } else if (provisioning.reason === 'personal_key_configured') {
             managedMessage.textContent = 'Remove your personal key first if you want to claim the included company key.';
           } else {
-            managedMessage.textContent = `Verified users can create one included key with a $${Number(provisioning.dailyLimitUsd || 0).toFixed(2)} daily limit.`;
+            managedMessage.textContent = `You can create one included key with a $${Number(provisioning.dailyLimitUsd || 0).toFixed(2)} daily limit.`;
           }
         }
         const managedOwnsCredential = !!managed && managed.status !== 'deleted';
@@ -2906,46 +2949,17 @@
         return false;
       };
 
-      // Close wallet admission before the first asynchronous web cleanup.
-      // New native builds also acknowledge their process-wide latch here.
-      let preflight = {
-        nativeTerminal: false, latch: 'unsupported', reason: null, code: null,
-      };
+      // This call closes the private realm synchronously, before this function
+      // reaches its first await. Native capability probing deliberately waits
+      // until after the server has revoked the HttpOnly session, so a degraded
+      // bridge can never prevent the authoritative logout boundary.
+      let preflight = { nativeTerminal: false };
       try {
         if (window.NativeChrome && NativeChrome.prepareWebLogout) {
-          const result = await NativeChrome.prepareWebLogout();
-          preflight = (result && typeof result === 'object')
-            ? result
-            : {
-              nativeTerminal: result === true,
-              latch: 'unsupported',
-              reason: null,
-              code: null,
-            };
+          preflight = NativeChrome.prepareWebLogout() || preflight;
         }
       } catch (error) {
-        // prepareWebLogout resolves a report now, but a rejection must not
-        // be a dead end either — treat it exactly like a refused latch.
-        console.warn('[settings] native logout preflight failed:', error);
-        preflight = {
-          nativeTerminal: false,
-          latch: 'unavailable',
-          reason: (error && error.message) ? String(error.message) : null,
-          code: null,
-        };
-      }
-
-      // THE DEAD END THIS REMOVES: a refused privileged bridge used to
-      // abort here, BEFORE POST /api/auth/logout, so the web session
-      // survived and the user had no way out of the app at all. The
-      // admission latches are already closed; ask, then sign out of the
-      // web session regardless. The app's own session is attempted
-      // best-effort below and named on the landing screen if it survives.
-      const degraded = preflight.latch === 'unavailable' ||
-        preflight.latch === 'inconclusive';
-      if (degraded && !await this._confirmDegradedSignOut(preflight)) {
-        if (btn) btn.disabled = false;
-        return false;
+        return fail(error);
       }
 
       try {
@@ -2973,107 +2987,28 @@
       // native logout replaces the WebView, so the old document has no
       // timeout or navigation continuation.
       if (preflight.nativeTerminal) {
-        // FIXME: if this rejects after web cleanup, add a fail-closed retry UI
-        // without resuming normal work in this old document.
-        return NativeChrome.commitNativeLogout();
-      }
-
-      if (degraded && !await this._bestEffortNativeLogout()) {
-        // The app kept its session. Say so on the next screen rather than
-        // leaving the user to discover it, and point at the fix.
-        this._noteIncompleteNativeSignOut();
+        // A rejection leaves this old document closed and server authority
+        // revoked. Do not navigate or reopen admission; the deliberately
+        // simple rare-failure recovery is an app restart/update.
+        return NativeChrome.commitNativeLogout().catch((error) => {
+          if (window.PlatformUI && PlatformUI.toast) {
+            PlatformUI.toast(
+              'Signed out. Close and reopen the app to finish shutting down Usernode.',
+              { error: true }
+            );
+          }
+          console.warn('[settings] local native shutdown failed:', error);
+          return false;
+        });
       }
 
       // Hard navigation on purpose: enterAuthed is one-shot per document
-      // in a regular browser or an old app without hard logout. `/` boots
+      // in a regular browser. `/` boots
       // the anonymous shell on the landing screen — the public app
       // directory a guest normally sees — instead of the bare sign-in
       // form (#1159); the landing header's Sign in CTA keeps re-login one
       // tap away.
       window.location.href = '/';
-    },
-
-    // The user's call, not ours: the web session is going either way, but
-    // they should know the app may stay signed in on this device.
-    _confirmDegradedSignOut(preflight) {
-      if (!window.PlatformUI || typeof PlatformUI.confirm !== 'function') {
-        // No dialog to ask with is not a reason to trap someone in a
-        // session — proceed, and the login-screen notice still fires.
-        return Promise.resolve(true);
-      }
-      const detail = preflight && preflight.reason
-        ? ` (${preflight.reason})`
-        : '';
-      return PlatformUI.confirm({
-        title: 'Sign out without the app?',
-        message: 'The Usernode app isn’t responding to this screen' +
-          detail + ', so it may stay signed in on this device. ' +
-          'You’ll be signed out of Social either way. Force-close ' +
-          'and reopen the app to finish signing out there.',
-        confirmLabel: 'Sign out anyway',
-        cancelLabel: 'Cancel',
-        danger: true,
-      });
-    },
-
-    // The app may still accept a plain logout even though its privileged
-    // latch never answered. Try, briefly, and swallow the rejection: the
-    // web session is already gone, so nothing here may block the user from
-    // leaving. Resolves whether the app accepted it.
-    NATIVE_SIGNOUT_BUDGET_MS: 3000,
-
-    _bestEffortNativeLogout() {
-      const bridge = window.usernode;
-      if (!bridge || bridge.isNative !== true ||
-          typeof bridge.logout !== 'function') {
-        return Promise.resolve(false);
-      }
-      return new Promise((resolve) => {
-        let done = false;
-        const settle = (ok) => {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          resolve(ok);
-        };
-        const timer = setTimeout(() => settle(false),
-          this.NATIVE_SIGNOUT_BUDGET_MS);
-        try {
-          bridge.logout().then(() => settle(true), (err) => {
-            console.warn('[settings] best-effort native logout failed:', err);
-            settle(false);
-          });
-        } catch (err) {
-          console.warn('[settings] best-effort native logout threw:', err);
-          settle(false);
-        }
-      });
-    },
-
-    NATIVE_SIGNOUT_NOTICE_KEY: 'sv:native_signout_incomplete',
-
-    _noteIncompleteNativeSignOut() {
-      try {
-        sessionStorage.setItem(this.NATIVE_SIGNOUT_NOTICE_KEY, '1');
-      } catch (_) { /* private mode / disabled storage: nothing to note */ }
-    },
-
-    // One-shot, on the next document — which is the landing screen, since
-    // logout hard-navigates to `/`. Without it the user lands there with
-    // no idea the app may still hold its own session.
-    _showIncompleteNativeSignOutNotice() {
-      let flagged = false;
-      try {
-        flagged = sessionStorage.getItem(this.NATIVE_SIGNOUT_NOTICE_KEY) === '1';
-        if (flagged) sessionStorage.removeItem(this.NATIVE_SIGNOUT_NOTICE_KEY);
-      } catch (_) { return; }
-      if (!flagged) return;
-      if (!window.PlatformUI || typeof PlatformUI.toast !== 'function') return;
-      PlatformUI.toast(
-        'Signed out of Social. The Usernode app didn’t confirm. ' +
-        'Force-close and reopen it to finish signing out there.',
-        { duration: 10000, priority: true }
-      );
     },
 
     // Ask the active service worker to drop its API cache; resolves on ack
@@ -3716,7 +3651,7 @@
       usesIframeRelay: false,
       hasNativeChannel: true,
       origin: 'https://staging.demo.invalid',
-      bridgeVersion: 4,
+      bridgeVersion: 5,
       capabilities: ['getBridgeInfo', 'getSettingsState', 'logout'],
       appVersion: '0.0.0-demo',
       buildNumber: '0',

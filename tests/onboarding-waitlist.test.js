@@ -24,7 +24,7 @@
 //   5. grantPlatformAccess is idempotent (the original granted_at wins).
 //
 // Service-level tests against a stateful in-memory mock pool — no live
-// DB, same idiom as tests/mobile-auth-from-session.test.js.
+// DB.
 //
 // Run with: node --test tests/onboarding-waitlist.test.js
 'use strict';

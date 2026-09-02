@@ -7,7 +7,7 @@
 //     no full page loads while navigating the anonymous side;
 //   - a RELOAD-FREE login: on success we refetch /api/auth/me and call
 //     App.enterAuthed(user) in place (see app.js staged boot), which also
-//     runs the native login handoff (completeLogin → startNode) without
+//     establishes the native realm in one protocol-2 transaction without
 //     the old navigate-to-'/' round trip;
 //   - one document for the service worker's offline fallback.
 //
@@ -176,6 +176,13 @@
     show(route, seg) {
       const id = SCREEN_IDS[route];
       if (!id) return;
+      // The screen's interior is not in the prerendered document: the
+      // island mounts it on first reveal (lib/mount-on-reveal.ts). Everything
+      // below — _wireScreen, the on-show hook, setScreenVisible — was written
+      // against markup that was always there, so ask for it first. The bridge
+      // mounts it inside flushSync and returns with the nodes in place and
+      // the screen's React half already patched onto this object.
+      AuthScreens._ensureMounted(id);
       AuthScreens._wireScreen(route);
 
       const prev = AuthScreens._current;
@@ -212,6 +219,15 @@
         }
       }, type);
       AuthScreens._current = route;
+    },
+
+    // See show(). Reached by name — this file is a classic script, and
+    // tests load it as one — and a no-op wherever the bridge is absent (a
+    // document without the React entry, a `vm` harness).
+    _ensureMounted(id) {
+      try {
+        window.UsernodeReact?.mount?.ensure?.(id);
+      } catch (err) { /* ignore */ }
     },
 
     hideAll() {

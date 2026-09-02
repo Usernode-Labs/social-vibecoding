@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'platform-ui.js'), 'utf8'
@@ -263,7 +264,7 @@ test('index.html viewport meta carries viewport-fit=cover (kit safe-area contrac
 
 test('settings toggles are kit switches (un-switch)', () => {
   for (const id of ['view-as-non-admin', 'dev-console-always-show', 'devchat-alerts-toggle', 'ai-progress-estimate']) {
-    const m = INDEX.match(new RegExp(`<input id="${id}"[^>]*>`));
+    const m = shellMarkup().match(new RegExp(`<input id="${id}"[^>]*>`));
     assert.ok(m, `missing settings checkbox #${id}`);
     assert.ok(m[0].includes('un-switch'), `#${id} lost its un-switch class`);
   }

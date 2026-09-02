@@ -1271,7 +1271,7 @@ different and must not be collapsed:
 | Public | `/api/v4/leaderboard*`, `/api/v4/season-events*`, `/api/v4/users/:id/profile`, `/api/v4/app-version/check` | Session-**optional**. A signed-in session can enrich a response (only `/leaderboard/global` branches on admin), but no session is required and these never 401. |
 | Partner | `/api/v4/partner/*` | `X-API-Key` vs `TOPOCHAIN_PARTNER_API_KEY`. |
 | Ingest | `POST /api/v4/slot-outcomes`, `POST /api/v4/epoch-stats` | `X-Ingest-Key` vs `TOPOCHAIN_INGEST_API_KEY`. The group's reads (`GET /api/v4/onchain-accounts`) stay public. |
-| Mobile | `/api/v4/mobile/*` | Bearer token. The shell obtains one from its web session via `POST /api/v4/mobile/auth/from-session`. |
+| Mobile | `/api/v4/mobile/*` | Native establishment starts from the Social web-session cookie, then returns an encrypted credential to the OS-owned client. Data, delegation and push routes accept only that private Bearer credential; Social JavaScript never receives it. |
 | Admin | `/api/v4/admin/*` | The platform's own admin gate (`adminMiddleware` / `requireAdminWrite`), not a topochain-specific credential. |
 
 Separately, **`/challenges-api/*`** is the SV web shell's own read
@@ -1284,13 +1284,21 @@ isn't explicitly registered returns 404.
 
 ### Configuration
 
-Four optional settings, none of which block boot — each disables exactly
-one capability. In production set them in the platform's **Platform
-variables** panel (they are declared in `dapp.json`'s `platform_env`, not
-in a child app's `secrets` block); `.env.example` documents the same keys
-for local dev and standalone deploys.
+Canonical production requires `NODE_RPC_URL`,
+`NATIVE_SESSION_V2_TESTNET_CHAIN_ID`, and `TOPOCHAIN_PARTNER_API_KEY`;
+missing lifecycle data stops boot. The self-app staging preview may omit
+them and keeps the corresponding routes unavailable. Other integration
+settings remain optional and disable only their named capability. Set
+production values in the platform's **Platform variables** panel (they are
+declared in `dapp.json`'s `platform_env`, not in a child app's `secrets`
+block); `.env.example` documents the same keys for local dev and standalone
+deploys.
 
-- `TOPOCHAIN_PARTNER_API_KEY` — unset: every partner request 500s.
+- `NODE_RPC_URL` — canonical node endpoint used to sample the current epoch.
+- `NATIVE_SESSION_V2_TESTNET_CHAIN_ID` — exact canonical Rust ChainId for
+  the one supported native network mapping.
+- `TOPOCHAIN_PARTNER_API_KEY` — authenticates partner routes and the managed
+  producer's `/api/v1/delegations` read.
 - `TOPOCHAIN_INGEST_API_KEY` — unset: every ingest **write** 500s.
 - `TOPOCHAIN_ZK_BRIDGE_URL` — unset: `POST /api/v4/mobile/zkpassport/complete` 500s.
 - `TOPOCHAIN_MAIL_API_URL` / `TOPOCHAIN_MAIL_API_KEY` / `TOPOCHAIN_MAIL_FROM`

@@ -32,9 +32,26 @@
        whole first impression happens.
        Set on <html> so it also fills the rubber-band area and any strip the
        body's own box does not cover. Duplicating the two values is the point:
-       this rule has to be true with no stylesheet at all. */
-    html { background-color: #eaeaea; }
-    html.dark { background-color: #0b0b0c; }
+       this rule has to be true with no stylesheet at all.
+
+       `color-scheme` rides along because a background alone does not settle
+       what the USER AGENT paints. It is what tells the engine which of its
+       own two palettes to use, and it reaches three surfaces no declaration
+       of ours can: the canvas underneath the document (the strip a WebView
+       shows between navigation start and the first painted frame — the white
+       flash the Usernode Flutter shell shows on cold launch), the scrollbars,
+       and the default rendering of form controls, which without it stay
+       light-on-light inside a near-black shell.
+
+       CLASS-KEYED, NOT `light dark`. The bare two-value form delegates the
+       choice to the OS, and the shell's Light/Dark override is a class on
+       <html> that no OS preference can see — so a viewer who picks Light on
+       a dark phone would get dark scrollbars and dark <select> menus on a
+       #eaeaea page. Keyed off `.dark` it tracks the resolved theme instead,
+       and Theme.apply() below adds that class in the same head-blocking pass
+       that fixes the background. */
+    html { background-color: #eaeaea; color-scheme: light; }
+    html.dark { background-color: #0b0b0c; color-scheme: dark; }
   </style>
   <script>
     // Theme module — Light / Dark / System mode selector.

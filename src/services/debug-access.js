@@ -52,9 +52,18 @@ const DENIED_TABLES = new Set([
   'user_agent_files',   // personal instruction files (private user text)
   'platform_env_values', // platform's own env values (AES blobs, still deny)
   'pending_secret_declarations', // values held for a declaration PR (AES blobs)
-  'mobile_otp_codes',   // topochain: one-time login codes (SPEC §6)
+  'mobile_otp_codes',   // hashed one-time email signup/claim codes
   'waitlist_verification_codes', // one-time waitlist email codes, same treatment as mobile_otp_codes
-  'mobile_auth_tokens', // topochain: bearer session/set-password tokens (plan Global Constraints #4)
+  'web_signup_sessions', // hashed, single-use first-password continuations
+  'mobile_auth_tokens', // protocol-2 native bearer hashes
+  'native_session_web_incarnations', // protocol-2 web-session security lineage
+  'native_session_attempts', // protocol-2 subject/network binding
+  'native_session_handoffs', // short-lived native redemption lineage
+  'native_session_tickets', // hashed tickets + encrypted exact replay
+  'native_installation_key_generations', // installation continuity keys
+  'native_session_credentials', // native credential/revocation lineage
+  'native_session_credential_envelopes', // compact JWE + encrypted exact replay
+  'native_epoch_delegation_policies', // credential-bound producer policy lineage
   'mobile_push_deployment_state', // trusted push deployment identity and activation state
   'mobile_push_installation_mutations', // private device mutation fences
   'mobile_push_registrations', // encrypted FCM destinations

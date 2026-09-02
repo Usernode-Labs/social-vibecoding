@@ -10,10 +10,10 @@
 //
 // Row: balance readout at the top of the drawer. Tap opens a bottom
 // sheet with the full balance, the user's address (copy + QR receive),
-// recent dapp-transaction receipts (`usernode.getTransactionRecords`),
+// recent Social-owned dapp-transaction receipts,
 // and a Send form. Send routes through the bridge's `sendTransaction`,
-// so the app's NATIVE confirm sheet still appears — the trust boundary
-// is unchanged (Apple Pay model).
+// which admits one native `submitTransaction` operation. Native returns the
+// authoritative txId; Social persists and observes the receipt.
 //
 // Present for every native top frame, even while wallet state is unavailable.
 // Desktop and child-app iframes keep the row hidden. Delegation itself is an
@@ -28,11 +28,12 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
 
   const WalletSheet = {
     _state: null,     // last getWalletState snapshot
-    _records: null,   // last getTransactionRecords items
+    _records: null,   // last Social-owned transaction receipt items
     _sheet: null,
     _timer: null,
     _walletSupported: false,
-    _recordsSupported: false,
+    _submissionSupported: false,
+    _receiptEventsBound: false,
     _stakingSupported: false,
     _stakingPending: false,
     _refreshPending: false,
@@ -74,12 +75,16 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
     },
 
     /**
-     * The Send form's submit. The TRUST BOUNDARY is unchanged: this still goes
-     * through `window.sendTransaction`, so the app's native confirm sheet is
-     * still the interaction, and the receipts list picks the tx up once the
-     * app observes it. Returns whether the form should close.
+     * The Send form's submit goes through `window.sendTransaction`, so the
+     * app's native confirm sheet remains the interaction. The exact native
+     * result is only a txId; Social records and observes it. Returns whether
+     * the form should close.
      */
     async sendFromSheet(to, amount) {
+      if (!WalletSheet._submissionSupported) {
+        PlatformUI.toast('Sending is unavailable in this app version');
+        return false;
+      }
       try {
         await window.sendTransaction(to, amount, '', {
           waitForInclusion: false,
@@ -115,7 +120,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       }
       return Promise.all([
         WalletSheet._refreshState(),
-        WalletSheet._refreshRecords(),
+        WalletSheet._refreshRecords(!!WalletSheet._sheet),
       ]).then(() => {
         WalletSheet._renderChip();
         if (WalletSheet._sheet) WalletSheet._renderSheetBody();
@@ -131,12 +136,22 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       WalletSheet._visible = true;
       WalletSheet._publish();
 
+      if (!WalletSheet._receiptEventsBound) {
+        WalletSheet._receiptEventsBound = true;
+        window.addEventListener('usernode:transaction-receipts-changed', (event) => {
+          const items = event && event.detail && event.detail.items;
+          WalletSheet._records = Array.isArray(items) ? items : [];
+          WalletSheet._publish();
+        });
+      }
+
       await WalletSheet._refreshCapabilities();
       if (WalletSheet._walletSupported) await WalletSheet._refreshState();
+      await WalletSheet._refreshRecords();
       WalletSheet._renderChip();
       WalletSheet._timer = setInterval(async () => {
-        if (!WalletSheet._walletSupported) return;
-        await WalletSheet._refreshState();
+        if (WalletSheet._walletSupported) await WalletSheet._refreshState();
+        await WalletSheet._refreshRecords();
         WalletSheet._renderChip();
         if (WalletSheet._sheet) WalletSheet._renderSheetBody();
       }, REFRESH_MS);
@@ -149,8 +164,8 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
         ? bridgeInfo.capabilities : [];
       WalletSheet._walletSupported =
         capabilities.includes('getWalletState');
-      WalletSheet._recordsSupported =
-        capabilities.includes('getTransactionRecords');
+      WalletSheet._submissionSupported =
+        capabilities.includes('submitTransaction');
       WalletSheet._stakingSupported =
         Number(bridgeInfo.version) >= 4 &&
         capabilities.includes('manageStaking');
@@ -176,10 +191,11 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       }
     },
 
-    async _refreshRecords() {
-      if (!WalletSheet._recordsSupported) return;
+    async _refreshRecords(observePending = false) {
       try {
-        const resp = await window.usernode.getTransactionRecords();
+        const resp = await window.usernode.getTransactionReceipts({
+          observePending,
+        });
         WalletSheet._records = (resp && Array.isArray(resp.items))
           ? resp.items : [];
       } catch (_) {
@@ -234,6 +250,7 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
         address: s.address || null,
         shortAddress: WalletSheet._shortAddr(s.address),
         walletSupported: WalletSheet._walletSupported,
+        submissionSupported: WalletSheet._submissionSupported,
         stateError: WalletSheet._stateError || null,
         staking: WalletSheet._stakingView(s.staking),
         stakingPending: WalletSheet._stakingPending,
@@ -262,20 +279,20 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       const items = WalletSheet._records;
       if (items == null) return null;
       return items.map((r, i) => {
-        const when = r.sentAt ? new Date(r.sentAt).toLocaleString() : '';
+        const when = r.submittedAt ? new Date(r.submittedAt).toLocaleString() : '';
         let status;
-        if (r.onChainStatus === 'confirmed' || r.confirmedAt) {
+        if (r.status === 'confirmed' || r.confirmedAt) {
           status = r.blockHeight != null
             ? `confirmed · block ${Number(r.blockHeight).toLocaleString()}`
             : 'confirmed';
-        } else if (r.status === 'queued') {
+        } else if (r.status === 'submitted') {
           status = 'pending';
         } else {
           status = r.status || 'unknown';
         }
         return {
-          key: String(r.id != null ? r.id : `${r.to}-${r.sentAt}-${i}`),
-          line1: `Sent ${r.amount} ${WalletSheet._symbol()} to ${WalletSheet._shortAddr(r.to)}`,
+          key: String(r.txId || `${r.destinationPubkey}-${r.submittedAt}-${i}`),
+          line1: `Sent ${r.amount} ${WalletSheet._symbol()} to ${WalletSheet._shortAddr(r.destinationPubkey)}`,
           line2: `${when} · ${status}`,
         };
       });
@@ -314,7 +331,9 @@ import { mountWalletSheet, unmountWalletSheet } from './wallet-sheet-body';
       await Promise.all([
         WalletSheet._walletSupported
           ? WalletSheet._refreshState() : Promise.resolve(),
-        WalletSheet._refreshRecords(),
+        // Opening the product surface explicitly resumes one bounded explorer
+        // attempt for any receipt that survived a reload as pending.
+        WalletSheet._refreshRecords(true),
       ]);
       WalletSheet._renderChip();
       WalletSheet._renderSheetBody();

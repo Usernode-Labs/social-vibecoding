@@ -6,27 +6,46 @@
 //     node-pill.js / wallet-sheet.js / settings.js don't each round-trip
 //     the channel;
 //   - the drawer's Profile row (#profile hash route, profile.js) — its
-//     click-to-close wiring only. The row is visible to everyone, web
-//     included: it is no longer gated on the bridge's getProfileInfo
-//     capability, because /challenges-api/me/* scopes to the platform
-//     session server-side and the screen works in any browser. The old
+//     click-to-close wiring only. The row is visible to everyone because
+//     /challenges-api/me/* scopes to the platform session server-side and
+//     the screen works in any browser. The old
 //     native-push Profile / App Settings rows are gone
 //     (profile-and-settings-to-web migration): App Settings is now
 //     capability-gated sections inside the Settings modal (settings.js);
-//   - the platform-login handoff + node lifecycle orchestration (bridge
-//     v4, thin-shell migration): on every shell boot with a live web
-//     session, always exchange the session cookie for a fresh mobile bearer
-//     (POST /api/v4/mobile/auth/from-session), hand it to the native app
-//     via completeLogin, then request node start bound to the current native
-//     participant + identity epoch. SV logout crosses one hard native boundary
-//     (settings.js prepares, commits its web cleanup, then calls the terminal
-//     NativeChrome.commitNativeLogout()).
+//   - the protocol-2 native-session realm gate. Social prepares one exact
+//     HttpOnly handoff and asks native to establish the whole session
+//     atomically; ticket and credential authority stay outside JavaScript.
 //
 // Everything here is capability-gated: on desktop, in child-app iframes,
 // and on old app builds the probe resolves { version: 0, capabilities: [] }
 // and no UI appears.
 (function () {
   'use strict';
+
+  function isTerminalAttemptFailure(error) {
+    const code = error && error.usernodeCode;
+    return code === 'native_session_ticket_expired' ||
+      code === 'native_session_attempt_revoked' ||
+      code === 'native_session_attempt_conflict' ||
+      code === 'native_session_credential_revoked' ||
+      code === 'native_session_credential_expired';
+  }
+
+  function offerWalletRecovery(userId, error) {
+    if (!error ||
+        error.usernodeCode !== 'native_session_wallet_pool_exhausted' ||
+        typeof window.dispatchEvent !== 'function' ||
+        typeof window.CustomEvent !== 'function') return;
+    try {
+      window.dispatchEvent(new CustomEvent(
+        'usernode:wallet-recovery-required',
+        { detail: { userId: String(userId) } }
+      ));
+    } catch (dispatchError) {
+      console.warn('[native-chrome] wallet recovery event failed:',
+        dispatchError);
+    }
+  }
 
   const NativeChrome = {
     _infoPromise: null,
@@ -138,535 +157,361 @@
     // ordinary browser) had already gone: /challenges-api/me/* scopes to the
     // platform session server-side since the topochain merge.
 
-    // ── Platform login handoff + node lifecycle (bridge v4) ──────────
-
-    // Overlapping boot/session signals share one authoritative exchange. If
-    // the web participant changes while it is running, the latest session is
-    // exchanged once the active run settles.
-    _handoffPromise: null,
-    _handoffRerunRequested: false,
-    _handoffGeneration: 0,
-    _nodeStartKey: null,
-    _nodeStartInFlight: null,
+    // ── Protocol-2 native-session realm ──────────────────────────────
+    _ATTEMPT_STORAGE_KEY: 'usernode.native-session-v2.attempt',
+    _HANDOFF_ENDPOINT: '/api/v4/mobile/auth/native-establish-handoff',
+    _realmGeneration: 0,
+    _establishLease: null,
+    _prepareLoginLease: null,
     _logoutRunning: false,
-    _authenticatedSessionAdmitted: true,
-    _authenticatedSessionKey: null,
-    _sessionWalletRelayAdmitted: true,
+    _sessionAdmitted: false,
+    _publicSessionStatus: null,
 
     isSessionAdmitted() {
-      return NativeChrome._authenticatedSessionAdmitted === true;
-    },
-
-    _participantId(value) {
-      const id = Number(value);
-      return Number.isSafeInteger(id) && id > 0 ? id : null;
+      const bridge = window.usernode;
+      return !bridge || bridge.isNative !== true ||
+        NativeChrome._sessionAdmitted === true;
     },
 
     _webParticipantId() {
-      return NativeChrome._participantId(
-        window.App && App.user ? App.user.id : null
-      );
+      const raw = window.App && App.user ? App.user.id : null;
+      const id = raw == null ? '' : String(raw);
+      return /^[1-9][0-9]*$/.test(id) ? id : null;
     },
 
-    _isCurrentWebParticipant(participantId, generation) {
-      return !NativeChrome._logoutRunning &&
-        NativeChrome._handoffGeneration === generation &&
-        NativeChrome._webParticipantId() === participantId;
+    _setSessionAdmission(admitted) {
+      const next = admitted === true;
+      const changed = NativeChrome._sessionAdmitted !== next;
+      NativeChrome._sessionAdmitted = next;
+      NativeChrome._notifySessionAdmission(next, changed);
     },
 
-    _boundReadyStatus(value, expectedParticipantId) {
-      if (!value || value.phase !== 'ready' || !value.address) return null;
-      const participantId = NativeChrome._participantId(value.participantId);
-      const epoch = Number(value.epoch);
-      if (participantId !== expectedParticipantId ||
-          !Number.isSafeInteger(epoch) || epoch < 0) return null;
-      return { address: value.address, participantId, epoch };
+    _notifySessionAdmission(admitted, changed) {
+      const walletSheet = window.WalletSheet;
+      try {
+        if (walletSheet &&
+            typeof walletSheet._setSessionWalletAdmission === 'function') {
+          walletSheet._setSessionWalletAdmission(admitted);
+        }
+      } catch (error) {
+        console.warn('[native-chrome] wallet admission sink failed:', error);
+      }
+      try {
+        if (changed && typeof window.dispatchEvent === 'function' &&
+            typeof window.CustomEvent === 'function') {
+          window.dispatchEvent(new CustomEvent(
+            'usernode:native-session-admission',
+            { detail: { admitted } }
+          ));
+        }
+      } catch (error) {
+        console.warn('[native-chrome] admission event sink failed:', error);
+      }
     },
 
-    _boundAuthenticatedStatus(value, expectedParticipantId) {
-      if (!value ||
-          (value.phase !== 'reconciling' && value.phase !== 'ready')) {
+    _removeStoredAttempt() {
+      try { localStorage.removeItem(NativeChrome._ATTEMPT_STORAGE_KEY); }
+      catch (_) {}
+    },
+
+    _readStoredAttempt() {
+      let value = null;
+      try {
+        value = JSON.parse(
+          localStorage.getItem(NativeChrome._ATTEMPT_STORAGE_KEY) || 'null'
+        );
+      } catch (_) {}
+      const keys = value && typeof value === 'object'
+        ? Object.keys(value).sort().join(',') : '';
+      if (!value || keys !==
+          'attemptId,desiredRuntime,protocol,userId' ||
+          value.protocol !== 2 || value.desiredRuntime !== 'running' ||
+          typeof value.userId !== 'string' ||
+          !/^[1-9][0-9]*$/.test(value.userId) ||
+          typeof value.attemptId !== 'string' ||
+          !/^nsa_[A-Za-z0-9_-]{43}$/.test(value.attemptId)) {
+        if (value !== null) NativeChrome._removeStoredAttempt();
         return null;
       }
-      const participantId = NativeChrome._participantId(value.participantId);
-      const epoch = Number(value.epoch);
-      if (participantId !== expectedParticipantId ||
-          !Number.isSafeInteger(epoch) || epoch < 0) return null;
-      return { phase: value.phase, participantId, epoch };
+      return value;
     },
 
-    _authenticatedStatusKey(status) {
-      return status
-        ? `${status.participantId}:${status.epoch}`
-        : null;
+    _writeStoredAttempt(value) {
+      localStorage.setItem(
+        NativeChrome._ATTEMPT_STORAGE_KEY, JSON.stringify(value)
+      );
+      return value;
     },
 
-    _authenticatedStatusMatches(status) {
-      return NativeChrome._authenticatedSessionAdmitted === true &&
-        NativeChrome._authenticatedSessionKey ===
-          NativeChrome._authenticatedStatusKey(status);
+    _newAttemptId() {
+      const bytes = new Uint8Array(32);
+      crypto.getRandomValues(bytes);
+      let binary = '';
+      bytes.forEach((value) => { binary += String.fromCharCode(value); });
+      return 'nsa_' + btoa(binary)
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     },
 
-    _setAuthenticatedSessionAdmission(admitted, status) {
-      const next = admitted === true;
-      const nextKey = next
-        ? NativeChrome._authenticatedStatusKey(status)
-        : null;
-      const changed = NativeChrome._authenticatedSessionAdmitted !== next ||
-        NativeChrome._authenticatedSessionKey !== nextKey;
-      NativeChrome._authenticatedSessionAdmitted = next;
-      NativeChrome._authenticatedSessionKey = nextKey;
-      // Social push is bound to the authenticated participant, not to wallet
-      // readiness. Notify it as soon as native accepts the bearer; wallet
-      // consumers remain behind the separate relay admission below.
-      if (changed && typeof window.dispatchEvent === 'function' &&
+    _attemptFor(userId) {
+      const stored = NativeChrome._readStoredAttempt();
+      if (stored && stored.userId === userId) return stored;
+      if (stored) NativeChrome._removeStoredAttempt();
+      return NativeChrome._writeStoredAttempt({
+        protocol: 2,
+        userId,
+        attemptId: NativeChrome._newAttemptId(),
+        desiredRuntime: 'running',
+      });
+    },
+
+    _isCurrentRealm(userId, generation) {
+      return !NativeChrome._logoutRunning &&
+        NativeChrome._realmGeneration === generation &&
+        NativeChrome._webParticipantId() === userId;
+    },
+
+    _closeRealm({ discardAttempt = false, notifyBridge = true } = {}) {
+      NativeChrome._realmGeneration++;
+      NativeChrome._establishLease = null;
+      NativeChrome._publicSessionStatus = null;
+      const admissionChanged = NativeChrome._sessionAdmitted !== false;
+      NativeChrome._sessionAdmitted = false;
+      if (discardAttempt) NativeChrome._removeStoredAttempt();
+      if (notifyBridge && typeof window.dispatchEvent === 'function' &&
           typeof window.CustomEvent === 'function') {
-        window.dispatchEvent(new CustomEvent(
-          'usernode:native-session-admission', { detail: { admitted: next } }
-        ));
+        try {
+          window.dispatchEvent(new CustomEvent('sv:native-realm-close'));
+        } catch (error) {
+          console.warn('[native-chrome] realm-close event failed:', error);
+        }
       }
+      NativeChrome._notifySessionAdmission(false, admissionChanged);
     },
 
-    _setSessionWalletRelayAdmission(admitted) {
-      const next = admitted === true;
-      NativeChrome._sessionWalletRelayAdmitted = next;
-      const bridge = window.usernode;
-      if (bridge &&
-          typeof bridge._setSessionWalletRelayAdmission === 'function') {
-        bridge._setSessionWalletRelayAdmission(next);
-      }
-      const walletSheet = window.WalletSheet;
-      if (walletSheet &&
-          typeof walletSheet._setSessionWalletAdmission === 'function') {
-        walletSheet._setSessionWalletAdmission(next);
-      }
+    // App calls this synchronously before publishing/replacing App.user.
+    // A saved non-secret exact attempt survives Activity/WebView recreation
+    // only for the same participant, so an already-Ready native session can
+    // be reclaimed by exact replay rather than stranded behind a new attempt.
+    prepareIdentityPublication(user) {
+      const participantId = user && user.id != null ? String(user.id) : null;
+      const stored = NativeChrome._readStoredAttempt();
+      NativeChrome._closeRealm({
+        discardAttempt: !!stored && stored.userId !== participantId,
+      });
     },
 
     enterAnonymous() {
-      NativeChrome._setAuthenticatedSessionAdmission(false);
-      NativeChrome._setSessionWalletRelayAdmission(false);
-      if (NativeChrome._logoutRunning) return Promise.resolve(false);
-      const generation = ++NativeChrome._handoffGeneration;
-      const isCurrentAnonymous = () =>
-        !NativeChrome._logoutRunning &&
-        NativeChrome._handoffGeneration === generation &&
-        NativeChrome._webParticipantId() == null;
-      return (async () => {
-        const bridge = window.usernode;
-        if (!bridge || bridge.isNative !== true) {
-          if (!isCurrentAnonymous()) return false;
-          NativeChrome._setAuthenticatedSessionAdmission(true);
-          NativeChrome._setSessionWalletRelayAdmission(true);
-          return true;
-        }
+      NativeChrome._closeRealm({ discardAttempt: true });
+      NativeChrome.maybeShowFirstRunPermissions();
+      return Promise.resolve(false);
+    },
 
-        const info = await NativeChrome.getInfo();
-        const capabilities = Array.isArray(info.capabilities)
-          ? info.capabilities
-          : [];
-        if (capabilities.includes('enterAnonymousSession')) {
-          if (!isCurrentAnonymous()) return false;
-          if (typeof bridge.enterAnonymousSession !== 'function') {
-            console.warn('[native-chrome] anonymous-session admission is unavailable');
-            NativeChrome._recordSessionFailure('anonymous-admission',
-              'Anonymous-session admission is unavailable on this app build');
-            return false;
-          }
-          const admission = await bridge.enterAnonymousSession();
-          if (!admission || admission.admitted !== true) {
-            console.warn('[native-chrome] anonymous session was not admitted');
-            NativeChrome._recordSessionFailure('anonymous-admission',
-              'The Usernode app did not admit the anonymous session');
-            return false;
-          }
-          if (!isCurrentAnonymous()) return false;
-          NativeChrome._lastSessionFailure = null;
-          NativeChrome._setAuthenticatedSessionAdmission(true);
-          NativeChrome._setSessionWalletRelayAdmission(true);
-          return true;
-        }
-
-        // Pre-v4 builds have no native handoff gate to acknowledge. Preserve
-        // their existing local wallet behavior after a conclusive probe;
-        // a v4/inconclusive native result stays fail-closed.
-        const confirmedPreV4 = Number.isInteger(info.version) &&
-          info.version > 0 && info.version < 4;
-        if (confirmedPreV4 && isCurrentAnonymous()) {
-          NativeChrome._setAuthenticatedSessionAdmission(true);
-          NativeChrome._setSessionWalletRelayAdmission(true);
-          return true;
-        }
-        return false;
-      })().then((admitted) => {
-        // Device permissions are not account-level: the iOS notification
-        // prompt (and the Android alarm/battery asks) should reach
-        // signed-out users too, so a settled anonymous session is a
-        // first-run trigger just like the post-login handoff. The run is
-        // shared/latched, so a login racing this cannot stack a second
-        // sheet. In a plain browser the capability probe bails it out.
-        if (admitted) NativeChrome.maybeShowFirstRunPermissions();
-        return admitted;
-      }).catch((error) => {
-        console.warn('[native-chrome] anonymous-session admission failed:',
-          error && error.message ? error.message : error);
-        NativeChrome._recordSessionFailure('anonymous-admission', error);
-        return false;
+    async _prepareNativeHandoff(attempt, userId, generation) {
+      const response = await fetch(NativeChrome._HANDOFF_ENDPOINT, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          protocol: 2,
+          attemptId: attempt.attemptId,
+          desiredRuntime: 'running',
+        }),
       });
-    },
-
-    // Boot-time orchestration. Runs once a web session exists (init()
-    // defers it to the `sv:session` boot stage — the SPA also boots
-    // anonymously now) and safe to call again later. Sequence:
-    //   1. Close local wallet admission and, when supported, the native latch.
-    //   2. Always exchange the current web session for a fresh mobile bearer.
-    //   3. Verify the exchange still describes the current web participant.
-    //   4. Run completeLogin, then start only the matching native
-    //      participant + identity epoch. A cross-participant result asks the
-    //      native runtime to restart; this document does no further work.
-    // Every failure is a console.warn and a clean exit — the web shell
-    // keeps working without the native side.
-    runLoginHandoff() {
-      // Close synchronously with the `sv:session` listener invocation. No
-      // wallet read/sign/send may reach the previous native identity while
-      // the new web participant is being exchanged and verified.
-      NativeChrome._setAuthenticatedSessionAdmission(false);
-      NativeChrome._setSessionWalletRelayAdmission(false);
-      if (NativeChrome._logoutRunning) return Promise.resolve(null);
-      if (NativeChrome._handoffPromise) {
-        NativeChrome._handoffRerunRequested = true;
-        return NativeChrome._handoffPromise;
-      }
-      const run = (async () => {
-        let result = null;
-        do {
-          NativeChrome._handoffRerunRequested = false;
-          const generation = ++NativeChrome._handoffGeneration;
-          result = await NativeChrome._runLoginHandoff(generation);
-          if (result && result.restarting === true) {
-            // This document is terminal once native accepts a runtime
-            // replacement. Ignore session signals queued while cleanup was
-            // being admitted; the replacement WebView starts a fresh run.
-            NativeChrome._handoffRerunRequested = false;
-            break;
-          }
-        } while (NativeChrome._handoffRerunRequested &&
-          !NativeChrome._logoutRunning);
-        return result;
-      })();
-      const tracked = run.finally(() => {
-        if (NativeChrome._handoffPromise === tracked) {
-          NativeChrome._handoffPromise = null;
-          NativeChrome._handoffRerunRequested = false;
-        }
-      });
-      NativeChrome._handoffPromise = tracked;
-      return tracked;
-    },
-
-    // A failed cold-start exchange leaves the native gate closed on purpose,
-    // but the web session may remain healthy and emit no later auth change.
-    // Foreground/network recovery signals therefore need an explicit retry.
-    // Unlike a new `sv:session` signal, these retries do not request a second
-    // pass when an authoritative handoff is already in flight.
-    recoverSessionAdmission() {
-      if (NativeChrome._logoutRunning ||
-          NativeChrome._authenticatedSessionAdmitted) {
-        return Promise.resolve(null);
-      }
-      if (NativeChrome._handoffPromise) return NativeChrome._handoffPromise;
-      if (NativeChrome._webParticipantId() == null) {
-        return NativeChrome.enterAnonymous();
-      }
-      return NativeChrome.runLoginHandoff();
-    },
-
-    async _runLoginHandoff(generation) {
-      const info = await NativeChrome.getInfo();
-      const capabilities = Array.isArray(info.capabilities)
-        ? info.capabilities
-        : [];
-      if (!capabilities.includes('completeLogin')) {
-        // Pre-v4 app builds have no platform-session handoff to verify. Keep
-        // their existing wallet behavior only when a real older bridge version
-        // confirms that absence. A version-0 timeout/fallback remains closed.
-        const confirmedPreV4 = Number.isInteger(info.version) &&
-          info.version > 0 && info.version < 4;
-        if (confirmedPreV4 && !NativeChrome._logoutRunning &&
-            !NativeChrome._handoffRerunRequested) {
-          NativeChrome._setAuthenticatedSessionAdmission(true);
-          NativeChrome._setSessionWalletRelayAdmission(true);
-        }
-        return null;
-      }
-      const webParticipantId = NativeChrome._webParticipantId();
-      if (webParticipantId == null) return null;
-      try {
-        if (capabilities.includes('beginSessionHandoff')) {
-          if (typeof window.usernode.beginSessionHandoff !== 'function') {
-            console.warn('[native-chrome] session handoff latch is unavailable');
-            NativeChrome._recordSessionFailure('login-handoff',
-              'The session handoff latch is unavailable on this app build');
-            return null;
-          }
-          const admission = await window.usernode.beginSessionHandoff();
-          if (!admission || admission.blocked !== true) {
-            console.warn('[native-chrome] native wallet handoff was not blocked');
-            NativeChrome._recordSessionFailure('login-handoff',
-              'The Usernode app did not block its wallet for the handoff');
-            return null;
-          }
-          if (!NativeChrome._isCurrentWebParticipant(
-            webParticipantId, generation
-          )) return null;
-        }
-        const res = await fetch('/api/v4/mobile/auth/from-session', {
-          method: 'POST',
-          credentials: 'same-origin',
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success || !data.token) {
-          console.warn('[native-chrome] from-session exchange failed',
-            res.status, data && data.error);
-          return null;
-        }
-        const exchangedParticipantId = NativeChrome._participantId(
-          data.user && data.user.id
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body.success !== true || !body.data) {
+        const error = new Error(
+          (body && body.error) || 'Native session handoff request failed'
         );
-        if (exchangedParticipantId !== webParticipantId ||
-            !NativeChrome._isCurrentWebParticipant(
-              webParticipantId, generation)) {
-          console.warn('[native-chrome] stale or mismatched web session exchange');
-          return null;
+        if (body && typeof body.code === 'string') {
+          error.usernodeCode = body.code;
         }
+        throw error;
+      }
+      if (!NativeChrome._isCurrentRealm(userId, generation) ||
+          body.data.protocol !== 2 ||
+          body.data.attemptId !== attempt.attemptId ||
+          body.data.desiredRuntime !== 'running') {
+        throw new Error('Native session handoff was stale or mismatched');
+      }
+    },
 
-        const result = await window.usernode.completeLogin({
-          token: data.token,
-          user: data.user || null,
+    establishCurrentSession() {
+      if (NativeChrome._logoutRunning) return Promise.resolve(null);
+      const userId = NativeChrome._webParticipantId();
+      if (!userId) return Promise.resolve(null);
+      const bridge = window.usernode;
+      if (!bridge || bridge.isNative !== true) return Promise.resolve(null);
+      if (NativeChrome._sessionAdmitted &&
+          NativeChrome._publicSessionStatus &&
+          NativeChrome._publicSessionStatus.identity.participantId === userId) {
+        return Promise.resolve(NativeChrome._publicSessionStatus);
+      }
+
+      const generation = NativeChrome._realmGeneration;
+      const active = NativeChrome._establishLease;
+      if (active && active.generation === generation &&
+          active.userId === userId) return active.promise;
+
+      const lease = { generation, userId, attemptId: null, promise: null };
+      const run = (async () => {
+        const info = await NativeChrome.getInfo();
+        const capabilities = Array.isArray(info && info.capabilities)
+          ? info.capabilities : [];
+        if (!info || info.sessionLifecycleProtocol !== 2 ||
+            !capabilities.includes('establishNativeSession') ||
+            typeof bridge.establishNativeSession !== 'function') {
+          throw new Error(
+            'This Usernode app version must be updated for secure sign-in'
+          );
+        }
+        if (!NativeChrome._isCurrentRealm(userId, generation)) return null;
+
+        const attempt = NativeChrome._attemptFor(userId);
+        lease.attemptId = attempt.attemptId;
+        await NativeChrome._prepareNativeHandoff(
+          attempt, userId, generation
+        );
+        if (!NativeChrome._isCurrentRealm(userId, generation)) return null;
+        const result = await bridge.establishNativeSession({
+          attemptId: attempt.attemptId,
+          desiredRuntime: 'running',
         });
-        if (result && result.restarting === true) return result;
-        if (!NativeChrome._isCurrentWebParticipant(
-          webParticipantId, generation)) return null;
-
-        const sessionBound = await NativeChrome.has('sessionBoundAuthStatus');
-        if (sessionBound) {
-          const authenticatedStatus = NativeChrome._boundAuthenticatedStatus(
-            result, webParticipantId
+        if (!NativeChrome._isCurrentRealm(userId, generation)) return null;
+        if (!result || !result.identity ||
+            result.identity.participantId !== String(App.user.id)) {
+          NativeChrome._closeRealm({ discardAttempt: true });
+          throw new Error(
+            'Native session result did not match the current participant'
           );
-          if (!authenticatedStatus) {
-            console.warn('[native-chrome] native login result did not match '
-              + 'the current participant/epoch');
-            return null;
-          }
-          NativeChrome._setAuthenticatedSessionAdmission(
-            true, authenticatedStatus
-          );
-          const readyStatus = NativeChrome._boundReadyStatus(
-            result, webParticipantId
-          );
-          if (readyStatus) {
-            await NativeChrome._ensureNodeStarted(readyStatus, generation);
-            if (!NativeChrome._handoffRerunRequested &&
-                NativeChrome._isCurrentWebParticipant(
-              webParticipantId, generation
-            ) && NativeChrome._authenticatedStatusMatches(
-              authenticatedStatus
-            )) {
-              NativeChrome._setSessionWalletRelayAdmission(true);
-            }
-          }
-        } else if (result && result.address) {
-          // Compatibility for bridge v4 builds. New builds advertise
-          // sessionBoundAuthStatus and take the participant/epoch path above.
-          NativeChrome._setAuthenticatedSessionAdmission(true);
-          await NativeChrome._ensureLegacyNodeStarted(
-            result.address, webParticipantId, generation
-          );
-          if (!NativeChrome._handoffRerunRequested &&
-              NativeChrome._isCurrentWebParticipant(
-            webParticipantId, generation
-          )) {
-            NativeChrome._setSessionWalletRelayAdmission(true);
-          }
         }
-        return result || null;
-      } catch (e) {
-        console.warn('[native-chrome] login handoff failed:',
-          e && e.message ? e.message : e);
-        NativeChrome._recordSessionFailure('login-handoff', e);
+        NativeChrome._publicSessionStatus = result;
+        NativeChrome._lastSessionFailure = null;
+        NativeChrome._setSessionAdmission(true);
+        NativeChrome.maybeShowFirstRunPermissions();
+        return result;
+      })().catch((error) => {
+        if (NativeChrome._isCurrentRealm(userId, generation)) {
+          // These server states cannot ever replay this exact attempt. Drop
+          // only its non-secret metadata; this run still fails closed and a
+          // later normal recovery may create a fresh attempt.
+          if (isTerminalAttemptFailure(error)) {
+            NativeChrome._removeStoredAttempt();
+          }
+          console.warn('[native-chrome] native session establishment failed:',
+            error && error.message ? error.message : error);
+          NativeChrome._recordSessionFailure(
+            (error && /must be updated/.test(error.message || ''))
+              ? 'update-required' : 'native-establish',
+            error
+          );
+          offerWalletRecovery(userId, error);
+        }
         return null;
-      }
-    },
-
-    _ensureNodeStarted(status, generation) {
-      const key = `${status.participantId}:${status.epoch}:${status.address}`;
-      return NativeChrome._startNodeOnce(
-        key,
-        {
-          address: status.address,
-          participantId: status.participantId,
-          epoch: status.epoch,
-        },
-        status.participantId,
-        generation
-      );
-    },
-
-    _ensureLegacyNodeStarted(address, participantId, generation) {
-      return NativeChrome._startNodeOnce(
-        `legacy:${participantId}:${address}`,
-        { address },
-        participantId,
-        generation
-      );
-    },
-
-    _startNodeOnce(key, payload, participantId, generation) {
-      if (!payload.address || !NativeChrome._isCurrentWebParticipant(
-        participantId, generation)) return Promise.resolve(false);
-      if (NativeChrome._nodeStartKey === key) return Promise.resolve(true);
-      const inFlight = NativeChrome._nodeStartInFlight;
-      if (inFlight) {
-        if (inFlight.key === key) return inFlight.promise;
-        // FIXME(#514): a different native identity epoch can arrive while a
-        // start is in flight. We intentionally defer queueing that extreme
-        // transition until native operation fencing is worth the complexity.
-        return Promise.resolve(false);
-      }
-
-      // Store the full capability-check + start promise immediately so two
-      // callers cannot both cross the await above and start the same node.
-      const promise = (async () => {
-        if (!(await NativeChrome.has('startNode')) ||
-            !NativeChrome._isCurrentWebParticipant(
-              participantId, generation)) return false;
-        try {
-          await window.usernode.startNode(payload);
-          if (NativeChrome._isCurrentWebParticipant(
-            participantId, generation)) {
-            NativeChrome._nodeStartKey = key;
-          }
-          return true;
-        } catch (e) {
-          console.warn('[native-chrome] startNode failed:',
-            e && e.message ? e.message : e);
-          return false;
-        }
-      })().finally(() => {
-        if (NativeChrome._nodeStartInFlight &&
-            NativeChrome._nodeStartInFlight.promise === promise) {
-          NativeChrome._nodeStartInFlight = null;
+      }).finally(() => {
+        if (NativeChrome._establishLease === lease) {
+          NativeChrome._establishLease = null;
         }
       });
-      NativeChrome._nodeStartInFlight = { key, promise };
-      return promise;
+      lease.promise = run;
+      NativeChrome._establishLease = lease;
+      return run;
     },
 
-    // Close every local/native wallet admission path before the first web
-    // logout await. This preflight does not tear down the WebView.
-    //
-    // It RESOLVES a report and no longer throws:
-    //   { nativeTerminal, latch, reason, code }
-    // with `latch` one of
-    //   'acknowledged'  the native wallet latch closed for this logout
-    //   'unsupported'   this build has no latch to close (pre-v4)
-    //   'unavailable'   the app refused or could not answer the latch call
-    //   'inconclusive'  two probes running and we still cannot tell
-    //
-    // Rejecting is what stranded a device whose privileged handshake was
-    // refused: Settings aborted before POST /api/auth/logout, so the web
-    // session survived and there was no way out of the app at all. The
-    // admission-closing above is unchanged and still synchronous — a
-    // refused latch means the caller must confirm with the user before
-    // clearing the web session, NOT that it may not.
+    recoverSessionAdmission() {
+      if (NativeChrome._logoutRunning || NativeChrome._sessionAdmitted) {
+        return Promise.resolve(NativeChrome._publicSessionStatus);
+      }
+      return NativeChrome.establishCurrentSession();
+    },
+
+    // An anonymous native shell may still have a recovered native A after its
+    // HttpOnly web session expired. Close page admission synchronously, then
+    // ask the app's private process root to drain and revoke A before Social
+    // receives any request that could mint B. A live App.user must instead use
+    // the ordinary explicit logout flow; the server enforces that boundary.
+    prepareForLogin() {
+      if (window.App && App.user) {
+        return Promise.reject(new Error('Sign out before signing in again.'));
+      }
+      const bridge = window.usernode;
+      if (!bridge || bridge.isNative !== true) return Promise.resolve(false);
+      if (NativeChrome._prepareLoginLease) {
+        return NativeChrome._prepareLoginLease;
+      }
+
+      NativeChrome._closeRealm({ discardAttempt: true });
+      let run;
+      run = NativeChrome.getInfo().then((info) => {
+        if (window.App && App.user) {
+          throw new Error('Sign out before signing in again.');
+        }
+        const capabilities = Array.isArray(info && info.capabilities)
+          ? info.capabilities : [];
+        if (!info || info.degraded === true ||
+            info.sessionLifecycleProtocol !== 2 ||
+            !capabilities.includes('prepareForLogin') ||
+            typeof bridge.prepareForLogin !== 'function') {
+          throw new Error(
+            'This Usernode app version must be updated for secure sign-in'
+          );
+        }
+        return bridge.prepareForLogin().then(() => {
+          NativeChrome._lastSessionFailure = null;
+          return true;
+        });
+      }).catch((error) => {
+        NativeChrome._recordSessionFailure('prepare-login', error);
+        throw error;
+      }).finally(() => {
+        if (NativeChrome._prepareLoginLease === run) {
+          NativeChrome._prepareLoginLease = null;
+        }
+      });
+      NativeChrome._prepareLoginLease = run;
+      return run;
+    },
+
+    // Close the JS/native realm synchronously before the first logout await.
     prepareWebLogout() {
       NativeChrome._logoutRunning = true;
-      NativeChrome._setAuthenticatedSessionAdmission(false);
-      NativeChrome._setSessionWalletRelayAdmission(false);
-      NativeChrome._handoffGeneration++;
-      NativeChrome._handoffRerunRequested = false;
-      NativeChrome._nodeStartKey = null;
-      return (async () => {
-        const report = (nativeTerminal, latch, reason, error) => {
-          if (latch !== 'acknowledged' && latch !== 'unsupported') {
-            NativeChrome._recordSessionFailure('logout-preflight',
-              error || reason);
-          }
-          return {
-            nativeTerminal,
-            latch,
-            reason: reason || null,
-            code: (error && typeof error.usernodeCode === 'string')
-              ? error.usernodeCode : null,
-          };
-        };
-        const isNative = () => {
-          const bridge = window.usernode;
-          return !!bridge && bridge.isNative === true;
-        };
-        const conclusive = (info) => Number.isInteger(info.version) &&
-          info.version > 0;
-
-        let info = await NativeChrome.getInfo();
-        if (isNative() && !conclusive(info)) {
-          // One cached probe may merely have timed out, so re-probe ONCE in
-          // place rather than making the user click again — that retry loop
-          // is exactly what a stuck device cannot escape.
-          NativeChrome._infoPromise = null;
-          info = await NativeChrome.getInfo();
-        }
-        if (isNative() && !conclusive(info)) {
-          NativeChrome._infoPromise = null;
-          return report(false, 'inconclusive',
-            'Native bridge probe was inconclusive');
-        }
-
-        const capabilities = Array.isArray(info.capabilities)
-          ? info.capabilities
-          : [];
-        if (capabilities.includes('beginSessionHandoff')) {
-          if (typeof window.usernode.beginSessionHandoff !== 'function') {
-            return report(false, 'unavailable',
-              'Native session handoff latch is unavailable');
-          }
-          let admission = null;
-          try {
-            admission = await window.usernode.beginSessionHandoff();
-          } catch (error) {
-            // The privileged handshake being refused lands here, and is the
-            // whole reason this resolves instead of throwing.
-            return report(false, 'unavailable',
-              (error && error.message)
-                ? String(error.message)
-                : 'Native session handoff latch failed',
-              error);
-          }
-          if (!admission || admission.blocked !== true) {
-            return report(false, 'unavailable',
-              'Native wallet handoff was not blocked');
-          }
-        }
-
-        const nativeTerminal = capabilities.includes('logout') &&
-          !!window.usernode && typeof window.usernode.logout === 'function';
-        NativeChrome._lastSessionFailure = null;
-        return report(nativeTerminal,
-          capabilities.includes('beginSessionHandoff')
-            ? 'acknowledged'
-            : 'unsupported',
-          null);
-      })();
+      // TODO(session-lifecycle-v2): Once web logout reports an authoritative
+      // success/failure result, retain this replay metadata until success.
+      // Today a failed web logout followed by Activity recreation stays
+      // safely closed but may require a process restart to recover.
+      NativeChrome._closeRealm({ discardAttempt: true });
+      const bridge = window.usernode;
+      // Classification is deliberately non-fallible. The server logout must
+      // never wait on native health; semantic protocol validation belongs to
+      // the terminal native call after server authority has been revoked.
+      return { nativeTerminal: !!bridge && bridge.isNative === true };
     },
 
     // Successful native logout replaces this WebView. Callers must return
     // this exact promise and perform no continuation work in the old document.
     commitNativeLogout() {
-      return window.usernode.logout();
+      const bridge = window.usernode;
+      if (!bridge || bridge.isNative !== true) {
+        return Promise.reject(new Error('Native sign-out is unavailable'));
+      }
+      return NativeChrome.getInfo().then((info) => {
+        const capabilities = Array.isArray(info && info.capabilities)
+          ? info.capabilities : [];
+        if (!info || info.degraded === true ||
+            info.sessionLifecycleProtocol !== 2 ||
+            !capabilities.includes('logout') ||
+            typeof bridge.logout !== 'function') {
+          throw new Error(
+            'This Usernode app version must be updated for secure sign-out'
+          );
+        }
+        return bridge.logout();
+      });
     },
 
     // ── First-run permissions step (thin-shell onboarding) ───────────
     //
     // Replaces the native onboarding permission screens: after the first
-    // successful login handoff on a device, offer the exact-alarm /
+    // successful native-session establishment on a device, offer the exact-alarm /
     // battery-optimization prompts (Android) or the notification prompt
     // (iOS) the node needs. One-shot per device via a localStorage
     // marker set on dismiss — except on iOS while the OS notification
@@ -858,10 +703,9 @@
       return caps.indexOf(method) !== -1;
     },
 
-    // Triggered from init()'s boot handoff, every `sv:session`, and the
-    // `usernode:auth-status` recovery chain — one shared run so the
-    // trigger storm cannot stack sheets, and a document latch once a
-    // sheet was actually presented.
+    // Triggered by anonymous entry and successful native establishment. One
+    // shared run keeps repeated session signals from stacking sheets, with a
+    // document latch once a sheet was actually presented.
     maybeShowFirstRunPermissions() {
       if (NativeChrome._firstRunPromise) return NativeChrome._firstRunPromise;
       const tracked = NativeChrome._maybeShowFirstRunPermissions()
@@ -1146,111 +990,150 @@
       return { granted, status };
     },
 
-    _initAuthStatusEvents() {
-      // Late identity transitions (e.g. wallet provisioning finishing
-      // after boot) surface as `usernode:auth-status` CustomEvents; a
-      // ready identity for the current web participant is the signal to
-      // request node start. New builds bind the request to the native epoch;
-      // old builds retain their address-only compatibility path.
-      window.addEventListener('usernode:auth-status', (e) => {
-        const d = e && e.detail;
-        if (!d || NativeChrome._logoutRunning) return;
-        const participantId = NativeChrome._webParticipantId();
-        if (!NativeChrome._authenticatedSessionAdmitted) {
-          // onPageFinished may be the first signal after the privileged bridge
-          // becomes available. Recover the explicit anonymous admission when
-          // there is no web participant; otherwise retry the authoritative
-          // web-session exchange. The event itself admits nothing.
-          if (participantId == null) {
-            NativeChrome.enterAnonymous();
-            return;
-          }
-          // Identity transitions emitted by the completeLogin currently in
-          // flight are progress, not a request to exchange the same web
-          // session again.
-          if (NativeChrome._handoffPromise) return;
-          // Preserve the normal post-handoff first-run permissions step on
-          // the authenticated recovery path.
-          NativeChrome.runLoginHandoff().then((result) =>
-            result && result.restarting === true
-              ? undefined
-              : NativeChrome.maybeShowFirstRunPermissions()
-          );
-          return;
-        }
-        if (participantId == null) return;
-        const authenticatedStatus = NativeChrome._boundAuthenticatedStatus(
-          d, participantId
-        );
-        if (!authenticatedStatus ||
-            !NativeChrome._authenticatedStatusMatches(authenticatedStatus)) {
-          NativeChrome._setAuthenticatedSessionAdmission(false);
-          NativeChrome._setSessionWalletRelayAdmission(false);
-          return;
-        }
-        if (d.phase === 'reconciling') {
-          NativeChrome._setSessionWalletRelayAdmission(false);
-          return;
-        }
-        if (d.phase !== 'ready' || !d.address) return;
-        const generation = NativeChrome._handoffGeneration;
-        NativeChrome.has('sessionBoundAuthStatus').then((sessionBound) => {
-          if (sessionBound) {
-            const status = NativeChrome._boundReadyStatus(d, participantId);
-            if (status) {
-              NativeChrome._ensureNodeStarted(status, generation).then(() => {
-                if (NativeChrome._isCurrentWebParticipant(
-                  participantId, generation
-                ) && NativeChrome._authenticatedStatusMatches(
-                  authenticatedStatus
-                )) {
-                  NativeChrome._setSessionWalletRelayAdmission(true);
-                }
-              });
-            }
-          } else {
-            NativeChrome._ensureLegacyNodeStarted(
-              d.address, participantId, generation
-            );
-          }
-        });
-      });
-    },
-
     _initSessionRecoveryEvents() {
       const recover = () => {
         if (document.visibilityState === 'hidden') return;
         NativeChrome.recoverSessionAdmission();
       };
       window.addEventListener('online', recover);
+      window.addEventListener('pageshow', recover);
+      window.addEventListener('pagehide', () => {
+        NativeChrome._closeRealm({ notifyBridge: false });
+      });
       document.addEventListener('visibilitychange', recover);
+    },
+
+    // ── Appearance publish (the cold-launch white flash) ─────────────
+    //
+    // The Flutter shell paints a launch screen before this document
+    // exists, and had no way to know what colour to paint it: SV's theme
+    // is in this WebView's localStorage, the app's is in its own
+    // SharedPreferences, and the two never met. So it fell back to the OS
+    // preference and painted WHITE for everyone who had picked Dark on a
+    // light-mode phone — a full-screen white frame ahead of a near-black
+    // shell, on every cold launch.
+    //
+    // Nothing web-side can fix that launch, because it happens before any
+    // web code runs. What we can do is fix the NEXT one: tell the app
+    // which appearance this document settled on, and let it store that as
+    // the colour to open with. Published on boot and on every theme
+    // change, so a user who switches to Light gets a light launch screen
+    // from then on.
+    _appearancePublished: null,
+    _appearancePublishPromise: null,
+    _appearanceRerun: false,
+
+    // The RESOLVED appearance, read back off the document rather than
+    // recomputed. `.dark` on <html> and the ground behind it are both
+    // written by the head's theme module (frontend/src/head.html), which
+    // has already folded the tri-state stored mode against the OS
+    // preference — so reading them here keeps ONE source of truth for the
+    // two ground colours instead of a third copy that drifts.
+    _resolvedAppearance() {
+      let dark = false;
+      let background = null;
+      try {
+        dark = document.documentElement.classList.contains('dark');
+      } catch (_) { /* no document — light is the shell's own default */ }
+      try {
+        // `rgb(r, g, b)` / `rgba(r, g, b, a)` — the critical <style> in the
+        // head sets it, so a miss means something replaced that block.
+        // Omitting the colour is fine: the app keeps its own default for
+        // the scheme, which is the part that actually stops the flash.
+        const match = /^rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(
+          getComputedStyle(document.documentElement).backgroundColor || ''
+        );
+        if (match) {
+          background = '#' + [1, 2, 3].map((i) => (
+            Number(match[i]).toString(16).padStart(2, '0')
+          )).join('');
+        }
+      } catch (_) { /* no layout yet — publish the scheme alone */ }
+      return { scheme: dark ? 'dark' : 'light', background };
+    },
+
+    // Fire-and-forget. Never throws into a caller's render path, and never
+    // latches "unsupported" from a DEGRADED probe — same rule as every
+    // other capability gate here (issue #978): one cold-start hiccup must
+    // not disable the publish for the rest of the document.
+    publishAppearance() {
+      const bridge = window.usernode;
+      if (!bridge || bridge.isNative !== true ||
+          typeof bridge.setAppearance !== 'function') {
+        return Promise.resolve(false);
+      }
+      // Coalesce onto the in-flight run rather than queueing a call per
+      // event: a theme change mid-publish re-runs the loop once with the
+      // latest value. Callers get the SAME promise back, so awaiting a
+      // publish means awaiting the one that is actually happening.
+      if (NativeChrome._appearancePublishPromise) {
+        NativeChrome._appearanceRerun = true;
+        return NativeChrome._appearancePublishPromise;
+      }
+      const run = NativeChrome._runAppearancePublish();
+      NativeChrome._appearancePublishPromise = run;
+      return run.then((published) => {
+        NativeChrome._appearancePublishPromise = null;
+        return published;
+      }, () => {
+        NativeChrome._appearancePublishPromise = null;
+        return false;
+      });
+    },
+
+    async _runAppearancePublish() {
+      try {
+        do {
+          NativeChrome._appearanceRerun = false;
+          const appearance = NativeChrome._resolvedAppearance();
+          const key = appearance.scheme + '|' + (appearance.background || '');
+          if (key === NativeChrome._appearancePublished) continue;
+          const info = await NativeChrome.getInfo();
+          if (info && info.degraded === true) return false;
+          const capabilities = Array.isArray(info && info.capabilities)
+            ? info.capabilities : [];
+          if (!capabilities.includes('setAppearance')) return false;
+          await window.usernode.setAppearance(appearance);
+          NativeChrome._appearancePublished = key;
+        } while (NativeChrome._appearanceRerun);
+        return true;
+      } catch (err) {
+        // An old build that drops the unknown method times out here. That
+        // is the expected answer, not an error worth a console.error —
+        // proposal checks fail any route that logs one.
+        console.warn('[native-chrome] appearance publish failed:',
+          err && err.message);
+        return false;
+      }
+    },
+
+    _initAppearancePublish() {
+      NativeChrome.publishAppearance();
+      // Theme.onChange fires on an explicit Light/Dark pick AND on an OS
+      // flip while in system mode — both change the resolved appearance,
+      // so both have to reach the app.
+      if (window.Theme && typeof Theme.onChange === 'function') {
+        Theme.onChange(() => NativeChrome.publishAppearance());
+      }
     },
 
     init() {
       // The bridge loads before wallet-sheet.js and before App resolves its
       // web session. Start closed so native A cannot be cached/rendered while
       // the shell is still deciding whether this document is anonymous or B.
-      NativeChrome._setAuthenticatedSessionAdmission(false);
-      NativeChrome._setSessionWalletRelayAdmission(false);
-      NativeChrome._initAuthStatusEvents();
+      NativeChrome._setSessionAdmission(false);
       NativeChrome._initSessionRecoveryEvents();
-      // Anonymous SPA boot (fold-auth-pages-into-SPA): the login handoff
-      // needs a live web session (the from-session exchange 401s without
-      // one), so it waits for the session boot stage. `sv:session` fires
-      // on every enterAuthed — including the waiting room, since wallet
-      // provisioning and the node work for unreleased users too — and the
-      // handoff self-guards against repeat runs. First-run permissions
-      // ride behind the handoff so a fresh install sees login → wallet →
-      // node → permissions in one flow.
-      const runHandoff = () => NativeChrome.runLoginHandoff().then(
-        (result) => result && result.restarting === true
-          ? undefined
-          : NativeChrome.maybeShowFirstRunPermissions()
-      );
-      // Always observe later SPA account changes, even when a session was
-      // already present when this script loaded.
-      document.addEventListener('sv:session', runHandoff);
-      if (window.App && App.user) runHandoff();
+      // Deliberately NOT behind session establishment below: the launch this
+      // is fixing is the one before sign-in, and the appearance it
+      // publishes is presentation state with no account in it.
+      NativeChrome._initAppearancePublish();
+      // Native session establishment needs a verified web session, so it
+      // waits for the session boot stage. Always observe later SPA account
+      // changes, even when a session was already present at script load.
+      document.addEventListener('sv:session', () => {
+        NativeChrome.establishCurrentSession();
+      });
+      if (window.App && App.user) NativeChrome.establishCurrentSession();
     },
   };
 

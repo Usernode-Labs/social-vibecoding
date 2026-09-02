@@ -18,6 +18,30 @@ const SETTINGS_SNAPSHOT = {
   authStatus: 'authenticated',
   permissions: { platform: 'android', exactAlarmGranted: true },
 };
+const ESTABLISH_ATTEMPT = `nsa_${'A'.repeat(43)}`;
+
+function establishResult(participantId = '41') {
+  return {
+    protocol: 2,
+    attemptId: ESTABLISH_ATTEMPT,
+    nativeRevision: '7',
+    identity: {
+      participantId,
+      accountId: 'account-1',
+      address: 'ut1-wallet',
+    },
+    runtimeStatus: { state: 'running' },
+    receiptStatus: 'committedReady',
+    realmSessionClaim: `realm-${participantId}`,
+  };
+}
+
+async function establishRealm(loaded) {
+  return loaded.sandbox.usernode.establishNativeSession({
+    attemptId: ESTABLISH_ATTEMPT,
+    desiredRuntime: 'running',
+  });
+}
 
 // `silentMethods` / `errorMethods` are returned to the caller so a test can
 // change how native behaves PART WAY THROUGH a run — the only way to
@@ -26,6 +50,9 @@ const SETTINGS_SNAPSHOT = {
 // capability.
 function loadBridge({
   capabilities = [],
+  responseMethods = {},
+  appUser = null,
+  fetchImpl = async () => ({ ok: false }),
   silentMethods = [],
   errorMethods = {},
   // Per-method 4th argument for __usernodeResolve — the machine-readable
@@ -34,20 +61,27 @@ function loadBridge({
   timeoutScale = 1,
   exposeCallNative = false,
   delayedMethods = {},
+  sharedStorage = null,
 } = {}) {
   const nativePosts = [];
   const messageListeners = [];
   const windowListeners = {};
+  const storage = sharedStorage || new Map();
   const responses = {
     getBridgeInfo: {
-      version: 4,
+      version: 5,
       capabilities,
+      ...(capabilities.includes('establishNativeSession')
+        ? { sessionLifecycleProtocol: 2 } : {}),
       appVersion: '0.4.0',
       buildNumber: '1223',
     },
     getPrivilegedBridgeCapability: 'navigation-capability',
-    beginSessionHandoff: { blocked: true },
-    enterAnonymousSession: { admitted: true },
+    getNodeAddress: 'ut1-sender',
+    submitTransaction: { txId: 'tx-authoritative' },
+    establishNativeSession: establishResult(
+      appUser && appUser.id != null ? String(appUser.id) : '41'
+    ),
     getWalletState: { address: 'ut1-wallet' },
     manageStaking: {
       delegate: 'B62qdelegate',
@@ -66,6 +100,7 @@ function loadBridge({
       base64: '/9j/2Q==',
     },
     markPrivilegedBridgeReady: { ready: true },
+    ...responseMethods,
   };
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
@@ -87,8 +122,8 @@ function loadBridge({
       search: '',
     },
     localStorage: {
-      getItem() { return null; },
-      setItem() {},
+      getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+      setItem(key, value) { storage.set(key, String(value)); },
     },
     document: {
       currentScript: { src: 'https://social.example/usernode-bridge.js' },
@@ -111,9 +146,12 @@ function loadBridge({
       if (!windowListeners[type]) windowListeners[type] = [];
       windowListeners[type].push(listener);
     },
-    dispatchEvent() {},
-    fetch: async () => ({ ok: false }),
+    dispatchEvent(event) {
+      for (const listener of windowListeners[event.type] || []) listener(event);
+    },
+    fetch: fetchImpl,
   };
+  if (appUser) sandbox.App = { user: appUser };
   sandbox.window = sandbox;
   sandbox.parent = sandbox;
   sandbox.globalThis = sandbox;
@@ -185,25 +223,17 @@ function loadBridge({
   };
 }
 
-test('top-frame privileged calls carry one closure-only realm capability', async () => {
+test('exact-session calls carry both closure-only root and realm claims', async () => {
   const loaded = loadBridge({
     capabilities: [
       'privilegedBridgeCapability',
-      'beginSessionHandoff',
-      'enterAnonymousSession',
+      'establishNativeSession',
       'logout',
       'getWalletState',
     ],
   });
 
-  assert.deepEqual(
-    await loaded.sandbox.usernode.beginSessionHandoff(),
-    { blocked: true }
-  );
-  assert.deepEqual(
-    await loaded.sandbox.usernode.enterAnonymousSession(),
-    { admitted: true }
-  );
+  const status = await establishRealm(loaded);
   await loaded.sandbox.usernode.logout();
   await loaded.sandbox.usernode.getWalletState();
 
@@ -212,8 +242,7 @@ test('top-frame privileged calls carry one closure-only realm capability', async
     [
       'getBridgeInfo',
       'getPrivilegedBridgeCapability',
-      'beginSessionHandoff',
-      'enterAnonymousSession',
+      'establishNativeSession',
       'logout',
       'getWalletState',
     ]
@@ -226,16 +255,78 @@ test('top-frame privileged calls carry one closure-only realm capability', async
     loaded.nativePosts[3].privilegedCapability,
     'navigation-capability'
   );
+  assert.equal('privilegedCapability' in loaded.nativePosts[0], false);
+  assert.equal('privilegedCapability' in loaded.nativePosts[1], false);
   assert.equal(
     loaded.nativePosts[4].privilegedCapability,
     'navigation-capability'
   );
-  assert.equal('privilegedCapability' in loaded.nativePosts[0], false);
-  assert.equal('privilegedCapability' in loaded.nativePosts[1], false);
-  assert.equal('privilegedCapability' in loaded.nativePosts[5], false,
-    'wallet reads remain available to embedded dapps');
+  assert.equal(loaded.nativePosts[4].realmSessionClaim, 'realm-41');
+  assert.equal('realmSessionClaim' in loaded.nativePosts[2], false,
+    'establishment cannot borrow a not-yet-created realm claim');
+  assert.equal(loaded.sandbox.usernode.realmSessionClaim, undefined,
+    'the realm claim is not exposed on the public bridge object');
   assert.equal(loaded.sandbox.usernode.privilegedCapability, undefined,
     'the capability is not exposed on the public bridge object');
+  assert.deepEqual(JSON.parse(JSON.stringify(status)), {
+    protocol: 2,
+    attemptId: ESTABLISH_ATTEMPT,
+    nativeRevision: '7',
+    identity: {
+      participantId: '41', accountId: 'account-1', address: 'ut1-wallet',
+    },
+    runtimeStatus: { state: 'running' },
+    receiptStatus: 'committedReady',
+  });
+  assert.equal(Object.isFrozen(status), true);
+  assert.equal(Object.isFrozen(status.identity), true);
+  assert.equal(Object.isFrozen(status.runtimeStatus), true);
+});
+
+test('login preparation is root-privileged without borrowing session authority',
+  async () => {
+    const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'prepareForLogin'],
+    });
+
+    assert.equal(await loaded.sandbox.usernode.prepareForLogin(), true);
+    assert.deepEqual(
+      loaded.nativePosts.map((post) => post.method),
+      ['getBridgeInfo', 'getPrivilegedBridgeCapability', 'prepareForLogin'],
+    );
+    assert.equal(
+      loaded.nativePosts[2].privilegedCapability,
+      'navigation-capability',
+    );
+    assert.equal('realmSessionClaim' in loaded.nativePosts[2], false,
+      'a recovered native session may predate the current web realm');
+  });
+
+test('native establishment rejects widened or non-canonical receipts', async () => {
+  const widenedIdentity = establishResult();
+  widenedIdentity.identity.credential = 'must-not-cross';
+  const invalidRuntime = establishResult();
+  invalidRuntime.runtimeStatus = {
+    state: 'startFailed', validatedCode: 'NOT_CANONICAL',
+  };
+  const cases = [
+    { ...establishResult(), nativeRevision: '01' },
+    widenedIdentity,
+    invalidRuntime,
+    { ...establishResult(), realmSessionClaim: ' realm-41' },
+  ];
+
+  for (const response of cases) {
+    const loaded = loadBridge({
+      capabilities: [
+        'privilegedBridgeCapability', 'establishNativeSession',
+      ],
+      responseMethods: { establishNativeSession: response },
+    });
+    await assert.rejects(establishRealm(loaded));
+    assert.equal(await loaded.sandbox.usernode.getWalletState(), null,
+      'a malformed receipt must leave the realm closed');
+  }
 });
 
 test('page readiness is an explicit top-frame privileged handshake', async () => {
@@ -368,24 +459,20 @@ test('pagehide also rejects an in-flight privileged capability bootstrap',
     );
   });
 
-test('pagehide leaves ordinary embedded-dapp requests on their prior contract',
+test('pagehide retires every in-flight session-bound read',
   async () => {
     const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'establishNativeSession'],
       silentMethods: ['getWalletState'],
     });
 
+    await establishRealm(loaded);
     const request = loaded.sandbox.usernode.getWalletState();
     await new Promise((resolve) => setImmediate(resolve));
     loaded.dispatchWindow('pagehide');
-
-    const pendingIds = Object.keys(loaded.sandbox.__usernodeBridge.pending);
-    assert.equal(pendingIds.length, 1);
-    loaded.sandbox.__usernodeResolve(
-      pendingIds[0],
-      { address: 'ut1-wallet' },
-      null
-    );
-    assert.deepEqual(await request, { address: 'ut1-wallet' });
+    assert.equal(await request, null,
+      'chrome reads preserve their documented null fallback');
+    assert.equal(Object.keys(loaded.sandbox.__usernodeBridge.pending).length, 0);
   });
 
 test('old native builds retain the legacy privileged request shape', async () => {
@@ -409,10 +496,12 @@ test('manageStaking is a no-argument top-frame privileged action', async () => {
   const loaded = loadBridge({
     capabilities: [
       'privilegedBridgeCapability',
+      'establishNativeSession',
       'manageStaking',
     ],
   });
 
+  await establishRealm(loaded);
   const staking = await loaded.sandbox.usernode.manageStaking();
 
   assert.equal(staking.delegate, 'B62qdelegate');
@@ -421,14 +510,16 @@ test('manageStaking is a no-argument top-frame privileged action', async () => {
     [
       'getBridgeInfo',
       'getPrivilegedBridgeCapability',
+      'establishNativeSession',
       'manageStaking',
     ]
   );
   assert.equal(
-    loaded.nativePosts[2].privilegedCapability,
+    loaded.nativePosts[3].privilegedCapability,
     'navigation-capability'
   );
-  assert.deepEqual(loaded.nativePosts[2].args, {},
+  assert.equal(loaded.nativePosts[3].realmSessionClaim, 'realm-41');
+  assert.deepEqual(loaded.nativePosts[3].args, {},
     'Social Vibecoding must not send a target or desired state');
 });
 
@@ -437,6 +528,7 @@ test('Social push state and tap methods stay behind the top-frame capability',
     const loaded = loadBridge({
       capabilities: [
         'privilegedBridgeCapability',
+        'establishNativeSession',
         'getSocialPushState',
         'setSocialPushEnabled',
         'claimPendingSocialNotification',
@@ -444,6 +536,7 @@ test('Social push state and tap methods stay behind the top-frame capability',
       ],
     });
 
+    await establishRealm(loaded);
     const state = await loaded.sandbox.usernode.getSocialPushState();
     await loaded.sandbox.usernode.setSocialPushEnabled(true);
     const claim = await loaded.sandbox.usernode.claimPendingSocialNotification();
@@ -456,6 +549,7 @@ test('Social push state and tap methods stay behind the top-frame capability',
       [
         'getBridgeInfo',
         'getPrivilegedBridgeCapability',
+        'establishNativeSession',
         'getSocialPushState',
         'setSocialPushEnabled',
         'claimPendingSocialNotification',
@@ -465,20 +559,29 @@ test('Social push state and tap methods stay behind the top-frame capability',
     for (const post of loaded.nativePosts.slice(2)) {
       assert.equal(post.privilegedCapability, 'navigation-capability');
     }
-    assert.deepEqual(loaded.nativePosts[3].args, { enabled: true });
-    assert.deepEqual(loaded.nativePosts[5].args, { notificationId: 42 });
+    for (const post of loaded.nativePosts.slice(3)) {
+      assert.equal(post.realmSessionClaim, 'realm-41');
+    }
+    assert.deepEqual(loaded.nativePosts[4].args, { enabled: true });
+    assert.deepEqual(loaded.nativePosts[6].args, { notificationId: 42 });
   });
 
-test('the homescreen badge count is a privileged top-frame action', async () => {
+test('the homescreen badge count requires the exact native session realm', async () => {
   // #1445: setSocialBadgeCount carries the unread total the OS icon badge
   // shows. Same per-realm capability as the other social-push methods.
   const loaded = loadBridge({
     capabilities: [
       'privilegedBridgeCapability',
+      'establishNativeSession',
       'setSocialBadgeCount',
     ],
   });
 
+  await assert.rejects(
+    loaded.sandbox.usernode.setSocialBadgeCount(7),
+    (error) => error.usernodeKind === 'native-session-closed'
+  );
+  await establishRealm(loaded);
   await loaded.sandbox.usernode.setSocialBadgeCount(7);
 
   assert.deepEqual(
@@ -486,14 +589,16 @@ test('the homescreen badge count is a privileged top-frame action', async () => 
     [
       'getBridgeInfo',
       'getPrivilegedBridgeCapability',
+      'establishNativeSession',
       'setSocialBadgeCount',
     ]
   );
   assert.equal(
-    loaded.nativePosts[2].privilegedCapability,
+    loaded.nativePosts[3].privilegedCapability,
     'navigation-capability'
   );
-  assert.deepEqual(loaded.nativePosts[2].args, { count: 7 });
+  assert.equal(loaded.nativePosts[3].realmSessionClaim, 'realm-41');
+  assert.deepEqual(loaded.nativePosts[3].args, { count: 7 });
 });
 
 test('notification permission actions require the top-frame capability',
@@ -705,7 +810,7 @@ test('a failed bridge probe is marked degraded, a real one is not', async () => 
   // sandbox realm, so their prototypes differ from the test realm's.
   const answered = loadBridge({ capabilities: ['getSettingsState'] });
   const info = await answered.sandbox.usernode.getBridgeInfo();
-  assert.equal(info.version, 4);
+  assert.equal(info.version, 5);
   assert.equal(info.appVersion, '0.4.0');
   assert.equal(info.buildNumber, '1223');
   assert.equal(info.degraded, undefined,
@@ -729,8 +834,11 @@ test('a failed bridge probe is marked degraded, a real one is not', async () => 
   assert.equal(empty.degraded, undefined);
 });
 
-test('parent relay denies bootstrap and privileged methods but keeps reads', () => {
-  const loaded = loadBridge({ capabilities: ['privilegedBridgeCapability'] });
+test('parent relay denies root methods and injects both claims for realm calls',
+  async () => {
+  const loaded = loadBridge({ capabilities: [
+    'privilegedBridgeCapability', 'establishNativeSession',
+  ] });
   const childReplies = [];
   const child = {
     postMessage(value, origin) { childReplies.push({ value, origin }); },
@@ -748,30 +856,33 @@ test('parent relay denies bootstrap and privileged methods but keeps reads', () 
 
   dispatch('getPrivilegedBridgeCapability', 'bootstrap');
   dispatch('logout', 'logout');
-  dispatch('enterAnonymousSession', 'anonymous');
-  dispatch('setIosKeepAlive', 'legacy-ios-setting');
   dispatch('manageStaking', 'manage-staking');
-  dispatch('getWalletState', 'wallet');
+  dispatch('getWalletState', 'closed-wallet');
 
-  assert.deepEqual(
-    loaded.nativePosts.map((post) => post.method),
-    ['getWalletState']
-  );
-  assert.equal(childReplies.length, 6);
+  assert.deepEqual(loaded.nativePosts.map((post) => post.method), []);
+  assert.equal(childReplies.length, 4);
   assert.match(childReplies[0].value.error, /top-level page/);
   assert.match(childReplies[1].value.error, /top-level page/);
   assert.match(childReplies[2].value.error, /top-level page/,
-    'only the trusted shell can admit an anonymous native session');
-  assert.match(childReplies[3].value.error, /top-level page/,
-    'removed v3 actions stay fenced for installed old app builds');
-  assert.match(childReplies[4].value.error, /top-level page/,
     'embedded apps cannot open native delegation management');
-  assert.equal(childReplies[5].value.error, null);
-  assert.deepEqual(childReplies[5].value.value, { address: 'ut1-wallet' });
+  assert.match(childReplies[3].value.error, /not established/);
+
+  await establishRealm(loaded);
+  dispatch('getWalletState', 'open-wallet');
+  assert.equal(childReplies[4].value.error, null);
+  assert.deepEqual(childReplies[4].value.value, { address: 'ut1-wallet' });
+  const relayed = loaded.nativePosts.at(-1);
+  assert.equal(relayed.method, 'getWalletState');
+  assert.equal(relayed.privilegedCapability, 'navigation-capability');
+  assert.equal(relayed.realmSessionClaim, 'realm-41');
 });
 
-test('session handoff gate rejects top-frame and iframe wallet calls', async () => {
-  const loaded = loadBridge();
+test('native realm gate rejects top-frame and iframe wallet calls until establish',
+  async () => {
+  const loaded = loadBridge({ capabilities: [
+    'privilegedBridgeCapability', 'establishNativeSession',
+    'submitTransaction',
+  ] });
   const childReplies = [];
   const child = {
     postMessage(value, origin) { childReplies.push({ value, origin }); },
@@ -787,28 +898,548 @@ test('session handoff gate rejects top-frame and iframe wallet calls', async () 
     },
   });
 
-  loaded.sandbox.usernode._setSessionWalletRelayAdmission(false);
   assert.equal(await loaded.sandbox.usernode.getWalletState(), null,
     'top-frame reads fail closed through their existing null fallback');
-  loaded.sandbox.usernode.acknowledgeTransaction('tx-during-handoff');
+  await assert.rejects(
+    loaded.sandbox.sendTransaction('ut1-recipient', 3, '', {
+      waitForInclusion: false,
+    }),
+    /not established/i
+  );
   await assert.rejects(
     loaded.sandbox.signMessage('session-scoped message'),
-    /wallet handoff is in progress/i
+    /not established/i
   );
   relayWalletRead('blocked-wallet');
 
   assert.equal(loaded.nativePosts.length, 0);
-  assert.match(childReplies[0].value.error, /wallet handoff is in progress/i);
+  assert.match(childReplies[0].value.error, /not established/i);
 
-  loaded.sandbox.usernode._setSessionWalletRelayAdmission(true);
+  await establishRealm(loaded);
   relayWalletRead('admitted-wallet');
-  loaded.sandbox.usernode.acknowledgeTransaction('tx-during-handoff');
+  const submission = await loaded.sandbox.sendTransaction(
+    'ut1-recipient', 3, '', { waitForInclusion: false }
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(submission)), {
+    txId: 'tx-authoritative',
+  });
   assert.deepEqual(
     loaded.nativePosts.map((post) => post.method),
-    ['getWalletState', 'txObserved']
+    [
+      'getBridgeInfo', 'getPrivilegedBridgeCapability',
+      'establishNativeSession', 'getWalletState', 'getBridgeInfo',
+      'getNodeAddress', 'submitTransaction',
+    ]
   );
   assert.equal(childReplies[1].value.error, null);
+  for (const post of loaded.nativePosts.slice(3)) {
+    if (post.method !== 'getBridgeInfo') {
+      assert.equal(post.privilegedCapability, 'navigation-capability');
+      assert.equal(post.realmSessionClaim, 'realm-41');
+    }
+  }
 });
+
+test('native transaction submission uses the exact admitted contract', async () => {
+  const loaded = loadBridge({ capabilities: [
+    'privilegedBridgeCapability', 'establishNativeSession',
+    'submitTransaction',
+  ] });
+  await establishRealm(loaded);
+
+  const result = await loaded.sandbox.sendTransaction(
+    ' ut1-recipient ', 7, '', {
+      waitForInclusion: false,
+      confirmTitle: 'Send tokens',
+      confirmSubtitle: 'Review this transfer',
+    }
+  );
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    txId: 'tx-authoritative',
+  });
+  const submission = loaded.nativePosts.find(
+    (post) => post.method === 'submitTransaction'
+  );
+  assert.ok(submission);
+  assert.deepEqual(JSON.parse(JSON.stringify(submission.args)), {
+    destinationPubkey: 'ut1-recipient',
+    amount: 7,
+    memo: '',
+    confirmation: {
+      title: 'Send tokens',
+      subtitle: 'Review this transfer',
+    },
+  });
+});
+
+test('native transaction submission rejects result aliases and extra fields', async () => {
+  const alias = loadBridge({
+    capabilities: [
+      'privilegedBridgeCapability', 'establishNativeSession',
+      'submitTransaction',
+    ],
+    responseMethods: { submitTransaction: { tx_id: 'legacy-id' } },
+  });
+  await establishRealm(alias);
+  await assert.rejects(
+    alias.sandbox.sendTransaction('ut1-recipient', 1, '', {
+      waitForInclusion: false,
+    }),
+    /contain only txId/
+  );
+
+  const extra = loadBridge({
+    capabilities: [
+      'privilegedBridgeCapability', 'establishNativeSession',
+      'submitTransaction',
+    ],
+    responseMethods: {
+      submitTransaction: { txId: 'tx-authoritative', queued: true },
+    },
+  });
+  await establishRealm(extra);
+  await assert.rejects(
+    extra.sandbox.sendTransaction('ut1-recipient', 1, '', {
+      waitForInclusion: false,
+    }),
+    /contain only txId/
+  );
+
+  const nonCanonical = loadBridge({
+    capabilities: [
+      'privilegedBridgeCapability', 'establishNativeSession',
+      'submitTransaction',
+    ],
+    responseMethods: { submitTransaction: { txId: ' tx-authoritative ' } },
+  });
+  await establishRealm(nonCanonical);
+  await assert.rejects(
+    nonCanonical.sandbox.sendTransaction('ut1-recipient', 1, '', {
+      waitForInclusion: false,
+    }),
+    /canonical non-empty string/
+  );
+});
+
+test('native transaction submission rejects invalid requests before dispatch', async () => {
+  const loaded = loadBridge();
+  await assert.rejects(
+    loaded.sandbox.sendTransaction('ut1-recipient', 1.5, '', {
+      waitForInclusion: false,
+    }),
+    /positive safe integer/
+  );
+  assert.equal(loaded.nativePosts.length, 0);
+});
+
+test('Social persists and confirms receipts under the authenticated user', async () => {
+  const explorerRequests = [];
+  const loaded = loadBridge({
+    capabilities: [
+      'privilegedBridgeCapability', 'establishNativeSession',
+      'submitTransaction',
+    ],
+    appUser: { id: 17 },
+    fetchImpl: async (url, options = {}) => {
+      const value = String(url);
+      if (value === '/__mock/enabled') return { ok: false };
+      if (value === '/explorer-api/active_chain') {
+        return {
+          ok: true,
+          json: async () => ({ chain_id: 'test-chain' }),
+        };
+      }
+      if (value === '/explorer-api/test-chain/transactions') {
+        explorerRequests.push(JSON.parse(options.body));
+        return {
+          ok: true,
+          json: async () => ({
+            items: [{
+              tx_id: 'tx-authoritative',
+              status: 'confirmed',
+              block_height: 42,
+              timestamp_ms: 123456,
+            }],
+          }),
+        };
+      }
+      throw new Error(`unexpected fetch ${value}`);
+    },
+  });
+  await establishRealm(loaded);
+
+  await loaded.sandbox.sendTransaction('ut1-recipient', 9, 'memo', {
+    waitForInclusion: false,
+  });
+
+  let receipts;
+  for (let i = 0; i < 20; i += 1) {
+    receipts = await loaded.sandbox.usernode.getTransactionReceipts();
+    if (receipts.items[0] && receipts.items[0].status === 'confirmed') break;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  assert.equal(receipts.items.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(receipts.items[0])), {
+    txId: 'tx-authoritative',
+    destinationPubkey: 'ut1-recipient',
+    fromPubkey: 'ut1-sender',
+    amount: 9,
+    memo: 'memo',
+    submittedAt: receipts.items[0].submittedAt,
+    status: 'confirmed',
+    confirmedAt: receipts.items[0].confirmedAt,
+    blockHeight: 42,
+    blockTimestampMs: 123456,
+  });
+  assert.equal(explorerRequests.length, 1);
+  assert.deepEqual(explorerRequests[0], {
+    limit: 1,
+    tx_id: 'tx-authoritative',
+  });
+
+  loaded.sandbox.App.user = { id: 18 };
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(
+      await loaded.sandbox.usernode.getTransactionReceipts()
+    )),
+    { items: [] },
+    'a new Social user cannot read the previous user receipt namespace'
+  );
+});
+
+test('missing submission capability fails closed before wallet dispatch', async () => {
+  const loaded = loadBridge({ capabilities: [
+    'privilegedBridgeCapability', 'establishNativeSession',
+  ] });
+  await establishRealm(loaded);
+  await assert.rejects(
+    loaded.sandbox.sendTransaction('ut1-recipient', 1, '', {
+      waitForInclusion: false,
+    }),
+    /not supported by this app build/
+  );
+  assert.deepEqual(
+    loaded.nativePosts.map((post) => post.method),
+    [
+      'getBridgeInfo', 'getPrivilegedBridgeCapability',
+      'establishNativeSession', 'getBridgeInfo',
+    ]
+  );
+});
+
+test('Social confirms only the authoritative txId, never a fuzzy field match',
+  async () => {
+    const loaded = loadBridge({
+      capabilities: [
+        'privilegedBridgeCapability', 'establishNativeSession',
+        'submitTransaction',
+      ],
+      appUser: { id: 19 },
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value === '/__mock/enabled') return { ok: false };
+        if (value === '/explorer-api/active_chain') {
+          return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+        }
+        if (value === '/explorer-api/test-chain/transactions') {
+          return {
+            ok: true,
+            json: async () => ({
+              items: [{
+                tx_id: 'different-tx',
+                source: 'ut1-sender',
+                destination: 'ut1-recipient',
+                memo: 'same fields',
+                amount: 3,
+              }],
+            }),
+          };
+        }
+        throw new Error(`unexpected fetch ${value}`);
+      },
+    });
+    await establishRealm(loaded);
+
+    await loaded.sandbox.sendTransaction(
+      'ut1-recipient', 3, 'same fields', {
+        waitForInclusion: false,
+        timeoutMs: 5,
+        pollIntervalMs: 1,
+      }
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const receipts = await loaded.sandbox.usernode.getTransactionReceipts();
+    assert.equal(receipts.items[0].status, 'submitted');
+  });
+
+test('a submission result cannot cross into a replacement Social identity', async () => {
+  const loaded = loadBridge({
+    capabilities: [
+      'privilegedBridgeCapability', 'establishNativeSession',
+      'submitTransaction',
+    ],
+    appUser: { id: 17 },
+    delayedMethods: { submitTransaction: 15 },
+  });
+  await establishRealm(loaded);
+  const pending = loaded.sandbox.sendTransaction(
+    'ut1-recipient', 2, '', { waitForInclusion: false }
+  );
+  for (let i = 0; i < 20 &&
+      !loaded.nativePosts.some((post) => post.method === 'submitTransaction');
+      i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  loaded.dispatchWindow('sv:native-realm-close');
+  loaded.sandbox.App.user = { id: 18 };
+  await assert.rejects(pending, /session changed/i);
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(
+      await loaded.sandbox.usernode.getTransactionReceipts()
+    )),
+    { items: [] }
+  );
+  loaded.sandbox.App.user = { id: 17 };
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(
+      await loaded.sandbox.usernode.getTransactionReceipts()
+    )),
+    { items: [] },
+    'a result delivered after admission closed is not persisted for either user'
+  );
+});
+
+test('trusted top frame records a dual-claim relayed child-app submission', async () => {
+  const childReplies = [];
+  const explorerRequests = [];
+  const loaded = loadBridge({
+    capabilities: ['privilegedBridgeCapability', 'establishNativeSession'],
+    appUser: { id: 23 },
+    fetchImpl: async (url) => {
+      if (String(url) === '/explorer-api/active_chain') {
+        return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+      }
+      if (String(url) === '/explorer-api/test-chain/transactions') {
+        explorerRequests.push(1);
+        return {
+          ok: true,
+          json: async () => ({
+            items: [{ tx_id: 'tx-authoritative', block_height: 84 }],
+          }),
+        };
+      }
+      return { ok: false };
+    },
+  });
+  await establishRealm(loaded);
+  const child = {
+    postMessage(value, origin) { childReplies.push({ value, origin }); },
+  };
+
+  loaded.dispatchMessage({
+    source: child,
+    origin: 'https://child.example',
+    data: {
+      __usernode_relay: 'request',
+      id: 'child-submit',
+      method: 'submitTransaction',
+      args: {
+        destinationPubkey: 'ut1-child-recipient',
+        amount: 11,
+        memo: 'from child',
+      },
+    },
+  });
+
+  for (let i = 0; i < 20 && childReplies.length === 0; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.deepEqual(JSON.parse(JSON.stringify(childReplies[0].value)), {
+    __usernode_relay: 'response',
+    id: 'child-submit',
+    value: { txId: 'tx-authoritative' },
+    error: null,
+  });
+  assert.deepEqual(
+    loaded.nativePosts.map((post) => post.method),
+    [
+      'getBridgeInfo', 'getPrivilegedBridgeCapability',
+      'establishNativeSession', 'submitTransaction',
+    ]
+  );
+  const relayed = loaded.nativePosts.at(-1);
+  assert.equal(relayed.privilegedCapability, 'navigation-capability');
+  assert.equal(relayed.realmSessionClaim, 'realm-23');
+  for (let i = 0; i < 20 && explorerRequests.length === 0; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.equal(explorerRequests.length, 1,
+    'the trusted top frame starts one Social observer for a relayed tx');
+  const receipts = await loaded.sandbox.usernode.getTransactionReceipts();
+  assert.equal(receipts.items.length, 1);
+  assert.equal(receipts.items[0].destinationPubkey, 'ut1-child-recipient');
+});
+
+test('explorer outage leaves one bounded pending receipt and reads do not retry',
+  async () => {
+    let explorerRequests = 0;
+    const loaded = loadBridge({
+      capabilities: [
+        'privilegedBridgeCapability', 'establishNativeSession',
+        'submitTransaction',
+      ],
+      appUser: { id: 31 },
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value === '/__mock/enabled') return { ok: false };
+        if (value === '/explorer-api/active_chain') {
+          return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+        }
+        if (value === '/explorer-api/test-chain/transactions') {
+          explorerRequests += 1;
+          return { ok: false, status: 503 };
+        }
+        throw new Error(`unexpected fetch ${value}`);
+      },
+    });
+    await establishRealm(loaded);
+
+    await loaded.sandbox.sendTransaction('ut1-recipient', 5, '', {
+      waitForInclusion: false,
+      timeoutMs: 8,
+      pollIntervalMs: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const requestsAfterBound = explorerRequests;
+    assert.ok(requestsAfterBound > 0);
+
+    const firstRead = await loaded.sandbox.usernode.getTransactionReceipts();
+    const secondRead = await loaded.sandbox.usernode.getTransactionReceipts();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(firstRead.items[0].status, 'submitted');
+    assert.equal(secondRead.items[0].status, 'submitted');
+    assert.equal(explorerRequests, requestsAfterBound,
+      'product reads never create a detached observation retry');
+  });
+
+test('closing and reopening admission makes same-account observers inert',
+  async () => {
+    let explorerRequests = 0;
+    const loaded = loadBridge({
+      capabilities: [
+        'privilegedBridgeCapability', 'establishNativeSession',
+        'submitTransaction',
+      ],
+      appUser: { id: 41 },
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value === '/__mock/enabled') return { ok: false };
+        if (value === '/explorer-api/active_chain') {
+          return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+        }
+        if (value === '/explorer-api/test-chain/transactions') {
+          explorerRequests += 1;
+          return { ok: true, json: async () => ({ items: [] }) };
+        }
+        throw new Error(`unexpected fetch ${value}`);
+      },
+    });
+    await establishRealm(loaded);
+
+    await loaded.sandbox.sendTransaction('ut1-recipient', 6, '', {
+      waitForInclusion: false,
+      timeoutMs: 1000,
+      pollIntervalMs: 15,
+    });
+    for (let i = 0; i < 20 && explorerRequests === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(explorerRequests, 1);
+
+    loaded.dispatchWindow('sv:native-realm-close');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.equal(explorerRequests, 1,
+      'the old generation cannot resume after the same account is readmitted');
+    await establishRealm(loaded);
+    const receipts = await loaded.sandbox.usernode.getTransactionReceipts();
+    assert.equal(receipts.items[0].status, 'submitted');
+  });
+
+test('an explicit product read resumes one pending receipt after reload',
+  async () => {
+    const sharedStorage = new Map();
+    const first = loadBridge({
+      capabilities: [
+        'privilegedBridgeCapability', 'establishNativeSession',
+        'submitTransaction',
+      ],
+      appUser: { id: 51 },
+      sharedStorage,
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value === '/__mock/enabled') return { ok: false };
+        if (value === '/explorer-api/active_chain') {
+          return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+        }
+        if (value === '/explorer-api/test-chain/transactions') {
+          return { ok: false, status: 503 };
+        }
+        throw new Error(`unexpected fetch ${value}`);
+      },
+    });
+    await establishRealm(first);
+    await first.sandbox.sendTransaction('ut1-recipient', 8, 'reload', {
+      waitForInclusion: false,
+      timeoutMs: 5,
+      pollIntervalMs: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    let explorerRequests = 0;
+    const reloaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'establishNativeSession'],
+      appUser: { id: 51 },
+      sharedStorage,
+      fetchImpl: async (url) => {
+        const value = String(url);
+        if (value === '/explorer-api/active_chain') {
+          return { ok: true, json: async () => ({ chain_id: 'test-chain' }) };
+        }
+        if (value === '/explorer-api/test-chain/transactions') {
+          explorerRequests += 1;
+          return {
+            ok: true,
+            json: async () => ({
+              items: [{ tx_id: 'tx-authoritative', block_height: 99 }],
+            }),
+          };
+        }
+        return { ok: false };
+      },
+    });
+    await establishRealm(reloaded);
+
+    const initial = await reloaded.sandbox.usernode.getTransactionReceipts({
+      observePending: true,
+    });
+    assert.equal(initial.items[0].status, 'submitted');
+    let confirmed;
+    for (let i = 0; i < 20; i += 1) {
+      confirmed = await reloaded.sandbox.usernode.getTransactionReceipts();
+      if (confirmed.items[0].status === 'confirmed') break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(confirmed.items[0].status, 'confirmed');
+    assert.equal(confirmed.items[0].blockHeight, 99);
+    assert.equal(explorerRequests, 1);
+  });
 
 // ── Refusal codes (bridge contract v4) ──────────────────────────────────
 //
@@ -820,11 +1451,11 @@ test('session handoff gate rejects top-frame and iframe wallet calls', async () 
 
 test('a three-argument resolve keeps exactly today’s behaviour', async () => {
   const loaded = loadBridge({
-    capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
-    errorMethods: { beginSessionHandoff: 'latch is busy' },
+    capabilities: ['privilegedBridgeCapability', 'logout'],
+    errorMethods: { logout: 'latch is busy' },
   });
 
-  const err = await loaded.sandbox.usernode.beginSessionHandoff()
+  const err = await loaded.sandbox.usernode.logout()
     .then(() => null, (e) => e);
 
   assert.equal(err.message, 'latch is busy');
@@ -835,17 +1466,17 @@ test('a three-argument resolve keeps exactly today’s behaviour', async () => {
 test('a refusal code rides alongside the human message, never replacing it',
   async () => {
     const loaded = loadBridge({
-      capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
+      capabilities: ['privilegedBridgeCapability', 'logout'],
       errorMethods: {
-        beginSessionHandoff:
+        logout:
           'Privileged bridge is unavailable for this main frame',
       },
       errorInfoMethods: {
-        beginSessionHandoff: { code: 'privileged_frame_unauthorized' },
+        logout: { code: 'privileged_frame_unauthorized' },
       },
     });
 
-    const err = await loaded.sandbox.usernode.beginSessionHandoff()
+    const err = await loaded.sandbox.usernode.logout()
       .then(() => null, (e) => e);
 
     assert.equal(err.message,
@@ -858,11 +1489,11 @@ test('a refusal code rides alongside the human message, never replacing it',
 test('a junk or empty errorInfo is ignored rather than trusted', async () => {
   for (const info of [null, {}, { code: '' }, { code: '  ' }, { code: 7 }, 'x']) {
     const loaded = loadBridge({
-      capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
-      errorMethods: { beginSessionHandoff: 'nope' },
-      errorInfoMethods: { beginSessionHandoff: info },
+      capabilities: ['privilegedBridgeCapability', 'logout'],
+      errorMethods: { logout: 'nope' },
+      errorInfoMethods: { logout: info },
     });
-    const err = await loaded.sandbox.usernode.beginSessionHandoff()
+    const err = await loaded.sandbox.usernode.logout()
       .then(() => null, (e) => e);
     assert.equal(err.message, 'nope');
     assert.equal(err.usernodeCode, undefined,
@@ -877,12 +1508,12 @@ test('each refusal code classifies to its own diagnosable state', async () => {
     ['privileged_bootstrap_timeout', 'unattached'],
   ];
   for (const [code, state] of cases) {
-    const loaded = loadBridge({
-      capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
-      errorMethods: { beginSessionHandoff: 'refused' },
-      errorInfoMethods: { beginSessionHandoff: { code } },
+      const loaded = loadBridge({
+      capabilities: ['privilegedBridgeCapability', 'logout'],
+      errorMethods: { logout: 'refused' },
+      errorInfoMethods: { logout: { code } },
     });
-    await loaded.sandbox.usernode.beginSessionHandoff().catch(() => {});
+    await loaded.sandbox.usernode.logout().catch(() => {});
     const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
     assert.equal(diag.privileged.state, state, `${code} → ${state}`);
     assert.equal(diag.privileged.code, code);
@@ -892,14 +1523,14 @@ test('each refusal code classifies to its own diagnosable state', async () => {
 test('an unknown code still classifies rather than falling through',
   async () => {
     const loaded = loadBridge({
-      capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
-      errorMethods: { beginSessionHandoff: 'refused for reasons' },
+      capabilities: ['privilegedBridgeCapability', 'logout'],
+      errorMethods: { logout: 'refused for reasons' },
       errorInfoMethods: {
-        beginSessionHandoff: { code: 'privileged_something_new' },
+        logout: { code: 'privileged_something_new' },
       },
     });
 
-    await loaded.sandbox.usernode.beginSessionHandoff().catch(() => {});
+    await loaded.sandbox.usernode.logout().catch(() => {});
     const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
     assert.equal(diag.privileged.state, 'blocked-frame');
     assert.equal(diag.privileged.code, 'privileged_something_new');
@@ -907,14 +1538,14 @@ test('an unknown code still classifies rather than falling through',
 
 test('with no code at all the English prose still classifies', async () => {
   const loaded = loadBridge({
-    capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
+    capabilities: ['privilegedBridgeCapability', 'logout'],
     errorMethods: {
-      beginSessionHandoff:
+      logout:
         'Privileged bridge is unavailable for this main frame',
     },
   });
 
-  await loaded.sandbox.usernode.beginSessionHandoff().catch(() => {});
+  await loaded.sandbox.usernode.logout().catch(() => {});
   const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
   assert.equal(diag.privileged.state, 'blocked-frame');
   assert.equal(diag.privileged.code, null);
@@ -923,11 +1554,11 @@ test('with no code at all the English prose still classifies', async () => {
 test('an ordinary method rejection is not mistaken for a refused bridge',
   async () => {
     const loaded = loadBridge({
-      capabilities: ['privilegedBridgeCapability', 'beginSessionHandoff'],
-      errorMethods: { beginSessionHandoff: 'the wallet is already unlocked' },
+      capabilities: ['privilegedBridgeCapability', 'logout'],
+      errorMethods: { logout: 'the wallet is already unlocked' },
     });
 
-    const err = await loaded.sandbox.usernode.beginSessionHandoff()
+    const err = await loaded.sandbox.usernode.logout()
       .then(() => null, (e) => e);
     assert.equal(err.usernodePrivileged, undefined);
 
@@ -938,9 +1569,9 @@ test('an ordinary method rejection is not mistaken for a refused bridge',
 
 test('a build without the privileged bootstrap classifies as unsupported',
   async () => {
-    const loaded = loadBridge({ capabilities: ['beginSessionHandoff'] });
+    const loaded = loadBridge({ capabilities: ['logout'] });
 
-    await loaded.sandbox.usernode.beginSessionHandoff().catch(() => {});
+    await loaded.sandbox.usernode.logout().catch(() => {});
     const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
     assert.equal(diag.privileged.state, 'unsupported');
     assert.equal(diag.privileged.code, null);

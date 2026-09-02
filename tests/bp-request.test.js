@@ -15,7 +15,7 @@
 //   3. bp/request is idempotent — asking twice keeps the original
 //      bp_requested_at — and reports the current release state.
 //   4. GET /api/v4/mobile/me carries the same three fields for the
-//      native side (bp_released is what NodeService gates on).
+//      native side (bp_released is part of managed runtime admission).
 //
 // HTTP-level tests against a throwaway express app + a substring-
 // dispatching mock pool (same idiom as tests/challenges-web-routes.test.js).
@@ -85,17 +85,23 @@ function makeMockPool(users) {
 
     // mobileTokenAuth (bearer token for /api/v4/mobile/me). Token 1 maps
     // to the released user.
-    if (sql.includes('FROM mobile_auth_tokens t JOIN users u')) {
+    if (sql.includes('FROM native_session_credentials c')
+        && sql.includes('JOIN mobile_auth_tokens t')
+        && sql.includes('JOIN users u')) {
       if (params[0] !== MOBILE_TOKEN_HASH) return { rows: [] };
+      const expiresAt = new Date(Date.now() + DAY);
       return {
         rows: [{
           id: 100, user_id: 1, ability: 'session',
-          expires_at: new Date(Date.now() + DAY), username: users[1].username,
+          expires_at: expiresAt,
+          credential_reference: `nsc_${'A'.repeat(43)}`,
+          credential_generation: 1,
+          installation_id: `nsi_${'B'.repeat(43)}`,
+          credential_expires_at: expiresAt,
+          renewal_due: false,
+          username: users[1].username,
         }],
       };
-    }
-    if (sql.startsWith('UPDATE mobile_auth_tokens SET last_used_at')) {
-      return { rows: [] };
     }
 
     // bp/state's user-row read.

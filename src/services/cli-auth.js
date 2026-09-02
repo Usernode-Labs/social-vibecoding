@@ -5,6 +5,7 @@ const {
   CLIENT_ID,
   REQUIRED_SCOPES,
 } = require('./cli-auth-constants');
+const { revokeNativeSessionCredentials } = require('./native-session-revocation');
 
 const DEVICE_RE = /^svdev_[A-Za-z0-9_-]{43}$/;
 const ACCESS_RE = /^svcli_[A-Za-z0-9_-]{43}$/;
@@ -324,6 +325,10 @@ async function accountRecovery(client, {
   if (!userRows.length) return { found: false };
 
   await client.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+  await revokeNativeSessionCredentials(client, {
+    reason: 'account_recovery',
+    userId,
+  });
 
   const { rows: cancelled } = await client.query(
     `WITH db_now AS (SELECT clock_timestamp() AS now)
