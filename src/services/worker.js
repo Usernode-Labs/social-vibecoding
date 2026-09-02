@@ -643,7 +643,10 @@ function parseLine(line, onProgress, state) {
   }
   if (line.startsWith('__USERNODE_WARN__')) {
     const msg = line.replace('__USERNODE_WARN__', '').trim();
-    log.warn('worker', msg);
+    log.warn('worker', msg, {
+      sessionId: state.hostSessionId,
+      containerName: state.hostContainerName,
+    });
     // run-cc.sh performs exactly one physical fresh invocation after a failed
     // --resume. Count that retry in the existing content-free diagnostic so
     // telemetry can reveal stale-resume frequency without storing ids, prompt
@@ -757,6 +760,13 @@ function newWatchState() {
     reasoningOutputTokens: null,
     sessionId: null,
     initSessionId: null,
+    // Host-side identity, seeded by whoever builds the state. Distinct from
+    // `sessionId` above, which is the PROVIDER's session id parsed out of the
+    // runner's own events. Only used to give runner warnings a context object
+    // in the platform log — a bare `log.warn('worker', msg)` produced
+    // `"data": null` entries that named no session and no container.
+    hostSessionId: null,
+    hostContainerName: null,
     ccIsError: false,
     agentError: null,
     usageSeen: false,
@@ -1616,6 +1626,109 @@ function adoptWarmWorker(sessionId, containerName = null) {
 // Bootstrap (cold start) + warm-ready wait
 // ──────────────────────────────────────────────────────────────────────
 
+// How many non-marker bootstrap lines to keep for the failure report.
+const BOOTSTRAP_LOG_LINES = 20;
+// How many `docker logs` lines to harvest off a container that failed to
+// reach warm-ready, before anything reaps it.
+const BOOTSTRAP_LOG_TAIL = 50;
+// Cold bootstrap is a network operation against github.com from a
+// just-created network namespace, and it fails transiently. Three attempts
+// with a short jittered backoff; see isRetryableBootstrapError for what
+// actually qualifies.
+const BOOTSTRAP_MAX_ATTEMPTS = 3;
+const BOOTSTRAP_RETRY_BASE_MS = 500;
+
+// Stable, machine-matchable prefixes. `die` in worker-run.sh emits
+// "clone failed: <git stderr>" / "checkout failed: <git stderr>" and
+// _awaitWarmReady rejects with "warm-ready timeout for <name>" or
+// "warm wrapper exited before warm-ready (code=N)".
+//
+// Classification is by PREFIX and never by the text after the colon: that
+// text is exactly what this change lets vary, so matching on it would tie
+// the retry policy to git's wording.
+const BOOTSTRAP_ERROR_PREFIXES = Object.freeze([
+  'clone failed',
+  'checkout failed',
+  'warm-ready timeout',
+  'warm wrapper exited before warm-ready',
+]);
+
+// Only the two failure modes with a plausible transient cause. A private
+// or missing repo, and a checkout that git refused, are deterministic —
+// retrying them just spends another container slot to be told the same
+// thing. `warm wrapper exited before warm-ready` is deliberately NOT here
+// either: the wrapper dying without emitting an error marker means it hit
+// something structural, and the harvested log tail is the useful output.
+const BOOTSTRAP_RETRYABLE_PREFIXES = Object.freeze([
+  'clone failed',
+  'warm-ready timeout',
+]);
+
+function _messageHasPrefix(err, prefixes) {
+  const msg = String((err && err.message) || '');
+  return prefixes.some((prefix) => msg.startsWith(prefix));
+}
+
+// True for any failure raised between `docker run` and warm-ready — i.e.
+// the coding agent never started and no code was touched. Exported so the
+// route layer can say that honestly instead of surfacing the raw string.
+function isBootstrapError(err) {
+  return _messageHasPrefix(err, BOOTSTRAP_ERROR_PREFIXES);
+}
+
+function isRetryableBootstrapError(err) {
+  return _messageHasPrefix(err, BOOTSTRAP_RETRYABLE_PREFIXES);
+}
+
+// Attach bootstrap diagnostics to a rejection WITHOUT widening what gets
+// serialized: both properties are non-enumerable, so the route layer's
+// `log.error('sessions', 'Chat error', { message, stack })` and the
+// `send('error', { error: err.message })` SSE frame are byte-identical to
+// before. Anything that wants the detail asks for it by name.
+function attachBootstrapContext(err, {
+  phase = null, bootstrapLog = null, containerName = null, attempts = null,
+} = {}) {
+  if (!err || typeof err !== 'object') return err;
+  const props = {
+    bootstrapPhase: phase,
+    bootstrapLog,
+    bootstrapContainerName: containerName,
+    bootstrapAttempts: attempts,
+  };
+  for (const [key, value] of Object.entries(props)) {
+    if (value == null) continue;
+    try {
+      Object.defineProperty(err, key, {
+        value, enumerable: false, configurable: true, writable: true,
+      });
+    } catch { /* frozen error object — diagnostics are never worth throwing over */ }
+  }
+  return err;
+}
+
+// Last-resort harvest of a container that never reached warm-ready. Called
+// BEFORE the container is reaped, which is the whole point: the reap used
+// to happen at the start of the NEXT bootstrap attempt, so `docker logs`
+// held the answer for minutes and nothing ever read it.
+//
+// Bounded and self-swallowing — a failure to collect diagnostics must never
+// replace the real error.
+async function _harvestBootstrapLog(containerName) {
+  if (usesKubernetesWorkers()) return null;
+  try {
+    const { stdout, stderr } = await docker.execFileAsync(
+      'docker', ['logs', '--tail', String(BOOTSTRAP_LOG_TAIL), containerName],
+      { timeout: 5000, maxBuffer: 1024 * 1024 },
+    );
+    const text = `${stdout || ''}${stderr || ''}`;
+    const lines = text.split('\n').map((l) => l.trimEnd()).filter(Boolean);
+    if (!lines.length) return null;
+    return lines.slice(-BOOTSTRAP_LOG_TAIL).join('\n').slice(-4000);
+  } catch {
+    return null;
+  }
+}
+
 // Spawn a brand-new warm worker container. Internal to this module —
 // callers should use `ensureWorker` which handles the "already warm"
 // case and concurrency.
@@ -1623,11 +1736,6 @@ async function _bootstrapWarmContainer(sessionId, {
   repoOwner, repoName, branchName, onProgress,
 }) {
   let containerName = workerContainerName(sessionId);
-
-  // Defensive: scrub any leftover container at this name. ensureWorker
-  // already checks for `running` and returns early; anything else (exited,
-  // restarting, dead) gets reaped here so `docker run --name` can succeed.
-  if (!usesKubernetesWorkers()) await docker.stopAndRemove(containerName).catch(() => {});
 
   // Public-only invariant: the worker carries no GitHub credentials in
   // its env — it relies on the unauthenticated git protocol for clones
@@ -1716,18 +1824,84 @@ async function _bootstrapWarmContainer(sessionId, {
     WORKER_IMAGE,
   ];
 
-  await docker.execFileAsync('docker', args, {
-    timeout: 30000,
-  });
-  log.info('worker', 'Warm worker spawned', { containerName, ccVolume });
+  // Cold bootstrap is a network operation, so it gets bounded retries.
+  // Everything above this line is deterministic (a private repo, a bad
+  // clone URL) and is deliberately outside the loop — retrying it would
+  // only re-ask GitHub the same question.
+  const progress = typeof onProgress === 'function' ? onProgress : () => {};
+  for (let attempt = 1; attempt <= BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
+    // Scrub any leftover container at this name. On attempt 1 this is the
+    // defensive scrub that has always been here (ensureWorker returns early
+    // for `running`; anything else — exited, restarting, dead — has to go so
+    // `docker run --name` can succeed). On later attempts it clears the
+    // previous attempt's corpse, whose logs were already harvested below.
+    await docker.stopAndRemove(containerName).catch(() => {});
+    try {
+      await docker.execFileAsync('docker', args, {
+        timeout: 30000,
+      });
+      log.info('worker', 'Warm worker spawned', { containerName, ccVolume, attempt });
 
-  // Wait for the wrapper to reach `__USERNODE_PHASE__ warm-ready`.
-  // Bootstrap progress (clone/checkout) flows through onProgress so the
-  // dev-chat UI sees [clone] / [checkout] phase ticks just like the
-  // legacy single-shot path used to surface them.
-  await _awaitWarmReady(containerName, { onProgress });
-
-  return containerName;
+      // Wait for the wrapper to reach `__USERNODE_PHASE__ warm-ready`.
+      // Bootstrap progress (clone/checkout) flows through onProgress so the
+      // dev-chat UI sees [clone] / [checkout] phase ticks just like the
+      // legacy single-shot path used to surface them.
+      //
+      // Attempts after the first get half the warm-ready budget, so three
+      // attempts cap at 2x the old single-attempt wall clock rather than 3x.
+      await _awaitWarmReady(containerName, {
+        onProgress,
+        timeoutMs: attempt === 1
+          ? WARM_READY_TIMEOUT_MS
+          : Math.round(WARM_READY_TIMEOUT_MS / 2),
+      });
+      return containerName;
+    } catch (err) {
+      // Harvest BEFORE anything reaps the container. This is the log that
+      // used to sit unread in a dead container until the next attempt's
+      // scrub discarded it.
+      //
+      // An EMPTY ring buffer is the case that most needs the harvest, not
+      // the case that skips it: a container that died before printing
+      // anything the tail could catch is exactly where `docker logs` holds
+      // the only copy of the reason. Test on length, not presence.
+      const ringTail = Array.isArray(err.bootstrapLog) && err.bootstrapLog.length
+        ? err.bootstrapLog.join('\n')
+        : null;
+      const logTail = ringTail || await _harvestBootstrapLog(containerName);
+      const retryable = isRetryableBootstrapError(err);
+      const willRetry = retryable && attempt < BOOTSTRAP_MAX_ATTEMPTS;
+      log.error('worker', 'Bootstrap failed', {
+        sessionId,
+        containerName,
+        repo: `${repoOwner}/${repoName}`,
+        branch: branchName,
+        attempt,
+        maxAttempts: BOOTSTRAP_MAX_ATTEMPTS,
+        retryable,
+        willRetry,
+        phase: err.bootstrapPhase || null,
+        message: err.message,
+        logTail,
+      });
+      if (!willRetry) {
+        throw attachBootstrapContext(err, {
+          containerName,
+          attempts: attempt,
+          // Only when the ring buffer came up empty; otherwise this is the
+          // same lines it already holds.
+          bootstrapLog: ringTail || !logTail ? null : logTail.split('\n'),
+        });
+      }
+      progress(`[retrying setup (attempt ${attempt + 1} of ${BOOTSTRAP_MAX_ATTEMPTS})]`);
+      // Jittered so a platform-wide blip doesn't resynchronize every
+      // session's second attempt into one burst.
+      const backoffMs = BOOTSTRAP_RETRY_BASE_MS * (2 * attempt - 1);
+      await new Promise((r) => setTimeout(r, backoffMs + Math.floor(Math.random() * 250)));
+    }
+  }
+  // Unreachable: the loop either returns or throws on its last attempt.
+  throw new Error(`warm bootstrap exhausted ${BOOTSTRAP_MAX_ATTEMPTS} attempts for ${containerName}`);
 }
 
 // Tail `docker logs -f` until the warm-ready phase marker shows up, or
@@ -1739,13 +1913,29 @@ async function _awaitWarmReady(containerName, { onProgress, timeoutMs = WARM_REA
     const proc = spawn('docker', ['logs', '-f', containerName]);
     let buf = '';
     let done = false;
+    // Bounded ring buffer of the last few non-marker lines, plus the last
+    // phase the wrapper announced. Two of the three rejection paths below
+    // (the warm-ready timeout and close-before-ready) carry no detail of
+    // their own at all, so without this they say only that bootstrap did
+    // not finish — never how far it got or what the container printed.
+    const recent = [];
+    let lastPhase = null;
+    const remember = (line) => {
+      recent.push(line.length > 500 ? `${line.slice(0, 500)}…` : line);
+      if (recent.length > BOOTSTRAP_LOG_LINES) recent.shift();
+    };
     const finish = (err) => {
       if (done) return;
       done = true;
       try { proc.kill('SIGKILL'); } catch {}
       clearTimeout(timer);
-      if (err) reject(err);
-      else resolve();
+      if (err) {
+        reject(attachBootstrapContext(err, {
+          containerName,
+          phase: lastPhase,
+          bootstrapLog: recent.slice(),
+        }));
+      } else resolve();
     };
     const timer = setTimeout(
       () => finish(new Error(`warm-ready timeout for ${containerName}`)),
@@ -1762,17 +1952,28 @@ async function _awaitWarmReady(containerName, { onProgress, timeoutMs = WARM_REA
         }
         if (line.startsWith('__USERNODE_PHASE__')) {
           const phase = line.replace('__USERNODE_PHASE__', '').trim();
+          lastPhase = phase;
           progress(`[${phase}]`);
           if (phase === 'warm-ready') return finish();
           continue;
         }
+        if (line.startsWith('__USERNODE_WARN__')) {
+          const msg = line.replace('__USERNODE_WARN__', '').trim();
+          log.warn('worker', msg, { containerName, phase: lastPhase });
+          remember(`WARN ${msg}`);
+          progress(`⚠ ${msg}`);
+          continue;
+        }
+        remember(line);
         if (line.length < 500) progress(line);
       }
     });
     proc.stderr.on('data', (chunk) => {
       const text = chunk.toString('utf8');
       for (const line of text.split('\n')) {
-        if (line.trim() && line.length < 500) progress(line);
+        if (!line.trim()) continue;
+        remember(line);
+        if (line.length < 500) progress(line);
       }
     });
     proc.on('close', (code) => {
@@ -2309,6 +2510,8 @@ async function execInWorker(sessionId, {
 
     const state = newWatchState();
     state.turnId = durableTurnId;
+    state.hostSessionId = sessionId;
+    state.hostContainerName = containerName;
     state.providerDispatched = true;
     // Seed the backend BEFORE consuming the journal (review P4): parseLine
     // routes JSON events to the Codex adapter only when
@@ -2879,6 +3082,8 @@ async function resumeTurnFromJournal(sessionId, {
   });
   const state = newWatchState();
   state.turnId = turnId || null;
+  state.hostSessionId = sessionId;
+  state.hostContainerName = containerName;
   // An executing/tail phase proves dispatch. A legacy dispatch_pending row
   // is ambiguous after a crash; for that shape the consumed journal below
   // must provide evidence before telemetry may count an invocation.
@@ -2974,6 +3179,7 @@ async function evictWorker(sessionId) {
 // execInWorker which streams the docker-exec child's stdout directly.
 async function watchWorker(containerName, { onProgress, fromStart = true } = {}) {
   const state = newWatchState();
+  state.hostContainerName = containerName;
   const progress = typeof onProgress === 'function' ? onProgress : () => {};
 
   const args = ['logs', '-f'];
@@ -3389,6 +3595,11 @@ module.exports = {
   ensureWorkerImage,
   // long-lived API
   ensureWorker,
+  // Cold-bootstrap failure classification. The route layer uses
+  // isBootstrapError to tell "the coding agent never started" apart from
+  // "the coding agent ran and failed" — the two need very different copy.
+  isBootstrapError,
+  isRetryableBootstrapError,
   execInWorker,
   stopTurn,
   // #937: pending-stop record (survives the dispatch it guards)

@@ -57,7 +57,7 @@ async function gatherFull(config) {
   const [appsQ, sessionsQ, llmQ, sessionCountsQ, runtimeQ] = await Promise.all([
     pool.query(
       `SELECT a.id, a.name, a.slug, a.repo_url, a.container_id, a.status, a.created_at,
-              a.image_ref, a.build_ref, a.runtime_kind, a.runtime_name,
+              a.image_ref, a.build_ref, a.runtime_kind, a.runtime_name, a.self_hosted,
               u.username AS created_by_username,
               (SELECT COUNT(*) FROM chat_sessions cs
                  WHERE cs.app_id = a.id AND cs.status = 'active') AS open_sessions,
@@ -268,7 +268,19 @@ async function gatherFull(config) {
         uptimeSeconds: uptimeSeconds(prodStarted),
         stats: stats[prodName] || null,
       } : null,
-      prodMissing: prodState === 'not_found' && app.status !== 'creating',
+      selfHosted: !!app.self_hosted,
+      // A self-hosted app IS this platform, and the platform does not run as
+      // `usernode-app-<slug>` — it runs as the blue/green pair the deploy
+      // workflow manages. So the container this lookup wants has never
+      // existed and never will, and reporting it as missing is a permanent
+      // false positive: one phantom entry in `prodMissing` and one in
+      // `driftContainers`, on every status poll, forever. That noise is not
+      // free. It sat at the top of the admin status screen while three real
+      // worker bootstrap failures went unnoticed below it, which is exactly
+      // the failure mode a always-red indicator produces.
+      prodMissing: prodState === 'not_found'
+        && app.status !== 'creating'
+        && !app.self_hosted,
       sessions: appSessions,
     };
   }));

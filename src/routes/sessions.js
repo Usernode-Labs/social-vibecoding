@@ -10422,6 +10422,34 @@ function describeTurnError(err) {
   if (/\bE2BIG\b/.test(message)) {
     return 'This request was too large to hand to the coding agent. Trim the session spec or attachments before retrying';
   }
+  // Cold worker bootstrap failed: the container never reached warm-ready,
+  // so the coding agent was never launched and not one file was touched.
+  //
+  // These used to reach the user as the wrapper's raw string. "clone failed"
+  // with nothing after it reads like the agent tried and gave up, names no
+  // cause, and does not say the repo is untouched. Two separate sessions
+  // spent real budget chasing a GitHub authentication problem that never
+  // existed, because the words were all the evidence anyone had.
+  if (worker.isBootstrapError(err)) {
+    // Everything after the first colon is git's own stderr, forwarded by
+    // worker-run.sh's `die`. Absent on the timeout paths, and absent on a
+    // warm container still running an image from before that change.
+    const colon = message.indexOf(':');
+    const detail = colon === -1 ? '' : message.slice(colon + 1).trim();
+    const git = detail ? ` Git reported: ${detail}` : '';
+    if (message.startsWith('clone failed')) {
+      return 'Setting up the coding agent failed while cloning the repository, so the agent never started and no code was changed.'
+        + `${git} The platform already retried this a few times, so if it keeps happening the repository or the network is genuinely unreachable rather than briefly flaky.`;
+    }
+    if (message.startsWith('checkout failed')) {
+      return 'Setting up the coding agent failed while checking out this session\'s branch, so the agent never started and no code was changed.'
+        + `${git} Retrying will not help until the branch problem is resolved.`;
+    }
+    if (message.startsWith('warm-ready timeout')) {
+      return 'Setting up the coding agent timed out before it was ready, so the agent never started and no code was changed. Try again in a minute.';
+    }
+    return 'Setting up the coding agent stopped unexpectedly before it was ready, so the agent never started and no code was changed. Try again, and if it keeps happening the platform log for this session holds the container output.';
+  }
   return message;
 }
 
@@ -11054,18 +11082,36 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   // Bootstrap progress (clone/checkout/warm-ready) flows through onProgress
   // to the dev-chat UI just like the legacy single-shot path used to.
   await ensureBranchForDispatch(pool, session);
-  const containerName = runLocally ? null : await worker.ensureWorker(session.id, {
-    repoOwner,
-    repoName,
-    branchName: session.branch_name,
-    onProgress: (text) => {
-      send('cc_progress', { text, ...agentIdentity.metadata });
-      workerProgress.set(session.id, text, {
-        model: turnModel,
-        backend: agentIdentity.backend,
+  let containerName = null;
+  if (!runLocally) {
+    try {
+      containerName = await worker.ensureWorker(session.id, {
+        repoOwner,
+        repoName,
+        branchName: session.branch_name,
+        onProgress: (text) => {
+          send('cc_progress', { text, ...agentIdentity.metadata });
+          workerProgress.set(session.id, text, {
+            model: turnModel,
+            backend: agentIdentity.backend,
+          });
+        },
       });
-    },
-  });
+    } catch (err) {
+      // Nothing was dispatched, so there is no turn to terminalize and no
+      // work to summarize. Hand the reason back to the Mayor.
+      return await workerBootstrapFailureResult(err, {
+        session,
+        send,
+        sendStatus,
+        statusMeta: {
+          ...agentIdentity.metadata,
+          durationMs: Date.now() - turnStartedMs,
+        },
+        durableTurnId,
+      });
+    }
+  }
 
   // Surface the warm container name for diagnostics. The actual stop
   // signal travels through worker.stopTurn (in-container pkill) so the
@@ -12045,6 +12091,39 @@ async function waitForTurnStopped(sessionId, containerName, { timeoutMs = 30000 
 // automated fix on the next turn. Shared by the interactive tail (where
 // the failure is fatal to the turn) and the headless tail (#183, where
 // it's non-fatal — the pushed commit is the deliverable).
+// Turn a failure to warm the worker container into a `tool_result` the
+// Mayor can act on, instead of letting it escape to the chat handler's
+// generic catch.
+//
+// Same reasoning as the staging-failure catch further down: without this
+// the Mayor never finds out anything went wrong, the user sees a bare
+// "Chat error" toast, and the next turn has no idea the dispatch never
+// happened. The difference from a staging failure is what it can promise —
+// nothing ran, so the branch is exactly as it was.
+async function workerBootstrapFailureResult(err, {
+  session, send, sendStatus, statusMeta = {}, durableTurnId = null,
+}) {
+  const friendly = describeTurnError(err);
+  log.error('sessions', 'Worker bootstrap failed', {
+    sessionId: session.id,
+    message: err && err.message,
+    phase: (err && err.bootstrapPhase) || null,
+    attempts: (err && err.bootstrapAttempts) || null,
+    containerName: (err && err.bootstrapContainerName) || null,
+    bootstrapLog: Array.isArray(err && err.bootstrapLog) ? err.bootstrapLog.join('\n') : null,
+  });
+  await sendStatus(friendly, statusMeta);
+  activeWorkers.delete(session.id);
+  workerProgress.clear(session.id);
+  if (typeof send === 'function') send('error', { error: friendly });
+  return {
+    toolResultText:
+      `The coding agent could not be started, so this dispatch never ran and the branch is unchanged.\n\n${friendly}`,
+    isError: true,
+    turnId: durableTurnId,
+  };
+}
+
 function describeStagingFailure(stagingErr) {
   let fix;
   let missingKeys = [];
@@ -12644,18 +12723,37 @@ ${buildGuidance.testingGuidance}`;
   // machine does the work, so neither their BYOK key nor the platform's proxy
   // JWT is created, sent, or needed on this path.
   await ensureBranchForDispatch(pool, session);
-  const containerName = runLocally ? null : await worker.ensureWorker(session.id, {
-    repoOwner,
-    repoName,
-    branchName: session.branch_name,
-    onProgress: (text) => {
-      send('cc_progress', { text, ...agentIdentity.metadata });
-      workerProgress.set(session.id, text, {
-        model: turnModel,
-        backend: agentIdentity.backend,
+  let containerName = null;
+  if (!runLocally) {
+    try {
+      containerName = await worker.ensureWorker(session.id, {
+        repoOwner,
+        repoName,
+        branchName: session.branch_name,
+        onProgress: (text) => {
+          send('cc_progress', { text, ...agentIdentity.metadata });
+          workerProgress.set(session.id, text, {
+            model: turnModel,
+            backend: agentIdentity.backend,
+          });
+        },
       });
-    },
-  });
+    } catch (err) {
+      // Same seam as the staging-failure catch below: the dispatch never
+      // happened, so report that as a tool_result rather than letting the
+      // throw surface as an anonymous "Chat error".
+      return await workerBootstrapFailureResult(err, {
+        session,
+        send,
+        sendStatus,
+        statusMeta: {
+          ...executionAgentMeta,
+          durationMs: Date.now() - turnStartedMs,
+        },
+        durableTurnId,
+      });
+    }
+  }
 
   // Surface the container name for diagnostics + admin tooling. The
   // actual stop signal flows through worker.stopTurn (in-container
