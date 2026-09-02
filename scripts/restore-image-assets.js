@@ -12,9 +12,24 @@ const ROOT = path.join(__dirname, '..');
 const IMAGE_ASSETS = process.env.USERNODE_IMAGE_ASSET_DIR || '/opt/usernode-shell-assets';
 const FILES = [
   'index.html',
-  'shell/assets/shell.js',
   'css/tailwind.css',
 ];
+// Everything the React build emitted, discovered rather than listed: it is
+// more than one file now (frontend/vite.config.ts emits lazy route chunks
+// beside assets/shell.js, today the admin console's sections). A hard-coded
+// name here silently left a new chunk unrestored under the dev bind mount.
+const ASSET_DIR = 'shell/assets';
+function emittedShellAssets() {
+  try {
+    return fs.readdirSync(path.join(IMAGE_ASSETS, ASSET_DIR))
+      .map((name) => path.posix.join(ASSET_DIR, name));
+  } catch {
+    // No image copy at all is the pre-existing "image is missing" case; let
+    // the loop below report it against the entry the shell cannot boot
+    // without, rather than throwing a readdir error here.
+    return [`${ASSET_DIR}/shell.js`];
+  }
+}
 
 const publicDir = path.join(ROOT, 'public');
 const owner = fs.statSync(publicDir);
@@ -30,7 +45,7 @@ function createParentDirectories(destination) {
   for (const directory of missing) fs.chownSync(directory, owner.uid, owner.gid);
 }
 
-for (const relative of FILES) {
+for (const relative of [...FILES, ...emittedShellAssets()]) {
   const source = path.join(IMAGE_ASSETS, relative);
   const destination = path.join(ROOT, 'public', relative);
   if (fs.existsSync(destination)) continue;

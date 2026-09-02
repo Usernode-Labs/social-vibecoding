@@ -31,7 +31,14 @@ const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
 const consoleJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
 // The chassis (#admin-root and the two hosts inside it) is React-owned markup
 // since #1082 chunk E; the module renders only what hangs off it.
-const islandTsx = fs.readFileSync(path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
+// The section imports moved out of index.tsx into ./sections.ts, which the
+// console dynamic-imports on its first open (421KB of the shell bundle a
+// non-admin never downloads). Both files are the island's own source, so
+// the invariant these assertions protect — every section module is imported
+// somewhere in the island's graph, admin-console.js first — is unchanged;
+// only which file the import sits in moved.
+const islandTsx = fs.readFileSync(path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8')
+  + fs.readFileSync(path.join(root, 'frontend/src/features/admin/sections.ts'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 test('the icon action navigates to the #admin hash route, gate first', () => {
@@ -105,7 +112,8 @@ test('the console island imports every admin module, console first', () => {
   // slice 17. Six of the eight self-rendered sections are still inline in
   // admin-console.js; each will add a line here.
   const island = fs.readFileSync(
-    path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
+    path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8')
+    + fs.readFileSync(path.join(root, 'frontend/src/features/admin/sections.ts'), 'utf8');
   // `.tsx` as well as `.js`: sections are converting to React one at a time
   // (#1120), and the import order this pins is about module EVALUATION order,
   // which the file extension has nothing to do with.
@@ -228,7 +236,9 @@ test('the menu carries every section, grouped, with no external tools left', () 
 test('every folded-in section has a module, an island import and no stale wiring', () => {
   const sw = fs.readFileSync(path.join(root, 'public/sw.js'), 'utf8');
   const island = fs.readFileSync(
-    path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
+    path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8')
+    + fs.readFileSync(
+      path.join(root, 'frontend/src/features/admin/sections.ts'), 'utf8');
   const MODULES = {
     status: 'admin-status',
     node: 'admin-node',

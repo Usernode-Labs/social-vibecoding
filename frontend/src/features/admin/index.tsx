@@ -124,26 +124,12 @@ import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 // admin-console.js FIRST: it exports the AdminUI registry the others import,
 // and admin-topochain.js reads AdminUI.card at module-evaluation time.
 import { AdminUI } from './admin-console.js';
-import './admin-overview.tsx';
-import './admin-codes.tsx';
-import './admin-featured-apps.tsx';
-import './admin-db-export.tsx';
-import './admin-features.tsx';
-import './admin-limits.tsx';
-import './admin-users.tsx';
-import './admin-rollover.tsx';
-import './admin-staging-reap.tsx';
-import './admin-status.tsx';
-import './admin-node.tsx';
-import './admin-analytics.tsx';
-import './admin-estimator.tsx';
-import './admin-merges.tsx';
-import './admin-gallery.tsx';
-import './admin-campaigns.tsx';
-import './admin-push.tsx';
-import './admin-mail.tsx';
-import './admin-e2e.tsx';
-import './admin-topochain.js';
+// The nineteen section modules used to be twenty bare side-effect imports
+// here. They are ./sections.ts now, dynamic-imported by
+// AdminConsole._ensureSections on the first open (and prefetched at idle for
+// an admin) — 422KB of this bundle that a non-admin never downloads. The
+// chassis below is unchanged: every id it renders is still in the
+// prerendered document, because the sections were never in it to begin with.
 
 export function AdminScreen() {
   const screenRef = useRef<HTMLElement | null>(null);

@@ -56,7 +56,14 @@ const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
 const modExt = (name) => (fs.existsSync(path.join(ADMIN_DIR, `${name}.tsx`)) ? 'tsx' : 'js');
 const readMod = (name) => fs.readFileSync(path.join(ADMIN_DIR, `${name}.${modExt(name)}`), 'utf8');
 
-const islandTsx = read('frontend/src/features/admin/index.tsx');
+// The section imports moved out of index.tsx into ./sections.ts, which the
+// console dynamic-imports on its first open (421KB of the shell bundle a
+// non-admin never downloads). Both files are the island's own source, so
+// the invariant these assertions protect — every section module is imported
+// somewhere in the island's graph, admin-console.js first — is unchanged;
+// only which file the import sits in moved.
+const islandTsx = read('frontend/src/features/admin/index.tsx')
+  + read('frontend/src/features/admin/sections.ts');
 const consoleJs = readMod('admin-console');
 const manifest = JSON.parse(read('dapp.json'));
 

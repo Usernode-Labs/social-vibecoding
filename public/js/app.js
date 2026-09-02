@@ -1272,7 +1272,15 @@ const App = {
     // visibility store is the one sanctioned way to drive a converted
     // region's visibility from outside React, and the component subscribes.
     // The gate is unchanged.
-    App.Visibility.publish('switcher-row-admin', !!App.user?.isAdmin);
+    const isAdmin = !!App.user?.isAdmin;
+    App.Visibility.publish('switcher-row-admin', isAdmin);
+    // The admin console's twenty section modules are a lazy chunk now
+    // (features/admin/sections.ts) — 422KB a non-admin never downloads. This
+    // is the moment the viewer is known to BE one, so warm it at idle and the
+    // first open is as instant as it was when everybody paid for it.
+    if (isAdmin) {
+      try { window.AdminConsole?.prefetchSections?.(); } catch (err) { /* opens on demand anyway */ }
+    }
   },
 
   // Navigate to the full-page admin console (#818): the #admin hash route
