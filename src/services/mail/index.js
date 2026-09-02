@@ -2,7 +2,7 @@
 //
 // THE CONTRACT, which predates this module and must not change: a send
 // never throws and never returns a value the caller must check.
-// POST /api/v4/mobile/auth/otp/request is always-200 by contract (SPEC
+// POST /api/auth/otp/request is always-200 by contract (SPEC
 // 1667) precisely so it can't be used to enumerate accounts, and the
 // waitlist join has the same shape. So a provider outage, a missing
 // credential, a throttled recipient and a successful delivery must all

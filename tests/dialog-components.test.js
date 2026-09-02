@@ -1,4 +1,4 @@
-// The shell's ten dialogs, and the seam that presents them.
+// The shell's eleven dialogs, and the seam that presents them.
 //
 // #1078 chunk A extracted their markup into components and this file pinned
 // them as deliberately STATIC — no state, no effects, no refs, no handlers.
@@ -48,15 +48,16 @@ const STATIC_MODAL = read('frontend/src/lib/static-modal.ts');
 const KIT_SURFACE = read('frontend/src/lib/kit-surface.ts');
 const USE_DIALOG = read('frontend/src/features/dialogs/use-dialog.ts');
 
-// The ten roots. This list was read out of platform-ui.js's STATIC_MODAL_IDS
+// The eleven roots. This list was read out of platform-ui.js's STATIC_MODAL_IDS
 // until chunk I retired it; it is spelled out here now, and the first test
 // below is what keeps it honest against the components. The tenth —
 // #board-filters-modal — is the Streamlined Concept's Filters dialog, NEW
-// markup on the same useDialog contract as the nine converted ones.
+// markup on the same useDialog contract as the nine converted ones. The
+// eleventh is native-only legacy-wallet recovery.
 const DIALOG_IDS = [
   'create-modal', 'rename-modal', 'close-issue-modal', 'fork-modal',
   'import-pr-modal', 'members-modal', 'feedback-modal', 'share-modal',
-  'app-secrets-modal', 'board-filters-modal',
+  'app-secrets-modal', 'board-filters-modal', 'wallet-recovery-modal',
 ];
 
 /**
@@ -83,7 +84,7 @@ const allSrc = new Map(
 const componentFiles = allFiles.filter((f) => !SUPPORT_FILES.includes(f));
 const componentSrc = new Map(componentFiles.map((f) => [f, allSrc.get(f)]));
 
-test('the dialogs/ directory is exactly ten dialogs plus its known support files', () => {
+test('the dialogs/ directory is exactly eleven dialogs plus its known support files', () => {
   assert.equal(componentFiles.length, DIALOG_IDS.length,
     `features/dialogs/ holds ${componentFiles.length} dialog components for ${DIALOG_IDS.length} roots — `
     + `a new file must either render a root or be listed in SUPPORT_FILES with a reason`);
@@ -110,7 +111,7 @@ function rootTag(src, id) {
 }
 
 test('every dialog root is rendered by exactly one dialog component', () => {
-  assert.equal(DIALOG_IDS.length, 10);
+  assert.equal(DIALOG_IDS.length, 11);
   for (const id of DIALOG_IDS) {
     const owners = [...componentSrc].filter(([, src]) => src.includes(`id="${id}"`));
     assert.equal(owners.length, 1, `#${id} should be rendered by exactly one features/dialogs/* component, got ${owners.map((o) => o[0])}`);

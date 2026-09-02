@@ -1,10 +1,7 @@
 // Topochain v4 partner API (plan Task 6; SPEC §4.3, lines 834-840/1320-1453).
 //
-// HTTP-level tests against a throwaway express app + a regex-dispatching
-// mock pool that ALSO implements `.connect()` (client with `.query`/
-// `.release`) for the PUT /delegations/:account transaction — same idiom
-// as tests/topochain-public-api.test.js and tests/board-order.test.js's
-// pool-injection style, extended for the transactional route.
+// HTTP-level tests against a throwaway express app and a regex-dispatching
+// read-only mock pool, following the pool-injection idiom used elsewhere.
 //
 // Run with: node --test tests/topochain-partner-api.test.js
 'use strict';
@@ -61,17 +58,15 @@ const ONCHAIN_ACCOUNTS = [
 let userActivities;
 let delegationRows; // { id, account, started_at, ended_at }
 let nextActivityId;
-let nextDelegationId;
 let lastUserActivityInsertSql; // raw SQL text of the last INSERT, to prove 'api' is a literal
 
 function resetFixtures() {
   userActivities = [];
   nextActivityId = 1;
-  nextDelegationId = 1;
   lastUserActivityInsertSql = null;
   delegationRows = [
-    { id: nextDelegationId++, account: 'ut1open0000000000000000000000000000000000', started_at: T(-5), ended_at: null },
-    { id: nextDelegationId++, account: 'ut1closed00000000000000000000000000000000', started_at: T(-20), ended_at: T(-10) },
+    { id: 1, account: 'ut1open0000000000000000000000000000000000', started_at: T(-5), ended_at: null },
+    { id: 2, account: 'ut1closed00000000000000000000000000000000', started_at: T(-20), ended_at: T(-10) },
   ];
 }
 
@@ -81,17 +76,8 @@ function collapse(sql) {
   return sql.replace(/\s+/g, ' ').trim();
 }
 
-// Shared dispatcher used by both `pool.query` and the transactional
-// `client.query` (the mock doesn't model real transaction isolation —
-// no test here exercises concurrent access, so a single shared in-memory
-// store is sufficient, same simplification tests/topochain-public-api.test.js
-// makes for its read-only mock).
 function handleQuery(rawSql, params = []) {
   const sql = collapse(rawSql);
-
-  if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
-    return { rows: [] };
-  }
 
   // POST /user-activities: season_events existence + season_id lookup.
   if (sql.startsWith('SELECT id, season_id FROM season_events WHERE id = $1')) {
@@ -148,7 +134,7 @@ function handleQuery(rawSql, params = []) {
     return { rows: open.slice(offset, offset + limit).map((d) => ({ account: d.account, started_at: d.started_at })) };
   }
 
-  // GET /delegations/:account and PUT (pre-transaction): account existence.
+  // GET /delegations/:account: account existence.
   if (sql.startsWith('SELECT address FROM onchain_accounts WHERE address = $1')) {
     const acct = ONCHAIN_ACCOUNTS.find((a) => a.address === params[0]);
     return { rows: acct ? [{ address: acct.address }] : [] };
@@ -161,37 +147,12 @@ function handleQuery(rawSql, params = []) {
     return { rows: row ? [{ started_at: row.started_at }] : [] };
   }
 
-  // PUT /delegations/:account: lock the open period.
-  if (sql.startsWith('SELECT id, started_at FROM account_delegation_periods WHERE account = $1 AND ended_at IS NULL FOR UPDATE')) {
-    const row = delegationRows.find((d) => d.account === params[0] && d.ended_at == null);
-    return { rows: row ? [{ id: row.id, started_at: row.started_at }] : [] };
-  }
-
-  // PUT /delegations/:account: open a NEW period (always an insert — the
-  // partial unique index allows one open row per account, any number closed).
-  if (sql.startsWith('INSERT INTO account_delegation_periods')) {
-    const startedAt = new Date();
-    delegationRows.push({ id: nextDelegationId++, account: params[0], started_at: startedAt, ended_at: null });
-    return { rows: [{ started_at: startedAt }] };
-  }
-
-  // PUT /delegations/:account: close an open row.
-  if (sql.startsWith('UPDATE account_delegation_periods SET ended_at = NOW()')) {
-    const row = delegationRows.find((d) => d.id === params[0]);
-    row.ended_at = new Date();
-    return { rows: [] };
-  }
-
   throw new Error(`Unhandled mock query: ${sql}`);
 }
 
 function makeMockPool() {
   return {
     query: async (sql, params) => handleQuery(sql, params),
-    connect: async () => ({
-      query: async (sql, params) => handleQuery(sql, params),
-      release: () => {},
-    }),
   };
 }
 
@@ -258,14 +219,6 @@ async function postJson(path, body, opts) {
     body: JSON.stringify(body),
   });
 }
-async function putJson(path, body, opts) {
-  return fetch(`${base}${path}`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json', 'x-api-key': API_KEY, ...(opts && opts.headers) },
-    body: JSON.stringify(body),
-  });
-}
-
 // ─── __ping (kept from Task 3) ──────────────────────────────────────────
 
 test('__ping still responds 200 unauthenticated (not gated by partnerApiKey)', async () => {
@@ -491,100 +444,4 @@ test('GET /delegations/:account: unknown account -> 404 Unknown account address.
   const res = await get('/api/v4/delegations/ut1doesnotexist00000000000000000000000000');
   assert.equal(res.status, 404);
   assert.deepEqual(await res.json(), { success: false, error: 'Unknown account address.' });
-});
-
-// ─── PUT /delegations/:account ───────────────────────────────────────────
-
-test('PUT /delegations/:account: validation runs BEFORE the account lookup (bad body + unknown account -> 422 not 404)', async () => {
-  const res = await putJson('/api/v4/delegations/ut1totallyunknown000000000000000000000000', { delegated: 'not-a-bool' });
-  assert.equal(res.status, 422);
-});
-
-test('PUT /delegations/:account: missing delegated field -> 422', async () => {
-  const res = await putJson('/api/v4/delegations/ut1known000000000000000000000000000000000', {});
-  assert.equal(res.status, 422);
-  const body = await res.json();
-  assert.ok(body.details.delegated);
-});
-
-test('PUT /delegations/:account: unknown account with valid body -> 404', async () => {
-  const res = await putJson('/api/v4/delegations/ut1totallyunknown000000000000000000000000', { delegated: true });
-  assert.equal(res.status, 404);
-  assert.deepEqual(await res.json(), { success: false, error: 'Unknown account address.' });
-});
-
-test('PUT /delegations/:account: turn on from nothing -> inserts a period, changed:true', async () => {
-  const res = await putJson('/api/v4/delegations/ut1known000000000000000000000000000000000', { delegated: true });
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(body.data.delegated, true);
-  assert.equal(body.data.changed, true);
-  assert.equal(body.message, 'Account marked as delegated.');
-  assert.match(body.data.delegated_since, /\+00:00$/);
-
-  // Re-fetch to prove it persisted.
-  const get2 = await get('/api/v4/delegations/ut1known000000000000000000000000000000000');
-  assert.equal((await get2.json()).data.delegated, true);
-});
-
-test('PUT /delegations/:account: idempotent re-assert true->true -> changed:false, unchanged message', async () => {
-  const res = await putJson('/api/v4/delegations/ut1open0000000000000000000000000000000000', { delegated: true });
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(body.data.changed, false);
-  assert.equal(body.data.delegated, true);
-  assert.equal(body.message, 'Delegation flag unchanged.');
-});
-
-test('PUT /delegations/:account: idempotent re-assert false->false (no row) -> changed:false, delegated:false', async () => {
-  const res = await putJson('/api/v4/delegations/ut1known000000000000000000000000000000000', { delegated: false });
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(body.data.changed, false);
-  assert.equal(body.data.delegated, false);
-  assert.equal(body.data.delegated_since, null);
-  assert.equal(body.message, 'Delegation flag unchanged.');
-});
-
-test('PUT /delegations/:account: turn off an open period -> changed:true, closes it', async () => {
-  const res = await putJson('/api/v4/delegations/ut1open0000000000000000000000000000000000', { delegated: false });
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(body.data.delegated, false);
-  assert.equal(body.data.changed, true);
-  assert.equal(body.message, 'Account unmarked as delegated.');
-
-  const get2 = await get('/api/v4/delegations/ut1open0000000000000000000000000000000000');
-  assert.equal((await get2.json()).data.delegated, false);
-});
-
-test('PUT /delegations/:account: accepts "1"/"0" string booleans (Laravel boolean rule)', async () => {
-  const res = await putJson('/api/v4/delegations/ut1known000000000000000000000000000000000', { delegated: '1' });
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(body.data.delegated, true);
-});
-
-test('PUT /delegations/:account: re-delegating after a close INSERTS a new period and keeps the closed one (history)', async () => {
-  const closed = delegationRows.find((d) => d.account === 'ut1closed00000000000000000000000000000000');
-  const closedStartedAt = closed.started_at;
-  const closedEndedAt = closed.ended_at;
-  const rowsBefore = delegationRows.length;
-
-  const res = await putJson('/api/v4/delegations/ut1closed00000000000000000000000000000000', { delegated: true });
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(body.data.changed, true);
-  assert.equal(body.data.delegated, true);
-
-  const get2 = await get('/api/v4/delegations/ut1closed00000000000000000000000000000000');
-  const getBody = await get2.json();
-  assert.equal(getBody.data.delegated, true);
-
-  // The point of the schema change: re-delegation appends, never rewrites.
-  assert.equal(delegationRows.length, rowsBefore + 1, 'a fresh period row was inserted');
-  assert.equal(closed.started_at, closedStartedAt, "the closed period's start survives");
-  assert.equal(closed.ended_at, closedEndedAt, "the closed period's end survives");
-  const open = delegationRows.filter((d) => d.account === 'ut1closed00000000000000000000000000000000' && d.ended_at == null);
-  assert.equal(open.length, 1, 'exactly one open period per account (partial unique)');
 });

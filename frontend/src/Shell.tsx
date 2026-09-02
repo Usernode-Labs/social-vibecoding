@@ -200,8 +200,7 @@ export function Shell() {
           Profile screen (profile-and-settings-to-web migration): the mobile
           app's native Profile screen rendered from the in-process
           /challenges-api/me/* routes, scoped to the signed-in platform
-          session server-side (the bridge's getProfileInfo participant id is
-          no longer consulted). Hash route #profile; mounted by
+          session server-side. Hash route #profile; mounted by
           App.navigateToProfile.
 
           A React island as of #1083 chunk F: the renderer moved with it, to

@@ -32,7 +32,7 @@ const nativeChromeSource = fs.readFileSync(
 
 // The sheet must reach signed-out users too: the OS notification prompt
 // (and the Android alarm/battery asks) are device-level, not
-// account-level, so the anonymous-session admission is also a trigger.
+// account-level, so entering the anonymous shell is also a trigger.
 
 function fakeNode(tag) {
   const node = {
@@ -67,8 +67,7 @@ function boot(opts) {
       : { toast() {}, platform: opts.kitPlatform || 'ios' },
     usernode: {
       isNative: true,
-      async getBridgeInfo() { return { version: 4, capabilities }; },
-      async enterAnonymousSession() { return { admitted: true }; },
+      async getBridgeInfo() { return { version: 5, capabilities }; },
       async getSettingsState() { return { permissions: opts.permissions }; },
       async getSocialPushState() {
         if (opts.socialPushState === undefined) return null;
@@ -303,18 +302,17 @@ test('iOS: a denial keeps the sheet open, un-granted, and unmarked', async () =>
   assert.notEqual(stored[MARKER], '1');
 });
 
-test('anonymous: a signed-out iOS device still gets the sheet once the ' +
-     'anonymous session is admitted', async () => {
+test('anonymous: native session stays closed while device permissions remain available',
+  async () => {
   const { sandbox, sheets } = boot({
     user: null,
-    capabilities: ['getSettingsState', 'getSocialPushState',
-      'enterAnonymousSession'],
+    capabilities: ['getSettingsState', 'getSocialPushState'],
     permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
     socialPushState: IOS_UNPROMPTED,
   });
   const admitted = await sandbox.NativeChrome.enterAnonymous();
-  assert.equal(admitted, true, 'the anonymous session was admitted');
-  // The admission fires the sheet itself — wait for that run, without
+  assert.equal(admitted, false, 'anonymous pages never receive session authority');
+  // Anonymous entry fires the device-only sheet itself — wait for that run, without
   // calling maybeShowFirstRunPermissions() here (that would mask a
   // missing trigger).
   if (sandbox.NativeChrome._firstRunPromise) {
@@ -322,24 +320,7 @@ test('anonymous: a signed-out iOS device still gets the sheet once the ' +
   }
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sheets.length, 1,
-    'the anonymous admission itself must trigger the sheet');
-});
-
-test('anonymous: a refused admission does not trigger the sheet', async () => {
-  const { sandbox, sheets } = boot({
-    user: null,
-    capabilities: ['getSettingsState', 'getSocialPushState',
-      'enterAnonymousSession'],
-    permissions: { platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null },
-    socialPushState: IOS_UNPROMPTED,
-  });
-  sandbox.usernode.enterAnonymousSession = async () => ({ admitted: false });
-  const admitted = await sandbox.NativeChrome.enterAnonymous();
-  assert.equal(admitted, false);
-  // Let any stray microtask chain settle before counting.
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(sheets.length, 0,
-    'a fail-closed admission keeps the boot quiet');
+    'anonymous entry must still trigger device-only permissions');
 });
 
 test('Android: an unmarked device still gets the sheet', async () => {
@@ -459,54 +440,30 @@ test('Settings’ Allow notifications completes the grant the same way', () => {
     'the old single-read path must not survive anywhere');
 });
 
-// ── ?shot=notif-permissions dispatches its ghost click on a FRAME ──────────
+// ── ?shot=notif-permissions dispatches its ghost click synchronously ───────
 //
-// The kit refuses a backdrop click that arrives within GHOST_CLICK_MS of
-// presenting (450ms — decideBackdropDismiss in
-// public/usernode-native/v1/native.js), and this shot exists to photograph
-// that refusal. It used to dispatch on a 150ms setTimeout, which is a
-// request, not a guarantee: measured at an 8x CPU throttle the timer fired
-// anywhere from 274ms to 606ms, and past 450 the kit CORRECTLY closed the
-// sheet — so the declared check found no sheet and went red. It did that on
-// three unrelated proposals before anyone traced it.
-//
-// Frames are the fix. One frame after presenting is late enough that the
-// sheet is in the document and early enough that no plausible contention
-// pushes it past the guard: a frame at a 16x throttle is ~64ms against
-// 450ms. Verified 8 of 8 at 8x and 16x, where the timer version failed 3 of 8.
+// presentSheet appends the sheet/backdrop and wires the guard before it
+// returns. Dispatch there, while the opening gesture's ghost window is true
+// by construction; deferring to a timer or frame makes a headless/background
+// scheduler part of the assertion and has made unrelated proposals go red.
 
-test('the ghost click is scheduled by frame and checked against the real guard', () => {
+test('the ghost click targets the synchronously presented sheet', () => {
   const app = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
   const shot = app.slice(app.indexOf('  _applyNotifPermissionsShot() {'));
   const body = shot.slice(0, shot.indexOf('\n  },'));
 
-  // No wall-clock timer deciding when the click lands.
-  assert.doesNotMatch(body, /\}, 150\);/,
-    'a 150ms timer is a request, not a guarantee — this must be frame-driven');
-  assert.match(body, /requestAnimationFrame/,
-    'the click is scheduled on a frame');
-  // The SCHEDULING CALL, not just the helper's definition: swapping
-  // `raf(fire)` for a timer while leaving the helper in place would
-  // otherwise slip past this test.
-  assert.match(body, /\n\s*raf\(fire\);/,
-    'the first dispatch goes through the frame scheduler');
-  assert.match(body, /if \(elapsed < 32\) \{ raf\(fire\); return; \}/,
-    'and so does the wait for the sheet to be in the document');
-  assert.match(body, /elapsed < 32/,
-    'and still gives the sheet a frame to be in the document');
-
-  // The guard is READ from the kit, not copied. native.js is centrally
-  // hosted and versioned separately, so a hard-coded 450 here would drift
-  // silently the day it changes.
-  assert.match(body, /window\.unNative\?\.physics\?\.GHOST_CLICK_MS/,
-    'the guard comes from the kit that enforces it');
-  assert.match(body, /\|\| 450/, 'with a fallback if the kit is not loaded');
-  assert.match(body, /elapsed > guard \* 0\.7/,
-    'and the dispatch is skipped if the window was somehow missed anyway');
-
-  // Missing the window must not leave a marked-but-dismissed sheet behind:
-  // the attempt starts over on the same try budget as every other retry.
-  assert.match(body, /sheet\.dismiss\(\)[\s\S]{0,200}?setTimeout\(attempt, App\.IMPROVE_SHOT_INTERVAL_MS\)/,
-    'a missed window re-presents rather than marking a sheet it just closed');
+  assert.doesNotMatch(body, /requestAnimationFrame|performance\.now/,
+    'no scheduler decides whether the synthetic ghost lands in time');
+  const presentAt = body.indexOf('const sheet = NativeChrome.presentPermissionsSheet');
+  const backdropAt = body.indexOf("const backdrop = document.querySelector('.un-backdrop')");
+  const clickAt = body.indexOf('backdrop.click()');
+  const markerAt = body.indexOf(
+    "sheet.el.setAttribute('data-un-ghost-click', 'dispatched')");
+  assert.ok(presentAt >= 0 && presentAt < backdropAt && backdropAt < clickAt && clickAt < markerAt,
+    'present, dispatch, and mark happen synchronously in that order');
+  assert.match(body, /if \(!backdrop\) return;/,
+    'a missing backdrop cannot produce a false-positive marker');
+  assert.doesNotMatch(body, /document\.querySelector\('\.un-sheet'\)/,
+    'the marker belongs to the exact returned sheet');
 });

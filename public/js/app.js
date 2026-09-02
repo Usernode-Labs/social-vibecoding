@@ -439,6 +439,10 @@ const App = {
       return;
     }
     App._sessionFromSnapshot = false;
+    if (window.NativeChrome &&
+        typeof NativeChrome.prepareIdentityPublication === 'function') {
+      NativeChrome.prepareIdentityPublication(user);
+    }
     App.user = user;
     App.saveSessionSnapshot(user);
     // The verified answer, for everyone who joined bootSession() rather
@@ -446,6 +450,9 @@ const App = {
     // optimistic boot, because until now the shell had a last-known user,
     // not a confirmed one.
     App._publishBootSession({ user });
+    document.dispatchEvent(new CustomEvent('sv:session', {
+      detail: { user: App.user },
+    }));
     App.connectEvents();
     if (window.Kudos?.Budget?.init) Kudos.Budget.init();
     if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
@@ -489,13 +496,16 @@ const App = {
   _authedBooted: false,
 
   async enterAnonymous() {
-    // No session, or a ?shot= link that boots the anonymous shell without
-    // reading one. Either way nobody joining bootSession() should spend a
-    // request finding that out.
-    App._publishBootSession({ signedOut: true });
+    let nativeBoundary = null;
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
-      await NativeChrome.enterAnonymous();
+      // enterAnonymous closes the private native realm synchronously before
+      // returning its Promise. Publish null only after that hard boundary.
+      nativeBoundary = NativeChrome.enterAnonymous();
     }
+    App.user = null;
+    if (nativeBoundary) await nativeBoundary;
+    // The boot reader sees signed-out only after native authority is closed.
+    App._publishBootSession({ signedOut: true });
     // Capture the platform SHA this document booted with. The anonymous
     // shell has no drawer (so no stale-version pill), which makes
     // pull-to-refresh its only recovery path after a deploy — and
@@ -614,14 +624,15 @@ const App = {
 
 
   enterAuthed(user) {
+    if (window.NativeChrome &&
+        typeof NativeChrome.prepareIdentityPublication === 'function') {
+      // The bridge handles this event synchronously and drops the old opaque
+      // realm claim before the successor identity becomes observable.
+      NativeChrome.prepareIdentityPublication(user);
+    }
     App.user = user;
-    // A snapshot-derived boot publishes NOTHING here. The record is the
-    // whole last user object, so the shell it paints is correct — but it is
-    // UNVERIFIED and can be up to SESSION_SNAPSHOT_MAX_AGE_MS old, and a
-    // joiner asking "who is signed in" wants the answer, not the last one.
-    // _reconcileSession publishes, a moment later, whichever of the three
-    // outcomes the read turns out to be. _sessionFromSnapshot is set
-    // immediately before this call, so it is already true here.
+    // A snapshot is display-only and unverified. _reconcileSession publishes
+    // the server's answer; a normal login publishes immediately.
     if (!App._sessionFromSnapshot) App._publishBootSession({ user });
     // "View as non-admin" admin tool. We mask `App.user.isAdmin`
     // for client-side UI gating (admin buttons, retry, delete, lock,
@@ -665,8 +676,8 @@ const App = {
     // its session out.
     if (!App._sessionFromSnapshot) App.saveSessionSnapshot(App.user);
 
-    // A web session exists (platform access or not). The native login
-    // handoff listens for this — wallet provisioning and the node work
+    // A web session exists (platform access or not). Native protocol 2
+    // listens for this — wallet provisioning and the node work
     // for waiting-room users too (apps are usable without platform
     // access; only the SV social/build surfaces are gated).
     document.dispatchEvent(new CustomEvent('sv:session', {
@@ -1049,64 +1060,14 @@ const App = {
         if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
         return;
       }
-      // After the entrance spring has settled — a ghost arrives at a
-      // presented sheet, not one still sliding in — and still well inside
-      // the kit's guard window. A bare .click() with no preceding
-      // pointerdown is exactly the shape of the real thing.
-      //
-      // THE TIMER IS NOT THE CONTRACT; THE ELAPSED TIME IS. The kit dismisses
-      // a backdrop click that arrives at or after GHOST_CLICK_MS (450ms —
-      // decideBackdropDismiss in public/usernode-native/v1/native.js), and
-      // this 150ms timer only lands inside that window on a machine that is
-      // free to run it on time. Measured at an 8x CPU throttle it fires
-      // anywhere between 274ms and 606ms, and past 450 the kit CORRECTLY
-      // treats it as a real click and closes the sheet — so the check saw no
-      // sheet and failed, having tested the scheduler rather than the guard.
-      // That is why this route has gone red on unrelated proposals.
-      //
-      // So: check the clock before dispatching. Inside the window, click.
-      // Past it, this attempt proved nothing — dismiss and present again,
-      // on the same try budget as every other retry here.
-      // Driven by FRAMES, not by a 150ms timer, and the difference is the
-      // whole fix. A timer asked for 150ms fires when the machine gets to
-      // it: measured at an 8x CPU throttle, anywhere from 274ms to 606ms.
-      // Past the guard the kit CORRECTLY treats the click as real and closes
-      // the sheet, so the check saw nothing and failed — having tested the
-      // scheduler rather than the guard. That is why this route has gone red
-      // on unrelated proposals.
-      //
-      // One frame after presenting is late enough (the sheet is up and the
-      // click has a backdrop to land on) and early enough that no plausible
-      // amount of contention pushes it out of the window — a frame at a 16x
-      // throttle is ~64ms against a 450ms guard. Which is also the honest
-      // shape of the thing: a real ghost click arrives a frame or two behind
-      // the gesture that opened the surface, not a third of a second later.
-      const now = () => ((typeof performance !== 'undefined' && performance.now)
-        ? performance.now() : Date.now());
-      const presentedAt = now();
-      const raf = (fn) => ((typeof requestAnimationFrame === 'function')
-        ? requestAnimationFrame(fn) : setTimeout(fn, 16));
-      const fire = () => {
-        const elapsed = now() - presentedAt;
-        // Give the sheet at least one frame to be in the document.
-        if (elapsed < 32) { raf(fire); return; }
-        // Read the real constant rather than keeping a copy that can drift:
-        // the kit is centrally hosted and versioned separately from this.
-        // Missing the window at all is now a surprise, but if it happens the
-        // attempt proved nothing — start over rather than dispatching a
-        // click the guard will (correctly) honour.
-        const guard = Number(window.unNative?.physics?.GHOST_CLICK_MS) || 450;
-        if (elapsed > guard * 0.7) {
-          try { if (typeof sheet.dismiss === 'function') sheet.dismiss(); } catch (err) { /* gone already */ }
-          if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-          return;
-        }
-        const backdrop = document.querySelector('.un-backdrop');
-        if (backdrop) backdrop.click();
-        const el = document.querySelector('.un-sheet');
-        if (el) el.setAttribute('data-un-ghost-click', 'dispatched');
-      };
-      raf(fire);
+      // The kit appends the backdrop and sheet, and wires the dismiss guard,
+      // before returning this handle. Dispatch immediately: a bare click with
+      // no pointerdown is the real ghost shape, and scheduling it would make
+      // this a test of a throttled browser clock instead of the guard.
+      const backdrop = document.querySelector('.un-backdrop');
+      if (!backdrop) return;
+      backdrop.click();
+      if (sheet.el) sheet.el.setAttribute('data-un-ghost-click', 'dispatched');
     };
     setTimeout(attempt, 50);
   },

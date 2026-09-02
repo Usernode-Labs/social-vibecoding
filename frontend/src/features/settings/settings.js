@@ -437,10 +437,6 @@
       // a modal. Leaving it is a real hash navigation (the header back
       // button, the device back gesture) — see handleBack / _exitSettings.
 
-      // A sign-out the app never acknowledged left a note for the next
-      // document; this is that document.
-      this._showIncompleteNativeSignOutNotice();
-
       this.refresh();
     },
 
@@ -2953,46 +2949,17 @@
         return false;
       };
 
-      // Close wallet admission before the first asynchronous web cleanup.
-      // New native builds also acknowledge their process-wide latch here.
-      let preflight = {
-        nativeTerminal: false, latch: 'unsupported', reason: null, code: null,
-      };
+      // This call closes the private realm synchronously, before this function
+      // reaches its first await. Native capability probing deliberately waits
+      // until after the server has revoked the HttpOnly session, so a degraded
+      // bridge can never prevent the authoritative logout boundary.
+      let preflight = { nativeTerminal: false };
       try {
         if (window.NativeChrome && NativeChrome.prepareWebLogout) {
-          const result = await NativeChrome.prepareWebLogout();
-          preflight = (result && typeof result === 'object')
-            ? result
-            : {
-              nativeTerminal: result === true,
-              latch: 'unsupported',
-              reason: null,
-              code: null,
-            };
+          preflight = NativeChrome.prepareWebLogout() || preflight;
         }
       } catch (error) {
-        // prepareWebLogout resolves a report now, but a rejection must not
-        // be a dead end either — treat it exactly like a refused latch.
-        console.warn('[settings] native logout preflight failed:', error);
-        preflight = {
-          nativeTerminal: false,
-          latch: 'unavailable',
-          reason: (error && error.message) ? String(error.message) : null,
-          code: null,
-        };
-      }
-
-      // THE DEAD END THIS REMOVES: a refused privileged bridge used to
-      // abort here, BEFORE POST /api/auth/logout, so the web session
-      // survived and the user had no way out of the app at all. The
-      // admission latches are already closed; ask, then sign out of the
-      // web session regardless. The app's own session is attempted
-      // best-effort below and named on the landing screen if it survives.
-      const degraded = preflight.latch === 'unavailable' ||
-        preflight.latch === 'inconclusive';
-      if (degraded && !await this._confirmDegradedSignOut(preflight)) {
-        if (btn) btn.disabled = false;
-        return false;
+        return fail(error);
       }
 
       try {
@@ -3020,107 +2987,28 @@
       // native logout replaces the WebView, so the old document has no
       // timeout or navigation continuation.
       if (preflight.nativeTerminal) {
-        // FIXME: if this rejects after web cleanup, add a fail-closed retry UI
-        // without resuming normal work in this old document.
-        return NativeChrome.commitNativeLogout();
-      }
-
-      if (degraded && !await this._bestEffortNativeLogout()) {
-        // The app kept its session. Say so on the next screen rather than
-        // leaving the user to discover it, and point at the fix.
-        this._noteIncompleteNativeSignOut();
+        // A rejection leaves this old document closed and server authority
+        // revoked. Do not navigate or reopen admission; the deliberately
+        // simple rare-failure recovery is an app restart/update.
+        return NativeChrome.commitNativeLogout().catch((error) => {
+          if (window.PlatformUI && PlatformUI.toast) {
+            PlatformUI.toast(
+              'Signed out. Close and reopen the app to finish shutting down Usernode.',
+              { error: true }
+            );
+          }
+          console.warn('[settings] local native shutdown failed:', error);
+          return false;
+        });
       }
 
       // Hard navigation on purpose: enterAuthed is one-shot per document
-      // in a regular browser or an old app without hard logout. `/` boots
+      // in a regular browser. `/` boots
       // the anonymous shell on the landing screen — the public app
       // directory a guest normally sees — instead of the bare sign-in
       // form (#1159); the landing header's Sign in CTA keeps re-login one
       // tap away.
       window.location.href = '/';
-    },
-
-    // The user's call, not ours: the web session is going either way, but
-    // they should know the app may stay signed in on this device.
-    _confirmDegradedSignOut(preflight) {
-      if (!window.PlatformUI || typeof PlatformUI.confirm !== 'function') {
-        // No dialog to ask with is not a reason to trap someone in a
-        // session — proceed, and the login-screen notice still fires.
-        return Promise.resolve(true);
-      }
-      const detail = preflight && preflight.reason
-        ? ` (${preflight.reason})`
-        : '';
-      return PlatformUI.confirm({
-        title: 'Sign out without the app?',
-        message: 'The Usernode app isn’t responding to this screen' +
-          detail + ', so it may stay signed in on this device. ' +
-          'You’ll be signed out of Social either way. Force-close ' +
-          'and reopen the app to finish signing out there.',
-        confirmLabel: 'Sign out anyway',
-        cancelLabel: 'Cancel',
-        danger: true,
-      });
-    },
-
-    // The app may still accept a plain logout even though its privileged
-    // latch never answered. Try, briefly, and swallow the rejection: the
-    // web session is already gone, so nothing here may block the user from
-    // leaving. Resolves whether the app accepted it.
-    NATIVE_SIGNOUT_BUDGET_MS: 3000,
-
-    _bestEffortNativeLogout() {
-      const bridge = window.usernode;
-      if (!bridge || bridge.isNative !== true ||
-          typeof bridge.logout !== 'function') {
-        return Promise.resolve(false);
-      }
-      return new Promise((resolve) => {
-        let done = false;
-        const settle = (ok) => {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          resolve(ok);
-        };
-        const timer = setTimeout(() => settle(false),
-          this.NATIVE_SIGNOUT_BUDGET_MS);
-        try {
-          bridge.logout().then(() => settle(true), (err) => {
-            console.warn('[settings] best-effort native logout failed:', err);
-            settle(false);
-          });
-        } catch (err) {
-          console.warn('[settings] best-effort native logout threw:', err);
-          settle(false);
-        }
-      });
-    },
-
-    NATIVE_SIGNOUT_NOTICE_KEY: 'sv:native_signout_incomplete',
-
-    _noteIncompleteNativeSignOut() {
-      try {
-        sessionStorage.setItem(this.NATIVE_SIGNOUT_NOTICE_KEY, '1');
-      } catch (_) { /* private mode / disabled storage: nothing to note */ }
-    },
-
-    // One-shot, on the next document — which is the landing screen, since
-    // logout hard-navigates to `/`. Without it the user lands there with
-    // no idea the app may still hold its own session.
-    _showIncompleteNativeSignOutNotice() {
-      let flagged = false;
-      try {
-        flagged = sessionStorage.getItem(this.NATIVE_SIGNOUT_NOTICE_KEY) === '1';
-        if (flagged) sessionStorage.removeItem(this.NATIVE_SIGNOUT_NOTICE_KEY);
-      } catch (_) { return; }
-      if (!flagged) return;
-      if (!window.PlatformUI || typeof PlatformUI.toast !== 'function') return;
-      PlatformUI.toast(
-        'Signed out of Social. The Usernode app didn’t confirm. ' +
-        'Force-close and reopen it to finish signing out there.',
-        { duration: 10000, priority: true }
-      );
     },
 
     // Ask the active service worker to drop its API cache; resolves on ack
@@ -3763,7 +3651,7 @@
       usesIframeRelay: false,
       hasNativeChannel: true,
       origin: 'https://staging.demo.invalid',
-      bridgeVersion: 4,
+      bridgeVersion: 5,
       capabilities: ['getBridgeInfo', 'getSettingsState', 'logout'],
       appVersion: '0.0.0-demo',
       buildNumber: '0',

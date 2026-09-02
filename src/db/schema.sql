@@ -153,6 +153,21 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TIMESTAMPTZ NOT NULL
 );
 
+-- Narrow, HttpOnly-cookie-backed continuation between a successful email
+-- code and first-password setup. This is deliberately not a mobile bearer:
+-- it authorizes exactly one password setup, is stored only as a hash, and is
+-- consumed in the same transaction that creates the ordinary web session.
+CREATE TABLE IF NOT EXISTS web_signup_sessions (
+  token_hash  VARCHAR(64) PRIMARY KEY
+    CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  user_id     INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_web_signup_sessions_expires
+  ON web_signup_sessions (expires_at);
+COMMENT ON TABLE web_signup_sessions IS 'staging:private';
+
 -- Global CLI device authorization and opaque access tokens. These are
 -- deliberately independent from browser sessions and iframe/app identity.
 CREATE TABLE IF NOT EXISTS cli_device_authorizations (
@@ -3660,6 +3675,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_season_public_key_unique
 CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_user_season_unique
   ON onchain_accounts (user_id, season_id)
   WHERE user_id IS NOT NULL AND season_event_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_id_user_uidx
+  ON onchain_accounts (id, user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_id_user_address_uidx
+  ON onchain_accounts (id, user_id, address);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_user ON onchain_accounts (user_id);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season ON onchain_accounts (season_id);
 CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season_event_address ON onchain_accounts (season_event_id, address);
@@ -3960,7 +3979,7 @@ CREATE TABLE IF NOT EXISTS mobile_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_logs_user ON mobile_logs (user_id);
 
--- `mobile_otp_codes` — email login codes for the mobile app. Schema
+-- `mobile_otp_codes` — email-code signup challenges for Social. Schema
 -- only is migrated; ROWS ARE NOT (migrating live login codes would be
 -- a security smell). Keyed by email; after identity merge, lookups go
 -- through the platform's own `users.email`. No FK (rows here predate
@@ -4023,17 +4042,12 @@ CREATE TABLE IF NOT EXISTS user_terms_consents (
   UNIQUE (user_id, terms_version_id)
 );
 
--- `mobile_auth_tokens` — bearer tokens for the topochain mobile
--- surface (plan Global Constraints #4; this table has no equivalent in
--- the source topochain database — it is new capability for the
--- platform-hosted mobile auth flow). `token_hash` stores the sha256
--- hex of the bearer token, never the token itself. `ability`
--- distinguishes a normal 90-day 'session' token from a single-use,
--- 10-minute 'set-password' token (issued right after OTP login for
--- users who still need to set a platform password). Never trust a
--- client-supplied user id on the mobile surface — the user always
--- comes from this table via the token (see topochain-auth
--- middleware, Task 3).
+-- `mobile_auth_tokens` — the private bearer embedded in a protocol-2 native
+-- credential envelope. `token_hash` stores the sha256 hex, never the token
+-- itself. The retired direct mobile login/signup surface is gone. Existing
+-- unbound `session` rows are inert because authentication requires the exact
+-- live native credential relation; every new token is minted inside
+-- native-session-protocol's atomic exchange.
 CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
   id            BIGSERIAL PRIMARY KEY,
   user_id       BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -4044,6 +4058,16 @@ CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS mobile_auth_tokens_id_user_uidx
+  ON mobile_auth_tokens (id, user_id);
+-- Retire any short-lived set-password capabilities left by the removed
+-- mobile onboarding flow before narrowing the table invariant.
+DELETE FROM mobile_auth_tokens WHERE ability <> 'session';
+ALTER TABLE mobile_auth_tokens
+  DROP CONSTRAINT IF EXISTS mobile_auth_tokens_ability_check;
+ALTER TABLE mobile_auth_tokens
+  ADD CONSTRAINT mobile_auth_tokens_ability_check CHECK (ability = 'session');
+
 
 -- Mobile push notifications — sender identity, registrations, deliveries (#844)
 --
@@ -4089,6 +4113,7 @@ CREATE TABLE IF NOT EXISTS mobile_push_installation_mutations (
 CREATE TABLE IF NOT EXISTS mobile_push_registrations (
   id                 BIGSERIAL PRIMARY KEY,
   user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  native_session_credential_reference VARCHAR(47) NOT NULL,
   environment        VARCHAR(32) NOT NULL,
   installation_id    UUID NOT NULL,
   provider           VARCHAR(16) NOT NULL DEFAULT 'fcm' CHECK (provider = 'fcm'),
@@ -4108,8 +4133,34 @@ CREATE TABLE IF NOT EXISTS mobile_push_registrations (
   UNIQUE (environment, registration_hash),
   CHECK (BTRIM(environment) <> '')
 );
+ALTER TABLE mobile_push_registrations
+  ADD COLUMN IF NOT EXISTS native_session_credential_reference VARCHAR(47);
+-- Existing unbound registrations predate native credential authority. Cut
+-- them off immediately, then reject every new unbound row. NOT VALID keeps
+-- historical diagnostic rows without weakening the constraint for writes.
+UPDATE mobile_push_registrations
+   SET session_expires_at = LEAST(session_expires_at, NOW()),
+       updated_at = NOW()
+ WHERE native_session_credential_reference IS NULL
+   AND session_expires_at > NOW();
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'mobile_push_registrations_native_credential_required_check'
+       AND conrelid = 'mobile_push_registrations'::regclass
+  ) THEN
+    ALTER TABLE mobile_push_registrations
+      ADD CONSTRAINT mobile_push_registrations_native_credential_required_check
+      CHECK (native_session_credential_reference IS NOT NULL) NOT VALID;
+  END IF;
+END;
+$$;
 CREATE INDEX IF NOT EXISTS idx_mobile_push_registrations_user
   ON mobile_push_registrations (user_id, environment);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_registrations_native_credential
+  ON mobile_push_registrations (native_session_credential_reference)
+  WHERE native_session_credential_reference IS NOT NULL;
 
 -- Short-lived, privacy-safe registration history for support diagnostics.
 -- The registration id is retained as an ordinary scalar so an event survives
@@ -4541,20 +4592,21 @@ COMMENT ON COLUMN onchain_accounts.secret_key        IS 'staging:private';
 COMMENT ON COLUMN onchain_accounts.registration_code IS 'staging:private';
 
 -- ═══════════════════════════════════════════════════════════════════════
--- Topochain Task 8 — mobile auth: users.password_set (plan Task 8;
+-- Topochain Task 8 — mobile auth / shared web signup: users.password_set
+-- (plan Task 8;
 -- Global Constraints #4/#6, task-8 brief).
 -- ═══════════════════════════════════════════════════════════════════════
 
 -- Every platform `users` row already has a NOT NULL `password` (a real
--- bcrypt hash) — but the topochain mobile OTP flow
--- (POST /api/v4/mobile/auth/otp/verify) can create a user row with NO
+-- bcrypt hash) — but the shared web OTP flow
+-- (POST /api/auth/otp/verify) can create a user row with NO
 -- caller-chosen password at all: it stores a random, unusable bcrypt hash
 -- (of 32 random bytes nobody knows) just to satisfy the NOT NULL
--- constraint. `password_set` is how the mobile auth surface tells "a real,
+-- constraint. `password_set` is how the platform auth surface tells "a real,
 -- caller-chosen password exists" apart from "some syntactically-valid
 -- hash nobody can ever produce" — POST /auth/check-email's
 -- `password_set` response field and POST /auth/login's guest/member/
--- operator level computation both branch on it directly (mobile-auth.js).
+-- operator level computation both branch on it directly (auth.js).
 -- Existing platform users (registered the normal way, always with a real
 -- chosen password) default TRUE via DEFAULT TRUE, so this column is a
 -- no-op for every pre-existing account; only the OTP-created path (and,
@@ -4562,6 +4614,522 @@ COMMENT ON COLUMN onchain_accounts.registration_code IS 'staging:private';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_set BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- ═══════════════════════════════════════════════════════════════════════
+-- Native session establish protocol 2. The web incarnation is created lazily
+-- on the first ticket request and attached to exactly one live cookie session.
+-- Its row deliberately survives deletion/expiry of that session: an exchange
+-- can prove that the exact session is no longer live, while an already-issued
+-- native credential retains an auditable origin until explicit revocation.
+CREATE TABLE IF NOT EXISTS native_session_web_incarnations (
+  id          VARCHAR(47) PRIMARY KEY
+    CHECK (id ~ '^nsw_[A-Za-z0-9_-]{43}$'),
+  user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (id, user_id)
+);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS native_session_incarnation_id
+  VARCHAR(47);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'sessions'::regclass
+       AND conname = 'sessions_native_session_incarnation_user_fkey'
+  ) THEN
+    ALTER TABLE sessions
+      ADD CONSTRAINT sessions_native_session_incarnation_user_fkey
+      FOREIGN KEY (native_session_incarnation_id, user_id)
+      REFERENCES native_session_web_incarnations(id, user_id)
+      ON DELETE SET NULL (native_session_incarnation_id);
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS sessions_native_session_incarnation_uidx
+  ON sessions (native_session_incarnation_id)
+  WHERE native_session_incarnation_id IS NOT NULL;
+
+-- A caller chooses only the opaque attempt id and the sole protocol-2 target,
+-- `running`. Subject and network are server-derived and frozen here. Reusing
+-- an attempt id with any changed semantic input is a sticky conflict.
+CREATE TABLE IF NOT EXISTS native_session_attempts (
+  attempt_id                 VARCHAR(47) PRIMARY KEY
+    CHECK (attempt_id ~ '^nsa_[A-Za-z0-9_-]{43}$'),
+  protocol                   SMALLINT NOT NULL DEFAULT 2 CHECK (protocol = 2),
+  user_id                    BIGINT NOT NULL,
+  web_session_incarnation_id VARCHAR(47) NOT NULL,
+  desired_runtime            VARCHAR(16) NOT NULL CHECK (desired_runtime = 'running'),
+  network_id                 VARCHAR(16) NOT NULL CHECK (network_id = 'testnet'),
+  chain_id                   VARCHAR(100) NOT NULL
+    CHECK (chain_id ~ '^utc1[023456789acdefghjklmnpqrstuvwxyz]+$'),
+  request_digest             CHAR(64) NOT NULL
+    CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+  state                      VARCHAR(16) NOT NULL DEFAULT 'ticketed'
+    CHECK (state IN ('ticketed', 'exchanged', 'revoked')),
+  created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (attempt_id, user_id, web_session_incarnation_id, network_id, chain_id),
+  FOREIGN KEY (web_session_incarnation_id, user_id)
+    REFERENCES native_session_web_incarnations(id, user_id) ON DELETE CASCADE,
+  CHECK (updated_at >= created_at)
+);
+CREATE INDEX IF NOT EXISTS native_session_attempts_user_idx
+  ON native_session_attempts (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS native_session_attempts_incarnation_idx
+  ON native_session_attempts (web_session_incarnation_id, state);
+
+-- The browser may mint only this short-lived, attempt-bound handoff. Its raw
+-- value lives in a path-scoped HttpOnly cookie and is never returned to
+-- JavaScript; native code reads the WebView cookie store and echoes the value
+-- in a purpose-specific header to redeem the exact ticket. Repeated delivery
+-- of one redemption is an idempotent retry of the same logical use.
+CREATE TABLE IF NOT EXISTS native_session_handoffs (
+  attempt_id    VARCHAR(47) PRIMARY KEY
+    REFERENCES native_session_attempts(attempt_id) ON DELETE CASCADE,
+  handoff_hash  CHAR(64) NOT NULL UNIQUE
+    CHECK (handoff_hash ~ '^[0-9a-f]{64}$'),
+  issued_at     TIMESTAMPTZ NOT NULL,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  redeemed_at   TIMESTAMPTZ,
+  CHECK (expires_at = issued_at + INTERVAL '5 minutes'),
+  CHECK (redeemed_at IS NULL OR redeemed_at >= issued_at)
+);
+CREATE INDEX IF NOT EXISTS native_session_handoffs_expiry_idx
+  ON native_session_handoffs (expires_at);
+
+-- Raw tickets never reach storage. Their SHA-256 digest is the lookup key;
+-- the one successful JSON response is encrypted at rest so ticket issuance
+-- can replay the byte-identical body without minting a second capability.
+CREATE TABLE IF NOT EXISTS native_session_tickets (
+  id                 BIGSERIAL PRIMARY KEY,
+  attempt_id         VARCHAR(47) NOT NULL UNIQUE
+    REFERENCES native_session_attempts(attempt_id) ON DELETE CASCADE,
+  ticket_hash        CHAR(64) NOT NULL UNIQUE
+    CHECK (ticket_hash ~ '^[0-9a-f]{64}$'),
+  exchange_challenge CHAR(43) NOT NULL
+    CHECK (exchange_challenge ~ '^[A-Za-z0-9_-]{43}$'),
+  audience           VARCHAR(64) NOT NULL
+    CHECK (audience = 'usernode-native-session-v2'),
+  encrypted_response TEXT NOT NULL,
+  response_digest    CHAR(64) NOT NULL
+    CHECK (response_digest ~ '^[0-9a-f]{64}$'),
+  state              VARCHAR(16) NOT NULL DEFAULT 'issued'
+    CHECK (state IN ('issued', 'exchanged', 'revoked')),
+  issued_at          TIMESTAMPTZ NOT NULL,
+  expires_at         TIMESTAMPTZ NOT NULL,
+  CHECK (expires_at = issued_at + INTERVAL '5 minutes')
+);
+CREATE INDEX IF NOT EXISTS native_session_tickets_expiry_idx
+  ON native_session_tickets (expires_at) WHERE state = 'issued';
+
+-- Installation identity is app/device continuity-only in protocol 2, not
+-- user identity or hardware attestation. The caller submits public JWKs; the
+-- server validates them and derives the purpose-specific ids and RFC 7638
+-- thumbprints stored here. Authenticated attempts and credentials, not this
+-- stable installation row, carry the exact user binding.
+CREATE TABLE IF NOT EXISTS native_installation_key_generations (
+  installation_id                 VARCHAR(47) NOT NULL
+    CHECK (installation_id ~ '^nsi_[A-Za-z0-9_-]{43}$'),
+  key_generation                  INTEGER NOT NULL CHECK (key_generation = 1),
+  possession_key_id               VARCHAR(48) NOT NULL UNIQUE
+    CHECK (possession_key_id ~ '^nskp_[A-Za-z0-9_-]{43}$'),
+  possession_key_thumbprint       CHAR(43) NOT NULL
+    CHECK (possession_key_thumbprint ~ '^[A-Za-z0-9_-]{43}$'),
+  possession_public_jwk           JSONB NOT NULL,
+  envelope_key_id                 VARCHAR(48) NOT NULL UNIQUE
+    CHECK (envelope_key_id ~ '^nske_[A-Za-z0-9_-]{43}$'),
+  envelope_key_thumbprint         CHAR(43) NOT NULL
+    CHECK (envelope_key_thumbprint ~ '^[A-Za-z0-9_-]{43}$'),
+  envelope_public_jwk             JSONB NOT NULL,
+  created_at                      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (installation_id, key_generation),
+  UNIQUE (installation_id),
+  UNIQUE (possession_key_thumbprint),
+  UNIQUE (envelope_key_thumbprint),
+  CHECK (jsonb_typeof(possession_public_jwk) = 'object'),
+  CHECK (jsonb_typeof(envelope_public_jwk) = 'object')
+);
+
+-- A credential references the existing mobile bearer and provisioned wallet,
+-- but neither secret is stored here. The encrypted compact JWE in the sibling
+-- table is the only response carrying those values to the native key owner.
+CREATE TABLE IF NOT EXISTS native_session_credentials (
+  credential_reference       VARCHAR(47) PRIMARY KEY
+    CHECK (credential_reference ~ '^nsc_[A-Za-z0-9_-]{43}$'),
+  credential_generation      INTEGER NOT NULL DEFAULT 1 CHECK (credential_generation = 1),
+  attempt_id                 VARCHAR(47) NOT NULL UNIQUE,
+  user_id                    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  web_session_incarnation_id VARCHAR(47) NOT NULL,
+  installation_id            VARCHAR(47) NOT NULL,
+  installation_key_generation INTEGER NOT NULL,
+  mobile_auth_token_id       BIGINT UNIQUE,
+  account_id                 BIGINT NOT NULL,
+  network_id                 VARCHAR(16) NOT NULL CHECK (network_id = 'testnet'),
+  chain_id                   VARCHAR(100) NOT NULL,
+  exchange_request_digest    CHAR(64) NOT NULL
+    CHECK (exchange_request_digest ~ '^[0-9a-f]{64}$'),
+  state                      VARCHAR(16) NOT NULL DEFAULT 'valid'
+    CHECK (state IN ('valid', 'revoked')),
+  revocation_reason          VARCHAR(32)
+    CONSTRAINT native_session_credentials_revocation_reason_closed_check
+      CHECK (revocation_reason IN ('web_logout', 'account_recovery')),
+  revoked_at                 TIMESTAMPTZ,
+  created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at                 TIMESTAMPTZ NOT NULL,
+  FOREIGN KEY (attempt_id, user_id, web_session_incarnation_id, network_id, chain_id)
+    REFERENCES native_session_attempts(
+      attempt_id, user_id, web_session_incarnation_id, network_id, chain_id
+    ),
+  FOREIGN KEY (installation_id, installation_key_generation)
+    REFERENCES native_installation_key_generations(installation_id, key_generation),
+  FOREIGN KEY (mobile_auth_token_id, user_id)
+    REFERENCES mobile_auth_tokens(id, user_id)
+    ON DELETE SET NULL (mobile_auth_token_id),
+  FOREIGN KEY (account_id, user_id)
+    REFERENCES onchain_accounts(id, user_id) ON DELETE RESTRICT,
+  CHECK ((state = 'valid' AND revoked_at IS NULL AND revocation_reason IS NULL)
+      OR (state = 'revoked' AND revoked_at IS NOT NULL AND revocation_reason IS NOT NULL)),
+  CONSTRAINT native_session_credentials_expiry_order_check
+    CHECK (expires_at > created_at),
+  CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+);
+
+-- Existing databases received an unnamed auto-generated CHECK that also
+-- admitted the retired `mobile_logout` value. Replace it without rewriting
+-- revoked audit history. `NOT VALID` still rejects that value on every new or
+-- updated row; operators may validate after confirming historical rows are
+-- already within the closed set. Fresh databases create the validated named
+-- constraint above and skip this compatibility branch.
+ALTER TABLE native_session_credentials
+  DROP CONSTRAINT IF EXISTS native_session_credentials_revocation_reason_check;
+-- Sliding mobile leases may move beyond their initial 90-day bound. Replace
+-- the old unnamed exact-expiry constraint while retaining the database-owned
+-- requirement that every lease ends after credential creation.
+DO $$
+DECLARE
+  constraint_name TEXT;
+BEGIN
+  FOR constraint_name IN
+    SELECT conname
+      FROM pg_constraint
+     WHERE conrelid = 'native_session_credentials'::regclass
+       AND contype = 'c'
+       AND pg_get_constraintdef(oid) LIKE '%expires_at = (created_at +%90 days%'
+  LOOP
+    EXECUTE format(
+      'ALTER TABLE native_session_credentials DROP CONSTRAINT %I',
+      constraint_name
+    );
+  END LOOP;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'native_session_credentials_expiry_order_check'
+       AND conrelid = 'native_session_credentials'::regclass
+  ) THEN
+    ALTER TABLE native_session_credentials
+      ADD CONSTRAINT native_session_credentials_expiry_order_check
+      CHECK (expires_at > created_at);
+  END IF;
+END;
+$$;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'native_session_credentials_revocation_reason_closed_check'
+       AND conrelid = 'native_session_credentials'::regclass
+  ) THEN
+    ALTER TABLE native_session_credentials
+      ADD CONSTRAINT native_session_credentials_revocation_reason_closed_check
+      CHECK (revocation_reason IN ('web_logout', 'account_recovery')) NOT VALID;
+  END IF;
+END;
+$$;
+CREATE UNIQUE INDEX IF NOT EXISTS native_session_credentials_reference_user_uidx
+  ON native_session_credentials (credential_reference, user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS native_session_credentials_policy_binding_uidx
+  ON native_session_credentials (
+    credential_reference, credential_generation, user_id, account_id,
+    network_id, chain_id
+  );
+-- Replace the earlier reference-only draft constraint, if this uncommitted
+-- migration was exercised locally, with the final exact subject binding.
+ALTER TABLE mobile_push_registrations
+  DROP CONSTRAINT IF EXISTS mobile_push_registrations_native_credential_fk;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'mobile_push_registrations_native_credential_user_fk'
+       AND conrelid = 'mobile_push_registrations'::regclass
+  ) THEN
+    ALTER TABLE mobile_push_registrations
+      ADD CONSTRAINT mobile_push_registrations_native_credential_user_fk
+      FOREIGN KEY (native_session_credential_reference, user_id)
+      REFERENCES native_session_credentials(credential_reference, user_id)
+      ON DELETE CASCADE;
+  END IF;
+END;
+$$;
+CREATE INDEX IF NOT EXISTS native_session_credentials_user_idx
+  ON native_session_credentials (user_id, state);
+CREATE INDEX IF NOT EXISTS native_session_credentials_incarnation_idx
+  ON native_session_credentials (web_session_incarnation_id, state);
+
+CREATE TABLE IF NOT EXISTS native_session_credential_envelopes (
+  credential_reference VARCHAR(47) PRIMARY KEY
+    REFERENCES native_session_credentials(credential_reference) ON DELETE CASCADE,
+  compact_jwe           TEXT NOT NULL
+    CHECK (compact_jwe ~ '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'),
+  compact_jwe_digest    CHAR(64) NOT NULL
+    CHECK (compact_jwe_digest ~ '^[0-9a-f]{64}$'),
+  encrypted_response    TEXT NOT NULL,
+  response_digest       CHAR(64) NOT NULL
+    CHECK (response_digest ~ '^[0-9a-f]{64}$'),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Epoch-scoped native delegation policy replaces timestamp delegation at one
+-- immutable per-chain cutover epoch. A one-shot operator transaction records
+-- that C, closes the old open periods at C's supplied timestamp, and inserts
+-- the verified active inventory as `cutover` rows effective exactly at C.
+-- Subsequent credential-bound `native` requests accepted in E are E+2.
+--
+-- The per-chain fence linearizes direct canonical `/status` samples without
+-- holding a database transaction across the HTTP call. Once an E+1 sample
+-- advances `observed_epoch`, an older E sample is stale and cannot append an
+-- E+2 change. The policy's global BIGSERIAL id is both its public monotonic
+-- revision and the same-epoch last-write-wins order.
+CREATE TABLE IF NOT EXISTS native_epoch_delegation_fences (
+  network_id          VARCHAR(16) NOT NULL CHECK (network_id = 'testnet'),
+  chain_id            VARCHAR(100) NOT NULL
+    CHECK (chain_id ~ '^utc1[023456789acdefghjklmnpqrstuvwxyz]+$'),
+  observed_epoch      BIGINT NOT NULL
+    CHECK (observed_epoch BETWEEN 0 AND 4294967295),
+  cutover_epoch       BIGINT
+    CHECK (cutover_epoch BETWEEN 0 AND 4294967295),
+  cutover_at          TIMESTAMPTZ,
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK ((cutover_epoch IS NULL) = (cutover_at IS NULL)),
+  PRIMARY KEY (network_id, chain_id)
+);
+
+CREATE TABLE IF NOT EXISTS native_epoch_delegation_policies (
+  id                    BIGSERIAL PRIMARY KEY CHECK (id > 0),
+  request_id            VARCHAR(47) NOT NULL
+    CHECK (request_id ~ '^nd[bp]_[A-Za-z0-9_-]{43}$'),
+  source                VARCHAR(16) NOT NULL DEFAULT 'native'
+    CHECK (source IN ('native', 'cutover')),
+  credential_reference  VARCHAR(47)
+    CHECK (credential_reference ~ '^nsc_[A-Za-z0-9_-]{43}$'),
+  credential_generation INTEGER CHECK (credential_generation = 1),
+  user_id               BIGINT NOT NULL CHECK (user_id > 0),
+  account_id            BIGINT NOT NULL CHECK (account_id > 0),
+  account_address       VARCHAR(255) NOT NULL
+    CHECK (account_address <> '' AND account_address = BTRIM(account_address)),
+  network_id            VARCHAR(16) NOT NULL CHECK (network_id = 'testnet'),
+  chain_id              VARCHAR(100) NOT NULL,
+  delegated             BOOLEAN NOT NULL,
+  changed               BOOLEAN NOT NULL,
+  accepted_epoch        BIGINT NOT NULL
+    CHECK (accepted_epoch BETWEEN 0 AND 4294967293),
+  effective_epoch       BIGINT NOT NULL
+    CHECK (effective_epoch BETWEEN 2 AND 4294967295),
+  accepted_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (request_id),
+  FOREIGN KEY (network_id, chain_id)
+    REFERENCES native_epoch_delegation_fences(network_id, chain_id),
+  CONSTRAINT native_epoch_delegation_policies_source_fields_check CHECK (
+    (source = 'native'
+      AND request_id ~ '^ndp_[A-Za-z0-9_-]{43}$'
+      AND credential_reference IS NOT NULL
+      AND credential_generation = 1
+      AND effective_epoch = accepted_epoch + 2)
+    OR
+    (source = 'cutover'
+      AND request_id ~ '^ndb_[A-Za-z0-9_-]{43}$'
+      AND credential_reference IS NULL
+      AND credential_generation IS NULL
+      AND effective_epoch = accepted_epoch)
+  )
+);
+CREATE INDEX IF NOT EXISTS native_epoch_delegation_policy_account_idx
+  ON native_epoch_delegation_policies (
+    network_id, chain_id, account_address, effective_epoch DESC, id DESC
+  );
+CREATE INDEX IF NOT EXISTS native_epoch_delegation_policy_effective_idx
+  ON native_epoch_delegation_policies (
+    network_id, chain_id, effective_epoch DESC, id DESC
+  );
+
+-- Idempotent upgrades for databases that received the additive pre-cutover
+-- schema. The old constraints admitted only ndp_/credential/E+2 rows.
+ALTER TABLE native_epoch_delegation_fences
+  ADD COLUMN IF NOT EXISTS cutover_epoch BIGINT;
+ALTER TABLE native_epoch_delegation_fences
+  ADD COLUMN IF NOT EXISTS cutover_at TIMESTAMPTZ;
+ALTER TABLE native_epoch_delegation_fences
+  DROP CONSTRAINT IF EXISTS native_epoch_delegation_fences_cutover_epoch_check;
+ALTER TABLE native_epoch_delegation_fences
+  ADD CONSTRAINT native_epoch_delegation_fences_cutover_epoch_check
+    CHECK (cutover_epoch BETWEEN 0 AND 4294967295);
+ALTER TABLE native_epoch_delegation_fences
+  DROP CONSTRAINT IF EXISTS native_epoch_delegation_fences_check;
+ALTER TABLE native_epoch_delegation_fences
+  ADD CONSTRAINT native_epoch_delegation_fences_check
+    CHECK ((cutover_epoch IS NULL) = (cutover_at IS NULL));
+
+ALTER TABLE native_epoch_delegation_policies
+  ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'native';
+ALTER TABLE native_epoch_delegation_policies
+  ALTER COLUMN credential_reference DROP NOT NULL;
+ALTER TABLE native_epoch_delegation_policies
+  ALTER COLUMN credential_generation DROP NOT NULL;
+ALTER TABLE native_epoch_delegation_policies
+  DROP CONSTRAINT IF EXISTS native_epoch_delegation_policies_request_id_check;
+ALTER TABLE native_epoch_delegation_policies
+  DROP CONSTRAINT IF EXISTS native_epoch_delegation_policies_check;
+ALTER TABLE native_epoch_delegation_policies
+  DROP CONSTRAINT IF EXISTS native_epoch_delegation_policies_source_check;
+ALTER TABLE native_epoch_delegation_policies
+  ADD CONSTRAINT native_epoch_delegation_policies_source_check
+    CHECK (source IN ('native', 'cutover'));
+ALTER TABLE native_epoch_delegation_policies
+  ADD CONSTRAINT native_epoch_delegation_policies_request_id_check
+    CHECK (request_id ~ '^nd[bp]_[A-Za-z0-9_-]{43}$');
+ALTER TABLE native_epoch_delegation_policies
+  DROP CONSTRAINT IF EXISTS native_epoch_delegation_policies_source_fields_check;
+ALTER TABLE native_epoch_delegation_policies
+  ADD CONSTRAINT native_epoch_delegation_policies_source_fields_check
+    CHECK (
+      (source = 'native'
+        AND request_id ~ '^ndp_[A-Za-z0-9_-]{43}$'
+        AND credential_reference IS NOT NULL
+        AND credential_generation = 1
+        AND effective_epoch = accepted_epoch + 2)
+      OR
+      (source = 'cutover'
+        AND request_id ~ '^ndb_[A-Za-z0-9_-]{43}$'
+        AND credential_reference IS NULL
+        AND credential_generation IS NULL
+        AND effective_epoch = accepted_epoch)
+    );
+
+-- Policies are permanent audit facts, while credentials are revocable and an
+-- account's user binding is cleared when that user is deleted. Validate the
+-- parent bindings at INSERT time under key-share locks instead of retaining
+-- foreign keys that would make those ordinary lifecycle deletes impossible.
+ALTER TABLE native_epoch_delegation_policies
+  DROP CONSTRAINT IF EXISTS native_epoch_delegation_policies_credential_binding_fkey;
+ALTER TABLE native_epoch_delegation_policies
+  DROP CONSTRAINT IF EXISTS native_epoch_delegation_policies_account_binding_fkey;
+
+CREATE OR REPLACE FUNCTION validate_native_epoch_policy_bindings()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.source = 'native' THEN
+    PERFORM 1
+      FROM native_session_credentials
+     WHERE credential_reference = NEW.credential_reference
+       AND credential_generation = NEW.credential_generation
+       AND user_id = NEW.user_id
+       AND account_id = NEW.account_id
+       AND network_id = NEW.network_id
+       AND chain_id = NEW.chain_id
+     FOR KEY SHARE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'native epoch policy credential binding is invalid'
+        USING ERRCODE = '23503',
+              CONSTRAINT = 'native_epoch_delegation_policies_credential_binding';
+    END IF;
+  END IF;
+
+  PERFORM 1
+    FROM onchain_accounts
+   WHERE id = NEW.account_id
+     AND user_id = NEW.user_id
+     AND address = NEW.account_address
+   FOR KEY SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'native epoch policy account binding is invalid'
+      USING ERRCODE = '23503',
+            CONSTRAINT = 'native_epoch_delegation_policies_account_binding';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS native_epoch_delegation_policy_bindings
+  ON native_epoch_delegation_policies;
+CREATE TRIGGER native_epoch_delegation_policy_bindings
+  BEFORE INSERT ON native_epoch_delegation_policies
+  FOR EACH ROW EXECUTE FUNCTION validate_native_epoch_policy_bindings();
+
+CREATE OR REPLACE FUNCTION prevent_native_delegation_cutover_change()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.cutover_epoch IS NOT NULL THEN
+      RAISE EXCEPTION 'native delegation cutover is immutable';
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF OLD.cutover_epoch IS NOT NULL AND
+     (NEW.cutover_epoch IS DISTINCT FROM OLD.cutover_epoch OR
+      NEW.cutover_at IS DISTINCT FROM OLD.cutover_at) THEN
+    RAISE EXCEPTION 'native delegation cutover is immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS native_delegation_cutover_immutable
+  ON native_epoch_delegation_fences;
+CREATE TRIGGER native_delegation_cutover_immutable
+  BEFORE UPDATE OR DELETE ON native_epoch_delegation_fences
+  FOR EACH ROW EXECUTE FUNCTION prevent_native_delegation_cutover_change();
+
+-- `account_delegation_periods` is global, so publishing the one canonical C
+-- freezes the entire legacy history table. The cutover transaction closes its
+-- open rows before setting C; every later write is a second authority.
+CREATE OR REPLACE FUNCTION prevent_legacy_delegation_change_after_cutover()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM native_epoch_delegation_fences
+     WHERE cutover_epoch IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'legacy delegation history is frozen after cutover';
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS legacy_delegation_frozen_after_cutover
+  ON account_delegation_periods;
+CREATE TRIGGER legacy_delegation_frozen_after_cutover
+  BEFORE INSERT OR UPDATE OR DELETE ON account_delegation_periods
+  FOR EACH ROW EXECUTE FUNCTION prevent_legacy_delegation_change_after_cutover();
+
+CREATE OR REPLACE FUNCTION prevent_native_epoch_policy_change()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'native epoch delegation policies are append-only';
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS native_epoch_delegation_policy_append_only
+  ON native_epoch_delegation_policies;
+CREATE TRIGGER native_epoch_delegation_policy_append_only
+  BEFORE UPDATE OR DELETE ON native_epoch_delegation_policies
+  FOR EACH ROW EXECUTE FUNCTION prevent_native_epoch_policy_change();
+
+COMMENT ON TABLE native_session_web_incarnations IS 'staging:private';
+COMMENT ON TABLE native_session_attempts IS 'staging:private';
+COMMENT ON TABLE native_session_handoffs IS 'staging:private';
+COMMENT ON TABLE native_session_tickets IS 'staging:private';
+COMMENT ON TABLE native_installation_key_generations IS 'staging:private';
+COMMENT ON TABLE native_session_credentials IS 'staging:private';
+COMMENT ON TABLE native_session_credential_envelopes IS 'staging:private';
+COMMENT ON TABLE native_epoch_delegation_policies IS 'staging:private';
+
 -- Onboarding flow alignment — email-only platform waitlist, enforced
 -- platform-access gate, block-producer queue (user-onboarding-flows doc).
 -- ═══════════════════════════════════════════════════════════════════════
@@ -5400,7 +5968,7 @@ COMMENT ON COLUMN users.profile_disabled_reason IS 'staging:private';
 -- /api/auth/password-reset/request only for non-admin accounts with a
 -- CONFIRMED email (admins keep the admin-issued temporary-password path —
 -- the same email-control-must-not-equal-admin-takeover stance as the
--- mobile OTP guard in src/routes/topochain/mobile-auth.js), consumed and
+-- web signup guard in src/services/email-signup.js), consumed and
 -- cleared by POST /api/auth/password-reset/confirm, which runs
 -- accountRecovery() so every session and CLI authorization dies with the
 -- old password.
@@ -6083,7 +6651,7 @@ CREATE INDEX IF NOT EXISTS idx_username_history_user
 
 -- The reservation has to be enforced in the DATABASE, not in the routes.
 -- Six different code paths insert into `users` (activation-code register,
--- wallet register, the two topochain admin creates, mobile-auth signup and
+-- wallet register, the two topochain admin creates, web email signup and
 -- fleet-maintenance), none of them share a validator, and a seventh will be
 -- added by someone who has never read this file. A handle escaping through
 -- any one of them is the exact failure `username_history` exists to

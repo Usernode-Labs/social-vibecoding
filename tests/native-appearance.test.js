@@ -278,10 +278,12 @@ test('publishing is not gated on the login handoff', () => {
   assert.ok(init, 'init() must still be findable');
   const body = init[0];
   const publishAt = body.indexOf('_initAppearancePublish');
-  const handoffAt = body.indexOf('runHandoff');
+  const sessionEstablishmentAt = body.indexOf('establishCurrentSession');
   assert.ok(publishAt !== -1, 'init() must wire the appearance publish');
-  assert.ok(publishAt < handoffAt,
-    'the appearance publish must not sit behind the login handoff');
+  assert.ok(sessionEstablishmentAt !== -1,
+    'init() must still establish the native session');
+  assert.ok(publishAt < sessionEstablishmentAt,
+    'the appearance publish must not sit behind native session establishment');
 });
 
 // ── 4. The contract both repos read ──────────────────────────────────────

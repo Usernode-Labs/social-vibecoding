@@ -10,11 +10,9 @@
  *
  * ── What stays the module's ───────────────────────────────────────────
  *
- * Every bridge call: `getWalletState`, `getTransactionRecords`,
- * `manageStaking`, `sendTransaction`. The trust boundary is unchanged — Send
- * routes through the bridge so the app's NATIVE confirm sheet still appears,
- * and no validator address or desired staking state crosses this seam. What
- * crosses is what to DRAW.
+ * Native bridge calls are `getWalletState`, `manageStaking` and the admitted
+ * `submitTransaction` behind the public `sendTransaction` wrapper. Receipts
+ * are persisted and observed by Social; they never come back from native.
  *
  * ── The strings are resolved before they get here ─────────────────────
  *
@@ -54,6 +52,8 @@ export interface WalletSheetState {
   shortAddress: string;
   /** False on app versions without `getWalletState` — an inline note, not a hole. */
   walletSupported: boolean;
+  /** Exact capability gate for the admitted native submission operation. */
+  submissionSupported: boolean;
   /** Inline and non-blocking: Send, Receive and navigation stay usable. */
   stateError: string | null;
   staking: StakingView;
@@ -69,6 +69,7 @@ export const WALLET_EMPTY: WalletSheetState = {
   address: null,
   shortAddress: '—',
   walletSupported: false,
+  submissionSupported: false,
   stateError: null,
   staking: { kind: 'absent' },
   stakingPending: false,

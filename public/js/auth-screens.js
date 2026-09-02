@@ -7,7 +7,7 @@
 //     no full page loads while navigating the anonymous side;
 //   - a RELOAD-FREE login: on success we refetch /api/auth/me and call
 //     App.enterAuthed(user) in place (see app.js staged boot), which also
-//     runs the native login handoff (completeLogin → startNode) without
+//     establishes the native realm in one protocol-2 transaction without
 //     the old navigate-to-'/' round trip;
 //   - one document for the service worker's offline fallback.
 //

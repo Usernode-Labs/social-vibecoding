@@ -9,22 +9,24 @@ the app (producer — the Flutter shell, which lives in its **own repository**,
 this repo) for the methods SV's own shell depends on.
 
 Wire format: the page posts
-`{ id, method, args, privilegedCapability? }` as JSON to the channel; the app
-resolves via `window.__usernodeResolve(id, value, error)`. The optional field
-is used only when the app advertises `privilegedBridgeCapability`; older app
-builds keep receiving the original `{ id, method, args }` shape. Unknown
-methods are silently dropped by old app builds, so every bridge wrapper races
-a timeout and degrades gracefully — never assume a method exists,
-feature-detect with `getBridgeInfo`.
+`{ id, method, args, privilegedCapability?, realmSessionClaim? }` as JSON to
+the channel; the app resolves via
+`window.__usernodeResolve(id, value, error)`. The bridge keeps both optional
+values private. It adds `privilegedCapability` to privileged methods and adds
+`realmSessionClaim` only to the closed set of session-bound methods after a
+successful protocol-2 establishment. Unknown methods are silently dropped by
+old app builds, so every bridge wrapper races a timeout and fails closed or
+returns its documented chrome-read fallback. Feature-detect with
+`getBridgeInfo`.
 
 ## Versioning
 
 - `getBridgeInfo()` → `{ version: number, capabilities: string[],
-  appVersion?: string, buildNumber?: string }`
+  sessionLifecycleProtocol?: 2, appVersion?: string, buildNumber?: string }`
 - `version` bumps only on breaking changes. New methods are additive and
   appear in `capabilities`.
 - Feature-detect with `capabilities.includes('<method>')`, not `version`.
-- Current version: **4**.
+- Current version: **5**.
 - **The two sides of this contract live in different repositories** — the
   producer in the Flutter shell repo, the consumer here. Adding or changing
   a bridge method is therefore a coordinated two-repo change, and the two
@@ -33,8 +35,17 @@ feature-detect with `getBridgeInfo`.
   `capabilities` is for — never assume a method exists because this document
   lists it.
 
-Six additive security/session capabilities extend v4 without changing its
-version:
+Version 5 is the transaction/profile ownership cut: native `sendTransaction`,
+`txObserved`, `getTransactionRecords`, and the legacy native profile identity
+endpoint are removed; `submitTransaction` is the sole native submission
+operation. There is no fallback to the removed authority. Generic bridge
+version 5 does **not** by itself mean that native lifecycle protocol 2 is
+available. Supporting builds separately advertise
+`sessionLifecycleProtocol: 2` and the `establishNativeSession` capability.
+Unsupported builds remain web-only/update-required; Social never falls back
+to the removed split lifecycle API.
+
+The security capabilities remain independently discoverable:
 
 - `privilegedBridgeCapability`: privileged top-frame methods require a
   native-issued capability scoped to the current trusted JavaScript realm.
@@ -42,18 +53,12 @@ version:
   shell explicitly identifies that exact realm as ready for one atomic state
   replay. A cached older coordinator falls back on its first authorized bridge
   call, so the web and app releases remain independently deployable.
-- `beginSessionHandoff`: closes native wallet dispatch before a web-session
-  exchange, including raw Android child-frame channel messages.
-- `enterAnonymousSession`: reopens native wallet dispatch after the shell has
-  confirmed that no web participant is signed in.
-- `sessionBoundAuthStatus`: auth snapshots include `participantId` and
-  identity `epoch`, and node starts can be bound to both values.
 - `privilegedErrorCodes`: every privileged refusal carries a stable
   machine-readable `code` alongside its human message, so the page never has
   to pattern-match English. Optional in both directions — see "Privileged
   refusal codes" below.
 
-One additive **widget** capability extends v4 the same way:
+One additive **widget** capability introduced in v4 remains available in v5:
 
 - `homeScreenShortcutDarkIcon`: the shell stores a SECOND icon per
   homescreen shortcut and the iOS widget selects between them per system
@@ -83,15 +88,37 @@ One additive **presentation** capability extends v4 the same way:
 
 ## Methods
 
-### Wallet / transactions (pre-existing, v1)
+### Wallet / transactions
 
 | Method | Args | Resolves |
 |---|---|---|
 | `getNodeAddress()` | — | `"ut1..."` current account address |
-| `sendTransaction(dest, amount, memo, opts)` | see bridge.js | `{ queued, tx }` after the native confirm sheet |
+| `submitTransaction(request)` | exact request below | exactly `{ "txId": "..." }` after admission, confirmation and submission |
 | `signMessage(message)` | `{ message }` | signature string |
-| `txObserved` | fire-and-forget inclusion ack | — |
 | `openExternal` | `{ url }` (http/https only) | `true` when the system browser opened |
+
+The hosted dapp API remains `window.sendTransaction(destination, amount, memo,
+opts)`. In native mode it validates and maps to this single boundary:
+
+```json
+{
+  "destinationPubkey": "ut1...",
+  "amount": 5,
+  "memo": "",
+  "confirmation": {
+    "title": "Send from wallet",
+    "subtitle": "Sending 5 UT to ut1..."
+  }
+}
+```
+
+`destinationPubkey` and `memo` are strings; `amount` is a positive safe
+integer. `confirmation` is optional and, when present, contains only optional
+string `title` and `subtitle` fields. Native must return an object containing
+only a non-empty string `txId`. The bridge rejects aliases, missing ids and
+additional result fields. `txId` is canonical: leading or trailing whitespace
+is rejected, never trimmed, and the accepted value is returned unchanged.
+Native has no transaction-observed callback or receipt API.
 
 ### Homescreen shortcuts (pre-existing, v1)
 
@@ -395,7 +422,7 @@ Everything the current frame knows about its own bridge, copied, with no
 { "isNative": true, "isTopFrame": true, "inIframe": false,
   "usesIframeRelay": false, "hasNativeChannel": true,
   "origin": "https://social.usernode.com",
-  "bridgeVersion": 4, "capabilities": ["..."],
+  "bridgeVersion": 5, "capabilities": ["..."],
   "appVersion": "0.4.0", "buildNumber": "1223",
   "privileged": { "state": "blocked-frame",
                   "code": "privileged_frame_unauthorized",
@@ -494,31 +521,48 @@ change. Native owns the fixed delegation target, confirmation, backend
 synchronization, persistence and node reconfiguration. Social Vibecoding must
 not submit a target address or requested delegation state itself.
 
-#### `getTransactionRecords()` → `{ items: [...] }`
+#### Social-owned transaction receipts
 
-The webview's persisted dapp-transaction receipts (what the native receipts
-sheet shows), newest first, capped at 100:
+Once `submitTransaction` returns, Social persists the receipt under the
+authenticated Social user, polls its own `/explorer-api` proxy by the exact
+`txId`, and publishes `usernode:transaction-receipts-changed`. The Wallet
+sheet reads `usernode.getTransactionReceipts()` locally; neither operation
+crosses the native bridge. Opening the sheet calls
+`getTransactionReceipts({ observePending: true })`, which resumes at most one
+deduplicated, bounded explorer attempt for a pending receipt restored after a
+reload. Periodic display reads omit that flag and never create detached retry
+loops. Observation is capped at three minutes even if a dapp supplies a larger
+or non-finite timeout. An explorer outage therefore leaves a pending receipt
+after the bounded attempt, while a later explicit sheet open can try again.
+Receipts are newest first and capped at 50:
 
 ```json
 {
   "items": [{
-    "id": "...",                // tx id
-    "sentAt": 1714672193412,    // epoch ms
-    "from": "ut1...", "to": "ut1...",
-    "amount": "5",              // base units, string
+    "txId": "...",
+    "submittedAt": 1714672193412,
+    "fromPubkey": "ut1...",
+    "destinationPubkey": "ut1...",
+    "amount": 5,
     "memo": "{...}",
-    "status": "queued",         // queued | denied | error
-    "confirmedAt": 1714672253412,       // present once seen on-chain
-    "inclusionLatencyMs": 60000,
+    "status": "submitted",
+    "confirmedAt": 1714672253412,
     "blockHeight": 12480,
-    "onChainStatus": "confirmed"
+    "blockTimestampMs": 1714672253000
   }]
 }
 ```
 
-Records are scoped per webview URL on the native side; the SV shell sees
-the receipts of transactions sent from SV (including relayed child-app
-sends, which run through the shell's bridge).
+Relayed child-app submissions are recorded by the trusted Social top frame
+before the exact result is returned to the child. Closing admission stops
+observation and prevents an old user's result from being written into a new
+user's receipt namespace. Each admitted operation carries a private top-frame
+gate generation through native resolution, explorer fetch/parse, persistence,
+and confirmation; closing the gate permanently invalidates that generation,
+even if the same account is later readmitted. `App.user.id` only chooses the
+product-storage namespace and is never treated as authority. Anonymous sends
+still receive the exact native result but do not create a persisted Social
+receipt.
 
 #### `openNativeScreen({ screen })` → `true`
 
@@ -547,31 +591,12 @@ This is a privileged trusted-top-frame action. Child dapps cannot request a
 capture of surrounding app chrome. Callers must feature-detect the capability;
 older app builds continue to use the feedback dialog's Photos/file fallback.
 
-### Profile & settings (v3 — profile-and-settings-to-web migration)
+### Settings (v3 — app-settings-to-web migration)
 
 All v3 methods are trusted-SV-origin gated like `openNativeScreen`. They
-power SV's `#profile` screen (`public/js/profile.js`) and the "Usernode
-app" sections in SV's Settings modal (`public/js/settings.js`).
-
-#### `getProfileInfo()` → `{ participantId }` (legacy)
-
-**Legacy — like `openNativeScreen`'s `settings` / `profile` screens, kept
-only so older shell builds keep working. Nothing in SV calls it any more;
-do not add new callers.**
-
-`participantId` is the leaderboard participant id (number), or `null` when
-the user hasn't registered. Since the topochain merge, participant ids ARE
-platform user ids and SV's `#profile` screen no longer consults this
-method for data — the in-process `/challenges-api` routes
-(`src/routes/topochain/mobile.js`) scope `/me/*` to the platform session
-server-side.
-
-Its last remaining use was capability detection: the drawer's Profile row
-was revealed only when the bridge reported this method, which meant the
-screen was unreachable in an ordinary browser even though it worked
-perfectly there. That gate is gone — the row now ships visible to
-everyone, and the screen renders a "Sign in to see your profile" prompt
-when there is no session.
+power the "Usernode app" sections in SV's Settings modal
+(`frontend/src/features/settings/settings.js`). Profile identity and data are
+owned entirely by the authenticated Social session.
 
 #### `getSettingsState()` → settings snapshot
 
@@ -627,106 +652,78 @@ recoverable rather than a dead end.
 | `resetZkChallenge()` | discards in-progress ZK identity registration (confirm web-side first) |
 | `openBatterySettings()` | opens Android battery-optimization settings |
 | `openNotificationSettings()` | opens the OS notification settings page for the app. The only way back from a **determined-denied** iOS notification permission: once the user has answered the OS prompt, `requestPermissions()` resolves immediately and presents no dialog, so a screen offering only "request" is a tap that does nothing forever. Capability-gated, and fails fast (probe timeout, not the 120 s permission timeout) — an *inconclusive* probe still calls through, per issue #978. |
+| `prepareForLogin()` | from an anonymous trusted shell, closes and drains any privately recovered native session before Social receives a session-mint request; no-op when native is already signed out |
 | `logout()` | performs the bounded hard native logout (node stop/drain plus identity and credential cleanup); clear the web session and cache first, then invoke this as the terminal operation |
 
-### Platform login + node lifecycle (v4 — thin-shell migration)
+### Platform login + node lifecycle (semantic protocol 2)
 
-All v4 methods are trusted-SV-origin gated. Login/onboarding is
-platform-owned: the SV shell signs the user in on the web, exchanges the
-session for a mobile bearer token (`POST /api/v4/mobile/auth/from-session`),
-hands the credential to the app, and then drives the node. Orchestration
-lives in `public/js/native-chrome.js` (`runLoginHandoff`,
-`prepareWebLogout`, and `commitNativeLogout`). The exchange runs for every
-live web session, including when native already reports `ready`, so same-user
-bearer rotation is never skipped. Its returned `user.id` must still match the
-current web participant before the token crosses the bridge. Overlapping
-session signals coalesce; if the web participant changes during an exchange,
-the latest session is exchanged once the active run settles.
+The native realm starts closed. Before Social publishes a web identity it
+synchronously clears any old realm claim, then creates or reloads one exact
+attempt identified by `{ protocol: 2, userId, attemptId,
+desiredRuntime: "running" }`. That non-secret attempt metadata is the only
+session lifecycle state stored in the browser. The ticket, exchange challenge,
+native credential, and realm claim are never written to web storage.
 
-The shell closes its local top-frame/iframe wallet gate synchronously with
-`sv:session`. Builds advertising `beginSessionHandoff` also close native
-wallet dispatch before `/from-session`, so Android child frames cannot bypass
-the JavaScript wrapper with a raw channel message. A verified current-user
-handoff reopens both gates; failures stay closed. Pre-v4 builds reopen the
-local gate after their older bridge version confirms that no handoff exists.
+Social retrieves the exact ticket response from
+`POST /api/v4/mobile/auth/native-establish-ticket` on every establishment or
+recovery and passes its `data` value to the single native transaction:
 
-**Sign-out never depends on the app answering.** `prepareWebLogout()` closes
-every admission gate synchronously and then **resolves a report** —
-`{ nativeTerminal, latch, reason, code }`, where `latch` is `acknowledged`,
-`unsupported`, `unavailable` or `inconclusive` — instead of rejecting. It
-used to reject, which aborted SV's sign-out *before* `POST /api/auth/logout`:
-a device whose privileged handshake was refused kept its web session with no
-way out of the app at all. A refused latch now means SV asks the user and
-then clears the web session anyway, attempts `usernode.logout()` best-effort
-inside a short budget, and says so on the login screen if the app kept its
-own session. The fail-closed wallet gate is unchanged — the fallback loosens
-the exit, never the gate.
+```js
+establishNativeSession({
+  attemptId,
+  nativeEstablishTicket: data,
+  desiredRuntime: 'running',
+})
+```
 
-#### `beginSessionHandoff()` → `{ blocked: true }`
+Native returns exactly:
 
-Privileged preflight for builds that advertise it. Closes session-scoped
-native wallet reads, signing, and transaction dispatch in this WebView until
-`completeLogin` admits the current participant. Participant replacement keeps
-the old WebView closed while its runtime is replaced.
+```js
+{
+  protocol: 2,
+  attemptId,
+  nativeRevision: '9',
+  identity: { participantId: '41', accountId: '...', address: '...' },
+  runtimeStatus: { state: 'running' },
+  receiptStatus: 'committedReady',
+  realmSessionClaim: '...'
+}
+```
 
-#### `enterAnonymousSession()` → `{ admitted: true }`
+`nativeRevision` is a canonical unsigned 64-bit decimal string. Identity has
+exactly the three shown non-secret fields and `participantId` must equal the
+current Social user. `runtimeStatus` is either `{ state: "running" }` or
+`{ state: "startFailed", validatedCode }`, where `validatedCode` matches
+`^[a-z0-9_]{1,64}$`. The bridge copies and freezes those public fields, stores
+the opaque realm claim only in its closure, and returns the public status to
+`NativeChrome` without the claim.
 
-Privileged acknowledgement used after the shell confirms an anonymous web
-session. The shell keeps its local wallet relay closed until native admits
-wallet access, so a failed or stale acknowledgement remains fail-closed.
+Every session-bound native request automatically receives the current claim
+as the top-level `realmSessionClaim`. A missing or stale claim fails closed in
+both the trusted top frame and iframe relay. Identity replacement, anonymous
+publication, `pagehide`, and logout synchronously clear the claim and reject
+late establishment or feature responses before a successor can be admitted.
+An exact in-flight establishment joins one lease; a different request is
+rejected.
 
-#### `completeLogin({ token, user })` → auth status snapshot or restart signal
+The same attempt metadata remains after success so a replacement realm can
+replay the exact committed attempt. The server replays the encrypted ticket
+and exchange results byte-identically for that attempt; an unused expired
+ticket still fails. Builds lacking `sessionLifecycleProtocol: 2` are web-only
+and update-required. There is no fallback to a multi-call login, node-start,
+or auth-poll sequence.
 
-Imports the platform credential into the native identity: the app stores
-the bearer token, provisions/imports the custodial wallet
-(`POST /api/v4/mobile/wallet/provision`), and settles the identity at
-`ready`. Idempotent for the same user, including bearer-token rotation.
-Wallet provisioning can take a while on a fresh install — the bridge wrapper
-allows up to 120s.
+Before an anonymous native shell submits any ordinary session-mint request,
+it invokes the privileged root-owned `prepareForLogin()` operation. Native
+closes admission, drains admitted work, revokes the exact retained credential,
+and publishes signed-out before acknowledging. The method carries no realm
+session claim because a recovered native session may predate the current web
+document. A live web session is never preempted this way: the API returns
+`409 logout_required`, requiring the ordinary explicit logout flow.
 
-With `sessionBoundAuthStatus`, a settled response is
-`{ phase, address, participantId, epoch, reconciliationStatus }`, where
-`reconciliationStatus` reports `idle | reconciling | transient | refreshing |
-settled | failed`. A cross-participant login first performs the native
-hard-logout boundary and resolves `{ restarting: true }`; the current document
-must stop there while the native runtime restarts.
-
-#### `startNode({ address?, participantId?, epoch? })` → node status snapshot
-
-Starts the native node bound to the given wallet address. The native side
-validates the address belongs to the current (ready) identity and rejects
-otherwise; omitting `address` starts with the identity's active account.
-Builds advertising `sessionBoundAuthStatus` also require the supplied
-participant and epoch to match the current identity. Older v4 builds ignore
-the additive binding fields and retain the address-only compatibility path.
-No native auto-start exists anymore — SV requests every node start.
-
-Block production is a released capability (onboarding flow alignment):
-the node always runs, syncs, and signs wallet transactions, but only
-configures a block-producer key when the platform has released the user
-(`bp_released` on `GET /api/v4/mobile/me` and
-`POST /api/v4/mobile/wallet/provision`, persisted natively per account).
-Users ask via the SV settings "Block production" section
-(`POST /challenges-api/bp/request`); admins release from the admin panel's
-Waitlist tab. No bridge payload change — the contract stays at v4.
-
-#### `stopNode()` → `{ stopped: true }`
-
-Stops the node. Idempotent and available for explicit lifecycle control;
-normal web logout calls the single hard native `logout()` boundary instead.
-
-#### `getAuthStatus()` → `{ phase, address, participantId?, epoch?, reconciliationStatus? }`
-
-Poll-style twin of the push events below. `phase` is the identity phase
-(`unknown | transitioning | unauthenticated | guest | reconciling |
-ready`); `address` is the active wallet address once `ready`. Builds with
-`sessionBoundAuthStatus` also include the current participant and identity
-epoch.
-
-**Push events:** the app dispatches a `usernode:auth-status` `CustomEvent`
-on `window` with the same shape as `detail` — once after the shell's explicit
-listener-readiness handshake and on every identity-phase transition. SV
-listens and requests `startNode` when the phase reaches `ready`.
+Logout closes the Social realm first, clears the web session and caches, and
+only then invokes the privileged terminal native `logout()` operation. A web
+logout failure leaves the native terminal untouched and the realm closed.
 
 ## Trust model
 
@@ -742,16 +739,15 @@ listens and requests `startNode` when the phase reaches `ready`.
   property.
 - Privileged replies and native-to-page events are delivered only when that
   exact realm is still executing. Social calls `markPrivilegedBridgeReady`
-  after all native-event listeners exist; native then dispatches the existing
-  auth/node/push events together in one realm-guarded JavaScript evaluation
-  before acknowledging readiness. A failed replay is retryable rather than
-  silently consuming state.
+  after all native-event listeners exist; native then dispatches its current
+  event state in one realm-guarded JavaScript evaluation before acknowledging
+  readiness. A failed replay is retryable rather than silently consuming
+  state.
   `onPageStarted`/`onPageFinished` are intentionally not authority or listener
   readiness signals because their ordering differs across WebView platforms.
 - The parent bridge refuses both capability bootstraps and privileged relays
   from child frames. Non-privileged dapp reads and transaction methods keep
-  their existing relay behavior only while the current web/native session
-  handoff is admitted.
+  their existing relay behavior only while the current realm claim is live.
 - Loopback origins are not privileged by default. Flutter development builds
   can opt in with `--dart-define=ENABLE_LOCAL_PRIVILEGED_BRIDGE=true`; the
   switch is additionally gated by Flutter debug mode and cannot enable

@@ -588,8 +588,15 @@ test('the Android rule is DEACTIVATED, not merely offered as an inactive insert'
   assert.ok(check, 'the declared check this fixture exists for is still there');
 });
 
-test('1 account_delegation_period', () => {
-  assert.equal((body.match(/INSERT INTO account_delegation_periods/g) || []).length, 1);
+test('obsolete legacy delegation fixtures are retired only before cutover', () => {
+  assert.equal((body.match(/INSERT INTO account_delegation_periods/g) || []).length, 0);
+  assert.match(body, /DELETE FROM account_delegation_periods/);
+  assert.match(body, /id = 900500[\s\S]*ut1stagingdemotopochainacct000001/);
+  assert.match(body, /id = 900501[\s\S]*ut1stagingdemotopochainacct000004/);
+  assert.match(
+    body,
+    /NOT EXISTS \([\s\S]*native_epoch_delegation_fences[\s\S]*cutover_epoch IS NOT NULL/,
+  );
 });
 
 test('token_allocation for 3 users', () => {

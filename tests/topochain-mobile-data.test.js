@@ -286,14 +286,24 @@ function makeMockPool() {
   async function query(rawSql, params = []) {
     const sql = collapse(rawSql);
 
-    // ── mobileTokenAuth's own lookup + bookkeeping bump ────────────────
-    if (sql.startsWith('SELECT t.id, t.user_id, t.ability, t.expires_at, u.username FROM mobile_auth_tokens')) {
+    // ── mobileTokenAuth's read-only current-lease lookup ───────────────
+    if (sql.startsWith('SELECT t.id, c.user_id, t.ability, t.expires_at,')) {
       const tok = TOKENS.find((t) => t.token_hash === params[0]);
       if (!tok) return { rows: [] };
       const user = USERS.find((u) => u.id === tok.user_id);
-      return { rows: [{ id: tok.id, user_id: tok.user_id, ability: tok.ability, expires_at: tok.expires_at, username: user ? user.email : null }] };
+      return { rows: [{
+        id: tok.id,
+        user_id: tok.user_id,
+        ability: tok.ability,
+        expires_at: tok.expires_at,
+        credential_reference: `nsc_${'A'.repeat(43)}`,
+        credential_generation: 1,
+        installation_id: `nsi_${'B'.repeat(43)}`,
+        credential_expires_at: tok.expires_at,
+        renewal_due: false,
+        username: user ? user.email : null,
+      }] };
     }
-    if (sql.startsWith('UPDATE mobile_auth_tokens SET last_used_at')) return { rows: [] };
 
     // ── GET /me ─────────────────────────────────────────────────────────
     if (sql.includes('is_in_waitlist, github, x, password_set')) {

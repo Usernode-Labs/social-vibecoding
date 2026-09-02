@@ -91,6 +91,7 @@ spec:
             - {name: EXPLORER_UPSTREAM, value: {{ .Values.config.explorerUpstream | quote }}}
             - {name: EXPLORER_UPSTREAM_BASE, value: {{ .Values.config.explorerUpstreamBase | quote }}}
             - {name: EXPLORER_USE_HTTP, value: {{ .Values.config.explorerUseHttp | quote }}}
+            - {name: NATIVE_SESSION_V2_TESTNET_CHAIN_ID, value: {{ .Values.config.nativeSessionV2TestnetChainId | quote }}}
             - {name: LOG_LEVEL, value: {{ .Values.config.logLevel | quote }}}
             - {name: WORKER_MEMORY, value: {{ .Values.config.workerMemory | quote }}}
             - {name: WORKER_CPUS, value: {{ .Values.config.workerCpus | quote }}}
