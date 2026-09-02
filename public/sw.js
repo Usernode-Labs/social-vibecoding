@@ -764,6 +764,14 @@ if (typeof module !== 'undefined' && module.exports) {
     // is most of the reported slowness, and mixing a cached document with
     // freshly-fetched scripts is the split-build hazard the flag exists to
     // avoid. The network copy still lands in the cache for the next load.
+    //
+    // This branch KEEPS its revalidation, unlike the build check below,
+    // and the difference is not an oversight: it asks no question about
+    // the entry it serves, so it will hand back an asset from a build the
+    // server has already moved past. That fetch is the only thing that
+    // repairs one. It also only fires on a connection slow enough to lose
+    // the document its own 200ms race, so it is not on the path a normal
+    // load takes.
     if (shellFromCacheThisLoad) {
       const hit = await cache.match(event.request, { ignoreSearch: true });
       if (hit) {
@@ -779,15 +787,35 @@ if (typeof module !== 'undefined' && module.exports) {
     // documentBuildThisLoad for why this is a different question from the
     // flag above, and why it is the one worth asking.
     //
-    // The revalidation still goes out, behind the response — that is what
-    // repairs a cache entry the server has since changed under the same
-    // build id, and it costs the page nothing.
+    // AND NOTHING GOES OUT BEHIND IT. This used to revalidate in a
+    // waitUntil, described as repairing "a cache entry the server has
+    // since changed under the same build id" — which is a state a deploy
+    // cannot produce, because a deploy is what changes the build id. So
+    // the revalidation only ever ran on the branch where the ids already
+    // agree, i.e. where there is by construction nothing new to fetch,
+    // and it ran for EVERY shell asset on EVERY load: ~34 requests, each
+    // re-read and re-stored, competing with the boot for the connection
+    // pool and for main-thread time on the response.
+    //
+    // It was not free, and the page was paying for it. Warm board,
+    // 390x844, 4x CPU throttle, 150ms link, two interleaved runs of nine
+    // samples per arm, timing the first board card onto the screen:
+    // median 1621ms -> 1455ms, mean -173ms.
+    // The main thread is ~85% blocked across that window, which the
+    // longtask API reports none of — the work is chopped finer than its
+    // 50ms floor, and measuring it needs a timer sampler instead. With
+    // these requests gone a fully offline load is no faster than an
+    // online one, so nothing is left waiting on the network at all.
+    //
+    // Redeploy still reaches a warm client on its second load, unchanged:
+    // the new document carries a new build id, every cached asset then
+    // mismatches HERE, and they all fall through to the race below and
+    // re-cache. Verified against a simulated deploy (build id changed,
+    // asset bytes changed) on a 150ms and a 400ms link, with the document
+    // served from the network and from cache.
     if (documentBuildThisLoad) {
       const hit = await cache.match(event.request, { ignoreSearch: true });
-      if (hit && buildIdOf(hit) === documentBuildThisLoad) {
-        event.waitUntil(fetchAndCache().catch(() => {}));
-        return hit;
-      }
+      if (hit && buildIdOf(hit) === documentBuildThisLoad) return hit;
       // Either nothing cached, or cached from a DIFFERENT build. Both mean
       // the network has something to say; fall through and let it race.
     }
