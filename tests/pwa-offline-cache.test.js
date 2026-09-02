@@ -386,13 +386,17 @@ test('the navigation publishes its cache/network verdict for the load', () => {
 });
 
 test('shell assets follow the navigation instead of re-racing', () => {
-  const shell = SW_SRC.slice(SW_SRC.indexOf('async function networkFirstShell('));
-  const body = shell.slice(0, 2600);
+  // The whole function, not a character budget: this used to slice the
+  // first 2600 characters, which made the assertions below depend on how
+  // much comment sat above them and failed the moment any was added.
+  const body = strategyBody('networkFirstShell');
   assert.match(body, /if \(shellFromCacheThisLoad\)/,
     'shell assets must consult the load-wide verdict');
   // On that path the asset is returned straight from cache, and the network
-  // copy is still fetched so the NEXT load is fresh.
-  assert.match(body, /event\.waitUntil\(fetchAndCache\(\)/,
+  // copy is still fetched so the NEXT load is fresh. Scoped to that branch:
+  // the build check below it deliberately has no revalidation.
+  const slowLane = body.slice(0, body.indexOf('if (documentBuildThisLoad)'));
+  assert.match(slowLane, /event\.waitUntil\(fetchAndCache\(\)/,
     'the cached-shell path must still refresh the cache in the background');
   // A brand-new asset (a deploy added one) has nothing cached to prefer, so
   // the flag must not be allowed to strand it.
@@ -654,8 +658,23 @@ test('a cached asset from the current build is served without a race', () => {
   // was GOOD.
   assert.match(body, /if \(documentBuildThisLoad\) \{[\s\S]*?buildIdOf\(hit\) === documentBuildThisLoad/,
     'a cached asset stamped with the document\'s own build is served on this tick');
-  assert.match(body, /event\.waitUntil\(fetchAndCache\(\)\.catch\(\(\) => \{\}\)\);\s*return hit;/,
-    'and still revalidated behind the response');
+  // And NOTHING is fetched behind it. The revalidation that used to sit
+  // here was justified as repairing an entry the server had changed under
+  // the same build id — a state a deploy cannot produce, since a deploy is
+  // what changes the id. It therefore only ever ran where the ids already
+  // agreed and there was nothing to fetch, once per shell asset per load:
+  // ~34 requests competing with the boot. Removing it moved the warm board
+  // card from a 1621ms median to 1455ms at 4x CPU on a 150ms link.
+  assert.match(body,
+    /buildIdOf\(hit\) === documentBuildThisLoad\) return hit;/,
+    'the matching entry is returned outright, with no revalidation behind it');
+  // Scoped to THIS branch. The shellFromCacheThisLoad branch above keeps
+  // its revalidation and must: it inspects nothing about the entry it
+  // serves, so that fetch is the only thing that can repair an asset from
+  // a build the server has moved past.
+  const slowLane = body.slice(0, body.indexOf('if (documentBuildThisLoad)'));
+  assert.match(slowLane, /event\.waitUntil\(fetchAndCache\(\)\.catch\(\(\) => \{\}\)\);\s*return hit;/,
+    'the known-slow-connection branch still revalidates behind its response');
   // A DIFFERENT stamp is a deploy, and must fall through to the race — that
   // is what keeps a redeploy reaching a WebView on the next load, which is
   // the whole reason src/services/static-cache.js exists.
