@@ -81,6 +81,11 @@ test('Kubernetes workloads receive the canonical repository and release revision
   assert.match(platform, /name: EXPLORER_USE_HTTP, value: \{\{ \.Values\.config\.explorerUseHttp \| quote \}\}/);
 });
 
+test('Kubernetes chart supplies the canonical native testnet ChainId', () => {
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  assert.match(values, /nativeSessionV2TestnetChainId: "utc1rq8tql3wr5w8u6nvkwepu7dazq89kv2838xwf02xmg2w5vzgly3s6xf63v"/);
+});
+
 test('platform node RPC egress is restricted to the configured namespace and Pod labels', () => {
   const policy = read('deploy/helm/social-vibecoding-platform/templates/networkpolicy.yaml');
   const platformPolicy = policy.split('kind: NetworkPolicy')[2].split('---')[0];
