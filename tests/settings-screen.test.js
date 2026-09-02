@@ -34,8 +34,11 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const { renderComponent } = require('./lib/render-tsx');
+const { shellMarkup } = require('./lib/shell-markup');
 
-const html = read('public/index.html');
+// The markup the shell renders — document plus the settings panes, which
+// mount on first reveal (tests/lib/shell-markup.js).
+const html = shellMarkup();
 const appJs = read('public/js/app.js');
 const settingsJs = read('frontend/src/features/settings/settings.js');
 // #1079: #settings-usernode-section's markup moved to a component; its tests
@@ -1469,7 +1472,7 @@ test('the credential list renders its three host states', () => {
   // empty line would mismatch on hydration — a console error on #settings, and
   // a console error on any route fails proposal checks.
   assert.equal(cliRows({ phase: 'idle', tokens: [] }), '');
-  assert.equal(read('public/index.html').includes('<div id="cli-tokens-list" class="space-y-2"></div>'),
+  assert.equal(shellMarkup().includes('<div id="cli-tokens-list" class="space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   // The two the module used to write with `textContent`.
   assert.match(cliRows({ phase: 'loading', tokens: [] }), /Loading credentials…/);
@@ -1522,7 +1525,7 @@ const connectorRows = (state) => renderComponent(CONNECTORS_LIST, 'ConnectorsLis
 test('the connections list renders its three host states', () => {
   assert.equal(connectorRows({ phase: 'idle', connectors: [] }), '');
   assert.equal(
-    read('public/index.html').includes('<div id="connectors-list" class="space-y-2"></div>'),
+    shellMarkup().includes('<div id="connectors-list" class="space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   assert.match(connectorRows({ phase: 'loading', connectors: [] }), /Loading connections…/);
   assert.match(connectorRows({ phase: 'ready', connectors: [] }),
@@ -1579,7 +1582,7 @@ const socialBase = { phase: 'ready', message: null, tier: null, providers: [] };
 test('the social block renders its four host states', () => {
   assert.equal(socialHtml({ ...socialBase, phase: 'idle' }), '');
   assert.equal(
-    read('public/index.html').includes('<div id="github-link-body" class="space-y-2"></div>'),
+    shellMarkup().includes('<div id="github-link-body" class="space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   assert.match(socialHtml({ ...socialBase, phase: 'loading', message: 'Loading…' }), /Loading…/);
   assert.match(

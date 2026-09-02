@@ -37,6 +37,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { ChevronLeftIcon, LockIcon } from '@/components/ui/icons';
 
+import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
@@ -227,6 +228,12 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
 export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
+  // The screen's interior mounts on its first reveal, not in the prerender —
+  // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
+  // window.UsernodeReact.mount) before it wires or reveals the screen, so the
+  // hooks this component patches onto AuthScreens are installed and the
+  // interior's nodes exist by the time the on-show hook runs.
+  const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.landing);
 
   // Both start at the value the prerendered markup shipped with: no session,
   // no app open. `_renderLandingHeader`'s equivalent (refreshHeader) runs on
@@ -545,6 +552,9 @@ export function LandingScreen() {
   useEffect(() => {
     const ui = legacy().PlatformUI;
     if (!ui) return;
+    // The scroller is part of the interior, so there is nothing to attach to
+    // until the screen has mounted; keyed on that, this runs once it has.
+    if (!mounted) return;
     const handle = ui.pullToRefresh(byId('auth-landing-scroll'), () =>
       legacy().App?._refreshOrReload?.(() => live.current.loadLandingApps()),
     );
@@ -555,7 +565,7 @@ export function LandingScreen() {
         /* ignore */
       }
     };
-  }, []);
+  }, [mounted]);
 
   /**
    * The browser/OS back gesture still closes the viewer. Ignore a popstate
@@ -622,6 +632,8 @@ export function LandingScreen() {
       id="auth-landing-screen"
       className="hidden fixed inset-0 z-40 bg-white dark:bg-zinc-950 flex flex-col"
     >
+      {mounted ? (
+        <>
       {/*
           Mirrors #platform-header's shape (height, padding, safe-area) so
           both shells read identically — same HEADER HEIGHT
@@ -845,6 +857,8 @@ export function LandingScreen() {
         </div>
       </div>
       <ViewerRegion />
+        </>
+      ) : null}
     </main>
   );
 }

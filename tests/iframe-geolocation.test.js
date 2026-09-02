@@ -26,6 +26,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -63,7 +64,9 @@ test('the staging preview frame delegates geolocation', () => {
 // The three above are sources; this one is the artifact that actually ships,
 // which is what a browser reads.
 test('the built shell ships the delegation on its server-rendered frames', () => {
-  const html = read('public/index.html');
+  // #app-viewer-frame is in the landing screen's interior, which mounts on
+  // first reveal; the staging frame is in the document. Both are the shell's.
+  const html = shellMarkup();
   const staging = html.match(/id="staging-iframe"[^>]*/);
   assert.ok(staging, 'staging-iframe should be present in the built shell');
   assert.match(staging[0], /allow="pointer-lock; geolocation"/);

@@ -23,6 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const CreditOptions = require('../public/js/credit-options.js');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const SETTINGS_SRC = fs.readFileSync(
   path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8'
@@ -33,9 +34,8 @@ const DEV_CHAT_SRC = fs.readFileSync(
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '../public/js/app-view.js'), 'utf8'
 );
-const INDEX_SRC = fs.readFileSync(
-  path.join(__dirname, '../public/index.html'), 'utf8'
-);
+// Document plus the settings panes, which mount on first reveal.
+const INDEX_SRC = shellMarkup();
 
 test('offers exactly three routes by default, in the documented order', () => {
   // Without the #1049 hand-offs (a deployment with no GitHub-link support)

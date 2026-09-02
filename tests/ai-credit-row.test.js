@@ -27,9 +27,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const root = path.join(__dirname, '..');
-const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+const html = shellMarkup();
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
 // #1079 chunk B: same module, moved into the React bundle with the drawer
 // rows it renders into.

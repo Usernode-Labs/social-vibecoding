@@ -62,7 +62,18 @@ const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 // ever needed from that document, so the coverage is unchanged.
 const baseline = require('./baselines/shell-markup.json');
 
-const shipped = new Set(idsOf(html));
+// The document plus the interiors that mount on first reveal rather than
+// shipping in the prerender (frontend/src/lib/mount-on-reveal.ts): the
+// settings panes and the six anonymous-shell screens. A declared check
+// reaches those ids on a route that reveals the screen — and the reveal is
+// what mounts the interior, synchronously, before the router paints it — so
+// a selector that anchors on one still resolves in the browser. Here they
+// are rendered through the same components with their roots marked mounted
+// (tests/lib/lazy-interiors.js), which is the static half of that fact.
+const { lazyInteriorsHtml } = require('./lib/lazy-interiors');
+const withInteriors = `${html}\n${lazyInteriorsHtml()}`;
+
+const shipped = new Set(idsOf(withInteriors));
 const shippedBefore = new Set(baseline.ids);
 
 // Every `#id` mentioned anywhere in a selector, including inside :not(…) and
@@ -117,7 +128,7 @@ test('every id a dapp.json selector anchors on is still in the shipped markup', 
 });
 
 test('every data-* attribute a dapp.json selector anchors on is still present', () => {
-  const shippedAttrs = dataAttrsUsed(html);
+  const shippedAttrs = dataAttrsUsed(withInteriors);
   const shippedAttrsBefore = new Set(baseline.dataAttributes);
 
   const failures = [];

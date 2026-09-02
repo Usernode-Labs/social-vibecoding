@@ -47,6 +47,7 @@ poolMod.getPool = () => ({
 });
 
 const { authRoutes, DEV_FLOWS } = require('../src/routes/auth');
+const { shellMarkup } = require('./lib/shell-markup');
 
 // With OAuth credentials configured the hand-off is offerable; the
 // no-credentials case gets its own server below.
@@ -231,7 +232,7 @@ test('Settings offers the same preference as a dropdown', () => {
   assert.match(pane, /id="settings-dev-flow"/);
   assert.match(pane, /data-settings-section="connectors"/,
     'and it is in the Connections pane, where the flows it configures live');
-  const html = read('public/index.html');
+  const html = shellMarkup();
   assert.ok(html.includes('id="settings-dev-flow"'),
     'so the dropdown IS in the prerendered document');
   assert.ok(html.indexOf('id="dev-flow-pref-section"') < html.indexOf('id="github-link-section"'),

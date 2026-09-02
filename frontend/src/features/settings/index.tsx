@@ -21,9 +21,12 @@
  *    components render them. Both hosts still ship EMPTY, which is what keeps
  *    the prerendered markup identical.
  *  - #settings-section-content's children are static components (see
- *    ./sections). The router only toggles `hidden` on the wrappers — no pane is
- *    ever rebuilt, because settings.js binds every control inside them by id
- *    ONCE and a rebuilt pane is a pane whose controls silently stop working.
+ *    ./sections), and they MOUNT ON FIRST REVEAL rather than shipping in the
+ *    prerender (lib/mount-on-reveal.ts): the host is empty in
+ *    public/index.html, exactly as #admin-section-content is. Once mounted,
+ *    the router only toggles `hidden` on the wrappers — no pane is ever
+ *    rebuilt, because settings.js binds every control inside them by id ONCE
+ *    and a rebuilt pane is a pane whose controls silently stop working.
  *  - #settings-footer is physically RE-PARENTED between the two columns by
  *    Settings._syncFooter() (sidebar on desktop, under the level-1 menu on
  *    mobile). React must therefore never re-render it either: this subtree is
@@ -45,6 +48,7 @@
  */
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { SettingsSections } from './sections';
 // ./mount imports ./settings.js and plants both seams on it. Importing that
 // module directly here would publish window.Settings without a store and
@@ -53,14 +57,39 @@ import './mount';
 import { SettingsMobileMenu, SettingsNavDesktop } from './settings-nav';
 
 export function SettingsScreen() {
-  // A LAYOUT effect, like the other islands: init() binds every control on
-  // this screen by id, and it has to have run before app.js's DOMContentLoaded
-  // handler routes an initial #settings/<section> hash at it. The React entry
-  // is a deferred module, so this still lands in the same window the classic
-  // <script> tag's own DOMContentLoaded handler used to.
+  // The sixteen panes mount on the screen's FIRST REVEAL, not in the
+  // prerender (see lib/mount-on-reveal.ts). They were 437 of the document's
+  // 1,485 elements, parsed, styled and hydrated on every load for a screen
+  // most loads never open. The chassis below — the column, the sidebar, the
+  // two nav hosts, the footer and the empty #settings-section-content — is
+  // still in the document, because app.js reads the root by id and the
+  // declared checks select through it.
+  //
+  // Settings.open() asks for the interior itself (`_ensureMounted`, through
+  // window.UsernodeReact.mount) before it renders a single pane, and gets it
+  // synchronously; the visibility path below is the belt to that brace.
+  const mounted = useMountedOnReveal('settings-screen');
+
+  // Two effects where there was one, because init() does two jobs.
+  //
+  // refresh() reads /api/auth/me (joining the boot read) into Settings.state,
+  // which dev-chat and app-view consult for `hasApiKey` before this screen is
+  // ever opened — so it still runs at hydration, on every route, as before.
+  // Every renderer it calls guards on its host, so an absent interior is a
+  // no-op for them rather than a throw.
   useIsomorphicLayoutEffect(() => {
-    window.Settings?.init();
+    window.Settings?.refresh?.();
   }, []);
+
+  // init() binds every control on this screen by id, ONCE, so it has to run
+  // after the panes exist and never again. A LAYOUT effect keyed on the
+  // mount: when Settings.open() forces the interior in through flushSync,
+  // this runs inside that flush, before open() reads a single id. When the
+  // router reveals the screen first (the visibility path), it runs before
+  // that reveal paints. `mounted` is one-way, so the guard cannot re-fire.
+  useIsomorphicLayoutEffect(() => {
+    if (mounted) window.Settings?.init();
+  }, [mounted]);
 
   return (
     <main
@@ -106,7 +135,7 @@ export function SettingsScreen() {
                 full width of the wide shell.
             */}
             <div id="settings-section-content" className="pb-8 max-w-xl">
-              <SettingsSections />
+              {mounted ? <SettingsSections /> : null}
             </div>
           </div>
         </div>

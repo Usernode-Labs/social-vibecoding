@@ -9,6 +9,7 @@ const cliAuth = require('../src/services/cli-auth');
 const constants = require('../src/services/cli-auth-constants');
 const routes = require('../src/routes/cli-auth');
 const config = require('../src/config');
+const { shellMarkup } = require('./lib/shell-markup');
 
 test('device and access secrets have the exact canonical 256-bit formats', () => {
   for (let i = 0; i < 100; i += 1) {
@@ -232,7 +233,7 @@ test('approval shell consumes a one-click fragment without leaking it in navigat
 });
 
 test('Settings exposes only the hint-based CLI credential list and revocation API', () => {
-  const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  const html = shellMarkup();
   const script = fs.readFileSync(path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8');
   assert.match(html, /id="cli-tokens-section"/);
   assert.match(script, /\/api\/me\/cli-tokens/);
@@ -265,7 +266,7 @@ test('the CLI grant carries the local-agent scope, and it is not optional', () =
 });
 
 test('the consent screen names what the new scope actually permits', () => {
-  const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  const html = shellMarkup();
   const authorize = fs.readFileSync(
     path.join(__dirname, '../src/routes/cli-auth.js'), 'utf8'
   );
