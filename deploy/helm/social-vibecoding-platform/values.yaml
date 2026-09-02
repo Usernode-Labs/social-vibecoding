@@ -94,9 +94,9 @@ config:
   explorerUpstream: testnet-explorer.usernodelabs.org
   explorerUpstreamBase: /api
   explorerUseHttp: false
-  # Required exact canonical Rust ChainId. The application validates the
-  # lower-case utc/bech32m/32-byte form and refuses malformed configuration.
-  nativeSessionV2TestnetChainId: ""
+  # Canonical Rust ChainId for the current testnet. Override this only when
+  # deploying a different genesis; the application validates the exact value.
+  nativeSessionV2TestnetChainId: "utc1rq8tql3wr5w8u6nvkwepu7dazq89kv2838xwf02xmg2w5vzgly3s6xf63v"
   internalUrl: http://social-vibecoding.social-platform.svc.cluster.local:3000
   logLevel: INFO
   workerMemory: 2g
