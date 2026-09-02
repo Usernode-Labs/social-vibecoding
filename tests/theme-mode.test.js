@@ -76,10 +76,18 @@ test('the ground is painted before any stylesheet, and the chrome follows the th
   //     light-mode viewer got a black band above a #eaeaea page in the
   //     address bar, the iOS status strip, the rubber-band area and a
   //     standalone install's window ground.
+  //
+  // `color-scheme` joined these two rules afterwards, for the third thing
+  // that has to be true with nothing loaded: the USER AGENT's own palette —
+  // the canvas under the document, the scrollbars, the default form
+  // controls. Same rules, same two selectors, because it answers the same
+  // question. tests/native-appearance.test.js pins that half, including
+  // that it is keyed off `.dark` rather than delegated to the OS; these two
+  // assertions still own the ground colours themselves.
   const src = themeSrc();
-  assert.match(src, /html \{ background-color: #eaeaea; \}/,
+  assert.match(src, /html \{ background-color: #eaeaea; color-scheme: light; \}/,
     'the light ground is painted with no stylesheet loaded');
-  assert.match(src, /html\.dark \{ background-color: #0b0b0c; \}/,
+  assert.match(src, /html\.dark \{ background-color: #0b0b0c; color-scheme: dark; \}/,
     'and the dark one, keyed off the class apply() has just written');
   // Written from the RESOLVED theme, not left to a prefers-color-scheme meta
   // pair: the shell's own Light/Dark override is a class on <html> that no

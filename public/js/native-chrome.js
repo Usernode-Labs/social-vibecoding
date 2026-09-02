@@ -1226,6 +1226,120 @@
       document.addEventListener('visibilitychange', recover);
     },
 
+    // ── Appearance publish (the cold-launch white flash) ─────────────
+    //
+    // The Flutter shell paints a launch screen before this document
+    // exists, and had no way to know what colour to paint it: SV's theme
+    // is in this WebView's localStorage, the app's is in its own
+    // SharedPreferences, and the two never met. So it fell back to the OS
+    // preference and painted WHITE for everyone who had picked Dark on a
+    // light-mode phone — a full-screen white frame ahead of a near-black
+    // shell, on every cold launch.
+    //
+    // Nothing web-side can fix that launch, because it happens before any
+    // web code runs. What we can do is fix the NEXT one: tell the app
+    // which appearance this document settled on, and let it store that as
+    // the colour to open with. Published on boot and on every theme
+    // change, so a user who switches to Light gets a light launch screen
+    // from then on.
+    _appearancePublished: null,
+    _appearancePublishPromise: null,
+    _appearanceRerun: false,
+
+    // The RESOLVED appearance, read back off the document rather than
+    // recomputed. `.dark` on <html> and the ground behind it are both
+    // written by the head's theme module (frontend/src/head.html), which
+    // has already folded the tri-state stored mode against the OS
+    // preference — so reading them here keeps ONE source of truth for the
+    // two ground colours instead of a third copy that drifts.
+    _resolvedAppearance() {
+      let dark = false;
+      let background = null;
+      try {
+        dark = document.documentElement.classList.contains('dark');
+      } catch (_) { /* no document — light is the shell's own default */ }
+      try {
+        // `rgb(r, g, b)` / `rgba(r, g, b, a)` — the critical <style> in the
+        // head sets it, so a miss means something replaced that block.
+        // Omitting the colour is fine: the app keeps its own default for
+        // the scheme, which is the part that actually stops the flash.
+        const match = /^rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(
+          getComputedStyle(document.documentElement).backgroundColor || ''
+        );
+        if (match) {
+          background = '#' + [1, 2, 3].map((i) => (
+            Number(match[i]).toString(16).padStart(2, '0')
+          )).join('');
+        }
+      } catch (_) { /* no layout yet — publish the scheme alone */ }
+      return { scheme: dark ? 'dark' : 'light', background };
+    },
+
+    // Fire-and-forget. Never throws into a caller's render path, and never
+    // latches "unsupported" from a DEGRADED probe — same rule as every
+    // other capability gate here (issue #978): one cold-start hiccup must
+    // not disable the publish for the rest of the document.
+    publishAppearance() {
+      const bridge = window.usernode;
+      if (!bridge || bridge.isNative !== true ||
+          typeof bridge.setAppearance !== 'function') {
+        return Promise.resolve(false);
+      }
+      // Coalesce onto the in-flight run rather than queueing a call per
+      // event: a theme change mid-publish re-runs the loop once with the
+      // latest value. Callers get the SAME promise back, so awaiting a
+      // publish means awaiting the one that is actually happening.
+      if (NativeChrome._appearancePublishPromise) {
+        NativeChrome._appearanceRerun = true;
+        return NativeChrome._appearancePublishPromise;
+      }
+      const run = NativeChrome._runAppearancePublish();
+      NativeChrome._appearancePublishPromise = run;
+      return run.then((published) => {
+        NativeChrome._appearancePublishPromise = null;
+        return published;
+      }, () => {
+        NativeChrome._appearancePublishPromise = null;
+        return false;
+      });
+    },
+
+    async _runAppearancePublish() {
+      try {
+        do {
+          NativeChrome._appearanceRerun = false;
+          const appearance = NativeChrome._resolvedAppearance();
+          const key = appearance.scheme + '|' + (appearance.background || '');
+          if (key === NativeChrome._appearancePublished) continue;
+          const info = await NativeChrome.getInfo();
+          if (info && info.degraded === true) return false;
+          const capabilities = Array.isArray(info && info.capabilities)
+            ? info.capabilities : [];
+          if (!capabilities.includes('setAppearance')) return false;
+          await window.usernode.setAppearance(appearance);
+          NativeChrome._appearancePublished = key;
+        } while (NativeChrome._appearanceRerun);
+        return true;
+      } catch (err) {
+        // An old build that drops the unknown method times out here. That
+        // is the expected answer, not an error worth a console.error —
+        // proposal checks fail any route that logs one.
+        console.warn('[native-chrome] appearance publish failed:',
+          err && err.message);
+        return false;
+      }
+    },
+
+    _initAppearancePublish() {
+      NativeChrome.publishAppearance();
+      // Theme.onChange fires on an explicit Light/Dark pick AND on an OS
+      // flip while in system mode — both change the resolved appearance,
+      // so both have to reach the app.
+      if (window.Theme && typeof Theme.onChange === 'function') {
+        Theme.onChange(() => NativeChrome.publishAppearance());
+      }
+    },
+
     init() {
       // The bridge loads before wallet-sheet.js and before App resolves its
       // web session. Start closed so native A cannot be cached/rendered while
@@ -1234,6 +1348,10 @@
       NativeChrome._setSessionWalletRelayAdmission(false);
       NativeChrome._initAuthStatusEvents();
       NativeChrome._initSessionRecoveryEvents();
+      // Deliberately NOT behind the login handoff below: the launch this
+      // is fixing is the one before sign-in, and the appearance it
+      // publishes is presentation state with no account in it.
+      NativeChrome._initAppearancePublish();
       // Anonymous SPA boot (fold-auth-pages-into-SPA): the login handoff
       // needs a live web session (the from-session exchange 401s without
       // one), so it waits for the session boot stage. `sv:session` fires
