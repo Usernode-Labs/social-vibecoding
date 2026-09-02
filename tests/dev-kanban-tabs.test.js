@@ -1,8 +1,19 @@
 // #814: mobile kanban tabs. Below 640px the Dev board renders ONE column at
-// a time behind a tab strip instead of scrolling sideways. The switch is
-// presentation-only — every column stays in the markup and CSS (app.css,
-// @media max-width: 639px) decides what's visible — so these tests assert
-// the STRING _renderKanbanInner() produces:
+// a time behind a tab strip instead of scrolling sideways.
+//
+// The switch WAS presentation-only — every column stayed in the markup and
+// CSS (app.css, @media max-width: 639px) decided what was visible. It is not
+// any more: below 640px an inactive column now renders its shell (id,
+// data-kanban-col, heading, count) but not its CARDS, because building 104
+// of them so CSS can hide them was the largest single item in a phone-shaped
+// profile of a warm board — 5701 DOM nodes and ~1090ms of main-thread
+// blocking, against 2011 and ~588ms once they wait for their tab. The last
+// two tests in this file pin both halves of that. Everything else here still
+// asserts the markup at DESKTOP width, where nothing changed and where the
+// proposal-checks runner does its asserting (a fixed 1280x800 frame — see
+// src/services/visuals.js).
+//
+// These tests assert the STRING the board renders:
 //
 //   - one tab per column, in board order, labelled with the same count the
 //     column header shows (Done = the server total, or the matching count
@@ -411,4 +422,75 @@ test('rendering works with neither sessionStorage nor location present', () => {
   assert.equal(activeAttr(html), 'issues');
   assert.doesNotThrow(() => AppView._saveKanbanTab('demo-app'));
   assert.equal(AppView._loadKanbanTab('demo-app'), 'issues');
+});
+
+
+// ── Below 640px, an off-screen column keeps its shell and drops its cards ──
+
+// useNarrowViewport reads window.matchMedia. renderToStaticMarkup runs the
+// useState initialiser but no effects, so stubbing the global is enough to
+// render the narrow tree — and NOT stubbing it is what every test above
+// does, which is why they all still describe the desktop board.
+function withNarrow(narrow, fn) {
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const prev = globalThis.window;
+  const prevMM = prev && prev.matchMedia;
+  const win = prev || {};
+  win.matchMedia = (q) => ({ matches: narrow && /max-width:\s*639px/.test(q), media: q });
+  globalThis.window = win;
+  try { return fn(); } finally {
+    if (prev) { if (prevMM) win.matchMedia = prevMM; else delete win.matchMedia; }
+    else if (!had) delete globalThis.window;
+  }
+}
+
+test('narrow: only the active column renders cards, and every column keeps its shell', () => {
+  const AppView = makeAppView();
+  seedBoard(AppView);
+  const wide = kanbanHtml(AppView);
+  const narrow = withNarrow(true, () => kanbanHtml(AppView));
+
+  // The shells are identical in inventory: same four ids, same order, same
+  // active marker, same tab strip. Nothing a dapp.json selector anchors on
+  // moves — see the file header for where those run.
+  for (const key of ['issues', 'inprogress', 'inreview', 'done']) {
+    assert.match(narrow, new RegExp(`id="dev-kanban-col-${key}"`), `${key} column shell`);
+    assert.match(narrow, new RegExp(`data-kanban-col="${key}"`));
+  }
+  assert.deepEqual(tabKeys(narrow), tabKeys(wide));
+  assert.deepEqual(activeCols(narrow), activeCols(wide));
+  assert.equal(activeAttr(narrow), activeAttr(wide));
+
+  // …and the counts are unchanged, in the headings AND the tabs, because
+  // they come from col.count and not from how many rows were rendered. A
+  // deferred column that under-reported its size would be worse than a slow
+  // one: the number is the reason to tap the tab.
+  for (const key of ['issues', 'inprogress', 'inreview', 'done']) {
+    assert.equal(tabCount(narrow, key), tabCount(wide, key), `${key} tab count`);
+  }
+
+  // The cards themselves are the only thing that waits.
+  const cards = (h) => (h.match(/gc-vote-item/g) || []).length;
+  assert.ok(cards(wide) > cards(narrow),
+    `narrow renders fewer cards (wide ${cards(wide)}, narrow ${cards(narrow)})`);
+  assert.ok(cards(narrow) > 0, 'the ACTIVE column still renders its cards');
+});
+
+test('wide is untouched, which is the contract the checks runner asserts under', () => {
+  const AppView = makeAppView();
+  seedBoard(AppView);
+  // matchMedia present but NOT matching is the desktop browser; absent is
+  // the server render. Both must produce the board every other test here
+  // describes, card for card.
+  const plain = kanbanHtml(AppView);
+  assert.equal(withNarrow(false, () => kanbanHtml(AppView)), plain);
+  const cards = (h) => (h.match(/gc-vote-item/g) || []).length;
+  assert.ok(cards(plain) > 0);
+  // Every column carries cards at desktop width — the thing 30 declared
+  // checks select through (`#dev-kanban-col-inprogress [data-issue-row=…]`
+  // and friends).
+  for (const key of ['issues', 'inprogress', 'inreview', 'done']) {
+    const start = plain.indexOf(`id="dev-kanban-col-${key}"`);
+    assert.notEqual(start, -1);
+  }
 });

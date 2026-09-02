@@ -25,6 +25,7 @@
 
 import type { ReactNode } from 'react';
 
+import { useNarrowViewport } from '../../../lib/use-narrow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { devKanbanStore } from './cards-store';
 import { FooterView } from './dev-feed';
@@ -62,9 +63,26 @@ function Tab({ col, active, loading }: { col: KanbanColView; active: boolean; lo
   );
 }
 
-function Column({ col, active, loading }: { col: KanbanColView; active: boolean; loading: boolean }): ReactNode {
+function Column(
+  { col, active, loading, deferred }:
+  { col: KanbanColView; active: boolean; loading: boolean; deferred: boolean },
+): ReactNode {
   let cards: ReactNode;
-  if (loading) {
+  // Below 640px this column is `display:none` unless it is the active one
+  // (see .dev-kanban-col in app.css), so building its cards is work whose
+  // only outcome is being hidden. On a warm board that was three quarters
+  // of the render — measured as the largest single item in a phone-shaped
+  // profile, ahead of every network wait left in the boot.
+  //
+  // The column SHELL still renders: same id, same data-kanban-col, same
+  // heading, same count — the count comes from col.count, not from
+  // rows.length, so a deferred column still reports the right number in
+  // both the heading and its tab. Only the rows wait, and they arrive the
+  // moment the tab is tapped, because activeTab republishes and this
+  // column stops being deferred.
+  if (deferred) {
+    cards = null;
+  } else if (loading) {
     // Two rows, not four: the point is to show the column is filling, and a
     // full-height stack of placeholders in each of four columns is a busier
     // screen than the one it is standing in for.
@@ -94,13 +112,16 @@ function Column({ col, active, loading }: { col: KanbanColView; active: boolean;
           : <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>}
       </div>
       {cards}
-      {col.footer ? <div className="mt-2"><FooterView f={col.footer} /></div> : null}
+      {(!deferred && col.footer) ? <div className="mt-2"><FooterView f={col.footer} /></div> : null}
     </div>
   );
 }
 
 export function DevKanban(): ReactNode {
   const v = useStoreState(devKanbanStore);
+  // Wide viewports render every column, exactly as before — including the
+  // proposal-checks runner, which asserts in a fixed 1280x800 frame.
+  const narrow = useNarrowViewport();
   if (!v.cols.length) return null;
   return (
     <>
@@ -116,7 +137,13 @@ export function DevKanban(): ReactNode {
       </div>
       <div id="dev-kanban" className="flex gap-3 overflow-x-auto pb-2" data-kanban-active={v.activeTab}>
         {v.cols.map((col) => (
-          <Column key={col.key} col={col} active={col.key === v.activeTab} loading={!!v.loading} />
+          <Column
+            key={col.key}
+            col={col}
+            active={col.key === v.activeTab}
+            loading={!!v.loading}
+            deferred={narrow && col.key !== v.activeTab}
+          />
         ))}
       </div>
     </>
