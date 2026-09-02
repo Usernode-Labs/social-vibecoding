@@ -262,7 +262,7 @@ function OpenRouterCard({ user, onReload }: { user: User; onReload: () => void }
         </span>
         {limit ? <span className="text-zinc-500 dark:text-zinc-400">{limit}</span> : null}
         <span className="text-zinc-500 dark:text-zinc-400">
-          {user.social_verified ? 'verified identity' : 'identity no longer verified'}
+          {user.social_verified ? 'verified identity' : 'no verified identity'}
         </span>
         <div className="ml-auto flex gap-2">
           {showActions && status === 'active' ? (

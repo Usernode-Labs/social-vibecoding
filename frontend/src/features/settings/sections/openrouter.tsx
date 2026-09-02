@@ -5,8 +5,9 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 
 /**
- * OpenRouter/Codex as the preferred coding agent. Verified users may claim a
- * limited company key once; everyone may still use a personal OpenRouter key.
+ * OpenRouter/Codex as the preferred coding agent. Each account may claim a
+ * limited company key once by default; deployments may require a verified
+ * GitHub or X identity. Everyone may still use a personal OpenRouter key.
  * #settings-openrouter-model's `<option>` list is BUILT by
  * settings.js from the catalogue response, which is the clearest reason the
  * Select primitive is a native `<select>` rather than a Radix combobox — see

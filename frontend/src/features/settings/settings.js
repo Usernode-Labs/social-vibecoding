@@ -2501,14 +2501,14 @@
             managedMessage.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
           } else if (managed?.status === 'needs_review' || managed?.status === 'provisioning') {
             managedMessage.textContent = 'This key needs admin review. Usernode did not retry the provider request, which prevents accidental duplicate keys.';
-          } else if (!provisioning.verified) {
+          } else if (provisioning.verificationRequired && !provisioning.verified) {
             managedMessage.textContent = 'Connect and verify GitHub or X in Social accounts & connectors to claim one limited company key.';
           } else if (!provisioning.available) {
             managedMessage.textContent = 'Included keys are not configured by the platform administrator yet.';
           } else if (provisioning.reason === 'personal_key_configured') {
             managedMessage.textContent = 'Remove your personal key first if you want to claim the included company key.';
           } else {
-            managedMessage.textContent = `Verified users can create one included key with a $${Number(provisioning.dailyLimitUsd || 0).toFixed(2)} daily limit.`;
+            managedMessage.textContent = `You can create one included key with a $${Number(provisioning.dailyLimitUsd || 0).toFixed(2)} daily limit.`;
           }
         }
         const managedOwnsCredential = !!managed && managed.status !== 'deleted';
