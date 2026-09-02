@@ -202,6 +202,14 @@ function load() {
     console.error('[config] OPENROUTER_MANAGED_DAILY_LIMIT_USD must be a positive dollar amount.');
     process.exit(1);
   }
+  const openrouterManagedRequireVerifiedIdentityValue =
+    process.env.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY || 'false';
+  if (!['true', 'false'].includes(openrouterManagedRequireVerifiedIdentityValue)) {
+    console.error('[config] OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY must be either true or false.');
+    process.exit(1);
+  }
+  const openrouterManagedRequireVerifiedIdentity =
+    openrouterManagedRequireVerifiedIdentityValue === 'true';
   let cliAuthOrigin = null;
   let cliAuthEnabled = !staging;
   if (cliAuthEnabled && cliLocalMode) {
@@ -272,6 +280,9 @@ function load() {
     openrouterManagementApiKey: process.env.OPENROUTER_MANAGEMENT_API_KEY || '',
     openrouterManagedDailyLimitUsd,
     openrouterManagedWorkspaceId: process.env.OPENROUTER_MANAGED_WORKSPACE_ID || '',
+    // Default-open claim policy. Operators may opt into requiring a linked
+    // GitHub or X identity before the one lifetime managed key is reserved.
+    openrouterManagedRequireVerifiedIdentity,
     // The former single shared JWT_SECRET is GONE. All four token
     // authorities (app identity RS256, worker, edge grant, edge cookie)
     // read their own key from env via services/platform-jwt.js, and a
@@ -619,6 +630,7 @@ function load() {
   console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
   console.log(`  OPENROUTER_MANAGEMENT_API_KEY=${mask(config.openrouterManagementApiKey)}`);
   console.log(`  OPENROUTER_MANAGED_DAILY_LIMIT_USD=${config.openrouterManagedDailyLimitUsd} OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
+  console.log(`  OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=${config.openrouterManagedRequireVerifiedIdentity}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
   console.log(`  IDENTITY_CREDIT_POLICY=${config.identityCreditPolicy}`);
   console.log(`  GITHUB_LINK=${config.githubLinkClientId && config.githubLinkClientSecret ? '(enabled)' : '(disabled)'}`);

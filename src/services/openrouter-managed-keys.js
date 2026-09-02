@@ -26,6 +26,10 @@ function managementOptions(config) {
   };
 }
 
+function requiresVerifiedIdentity(config) {
+  return config?.openrouterManagedRequireVerifiedIdentity === true;
+}
+
 function publicState(row) {
   if (!row?.managed_key_id) return null;
   return {
@@ -120,18 +124,21 @@ async function provision({ pool, userId, config }) {
   }
 
   // Reserve the user's one lifetime issuance before the provider call. The
-  // user row and identity proofs are locked so unlink/concurrent claims
-  // cannot race this decision.
+  // user row serializes concurrent claims. When the optional verification
+  // policy is enabled, identity proofs are also locked so unlink cannot race
+  // the eligibility decision.
   const reservation = await credentialStore.withTransaction(pool, async (client) => {
     await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
-    const { rows: identityRows } = await client.query(
-      `SELECT id FROM user_social_identities
-        WHERE user_id = $1
-        FOR SHARE`,
-      [userId],
-    );
-    if (!identityRows.length) {
-      throw new ManagedOpenRouterError(403, 'verification_required', 'Connect a verified GitHub or X account first.');
+    if (requiresVerifiedIdentity(config)) {
+      const { rows: identityRows } = await client.query(
+        `SELECT id FROM user_social_identities
+          WHERE user_id = $1
+          FOR SHARE`,
+        [userId],
+      );
+      if (!identityRows.length) {
+        throw new ManagedOpenRouterError(403, 'verification_required', 'Connect a verified GitHub or X account first.');
+      }
     }
     const existingCredential = await credentialStore.readMetadata({
       pool: client, userId, ...OPENROUTER,
@@ -223,11 +230,11 @@ async function provision({ pool, userId, config }) {
       managedKeyId: reservation.id,
       kind: 'openrouter_key_created',
     });
-    // Close the unlink-during-provision race. There is deliberately no
-    // automatic revocation; a second, deduplicated review notification is
-    // emitted only if the user lost their final proof while OpenRouter was
-    // creating the key.
-    await notifyIdentityReview({ pool, userId }).catch((err) => {
+    // Close the unlink-during-provision race when verification is required.
+    // There is deliberately no automatic revocation; a second, deduplicated
+    // review notification is emitted only if the user lost their final proof
+    // while OpenRouter was creating the key.
+    await notifyIdentityReview({ pool, userId, config }).catch((err) => {
       log.warn('openrouter-managed', 'post-provision identity review check failed', {
         userId, managedKeyId: reservation.id, err: err.message,
       });
@@ -346,7 +353,8 @@ async function remove({ pool, id, config, actorId }) {
   return { id: Number(id), status: 'deleted' };
 }
 
-async function notifyIdentityReview({ pool, userId }) {
+async function notifyIdentityReview({ pool, userId, config }) {
+  if (!requiresVerifiedIdentity(config)) return false;
   const state = await stateForUser(pool, userId);
   if (state.verified || !state.managed_key_id
       || !['active', 'disabled'].includes(state.managed_status)) return false;
@@ -361,6 +369,7 @@ async function notifyIdentityReview({ pool, userId }) {
 module.exports = {
   ManagedOpenRouterError,
   OPENROUTER,
+  requiresVerifiedIdentity,
   publicState,
   stateForUser,
   provision,

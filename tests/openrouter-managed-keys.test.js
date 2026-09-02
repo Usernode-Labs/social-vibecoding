@@ -10,6 +10,7 @@ const managed = require('../src/services/openrouter-managed-keys');
 const credentialStore = require('../src/services/credential-store');
 const agentModels = require('../src/services/agent-models');
 const notifications = require('../src/services/notifications');
+const runtimeConfig = require('../src/config');
 
 const root = path.join(__dirname, '..');
 
@@ -75,7 +76,7 @@ test('an ambiguous create failure is surfaced after exactly one attempt', async 
   assert.equal(calls, 1, 'POST /keys must never be blindly retried');
 });
 
-test('successful managed provisioning reserves once, stores encrypted credential metadata, and returns plaintext once', async (t) => {
+test('default-open managed provisioning does not require an identity and returns plaintext once', async (t) => {
   const originals = {
     withTransaction: credentialStore.withTransaction,
     readMetadata: credentialStore.readMetadata,
@@ -97,10 +98,14 @@ test('successful managed provisioning reserves once, stores encrypted credential
   let stored;
   let defaultModel;
   let notificationsSent = 0;
+  let identityQueries = 0;
   const client = {
     query: async (sql, params = []) => {
       const text = String(sql);
-      if (/FROM user_social_identities/.test(text)) return { rows: [{ id: 4 }] };
+      if (/FROM user_social_identities/.test(text)) {
+        identityQueries += 1;
+        return { rows: [] };
+      }
       if (/INSERT INTO credentials\.managed_openrouter_keys/.test(text)) return { rows: [{ id: 17 }] };
       if (/SELECT id FROM credentials\.managed_openrouter_keys/.test(text)) return { rows: [{ id: 17 }] };
       if (/INSERT INTO user_agent_preferences/.test(text)) defaultModel = params[2];
@@ -147,6 +152,7 @@ test('successful managed provisioning reserves once, stores encrypted credential
   });
 
   assert.equal(createCalls, 1);
+  assert.equal(identityQueries, 0, 'the default policy must not query or require an identity proof');
   assert.equal(stored.apiKey, 'sk-or-v1-issued-once');
   assert.equal(stored.metadata.source, 'usernode_managed');
   assert.equal(stored.metadata.managedKeyId, 17);
@@ -157,6 +163,113 @@ test('successful managed provisioning reserves once, stores encrypted credential
   assert.equal(notificationsSent, 1);
 });
 
+test('the opt-in verification policy rejects an unverified account before provider creation', async (t) => {
+  const originals = {
+    withTransaction: credentialStore.withTransaction,
+    createKey: managementClient.createKey,
+  };
+  t.after(() => {
+    credentialStore.withTransaction = originals.withTransaction;
+    managementClient.createKey = originals.createKey;
+  });
+
+  let createCalls = 0;
+  let reservationCalls = 0;
+  const client = {
+    query: async (sql) => {
+      const text = String(sql);
+      if (/FROM user_social_identities/.test(text)) return { rows: [] };
+      if (/INSERT INTO credentials\.managed_openrouter_keys/.test(text)) reservationCalls += 1;
+      return { rows: [] };
+    },
+  };
+  credentialStore.withTransaction = async (_pool, fn) => fn(client);
+  managementClient.createKey = async () => { createCalls += 1; };
+
+  await assert.rejects(
+    managed.provision({
+      pool: {},
+      userId: 8,
+      config: {
+        openrouterManagementApiKey: 'sk-or-v1-management',
+        openrouterManagedRequireVerifiedIdentity: true,
+      },
+    }),
+    (err) => err instanceof managed.ManagedOpenRouterError
+      && err.statusCode === 403
+      && err.code === 'verification_required',
+  );
+  assert.equal(reservationCalls, 0, 'an ineligible user never consumes their one issuance');
+  assert.equal(createCalls, 0, 'an ineligible user never reaches OpenRouter');
+});
+
+test('identity-loss review notifications follow the same opt-in policy', async (t) => {
+  const originalNotify = notifications.notifyManagedOpenRouterAdmins;
+  let notificationsSent = 0;
+  notifications.notifyManagedOpenRouterAdmins = async () => {
+    notificationsSent += 1;
+    return [];
+  };
+  t.after(() => { notifications.notifyManagedOpenRouterAdmins = originalNotify; });
+
+  let stateReads = 0;
+  const pool = {
+    query: async () => {
+      stateReads += 1;
+      return { rows: [{ verified: false, managed_key_id: 19, managed_status: 'active' }] };
+    },
+  };
+
+  assert.equal(await managed.notifyIdentityReview({ pool, userId: 9, config: {} }), false);
+  assert.equal(stateReads, 0, 'the default-open policy does not inspect identity state for review');
+  assert.equal(notificationsSent, 0);
+
+  assert.equal(await managed.notifyIdentityReview({
+    pool,
+    userId: 9,
+    config: { openrouterManagedRequireVerifiedIdentity: true },
+  }), true);
+  assert.equal(stateReads, 1);
+  assert.equal(notificationsSent, 1);
+});
+
+function loadManagedVerificationConfig(value) {
+  const keys = [
+    'DATABASE_URL', 'SESSION_SECRET', 'ADMIN_USERNAME', 'ADMIN_PASSWORD',
+    'USERNODE_ENV', 'OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY',
+  ];
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, {
+    DATABASE_URL: 'postgres://localhost/test',
+    SESSION_SECRET: 'test-session-secret',
+    ADMIN_USERNAME: 'admin',
+    ADMIN_PASSWORD: 'admin-pass',
+    USERNODE_ENV: 'staging',
+  });
+  if (value === undefined) delete process.env.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY;
+  else process.env.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY = value;
+
+  const realLog = console.log;
+  console.log = () => {};
+  try {
+    return runtimeConfig.load();
+  } finally {
+    console.log = realLog;
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  }
+}
+
+test('managed-key verification defaults off and can be enabled explicitly', () => {
+  assert.equal(loadManagedVerificationConfig(undefined).openrouterManagedRequireVerifiedIdentity, false);
+  assert.equal(loadManagedVerificationConfig('false').openrouterManagedRequireVerifiedIdentity, false);
+  assert.equal(loadManagedVerificationConfig('true').openrouterManagedRequireVerifiedIdentity, true);
+  assert.equal(managed.requiresVerifiedIdentity({}), false);
+  assert.equal(managed.requiresVerifiedIdentity({ openrouterManagedRequireVerifiedIdentity: true }), true);
+});
+
 test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-owned management credentials', () => {
   const schema = fs.readFileSync(path.join(root, 'src/db/schema.sql'), 'utf8');
   const routes = fs.readFileSync(path.join(root, 'src/routes/credentials.js'), 'utf8');
@@ -164,6 +277,7 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   const settings = fs.readFileSync(path.join(root, 'frontend/src/features/settings/settings.js'), 'utf8');
   const settingsSection = fs.readFileSync(path.join(root, 'frontend/src/features/settings/sections/openrouter.tsx'), 'utf8');
   const deploy = fs.readFileSync(path.join(root, '.github/workflows/deploy.yml'), 'utf8');
+  const envExample = fs.readFileSync(path.join(root, '.env.example'), 'utf8');
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
   const appManifest = require('../src/services/app-manifest');
 
@@ -179,9 +293,17 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
     'OpenRouter precedes the Anthropic key in the AI settings group',
   );
   assert.match(deploy, /secrets\.USERNODE_OPENROUTER_MANAGEMENT_API_KEY/);
+  assert.match(deploy, /OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=\$\{\{ vars\.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY \|\| 'false' \}\}/);
+  assert.match(envExample, /OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=false/);
   assert.ok(appManifest.PLATFORM_ENV_UNWRITABLE.has('OPENROUTER_MANAGEMENT_API_KEY'));
   const declaration = manifest.platform_env.find((item) => item.key === 'OPENROUTER_MANAGEMENT_API_KEY');
   assert.equal(declaration.private, true);
+  const verificationDeclaration = manifest.platform_env.find(
+    (item) => item.key === 'OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY',
+  );
+  assert.equal(verificationDeclaration.default, 'false');
+  assert.match(routes, /verificationRequired/);
+  assert.match(settings, /provisioning\.verificationRequired && !provisioning\.verified/);
 });
 
 test('configured GLM is preferred without filtering the remaining model catalog', async (t) => {
