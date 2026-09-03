@@ -42,7 +42,14 @@
 // /shell/assets/shell.js — and SHELL_ASSETS below precaches it like any
 // other. It needed no version bump of its own: a byte change to this file
 // re-runs install(), which re-runs the precache with the current list.
-const SW_VERSION = 'v7';
+//
+// v8: a deployed document loads its scripts and stylesheets from build-scoped
+// URLs (/b/<sha>/…, see parseBuildScopedPath). The precache now stores those
+// addresses, so the shell cache is versioned past the plain-path entries a
+// v7 worker filled it with — network-first and content-addressed, it costs
+// nothing to refill, which is exactly why the SHELL cache is versioned and
+// the API cache below is not.
+const SW_VERSION = 'v8';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
@@ -233,7 +240,12 @@ const SHELL_ASSETS = [
   // The React chassis: the runtime plus the shell tree, hydrating the markup
   // index.html already ships (frontend/src/main.tsx). Deliberately UNHASHED —
   // this list is hand-maintained and content-hashed filenames would make it
-  // churn on every build; freshness comes from `no-cache, must-revalidate`
+  // churn on every build. A deployed document loads it, like every script and
+  // stylesheet here, from `/b/<build sha>/shell/assets/shell.js`: the build
+  // moves into the URL's prefix rather than the filename, precacheShell
+  // derives that address from this plain path, and the server answers it
+  // immutable (see "Build-scoped asset URLs" above parseBuildScopedPath).
+  // A checkout keeps the plain path under `no-cache, must-revalidate`
   // (src/services/static-cache.js) plus this worker being network-first.
   '/shell/assets/shell.js',
   // ── LAZY CHUNKS ARE DELIBERATELY NOT HERE ────────────────────────────
@@ -564,6 +576,48 @@ function bytesEqual(a, b) {
   return true;
 }
 
+// ── Build-scoped asset URLs ───────────────────────────────────────────
+//
+// A deployed document loads its scripts and stylesheets from
+// `/b/<build sha>/…` (scripts/shell-stamp.js has the scheme; the server side
+// is src/services/static-cache.js). The sha in the URL names the build the
+// bytes belong to, which changes two things here:
+//
+//   - such a URL is CACHE-FIRST, with no deadline and no race. A hit is the
+//     right build by construction — that is what the sha in the key means —
+//     so the document/asset build check networkFirstShell makes for the
+//     plain paths has nothing left to ask. A miss goes to the network, the
+//     way a miss always did.
+//   - the precache has to store the URLs the document will actually ask
+//     for. SHELL_ASSETS stays the readable, hand-maintained list of plain
+//     paths; precacheShell reads the build id off the document it fetches
+//     first and scopes each script and stylesheet under it (the manifest,
+//     the icons and the document itself have no scoped form).
+//
+// A checkout has no build id, so its document keeps the plain paths and
+// every strategy below behaves exactly as it did.
+const BUILD_SCOPED_PATH_RE = /^\/b\/([0-9a-f]{7,40})(\/.*)$/;
+
+function parseBuildScopedPath(pathname) {
+  const m = BUILD_SCOPED_PATH_RE.exec(String(pathname == null ? '' : pathname));
+  return m ? { build: m[1], path: m[2] } : null;
+}
+
+// Mirrors scripts/shell-stamp.js's isBuildScopedAssetPath: scripts and
+// stylesheets, never the worker itself.
+function isBuildScopedAssetPath(pathname) {
+  const p = String(pathname == null ? '' : pathname);
+  if (p === '/sw.js') return false;
+  return /\.(?:js|css)$/i.test(p);
+}
+
+// The URL a document of build `build` loads `path` from: scoped for a
+// script or stylesheet when there is a build id, the plain path otherwise.
+function shellAssetUrl(path, build) {
+  if (!build || !isBuildScopedAssetPath(path) || parseBuildScopedPath(path)) return path;
+  return `/b/${build}${path}`;
+}
+
 /* ------------------------------------------------------------------ */
 /* Service-worker runtime (skipped when loaded in Node for tests).     */
 /* ------------------------------------------------------------------ */
@@ -582,6 +636,9 @@ if (typeof module !== 'undefined' && module.exports) {
     raceNetworkAndCache,
     bytesEqual,
     SHELL_ASSETS,
+    parseBuildScopedPath,
+    isBuildScopedAssetPath,
+    shellAssetUrl,
     NO_FALLBACK_PAGES,
     NO_FALLBACK_PREFIXES,
     SW_VERSION,
@@ -604,6 +661,10 @@ if (typeof module !== 'undefined' && module.exports) {
   // question that matters — is this connection fast right now? — so it
   // records its own outcome here and every shell asset in the same load
   // follows it, instead of re-rolling the dice 38 more times.
+  //
+  // (A deployed document's scripts are build-scoped URLs and never reach
+  // this race — the sha in the path already pins the build; see
+  // parseBuildScopedPath. The plain paths a checkout loads still do.)
   //
   // Heuristic, and deliberately so: a worker restart mid-load resets it,
   // and two tabs loading at once share it. Both degrade to the `false`
@@ -756,6 +817,25 @@ if (typeof module !== 'undefined' && module.exports) {
       if (res && res.ok) cache.put(event.request, res.clone()).catch(() => {});
       return res;
     });
+
+    // A build-scoped URL: the sha in the path says which build these bytes
+    // are, so a cached copy is current by construction and there is nothing
+    // to race for — see parseBuildScopedPath. Cache-first, then the network.
+    // The network answer is stored only when the server confirms it IS that
+    // build (X-Platform-Build matches the sha asked for): during a rollout a
+    // request for the new build can land on the old colour, which answers
+    // with its own bytes under the revalidate policy, and caching those under
+    // the new build's URL would pin the wrong script there for a year.
+    const scoped = parseBuildScopedPath(new URL(event.request.url).pathname);
+    if (scoped) {
+      const hit = await cache.match(event.request);
+      if (hit) return hit;
+      const res = await fetch(event.request);
+      if (res && res.ok && buildIdOf(res) === scoped.build) {
+        cache.put(event.request, res.clone()).catch(() => {});
+      }
+      return res;
+    }
 
     // This load's navigation already lost its race, so the connection is
     // known-slow AND the document being parsed is the cached one. Serve the
@@ -980,6 +1060,62 @@ if (typeof module !== 'undefined' && module.exports) {
     return res;
   }
 
+  // Fill the shell cache with ONE build: the document first, then every
+  // other SHELL_ASSETS entry at the URL that document loads it from — scoped
+  // under the document's build id when it has one (X-Platform-Build on the
+  // response; the document's own <meta> is written from the same GIT_SHA),
+  // the plain path when it does not. Returns one settled result per asset,
+  // so install() can stay best-effort while the deploy prefetch demands all
+  // of them.
+  //
+  // `reload` bypasses the HTTP cache on every request. The deploy prefetch
+  // needs that for the plain paths, where a revalidated 304 would report
+  // success having stored nothing new; a scoped URL is new to the browser
+  // whenever the build is, so there it costs nothing.
+  async function precacheShell(cache, { reload = false } = {}) {
+    const init = reload ? { cache: 'reload' } : undefined;
+    const [documentPath, ...assets] = SHELL_ASSETS;
+    let build = null;
+    const results = [];
+    try {
+      const doc = await fetch(documentPath, init);
+      if (!doc || !doc.ok) throw new Error(`HTTP ${doc && doc.status}`);
+      build = buildIdOf(doc);
+      // '/index.html' is stored under exactly the key networkFirstNavigate
+      // reads, so the document itself is refreshed here and not only the
+      // assets around it.
+      await cache.put(documentPath, doc.clone());
+      results.push({ status: 'fulfilled', value: documentPath });
+    } catch (err) {
+      results.push({ status: 'rejected', reason: err });
+    }
+    results.push(...await Promise.allSettled(assets.map(async (path) => {
+      const url = shellAssetUrl(path, build);
+      const res = await fetch(url, init);
+      if (!res || !res.ok) throw new Error(`HTTP ${res && res.status}`);
+      // A scoped URL is stored only as the build it names — the rule
+      // networkFirstShell applies, for the same rollout reason.
+      if (url !== path && buildIdOf(res) !== build) throw new Error('served by a different build');
+      await cache.put(url, res.clone());
+      return url;
+    })));
+    if (build) await pruneOtherBuilds(cache, build);
+    return results;
+  }
+
+  // Scoped entries of any OTHER build are dead weight once a build is in:
+  // nothing asks for them again (a document always asks for its own), and
+  // each deploy would otherwise leave the previous build's ~4MB behind.
+  async function pruneOtherBuilds(cache, keep) {
+    try {
+      const keys = await cache.keys();
+      await Promise.all(keys.map(async (req) => {
+        const scoped = parseBuildScopedPath(new URL(req.url).pathname);
+        if (scoped && scoped.build !== keep) await cache.delete(req);
+      }));
+    } catch { /* best-effort housekeeping */ }
+  }
+
   self.addEventListener('install', (event) => {
     event.waitUntil((async () => {
       const shell = await caches.open(SHELL_CACHE);
@@ -987,7 +1123,7 @@ if (typeof module !== 'undefined' && module.exports) {
       // Every asset the shell needs is same-origin now, so a completed
       // install is enough to render offline — there is no second,
       // cross-origin precache pass that can partially fail any more.
-      await Promise.allSettled(SHELL_ASSETS.map((path) => shell.add(path)));
+      await precacheShell(shell);
       await self.skipWaiting();
     })());
   });
@@ -1065,14 +1201,11 @@ if (typeof module !== 'undefined' && module.exports) {
 
   async function prefetchShellAssets() {
     const cache = await caches.open(SHELL_CACHE);
-    const results = await Promise.allSettled(SHELL_ASSETS.map(async (path) => {
-      const res = await fetch(path, { cache: 'reload' });
-      if (!res || !res.ok) throw new Error(`HTTP ${res && res.status}`);
-      // '/index.html' is SHELL_ASSETS[0] and is stored under exactly the key
-      // networkFirstNavigate reads, so the document itself is refreshed here
-      // and not only the assets around it.
-      await cache.put(path, res.clone());
-    }));
+    // The new document first, then its assets at the URLs IT loads them
+    // from: a new build's scripts live under a new /b/<sha>/ prefix, so
+    // fetching the plain paths here would refresh nothing the next load asks
+    // for. See precacheShell.
+    const results = await precacheShell(cache, { reload: true });
     // ALL of them, deliberately. A partial refresh is the split-build state
     // shellFromCacheThisLoad exists to prevent, and reporting success for one
     // would put the page's reload button on top of it.
