@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const ts = require('typescript');
 
 const nativeChromeSource = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'native-chrome.js'),
@@ -17,6 +18,36 @@ const waitingTsx = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'auth', 'waiting.tsx'),
   'utf8'
 );
+const authSharedSource = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'auth', 'shared.ts'),
+  'utf8'
+);
+
+function loadAuthShared(window, fetchImpl) {
+  const compiled = ts.transpileModule(authSharedSource, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+  const module = { exports: {} };
+  const sandbox = {
+    module,
+    exports: module.exports,
+    window,
+    fetch: fetchImpl,
+    console: { warn() {} },
+    require(specifier) {
+      if (specifier === '../../lib/legacy-dom') {
+        return { useIsomorphicLayoutEffect() {} };
+      }
+      throw new Error(`unexpected auth shared import: ${specifier}`);
+    },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(compiled, sandbox);
+  return module.exports;
+}
 
 function deferred() {
   let resolve;
@@ -393,6 +424,45 @@ test('login preflight never preempts a live web session', async () => {
   );
   assert.equal(loaded.calls.prepareForLogin, 0);
 });
+
+test('session mint reports native preparation separately from network failure',
+  async () => {
+    let fetches = 0;
+    const nativeFailure = new Error('The native credential could not be validated yet.');
+    nativeFailure.usernodeCode = 'native_session_recovery_uncertain';
+    const native = loadAuthShared({
+      usernode: { isNative: true },
+      NativeChrome: {
+        async prepareForLogin() { throw nativeFailure; },
+        lastSessionFailure() {
+          return {
+            stage: 'prepare-login',
+            code: nativeFailure.usernodeCode,
+            kind: null,
+          };
+        },
+      },
+    }, async () => {
+      fetches += 1;
+      throw new Error('fetch must not run');
+    });
+
+    const preparationError = await native.fetchSessionMint('/api/auth/login')
+      .then(() => null, (error) => error);
+    assert.equal(fetches, 0, 'native preparation still gates the session mint');
+    assert.equal(
+      native.sessionMintFailureMessage(preparationError),
+      'Secure app session could not be prepared. Force-quit and reopen Usernode, ' +
+        'then try again. Diagnostic: native_session_recovery_uncertain'
+    );
+
+    const web = loadAuthShared({ usernode: { isNative: false } }, async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const networkError = await web.fetchSessionMint('/api/auth/login')
+      .then(() => null, (error) => error);
+    assert.equal(web.sessionMintFailureMessage(networkError), 'Network error');
+  });
 
 test('a late A result cannot admit or overwrite successor B', async () => {
   const a = deferred();

@@ -69,7 +69,14 @@ interface LegacyWindow {
     restoreFromHash?(): void;
   };
   Settings?: { logout?(): void };
-  NativeChrome?: { prepareForLogin?(): Promise<unknown> };
+  NativeChrome?: {
+    prepareForLogin?(): Promise<unknown>;
+    lastSessionFailure?(): {
+      stage?: string | null;
+      code?: string | null;
+      kind?: string | null;
+    } | null;
+  };
   AppView?: {
     mountViewerCover?(
       viewer: Element,
@@ -178,6 +185,52 @@ export function isNative(): boolean {
   return !!(w.usernode && w.usernode.isNative);
 }
 
+const NATIVE_LOGIN_PREPARATION_MESSAGE =
+  'Secure app session could not be prepared. Force-quit and reopen Usernode, then try again.';
+const NATIVE_DIAGNOSTIC_RE = /^[a-z][a-z0-9_-]{0,95}$/;
+
+function diagnosticValue(value: unknown): string | null {
+  return typeof value === 'string' && NATIVE_DIAGNOSTIC_RE.test(value) ? value : null;
+}
+
+function errorField(error: unknown, key: string): unknown {
+  return error && typeof error === 'object'
+    ? (error as Record<string, unknown>)[key]
+    : null;
+}
+
+function nativePreparationDiagnostic(
+  chrome: LegacyWindow['NativeChrome'],
+  error: unknown,
+): string | null {
+  try {
+    const failure = chrome?.lastSessionFailure?.();
+    if (failure?.stage === 'prepare-login') {
+      return diagnosticValue(failure.code) || diagnosticValue(failure.kind);
+    }
+  } catch {
+    /* use the rejection itself */
+  }
+  return (
+    diagnosticValue(errorField(error, 'usernodeCode')) ||
+    diagnosticValue(errorField(error, 'usernodeKind'))
+  );
+}
+
+export class NativeLoginPreparationError extends Error {
+  constructor(
+    readonly diagnostic: string | null,
+    message = NATIVE_LOGIN_PREPARATION_MESSAGE,
+  ) {
+    super(diagnostic ? `${message} Diagnostic: ${diagnostic}` : message);
+    this.name = 'NativeLoginPreparationError';
+  }
+}
+
+export function sessionMintFailureMessage(error: unknown): string {
+  return error instanceof NativeLoginPreparationError ? error.message : 'Network error';
+}
+
 /**
  * Sends an ordinary session-mint request only after a native anonymous shell
  * has closed, drained, and revoked any privately retained native session.
@@ -192,11 +245,21 @@ export async function fetchSessionMint(
   if (w.usernode?.isNative === true) {
     const chrome = w.NativeChrome;
     if (!chrome || typeof chrome.prepareForLogin !== 'function') {
-      throw new Error(
+      throw new NativeLoginPreparationError(
+        null,
         'This Usernode app version must be updated for secure sign-in',
       );
     }
-    await chrome.prepareForLogin();
+    try {
+      await chrome.prepareForLogin();
+    } catch (error) {
+      const diagnostic = nativePreparationDiagnostic(chrome, error);
+      console.warn('[auth] native login preparation failed', {
+        stage: 'prepare-login',
+        diagnostic: diagnostic || 'unclassified',
+      });
+      throw new NativeLoginPreparationError(diagnostic);
+    }
   }
   return fetch(input, init);
 }
