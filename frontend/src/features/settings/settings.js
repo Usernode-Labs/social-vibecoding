@@ -38,6 +38,43 @@
 (function () {
   'use strict';
 
+  // ── Status lines ──────────────────────────────────────────────────────
+  //
+  // Seven sections report the result of the user's last action in a status
+  // line, and all seven paint it identically: reveal the node, write the
+  // text, swap in one of three colour pairs. This is that paint, and the
+  // palette below is the only place those classes are named.
+  //
+  // The pairs are TOKEN ARRAYS and they are SPREAD into classList, because a
+  // DOMTokenList token may not contain whitespace: `classList.add('a b')`
+  // throws InvalidCharacterError. Each of these was a SINGLE class when it
+  // was written (#1380); #1400's widget-library migration rewrote all seven
+  // into `dark:` pairs and left the single-argument `add(cls)` in place, so
+  // every status write in this file threw. It read as cosmetic because the
+  // text is written FIRST and still landed — what actually broke was the
+  // code AFTER the call. changeUsername() is the case that was reported: it
+  // painted "Saving…", threw before its fetch was ever issued, and left the
+  // button disabled under a message that could never resolve. Keep these
+  // arrays, and add a colour by adding a pair here rather than a string at a
+  // call site. _wireConnectorNameSpelling's link-status write already spread
+  // its pair, which is why that one line kept working.
+  const STATUS_PALETTE = {
+    error: ['text-red-700', 'dark:text-red-400'],
+    ok: ['text-emerald-700', 'dark:text-emerald-400'],
+    info: ['text-zinc-500', 'dark:text-zinc-400'],
+  };
+  const STATUS_PALETTE_CLASSES = [
+    'hidden',
+    ...STATUS_PALETTE.error, ...STATUS_PALETTE.ok, ...STATUS_PALETTE.info,
+  ];
+
+  /** Reveal `el`, write `text`, colour it for `kind` (anything else: info). */
+  function paintStatus(el, text, kind) {
+    el.textContent = text;
+    el.classList.remove(...STATUS_PALETTE_CLASSES);
+    el.classList.add(...(STATUS_PALETTE[kind] || STATUS_PALETTE.info));
+  }
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -2336,12 +2373,7 @@
 
     _setStatus(text, kind) {
       const el = document.getElementById('settings-status');
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400'
-                : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400'
-                : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
     },
 
     _clearStatus() {
@@ -2472,10 +2504,7 @@
     _setOrStatus(text, kind) {
       const el = document.getElementById('settings-openrouter-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
     },
 
     async _refreshOpenRouter() {
@@ -2725,10 +2754,7 @@
     _setCpStatus(text, kind) {
       const el = document.getElementById('cp-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
     },
 
     // Decide whether the wallet option is even offered, then default to
@@ -2826,10 +2852,7 @@
     _setCuStatus(text, kind) {
       const el = document.getElementById('cu-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
     },
 
     // Paint the current handle. Called from _renderAllSections on every
@@ -2858,9 +2881,14 @@
       if (!username) { this._setCuStatus('Enter a new username.', 'error'); return; }
       if (!currentPassword) { this._setCuStatus('Enter your current password.', 'error'); return; }
 
+      // Everything that can throw goes INSIDE the try, so `finally` is the
+      // only exit and the button cannot be stranded disabled under a
+      // "Saving…" that never resolves — the shape of the reported bug, when
+      // painting that very line was what threw. `btn.disabled = true` is a
+      // property write and cannot.
       btn.disabled = true;
-      this._setCuStatus('Saving…', 'info');
       try {
+        this._setCuStatus('Saving…', 'info');
         const r = await fetch('/api/me/username', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3191,10 +3219,7 @@
     _setLlmGrantsStatus(text, kind) {
       const el = document.getElementById('llm-grants-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
@@ -3398,10 +3423,7 @@
         el.textContent = '';
         return;
       }
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
@@ -3541,10 +3563,7 @@
     _setWalletStatus(text, kind) {
       const el = document.getElementById('wallet-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-      const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : kind === 'ok' ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-500 dark:text-zinc-400';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
