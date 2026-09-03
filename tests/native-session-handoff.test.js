@@ -456,6 +456,31 @@ test('session mint reports native preparation separately from network failure',
         'then try again. Diagnostic: native_session_recovery_uncertain'
     );
 
+    const bridgeFailure = new Error(
+      'prepareForLogin was cancelled because the page changed'
+    );
+    const untypedNative = loadAuthShared({
+      usernode: { isNative: true },
+      NativeChrome: {
+        async prepareForLogin() { throw bridgeFailure; },
+        lastSessionFailure() {
+          return {
+            stage: 'prepare-login',
+            message: bridgeFailure.message,
+            code: null,
+            kind: null,
+          };
+        },
+      },
+    }, async () => { throw new Error('fetch must not run'); });
+    const untypedError = await untypedNative.fetchSessionMint('/api/auth/login')
+      .then(() => null, (error) => error);
+    assert.equal(
+      untypedNative.sessionMintFailureMessage(untypedError),
+      'Secure app session could not be prepared. Force-quit and reopen Usernode, ' +
+        'then try again. Reason: prepareForLogin was cancelled because the page changed'
+    );
+
     const web = loadAuthShared({ usernode: { isNative: false } }, async () => {
       throw new TypeError('Failed to fetch');
     });
