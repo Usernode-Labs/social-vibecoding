@@ -18,7 +18,9 @@
 //      synchronous contract lib/mount-on-reveal.ts gives it;
 //   4. the boot triggers that must fire before the screen is ever opened
 //      (the first-run terms prompt) stay in the shell, not in the chunk;
-//   5. every image copies every chunk, not the entry alone.
+//   5. every image copies every chunk, not the entry alone;
+//   6. a legacy-owned host inside a pane is repainted when the pane mounts,
+//      because deferring the panes moved them past the boot answer.
 //
 // Run with: node --test tests/settings-lazy.test.js
 
@@ -39,6 +41,7 @@ const indexTsx = read(`${SETTINGS_DIR}/index.tsx`);
 const chunkTs = read(`${SETTINGS_DIR}/settings-chunk.ts`);
 const mountTs = read(`${SETTINGS_DIR}/mount.ts`);
 const sectionsTsx = read(`${SETTINGS_DIR}/sections/index.tsx`);
+const aboutTsx = read(`${SETTINGS_DIR}/sections/about.tsx`);
 
 // The `key: default` pairs of an object literal, in order.
 function literalKeys(src, start) {
@@ -204,4 +207,40 @@ test('the chunk is a lazy route chunk: unlisted in the precache, copied by every
   assert.match(read('Dockerfile.kubernetes'), /COPY --chown=node:node --from=shell \/build\/public\/shell\/assets\/ \.\/public\/shell\/assets\//,
     'the Kubernetes image copied shell.js alone, which left every lazy chunk out of it');
   assert.match(read('frontend/vite.config.ts'), /chunkFileNames: 'assets\/shell-\[name\]\.js'/);
+});
+
+// ── 6. A legacy-owned host, repainted when its pane mounts ─────────────
+
+test('Settings → About asks app.js to repaint the platform pill on mount', () => {
+  // The bug this pins, found on the staging preview and reproduced in a
+  // browser: app.js paints #platform-version-pill-slot from /api/version once
+  // at boot and then every 10s, and #1504 made the panes mount on first
+  // reveal. Deferring the module widened the gap between those two enough
+  // that the boot answer always landed BEFORE the host existed — the paint
+  // went nowhere and the row sat blank for up to ten seconds (measured:
+  // 10.4s to paint, against 0.46s before the split). The pane asks for the
+  // answer app.js already has, so mounting after it is no longer a race.
+  const row = aboutTsx.slice(aboutTsx.indexOf('function PlatformVersionRow()'),
+    aboutTsx.indexOf('export function AboutSection()'));
+  assert.match(row, /useIsomorphicLayoutEffect\(\(\) => \{/,
+    'a mount effect, so the paint happens in the same commit that put the host in the document');
+  assert.match(row, /if \(App\?\._lastVersionInfo\) App\.renderPlatformVersionPill\?\.\(App\._lastVersionInfo\);/,
+    "app.js's own last answer, painted the way its prefetch-settled repaint does");
+  assert.match(row, /\}, \[\]\);/, 'once, on mount — the 10s poll owns every later repaint');
+  assert.match(aboutTsx, /<PlatformVersionRow \/>/);
+});
+
+test('the About pane still renders the pill slot EMPTY, as app.js\'s host', () => {
+  // The other half of the same rule: React renders the box and never what
+  // goes in it. A pane that rendered a pill of its own would be a second
+  // owner of that node, and the repaint above would fight it.
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { AboutSection } = loadTsx(`${SETTINGS_DIR}/sections/about.tsx`);
+  const html = renderToHtml(createElement(AboutSection, {}));
+  const slot = html.slice(html.indexOf('id="platform-version-pill-slot"'));
+  const inner = slot.slice(slot.indexOf('>') + 1, slot.indexOf('</span>'));
+  assert.equal(inner.trim(), '', `the slot must render empty, got ${JSON.stringify(inner)}`);
+  assert.ok(!html.includes('drawer-ver drawer-ver--'),
+    'no pill variant class: those are app.js\'s to write');
+  assert.match(html, /id="drawer-row-platform-version"/);
 });
