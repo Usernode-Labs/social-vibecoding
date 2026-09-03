@@ -209,16 +209,55 @@ test('the Activity feed reply box is not filled with the page ground', () => {
 //
 // So the rule is spelled the way the mistake was made: a `classList.add` or
 // `.remove` argument is ONE token. Pass a pair as two arguments.
+//
+// ── Why this first shipped only checking LITERALS, and why it no longer does
+//
+// It read the argument text and skipped anything that was not a quoted
+// string, which is precisely the shape the pairing pass had already left in
+// settings.js seven times over:
+//
+//     const cls = kind === 'error' ? 'text-red-700 dark:text-red-400' : …;
+//     el.classList.add(cls);
+//
+// A variable, so nothing to inspect, so no finding — while every status line
+// on the Settings screen threw on its first write. Change username was the
+// one that got reported: it painted "Saving…", threw on that paint, and so
+// never reached the fetch on the next line, leaving the button disabled under
+// a message that could not resolve. The text landed because textContent is
+// assigned before the classes are, which is what made seven dead forms look
+// like a colour that had not been applied.
+//
+// So the rule follows one hop now: an argument that is a bare identifier is
+// resolved to its `const`/`let` initializer in the same file, and a
+// space-bearing string literal anywhere in that initializer is the finding.
+// One hop is enough for the mistake this guards and shallow enough to need no
+// parser. `toggle`'s second argument is a BOOLEAN, so only its first counts.
 test('no classList argument carries more than one class token', () => {
   const bad = [];
-  const call = /classList\.(?:add|remove|toggle|contains|replace)\(([^()]*)\)/g;
+  // Comments are stripped: this rule is documented in prose above, and prose
+  // that names the broken spelling must not read as an offender.
+  const call = /classList\.(add|remove|toggle|contains|replace)\(([^()]*)\)/g;
+  const multiToken = (text) => /(['"`])[^'"`]*\s[^'"`]*\1/.test(text);
   for (const s of SOURCES) {
-    for (const m of s.text.matchAll(call)) {
-      for (const arg of m[1].split(',')) {
-        const lit = arg.trim().match(/^'([^']*)'$/);
-        if (lit && /\s/.test(lit[1].trim()) === false) continue;
-        if (lit && /\s/.test(lit[1])) {
-          bad.push(`${s.path}:${s.text.slice(0, m.index).split('\n').length}  '${lit[1]}'`);
+    const src = code(s.text);
+    for (const m of src.matchAll(call)) {
+      const args = m[2].split(',').map((a) => a.trim());
+      // toggle(token, force) — the force flag may be any expression.
+      const tokens = m[1] === 'toggle' ? args.slice(0, 1) : args;
+      const line = () => src.slice(0, m.index).split('\n').length;
+      for (const arg of tokens) {
+        const lit = arg.match(/^'([^']*)'$/);
+        if (lit) {
+          if (/\s/.test(lit[1])) bad.push(`${s.path}:${line()}  '${lit[1]}'`);
+          continue;
+        }
+        // One hop: a bare identifier holding a class STRING is the same bug
+        // wearing a name. Anything else (a spread, a ternary of literals, a
+        // template, a boolean) is out of this rule's reach by design.
+        if (!/^[A-Za-z_$][\w$]*$/.test(arg)) continue;
+        const decl = src.match(new RegExp(`(?:const|let|var)\\s+${arg}\\s*=([^;]*);`));
+        if (decl && multiToken(decl[1])) {
+          bad.push(`${s.path}:${line()}  ${arg} = ${decl[1].trim().slice(0, 60)}`);
         }
       }
     }
