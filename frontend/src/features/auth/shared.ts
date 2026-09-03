@@ -71,11 +71,7 @@ interface LegacyWindow {
   Settings?: { logout?(): void };
   NativeChrome?: {
     prepareForLogin?(): Promise<unknown>;
-    lastSessionFailure?(): {
-      stage?: string | null;
-      code?: string | null;
-      kind?: string | null;
-    } | null;
+    lastSessionFailure?(): NativeSessionFailureRecord | null;
   };
   AppView?: {
     mountViewerCover?(
@@ -93,6 +89,13 @@ interface LegacyWindow {
   usernode?: { isNative?: boolean };
   getNodeAddress?(): Promise<string | null>;
   signMessage?(message: string): Promise<{ publicKey: string; signature: string }>;
+}
+
+interface NativeSessionFailureRecord {
+  stage?: string | null;
+  message?: string | null;
+  code?: string | null;
+  kind?: string | null;
 }
 
 /** `window`, with the legacy globals these screens talk to declared. */
@@ -199,22 +202,30 @@ function errorField(error: unknown, key: string): unknown {
     : null;
 }
 
-function nativePreparationDiagnostic(
+function nativePreparationDetails(
   chrome: LegacyWindow['NativeChrome'],
   error: unknown,
-): string | null {
+): { diagnostic: string | null; reason: string | null } {
+  let failure: NativeSessionFailureRecord | null = null;
   try {
-    const failure = chrome?.lastSessionFailure?.();
-    if (failure?.stage === 'prepare-login') {
-      return diagnosticValue(failure.code) || diagnosticValue(failure.kind);
-    }
+    const recorded = chrome?.lastSessionFailure?.();
+    if (recorded?.stage === 'prepare-login') failure = recorded;
   } catch {
     /* use the rejection itself */
   }
-  return (
+  const diagnostic =
+    diagnosticValue(failure?.code) ||
+    diagnosticValue(failure?.kind) ||
     diagnosticValue(errorField(error, 'usernodeCode')) ||
-    diagnosticValue(errorField(error, 'usernodeKind'))
-  );
+    diagnosticValue(errorField(error, 'usernodeKind'));
+  const rawReason = failure?.message ?? errorField(error, 'message');
+  const reason = typeof rawReason === 'string' ? rawReason.trim() : '';
+  return {
+    diagnostic,
+    reason: !diagnostic && reason.length <= 240 && !/[\u0000-\u001f\u007f]/.test(reason)
+      ? reason || null
+      : null,
+  };
 }
 
 export class NativeLoginPreparationError extends Error {
@@ -253,12 +264,15 @@ export async function fetchSessionMint(
     try {
       await chrome.prepareForLogin();
     } catch (error) {
-      const diagnostic = nativePreparationDiagnostic(chrome, error);
+      const { diagnostic, reason } = nativePreparationDetails(chrome, error);
       console.warn('[auth] native login preparation failed', {
         stage: 'prepare-login',
         diagnostic: diagnostic || 'unclassified',
       });
-      throw new NativeLoginPreparationError(diagnostic);
+      throw new NativeLoginPreparationError(
+        diagnostic,
+        reason ? `${NATIVE_LOGIN_PREPARATION_MESSAGE} Reason: ${reason}` : undefined,
+      );
     }
   }
   return fetch(input, init);
