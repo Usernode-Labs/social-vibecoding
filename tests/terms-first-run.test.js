@@ -45,7 +45,13 @@ const dapp = JSON.parse(read('dapp.json'));
 // ─── The trigger module ──────────────────────────────────────────────────
 
 test('the trigger rides the settings bundle, not a new public/js script', () => {
-  assert.match(mountTs, /import '\.\/terms-first-run\.js';/);
+  // From the chassis island, which is in the shell's entry — NOT from
+  // ./mount.ts, which is inside the lazy settings chunk now: a boot listener
+  // that only exists once the screen has been opened would never fire.
+  const indexTsx = read('frontend', 'src', 'features', 'settings', 'index.tsx');
+  assert.match(indexTsx, /import '\.\/terms-first-run\.js';/);
+  assert.doesNotMatch(mountTs, /import '\.\/terms-first-run\.js';/,
+    'the trigger must not ride the lazy chunk');
   // Belt: nothing added it to the service worker's precache either.
   assert.ok(!read('public', 'sw.js').includes('terms-first-run'),
     'no SHELL_ASSETS entry — the module is bundled, not a shell script');
