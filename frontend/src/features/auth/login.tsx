@@ -65,6 +65,8 @@ import {
   hiddenLast,
   isNative,
   legacy,
+  NativeLoginPreparationError,
+  sessionMintFailureMessage,
   useAuthScreensPatch,
 } from './shared';
 
@@ -365,8 +367,8 @@ export function LoginScreen() {
         return;
       }
       finishLogin();
-    } catch {
-      setLoginError('Network error');
+    } catch (error) {
+      setLoginError(sessionMintFailureMessage(error));
     }
   }, []);
 
@@ -478,9 +480,9 @@ export function LoginScreen() {
       }
       setOtpStatus('Signed in!');
       finishLogin();
-    } catch {
+    } catch (error) {
       setOtpStatus(null);
-      setOtpError('Network error');
+      setOtpError(sessionMintFailureMessage(error));
     }
   }, [st]);
 
@@ -536,6 +538,10 @@ export function LoginScreen() {
       fail(verifyData.error || 'Verification failed');
     } catch (e) {
       st.cachedChallenge = null;
+      if (e instanceof NativeLoginPreparationError) {
+        fail(e.message);
+        return;
+      }
       const message = e instanceof Error ? e.message : String(e);
       if (message && message.includes('denied')) fail('Signature request was denied.');
       else fail('Signature failed: ' + message);
@@ -595,6 +601,10 @@ export function LoginScreen() {
       finishLogin();
     } catch (e) {
       setRecoveryStatus(null);
+      if (e instanceof NativeLoginPreparationError) {
+        setRecoveryError(e.message);
+        return;
+      }
       const message = e instanceof Error ? e.message : String(e);
       if (message && message.includes('denied')) {
         setRecoveryError('Signature request was denied.');

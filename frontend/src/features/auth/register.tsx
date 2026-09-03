@@ -26,6 +26,7 @@ import {
   fetchSessionMint,
   finishLogin,
   hiddenLast,
+  sessionMintFailureMessage,
   useAuthScreensPatch,
 } from './shared';
 
@@ -87,8 +88,8 @@ export function RegisterScreen() {
         return;
       }
       finishLogin();
-    } catch {
-      setError('Network error');
+    } catch (error) {
+      setError(sessionMintFailureMessage(error));
     }
   }, []);
 
