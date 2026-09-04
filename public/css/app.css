@@ -901,7 +901,11 @@ html.un-kb .platform-safe-sheet {
   --un-navbar-bg: rgba(255, 255, 255, 0.82);
   --un-radius-card: 12px;
   /* The tile-zoom overlay surface: the app view's screens paint on the
-     body background, so the moving card must match it exactly. */
+     body background, so the moving card must match it exactly. On the
+     wallpaper routes the body's ground is the cream, and the same rule
+     that paints it re-points this at --home-ground (see "The home
+     ground") — otherwise the card zooms open WHITE and snaps to cream
+     when the kit lifts its surface. */
   --un-zoom-bg: var(--bg-primary);
 }
 
@@ -1378,6 +1382,13 @@ html, body {
 body:has(#home-screen:not(.hidden)),
 body:has(#app-view:not(.hidden)) {
   --home-ground: #fffeea;
+  /* The kit's tile-zoom paints the moving #app-view on this (native.js
+     sets its inline background to the variable), and it is read from
+     the body's descendants, so this is where it has to follow the ground:
+     the card that zooms open out of a tile is cream, the same cream the
+     board or the app frame then sits on, and nothing snaps when the kit
+     lifts the surface. */
+  --un-zoom-bg: var(--home-ground);
   --home-star: url("data:image/png;base64,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");
   --home-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.3'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
   background-color: var(--home-ground);
@@ -1395,6 +1406,7 @@ body:has(#app-view:not(.hidden)) {
 .dark body:has(#app-view:not(.hidden)) {
   background-color: #0b0b0c; /* zinc-950, the body's own dark ground */
   background-image: none;
+  --un-zoom-bg: var(--bg-primary);
 }
 /* WIDE VIEWPORTS. The three discs above are the phone frame's, anchored in
    px to its corners, and on a desktop window they shrink into the corners
