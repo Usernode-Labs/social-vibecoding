@@ -168,6 +168,58 @@ test('Docker builds the shell before Tailwind and copies both outputs into the r
     'the image must preserve every generated chunk outside the dev public bind mount');
 });
 
+test('every file the shell bundle imports from outside frontend/ is copied into its stage', () => {
+  // WHY THIS EXISTS. The shell stage's build context is `frontend/` plus a
+  // named file or two — nothing else. An import that climbs out of it
+  // (`../../../../../src/services/countries.json`) resolves in EVERY local
+  // run, because the whole repo is on disk, and in NO image build. Nothing
+  // else in this suite models that context, so the first sign was a staging
+  // preview that never booted: `node frontend/scripts/build-shell.mjs`
+  // returned 1 on fifteen consecutive builds of one proposal while its unit
+  // suite stayed green.
+  //
+  // So the rule is not "never import out of frontend/" — one shared table
+  // beats two copies of 249 country names — it is that anything imported out
+  // of it must be COPIED INTO THE STAGE. This reads the imports and asks the
+  // Dockerfile about each one.
+  const escapes = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+        walk(full);
+        continue;
+      }
+      if (!/\.(ts|tsx|js|jsx|mjs)$/.test(entry.name)) continue;
+      const src = fs.readFileSync(full, 'utf8');
+      for (const m of src.matchAll(/(?:from|import)\s*\(?\s*['"]((?:\.\.\/)+[^'"]+)['"]/g)) {
+        const resolved = path.relative(ROOT, path.resolve(path.dirname(full), m[1]));
+        if (!resolved.startsWith('frontend' + path.sep)) {
+          escapes.push({ file: path.relative(ROOT, full), spec: m[1], resolved });
+        }
+      }
+    }
+  };
+  walk(path.join(ROOT, 'frontend'));
+
+  const shellStage = dockerfile.slice(
+    dockerfile.indexOf('FROM node:22-alpine AS shell'),
+    dockerfile.indexOf('# Stage 2'),
+  );
+  for (const e of escapes) {
+    // The path as the stage would have to name it, with either COPY spelling.
+    const copied = new RegExp(
+      `COPY\\s+${e.resolved.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s`,
+    ).test(shellStage);
+    assert.ok(copied,
+      `${e.file} imports '${e.spec}', which resolves to ${e.resolved} — outside the shell `
+      + "stage's build context. Add `COPY " + e.resolved + ' ./' + e.resolved
+      + '` to the shell stage, or move the file under frontend/. Without it the image build '
+      + 'fails with "Could not resolve" while every local test passes.');
+  }
+});
+
 test('the untracked shell keeps its fixed-name, no-CSS build contract', () => {
   assert.match(viteConfig, /emptyOutDir:\s*true/,
     'each image build must clear old shell outputs before emitting the bundle');

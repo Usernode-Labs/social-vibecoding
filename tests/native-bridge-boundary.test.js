@@ -283,6 +283,32 @@ test('exact-session calls carry both closure-only root and realm claims', async 
   assert.equal(Object.isFrozen(status.runtimeStatus), true);
 });
 
+test('identity-only establishment is admitted without wallet authority', async () => {
+  const response = establishResult();
+  response.identity.accountId = null;
+  response.identity.address = null;
+  response.runtimeStatus = { state: 'notStarted' };
+  const loaded = loadBridge({
+    capabilities: [
+      'privilegedBridgeCapability',
+      'establishNativeSession',
+    ],
+    responseMethods: { establishNativeSession: response },
+  });
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(await establishRealm(loaded))),
+    {
+      protocol: 2,
+      attemptId: ESTABLISH_ATTEMPT,
+      nativeRevision: '7',
+      identity: { participantId: '41', accountId: null, address: null },
+      runtimeStatus: { state: 'notStarted' },
+      receiptStatus: 'committedReady',
+    },
+  );
+});
+
 test('settings state is bound to the exact established native session', async () => {
   const loaded = loadBridge({
     capabilities: [
@@ -334,10 +360,20 @@ test('native establishment rejects widened or non-canonical receipts', async () 
   invalidRuntime.runtimeStatus = {
     state: 'startFailed', validatedCode: 'NOT_CANONICAL',
   };
+  const partialWallet = establishResult();
+  partialWallet.identity.accountId = null;
+  const walletlessRunning = establishResult();
+  walletlessRunning.identity.accountId = null;
+  walletlessRunning.identity.address = null;
+  const walletNotStarted = establishResult();
+  walletNotStarted.runtimeStatus = { state: 'notStarted' };
   const cases = [
     { ...establishResult(), nativeRevision: '01' },
     widenedIdentity,
     invalidRuntime,
+    partialWallet,
+    walletlessRunning,
+    walletNotStarted,
     { ...establishResult(), realmSessionClaim: ' realm-41' },
   ];
 

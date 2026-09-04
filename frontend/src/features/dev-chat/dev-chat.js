@@ -209,8 +209,8 @@ const DevChat = {
         long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
       },
     },
-    'claude-fable-5': {
-      label: 'Fable 5',
+    'claude-fable-5-1': {
+      label: 'Fable 5.1',
       changeSize: {
         short: 'design, taste, and difficult coding',
         long: 'Design and taste (how a screen looks, reads, and feels) plus the most difficult coding work.',
@@ -272,29 +272,82 @@ const DevChat = {
   /**
    * The chat-model picker, as data. Null on every venue that has none.
    *
-   * NAMES ONLY in the composer (#1589). A native select's closed control
-   * shows the selected option's own text, so `modelOptionText`'s guidance
-   * ("Fable 5: design, taste, and difficult coding") set the control's width:
-   * 276px of a 344px strip on a phone, which pushed the label above it and
-   * the credit meter below it — three lines for a row that holds two things.
-   * Names bring it to 89px and the row fits on one line, measured.
+   * TWO SURFACES, and the split is what #1589 found. A native select's
+   * closed control shows the selected option's own text, so
+   * `modelOptionText`'s guidance ("Fable 5.1: design, taste, and difficult
+   * coding") set the control's width: 276px of a 344px strip on a phone,
+   * which pushed the label above it and the credit meter below it — three
+   * lines for a row that holds two things. Names brought it to 89px.
    *
-   * The guidance is not dropped, it stays where there is room for it: the
-   * Generate-proposal picker — the one a first-timer meets, in a dialog, with
-   * a caption under each option — still renders `modelOptionText`, which is
-   * untouched. That is the same split #1353 drew when it took the caption out
-   * of this strip, and the reason nothing restates it here in a title either:
-   * a viewer reading this control has already chosen.
+   * That finding was about the CLOSED control, and `selectedLabel` still
+   * honours it. The picker is the kit's anchored menu now rather than a
+   * <select> (see `openModelSheet`), and a sheet row is a line of its own —
+   * so the blurb comes back on `options`, where it costs nothing and answers
+   * the only question this control is ever asked: which one for what.
+   *
+   * It is `changeSize.short`, not `modelOptionText`: the helper prefixes the
+   * name ("Opus 5: general coding work") and the row already opens with it,
+   * so the sheet joins the two itself. The Generate-proposal picker — the one
+   * a first-timer meets, in a dialog, with a caption under each option —
+   * still renders `modelOptionText`, which is untouched.
    */
   _modelPickerView() {
     if (DevChat._currentVenueId() !== 'usernode-claude') return null;
+    const selected = DevChat.selectedModel;
+    const label = (id) => {
+      const meta = DevChat.MODELS[id];
+      return (meta && meta.label) || id;
+    };
     return {
       options: Object.entries(DevChat.MODELS).map(([id, meta]) => ({
         id,
         label: (meta && meta.label) || id,
+        // Optional on the wire — loadModels() carries changeSize through
+        // only when the server sends it, and a server that omits it leaves
+        // the sheet rendering plain names.
+        blurb: (meta && meta.changeSize && meta.changeSize.short) || '',
       })),
-      selected: DevChat.selectedModel,
+      selected,
+      selectedLabel: label(selected),
     };
+  },
+
+  /**
+   * The model picker's sheet — `openVenueSheet`'s mirror, one screen down.
+   *
+   * The venue control at the top of the session opens the kit's adaptive
+   * menu (a bottom action sheet on touch, an anchored popover on desktop).
+   * This was the only native <select> left beside it, and the two are the
+   * same question asked at different scopes: where this is built, and by
+   * whom. They should not answer in two different idioms.
+   *
+   * The kit sets row labels with textContent, so the blurb and the tick ride
+   * IN the label — the same constraint build-venues.js states at its own
+   * call. The tick trails the row, as it does there, so the two sheets mark
+   * "you are here" the same way.
+   *
+   * No kit, no sheet — exactly what BuildVenues.open does. The kit ships
+   * with the shell (public/usernode-native/v1), so this is the "someone
+   * stripped native.js" case, not a route we serve.
+   */
+  openModelSheet(anchorEl) {
+    const view = DevChat._modelPickerView();
+    if (!view || !view.options.length) return Promise.resolve(null);
+    const kit = (typeof window !== 'undefined' && window.PlatformUI) || null;
+    if (!kit || !kit.hasKit()) return Promise.resolve(null);
+    DevChat._closeSessionOptions();
+    return kit.menu({
+      anchorEl: anchorEl || document.getElementById('dc-model-select') || undefined,
+      title: 'Which model should write this change?',
+      items: view.options.map((o) => ({
+        label: o.label
+          + (o.blurb ? ` \u2014 ${o.blurb}` : '')
+          + (o.id === view.selected ? ' \u2713' : ''),
+        handler: () => {
+          if (o.id !== view.selected) DevChat._onModelPicked(o.id);
+        },
+      })),
+    });
   },
 
   /** The picker's `change`, which used to be an addEventListener per render. */

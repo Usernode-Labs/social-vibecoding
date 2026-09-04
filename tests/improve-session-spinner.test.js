@@ -40,6 +40,7 @@ const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 const DEV_CHAT_LIST = read('frontend/src/features/dev-chat/session-list.tsx');
 const APP_CSS = read('public/css/app.css');
 const MANIFEST = JSON.parse(read('dapp.json'));
+const appManifest = require('../src/services/app-manifest');
 
 /** The `stateOf` table on its own — three branches, one per state. */
 function stateOfBody() {
@@ -154,19 +155,26 @@ test('the Improve busy-row check selects the arc, and no check was added', () =>
     'retargeted with the markup — .animate-pulse now matches nothing there');
   assert.equal(busy[0].path, '/?shot=improve&demo=1#app/usernode-2d5619/dev');
 
-  // The manifest is near its ceiling, so this change retargets rather than
-  // adds — which the `busy.length === 1` above is what actually proves.
+  // …and it RETARGETS rather than adds, which is what the equality above
+  // pins: one check owns the busy mock row, before and after.
   //
-  // This used to read `MANIFEST.tests.length <= 459`, a snapshot of the count
-  // on the day #1633 was written. That number is not a property of #1597: the
-  // manifest was already at 464 when #1633 merged, so the assertion shipped
-  // failing and then blocked the next unrelated proposal that declared a
-  // check. A count freeze cannot express "this change adds none" — only a
-  // diff against the merge base could, and nothing here has one. So pin the
-  // real ceiling instead, the one the platform enforces, and let the
-  // single-owner assertion above carry the intent.
-  const appManifest = require('../src/services/app-manifest');
-  assert.equal(appManifest.readTestsWithMeta(MANIFEST).ceilingDropped, 0,
-    `declared checks (${MANIFEST.tests.length}) passed the `
-    + `${appManifest.MAX_DECLARED_TESTS}-check ceiling; the tail never runs`);
+  // This used to be `MANIFEST.tests.length <= 459` — the manifest's size on
+  // the day #1597 was written, standing in for "near the ceiling, so add
+  // nothing". An absolute count cannot say "THIS change adds none": every
+  // later proposal that declares a check breaks it, whoever wrote it, and
+  // the manifest passed 459 almost immediately. It has been red on main —
+  // and therefore on every proposal opened since — rather than catching
+  // anything.
+  //
+  // The ceiling concern is real and belongs here, so it is stated as the
+  // arithmetic the MAX_DECLARED_TESTS note in services/app-manifest.js
+  // actually documents: the manifest keeps 20 slots clear of the cap, and
+  // crossing that floor is what makes the reader drop checks silently. That
+  // is stable against other people's work, and tests/checks-budget.test.js
+  // asserts the consequence (ceilingDropped === 0) from the other side.
+  const ceiling = appManifest.MAX_DECLARED_TESTS;
+  assert.ok(MANIFEST.tests.length <= ceiling - 20,
+    `declared checks are at ${MANIFEST.tests.length} of ${ceiling}; the `
+    + 'manifest keeps 20 slots clear, and raising the cap is a coupled '
+    + 'change with TESTS_DEADLINE_MS — see services/app-manifest.js');
 });
