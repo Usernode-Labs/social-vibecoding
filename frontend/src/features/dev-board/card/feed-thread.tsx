@@ -91,15 +91,16 @@ export function feedThreadPreview(rows: any[]): {
   };
 }
 
-function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
+export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
   return (
     <div className="flex gap-1.5 text-xs leading-snug">
       <span className="shrink-0 font-medium text-zinc-700 dark:text-zinc-300">{m.author}</span>
       {/* Plain text, never markdown and never innerHTML. This is the one
           surface in the feed that renders something a person typed, and it
           renders it as a text child so React escapes it — the topic page is
-          where the full, formatted thread lives. */}
-      <span className="min-w-0 flex-1 text-zinc-600 dark:text-zinc-400 break-words">{m.content}</span>
+          where the full, formatted thread lives. `whitespace-pre-wrap` keeps
+          the line breaks the multiline composer deliberately accepts. */}
+      <span className="min-w-0 flex-1 whitespace-pre-wrap text-zinc-600 dark:text-zinc-400 break-words">{m.content}</span>
       <span className="shrink-0 text-zinc-400 dark:text-zinc-500">{relTime(m.createdAt)}</span>
     </div>
   );
