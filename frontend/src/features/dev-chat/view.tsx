@@ -24,7 +24,12 @@ const HINT_TEXT
 
 /** The composer bar's two class runs, as complete literals for Tailwind. */
 const BAR = {
-  framed: 'shrink-0 platform-safe-bar border-t border-zinc-200 dark:border-zinc-800 p-2',
+  // Streamlined Concept: no `border-t` any more. The composer is a CARD that
+  // floats on the pane's ground and carries its own elevation, so a rule
+  // above it would draw a second edge across a shape that already has one.
+  // The padding narrows with it — the card's own radius does the insetting
+  // the old bar did with a full `p-2`.
+  framed: 'shrink-0 platform-safe-bar px-3 pb-3 pt-1',
   bare: 'shrink-0 platform-safe-bar',
 } as const;
 

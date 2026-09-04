@@ -196,12 +196,22 @@ test('a pane with no saved width renders none, rather than a zero', () => {
   assert.match(open, /id="dc-spec-viewer" class="dc-spec-viewer dc-spec-viewer-open"><\/div>/);
 });
 
-test('the composer bar keeps the safe-area inset when it drops its border', () => {
+test('the composer bar keeps the safe-area inset when it drops its padding', () => {
   // #1348: in a launchpad the composer is hidden and the venue note is
-  // usually absent, so the border and padding go — an empty bordered strip
-  // reads as a broken composer. The INSET is not part of that: this is still
-  // the bottom of the screen.
-  assert.match(html(SESSION), /id="dc-composer-bar" class="shrink-0 platform-safe-bar border-t/);
+  // usually absent, so the framing goes — an empty framed strip reads as a
+  // broken composer. The INSET is not part of that: this is still the bottom
+  // of the screen.
+  //
+  // Streamlined Concept retired the `border-t`. The composer is a CARD that
+  // floats on the pane's ground and carries its own elevation, so a rule
+  // above it drew a second edge across a shape that already had one. What is
+  // left is padding, and it must stay ASYMMETRIC — a narrow top, a full
+  // bottom — because the card's own radius does the insetting the old bar did
+  // with a uniform `p-2`.
+  assert.match(html(SESSION),
+    /id="dc-composer-bar" class="shrink-0 platform-safe-bar px-3 pb-3 pt-1"/);
+  assert.doesNotMatch(html(SESSION), /id="dc-composer-bar"[^>]*border-t/,
+    'the card draws its own edge; a rule above it would be a second one');
   assert.match(html({ ...SESSION, barEmpty: true }),
     /id="dc-composer-bar" class="shrink-0 platform-safe-bar"/);
 });

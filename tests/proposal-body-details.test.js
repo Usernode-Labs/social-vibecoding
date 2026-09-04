@@ -8,7 +8,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { proposalBodyHtml, proposalCardHtml } = require('./lib/dev-card-html');
+const {
+  detailsHtml, proposalBodyHtml, proposalCardHtml,
+} = require('./lib/dev-card-html');
 
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'), 'utf8'
@@ -84,6 +86,55 @@ test('both live and completed proposal rows include the full PR body', () => {
     /body\.summaryHtml[\s\S]*?body\.proposalBody[\s\S]*?body\.details/,
     'and the component draws them in that order'
   );
+});
+
+test('an imported Underway topic reuses proposal details without opening voting', () => {
+  const AppView = makeAppView((md) => `<safe-markdown>${md}</safe-markdown>`);
+  const item = {
+    id: 88,
+    status: 'active',
+    source: 'imported',
+    username: 'bruno',
+    imported_pr_author: 'contributor',
+    pr_url: 'https://github.example/pull/88',
+    check_state: 'failing',
+    checks_checked_at: '2026-09-04T12:00:00Z',
+    test_results: [{
+      name: 'Imported proposal details',
+      path: '/app/demo/dev',
+      status: 'fail',
+      failureReason: 'assignee chip was missing',
+    }],
+  };
+  const view = AppView._proposalDetailsView(item);
+  assert.equal(view.help, false);
+  assert.equal(view.helpHint, false);
+  assert.equal(view.roster, null);
+  assert.equal(view.lockedNote, null);
+
+  const html = detailsHtml(AppView, item);
+  assert.match(html, /View PR on GitHub/);
+  assert.match(html, /authored by.*contributor/);
+  assert.match(html, /checks and proposal details are available now/);
+  assert.match(html, /voting begins only after it is put up for vote/);
+  assert.match(html, /Imported proposal details/);
+  assert.match(html, /assignee chip was missing/);
+  assert.doesNotMatch(html, /How voting works|Who can vote/);
+
+  const promoted = AppView._proposalDetailsView({ ...item, status: 'promoted' });
+  assert.equal(promoted.help, true);
+  assert.equal(promoted.roster.phase, 'loading');
+});
+
+test('the imported session topic renders summary, PR body and check details in order', () => {
+  const sessionBranch = APP_VIEW_SRC.slice(
+    APP_VIEW_SRC.indexOf("} else if (t.kind === 'session')"),
+    APP_VIEW_SRC.indexOf('\n    } else {', APP_VIEW_SRC.indexOf("} else if (t.kind === 'session')") + 1)
+  );
+  assert.match(sessionBranch,
+    /body = imported[\s\S]*?summaryHtml: AppView\._proposalSummaryHtml\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/);
+  assert.doesNotMatch(sessionBranch, /castVote|_cardVoteButtonSpecs|voteButtonsHtml/,
+    'metadata reuse must not pull voting controls into Underway');
 });
 
 test('the proposal staging fixture carries a reviewable full body', () => {
