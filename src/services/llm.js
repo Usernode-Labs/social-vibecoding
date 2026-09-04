@@ -10,8 +10,8 @@ const llmTelemetry = require('./llm-telemetry');
 // DEFAULT_MODEL (the user-facing allowlist default).
 const DEFAULT_MODEL = 'claude-opus-5';
 
-// ── Fable 5 classifier fallback ─────────────────────────────────────
-// claude-fable-5 requests run through Anthropic's safety classifiers,
+// ── Fable classifier fallback ───────────────────────────────────────
+// claude-fable-5-1 requests run through Anthropic's safety classifiers,
 // which can decline a request (HTTP 200 + stop_reason 'refusal' +
 // stop_details.category). Recovery is opt-in and PER REQUEST: the
 // server-side fallback beta re-serves a declined request on the fallback
@@ -23,7 +23,7 @@ const DEFAULT_MODEL = 'claude-opus-5';
 // NOTE: any future direct SDK use outside this module bypasses the
 // fallback config, the detection, and the billing attribution — route
 // new Messages calls through streamChat.
-const FABLE_MODEL = 'claude-fable-5';
+const FABLE_MODEL = 'claude-fable-5-1';
 const FALLBACK_TARGET_MODEL = 'claude-opus-5';
 const FALLBACK_BETA = 'server-side-fallback-2026-06-01';
 
@@ -1403,15 +1403,29 @@ function buildQuickReplyContext({ appName, state, transcriptTail, replyText } = 
   return parts.join('\n\n');
 }
 
-// Rung 2 — the FORCED pills-only continuation.
+// Rung 2 — the pills-only continuation.
 //
 // `tool` is SUGGEST_REPLIES_TOOL passed in from routes/sessions.js so the
 // schema stays defined exactly once, at the place that also sanitizes its
-// input. tool_choice pins that one tool, which means the response is a lone
-// tool_use with no text block — exactly what we want here, because the
-// user-visible text was already produced and streamed by the first call.
+// input. The response we want is a lone tool_use with no text block, because
+// the user-visible text was already produced and streamed by the first call.
 // No tool_result round-trip is involved, so the dangling-tool_use 400 that
 // a full-context replay has to handle cannot occur.
+//
+// IT USED TO FORCE THE CALL — `tool_choice: { type: 'tool', name }` — and
+// that is a 400 on Fable 5.1, which removed forced tool use (`any` and
+// `tool` both). `runModel` is THE TURN'S OWN MODEL, so once the catalogue's
+// fable entry became claude-fable-5-1 this rung would have started failing
+// for every Fable session — and failing INVISIBLY, because it throws and
+// resolveTurnPills catches and drops to the next rung. Pills would simply
+// have got quietly worse on one model.
+//
+// The documented replacement is `auto` plus an instruction naming the tool
+// and `strict: true` to keep the arguments schema-valid. The instruction was
+// already in the system prompt below ("Call <tool> now with those pills, and
+// nothing else"), which is what makes this a swap rather than a rewrite: the
+// only thing lost is the API's guarantee that the call happens, and the
+// caller already treats "no tool_use came back" as this rung's failure.
 //
 // Returns { replies (RAW tool input, for the caller's sanitizer), usage,
 // model }. THROWS when no tool_use came back (refusal, max_tokens
@@ -1436,8 +1450,11 @@ ${rules || ''}`;
       max_tokens: 300,
       system,
       messages: [{ role: 'user', content: context }],
-      tools: [tool],
-      tool_choice: { type: 'tool', name: tool.name },
+      // `strict` on the tool, not on tool_choice — it is a top-level field of
+      // the tool definition, and it is what replaces the forced call's
+      // schema guarantee.
+      tools: [{ ...tool, strict: true }],
+      tool_choice: { type: 'auto' },
     },
     requestOptions: signal ? { signal } : undefined,
     passRequestOptions: true,
@@ -1447,7 +1464,7 @@ ${rules || ''}`;
   });
 
   const call = (resp.content || []).find((b) => b.type === 'tool_use' && b.name === tool.name);
-  if (!call) throw new Error('Forced suggest_replies call returned no tool_use');
+  if (!call) throw new Error('suggest_replies continuation returned no tool_use');
   return { replies: call.input, usage: resp.usage, model: resp.model || runModel };
 }
 

@@ -160,7 +160,7 @@ test('recommended-model retry records two correlated physical attempts', async (
   await withTelemetrySink(async (rows) => {
     const client = streamClient([
       finalMessage({
-        model: 'claude-fable-5',
+        model: 'claude-fable-5-1',
         stop_reason: 'refusal',
         stop_details: { recommended_model: 'claude-opus-5' },
         content: [],
@@ -169,7 +169,7 @@ test('recommended-model retry records two correlated physical attempts', async (
       finalMessage({ model: 'claude-opus-5' }),
     ]);
     await withClient(client, () => llm.streamChat({
-      messages: [], systemPrompt: 's', model: 'claude-fable-5',
+      messages: [], systemPrompt: 's', model: 'claude-fable-5-1',
       telemetryContext: { component: 'mayor_phase_1' },
     }));
     assert.equal(client.calls.length, 2);
@@ -187,7 +187,7 @@ test('server-side fallback iterations become separate model-invocation events', 
     const response = finalMessage({
       model: 'claude-opus-5',
       content: [
-        { type: 'fallback', from: { model: 'claude-fable-5' }, to: { model: 'claude-opus-5' } },
+        { type: 'fallback', from: { model: 'claude-fable-5-1' }, to: { model: 'claude-opus-5' } },
         { type: 'text', text: 'served by fallback' },
       ],
       usage: {
@@ -195,7 +195,7 @@ test('server-side fallback iterations become separate model-invocation events', 
         output_tokens: 8,
         iterations: [
           {
-            type: 'message', model: 'claude-fable-5',
+            type: 'message', model: 'claude-fable-5-1',
             input_tokens: 10, cache_read_input_tokens: 4,
             cache_creation_input_tokens: 2, output_tokens: 1,
           },
@@ -209,13 +209,13 @@ test('server-side fallback iterations become separate model-invocation events', 
     });
     const client = streamClient([response]);
     await withClient(client, () => llm.streamChat({
-      messages: [], systemPrompt: 's', model: 'claude-fable-5',
+      messages: [], systemPrompt: 's', model: 'claude-fable-5-1',
       telemetryContext: { component: 'headless_decision' },
     }));
     assert.equal(client.calls.length, 1, 'provider API request shape is unchanged');
     assert.equal(rows.length, 2, 'two provider model iterations are measured');
-    assert.deepEqual(rows.map((row) => row.requested_model), ['claude-fable-5', 'claude-fable-5']);
-    assert.deepEqual(rows.map((row) => row.served_model), ['claude-fable-5', 'claude-opus-5']);
+    assert.deepEqual(rows.map((row) => row.requested_model), ['claude-fable-5-1', 'claude-fable-5-1']);
+    assert.deepEqual(rows.map((row) => row.served_model), ['claude-fable-5-1', 'claude-opus-5']);
     assert.deepEqual(rows.map((row) => row.input_tokens), [10, 20]);
     assert.deepEqual(rows.map((row) => row.cache_read_input_tokens), [4, 6]);
     assert.equal(rows[0].duration_ms, null, 'enclosing duration is not duplicated');

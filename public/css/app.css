@@ -6210,22 +6210,42 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 .dc-card-row > .dc-row-btn:first-of-type { margin-left: -4px; }
 
-/* The chat-model picker, stripped to text plus the caret its sibling draws.
-   `appearance: none` is what removes the native box AND the native caret, so
-   the ChevronDownIcon beside it is not a second one. */
+/* The chat-model picker, stripped to its name plus a caret.
+
+   It is a <button> that opens the kit's menu now, not a <select>
+   (composer.tsx). `appearance: none` stays because a button has a native box
+   of its own to remove, and the caret has moved INSIDE the control — with no
+   native dropdown arrow to avoid duplicating, there was no longer a reason
+   for half of it to be unclickable. Hence the flex row here, which the
+   select could not have had. */
 .dc-model-select {
   appearance: none;
   -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   background: none;
   border: 0;
   padding: 0;
   max-width: 100%;
+  min-width: 0;
   cursor: pointer;
-  text-overflow: ellipsis;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
-/* The caret is a sibling of the <select>, not inside it, so it inherits from
-   this row rather than from the field — which left it invisible in dark mode
-   until this said otherwise. */
+/* The name is what truncates — the caret must not, or the control loses the
+   only thing that says it opens. */
+.dc-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dc-model-select > svg { flex: none; }
+/* The caret sits inside the button now, but this rule still earns its place:
+   it is what gives the row its colour in dark mode, where the caret was
+   invisible until it stopped inheriting from the field. */
 .dc-venue-detail-inline {
   display: inline-flex;
   align-items: center;
@@ -6589,6 +6609,81 @@ span.gc-vote-btn-icon { cursor: default; }
 
 .dc-session-body { /* row layout for chat + viewer */
   flex-direction: row;
+}
+
+/* ── The dev chat's three-layer lift ──────────────────────
+   The move a running app already makes, repeated once per layer. A
+   running app's sheet (#app-frame-host) rounds its TOP two corners over
+   the platform header's ground, so the header shows through a notch at
+   each shoulder. Here the session strip does that over the page
+   wallpaper, and the session sheet does it again over the strip: three
+   surfaces, each one revealing a shoulder of the one above it.
+
+   The geometry is #app-frame-host's, to the token — a 28px top radius, a
+   1px hairline on the TOP EDGE ONLY, and the deck's two-layer blue-black
+   shadow. Read that block for why the hairline is `border-top` and not a
+   full border: these sheets are as wide as the screen and run off the
+   bottom, so the top is the only side that is an edge of anything.
+
+   Neither layer clips to its own radius. The shoulder of a sheet is the
+   area INSIDE its border box but OUTSIDE its arc, so `overflow: hidden`
+   would remove precisely the thing this is for. */
+.dc-lift {
+  border-radius: 1.75rem 1.75rem 0 0;
+  border-top: 1px solid var(--app-sheet-line);
+  box-shadow:
+    0 6px 12px -6px var(--app-sheet-shadow-near),
+    0 8px 24px -4px var(--app-sheet-shadow-far);
+  /* BOTH LAYERS ARE POSITIONED, and that is what puts the session sheet
+     ON the strip rather than under it. Positioned siblings paint after
+     unpositioned ones and among themselves in tree order, so with only
+     one of the two positioned the strip would paint over the sheet —
+     drawing its own bottom edge as a hard line across it and hiding the
+     very corners this is for. No z-index: tree order already says it. */
+  position: relative;
+}
+
+/* The two surfaces, in the platform's own tokens: the strip is the
+   secondary ground and the sheet is the primary one, the same pairing a
+   card gets on a page. Before this the whole screen sat on the bare
+   wallpaper. */
+.dc-lift-strip { background-color: var(--bg-secondary); }
+.dc-lift-session { background-color: var(--bg-primary); }
+
+/* THE OVERLAP MUST BE A FULL RADIUS, and it has to come from whatever is
+   directly above the sheet.
+
+   The sheet's arc reaches 28px down before it meets the sheet's own left
+   and right edges. If the layer above stops at the sheet's top edge, the
+   page wallpaper reappears through those 28px of shoulder and the effect
+   inverts — the sheet reads as a hole in the page rather than as a card
+   on the strip. So the layer above extends one full radius DOWN BEHIND
+   the sheet, as surface that exists only to be covered and to show
+   through the shoulders.
+
+   `:has(+ .dc-session-body)` rather than a rule on the strip, because the
+   strip is not always the element above: #dc-banners is `display: contents`
+   (see view.tsx), so a sync / credits / new-change banner is itself a flex
+   child of #dc-view and takes that place whenever one is up. The extension
+   inherits its background-color from whichever element it belongs to, so
+   the shoulders show the strip's grey normally and the banner's tint when
+   a banner is the layer being sat on — which is the honest answer either
+   way.
+
+   It is a pseudo-element, NOT padding plus a negative margin. Padding
+   would have to be re-derived for every element that can occupy this slot
+   (the strip and four banner shells, each with its own vertical padding),
+   and a negative margin would drag the next sibling up with it. This
+   takes no layout at all. */
+#dc-view > :has(+ .dc-session-body) { position: relative; }
+#dc-view > :has(+ .dc-session-body)::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 1.75rem;
+  background-color: inherit;
 }
 
 .dc-chat-pane {

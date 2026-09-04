@@ -161,7 +161,9 @@ test('every id and class the skeleton emitted still renders', () => {
     'dc-messages', 'dc-composer-bar', 'dc-spec-resizer', 'dc-spec-viewer',
     'dc-staging-resizer', 'dc-staging-panel',
   ]) assert.ok(out.includes(`id="${id}"`), `${id} is still in the document`);
-  assert.match(out, /class="dc-session-body flex-1 flex min-h-0"/);
+  // The lift classes are ADDED to this run, not a rewrite of it — the
+  // legacy modules and dapp.json's declared checks select on it.
+  assert.match(out, /class="dc-session-body flex-1 flex min-h-0 dc-lift dc-lift-session"/);
   assert.match(out, /id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0"/);
   assert.match(out, /id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"/);
   // `display: contents` — #dc-view is a flex column and each banner has to
@@ -252,27 +254,61 @@ test('the header ELEMENT keeps a constant className, because the kit writes one'
   assert.match(tag, /className="[^"{]*"/);
 });
 
-test('the strip curves its bottom corners like the bar above it (#1588)', () => {
-  // Two bars stack on this screen and only one of them was shaped. The
-  // platform header curves its bottom corners away so the page ground shows
-  // through two notches; this strip sits directly under it and was square.
-  // Same token on both, so they cannot drift apart.
+test('the strip and the session sheet each lift off the layer above (three-layer)', () => {
+  // WHAT REPLACED #1588. That change gave this strip the platform header's
+  // OWN shape — `rounded-b-2xl`, bottom corners curved away — because it was
+  // the second bar on the screen and the first one was shaped. It is the
+  // middle of three surfaces now: a running app rounds its TOP corners over
+  // the header's ground (#app-frame-host), and the same move is made twice
+  // more here, so the strip shows the wallpaper at its shoulders and the
+  // session sheet shows the strip at its.
+  //
+  // Both layers therefore ask for the geometry BY CLASS. app.css owns it, in
+  // #app-frame-host's own tokens, so the three cannot drift apart the way two
+  // hand-copied `rounded-b-2xl`s could — which is what the superseded version
+  // of this test was guarding by hand.
   const at = VIEW_TSX.indexOf('id="dc-session-header"');
   const tag = VIEW_TSX.slice(at, VIEW_TSX.indexOf('>', at));
-  // #1571 doubled the radius on both bars together. The token is asserted
-  // rather than merely "some rounded-b-*" so that enlarging one bar and not
-  // the other fails here, which is the drift this test exists to catch.
-  assert.match(tag, /rounded-b-2xl/);
-  const HEADER = fs.readFileSync(
-    path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'platform-header.tsx'),
-    'utf8',
-  );
-  assert.match(HEADER, /rounded-b-2xl -mb-2/, 'which is the header\'s own radius');
-  // The header's `-mb-2` is NOT copied: it exists to make the screen below it
-  // read as rounded-topped, and below this strip is the transcript scroller.
-  assert.doesNotMatch(tag, /-mb-2/);
-  // And nothing may clip the corners' contents — same rule as the header.
+  assert.match(tag, /\bdc-lift dc-lift-strip\b/);
+  assert.doesNotMatch(tag, /rounded-b-2xl/, 'the bottom-corner shape is gone');
+  assert.match(VIEW_TSX, /dc-session-body[^"]*\bdc-lift dc-lift-session\b/);
+
+  const CSS = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const lift = CSS.slice(CSS.indexOf('\n.dc-lift {'));
+  const frame = CSS.slice(CSS.indexOf('\n#app-frame-host {'));
+  const radius = (block) => (block.match(/border-radius: ([^;]+);/) || [])[1];
+  assert.equal(radius(lift), radius(frame),
+    'the two layers take the running app\'s radius, not one of their own');
+  // Neither layer may clip: a sheet's shoulder is the area INSIDE its border
+  // box and OUTSIDE its arc, so `overflow: hidden` removes exactly the thing
+  // this is for. Same rule the header states for itself.
   assert.doesNotMatch(tag, /overflow-hidden/);
+  assert.doesNotMatch(
+    lift.slice(0, lift.indexOf('\n.dc-lift-strip')), /overflow: hidden/);
+});
+
+test('the layer above the sheet extends a full radius behind it', () => {
+  // At anything less the sheet's 28px arc runs past the bottom of the layer
+  // above and the page wallpaper reappears through the shoulders — which
+  // inverts the effect: the sheet reads as a hole in the page rather than a
+  // card on the strip.
+  //
+  // It hangs off `:has(+ .dc-session-body)` because the strip is not always
+  // the element above. #dc-banners is `display: contents`, so a sync /
+  // credits / new-change banner is itself a flex child of #dc-view and takes
+  // that place whenever one is up.
+  const CSS = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const at = CSS.indexOf('#dc-view > :has(+ .dc-session-body)::after');
+  assert.ok(at > 0, 'the extension rule is declared');
+  const rule = CSS.slice(at, CSS.indexOf('}', at));
+  assert.match(rule, /height: 1\.75rem;/, 'one full radius, the same token');
+  assert.match(rule, /background-color: inherit;/,
+    'so the shoulders show the strip normally and a banner\'s tint when one '
+    + 'is up — whichever element is actually being sat on');
+  assert.match(VIEW_TSX, /id="dc-banners" className="contents"/,
+    'which is only true while the banners are `display: contents`');
 });
 
 // ── 4. #194's hint, which used to be a second author ───────────────────

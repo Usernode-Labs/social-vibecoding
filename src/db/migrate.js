@@ -4007,14 +4007,14 @@ async function seedStagingSyncActivity(pool, config) {
         `INSERT INTO chat_session_messages (session_id, role, content, metadata)
          VALUES ($1, 'system', $2, $3)`,
         [SESSION_ID,
-         'Fable 5 declined part of this request (safety classifier: cyber) — it was completed by Opus 5.',
-         JSON.stringify({ modelFallback: { requested: 'claude-fable-5', served: 'claude-opus-5', category: 'cyber' } })]
+         'Fable 5.1 declined part of this request (safety classifier: cyber) — it was completed by Opus 5.',
+         JSON.stringify({ modelFallback: { requested: 'claude-fable-5-1', served: 'claude-opus-5', category: 'cyber' } })]
       );
       await pool.query(
         `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
          VALUES ($1, $2, $3, 'model_fallback', $4::jsonb)`,
         [owner.id, appId, SESSION_ID,
-         JSON.stringify({ requested: 'claude-fable-5', served: 'claude-opus-5', category: 'cyber', source: 'staging-seed' })]
+         JSON.stringify({ requested: 'claude-fable-5-1', served: 'claude-opus-5', category: 'cyber', source: 'staging-seed' })]
       );
     }
 
