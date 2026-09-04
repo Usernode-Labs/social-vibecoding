@@ -5185,11 +5185,15 @@
         !/^[1-9][0-9]*$/.test(value.participantId)) {
       throw new Error("native identity participantId is invalid");
     }
+    var walletless = value.accountId === null && value.address === null;
+    if (!walletless && (value.accountId === null || value.address === null)) {
+      throw new Error("native identity wallet fields must be present together");
+    }
     return Object.freeze({
       participantId: value.participantId,
-      accountId: requireCanonicalString(value.accountId,
+      accountId: walletless ? null : requireCanonicalString(value.accountId,
         "native identity accountId"),
-      address: requireCanonicalString(value.address,
+      address: walletless ? null : requireCanonicalString(value.address,
         "native identity address"),
     });
   }
@@ -5198,9 +5202,9 @@
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new Error("runtimeStatus is invalid");
     }
-    if (value.state === "running") {
+    if (value.state === "running" || value.state === "notStarted") {
       requireExactObject(value, ["state"], "runtimeStatus");
-      return Object.freeze({ state: "running" });
+      return Object.freeze({ state: value.state });
     }
     requireExactObject(value, ["state", "validatedCode"], "runtimeStatus");
     if (value.state !== "startFailed" ||
@@ -5234,6 +5238,10 @@
     }
     var identity = requireNativeIdentity(value.identity);
     var runtimeStatus = requireRuntimeStatus(value.runtimeStatus);
+    if ((identity.accountId === null) !==
+        (runtimeStatus.state === "notStarted")) {
+      throw new Error("native identity and runtimeStatus are inconsistent");
+    }
     var publicStatus = Object.freeze({
       protocol: 2,
       attemptId: attemptId,
