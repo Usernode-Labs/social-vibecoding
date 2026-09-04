@@ -66,6 +66,10 @@ interface LegacyWindow {
     enterAuthed?(user: unknown): void;
     enterAnonymous?(): Promise<void> | void;
     clearSessionSnapshot?(): void;
+    // Everything clearSessionSnapshot drops, plus the shell chrome snapshot
+    // and the service worker's cached API responses. Called by the
+    // stale-session recovery in fetchSessionMint.
+    _dropCachedSession?(): void;
     restoreFromHash?(): void;
   };
   Settings?: { logout?(): void };
@@ -243,38 +247,114 @@ export function sessionMintFailureMessage(error: unknown): string {
 }
 
 /**
+ * Runs the native side of the session-mint boundary: an anonymous native
+ * shell closes, drains and revokes any privately retained native session
+ * before ANY ordinary mint request goes out — including the retry the
+ * stale-session recovery below makes, which is a second such request.
+ */
+async function prepareNativeMint(w: LegacyWindow): Promise<void> {
+  if (w.usernode?.isNative !== true) return;
+  const chrome = w.NativeChrome;
+  if (!chrome || typeof chrome.prepareForLogin !== 'function') {
+    throw new NativeLoginPreparationError(
+      null,
+      'This Usernode app version must be updated for secure sign-in',
+    );
+  }
+  try {
+    await chrome.prepareForLogin();
+  } catch (error) {
+    const { diagnostic, reason } = nativePreparationDetails(chrome, error);
+    console.warn('[auth] native login preparation failed', {
+      stage: 'prepare-login',
+      diagnostic: diagnostic || 'unclassified',
+    });
+    throw new NativeLoginPreparationError(
+      diagnostic,
+      reason ? `${NATIVE_LOGIN_PREPARATION_MESSAGE} Reason: ${reason}` : undefined,
+    );
+  }
+}
+
+/** The API's code for "a live session already exists on this cookie". */
+const LOGOUT_REQUIRED_CODE = 'logout_required';
+
+/**
+ * A response whose JSON body has already been read, handed back so the
+ * caller's own `await res.json()` still works. Only built on the 409 path,
+ * where the body has to be inspected before the response can be returned.
+ */
+function replayed(res: Response, body: unknown): Response {
+  return {
+    ok: false,
+    status: res.status,
+    async json() { return body; },
+  } as unknown as Response;
+}
+
+/**
+ * Ends the session the server still holds for this browser, so the
+ * credentials that were just typed can be exchanged for a new one. Uses the
+ * ordinary logout endpoint rather than a bare session delete: that is what
+ * atomically revokes the native credentials bound to the same incarnation.
+ * Returns false when the server would not let go, in which case the original
+ * 409 is what the caller reports.
+ */
+async function clearStaleSession(w: LegacyWindow): Promise<boolean> {
+  try {
+    const res = await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    if (!res.ok) return false;
+  } catch {
+    return false;
+  }
+  // The same residue an explicit sign-out drops: the display-only session
+  // snapshot, the remembered shell chrome, and the service worker's cached
+  // API responses (which are per-URL, not per-user).
+  try { w.App?._dropCachedSession?.(); } catch { /* nothing stored */ }
+  return true;
+}
+
+/**
  * Sends an ordinary session-mint request only after a native anonymous shell
  * has closed, drained, and revoked any privately retained native session.
- * Desktop browsers have no native authority, while an already-live web
- * session is rejected centrally by the API and must use explicit logout.
+ * Desktop browsers have no native authority.
+ *
+ * ── The stale-session dead end (#1608) ────────────────────────────────
+ *
+ * The API refuses to mint a second session onto a cookie that still names a
+ * live one (`409 logout_required`, src/routes/auth.js). That boundary is
+ * right — it is what keeps the native A -> B hand-off ordered — but it was
+ * reported from a shell that had NO sign-out to offer: the browser was
+ * looking at the sign-in screen, so there was no Settings screen to reach,
+ * and the message asked for the one action the user could not perform.
+ *
+ * So when the shell is anonymous, the 409 is not a refusal to relay, it is a
+ * repair: sign the stale session out and send the credentials again. A live
+ * `App.user` keeps the original message, because that viewer really can
+ * reach Settings and the explicit flow is the one the native protocol wants.
  */
 export async function fetchSessionMint(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
   const w = legacy();
-  if (w.usernode?.isNative === true) {
-    const chrome = w.NativeChrome;
-    if (!chrome || typeof chrome.prepareForLogin !== 'function') {
-      throw new NativeLoginPreparationError(
-        null,
-        'This Usernode app version must be updated for secure sign-in',
-      );
-    }
-    try {
-      await chrome.prepareForLogin();
-    } catch (error) {
-      const { diagnostic, reason } = nativePreparationDetails(chrome, error);
-      console.warn('[auth] native login preparation failed', {
-        stage: 'prepare-login',
-        diagnostic: diagnostic || 'unclassified',
-      });
-      throw new NativeLoginPreparationError(
-        diagnostic,
-        reason ? `${NATIVE_LOGIN_PREPARATION_MESSAGE} Reason: ${reason}` : undefined,
-      );
-    }
-  }
+  await prepareNativeMint(w);
+  const res = await fetch(input, init);
+  if (res.status !== 409) return res;
+
+  let body: unknown = null;
+  try { body = await res.json(); } catch { body = null; }
+  const code = (body as { code?: unknown } | null)?.code;
+  if (code !== LOGOUT_REQUIRED_CODE || hasSession()) return replayed(res, body);
+
+  if (!(await clearStaleSession(w))) return replayed(res, body);
+  // A retry is an ordinary mint request too, so it re-runs the native
+  // preparation. `init.body` is a string at every call site, which is what
+  // makes replaying it safe.
+  await prepareNativeMint(w);
   return fetch(input, init);
 }
 
