@@ -22,8 +22,6 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   EllipsisVerticalIcon,
-  SearchIcon,
-  TrophyOutlineIcon,
 } from '@/components/ui/icons';
 
 import type { PanelStamps } from '../panels-store';
@@ -94,13 +92,18 @@ export function stampProps(stamps: PanelStamps | undefined) {
  * Sized and coloured as the block titles it replaces (`text-[0.9375rem]`,
  * zinc-500 — the shell's secondary ink), so the type itself is a MOVE rather
  * than a restyle.
+ *
+ * THE HOMESCREEN DESIGN then restyled it: 20px bold in the primary ink, the
+ * area title rather than a caption, with the area's link beside it at 16px
+ * medium in the brand periwinkle (--brand-ink) and no glyph in front of it.
+ * The row's shape — label, link, ⋮ — is unchanged.
  */
 export function SectionHeading({ children, action }: {
   children: ReactNode;
   action?: ReactNode;
 }) {
   return (
-    <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-[0.9375rem] leading-tight text-zinc-500 dark:text-zinc-500">
+    <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-[1.25rem] font-bold leading-tight text-zinc-900 dark:text-zinc-100">
       <span className="min-w-0 flex-1 truncate whitespace-nowrap">{children}</span>
       {action}
     </h2>
@@ -120,7 +123,7 @@ export function PanelMenuButton({ panelKey }: { panelKey: string }) {
   return (
     <button
       type="button"
-      className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none dark:text-zinc-400"
+      className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-[color:var(--brand-ink)] opacity-60 hover:opacity-100 leading-none"
       data-panel-key={panelKey}
       aria-haspopup="menu"
       title="Widget options"
@@ -147,7 +150,7 @@ export function BrowseLink() {
     <button
       type="button"
       id="home-browse-btn"
-      className="home-panel-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
+      className="home-panel-browse shrink-0 flex items-center gap-1 text-[16px] font-medium text-[color:var(--brand-ink)] hover:underline whitespace-nowrap"
       title="Browse every app in the directory"
       aria-label="Browse all apps"
       onClick={(e) => {
@@ -157,7 +160,6 @@ export function BrowseLink() {
         window.location.hash = '#apps';
       }}
     >
-      <SearchIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
       <span className="whitespace-nowrap">Browse all apps</span>
     </button>
   );
@@ -210,7 +212,7 @@ export function LeaderboardLink() {
   return (
     <button
       type="button"
-      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
+      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[16px] font-medium text-[color:var(--brand-ink)] hover:underline whitespace-nowrap"
       title="Open the Leaderboard screen"
       aria-label="Open leaderboard"
       onClick={(e) => {
@@ -221,7 +223,6 @@ export function LeaderboardLink() {
         panels()?.goToLeaderboard?.();
       }}
     >
-      <TrophyOutlineIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
       <span className="whitespace-nowrap">Open leaderboard</span>
     </button>
   );

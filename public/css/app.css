@@ -105,6 +105,18 @@
   --state-progress-bg: rgba(124, 58, 237, 0.12);
   --state-attention: #b45309;
   --state-attention-bg: rgba(245, 158, 11, 0.14);
+  /* THE BRAND PERIWINKLE — the homescreen design's second accent, distinct
+     from --accent (the blue that fills buttons and links across the
+     product). It is the ink of the header's controls (the app chip, the
+     bell, the back disc) and of the section links on the home screen, with
+     a tint for their fill and a hairline one step darker than the tint.
+     Sampled from the design's render (#37477b / #e4e9f7); the hairline is
+     interpolated. Read through Tailwind arbitrary values
+     (`text-[color:var(--brand-ink)]`) so the classes stay complete
+     literals for the extractor. */
+  --brand-ink: #37477b;
+  --brand-tint: #e4e9f7;
+  --brand-line: #c9d2f2;
   --state-blocked: #dc2626;
   --state-blocked-bg: rgba(239, 68, 68, 0.12);
   --state-blocked-fill: rgba(239, 68, 68, 0.32);
@@ -852,6 +864,9 @@ html.un-kb .platform-safe-sheet {
   --state-progress: #a78bfa;
   --state-progress-bg: rgba(167, 139, 250, 0.18);
   --state-attention: #fbbf24;
+  --brand-ink: #c7d0f5;
+  --brand-tint: #262b45;
+  --brand-line: #3a4270;
   --state-attention-bg: rgba(245, 158, 11, 0.18);
   --state-blocked: #f87171;
   --state-blocked-bg: rgba(239, 68, 68, 0.18);
@@ -1305,14 +1320,22 @@ html, body {
    yellow paper grain, three gaussian-blurred colour discs and a blue
    halftone star tucked into the top-right corner.
 
-   PAINTED ON THE SCROLLER, NOT ON THE FEED. #home-screen is the
-   overflow-y:auto box, and a background on a scroll container is fixed to
-   the box rather than to its contents (background-attachment's default
-   `scroll` means exactly that for a scrolling element), so the washes and
-   the star stay put while the grid and panels scroll over them — a
-   wallpaper, not a banner that scrolls away. The gradient layers are sized
-   to the visible box (100% 100%), never to the scroll height, so a long
-   feed cannot stretch a wash across two screens.
+   PAINTED ON THE BODY, on the home route only. The body is the fixed
+   100dvh column that the header and the #home-screen scroller both sit
+   in, so one background here runs under both — the bar is cleared over it
+   (below) and the star lands behind the bell, where the design puts it —
+   and it never scrolls: the grid and panels move over a wallpaper, not
+   under a banner. The gradient layers are sized to the body (100% 100%),
+   which is the viewport, so a long feed cannot stretch a wash across two
+   screens.
+
+   `body:has(#home-screen:not(.hidden))` is the route test. The shell
+   swaps screens by toggling `.hidden` on their roots (see
+   frontend/src/lib/visibility-store.ts), so "the home root is showing" IS
+   "we are on the home route", read from the DOM with no class for a
+   module to publish. Everywhere else the body keeps its `bg-zinc-100`
+   ground and the bar its zinc-200 surface. An engine without :has()
+   (none the shell supports) simply keeps that everywhere.
 
    THE DISCS are the export's blurred circles as radial gradients: each
    holds its fill to (r - 2σ), is at half opacity at r, and is gone by
@@ -1342,8 +1365,8 @@ html, body {
    SVG image, for one); a raster is the same everywhere.
 
    DARK MODE KEEPS ITS GROUND. The mock is a light-mode design; on the
-   near-black page the scroller goes back to painting nothing of its own. */
-#home-screen {
+   near-black page the body keeps zinc-950 and paints no layers. */
+body:has(#home-screen:not(.hidden)) {
   --home-ground: #fffeea;
   background-color: var(--home-ground);
   background-image:
@@ -1356,9 +1379,23 @@ html, body {
   background-position: right 32px top 0, 0 0, 0 0, 0 0, 0 0;
   background-size: 97px 78px, 240px 240px, 100% 100%, 100% 100%, 100% 100%;
 }
-.dark #home-screen {
-  background-color: transparent;
+.dark body:has(#home-screen:not(.hidden)) {
+  background-color: #0b0b0c; /* zinc-950, the body's own dark ground */
   background-image: none;
+}
+/* THE BAR OVER THE WALLPAPER. On the home route the header's zinc-200
+   surface goes, so the wallpaper (and the star) run up behind the bell —
+   the one place the design's "page ground runs to the top of the screen"
+   is literal. The controls on it carry their own periwinkle fill and
+   hairline (--brand-tint / --brand-line), so they still lift off cream and
+   off dark alike. Everywhere else the bar keeps its surface — see the
+   "THE BAR'S OWN SURFACE" note in platform-header.tsx for why it has one.
+   The view-transition group note above (#platform-header is opaque) has a
+   home-route exception here: during the push from home into an app the
+   incoming page slides under a bar with no fill, which is the iOS reading
+   of a translucent bar rather than a defect. */
+body:has(#home-screen:not(.hidden)) #platform-header {
+  background-color: transparent;
 }
 
 /* ── App cards ─────────────────────────────────────────── */
