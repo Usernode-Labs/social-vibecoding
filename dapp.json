@@ -2571,9 +2571,9 @@
       "expectText": "Spinning the preview back up…"
     },
     {
-      "name": "The bounty row states the weekly kudos allowance (#964)",
+      "name": "The bounty row says what a kudos bounty does (#1582)",
       "path": "/?shot=feedback",
-      "expectText": "pledges 1 of your weekly kudos"
+      "expectText": "encourages someone to take it up and solve it"
     },
     {
       "name": "A spent allowance says so instead of showing a count (#964)",
