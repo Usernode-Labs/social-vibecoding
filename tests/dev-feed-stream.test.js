@@ -27,6 +27,7 @@ const APP_VIEW = read('public/js/app-view.js');
 const FEED = read('frontend/src/features/dev-board/card/dev-feed.tsx');
 const CSS = read('public/css/app.css');
 const dapp = JSON.parse(read('dapp.json'));
+const AppView = require('../public/js/app-view.js');
 
 test('the feed wraps each entry, and the card builders stay shared', () => {
   // The wrapper is the FEED's, not the card's — that is what keeps one
@@ -158,16 +159,46 @@ test('inline comments load lazily, per row, off the existing endpoint', () => {
   assert.match(CSS, /\.dev-feed-comments:empty \{ display: none; \}/);
 });
 
+test('inline comments show a relative age at the right edge', () => {
+  const realNow = Date.now;
+  Date.now = () => Date.parse('2026-09-04T12:00:00Z');
+  try {
+    const html = AppView._feedCommentsHtml([{
+      author: 'alice',
+      body: 'A recent comment',
+      createdAt: '2026-09-04T10:00:00Z',
+    }]);
+    assert.match(html, /class="dev-feed-comment-time">2h ago<\/span>/,
+      'the endpoint\'s existing createdAt value becomes a compact relative age');
+
+    const invalid = AppView._feedCommentsHtml([{
+      author: 'alice', body: 'No timestamp', createdAt: 'not-a-date',
+    }]);
+    assert.doesNotMatch(invalid, /dev-feed-comment-time/,
+      'a missing or invalid timestamp leaves no empty age label behind');
+  } finally {
+    Date.now = realNow;
+  }
+
+  assert.match(CSS, /#dev-feed \.dev-feed-comment \{[^}]*display:\s*flex/s,
+    'the comment row owns a left/right layout');
+  assert.match(CSS, /#dev-feed \.dev-feed-comment-main \{[^}]*flex:\s*1[^}]*min-width:\s*0/s,
+    'long author and body content wraps in the space left of the age');
+  assert.match(CSS, /#dev-feed \.dev-feed-comment-time \{[^}]*flex-shrink:\s*0[^}]*margin-left:\s*auto/s,
+    'the age stays visible at the right edge');
+});
+
 test('the declared checks cover the stream and the comment slots', () => {
   const sels = dapp.tests.map((t) => t.expectSelector || '').join('\n');
   assert.match(sels, /dev-feed-entry/,
     'a check pins the de-carded entry row');
   assert.match(sels, /dev-feed-comments\[data-comments-for\]/,
     'and one pins the inline-comment slot');
-  // Deliberately NOT asserting rendered comment TEXT on staging: the demo
-  // issues are mock numbers with no GitHub thread behind them, so a text
-  // assertion there would be red for a reason that has nothing to do with
-  // this code.
+  assert.match(sels, /dev-feed-comment-time/,
+    'and staging must render a relative age inside that slot');
+  // Pin the timestamp element rather than its text: staging mock threads
+  // carry real relative timestamps, so their displayed ages necessarily
+  // move as the preview clock advances.
 });
 
 // ── The staging demo has to contain what the testing steps ask for ──
