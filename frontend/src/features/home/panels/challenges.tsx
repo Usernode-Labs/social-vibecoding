@@ -144,18 +144,70 @@ function ChallengeCard({ row, deadline }: { row: ChallengeRowView; deadline: str
           {row.goal}
         </div>
         <div className="home-challenge-pill relative overflow-hidden mt-1.5 flex items-center gap-2 pl-2.5 pr-2.5 pt-1.5 pb-2.5">
-          {row.done ? (
-            <span
-              className="home-panel-glyph shrink-0 w-4 h-4 rounded-full flex items-center justify-center bg-emerald-500 text-white text-[10px] leading-none"
-              aria-hidden="true"
-            >
-              ✓
-            </span>
+          {meter.binary ? (
+            /*
+                A YES-OR-NO CHALLENGE IS A CIRCLE, and only that. It has no
+                progress to draw, so the ○/✓ is the whole of its state — and
+                the shape difference is what tells it apart at a glance from
+                the capsule beside it in the list.
+            */
+            row.done ? (
+              <span
+                className="home-panel-glyph shrink-0 w-4 h-4 rounded-full flex items-center justify-center bg-emerald-500 text-white text-[10px] leading-none"
+                aria-hidden="true"
+              >
+                ✓
+              </span>
+            ) : (
+              <span
+                className="home-panel-glyph shrink-0 w-4 h-4 rounded-full border-[1.5px] border-zinc-400 dark:border-zinc-500"
+                aria-hidden="true"
+              />
+            )
           ) : (
+            /*
+                A COUNTED ONE IS A CAPSULE THAT FILLS, and it carries all three
+                things the state used to need three elements for: how far
+                along, the exact count, and whether it is done. The bar that
+                used to ride the pill's bottom edge is gone with it — one
+                element in the pill, not one in the pill and a rule under it.
+                Same height as the circle, so the two line up down the list.
+
+                THE FILL IS A TINT, not the solid accent. The count sits ON the
+                capsule, so a solid fill would hide it the moment progress
+                passed the text; at this opacity the same dark ink reads over
+                the filled part and the empty part alike, and the boundary is
+                still perfectly visible.
+            */
             <span
-              className="home-panel-glyph shrink-0 w-4 h-4 rounded-full border-[1.5px] border-zinc-400 dark:border-zinc-500"
-              aria-hidden="true"
-            />
+              className="home-panel-bar-track home-challenge-meter relative shrink-0 inline-flex h-4 items-center justify-center overflow-hidden rounded-full bg-black/10 dark:bg-white/15"
+              role="progressbar"
+              aria-valuenow={meter.current}
+              aria-valuemin={0}
+              aria-valuemax={meter.target}
+              aria-label={`${row.goal || 'Challenge'}: ${meter.current} of ${meter.target}${meter.label}`}
+            >
+              <span
+                className={row.done
+                  ? 'home-panel-bar-fill home-challenge-meter-fill absolute inset-y-0 left-0 bg-emerald-500'
+                  : 'home-panel-bar-fill home-challenge-meter-fill absolute inset-y-0 left-0 bg-[color:var(--brand-ink)]'}
+                // A FLOOR, not a bare percentage. The fill starts at the
+                // capsule's rounded left end, so anything narrower than that
+                // radius is drawn inside the corner and painted over — a
+                // challenge at 0 of 5 would show an empty capsule, which is
+                // the one state that most needs to say there is progress to
+                // make here. --home-meter-floor is that radius plus the stub
+                // that has to remain; app.css states both.
+                style={{ width: `max(var(--home-meter-floor), ${meter.pct}%)` }}
+              />
+              <span
+                className={row.done
+                  ? 'relative px-1.5 text-[10.5px] font-semibold leading-none text-emerald-800 dark:text-emerald-200'
+                  : 'relative px-1.5 text-[10.5px] font-semibold leading-none text-[color:var(--brand-ink)]'}
+              >
+                {`${meter.current}/${meter.target}`}
+              </span>
+            </span>
           )}
           {/*
               The SEASON's deadline, on every card. Null only when the payload
@@ -175,29 +227,6 @@ function ChallengeCard({ row, deadline }: { row: ChallengeRowView; deadline: str
               {row.reward}
             </span>
           ) : null}
-          {meter.binary ? null : (
-            <span
-              className="home-panel-bar-track absolute left-0 right-0 bottom-0 block h-[3px] bg-black/10 overflow-hidden dark:bg-white/15"
-              role="progressbar"
-              aria-valuenow={meter.current}
-              aria-valuemin={0}
-              aria-valuemax={meter.target}
-              aria-label={`${row.goal || 'Challenge'}: ${meter.current} of ${meter.target}${meter.label}`}
-            >
-              <span
-                className={row.done
-                  ? 'home-panel-bar-fill block h-full bg-emerald-500'
-                  : 'home-panel-bar-fill block h-full bg-[color:var(--brand-ink)]'}
-                // A FLOOR, not a bare percentage. The track is flush with the
-                // pill's bottom edge, so its first --home-pill-radius is
-                // inside the corner and clipped; a fill shorter than that is
-                // drawn and invisible. --home-meter-floor is that radius plus
-                // the stub that has to remain (app.css states both), so a
-                // challenge at 0 of 5 reads as a track not yet run.
-                style={{ width: `max(var(--home-meter-floor), ${meter.pct}%)` }}
-              />
-            </span>
-          )}
         </div>
       </div>
     </div>

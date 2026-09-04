@@ -2401,27 +2401,41 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    through. */
 .home-challenge-pill {
   background: #fff;
-  /* AN EXPLICIT RADIUS, not 9999px, and the meter below is the reason.
-     A stadium's radius is half its height, so it changes with the type and
-     with the viewer's text size — and the meter runs along the BOTTOM EDGE,
-     where the corner is what decides how much of a short fill is visible at
-     all. Pinning the radius makes that inset a known number instead of a
-     consequence, which is what lets --home-meter-floor be stated. At this
-     pill's height the two render identically. */
-  --home-pill-radius: 1rem;
-  /* THE SHORTEST FILL THAT STILL READS. The meter is flush with the pill's
-     bottom, so its bottom row only exists between the two corners: the
-     first `--home-pill-radius` of the fill is inside the left curve and is
-     clipped away. A floor of radius + 0.625rem therefore leaves ~10px of
-     visible stub on a challenge at zero, which is the whole point of having
-     a floor — "not started" has to read as a track not yet run rather than
-     as no track at all. tests/home-panels-render.test.js pins the
-     relationship, and scripts/measure-meter-zero.mjs measures the rendered
-     result rather than trusting the arithmetic. */
-  --home-meter-floor: calc(var(--home-pill-radius) + 0.625rem);
-  border-radius: var(--home-pill-radius);
+  border-radius: 9999px;
 }
 .dark .home-challenge-pill { background: rgba(0, 0, 0, 0.35); }
+/* THE COUNTED CHALLENGE'S STATE: a capsule that fills, in the place a
+   yes-or-no challenge puts its circle. It replaces a 3px rail that ran along
+   the pill's bottom edge — one element in the pill instead of one in it and a
+   rule under it, and it carries the exact count as well, which the rail had
+   no room for.
+
+   AN EXPLICIT RADIUS, and the floor below is why. The capsule is drawn
+   `rounded-full`, so its radius is half its height and would move with the
+   type; the fill starts at that rounded left end, and anything narrower than
+   the radius is painted over by it. Stating the radius makes the clipped
+   amount a known number rather than a consequence.
+
+   --home-meter-floor is that radius plus the stub that has to remain, so a
+   challenge at 0 of 5 shows a short run of fill rather than an empty capsule.
+   tests/home-panels-render.test.js pins the relationship;
+   scripts/measure-meter-zero.mjs measures what a browser actually paints. */
+.home-challenge-meter {
+  --home-meter-radius: 0.5rem;   /* half of h-4, the capsule's own corner */
+  --home-meter-floor: calc(var(--home-meter-radius) + 0.375rem);
+  min-width: 2.875rem;           /* fits "12/20" without the capsule jumping */
+}
+/* The fill is a TINT of the accent, not the accent: the count sits on top of
+   it, and a solid fill would swallow the digits the moment progress passed
+   them. Opacity rather than a mixed colour, so it follows --brand-ink into
+   dark mode without a second value to keep in step. */
+.home-challenge-meter-fill {
+  opacity: 0.3;
+}
+.dark .home-challenge-meter-fill {
+  opacity: 0.4;
+}
+
 /* The art well on a challenge card. Lighter than the card so the
    illustration sits ON something, the same relationship the Discover card's
    art block has to its footer. */

@@ -465,20 +465,18 @@ test('render: a numeric row gets a progressbar with truthful aria values', () =>
   assert.match(html, /aria-valuemax="8"/);
   assert.match(html, /width:max\(var\(--home-meter-floor\), 38%\)/,
     'the fill states its floor alongside the percentage — see the geometry test below');
-  // The metric label rides the aria-label, which is now the only place the
-  // count is stated at all: the pill holds the state, the season's deadline
-  // and the reward, and a fourth item competing in it read as a crowd. The
-  // METER is the count, and a reader who wants the number has the card's
-  // destination one tap away.
   assert.match(html, /aria-label="[^"]*3 of 8 Apps tested"/);
-  // The track is FLUSH with the pill on all three edges — an absolute inset
-  // again, and deliberately so this time. It was the row's second line,
-  // spanning the text column by layout, back when a row had two lines to give
-  // it; a card's pill has one. Riding the pill's bottom edge is what makes it
-  // read as that control's own progress rather than as a rule under the text.
-  assert.match(html, /home-panel-bar-track absolute left-0 right-0 bottom-0/);
-  assert.doesNotMatch(html, /home-panel-bar-track[^"]*w-full rounded-full/,
-    'the full-width rounded rail belonged to the two-line row');
+  // THE COUNT IS ON THE CAPSULE, which is the whole reason the capsule earns
+  // the space a 3px rail did not need: it states progress, the exact figure
+  // and doneness in one element, where the rail could only state the first.
+  assert.match(html, />3\/8</);
+  // The capsule sits where a yes-or-no challenge puts its circle, at the same
+  // height, so the two line up down the list and the SHAPE is what tells them
+  // apart. It is still the progressbar the aria contract and dapp.json select
+  // on — the class stays, the geometry changed.
+  assert.match(html, /home-panel-bar-track home-challenge-meter[^"]*h-4[^"]*rounded-full/);
+  assert.doesNotMatch(html, /home-panel-bar-track absolute left-0 right-0 bottom-0/,
+    'the rail under the pill is gone; the state element carries the meter');
   assert.doesNotMatch(html, /bottom-\[3px\]/,
     'and the cramped 3px-from-the-divider geometry never came back as a utility');
 });
@@ -491,22 +489,22 @@ test('render: a numeric row at zero still renders an (empty) bar', () => {
     })],
   });
   const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
-  // NOT `width:0%`. The meter is flush with the pill's bottom edge, so a fill
-  // narrower than the pill's corner radius is laid out and then painted over
-  // by the corner — a challenge at 0 of 5 would show nothing at all, which is
-  // the one state that most needs to say "there is a track here". The floor is
-  // stated as that radius plus the stub that must remain; see the geometry
-  // test below, and scripts/measure-meter-zero.mjs for the painted result.
+  // NOT `width:0%`. The fill starts at the capsule's rounded left end, so a
+  // fill narrower than that radius is laid out and then painted over by the
+  // corner — a challenge at 0 of 5 would show an empty capsule, which is the
+  // one state that most needs to say there is progress to be made here. The
+  // floor is stated as that radius plus the stub that must remain; see the
+  // geometry test below, and scripts/measure-meter-zero.mjs for what a
+  // browser actually paints.
   assert.match(html, /width:max\(var\(--home-meter-floor\), 0%\)/);
   assert.match(html, /aria-valuenow="0"[^>]*aria-valuemax="5"/,
     'the aria values stay truthful even though the fill has a floor');
-  // A SOLID rail, not an outline. The outline existed because an empty track
-  // in a 14px lane was otherwise indistinguishable from the row's own hairline
-  // divider; inside a white pill there is no divider to be confused with, and
-  // an outlined container asks to be looked at.
-  assert.match(html, /home-panel-bar-track[^"]*bg-black\/10 overflow-hidden dark:bg-white\/15/);
-  assert.doesNotMatch(html, /home-panel-bar-track[^"]*border/,
-    'no hairline around an empty track');
+  assert.match(html, />0\/5</, 'and the capsule names the count it is at');
+  // A SOLID track, not an outline: an outlined capsule beside a plain circle
+  // reads as two different kinds of control rather than two states of one.
+  assert.match(html, /home-panel-bar-track[^"]*bg-black\/10 dark:bg-white\/15/);
+  assert.doesNotMatch(html, /home-panel-bar-track[^"]*border-/,
+    'no hairline around the capsule');
 });
 
 // ── The bar's breathing room ──────────────────────────────────────
@@ -521,12 +519,12 @@ test('render: a numeric row at zero still renders an (empty) bar', () => {
 // one the first could not afford: a second LINE. The lane, its three tokens
 // and the bar geometry derived from them are retired with it.
 
-test('the zero-progress meter clears the pill corner that clips it', () => {
-  // THE ONE NUMBER THIS BLOCK CANNOT GUESS. A challenge card's meter is flush
-  // with the bottom edge of a rounded pill, so the first `--home-pill-radius`
-  // of its fill is inside the corner and is painted over. A fill shorter than
-  // that radius is laid out and invisible — which is precisely the "0 of 5"
-  // case the floor exists for.
+test('the zero-progress meter clears the capsule corner that clips it', () => {
+  // THE ONE NUMBER THIS BLOCK CANNOT GUESS. A counted challenge's state is a
+  // capsule that fills from its rounded left end, so a fill narrower than that
+  // end's radius is laid out inside the corner and painted over — a challenge
+  // at 0 of 5 would show an empty capsule, which is the one state that most
+  // needs to say there is progress to be made here.
   //
   // So the floor is stated AS the radius plus the stub that has to remain,
   // rather than as a number somebody measured once. This pins that shape:
@@ -534,31 +532,34 @@ test('the zero-progress meter clears the pill corner that clips it', () => {
   // fails rather than silently swallowing the zero state again.
   //
   // The rendered result is measured by scripts/measure-meter-zero.mjs, which
-  // reads painted pixels off a screenshot (the hit-test tree does not model an
-  // ancestor's rounded clip and reports the fill as fully visible). At the
-  // values below it paints 12px on the pill's last row.
-  const pill = CSS.slice(CSS.indexOf('.home-challenge-pill {'),
-    CSS.indexOf('}', CSS.indexOf('.home-challenge-pill {')));
-  const radius = /--home-pill-radius:\s*([\d.]+)rem/.exec(pill);
-  assert.ok(radius, 'the pill states an explicit radius — a stadium 9999px would vary with the type');
+  // reads painted pixels off a screenshot — the hit-test tree does not model
+  // an ancestor's rounded clip, and the count's own glyphs are drawn in the
+  // ink the fill is tinted from, so both had to be worked around before the
+  // number meant anything. At the values below a challenge at zero paints
+  // 14px of a 46px capsule.
+  const meter = CSS.slice(CSS.indexOf('.home-challenge-meter {'),
+    CSS.indexOf('}', CSS.indexOf('.home-challenge-meter {')));
+  assert.match(meter, /--home-meter-radius:\s*([\d.]+)rem/,
+    'the capsule states an explicit radius — rounded-full varies with the type');
   assert.match(
-    pill,
-    /--home-meter-floor:\s*calc\(var\(--home-pill-radius\)\s*\+\s*([\d.]+)rem\)/,
-    'and the meter floor is that radius plus a stub, not a bare number'
+    meter,
+    /--home-meter-floor:\s*calc\(var\(--home-meter-radius\)\s*\+\s*([\d.]+)rem\)/,
+    'and the floor is that radius plus a stub, not a bare number'
   );
-  const stub = /--home-meter-floor:\s*calc\(var\(--home-pill-radius\)\s*\+\s*([\d.]+)rem\)/.exec(pill)[1];
-  assert.ok(Number(stub) >= 0.5,
-    `the stub is ${stub}rem — under 0.5rem there is nothing left to see once the corner takes its share`);
+  const stub = /--home-meter-floor:\s*calc\(var\(--home-meter-radius\)\s*\+\s*([\d.]+)rem\)/.exec(meter)[1];
+  assert.ok(Number(stub) >= 0.25,
+    `the stub is ${stub}rem — under 0.25rem there is nothing left to see once the corner takes its share`);
   assert.match(
     challengesSrc(),
     /width: `max\(var\(--home-meter-floor\), \$\{meter\.pct\}%\)`/,
     'and the fill uses the floor rather than a percentage alone'
   );
-  assert.match(
-    challengesSrc(),
-    /home-panel-bar-track absolute left-0 right-0 bottom-0/,
-    'the meter is flush with the pill on all three edges — the geometry the floor is derived from'
-  );
+  // The bar that rode the pill's bottom edge is gone: the capsule carries the
+  // progress now, in the place the circle sits on a yes-or-no challenge.
+  assert.doesNotMatch(challengesSrc(), /home-panel-bar-track absolute left-0 right-0 bottom-0/,
+    'no rule under the pill — the state element is the meter');
+  assert.match(challengesSrc(), /home-panel-bar-track home-challenge-meter/,
+    'the capsule IS the track, which is what dapp.json and the aria contract select on');
 });
 
 test('the lane is gone: a row is two lines and every row draws a track', () => {
@@ -631,13 +632,18 @@ test('a numeric challenge at full target draws a full bar AND the ✓', () => {
     })],
   });
   assert.match(html, /width:max\(var\(--home-meter-floor\), 100%\)/,
-    'the floor never shortens a full bar — max() takes the percentage here');
+    'the floor never shortens a full capsule — max() takes the percentage here');
   assert.match(html, /aria-valuenow="5"[^>]*aria-valuemax="5"/);
-  // The COUNT is the meter now, not a "5/5" beside it: the pill carries the
-  // state, the deadline and the reward, and the exact figure stays in the
-  // aria-label where a screen reader still gets it.
   assert.match(html, /aria-label="[^"]*5 of 5 Proposals voted"/);
-  assert.match(html, /home-panel-glyph[^>]*bg-emerald-500 text-white[^>]*>✓</);
+  // A FINISHED COUNTED CHALLENGE KEEPS ITS CAPSULE, in emerald, rather than
+  // collapsing to the tick a yes-or-no one shows. The tick was the other
+  // option and it was tempting — one shape for "finished" reads fastest down a
+  // column — but it throws away the figure a counted challenge is about, and
+  // "5/5" on a full capsule says finished just as plainly.
+  assert.match(html, />5\/5</);
+  assert.match(html, /home-panel-bar-fill[^"]*bg-emerald-500/);
+  assert.doesNotMatch(html, /home-panel-glyph/,
+    'a counted challenge draws no circle in any state — the capsule is its state');
 });
 
 test('both well states occupy the same box, so the pill\'s text never shifts', () => {
@@ -650,17 +656,17 @@ test('both well states occupy the same box, so the pill\'s text never shifts', (
   // pill that is barely taller than that is the pill's whole height. The bar
   // has no stake in it either way: it is flush with the pill's edges, so
   // nothing about it is derived from the well's width.
-  const rows = ({ done, current }) => renderWith({
+  // A YES-OR-NO challenge, because the circle is now that challenge's state
+  // alone: a counted one draws a capsule instead, and comparing the two
+  // shapes is the point of the pair rather than an accident to guard against.
+  const rows = ({ done }) => renderWith({
     registry: [], hidden: [], panels: [panel({
-      challenges: [challenge({
-        metric: { kind: 'count', label: 'Kudos', target: 5 },
-        progress: { done, current, target: 5 },
-      })],
+      challenges: [challenge({ progress: { done, current: null, target: null } })],
     })],
   }).html;
-  assert.match(rows({ done: false, current: 0 }), /home-panel-glyph shrink-0 w-4 h-4 rounded-full/);
-  assert.match(rows({ done: true, current: 5 }), /home-panel-glyph shrink-0 w-4 h-4 rounded-full/);
-  assert.match(rows({ done: false, current: 0 }),
+  assert.match(rows({ done: false }), /home-panel-glyph shrink-0 w-4 h-4 rounded-full/);
+  assert.match(rows({ done: true }), /home-panel-glyph shrink-0 w-4 h-4 rounded-full/);
+  assert.match(rows({ done: false }),
     /home-challenge-card [^"]*flex items-center gap-3 p-2\.5/);
 });
 
@@ -997,7 +1003,10 @@ test('every text node in a row is single-line — no wrapping anywhere', () => {
   for (const span of spans) {
     // The well, the state pip and the meter's track and fill carry no text;
     // every span that CAN hold text must opt out of wrapping.
-    if (/home-panel-glyph|home-panel-bar-(fill|track)|home-challenge-art/.test(span)) continue;
+    // The well, the state pip, the capsule and its fill carry no prose. The
+    // capsule's COUNT is exempt for a different reason: it is "1/3", which
+    // has nothing to wrap at, and it is centred rather than laid in a row.
+    if (/home-panel-glyph|home-panel-bar-(fill|track)|home-challenge-art|relative px-1\.5 text-\[10\.5px\]/.test(span)) continue;
     assert.match(span, /whitespace-nowrap|truncate/,
       `a card span may not wrap: ${span}`);
   }
