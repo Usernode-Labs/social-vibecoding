@@ -138,6 +138,8 @@ function parseCompanion(raw) {
 }
 
 const NAV_TIMEOUT_MS = 30000;
+const NETWORK_IDLE_CONCURRENCY = 2;
+const NETWORK_IDLE_MS = 500;
 const SETTLE_MS = 500;
 const PRE_SCROLL_HOLD_MS = 1500;
 const SHORT_PAGE_HOLD_MS = 4000;
@@ -177,7 +179,7 @@ const CONSOLE_ONLY_SETTLE_MS = 1500;
 // of unconditional sleep per navigation, whatever the page did. Production
 // measured 158 navigations over 8 lanes for this repo's own manifest — ~20
 // waves, so ~40s of a 72s capture was spent asleep on pages that had already
-// gone quiet the instant `networkidle2` resolved.
+// gone quiet when the initial network-idle wait resolved.
 //
 // The safety property those sleeps existed for is real and is preserved: a
 // page that is STILL emitting deferred async errors keeps getting waited on,
@@ -187,11 +189,12 @@ const CONSOLE_ONLY_SETTLE_MS = 1500;
 // lifecycle events, so "quiet" means the document is genuinely idle rather
 // than merely past a timer.
 //
-// SETTLE_MIN_MS is the floor after a cold navigation. `networkidle2` already
-// resolves 500ms after the last request, so a page whose deferred error fires
-// a few hundred ms into idle would be judged before it spoke if the only bound
-// were the quiet window. The floor keeps a guaranteed listening period; any
-// error inside it re-arms the window, so the noisy case still runs long.
+// SETTLE_MIN_MS is the floor after a cold navigation. The initial network-idle
+// wait already resolves 500ms after the last request, so a page whose deferred
+// error fires a few hundred ms into idle would be judged before it spoke if the
+// only bound were the quiet window. The floor keeps a guaranteed listening
+// period; any error inside it re-arms the window, so the noisy case still runs
+// long.
 const SETTLE_QUIET_MS = 250;
 const SETTLE_MIN_MS = 500;
 const SETTLE_MAX_MS = 1500;
@@ -280,10 +283,10 @@ function poolSize(env) {
   return Math.min(16, raw);
 }
 
-// Per-check wall clock. NAV_TIMEOUT_MS only bounds page.goto — the settle
-// sleeps and the selector/text assertions are unbounded, so one wedged page
-// could previously eat the whole run's budget. A check that blows this is
-// reported as an ordinary failed frame and the pool moves on.
+// Per-check wall clock. NAV_TIMEOUT_MS bounds cold document readiness; the
+// group deadline separately bounds every phase together, so one wedged page
+// cannot eat the whole run's budget. A check that blows this is reported as an
+// ordinary failed frame and the pool moves on.
 function testTimeoutMs(env) {
   const raw = parseInt((env || {}).TEST_TIMEOUT_MS, 10);
   return (Number.isFinite(raw) && raw > 0) ? raw : 25000;
@@ -1044,6 +1047,34 @@ function groupTests(tests, env) {
   return groupTestsByDocument(tests, { cap: hashGroupCap(env) });
 }
 
+// Load the document and establish the same readiness condition as
+// `waitUntil: 'networkidle2'`, but do not keep that condition attached to
+// Puppeteer's document-navigation watcher. Some declared checks deliberately
+// exercise hash/history traversal during boot. That later same-document
+// navigation must not pre-empt the watcher for the document that already
+// reached DOMContentLoaded and leave the check waiting until its group dies.
+//
+// `concurrency: 2` + 500ms is networkidle2's contract. Both phases share the
+// original 30s navigation budget, so separating them cannot extend a stuck
+// load's allowance.
+async function gotoTestDocument(page, url) {
+  const startedAt = Date.now();
+  const response = await page.goto(url, {
+    waitUntil: 'domcontentloaded',
+    timeout: NAV_TIMEOUT_MS,
+  });
+  const remainingMs = NAV_TIMEOUT_MS - (Date.now() - startedAt);
+  if (remainingMs <= 0) {
+    throw new Error(`Navigation timeout of ${NAV_TIMEOUT_MS} ms exceeded`);
+  }
+  await page.waitForNetworkIdle({
+    concurrency: NETWORK_IDLE_CONCURRENCY,
+    idleTime: NETWORK_IDLE_MS,
+    timeout: remainingMs,
+  });
+  return response;
+}
+
 // #47: run the declared tests for ONE route against the staging build.
 // Navigates once, collects console errors / uncaught exceptions / failed
 // loads (the #381 baseline) for that load, then evaluates each check's
@@ -1153,7 +1184,7 @@ async function runTestGroup(browser, group, opts) {
     }
 
     try {
-      const resp = await page.goto(lead.url, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
+      const resp = await gotoTestDocument(page, lead.url);
       status = resp ? resp.status() : 200;
     } catch (err) {
       pushErr('load', `navigation failed: ${err.message}`, lead.url);
@@ -1265,9 +1296,7 @@ async function runTestGroup(browser, group, opts) {
         && [...presence.values()].some(Boolean)) {
         try {
           await page.goto('about:blank', { timeout: NAV_TIMEOUT_MS });
-          const resp = await page.goto(cohort.tests[0].url, {
-            waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS,
-          });
+          const resp = await gotoTestDocument(page, cohort.tests[0].url);
           const reloadStatus = resp ? resp.status() : status;
           activity.bump();
           await waitForQuiet(activity, { quietMs, maxMs, minMs: Math.min(SETTLE_MIN_MS, maxMs) });
@@ -1366,12 +1395,12 @@ const GROUP_EXTRA_COHORT_MS = 13000;
 //     sequential "primer" navigation to seed the shared jar (concurrent
 //     exchanges into one jar raced, and the losers rendered the "Admins
 //     only" gate) and still left every non-active tab hidden.
-//  2. PER-GROUP DEADLINE. runTestGroup bounds its navigation, but the
-//     settle sleeps and assertion evaluation are not bounded, and a page
-//     that keeps a socket open can hang `networkidle2` past its own
-//     timeout. A group that overruns has its unreported checks recorded as
-//     failures and its slot released, so one bad route can't hold a worker
-//     forever. The budget scales gently with group size (see
+//  2. PER-GROUP DEADLINE. Cold readiness, settling and assertion polling
+//     have their own bounds, but a browser/renderer call can still stop
+//     responding and one group may span many cohorts. A group that overruns
+//     has its unreported checks recorded as failures and its slot released,
+//     so one bad route can't hold a worker forever. The budget scales gently
+//     with group size (see
 //     GROUP_EXTRA_CHECK_MS) because assertions are cheap but not free.
 //  3. GLOBAL DEADLINE. Workers stop PULLING new groups once the suite
 //     budget is spent (in-flight groups are allowed to finish). Whatever
