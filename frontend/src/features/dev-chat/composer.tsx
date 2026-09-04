@@ -284,7 +284,7 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
               React the owner of the first and fight the module for it. */}
           <Textarea
             id="dc-input" rows={1} autoComplete="off" placeholder={s.placeholder}
-            lead="devComposer" width="full" box="devCard" hint="muted" ring={false}
+            lead="devComposer" width="full" box="devCard" hint="muted" ring="bare"
             className="resize-none"
           />
           <div className="dc-card-row">

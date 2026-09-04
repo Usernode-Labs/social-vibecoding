@@ -182,7 +182,22 @@ const inputVariants = cva('', {
     mono: { true: 'font-mono', false: '' },
     ring: {
       true: 'focus:outline-none focus:ring-2 focus:ring-violet-500',
+      // NO RULE AT ALL — which means the browser's own focus ring still
+      // draws. That is deliberate for `groupRow`, whose `.un-group` clips an
+      // outward ring and whose row carries a `focus-within:` tint instead:
+      // the UA outline is the only cue those fields have left.
       false: '',
+      // Suppresses the UA outline WITHOUT drawing a ring of our own — which
+      // `false` does not do, and the difference is a blue box nobody asked
+      // for. For a field that contributes no box: the dev composer's, where
+      // the card around it is the only edge and a ring inside that card would
+      // be a second one.
+      //
+      // The focus cue is the CARET. That is sound for a text field — the
+      // blinking cursor is exactly what tells you where typing goes — and it
+      // is why this value must not spread to buttons or selects, which have
+      // no caret and would be left with no focus indicator at all.
+      bare: 'focus:outline-none',
       // The dialogs' fields also drop the border colour while focused, so the
       // ring reads as the only edge.
       seamless:
