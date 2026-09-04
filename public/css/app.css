@@ -117,6 +117,14 @@
   --brand-ink: #37477b;
   --brand-tint: #e4e9f7;
   --brand-line: #c9d2f2;
+  /* The running app's sheet edge (#1571) — see "THE APP SHEET" below for
+     which element wears it and why. Straight off the design's render
+     (node 736:4306): a black-at-10% hairline, and a two-layer shadow in
+     the deck's blue-black rather than neutral grey, which is what keeps
+     it from reading as dirt over the cream ground. */
+  --app-sheet-line: rgba(0, 0, 0, 0.1);
+  --app-sheet-shadow-near: rgba(24, 39, 75, 0.12);
+  --app-sheet-shadow-far: rgba(24, 39, 75, 0.08);
   --state-blocked: #dc2626;
   --state-blocked-bg: rgba(239, 68, 68, 0.12);
   --state-blocked-fill: rgba(239, 68, 68, 0.32);
@@ -867,6 +875,13 @@ html.un-kb .platform-safe-sheet {
   --brand-ink: #c7d0f5;
   --brand-tint: #262b45;
   --brand-line: #3a4270;
+  /* Dark inverts both halves rather than dimming them: the hairline goes
+     to white-at-low-alpha (a black one is invisible on a near-black
+     ground) and the shadow goes DEEPER, not softer, because a shadow has
+     to out-darken #0b0d1b to separate anything from it at all. */
+  --app-sheet-line: rgba(255, 255, 255, 0.12);
+  --app-sheet-shadow-near: rgba(0, 0, 0, 0.55);
+  --app-sheet-shadow-far: rgba(0, 0, 0, 0.4);
   --state-attention-bg: rgba(245, 158, 11, 0.18);
   --state-blocked: #f87171;
   --state-blocked-bg: rgba(239, 68, 68, 0.18);
@@ -2820,6 +2835,122 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   top: 0; left: 0; width: 100%; height: 100%;
   border: 0;
   background: var(--bg-primary);
+}
+
+/* ── THE APP SHEET, and why the corner lives HERE (#1571) ──────────────
+   The running app arrives as a raised sheet on the page ground: its own
+   top radius, its own hairline, its own shadow. That is a different
+   mechanism from the one every OTHER route uses, and the split is not
+   an inconsistency — it is the only arrangement that works on both.
+
+   #platform-header carries `rounded-b-2xl -mb-2`: a notch cut out of THE
+   BAR, overlapping downward so whatever sits below reads as
+   rounded-topped. It costs the screens below it nothing, which is what
+   makes it right for them — every screen root is TRANSPARENT (the body
+   paints the ground, the roots are `flex-1 overflow-y-auto` and nothing
+   else), so there is no fill on them to round in the first place.
+
+   That notch needs a bar surface to cut, and on an app route there
+   isn't one: the rule at "THE BAR OVER THE WALLPAPER" above clears
+   #platform-header's background wherever the wallpaper shows, and
+   #app-view is on that list. So inside an app the notch produced
+   nothing at all, while the one opaque thing on the screen — the app's
+   own document, behind #app-iframe's `background: var(--bg-primary)` —
+   met the cream in a hard horizontal line corner to corner. That line
+   is what #1571 reported ("cuts out on apps … a gray horizontal line
+   not matching the background of the app"), and no radius on the bar
+   can reach it.
+
+   So the app frame rounds ITSELF. #app-frame-host is the right element
+   and not #app-view: it is React-owned end to end (see
+   features/app-frame/app-frame.tsx), it is shown only while an app is
+   actually mounted, and it is already `overflow: hidden`, so the radius
+   clips the frame with nothing further to arrange. Its sibling
+   #app-content — Dev mode, the status placeholders — keeps the header's
+   notch like every other platform surface, because like them it is
+   transparent and has nothing to round.
+
+   The shadow reaches UP into the bar's strip on purpose, which is what
+   makes the sheet read as lifted rather than abutted. Nothing clips it:
+   #app-view sets no overflow, and the bar's own `z-10` paints it above
+   the shadow without hiding it, because on this route the bar has no
+   background to hide anything with.
+
+   Geometry is the design's (Streamlined Concept, node 736:4306): a 28px
+   top radius, a 1px hairline and a two-layer shadow.
+
+   THE HAIRLINE IS `border-top` ONLY, and that is the whole of it. The
+   sheet is as wide as the screen and runs off the bottom, so a border on
+   any other side is not an edge of anything — it draws a 1px rule down
+   the left and right of the display for the entire height of the app,
+   which reads as a letterboxed frame around it rather than as a card.
+   Only the top edge is a real boundary here, because it is the only side
+   where the sheet actually meets the page ground. */
+#app-frame-host {
+  border-radius: 1.75rem 1.75rem 0 0;
+  border-top: 1px solid var(--app-sheet-line);
+  box-shadow:
+    0 6px 12px -6px var(--app-sheet-shadow-near),
+    0 8px 24px -4px var(--app-sheet-shadow-far);
+}
+
+/* THE CLIP, STATED AT EVERY LEVEL, because one level is not enough here.
+
+   #app-frame-host's own `overflow: hidden` (an inline style, see
+   features/app-frame/app-frame.tsx) is the whole fix in Chrome and
+   Firefox for content that stays on its parent's layer. Two things in
+   this subtree do not:
+
+   - #app-iframe. WebKit has a long-standing bug where an <iframe>
+     ignores an ancestor's border-radius outright.
+   - .app-launch-cover. It cross-fades on `opacity` (see its rule further
+     down) WHILE the kit runs its own transform animation over the
+     document root, so for the length of the launch it is a promoted
+     compositing layer — and a promoted layer can paint a frame or two
+     before it picks up an ancestor's rounded clip. That is a square
+     corner appearing and then snapping round again mid-animation, and it
+     shows up only on apps slow enough to boot that the cover is still on
+     screen when the push lands.
+
+   So the radius is restated on each of them, and .app-launch-host takes
+   an `overflow: hidden` of its own so the clip also exists one level
+   closer to the cover than the host's. Same value everywhere, via
+   `inherit` — a child rounding to a DIFFERENT radius than the box
+   clipping it is worse than either alone. */
+#app-frame-host > .app-launch-host {
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+#app-frame-host #app-iframe,
+#app-frame-host .app-launch-cover {
+  border-radius: inherit;
+}
+
+/* CHROMELESS TAKES IT ALL BACK OFF. The chromeless route is
+   `#app/<slug>/full` — `const chromeless = tab === 'full'` in app.js's
+   restoreFromHash, which then rewrites tab to 'app', so the ordinary
+   in-app route `#app/<slug>/app` is NOT this and keeps the sheet. There
+   the bar is not transparent, it is GONE (App.setChromeless publishes the
+   header's visibility off and platform-header.tsx's useHiddenClass puts
+   `hidden` on the element), so the frame starts at the top of the
+   viewport. A sheet needs something to be a sheet ON, and there is
+   nothing above it: the radius would round the app's top corners against
+   the bare page ground and the shadow would fall on nothing. Chromeless
+   means the app IS the screen, so it goes back to filling it edge to
+   edge.
+
+   Keyed on the header's `hidden` class rather than on App.chromeless
+   because that flag has no DOM presence to select on. The cost is that
+   the class arrives via the visibility store's re-render, so LEAVING
+   chromeless through the pill can show one square frame before the sheet
+   returns. Worth knowing about; not worth a body-class write from
+   app.js to pre-empt, since the transition it happens under is a
+   full-document one either way. */
+body:has(#platform-header.hidden) #app-frame-host {
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
 }
 
 /* ── Dev chat messages ─────────────────────────────────── */
