@@ -65,7 +65,7 @@
   /* The authored top bar's height, WITHOUT the status-bar inset it extends
      into (that is --platform-safe-top, added by whoever needs the total).
      Not a new fact: it is the 52px the "Header height invariant" block near
-     #header-title.is-centered derives from the markup — py-3 around a 28px
+     #header-title.is-centered derives from the markup — py-3 around a 48px
      content row, and no hairline since the reskin — restated once so a
      surface that hangs off the bottom of the bar can say so rather than
      hard-code a number that quietly stops matching. #apps-switcher-sheet's
@@ -105,6 +105,18 @@
   --state-progress-bg: rgba(124, 58, 237, 0.12);
   --state-attention: #b45309;
   --state-attention-bg: rgba(245, 158, 11, 0.14);
+  /* THE BRAND PERIWINKLE — the homescreen design's second accent, distinct
+     from --accent (the blue that fills buttons and links across the
+     product). It is the ink of the header's controls (the app chip, the
+     bell, the back disc) and of the section links on the home screen, with
+     a tint for their fill and a hairline one step darker than the tint.
+     Sampled from the design's render (#37477b / #e4e9f7); the hairline is
+     interpolated. Read through Tailwind arbitrary values
+     (`text-[color:var(--brand-ink)]`) so the classes stay complete
+     literals for the extractor. */
+  --brand-ink: #37477b;
+  --brand-tint: #e4e9f7;
+  --brand-line: #c9d2f2;
   --state-blocked: #dc2626;
   --state-blocked-bg: rgba(239, 68, 68, 0.12);
   --state-blocked-fill: rgba(239, 68, 68, 0.32);
@@ -852,6 +864,9 @@ html.un-kb .platform-safe-sheet {
   --state-progress: #a78bfa;
   --state-progress-bg: rgba(167, 139, 250, 0.18);
   --state-attention: #fbbf24;
+  --brand-ink: #c7d0f5;
+  --brand-tint: #262b45;
+  --brand-line: #3a4270;
   --state-attention-bg: rgba(245, 158, 11, 0.18);
   --state-blocked: #f87171;
   --state-blocked-bg: rgba(239, 68, 68, 0.18);
@@ -1297,6 +1312,117 @@ html, body {
 #auth-landing-scroll {
   overscroll-behavior-y: contain;
   overflow-x: hidden;
+}
+
+/* ── The home ground ───────────────────────────────────────
+   The launcher's own wallpaper, ported layer for layer from the homescreen
+   design's Figma export (a 402x874 phone frame): a warm cream page, a fine
+   yellow paper grain, three gaussian-blurred colour discs and a blue
+   halftone star tucked into the top-right corner.
+
+   PAINTED ON THE BODY, on the home route only. The body is the fixed
+   100dvh column that the header and the #home-screen scroller both sit
+   in, so one background here runs under both — the bar is cleared over it
+   (below) and the star lands behind the bell, where the design puts it —
+   and it never scrolls: the grid and panels move over a wallpaper, not
+   under a banner. The gradient layers are sized to the body (100% 100%),
+   which is the viewport, so a long feed cannot stretch a wash across two
+   screens.
+
+   `body:has(#home-screen:not(.hidden))` is the route test. The shell
+   swaps screens by toggling `.hidden` on their roots (see
+   frontend/src/lib/visibility-store.ts), so "the home root is showing" IS
+   "we are on the home route", read from the DOM with no class for a
+   module to publish. Everywhere else the body keeps its `bg-zinc-100`
+   ground and the bar its zinc-200 surface. An engine without :has()
+   (none the shell supports) simply keeps that everywhere.
+
+   THE DISCS are the export's blurred circles as radial gradients: each
+   holds its fill to (r - 2σ), is at half opacity at r, and is gone by
+   (r + 2σ), which is a gaussian edge to within what the eye reads. The two
+   corner discs are anchored in px to their corners, as in the export; the
+   mid-height one is anchored at 59% (515/874) so it stays mid-screen on a
+   taller viewport instead of parking at one fixed offset.
+
+   THE STAR AND THE GRAIN ARE INLINE, not files. app.css is the one asset
+   the shell already precaches and build-scopes (/b/<sha>/css/…), and a
+   url() to a sibling image would need the same treatment in sw.js and in
+   the build-scoped path parser — two more places to keep honest for two
+   decorative layers. The grain is the export's own filter chain
+   (fractalNoise → luminanceToAlpha → one discrete band → #FFEE6F) on one
+   stitched SVG tile, under 1 KB — at 30% rather than the export's 50%,
+   which is what a pixel sweep against the designer's own render settled
+   on: at 50% the specks measured a third louder than hers. The star is the designer's own
+   raster of the element WITH its "halftone dot screen" effect — 194x156,
+   the export's 97x78 box at 2x, so it is pixel-exact on a 2x screen — set
+   32px in from the right and flush with the top, where the export puts it
+   (its top point is already cropped in the raster, as the design crops it
+   at the screen edge). It is one colour (#DEEDF8) at varying alpha, so it
+   is stored as an indexed PNG: one palette entry at 32 alpha levels, which
+   keeps the halftone intact at a quarter of the RGBA size. Do not rebuild
+   it by hand — an SVG re-creation of the halftone came before it, and
+   every engine drew it differently (Firefox drops blend modes inside an
+   SVG image, for one); a raster is the same everywhere.
+
+   DARK MODE KEEPS ITS GROUND. The mock is a light-mode design; on the
+   near-black page the body keeps zinc-950 and paints no layers. */
+body:has(#home-screen:not(.hidden)) {
+  --home-ground: #fffeea;
+  --home-star: url("data:image/png;base64,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");
+  --home-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.3'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-color: var(--home-ground);
+  background-image:
+    var(--home-star),
+    var(--home-grain),
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px),
+    radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px),
+    radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px);
+  background-repeat: no-repeat, repeat, no-repeat, no-repeat, no-repeat;
+  background-position: right 32px top 0, 0 0, 0 0, 0 0, 0 0;
+  background-size: 97px 78px, 240px 240px, 100% 100%, 100% 100%, 100% 100%;
+}
+.dark body:has(#home-screen:not(.hidden)) {
+  background-color: #0b0b0c; /* zinc-950, the body's own dark ground */
+  background-image: none;
+}
+/* WIDE VIEWPORTS. The three discs above are the phone frame's, anchored in
+   px to its corners, and on a desktop window they shrink into the corners
+   and leave a field of plain cream. From the shell's desktop breakpoint four
+   more washes join them — the same three tints, sized in viewport units so
+   they scale with the window rather than with the phone, and placed across
+   the middle of the page where the frame's discs never reach. The dark rule
+   above still wins here (it is the more specific selector), so dark mode
+   stays unpainted at every width. */
+@media (min-width: 640px) {
+  body:has(#home-screen:not(.hidden)) {
+    background-image:
+      var(--home-star),
+      var(--home-grain),
+      radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px),
+      radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px),
+      radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px),
+      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(237, 228, 244, 0.65), rgba(237, 228, 244, 0) 70%),
+      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(248, 228, 238, 0.65), rgba(248, 228, 238, 0) 70%),
+      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(253, 232, 228, 0.7), rgba(253, 232, 228, 0) 70%),
+      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(237, 228, 244, 0.55), rgba(237, 228, 244, 0) 70%);
+    background-repeat: no-repeat, repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+    background-position: right 32px top 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0;
+    background-size: 97px 78px, 240px 240px, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+  }
+}
+/* THE BAR OVER THE WALLPAPER. On the home route the header's zinc-200
+   surface goes, so the wallpaper (and the star) run up behind the bell —
+   the one place the design's "page ground runs to the top of the screen"
+   is literal. The controls on it carry their own periwinkle fill and
+   hairline (--brand-tint / --brand-line), so they still lift off cream and
+   off dark alike. Everywhere else the bar keeps its surface — see the
+   "THE BAR'S OWN SURFACE" note in platform-header.tsx for why it has one.
+   The view-transition group note above (#platform-header is opaque) has a
+   home-route exception here: during the push from home into an app the
+   incoming page slides under a bar with no fill, which is the iOS reading
+   of a translucent bar rather than a defect. */
+body:has(#home-screen:not(.hidden)) #platform-header {
+  background-color: transparent;
 }
 
 /* ── App cards ─────────────────────────────────────────── */
@@ -6822,9 +6948,13 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
    console, …) and #landing-header (the anonymous shell) — and they must
    be the SAME height on every screen. Both are built the same way:
 
-     py-3 (12px top + bottom) around a 28px CONTENT ROW  =  52px,
+     py-3 (12px top + bottom) around a 48px CONTENT ROW  =  72px,
      plus env(safe-area-inset-top) via .un-safe-top-extend (native.css)
      on the padding-top.
+
+   The row was 28px (a 52px bar) until the homescreen design, whose app
+   chip and bell are 48px discs with the same 12px of padding around
+   them; the row grew to hold them and every pin below moved with it.
 
    It was 53px until the reskin: both bars carried a 1px `border-b`
    hairline, and the border box counted it. The widget language draws no
@@ -6842,21 +6972,21 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 
    So the row is pinned from BOTH directions, in the markup:
 
-   - FLOOR: the lead back-button wrapper (`div.w-5.h-7.shrink-0` — the
-     one child present in every state of both headers) carries `h-7` =
-     28px, which survives the title being display:none. It stays `w-5`:
-     frontend/src/features/header/use-header-layout.ts measures it as the
-     title's left side group.
-   - CEILING: no direct child of either header may exceed 28px, and the
+   - FLOOR: the lead back-button wrapper (the one child present in every
+     state of both headers) carries `h-12` = 48px, which survives the
+     title being display:none. On the landing bar it is also fixed-width
+     (`w-12`): frontend/src/features/header/use-header-layout.ts measures
+     it as the title's left side group.
+   - CEILING: no direct child of either header may exceed 48px, and the
      children that could grow past it state their height OUTRIGHT rather
-     than adding up to it — #app-mode-switch is `h-7` with
-     `items-stretch` segments, the landing CTAs are `h-7 inline-flex
-     items-center`. Padding arithmetic is what broke this twice: the
+     than adding up to it — the Improve pill is `h-12`, the landing CTAs
+     are `h-12 inline-flex items-center`. Padding arithmetic is what
+     broke this twice back when the row was 28px: the old App/Dev
      switch's `py-1` segments + `p-0.5` track came to 28px only if you
      forgot its 1px border (it was 30px), and the bordered "Join
      waitlist" CTA was 30px next to its borderless 28px siblings for the
-     same reason. Anything new added to a header gets the same 28px
-     budget — declare `h-7` and centre inside it.
+     same reason. Anything new added to a header gets the same 48px
+     budget — declare `h-12` and centre inside it.
 
    Absolutely-positioned badges and dots (#notifications-badge,
    #improve-working-dot, #dev-console-badge, #header-menu-deploy-dot)
