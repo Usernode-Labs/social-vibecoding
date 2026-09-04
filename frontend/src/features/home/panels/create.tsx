@@ -14,8 +14,9 @@
  * dimmed, and tapping it says why — rather than having it silently absent.
  * Two reasons that is the right shape:
  *
- *   1. `canCreateApps` is DERIVED per request (`isAdmin || live app count <
- *      app_quota`, see /api/auth/me), so it flips without any user action:
+ *   1. `canCreateApps` is DERIVED per request (full-admin write access or
+ *      `live app count < app_quota`, see /api/auth/me), so it flips without
+ *      any user action:
  *      creating your one allowed app, an admin editing your quota, an app
  *      erroring out. A conditional block would turn each of those flips into a
  *      layout change under the user.

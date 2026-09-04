@@ -843,7 +843,7 @@
     },
     {
       "name": "The Create app section sits below the grid and opens the create flow",
-      "path": "/?demo=1",
+      "path": "/?demo=1&shot=create-enabled",
       "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"flex-row\"]",
       "expectText": "Create app"
     },

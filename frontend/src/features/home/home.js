@@ -26,25 +26,26 @@ import { chromeStore } from './chrome-store';
 
 const Home = {
   // Can this viewer create apps right now? Derived per request by
-  // /api/auth/me as `isAdmin || live app count < app_quota`, so it flips
-  // without any user action — creating your one allowed app, an admin
-  // editing your quota, an app erroring out.
+  // /api/auth/me as `canAdminWrite || live app count < app_quota`, so it
+  // flips without any user action — creating your one allowed app, an admin
+  // editing your quota, an app erroring out. View-only admins intentionally
+  // keep their ordinary quota because they cannot use the create route's
+  // full-admin bypass.
   //
   // It gates the create WIDGET's appearance only, never whether the widget
   // exists: the widget is on every home screen, in the layout, for every
   // account (see HomePanels.renderCreatePanel for why).
   //
-  // ?shot=create-disabled forces the locked rendering regardless. That is
-  // not a convenience: every capture identity is an admin, and the only
-  // zero-quota staging fixture carries a sentinel password and cannot be
-  // signed into — so without a URL the MAJORITY rendering (most accounts
-  // carry no quota) would be invisible to before/after screenshots and to
-  // every declared check. Pure UI state: it flips one boolean at render
-  // time, writes nothing, and is not env-gated, so it works in production
-  // the moment it ships.
+  // ?shot=create-enabled and ?shot=create-disabled pin the two treatments.
+  // Proposal checks run as a zero-quota, view-only admin, so neither state
+  // should depend on that fixture's privileges. Pure UI state: these flip one
+  // boolean at render time, write nothing, and are not env-gated, so they work
+  // in production the moment they ship.
   canCreate() {
     try {
-      if (new URLSearchParams(location.search).get('shot') === 'create-disabled') return false;
+      const shot = new URLSearchParams(location.search).get('shot');
+      if (shot === 'create-enabled') return true;
+      if (shot === 'create-disabled') return false;
     } catch (err) { /* ignore */ }
     return !!App.user?.canCreateApps;
   },

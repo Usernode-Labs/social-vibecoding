@@ -522,8 +522,9 @@ const HomePanels = {
   // absent. Two reasons this is
   // the right shape and not a conditional placement:
   //
-  //   1. canCreateApps is DERIVED per request (isAdmin || live app count <
-  //      app_quota — see /api/auth/me), so it flips without any user action:
+  //   1. canCreateApps is DERIVED per request (full-admin write access or
+  //      live app count < app_quota — see /api/auth/me), so it flips without
+  //      any user action:
   //      creating your one allowed app, an admin editing your quota, an app
   //      erroring out. Conditional placement would turn each of those flips
   //      into a layout mutation that re-packs the grid under the user.

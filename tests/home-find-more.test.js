@@ -78,11 +78,12 @@ const SCHEMA = read('src/db/schema.sql');
 const APPS_ROUTE = read('src/routes/apps.js');
 
 // `search` drives the screenshot-state deep links the module reads off
-// location (?shot=create-disabled, ?shot=discover-empty).
-function makeHome({ search = '' } = {}) {
+// location (?shot=create-enabled, ?shot=create-disabled,
+// ?shot=discover-empty).
+function makeHome({ search = '', canCreateApps = true } = {}) {
   const sandbox = {
     console,
-    App: { user: { id: 1, canCreateApps: true } },
+    App: { user: { id: 1, canCreateApps } },
     document: {
       getElementById: () => null,
       querySelector: () => null,
@@ -208,6 +209,15 @@ test('featuredApps: ?shot=discover-empty forces the empty state', () => {
   assert.equal(shot.featuredApps(apps).length, 0, 'the deep link empties it');
   // Paint-only: a DIFFERENT shot value must not touch this list.
   assert.equal(makeHome({ search: '?shot=create-disabled' }).featuredApps(apps).length, 1);
+});
+
+test('the create-widget shot paths pin both quota treatments', () => {
+  assert.equal(makeHome({ canCreateApps: false }).canCreate(), false,
+    'the ordinary state follows the authenticated quota');
+  assert.equal(makeHome({ search: '?shot=create-enabled', canCreateApps: false }).canCreate(), true,
+    'the enabled review path does not depend on capture-admin privileges');
+  assert.equal(makeHome({ search: '?shot=create-disabled', canCreateApps: true }).canCreate(), false,
+    'the locked review path stays deterministic too');
 });
 
 // ── popularApps selection (#949) ──────────────────────────────────
