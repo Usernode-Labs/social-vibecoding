@@ -316,12 +316,12 @@ test('dapp.json asserts the text the new pills render', () => {
   assert.ok(texts.some((t) => /Preview unavailable/.test(t)), 'unavailable chip checked');
 });
 
-// ── the sweeper's two guards (server.js) ────────────────────────────────
+// ── the sweeper and check-status guards (server.js) ────────────────────
 //
 // server.js cannot be required here — it binds ports and starts timers on
-// load — so these are source invariants over the two edits the spec asks
-// for. Both are one-line guards whose absence is silent and destructive, so
-// they're worth pinning even at this coarse granularity.
+// load — so these are source invariants over call sites whose absence is
+// silent and destructive, so they're worth pinning even at this coarse
+// granularity.
 //
 //  Pass 3 (staging heal): an imported proposal's first build runs with no
 //  worker attached and takes minutes, during which staging_url is NULL. Without
@@ -332,7 +332,7 @@ test('dapp.json asserts the text the new pills render', () => {
 //  proposal's container is pure waste — but the same in-flight check has to
 //  stand between the GC and a live build, or the GC deletes the container the
 //  build is about to record.
-test('server.js sweeper: both passes consult staging.hasInFlightBuild', () => {
+test('server.js: both sweeper passes and check status consult staging.hasInFlightBuild', () => {
   const src = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'server.js'), 'utf8'
   );
@@ -341,7 +341,11 @@ test('server.js sweeper: both passes consult staging.hasInFlightBuild', () => {
     'named stagingSvc: recoverActiveWorkers() already binds a local `staging`');
 
   const guards = src.match(/stagingSvc\.hasInFlightBuild\(/g) || [];
-  assert.equal(guards.length, 2, 'one guard in the idle-GC pass, one in the heal pass');
+  assert.equal(guards.length, 3,
+    'one guard each in check status, the idle-GC pass, and the heal pass');
+  assert.match(src,
+    /function checkRecoveryInFlight\(sessionId\)[\s\S]*stagingSvc\.hasInFlightBuild\(Number\(sessionId\)\)/,
+    'stalled-check reporting leaves a live staging build in flight');
   assert.match(src, /if \(stagingSvc\.hasInFlightBuild\(session\.id\)\) continue;/,
     'heal pass skips the session instead of starting a duplicate build');
   assert.match(src, /if \(stagingSvc\.hasInFlightBuild\(row\.id\)\) continue;/,

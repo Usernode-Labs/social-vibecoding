@@ -60,6 +60,7 @@ function loadWithStubs() {
     getPRResult: null,
     getPRShouldThrow: false,
     pushSessionUpdate: [],
+    pushIssueUpdate: [],
     sendSystemMessage: [],
     sendSystemMessageShouldThrow: false,
     busySessionIds: new Set(),
@@ -99,6 +100,7 @@ function loadWithStubs() {
   });
   stub(ids.ws, {
     pushSessionUpdate: (payload) => { spies.pushSessionUpdate.push(payload); },
+    pushIssueUpdate: (payload) => { spies.pushIssueUpdate.push(payload); },
     sendSystemMessage: async (pool, appId, content, msgType, metadata) => {
       spies.sendSystemMessage.push({ appId, content, msgType, metadata });
       if (spies.sendSystemMessageShouldThrow) throw new Error('chat insert failed');
@@ -147,6 +149,31 @@ test('archiveSession: keeps CC volume by default (reversible), closes PR, tears 
     // duplicate is gone and the chokepoint above owns it.
     assert.equal(pool.issued(/staging_container_id = NULL/), false,
       'the caller must not null behind the chokepoint (see tests/staging-teardown-leak.test.js)');
+    assert.equal(spies.pushSessionUpdate[0].action, 'archived');
+  } finally {
+    restore();
+  }
+});
+
+test('finalizeArchivedSession cleans up a predecessor whose status changed in another transaction', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    const pool = makePool([
+      [/SELECT cs\.\*/, [{
+        id: 7, app_id: 2, app_slug: 'widget', repo_url: REPO,
+        pr_number: null, staging_container_id: 'sc-1', linked_issues: [1647],
+      }]],
+    ]);
+
+    const res = await subject.finalizeArchivedSession({
+      pool, sessionId: 7, userId: 3, reason: 'proposal-replaced',
+    });
+
+    assert.deepEqual(res, { archived: true, appSlug: 'widget' });
+    assert.equal(pool.issued(/SET status = 'archived'/), false,
+      'the predecessor and successor status changes belong to the caller transaction');
+    assert.equal(spies.teardownStaging.length, 1);
+    assert.deepEqual(spies.destroyWorker, ['usernode-worker-7']);
     assert.equal(spies.pushSessionUpdate[0].action, 'archived');
   } finally {
     restore();

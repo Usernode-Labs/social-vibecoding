@@ -97,6 +97,8 @@ const stagingReap = require('./src/services/staging-reap');
 // preview is being built right now alone (see Pass 2 / Pass 3 below). Named
 // stagingSvc because recoverActiveWorkers() already binds a local `staging`.
 const stagingSvc = require('./src/services/staging');
+const visualsSvc = require('./src/services/visuals');
+const { hasInFlightHandoffPipeline } = require('./src/services/handoff-pipeline');
 const limits = require('./src/services/limits');
 const events = require('./src/services/events');
 const ws = require('./src/services/ws');
@@ -1529,10 +1531,7 @@ async function reconcileEligibleMerges(config) {
 // The headless capture run is capped at RUN_TIMEOUT_MS (240s in
 // services/visuals.js) plus the staging build, so 10 minutes is comfortably
 // beyond any legitimately in-flight run. Tunable via CHECKS_STALE_MS.
-const CHECKS_STALE_MS = parseInt(
-  process.env.CHECKS_STALE_MS || String(10 * 60 * 1000),
-  10
-);
+const CHECKS_STALE_MS = stagingRecovery.checksStaleMs();
 
 // #237: crash-loop short-circuit. A staging build that crashes deterministically
 // (e.g. an app whose staging-only seed hits a missing constraint) used to be
@@ -1548,13 +1547,20 @@ const CHECK_MAX_AUTO_RETRIES = parseInt(
   10
 );
 
+function checkRecoveryInFlight(sessionId) {
+  return activeWorkersSvc.isSessionBusy(sessionId)
+    || hasInFlightHandoffPipeline(sessionId)
+    || stagingSvc.hasInFlightBuild(Number(sessionId))
+    || visualsSvc.hasInFlightCapture(sessionId);
+}
+
 // #447: reconcile stuck proposal checks. check_state is only ever advanced
 // out of 'pending' by the same captureForSession invocation that set it, so
 // a process restart/crash mid-capture (or a staging rebuild that predated
-// the #447 capture wiring) can leave a promoted PR 'pending'/NULL forever —
-// past the vote threshold but permanently "still running its tests", blocked
-// from merging with no retry. This re-runs the checks for promoted sessions
-// whose verdict is NULL or has been 'pending' longer than CHECKS_STALE_MS.
+// the #447 capture wiring) can leave a submitted CLI handoff or promoted PR
+// 'pending'/NULL forever. This re-runs the checks for those managed sessions
+// once the durable run is stale and no in-process worker, build, handoff tail,
+// or capture still owns it. Drafts and unsubmitted uploads stay out.
 // captureForSession always resolves to a terminal state (or 'error' via its
 // catch), so this guarantees no row stays 'pending' indefinitely. Bounded
 // per run like the staging-heal sweep; runs at boot and from the session
@@ -1570,22 +1576,12 @@ async function reconcileStuckChecks(config) {
 
   let rows;
   try {
-    ({ rows } = await pool.query(
-      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-        WHERE cs.status = 'promoted'
-          AND cs.branch_name IS NOT NULL
-          AND (cs.check_state IS NULL
-               OR (cs.check_state = 'pending'
-                   AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0))
-               OR (cs.check_state = 'error'
-                   AND cs.consecutive_check_failures < $2
-                   AND cs.check_next_retry_at IS NOT NULL
-                   AND cs.check_next_retry_at < NOW()))
-        ORDER BY cs.promoted_at ASC NULLS FIRST
-        LIMIT 50`,
-      [CHECKS_STALE_MS, CHECK_MAX_AUTO_RETRIES]
-    ));
+    ({ rows } = await stagingRecovery.findStuckCheckSessions({
+      pool,
+      staleMs: CHECKS_STALE_MS,
+      maxAutoRetries: CHECK_MAX_AUTO_RETRIES,
+      limit: 50,
+    }));
   } catch (err) {
     log.warn('server', 'reconcileStuckChecks query failed', { err: err.message });
     return;
@@ -1598,7 +1594,7 @@ async function reconcileStuckChecks(config) {
   let rechecked = 0;
   for (const session of rows) {
     if (rechecked >= MAX_RECHECKS) break;
-    if (activeWorkersSvc.isSessionBusy(session.id)) continue;
+    if (checkRecoveryInFlight(session.id)) continue;
     rechecked++;
     try {
       await stagingRecovery.recheckSessionChecks({
@@ -4342,38 +4338,26 @@ function startSessionAutoPauseSweeper(config) {
     }
 
     // Pass 4: stuck-check reconcile (#447). The flip side of the merge gate
-    // — a promoted PR whose proposal checks are NULL or stuck 'pending' past
-    // CHECKS_STALE_MS is permanently blocked from merging ("still running its
-    // tests") because nothing ever advances check_state out of 'pending'
-    // after a restart mid-capture. Re-run the checks (rebuild staging if the
-    // preview is gone, else recheck the live container) so legitimately-
-    // passing PRs flip to 'passing' and become mergeable. Bounded per sweep
+    // — a submitted CLI handoff or promoted PR whose checks are NULL or stuck
+    // 'pending' past CHECKS_STALE_MS has no live tail left to advance it after
+    // a restart. Re-run the checks (rebuild staging if the preview is gone,
+    // else recheck the live container) so the same proposal can continue.
+    // Bounded per sweep
     // with a per-session cooldown, exactly like the staging-heal pass above;
     // the boot-time reconcileStuckChecks handles the restart case, this keeps
     // them healed live without a restart.
     try {
-      const { rows } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-           FROM chat_sessions cs
-           JOIN apps a ON cs.app_id = a.id
-          WHERE cs.status = 'promoted'
-            AND cs.branch_name IS NOT NULL
-            AND (cs.check_state IS NULL
-                 OR (cs.check_state = 'pending'
-                     AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0))
-                 OR (cs.check_state = 'error'
-                     AND cs.consecutive_check_failures < $2
-                     AND cs.check_next_retry_at IS NOT NULL
-                     AND cs.check_next_retry_at < NOW()))
-          ORDER BY cs.promoted_at ASC NULLS FIRST
-          LIMIT 50`,
-        [CHECKS_STALE_MS, CHECK_MAX_AUTO_RETRIES]
-      );
+      const { rows } = await stagingRecovery.findStuckCheckSessions({
+        pool,
+        staleMs: CHECKS_STALE_MS,
+        maxAutoRetries: CHECK_MAX_AUTO_RETRIES,
+        limit: 50,
+      });
       const MAX_RECHECKS_PER_SWEEP = 5;
       let rechecked = 0;
       for (const session of rows) {
         if (rechecked >= MAX_RECHECKS_PER_SWEEP) break;
-        if (activeWorkersSvc.isSessionBusy(session.id)) continue;
+        if (checkRecoveryInFlight(session.id)) continue;
         const last = checkRecheckAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
         // Stamp BEFORE the (minutes-long) recheck so a later tick won't kick

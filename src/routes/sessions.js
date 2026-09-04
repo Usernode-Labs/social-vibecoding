@@ -7042,6 +7042,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
       const session = rows[0];
 
+      if (!['active', 'promoted'].includes(session.status)) {
+        return res.status(409).json({
+          error: 'proposal_closed',
+          message: `This proposal is ${session.status || 'no longer open'}, so its checks cannot be re-run.`,
+        });
+      }
+
       // Owner or admin only — re-running checks costs a staging build +
       // headless run, so it's not opened to every collaborator (deferred).
       // NB: req.user is the camelCase shape from middleware/auth.js —
