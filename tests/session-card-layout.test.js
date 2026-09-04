@@ -184,7 +184,7 @@ test('shared card: single-row shell; noNav drops nav, chevron and the actions ro
   assert.doesNotMatch(noNav, /gc-card-actions/, 'noNav variant has no actions row');
 });
 
-test('an owned imported PR is an In-progress discussion card with one promotion action', () => {
+test('an owned imported PR shows proposal metadata with one promotion action', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
   const model = AppView._mySessionCardModel(mySess({
@@ -192,6 +192,10 @@ test('an owned imported PR is an In-progress discussion card with one promotion 
     source: 'imported',
     imported_pr_author: 'octo-contributor',
     pr_number: 1165,
+    pr_url: 'https://github.example/pull/1165',
+    priority: { top: 'high', count: 2, myValue: 'high' },
+    assignee: { top: 'tester', count: 1, myValue: 'tester' },
+    category: { top: 'bug', count: 1, myValue: 'bug' },
     shared_at: '2026-06-01T03:00:00Z',
   }));
   const html = cardHtml(model);
@@ -199,23 +203,46 @@ test('an owned imported PR is an In-progress discussion card with one promotion 
     'the card opens its public discussion, never a dev chat');
   assert.doesNotMatch(html, /data-session-chip=/);
   assert.match(html, /Imported PR/);
+  assert.match(html, /High/);
+  assert.match(html, /@tester/);
+  assert.match(html, />Bug</);
   assert.match(html, /Imported pull request by octo-contributor · not up for vote yet/);
   // `passNode` appends the clicked button, which the model cannot hold.
   assert.ok(hasAction(model, 'promoteImportedSession', 88), 'the promote pill is wired');
   assert.ok(model.actions.find((a) => a.key === 'promote').passNode);
   assert.match(html, />Put up for vote</);
+  assert.doesNotMatch(html, />Yes \(|>No \(/, 'voting stays hidden until promotion');
   assert.doesNotMatch(html, /Make visible|>Hide<|Share chat/);
-  assert.equal(menuKeyOf(html), null, 'no archive or dev-session menu is exposed');
+  assert.equal(menuLabels(AppView, html).join('|'),
+    'Change priority…|Change category…|Change assignee…|View PR on GitHub',
+    'the menu edits proposal attributes without exposing dev-session actions');
+  assert.ok(!menuHas(AppView, html, /Archive|Open session|Vote/));
 });
 
-test('another user’s imported PR names author and importer without owner controls', () => {
+test('another user’s imported PR names its people and exposes proposal attributes', () => {
   const AppView = makeAppView();
   const html = sharedSessionCardHtml(AppView, sharedSess({
     source: 'imported', imported_pr_author: 'octo-contributor', username: 'maya',
+    pr_url: 'https://github.example/pull/1165',
+    assignee: { top: 'sam', count: 1, myValue: null },
   }));
   assert.match(html, /Imported PR/);
+  assert.match(html, /@sam/);
   assert.match(html, /Imported pull request by octo-contributor · imported by maya/);
   assert.doesNotMatch(html, /Put up for vote|is working on this/);
+  assert.ok(menuHas(AppView, html, /Change assignee/));
+  assert.ok(menuHas(AppView, html, /View PR on GitHub/));
+});
+
+test('an imported PR detail header shows all three editable attribute slots', () => {
+  const AppView = makeAppView();
+  const html = sharedSessionCardHtml(AppView, sharedSess({
+    source: 'imported', imported_pr_author: 'octo-contributor', username: 'maya',
+  }), { noNav: true });
+  assert.match(html, /Set priority/);
+  assert.match(html, /Unassigned/);
+  assert.match(html, /Set category/);
+  assert.doesNotMatch(html, />Yes \(|>No \(/);
 });
 
 // ── Preview pill gating (#689) ──────────────────────────────────────────────

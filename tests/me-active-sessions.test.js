@@ -110,18 +110,73 @@ test('query is owner-scoped and excludes archived/headless rows', async () => {
 
 test('the Dev board can opt imported active rows into the owner list', async () => {
   capturedQueries = [];
-  poolQueryHandler = async () => ({ rows: [sessionRow({
+  const base = sessionRow({
     id: 44, source: 'imported', imported_pr_author: 'contributor', pr_number: 44,
-  })] });
+  });
+  poolQueryHandler = async (sql) => {
+    if (/ORDER BY last_activity_at DESC/.test(sql)) return { rows: [base] };
+    if (/WHERE cs\.id = ANY\(\$1::int\[\]\)/.test(sql)) {
+      return { rows: [{
+        ...base,
+        app_id: 1,
+        user_id: VIEWER.id,
+        username: VIEWER.username,
+        pr_url: 'https://github.example/pull/44',
+        pr_summary_md: 'Adds full Underway details.',
+        pr_body: '## What changed\n\nFull details.',
+        testing_md: 'Open the Dev board.',
+        testing_path: '/app/demo/dev',
+        testing_paths: [{ path: '/app/demo/dev', viewport: 'desktop' }],
+        check_state: 'failing',
+        check_phase: null,
+        check_trigger: 'pr-import',
+        check_error_detail: null,
+        test_results: [{ name: 'details', status: 'fail', failureReason: 'missing assignee' }],
+        checks_checked_at: '2026-09-04T12:00:00Z',
+        visuals_agg: null,
+      }] };
+    }
+    if (/GROUP BY target_ref, field, norm/.test(sql)) {
+      return { rows: [
+        { ref: 44, field: 'priority', display_value: 'high', count: 2, first_at: '2026-09-04T10:00:00Z' },
+        { ref: 44, field: 'assignee', display_value: 'tester', count: 1, first_at: '2026-09-04T10:01:00Z' },
+        { ref: 44, field: 'category', display_value: 'bug', count: 1, first_at: '2026-09-04T10:02:00Z' },
+      ] };
+    }
+    if (/FROM topic_attribute_votes/.test(sql) && /AND user_id = \$4/.test(sql)) {
+      return { rows: [
+        { ref: 44, field: 'assignee', value: 'tester' },
+      ] };
+    }
+    return { rows: [] };
+  };
   const server = await startServer();
   try {
     const { res, body } = await fetchActiveSessions(server, { includeImported: true });
     assert.strictEqual(res.status, 200);
-    assert.strictEqual(body.sessions[0].source, 'imported');
+    const imported = body.sessions[0];
+    assert.strictEqual(imported.source, 'imported');
+    assert.strictEqual(imported.pr_body, '## What changed\n\nFull details.');
+    assert.strictEqual(imported.testing_md, 'Open the Dev board.');
+    assert.strictEqual(imported.test_results[0].failureReason, 'missing assignee');
+    assert.strictEqual(imported.priority.top, 'high');
+    assert.strictEqual(imported.assignee.top, 'tester');
+    assert.strictEqual(imported.assignee.myValue, 'tester');
+    assert.strictEqual(imported.category.top, 'bug');
     const q = capturedQueries.find((c) => /FROM chat_sessions cs/.test(c.sql));
     assert.deepStrictEqual(q.params, [VIEWER.id, true]);
     assert.match(q.sql, /cs\.imported_pr_author/);
     assert.match(q.sql, /cs\.staging_url/);
+    const detail = capturedQueries.find((c) => /WHERE cs\.id = ANY\(\$1::int\[\]\)/.test(c.sql));
+    assert.ok(detail, 'imported proposal detail query was issued');
+    assert.deepStrictEqual(detail.params, [[44]]);
+    assert.match(detail.sql, /cs\.source = 'imported'/);
+    assert.match(detail.sql, /cs\.status IN \('active', 'paused'\)/);
+    assert.match(detail.sql, /cs\.pr_summary_md/);
+    assert.match(detail.sql, /cs\.pr_body/);
+    assert.match(detail.sql, /cs\.testing_md/);
+    assert.match(detail.sql, /cs\.test_results/);
+    assert.match(detail.sql, /cs\.checks_checked_at/);
   } finally {
     server.close();
   }
@@ -153,6 +208,9 @@ test('response shape: row fields pass through, busy false without a warm worker'
     assert.strictEqual(body.sessions[0].pr_title, 'Add leaderboard');
     assert.strictEqual(body.sessions[1].agent_backend, 'codex_openrouter');
     assert.strictEqual(body.sessions[1].agent_model, 'openai/gpt-5.3-codex');
+    assert.equal(capturedQueries.some(
+      (q) => /WHERE cs\.id = ANY\(\$1::int\[\]\)/.test(q.sql)), false,
+      'ordinary dev sessions never enter the proposal-detail read');
   } finally {
     worker.isInFlight = realIsInFlight;
     server.close();
