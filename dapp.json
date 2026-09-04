@@ -1640,16 +1640,16 @@
       "expectText": "Send"
     },
     {
-      "name": "Opus 5 reads as the general coding pick, not big-or-tricky-only (#809)",
+      "name": "The composer's picker names the model and nothing else (#1589)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-model-select option[value=\"claude-opus-5\"]",
-      "expectText": "general coding work"
+      "expectText": "Opus 5"
     },
     {
-      "name": "Fable 5 reads as design, taste, and difficult coding",
+      "name": "The picker's longest option is a name, so the row fits one line (#1589)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-model-select option[value=\"claude-fable-5\"]",
-      "expectText": "design, taste, and difficult coding"
+      "expectText": "Fable 5"
     },
     {
       "name": "Saved drafts render above the composer with send/edit/trash (#798)",
