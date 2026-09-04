@@ -518,21 +518,21 @@ const HomePanels = {
   //
   // IT IS ON EVERY HOME SCREEN, FOR EVERY ACCOUNT. An account with no app
   // quota gets the same widget in the same cell — dimmed, and tapping it
-  // says why — rather than having it silently absent. Two reasons this is
+  // opens the dialog with exact usage — rather than having it silently
+  // absent. Two reasons this is
   // the right shape and not a conditional placement:
   //
-  //   1. canCreateApps is DERIVED per request (isAdmin || live app count <
-  //      app_quota — see /api/auth/me), so it flips without any user action:
+  //   1. canCreateApps is DERIVED per request (full-admin write access or
+  //      live app count < app_quota — see /api/auth/me), so it flips without
+  //      any user action:
   //      creating your one allowed app, an admin editing your quota, an app
   //      erroring out. Conditional placement would turn each of those flips
   //      into a layout mutation that re-packs the grid under the user.
   //   2. It's the majority rendering — most accounts carry no quota — so
   //      "absent" would read as a missing feature rather than a locked one.
   //
-  // The disabled state must NOT be a `disabled` attribute: a disabled
-  // element swallows pointer events, which would kill both the explanatory
-  // toast AND the widget's participation in the drag recognizer. aria-disabled
-  // plus a branch in the click handler keeps it draggable and tappable.
+  // The locked treatment belongs to the widget, not to a disabled button:
+  // that button's available action is opening the exact quota details.
   createView(panel) {
     return {
       key: panel.key,
@@ -686,9 +686,8 @@ const HomePanels = {
       items.push({ label: 'Browse all apps', handler: () => { location.hash = '#apps'; } });
     }
     // The create widget's menu carries the ask-an-admin sentence as an inert
-    // note when the viewer has no quota — the same string the tile's tooltip
-    // and its tap toast use, so the explanation is reachable from the
-    // widget's own affordance rather than only by tapping it.
+    // note when the viewer has no quota — the same compact string as the
+    // tile's tooltip, while a tap opens the detailed quota in the dialog.
     if (key === 'create' && window.Home && typeof Home.canCreate === 'function' && !Home.canCreate()) {
       items.push({
         label: Home.CREATE_DISABLED_HINT || 'Ask an admin to enable app creation for your account.',

@@ -120,7 +120,7 @@ export interface ChallengesView {
 export interface CreateView {
   key: string;
   canCreate: boolean;
-  /** The ask-an-admin sentence — tooltip, tap toast and ⋮ note share it. */
+  /** The compact ask-an-admin sentence shared by the tooltip and ⋮ note. */
   hint: string;
 }
 
