@@ -290,14 +290,30 @@ export function PlatformHeader() {
           the same relationship every sheet already uses (zinc-900 on
           zinc-950; cf. notifications-sheet.tsx, anchored-panel.tsx).
 
-          `rounded-b-lg` + `-mb-1` is the "eats into the app area" corner: an
-          8px radius curves the bar's bottom corners away so the page ground
-          shows through the two notches, and a 4px overlap onto the next
+          `rounded-b-2xl` + `-mb-2` is the "eats into the app area" corner: a
+          16px radius curves the bar's bottom corners away so the page ground
+          shows through the two notches, and an 8px overlap onto the next
           sibling puts that curve slightly INSIDE the area below, which is
           what makes the content read as having rounded top corners. The
           overlap is deliberately half the radius: every screen root below
-          opens with its own padding, so 4px comes out of that padding rather
+          opens with its own padding, so 8px comes out of that padding rather
           than off the top of a card, and nothing is clipped at rest.
+          It was `rounded-b-lg` + `-mb-1` (8px over 4px) until #1571, which
+          asked for a corner that reads as INTENDED rather than as a
+          rendering artifact — doubling it is the whole of that half of the
+          request. Keep the two in step: the overlap is half the radius, and
+          features/dev-chat/view.tsx's #dc-session-header carries the same
+          radius token because it is the second bar on that screen
+          (tests/dev-chat-view.test.js pins them to each other).
+
+          WHAT THIS CORNER CANNOT REACH, and what does instead: the notch is
+          cut out of the BAR, so it needs the bar to have a surface. On the
+          wallpaper routes it has none — app.css clears it so the ground runs
+          to the top of the screen — and #app-view is one of them. There the
+          radius belongs to the app frame itself; see "THE APP SHEET" in
+          app.css for the whole of that argument. The two mechanisms do not
+          overlap: #app-frame-host is the only opaque thing below this bar,
+          and every other root is transparent and has nothing to round.
           `z-10` is load-bearing — #home-screen and #messages-screen set
           `position:relative` with z-index:auto, so without it two positioned
           siblings paint in DOM order and the screen wins.
@@ -320,7 +336,7 @@ export function PlatformHeader() {
         ref={headerRef}
         id="platform-header"
         className={'un-safe-top-extend relative z-10 flex items-center gap-4 px-4 py-3 shrink-0'
-          + ' bg-zinc-200 dark:bg-zinc-900 rounded-b-lg -mb-1'}
+          + ' bg-zinc-200 dark:bg-zinc-900 rounded-b-2xl -mb-2'}
       >
         {/*
             The LEFT group: the back chevron when there is somewhere to go
