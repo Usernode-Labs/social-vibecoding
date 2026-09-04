@@ -2878,6 +2878,10 @@ const DevChat = {
         DevChat._venueFallbackReason = data.agentFallbackReason;
       }
       DevChat.sessions.unshift(data.session);
+      // Improve renders its own cross-app cache, not DevChat.sessions. Publish
+      // the successful server row now so the first open after creation cannot
+      // briefly claim that no changes are in progress (#1596).
+      try { window.Improve?.onSessionCreated?.(data.session, appSlug); } catch {}
       return data.session;
     } catch {
       PlatformUI.toast('Network error');
