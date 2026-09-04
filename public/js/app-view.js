@@ -2678,22 +2678,29 @@ const AppView = {
       };
     } else if (t.kind === 'session') {
       // A shared session's public page: the static card (no nav — we're
-      // already here) plus a one-line explainer. The discussion mounts
-      // beneath exactly like a proposal's. No "Explore in dev chat" (there's
-      // no PR to explore yet) and no vote panel — there's nothing to vote on
-      // yet either.
+      // already here) plus its public details. Imported PRs already have the
+      // same description, testing guidance, checks and attributes they will
+      // carry after promotion, so render the proposal-shaped detail blocks
+      // now; lifecycle status controls voting, not metadata visibility.
+      // Ordinary dev sessions keep the one-line explainer they had before.
       // Shared rows carry username; the viewer's own rows (from
       // /api/me/active-sessions) don't — the owner is the viewer then.
       const ownerName = item.username || (App.user ? App.user.username : '') || 'someone';
       card = AppView._sharedSessionCardModel({ ...item, username: ownerName }, { noNav: true });
       const imported = item.source === 'imported';
-      body = {
-        actions: AppView._detailActionsView('session', item),
-        note: imported
-          ? 'Imported pull request. The code stays on GitHub. The discussion below is visible to everyone and carries over when the importer puts it up for vote.'
-          : `Live dev session by ${ownerName}. The discussion below is visible to everyone and carries over if this becomes a proposal.`,
-        transcript: imported ? null : AppView._transcriptSectionView(item),
-      };
+      body = imported
+        ? {
+          actions: AppView._detailActionsView('session', item),
+          summaryHtml: AppView._proposalSummaryHtml(item),
+          proposalBody: AppView._proposalBodyView(item),
+          details: AppView._proposalDetailsView(item),
+          transcript: null,
+        }
+        : {
+          actions: AppView._detailActionsView('session', item),
+          note: `Live dev session by ${ownerName}. The discussion below is visible to everyone and carries over if this becomes a proposal.`,
+          transcript: AppView._transcriptSectionView(item),
+        };
     } else {
       card = AppView._govCardModel(item, { noNav: true });
       // Close-issue proposals store the proposer's reason in the payload;
@@ -2884,11 +2891,15 @@ const AppView = {
     // reader never has to infer "behind main AND checks failing AND console
     // errors" from three badges sitting side by side.
     let reasons = null;
-    if (kind === 'proposal' && item.status !== 'merged') {
+    if ((kind === 'proposal' || (kind === 'session' && item.source === 'imported'))
+        && item.status !== 'merged') {
       const list = AppView.blockReasons(item);
       if (list.length) {
+        const underwayImported = kind === 'session' && item.source === 'imported';
         reasons = {
-          heading: list.some((r) => !r.soft) ? 'Why this can’t merge yet' : 'Worth knowing before you vote',
+          heading: underwayImported
+            ? 'What needs attention before voting'
+            : (list.some((r) => !r.soft) ? 'Why this can’t merge yet' : 'Worth knowing before you vote'),
           items: list.map((r) => ({ key: r.key, label: r.label, detail: r.detail, soft: !!r.soft })),
         };
       }
@@ -2900,7 +2911,7 @@ const AppView = {
     // inert <template> the old toggle copied from is gone: closed simply
     // renders no tiles, which is what stopped the looping <video>s anyway.
     let visuals = null;
-    if (kind === 'proposal') {
+    if (kind === 'proposal' || (kind === 'session' && item.source === 'imported')) {
       const tilesHtml = AppView.visualsTilesHtml(item.visuals);
       if (tilesHtml) {
         visuals = { sessionId: item.id, open: AppView._visualsOpen.has(item.id), tilesHtml };
@@ -5244,13 +5255,15 @@ const AppView = {
   // ── Kanban filters (#482) ───────────────────────────────────────────
   //
   // Pure card-level filter predicate for the kanban filter bar. kind ∈
-  // 'issue' | 'proposal' | 'gov' | 'merged' | 'session'. A 'session' card
+  // 'issue' | 'proposal' | 'gov' | 'merged' | 'session'. An ordinary session
   // matches on its displayed label, linked issue numbers, and author, and is
-  // exempt from priority/category (which it cannot carry). No DOM or mutable
-  // AppView state reads — the filters come in explicitly — so it is unit-testable in
-  // isolation (see tests/dev-kanban-filters.test.js). Empty/default
-  // filters match everything, keeping the unfiltered board identical to
-  // the pre-filter output.
+  // exempt from priority/category (which it cannot carry). An imported PR is
+  // still lifecycle-kind 'session' while Underway, but uses proposal
+  // attribute semantics because those values already exist. No DOM or
+  // mutable AppView state reads — the filters come in explicitly — so it is
+  // unit-testable in isolation (see tests/dev-kanban-filters.test.js).
+  // Empty/default filters match everything, keeping the unfiltered board
+  // identical to the pre-filter output.
   _devCardAuthor(kind, item) {
     const it = item || {};
     if (kind === 'issue') return it.created_by_username || it.user || '';
@@ -5306,7 +5319,7 @@ const AppView = {
       }
       if (!hit) return false;
     }
-    if (kind === 'session') {
+    if (kind === 'session' && it.source !== 'imported') {
       // "Needs my vote" genuinely excludes a session — there is nothing to
       // vote on until it becomes a proposal.
       if (f.needsVote) return false;
@@ -5914,6 +5927,23 @@ const AppView = {
       : null;
   },
 
+  // Imported Underway rows are proposal-shaped, but deliberately have no
+  // voting controls until promotion. Their menu therefore exposes only the
+  // metadata editors and permanent GitHub destination that survive the
+  // lifecycle transition.
+  _importedUnderwayMenuItems(s) {
+    const items = AppView._attrMenuItems('proposal', s.id, s);
+    if (s.pr_url) {
+      items.push({
+        label: 'View PR on GitHub',
+        icon: 'github',
+        title: s.pr_url,
+        act: () => window.open(s.pr_url, '_blank', 'noopener'),
+      });
+    }
+    return items;
+  },
+
   // One of the viewer's own session cards, as a MODEL (card/model.ts).
   // The whole card is the tap target — it opens the owner's dev chat —
   // so the inner controls stay real buttons inside a role="button" div.
@@ -5966,7 +5996,7 @@ const AppView = {
         });
     }
 
-    const menu = [];
+    const menu = imported ? AppView._importedUnderwayMenuItems(s) : [];
     // The SECOND opt-in, offered only once the session is visible (there is
     // nowhere for a reader to reach an invisible session's chat from).
     if (shared && !imported) {
@@ -6025,8 +6055,11 @@ const AppView = {
       pill: null,
       linked: [],
       badges: [
-        AppView._importedSessionBadgeSpec(s),
+        ...(imported
+          ? AppView._attrChipSpecs('proposal', s.id, s, { omitUnset: true })
+          : []),
         AppView._sessionStatusTagSpec(s),
+        AppView._importedSessionBadgeSpec(s),
         AppView._sessionVenueChipSpec(s),
         ...AppView.issueChipSpecs(s.linked_issues),
       ].filter(Boolean),
@@ -6035,7 +6068,7 @@ const AppView = {
       actionPreview: null,
       // `preview` goes to the rail, not the action band. The chevron rides
       // with it: tapping the card opens the owner's dev chat.
-      rail: { menuKey: AppView._registerCardMenu(`session:${s.id}`, imported ? [] : menu), chevron: true, preview },
+      rail: { menuKey: AppView._registerCardMenu(`session:${s.id}`, menu), chevron: true, preview },
       extra: [],
       dense: true,
       uncapped: false,
@@ -6057,6 +6090,7 @@ const AppView = {
     const imported = s.source === 'imported';
     const author = s.imported_pr_author || 'unknown author';
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
+    const menu = imported && !noNav ? AppView._importedUnderwayMenuItems(s) : [];
     const attrs = { title: label };
     if (!noNav) {
       attrs['data-shared-session-row'] = String(s.id);
@@ -6078,8 +6112,11 @@ const AppView = {
       pill: null,
       linked: [],
       badges: [
-        AppView._importedSessionBadgeSpec(s),
+        ...(imported
+          ? AppView._attrChipSpecs('proposal', s.id, s, { omitUnset: !noNav })
+          : []),
         AppView._sessionStatusTagSpec(s),
+        AppView._importedSessionBadgeSpec(s),
         ...AppView.issueChipSpecs(s.linked_issues),
       ].filter(Boolean),
       chatCount: s.chat_count,
@@ -6087,9 +6124,13 @@ const AppView = {
       // dense band renders reserved-and-empty.
       actions: [],
       actionPreview: null,
-      // This card has no ⋯ menu of its own, so the rail is the chevron alone
-      // until there is a preview to pin under it.
-      rail: { chevron: !noNav, preview: noNav ? null : preview },
+      // Ordinary shared sessions keep the chevron-only rail. Imported PRs
+      // add their proposal attribute editors / GitHub destination.
+      rail: {
+        menuKey: AppView._registerCardMenu(`session:${s.id}`, menu),
+        chevron: !noNav,
+        preview: noNav ? null : preview,
+      },
       extra: [],
       dense: !noNav,
       uncapped: noNav,
@@ -6119,9 +6160,11 @@ const AppView = {
   // The visible note that replaces the filter bar's silent skip of session
   // cards. Text search, #number and a named person DO filter sessions now
   // (#1404 matches a person against the session's author); priority, category
-  // and the Unassigned sentinel genuinely cannot apply to a dev session, so
-  // rather than quietly ignoring those the column says so. Returns null when
-  // no such filter is active or there are no sessions to explain.
+  // and the Unassigned sentinel genuinely cannot apply to an ordinary dev
+  // session, so rather than quietly ignoring those the column says so.
+  // Imported PRs carry all three attributes while Underway and are excluded
+  // from this count. Returns null when no such filter is active or there are
+  // no ordinary sessions to explain.
   _sessionFilterNoteRow(sessionCount) {
     if (!sessionCount) return null;
     const f = AppView._kanbanFilters || {};
@@ -6136,7 +6179,7 @@ const AppView = {
     return {
       t: 'note',
       key: 'note:session-filter',
-      text: `Dev sessions don't carry priority, category or assignee. The ${sessionCount} `
+      text: `Regular dev sessions don't carry priority, category or assignee. The ${sessionCount} `
         + `session card${sessionCount === 1 ? '' : 's'} below ${sessionCount === 1 ? 'is' : 'are'} not filtered by ${list}.`,
     };
   },
@@ -6184,7 +6227,9 @@ const AppView = {
     const rows = [];
     // The visible "these filters don't apply here" note sits above every
     // group, so it can't be mistaken for a note about just one of them.
-    const note = AppView._sessionFilterNoteRow(priv.length + vis.length + shared.length);
+    const regularSessionCount = [...priv, ...vis, ...shared]
+      .filter((entry) => entry.item.source !== 'imported').length;
+    const note = AppView._sessionFilterNoteRow(regularSessionCount);
     if (note) rows.push(note);
     if (priv.length) {
       rows.push(AppView._privateDividerRow());
@@ -7102,8 +7147,11 @@ const AppView = {
     // maintained on GitHub by its author, so there's no continue-in-dev-chat,
     // sync-with-main, or in-app edit. Spell that out where those controls
     // would otherwise be discovered.
+    const underway = pr.status === 'active' || pr.status === 'paused';
     const IMPORTED_TAIL = "The code is maintained on GitHub; there's no in-app dev session for it. "
-      + 'Voting and checks work the same as any proposal.';
+      + (underway
+        ? 'Its checks and proposal details are available now; voting begins only after it is put up for vote.'
+        : 'Voting and checks work the same as any proposal.');
     if (imported) {
       notes.push({
         key: 'imported',
@@ -7172,8 +7220,10 @@ const AppView = {
     // only via the chip tooltip / help popover. Numbers derive exactly as
     // _votingHelpText's (qualified tally first, votes_required snapshot
     // first) so the note can never contradict the pill.
+    const showHelp = pr.status === 'promoted' || pr.status === 'merging';
     let explicitNote = null;
-    if (pr.requires_explicit_approval && pr.status !== 'merged' && pr.status !== 'merging') {
+    if (showHelp && pr.requires_explicit_approval
+        && pr.status !== 'merged' && pr.status !== 'merging') {
       const eYes = pr.qualified_yes_count != null
         ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
       const eSnap = parseInt(pr.votes_required);
@@ -7190,7 +7240,6 @@ const AppView = {
     // under the roster is the discoverable text entry point. Both carry
     // data-voting-help and open the same popover (see _attrInit →
     // _openVotingHelpPopover), reading the current topic item live.
-    const showHelp = pr.status !== 'merged';
     return {
       meta,
       help: showHelp,
@@ -7202,7 +7251,7 @@ const AppView = {
       roster: showHelp ? (AppView._voteRoster[pr.id] || { phase: 'loading' }) : null,
       helpHint: showHelp,
       explicitNote,
-      lockedNote: (ctx.locked && pr.status !== 'merged')
+      lockedNote: (showHelp && ctx.locked && pr.status !== 'merged')
         ? 'App is locked, so it also needs at least one admin yes before it merges.'
         : null,
     };
@@ -8950,9 +8999,9 @@ const AppView = {
       `[data-attr-chip][data-attr-field="${field}"][data-attr-target-type="${targetType}"][data-attr-target-ref="${targetRef}"]`
     );
     if (chip) return chip;
-    const card = document.querySelector(
-      targetType === 'issue' ? `[data-ref-issue="${targetRef}"]` : `[data-proposal-row="${targetRef}"]`
-    );
+    const card = document.querySelector(targetType === 'issue'
+      ? `[data-ref-issue="${targetRef}"]`
+      : `[data-proposal-row="${targetRef}"], [data-shared-session-row="${targetRef}"]`);
     if (!card) return null;
     return {
       dataset: { attrField: field, attrTargetType: targetType, attrTargetRef: String(targetRef) },
@@ -9340,7 +9389,11 @@ const AppView = {
       item = (AppView._ghIssues || []).find((i) => i.number === targetRef);
     } else {
       item = (AppView._proposals || []).find((p) => p.id === targetRef)
-        || (AppView._merged || []).find((p) => p.id === targetRef);
+        || (AppView._merged || []).find((p) => p.id === targetRef)
+        || (AppView._mySessions || []).find(
+          (p) => p.id === targetRef && p.source === 'imported')
+        || (AppView._sharedSessions || []).find(
+          (p) => p.id === targetRef && p.source === 'imported');
     }
     if (item) item[field] = summary;
   },
@@ -12064,6 +12117,7 @@ const AppView = {
 
   voteButtonsHtml(pr, opts) {
     if (!pr) return '';
+    AppView._rememberSessionTesting(pr.id, pr);
     // Group-chat inline rows pass { collapseVoted: true }: once the viewer
     // has voted, the whole control set is replaced by a single read-only
     // "You voted X" box. The activity drawer passes nothing, so it keeps the
@@ -12077,15 +12131,6 @@ const AppView = {
     // (now no-op) Yes/No buttons for someone who never voted; the pill +
     // status badge already convey the outcome.
     if (opts && opts.collapseVoted && pr.status !== 'promoted') return '';
-    // #127: stash the PR's testing guidance in the by-session registry so
-    // the Preview onclick passes it to the overlay (which renders its own
-    // "Test this change" button + instructions panel) without the markdown
-    // ever transiting an HTML attribute.
-    if (pr.testing_md || pr.testing_path) {
-      AppView._sessionTesting[pr.id] = { md: pr.testing_md || null, path: pr.testing_path || null };
-    } else {
-      delete AppView._sessionTesting[pr.id];
-    }
     const preview = AppView._previewAffordanceHtml(pr);
     // #621: read-only viewers keep the Preview affordance but get no
     // vote controls — the tally pill on the card already shows counts.
@@ -12176,6 +12221,23 @@ const AppView = {
     'issue-run': 'Open the generated proposal’s staging preview',
   },
 
+  // Keep testing guidance out of DOM attributes. Every preview surface —
+  // including imported PR cards while Underway — records it in this
+  // by-session registry, and swapToStagingForSession passes it to the
+  // existing "How to test" panel in the preview overlay.
+  _rememberSessionTesting(sessionId, item) {
+    if (!sessionId) return;
+    const it = item || {};
+    if (it.testing_md || it.testing_path) {
+      AppView._sessionTesting[sessionId] = {
+        md: it.testing_md || null,
+        path: it.testing_path || null,
+      };
+    } else {
+      delete AppView._sessionTesting[sessionId];
+    }
+  },
+
   // The Preview affordance's STATE — the truth table, in one place. Both
   // renderers are card/dev-card.tsx's `Preview`: the card's icon-only eye
   // and the topic head's labelled pill differ only by `iconOnly`.
@@ -12186,6 +12248,7 @@ const AppView = {
     const iconOnly = o.iconOnly !== false;
     const sessionId = o.sessionId != null ? o.sessionId : it.id;
     if (!sessionId) return null;
+    AppView._rememberSessionTesting(sessionId, it);
     const url = it.staging_url || o.stagingUrl || '';
     // A shared/own session with no live URL is still previewable when the
     // branch has pushed changes — the click routes through ensure-staging,
@@ -13072,9 +13135,10 @@ const AppView = {
     }, AppView.STAGING_IFRAME_LOAD_TIMEOUT_MS);
   },
 
-  // #127: Preview entry point for vote-panel / group-chat rows — looks up
-  // the testing guidance stashed by voteButtonsHtml at render time, so the
-  // existing Preview button passes it through without any new UI there.
+  // #127: Preview entry point for proposal/session rows — looks up the
+  // testing guidance stashed when their preview affordance was modelled, so
+  // the existing Preview button passes it through without any markdown in
+  // DOM attributes.
   swapToStagingForSession(sessionId, stagingUrl) {
     // #439: route through ensure-then-open so a vote-panel preview that was
     // torn down (idle GC, lost container) rebuilds on click instead of
@@ -13241,7 +13305,7 @@ const AppView = {
   },
 
   // #127: per-render registry of { md, path } testing guidance keyed by
-  // session id, populated by voteButtonsHtml. Exists so bot-authored
+  // session id, populated by every preview surface. Exists so bot-authored
   // markdown never transits an inline onclick attribute.
   _sessionTesting: {},
 

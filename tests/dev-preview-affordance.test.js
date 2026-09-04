@@ -168,6 +168,26 @@ test('an own session is previewable once a PR exists (pr_number)', () => {
     '');
 });
 
+test('an imported Underway preview carries its testing guidance into the overlay registry', () => {
+  const AppView = makeAppView();
+  AppView._sessionTesting = {};
+  const item = {
+    id: 88,
+    source: 'imported',
+    staging_url: 'https://stg.example',
+    testing_md: '1. Open the imported proposal.\n2. Inspect every check.',
+    testing_path: '/app/demo/dev',
+  };
+  sharedSessionCardHtml(AppView, item);
+  assert.equal(AppView._sessionTesting[88].md, item.testing_md);
+  assert.equal(AppView._sessionTesting[88].path, item.testing_path);
+
+  AppView._cardPreviewSpec({ id: 88, staging_url: 'https://stg.example' },
+    { kind: 'shared-session', sessionId: 88 });
+  assert.equal(AppView._sessionTesting[88], undefined,
+    'a later canonical row with no guidance clears stale instructions');
+});
+
 test('read-only viewers cannot trigger a rebuild, but a live URL still opens', () => {
   const AppView = makeAppView({ readOnly: true });
   assert.equal(

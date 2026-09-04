@@ -2613,11 +2613,6 @@ async function submitWorkLocked(deps, params) {
       ...(title ? { title: stripEnvelope(title) } : {}),
       ...(params.body ? { description: stripEnvelope(params.body) } : {}),
       ...(linkedIssuesFor(task).length ? { linkedIssues: linkedIssuesFor(task) } : {}),
-      // Which coding agent wrote it, resolved HERE rather than at the tool
-      // layer: normalizeAgent already folds the self-reported name together
-      // with the connected client's, and the badge on the shared card should
-      // read the same as the badge on a proposal from the same agent.
-      externalAgent: normalizeAgent(agent, clientName),
     };
 
     // Sharing the same task twice pushes onto the SAME card rather than making
@@ -2634,6 +2629,9 @@ async function submitWorkLocked(deps, params) {
           { retryable: true }
         );
       }
+      // `payload` AS IS — the badge is deliberately not in it. See the note
+      // on the share call below: this is the update route, and its body
+      // parser is `exactKeys`, so one unknown field refuses the whole call.
       const advanced = await params.updateProposal(slug, existing, payload);
       if (!advanced || !advanced.ok) {
         return {
@@ -2662,7 +2660,25 @@ async function submitWorkLocked(deps, params) {
       };
     }
 
-    const shared = await params.shareWork(slug, payload);
+    // THE BADGE GOES ONLY TO THE CREATE PATH, and that is not a tidy-up.
+    //
+    // These two calls are two different routes with two different body
+    // parsers, and both parsers are `exactKeys` — an unknown field is not
+    // ignored, it refuses the whole request. `externalAgent` is accepted by
+    // share-in-progress and NOT by update-from-fork, so building it into the
+    // one shared payload made every RESHARE fail with `invalid_request`:
+    // sharing a second time onto the same card, the documented way to keep
+    // committing to shared work, could not work at all.
+    //
+    // It belongs here on the merits anyway. The badge is which coding agent
+    // wrote it, resolved in the service rather than at the tool layer so a
+    // shared card reads the same as a proposal from the same agent — and it
+    // is set when the card is CREATED. A reshare advances a card that already
+    // carries it, so there was never anything for the update to say.
+    const shared = await params.shareWork(slug, {
+      ...payload,
+      externalAgent: normalizeAgent(agent, clientName),
+    });
     if (!shared || !shared.ok) {
       return {
         ok: false,

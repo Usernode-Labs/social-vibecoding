@@ -1373,6 +1373,8 @@ test('native CLI handoff persists context, adopts an exact commit, and reaches r
       params: { id: '101' }, cliAuthenticated: true, user: { id: 7, username: 'maker' },
     }, earlyPromoteRes, () => { earlyNext = true; });
     assert.equal(earlyPromoteRes.statusCode, 409);
+    assert.equal(earlyPromoteRes.body.error, 'proposal_not_ready');
+    assert.match(earlyPromoteRes.body.message, /not ready yet/i);
     assert.equal(earlyNext, false);
 
     // Same request/event IDs repair safely without duplicating the session or

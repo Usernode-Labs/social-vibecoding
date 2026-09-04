@@ -115,16 +115,13 @@ const DevChat = {
     'Claude is working. Type your next note and tap 💾 to save it for later.',
   SAVE_DRAFT_TITLE:
     'Save this text as a draft (Ctrl+Enter). It stays here until you send it',
-  // #920: the hint under the composer names whatever Ctrl/Cmd+Enter does
-  // RIGHT NOW. While a turn runs sending is impossible and the keystroke
-  // parks the text as a draft instead, so the copy follows the action.
-  // Both carry the same <kbd> markup the template ships inline; the idle
-  // variant IS the template's default, so a fresh render never flashes
-  // the wrong one. _syncShortcutHint swaps them.
-  SHORTCUT_HINT_SEND:
-    '<kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to send',
-  SHORTCUT_HINT_SAVE:
-    '<kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to save as draft',
+  SEND_TITLE: 'Send (Ctrl+Enter)',
+  // #920's hint used to be a LINE under the box, because the keystroke does
+  // two different things and nothing else said which. It is the one circle's
+  // title now: the button and the shortcut perform the same action in every
+  // state, so naming it on the control names it for both. The mid-turn half
+  // is also carried by the busy placeholder, which already says "save it for
+  // later" — which is what made the separate line affordable to lose.
   // Floppy-disk glyph, same inline-SVG style as the attach button.
   _SAVE_ICON_SVG:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>',
@@ -5519,7 +5516,12 @@ const DevChat = {
         // res.json() throwing here used to masquerade as "Network error".
         const data = await res.json().catch(() => ({}));
         if (stillCurrent()) {
-          PlatformUI.toast(data.error || 'Failed to promote');
+          const friendly = data.message
+            || (data.error === 'proposal_not_ready'
+              ? 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.'
+              : data.error)
+            || 'Failed to promote';
+          PlatformUI.toast(friendly);
           restoreBtn();
         } else {
           // No context-free popup chasing the user to another page —
@@ -6007,9 +6009,38 @@ const DevChat = {
           // terminal states still render no proposal action.
           let propose = null;
           if (session?.status === 'active') {
-            propose = Number(DevChat._proposing) === Number(session.id)
-              ? { kind: 'pending' }
-              : { kind: 'ready' };
+            if (Number(DevChat._proposing) === Number(session.id)) {
+              propose = { kind: 'pending' };
+            } else if (session.source !== 'cli_handoff' || session.proposal_state === 'ready') {
+              propose = { kind: 'ready' };
+            } else {
+              const blocked = {
+                draft: {
+                  label: 'Not ready to propose',
+                  reason: 'Upload and submit this change before proposing it to the group.',
+                },
+                uploaded: {
+                  label: 'Not ready to propose',
+                  reason: 'Submit the uploaded change for staging and checks before proposing it.',
+                },
+                deploying: {
+                  label: 'Deploying staging…',
+                  reason: 'Staging is still deploying. You can propose after it is ready and checks pass.',
+                },
+                checking: {
+                  label: 'Checks running…',
+                  reason: 'Proposal checks are still running. You can propose after they pass.',
+                },
+                failed: {
+                  label: 'Checks need attention',
+                  reason: 'Resolve the staging or check failure before proposing this change.',
+                },
+              }[session.proposal_state] || {
+                label: 'Not ready to propose',
+                reason: 'This proposal is still being prepared. Try again when staging and checks are ready.',
+              };
+              propose = { kind: 'blocked', ...blocked };
+            }
           } else if (session
               && (session.status === 'promoted'
                 || session.status === 'merging'
@@ -7374,7 +7405,8 @@ const DevChat = {
           || Number(DevChat.currentSession.id) !== Number(session.id)) return;
       // Lifecycle-relevant scalars decide whether anything visible changed;
       // copy them onto the live row either way.
-      const watch = ['status', 'check_state', 'merge_conflict_state', 'behind_main',
+      const watch = ['status', 'check_state', 'proposal_state',
+                     'merge_conflict_state', 'behind_main',
                      'yes_count', 'no_count', 'majority', 'merged_at',
                      // #1442: the freshness measurement. `behind_main` above
                      // is written through from the same pass, but these are
@@ -7725,11 +7757,7 @@ const DevChat = {
       placeholder: DevChat._composerBusy
         ? DevChat._busyComposerPlaceholder()
         : DevChat.COMPOSER_PLACEHOLDER,
-      saveDraft: DevChat._saveDraftView(),
       send: DevChat._sendButtonView(),
-      shortcutHintHtml: DevChat._chatBusyForPaint()
-        ? DevChat.SHORTCUT_HINT_SAVE
-        : DevChat.SHORTCUT_HINT_SEND,
     };
   },
 
@@ -7739,6 +7767,25 @@ const DevChat = {
    * knowing which transition it is in the middle of.
    */
   _sendButtonView() {
+    // TEXT IN THE BOX OUTRANKS EVERY BUSY SHAPE BELOW. This is #810's rule,
+    // moved from a separate icon onto the button itself: while a turn runs
+    // sending is impossible, so the only thing to do with typed text is park
+    // it. Reading the LIVE field is the one input here that cannot come from
+    // module state — the textarea is uncontrolled, so its value lives in the
+    // DOM and nowhere else. `_syncSaveDraftBtn` is the republish that every
+    // keystroke already goes through, which is what keeps this current.
+    //
+    // It takes Stop's place rather than sitting beside it, which means Stop
+    // is not reachable while the field has text. That is deliberate: saving
+    // BLANKS the field, so one press of the green button both parks the note
+    // and hands Stop back — as does clearing the box.
+    //
+    // Gated on the PAINT predicate, not on `_composerBusy`, because that is
+    // the predicate the save icon this replaces was gated on — `isStreaming`
+    // plus the `?shot=` capture state. Keeping it means the affordance is
+    // available at exactly the same moments it always was, including before
+    // `_setStreamingUI` has run for a turn that has already started.
+    if (DevChat._chatBusyForPaint() && DevChat._sendButtonHasText()) return { kind: 'save' };
     if (!DevChat._composerBusy) return { kind: 'send' };
     // #889: a requested-but-not-yet-landed stop outranks both states below —
     // the turn is still streaming (so Send is wrong), but the red Stop square
@@ -7937,10 +7984,14 @@ const DevChat = {
     DevChat._wireSavedDrafts();
     DevChat._syncSaveDraftBtn();
     if (DevChat.isStreaming) DevChat._setStreamingUI(true);
-    // #801 screenshot state: paint the mid-turn composer (Stop button, busy
-    // placeholder, no save icon) without any turn actually running. Pure UI
-    // — isStreaming stays false, so nothing can be sent or stopped.
+    // #801 screenshot state: paint the mid-turn composer (the circle as Stop,
+    // busy placeholder, drafts listed) without any turn actually running.
+    // Pure UI — isStreaming stays false, so nothing can be sent or stopped.
     else if (DevChat._wantsBusyShot()) DevChat._setStreamingUI(true, 'claude');
+    // …and `?shot=busy-typed` fills the box on top of that, which is what
+    // turns the circle green. After the paint above, so the republish it
+    // triggers is the last word on the button's shape.
+    DevChat._applyTypedShot();
 
     // #907: repaint from whatever the last status poll told us. The poll
     // itself runs a beat later; painting here means a re-render of an already
@@ -7977,10 +8028,20 @@ const DevChat = {
 
     document.getElementById('dc-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      // When streaming, the same button is the "Stop" affordance — so
-      // a submit event means "stop this turn" rather than "send a new
-      // message" (the input is disabled while streaming anyway).
+      // The one circle, routed. This is now the SAME three-way decision
+      // `_onComposerShortcut` makes, which is what let #920's hint line go:
+      // the button and Ctrl/Cmd+Enter do the same thing in every state, so
+      // the control's own title names it for both.
       if (DevChat.isStreaming) {
+        // Text in the box means the button is green Save, not red Stop.
+        // `_saveComposerDraft` re-checks `isStreaming` and a non-blank
+        // field itself, so a turn that ended between the paint and the
+        // click refuses quietly rather than stopping something the user
+        // did not aim at.
+        if (DevChat._sendButtonHasText()) {
+          DevChat._saveComposerDraft();
+          return;
+        }
         DevChat._stopCurrentTurn();
         return;
       }
@@ -8383,8 +8444,35 @@ const DevChat = {
   // (sendMessage / _submitFromInput / _sendSavedDraft / _stopCurrentTurn)
   // keep reading the honest flag, and nothing here starts or stops a turn.
   _wantsBusyShot() {
-    try { return new URLSearchParams(location.search).get('shot') === 'busy-drafts'; }
+    try {
+      const shot = new URLSearchParams(location.search).get('shot');
+      return shot === 'busy-drafts' || shot === 'busy-typed';
+    } catch { return false; }
+  },
+
+  // `?shot=busy-typed`: the same mid-turn paint, plus TEXT IN THE BOX — which
+  // is the state where the one circle is green Save rather than red Stop.
+  //
+  // It needs its own route because that state is unreachable from a URL
+  // otherwise: the shape is read off the live field (`_sendButtonHasText`),
+  // so no amount of module state produces it and a capture of `busy-drafts`
+  // only ever shows the empty-field half. Platform rule 5's deep link, for
+  // exactly the reason it exists — the changed UI is only reachable by
+  // interacting.
+  _wantsTypedShot() {
+    try { return new URLSearchParams(location.search).get('shot') === 'busy-typed'; }
     catch { return false; }
+  },
+
+  // Seed the field for the shot above, once the composer exists. Writes the
+  // uncontrolled textarea directly, exactly as `_restoreDraft` does, then
+  // republishes so the circle repaints from it.
+  _applyTypedShot() {
+    if (!DevChat._wantsTypedShot()) return;
+    const input = document.getElementById('dc-input');
+    if (!input || input.value) return;
+    input.value = 'Also widen the meter a little';
+    DevChat._syncSaveDraftBtn();
   },
 
   // Paint-only "is a turn running" predicate. Real behaviour must keep
@@ -8671,70 +8759,39 @@ const DevChat = {
     if (window.PlatformUI && typeof PlatformUI.toast === 'function') PlatformUI.toast(msg);
   },
 
-  // #920: keep the hint under the box naming what Ctrl/Cmd+Enter actually
-  // does in the current state — "to send" while stopped, "to save as
-  // draft" while a turn runs, since that is what _onComposerShortcut
-  // routes to. Driven off the PAINT predicate (like the save icon it sits
-  // under) so the `?shot=busy-drafts` capture shows the running copy;
-  // the keystroke's real routing reads the honest isStreaming flag.
-  _syncShortcutHint() {
-    DevChat._publishComposer();
-  },
-
-  // Show the save icon only while a TURN IS RUNNING (#810 — the inverse of
-  // the #801 rule it replaces), and — when shown — enable it only if there
-  // is non-whitespace text to save.
+  // Republish the composer because the FIELD changed.
   //
-  // The rule follows the send button: while the chat is stopped the user can
-  // just SEND what they typed, so a "save it for later" control is noise;
-  // the moment the button flips to Stop, sending is impossible and parking
-  // the text as a draft is the only thing to do with it. So the icon is
-  // present for exactly as long as the stop sign is — `isStreaming` is the
-  // same flag that decides Send-vs-Stop, refuses `_submitFromInput` and
-  // disables the draft rows' Send. Every streaming transition funnels
-  // through _setStreamingUI, which already calls this — no extra listeners
-  // needed.
+  // It was named for a separate save icon whose `hidden`/`disabled`/`title`
+  // it drove (#810). That icon folded into the one circle, but the reason to
+  // republish on a keystroke did not: the circle is green Save while a turn
+  // runs and the box has text, red Stop while it is empty, so every edit can
+  // change its shape. `_sendButtonHasText` is where the rule lives now.
   //
-  // Hidden via the `hidden` PROPERTY (paired with `.dc-save-draft-btn
-  // [hidden]` in app.css, which the shared inline-flex rule would
-  // otherwise beat) rather than a class, so the control also leaves the
-  // tab order and the accessibility tree. The node itself stays mounted:
-  // its click listener is bound once per render behind `_sdWired`, so a
-  // removed-and-recreated button would come back unwired.
+  // Every streaming transition also funnels through `_setStreamingUI`, which
+  // calls this — so no extra listeners are needed for the other half.
   _syncSaveDraftBtn() {
-    // One publish for both: the hint under the box flips on exactly the
-    // events the save icon does, which is why this function was the hint's
-    // only caller. `_saveDraftView` is where the rule lives now.
     DevChat._publishComposer();
   },
 
   /**
-   * #810's save icon, as data.
+   * Is there anything in the box to park? — #810's rule, as one boolean.
    *
-   * The rule follows the send button: while the chat is stopped the user can
-   * just SEND what they typed, so a "save it for later" control is noise; the
-   * moment the button flips to Stop, sending is impossible and parking the
-   * text as a draft is the only thing to do with it. So the icon is present
-   * for exactly as long as the stop sign is.
+   * This was `_saveDraftView`, which answered the same question for a
+   * separate save icon. The icon is gone; the rule decides the one circle's
+   * shape instead (see `_sendButtonView`), and it is the same rule: while
+   * the chat is stopped the user can just SEND what they typed, so a "save
+   * it for later" control is noise; the moment the button flips to Stop,
+   * sending is impossible and parking the text is the only thing to do
+   * with it.
    *
-   * `hasText` is read off the LIVE field, which is the one thing here that
-   * cannot come from a model: the textarea is uncontrolled (the draft
-   * restore and the auto-grow both write it directly), so its value lives in
-   * the DOM and nowhere else.
+   * Read off the LIVE field, which is the one input here that cannot come
+   * from a model: the textarea is uncontrolled (the draft restore and the
+   * auto-grow both write it directly), so its value lives in the DOM and
+   * nowhere else. The caller has already established that a turn is running.
    */
-  _saveDraftView() {
-    if (!DevChat._chatBusyForPaint()) {
-      return { hidden: true, disabled: true, title: DevChat.SAVE_DRAFT_TITLE };
-    }
+  _sendButtonHasText() {
     const input = document.getElementById('dc-input');
-    const hasText = !!(input && input.value.trim());
-    return {
-      hidden: false,
-      disabled: !hasText,
-      title: hasText
-        ? DevChat.SAVE_DRAFT_TITLE
-        : 'Type something first, then save it as a draft for later',
-    };
+    return !!(input && input.value.trim());
   },
 
   _renderSavedDrafts() {
@@ -8759,12 +8816,11 @@ const DevChat = {
 
   // Click delegation, bound once per renderChatView (the container node is
   // recreated on every session re-render, like #dc-quick-replies).
+  //
+  // The composer's own save button used to be bound here too. It is the one
+  // circle now, which is inside `#dc-form` and therefore already routed by
+  // that form's submit listener — see the three-way branch there.
   _wireSavedDrafts() {
-    const saveBtn = document.getElementById('dc-save-draft-btn');
-    if (saveBtn && !saveBtn._sdWired) {
-      saveBtn._sdWired = true;
-      saveBtn.addEventListener('click', () => DevChat._saveComposerDraft());
-    }
     const box = document.getElementById('dc-drafts');
     if (!box || box._sdWired) return;
     box._sdWired = true;
@@ -8781,15 +8837,19 @@ const DevChat = {
     });
   },
 
-  // Save icon: move the composer's text into the drafts list and clear the
-  // box, so the user can immediately type the next thought. Attachments are
-  // NOT captured — a draft is plain text; any pending files stay parked in
-  // the composer strip for the real send.
+  // The green circle: move the composer's text into the drafts list and clear
+  // the box, so the user can immediately type the next thought. Attachments
+  // are NOT captured — a draft is plain text; any pending files stay parked
+  // in the composer strip for the real send.
+  //
+  // CLEARING THE BOX IS load-BEARING, not just a courtesy: an empty field is
+  // what turns the circle back into red Stop, so this one press both parks
+  // the note and hands the interrupt back.
   //
   // #810: refused while the chat is STOPPED, so the rule holds in BEHAVIOUR
   // and not only in paint — a click landing exactly as a turn ends, or any
   // programmatic call, can't park a draft the user could simply send. Silent
-  // no-op (the icon is hidden then, so there's no affordance to explain
+  // no-op (the button is Send by then, so there's no affordance to explain
   // away) and the text is left in the box, where it's already persisted per
   // session. Inverse of the #801 guard it replaces.
   _saveComposerDraft() {

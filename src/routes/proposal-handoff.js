@@ -1785,10 +1785,16 @@ function proposalHandoffRoutes(config) {
         return res.status(404).json({ error: 'Active handoff session not found' });
       }
       if (publicSessionStatus(session).state !== 'ready') {
-        return res.status(409).json({ error: 'proposal_not_ready' });
+        return res.status(409).json({
+          error: 'proposal_not_ready',
+          message: 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.',
+        });
       }
       if (isSessionBusy(Number(session.id))) {
-        return res.status(409).json({ error: 'proposal_not_ready' });
+        return res.status(409).json({
+          error: 'proposal_not_ready',
+          message: 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.',
+        });
       }
       // Hold the same cross-surface claim used by build/sync through the
       // downstream promotion handler. Releasing before next() would reopen a
