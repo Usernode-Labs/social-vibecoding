@@ -199,18 +199,20 @@ test("the worker answers build-scoped URLs cache-first and precaches the documen
   assert.match(shellFn, /if \(scoped\) \{\s*const hit = await cache\.match\(event\.request\);\s*if \(hit\) return hit;/);
   assert.match(shellFn, /buildIdOf\(res\) === scoped\.build/, 'a rollout answer from another build is served but never stored');
 
-  // Precache: the document first, its assets at the URLs it loads, and the
-  // previous build's scoped entries pruned.
+  // Precache: fetch the document first, cache its assets at the URLs it loads,
+  // and only then promote the targeted document and prune the prior build.
   const pre = src.slice(src.indexOf('async function precacheShell'), src.indexOf("self.addEventListener('install'"));
   assert.match(pre, /const \[documentPath, \.\.\.assets\] = SHELL_ASSETS;/);
   assert.match(pre, /build = buildIdOf\(doc\);/);
   assert.match(pre, /shellAssetUrl\(path, build\)/);
   assert.match(pre, /buildIdOf\(res\) !== build\) throw/);
+  assert.match(pre, /expectedBuild && build !== expectedBuild/);
   assert.match(pre, /pruneOtherBuilds\(cache, build\)/);
   assert.match(src, /await precacheShell\(shell\);/, 'install() precaches through it');
-  assert.match(src, /await precacheShell\(cache, \{ reload: true \}\);/, 'the deploy prefetch does too, bypassing the HTTP cache');
+  assert.match(src, /await precacheShell\(cache, \{[\s\S]*?reload: true,[\s\S]*?expectedBuild,[\s\S]*?documentLast: true/,
+    'the deploy prefetch bypasses HTTP cache and names the exact build it will promote');
   assert.equal(sw.SHELL_ASSETS[0], '/index.html', 'the document is the first entry: precacheShell reads the build id off it');
-  assert.equal(sw.SW_VERSION, 'v8', 'the shell cache is versioned past the plain-path precache');
+  assert.equal(sw.SW_VERSION, 'v9', 'the shell cache drops v8 entries whose document write may not have completed');
 });
 
 // ── src/services/static-cache.js + server.js: the route that serves it ──
@@ -313,7 +315,8 @@ test('server.js mounts the handler ahead of the plain static handler, and auth l
   const plain = server.indexOf("app.use(express.static(path.join(__dirname, 'public'), {");
   assert.ok(mount > -1, 'buildScopedAssetHandler is mounted');
   assert.ok(plain > mount, 'ahead of the plain static handler');
-  assert.match(server, /buildScopedAssetHandler \} = require\('\.\/src\/services\/static-cache'\)/);
+  assert.match(server,
+    /buildScopedAssetHandler,[\s\S]{0,80}?\} = require\('\.\/src\/services\/static-cache'\)/);
 
   const auth = fs.readFileSync(path.join(ROOT, 'src/middleware/auth.js'), 'utf8');
   const m = auth.match(/const PUBLIC_PATHS = \[([\s\S]*?)\];/);

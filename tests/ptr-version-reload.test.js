@@ -66,7 +66,8 @@ test('_refreshOrReload reloads only on a moved-on platform and parks the spinner
   );
   assert.ok(fn.length > 0, '_refreshOrReload is defined');
   assert.match(fn, /App\.platformMovedOn\(\)/);
-  assert.match(fn, /location\.reload\(\)/);
+  assert.match(fn, /App\._reloadPrefetchedShellIfSafe\(movedOnSha, \{ force: true \}\)/,
+    'pull-to-refresh uses the same one-shot reload gate as cold-boot recovery');
   // The pull is the OTHER door into the same reload, and on a phone it is
   // the one people actually use. It goes through the same prefetch the
   // drawer's button has used since #1468 — behaviour executed against a
