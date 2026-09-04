@@ -2223,112 +2223,27 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   pointer-events: none;
 }
 
-/* ── Discover widget ────────────────────────────────────────
-   The block is ~366px wide on a phone and ~397px on a wide desktop, and it
-   draws two lanes and the caption between them — no title bar and no footer:
+/* ── THE TILE GRID IS RETIRED ───────────────────────────────
+   `.home-discover-tiles` was six explicit grid tracks (`--lane-tracks`, set
+   from the lane's own count and floored at four), `.home-discover-icon-wrap`
+   capped the fluid icon at the 40px the tile always drew at, `.home-discover-
+   icon` held it square, `.home-discover-tiles .home-discover-tile` stripped
+   the launcher card's padding back off, and `.home-discover-name` clamped the
+   label to two lines because a ~55px track rendered most names as "Opinio…".
+   Every one of those existed to fit six icons into ONE grid cell on a phone.
 
-     border            1px top + 1px bottom          =   2px
-     tile lane         8 + 40 icon + 4 gap + 24 name + 8
-                                                     =  84px
-     divider/"Popular" caption (1 rule + ~18)        =  19px
-     second lane                                     =  84px
-                                                       -------
-                                                        189px
+   The lane is a rail of cards (see `.home-discover-rail` below) and the block
+   is a section that grows to its content, so none of that arithmetic has
+   anything left to constrain. What survives is the lane wrapper, the
+   "Popular" divider between the two rails and the empty note.
 
-   TWO TERMS OF THAT SUM CHANGED TOGETHER. The 27px TITLE BAR is gone: the
-   block's title is the section's own label above the card now and its browse
-   link went with it, so the card starts on its first lane (see
-   frontend/src/features/home/panels/ui.tsx). The NAME lane doubled, 12px to
-   24px, because a lane is one track per tile and a track is ~55px on a phone
-   — one line rendered most of these as "Opinio…", "ClearS…", "Watch…", which
-   is a poor advertisement for an area called Discover. The bar's 27px paid
-   for most of the 24px the second line costs.
-
-   It was measured against a 256px height cap while the block was a 2x2 tile,
-   and against --home-cell-h while it was a 4x1 one. There is no cap now — the
-   section is as tall as its two lanes — so the sum is a description rather
-   than a constraint. Both lanes stay `flex: 1 1 auto`, so anything spare is
-   still split evenly and each lane centres its single row of tiles in its own
-   band.
-
-   SIX EXPLICIT TRACKS, NOT auto-fill. Each lane must be exactly one row:
-   with a lane budgeted at one row, anything that wraps is clipped by
-   .home-panel-rows' overflow and silently disappears. auto-fill made the
-   track count follow the pixel width — 6 tracks on a phone and on a wide
-   desktop, but only 3-4 in a 640-800px window, where a full six tiles
-   wrapped. Six is Home.FEATURED_LIMIT / Home.POPULAR_LIMIT, so there is
-   exactly one track per tile either lane can ever produce.
-
-   The icon is FLUID for the same reason: the narrowest 5-column lane gives
-   a track ~32px, and a fixed 40px box would overflow it. It fills its track
-   up to the 40px it has always drawn at, so a phone and a wide desktop are
-   unchanged and a narrow desktop window shrinks instead of clipping. */
-.home-discover-tiles {
-  display: grid;
-  /* The track count is the LANE'S OWN (discover.tsx sets --lane-tracks from
-     the number of tiles, floored at four); the six above is the fallback and
-     still the ceiling, since six is Home.FEATURED_LIMIT / POPULAR_LIMIT. The
-     invariant the paragraph above is about — one track per tile, so a lane is
-     always exactly one row — is unchanged: it just comes from the data now
-     instead of from a constant that had to assume the worst case, which is
-     what made a five-tile lane squeeze five names to fit six columns. */
-  grid-template-columns: repeat(var(--lane-tracks, 6), minmax(0, 1fr));
-  gap: 0.375rem;
-  padding: 0.5rem 0.625rem;
-  /* One row inside a band that is taller than it needs: centre it rather
-     than hanging it off the top edge. */
-  align-content: center;
-}
-/* THE BASIS IS THE CONTENT, not the band. It was `1 1 0` while the block was
-   a fixed 2x2 TILE: there the article's height came from the grid cell, so a
-   zero basis was the way to make two lanes split a real, generous box evenly
-   instead of the first one taking it all.
-
-   A section sizes to ITS OWN CONTENT, and a zero basis in that direction is
-   circular — each lane contributed 0 to the height the article asked for, the
-   article collapsed to its title bar, and both lanes were then handed the
-   ~16px that was left and clipped their 44px tiles in half. `1 1 auto` reads
-   the same intent (share anything spare, evenly) against a basis that
-   actually exists. */
+   The NAME keeps its class and loses its clamp: on a 152px card a real name
+   has room to be read on one line, and the second line would only ever be
+   spent on the longest few. Truncation is a utility on the element now. */
 .home-discover-lane {
   flex: 1 1 auto;
 }
-/* .app-card buys these tiles their tap/drag behaviour, but NOT its padding:
-   that class is the 56px launcher tile, and its 8px (phone) / 12px (desktop)
-   inset is sized for a card that owns a whole grid cell. Inherited here it
-   added 16px to every tile, which put the phone widget at 116px of a 116px
-   cell — no headroom at all, so the first reader with larger system text
-   would have had the captions clipped. The lane's own padding is the inset;
-   the tile just holds the icon and its name.
-
-   Two classes deep on purpose: .app-card's own padding is declared LATER in
-   this file (in the phone-density block), so an equal-specificity rule here
-   would lose to it at exactly the width where it matters most. */
-.home-discover-tiles .home-discover-tile {
-  min-width: 0;
-  padding: 0;
-}
-/* THE CAP LIVES ON THE WRAPPER, NOT THE ICON. The icon's own box is a flex
-   item of a `flex-col items-center` tile, so it is shrink-to-fit: a
-   `width: 100%` on it resolves against a parent whose width comes from its
-   content, which is circular — the icons collapsed to whatever their glyph
-   happened to measure (a 12px emoji, a 30px image) instead of a uniform
-   40px. Giving the WRAPPER a definite width (the track, capped at 40px)
-   breaks the cycle: the icon then fills a box that is already decided, and
-   the +/✓ badge, which is positioned against this wrapper, keeps tracking
-   the icon's real edges at every size. */
-.home-discover-icon-wrap {
-  width: 100%;
-  max-width: 2.5rem;   /* 40px — the size the tile has always drawn at */
-  margin-inline: auto;
-}
-.home-discover-icon {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-}
-/* The "Popular" caption sits on its own hairline row between the lanes — on
-   the same 0.625rem inset lane as every other rule inside a home panel card,
-   see .home-panel-row + .home-panel-row::before above. */
+/* The "Popular" caption sits on its own hairline row between the two rails. */
 .home-discover-divider {
   position: relative;
   min-height: 1.125rem; /* 18px */
@@ -2343,34 +2258,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   background: var(--border-light);
   pointer-events: none;
 }
-/* THE TILE NAME GETS TWO LINES, exactly as the launcher tile's label does.
-   A lane is six explicit tracks at every width (see .home-discover-tiles), so
-   a track is ~55px on a phone — and a single truncated line rendered most of
-   these as "Opinio…", "ClearS…", "Watch…". A lane of unreadable names is a
-   poor advertisement for an area called Discover, and the height cap that
-   made one line the only affordable answer is gone (see .home-panel above):
-   a section is as tall as its content, so the second line simply costs 12px.
-   The clamp is here rather than in the component because `line-clamp` is
-   three properties and two of them are prefixed. */
-.home-discover-name {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  /* A FIXED two-line box, not a max — the launcher label's own reasoning
-     (.app-card-title above): a one-line name and a two-line name must occupy
-     the same height or the tiles in a lane sit on different baselines. 24px is
-     exactly two of the 12px lines `leading-tight` gives this 9.6px type. */
-  height: 1.5rem;
-  /* Same as the launcher label: a single unbroken name (a slug-style one, or
-     just "Crowdfunding" in a 55px track) stays inside its tile rather than
-     overflowing it. */
-  overflow-wrap: anywhere;
-}
-
-/* The empty state: no tile lane at all, one centred line in its place, so
-   the block reads as a compact strip rather than a mostly-blank box. */
+/* The empty state: no rail at all, one centred line in its place, so the
+   block reads as a compact strip rather than a mostly-blank box. */
 .home-discover-empty {
   padding: 0.5rem 0.625rem;
 }

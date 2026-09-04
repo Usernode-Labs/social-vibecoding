@@ -307,25 +307,27 @@ test('renderAppCard: discovery mode leads with the add badge', () => {
   assert.match(withMenu, /card-menu-btn/, 'browse opts in');
 });
 
-test('Discover tiles are the compact treatment, wired like the old row', () => {
-  const src = PANEL_SRC.discover.slice(PANEL_SRC.discover.indexOf('function DiscoverTile('));
-  // The block is ~366px wide on a phone across six tracks — a 56px launcher
-  // card does not fit, so the widget uses the 40px widget-strip tile. The
-  // size lives in CSS now (#949): the icon fills its track up to that same
-  // 40px, because the narrowest 5-column lane gives it only ~32px and a
-  // fixed box there would overflow and be clipped.
-  assert.match(src, /className="app-icon-tile home-discover-icon/);
-  assert.doesNotMatch(src, /w-14 h-14/);
-  // The cap sits on the wrapper, whose width is definite; see the sizing
-  // note in app.css and the budget test in home-panels-render.test.js.
-  assert.match(CSS, /\.home-discover-icon-wrap \{[^}]*max-width: 2\.5rem/);
-  // It still carries .app-card + data-slug, which is what lets it reuse
-  // Home._wireDiscoveryCards wholesale (tap opens, badge toggles) so the
-  // widget cannot drift from the row it replaced.
-  assert.match(src, /className="app-card home-discover-tile/);
+test('Discover cards keep the wiring the compact tiles had', () => {
+  const src = PANEL_SRC.discover.slice(PANEL_SRC.discover.indexOf('function DiscoverCard('));
+  // THE COMPACT TREATMENT IS GONE. It was a 40px widget-strip tile, sized to
+  // fit six of them across a ~366px phone block — the icon filled its grid
+  // track up to that cap, because the narrowest lane gave it ~32px and a fixed
+  // box there overflowed. The lane is a rail of 152px cards now, so the track,
+  // the cap and the fluid icon all went with the grid (see the retirement note
+  // in app.css and the rail test in home-panels-render.test.js).
+  assert.doesNotMatch(src, /app-icon-tile home-discover-icon/,
+    'the 40px tile face is retired');
+  assert.doesNotMatch(CSS, /^\.home-discover-icon-wrap[\s,{]/m,
+    'and so is the wrapper that capped it');
+  // What SURVIVES is the contract with Home's wiring: `.app-card` and
+  // `data-slug` are what let the card reuse _wireDiscoveryCards wholesale
+  // (tap opens, badge toggles), so a redesign cannot quietly drift from the
+  // behaviour of the row this area has always had. dapp.json's own Discover
+  // check chains `.app-card` too.
+  assert.match(src, /className={`app-card home-discover-card /);
   assert.match(src, /card-add-btn/);
-  // The binding runs from the LANE's effect now rather than a _wire sweep —
-  // still Home's function, still once per lane.
+  // The binding runs from the LANE's effect — still Home's function, still
+  // once per lane.
   assert.match(PANEL_SRC.discover, /_wireDiscoveryCards\?\.\(el\)/);
 });
 

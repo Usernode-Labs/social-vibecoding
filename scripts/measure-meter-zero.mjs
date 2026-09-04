@@ -61,22 +61,34 @@ let failed = false;
 // check. A screenshot of the pill is the ground truth: the corner either
 // covered those pixels or it did not.
 async function visibleRun(fillSel, colour) {
-  const shot = await p.locator(fillSel).locator('xpath=ancestor::*[contains(@class,"home-challenge-pill")][1]')
-    .screenshot();
+  const pill = p.locator(fillSel).locator('xpath=ancestor::*[contains(@class,"home-challenge-pill")][1]');
+  // The launcher is a long feed inside its own scroller, so every one of these
+  // starts well below the fold. A screenshot of an element that is not in view
+  // comes back blank, which reads as "nothing painted" — the exact answer this
+  // tool exists to distinguish from a real one.
+  await pill.scrollIntoViewIfNeeded();
+  const shot = await pill.screenshot();
   return p.evaluate(async ({ png, colour }) => {
     const bmp = await createImageBitmap(await (await fetch(png)).blob());
     const c = new OffscreenCanvas(bmp.width, bmp.height);
     const g = c.getContext('2d');
     g.drawImage(bmp, 0, 0);
     const want = colour.match(/\d+/g).slice(0, 3).map(Number);
-    // The pill's LAST row — the one the corner narrows most.
-    const row = g.getImageData(0, bmp.height - 1, bmp.width, 1).data;
-    let seen = 0;
-    for (let x = 0; x < bmp.width; x += 1) {
-      const [r, gg, b] = [row[x * 4], row[x * 4 + 1], row[x * 4 + 2]];
-      if (Math.abs(r - want[0]) < 24 && Math.abs(gg - want[1]) < 24 && Math.abs(b - want[2]) < 24) seen += 1;
+    const isFill = (d, x) => Math.abs(d[x * 4] - want[0]) < 24
+      && Math.abs(d[x * 4 + 1] - want[1]) < 24
+      && Math.abs(d[x * 4 + 2] - want[2]) < 24;
+    // Scan UP from the bottom for the lowest row that actually carries the
+    // fill, rather than taking `height - 1` outright. An element's box is
+    // fractional (35.25px here), so the bitmap is a whole pixel taller than
+    // the painted pill and its last row is the card behind it — which reads
+    // as "nothing painted" and is not what this is asking.
+    for (let y = bmp.height - 1; y >= 0; y -= 1) {
+      const row = g.getImageData(0, y, bmp.width, 1).data;
+      let seen = 0;
+      for (let x = 0; x < bmp.width; x += 1) if (isFill(row, x)) seen += 1;
+      if (seen) return seen;
     }
-    return seen;
+    return 0;
   }, { png: `data:image/png;base64,${shot.toString('base64')}`, colour });
 }
 
