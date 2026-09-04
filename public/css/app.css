@@ -2991,6 +2991,31 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   border-radius: inherit;
 }
 
+/* DIAGNOSTIC ROUND 2 of 3 — not a proposed fix. Round 1 put
+   `will-change: transform` on the host and that took the flicker from
+   two apps down to one: Gym Tracker stopped, Todo List did not. The
+   difference between those two apps is the lead:
+
+     Todo List loads Google Fonts with `display=swap`. A swap repaints
+     its WHOLE document when the face arrives, and that lands inside
+     the open animation's window. Gym Tracker loads no web fonts at
+     all.
+
+   Promoting the HOST stabilises the host's layer, but an <iframe> owns
+   a layer of its own and a repaint inside the app re-rasters THAT one
+   — which is the layer the ancestor's rounded clip has to be applied
+   to. So round 2 promotes the frame itself. `will-change`, not
+   `translateZ(0)`: the latter computes to a 2D matrix and is optimised
+   away (verified — getComputedStyle returns `matrix(1, 0, 0, 1, 0, 0)`),
+   so it never creates the layer it looks like it creates.
+
+   If this is the answer, the promotion wants narrowing before merge —
+   `will-change` holds a layer alive for as long as it is set, and this
+   one would sit on every running app's frame permanently. */
+#app-frame-host #app-iframe {
+  will-change: transform;
+}
+
 /* CHROMELESS TAKES IT ALL BACK OFF. The chromeless route is
    `#app/<slug>/full` — `const chromeless = tab === 'full'` in app.js's
    restoreFromHash, which then rewrites tab to 'app', so the ordinary
