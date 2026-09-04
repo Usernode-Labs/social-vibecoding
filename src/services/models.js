@@ -56,8 +56,13 @@ const MODELS = {
       long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
     },
   },
-  'claude-fable-5': {
-    label: 'Fable 5',
+  // Fable 5.1 succeeds Fable 5 in the same tier at the same per-token price
+  // ($10 in / $50 out per MTok), so `outputCostPerMTok` is unchanged. What it
+  // does NOT share is forced tool use: `tool_choice` `any`/`tool` returns a
+  // 400 on 5.1, which is why services/llm.js's pills call had to move to
+  // `auto` + `strict` in the same change as this rename.
+  'claude-fable-5-1': {
+    label: 'Fable 5.1',
     tier: 'fable',
     outputCostPerMTok: 50,
     changeSize: {

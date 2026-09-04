@@ -1643,16 +1643,15 @@
       "expectSelector": "#dc-form.dc-card > .dc-card-row > #dc-attach-btn"
     },
     {
-      "name": "The composer's picker names the model and nothing else (#1589)",
+      "name": "The model picker opens a sheet, like the venue control above it",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-model-select option[value=\"claude-opus-5\"]",
+      "expectSelector": "button#dc-model-select[aria-haspopup=\"menu\"] .dc-model-name",
       "expectText": "Opus 5"
     },
     {
-      "name": "The picker's longest option is a name, so the row fits one line (#1589)",
+      "name": "…so no native dropdown is left in the composer (#1589 still holds)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-model-select option[value=\"claude-fable-5\"]",
-      "expectText": "Fable 5"
+      "expectSelector": "#dc-composer-controls:not(:has(select))"
     },
     {
       "name": "Saved drafts render above the composer with send/edit/trash (#798)",
