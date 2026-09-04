@@ -337,17 +337,18 @@ function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): Re
           {/* #558: the in-flight state is the MODEL's, not this element's.
               `promotePR` used to disable the button and swap its innerHTML
               for a spinner; a 3s status poll's repaint would have undone
-              both, re-entry guard included. */}
-          {r.canPropose ? (
+              both, re-entry guard included. #1602 keeps the terminal state
+              in that same model so a promoted card remains visibly locked. */}
+          {r.propose ? (
             <button
               className="dc-pr-btn dc-pr-btn-promote"
-              disabled={r.proposePending}
-              aria-busy={r.proposePending ? 'true' : undefined}
-              onClick={() => controller()?.promotePR?.()}
+              disabled={r.propose.kind !== 'ready'}
+              aria-busy={r.propose.kind === 'pending' ? 'true' : undefined}
+              onClick={r.propose.kind === 'ready' ? () => controller()?.promotePR?.() : undefined}
             >
-              {r.proposePending
+              {r.propose.kind === 'pending'
                 ? <><span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>{' Proposing…'}</>
-                : 'Propose to group'}
+                : r.propose.kind === 'completed' ? 'Already proposed' : 'Propose to group'}
             </button>
           ) : null}
           {r.status2.kind === 'merged'

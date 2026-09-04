@@ -2847,6 +2847,12 @@
       "expectSelector": "[role=\"menuitem\"][title*=\"pushes back onto the same proposal\"]"
     },
     {
+      "name": "An already-proposed change cannot be proposed twice (#1602)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990406",
+      "expectSelector": "#dc-pr-card .dc-pr-btn-promote:disabled",
+      "expectText": "Already proposed"
+    },
+    {
       "name": "An archived session starts new work instead of resurrecting itself (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990408",
       "expectSelector": "[role=\"menuitem\"][title*=\"comes back as its own proposal\"]"
