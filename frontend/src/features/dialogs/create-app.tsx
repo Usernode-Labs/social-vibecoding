@@ -75,6 +75,7 @@ import {
   stopWatchingCreation,
   watchCreation,
 } from './creation-progress-store.js';
+import { normalizeRepositoryUrl } from './repository-url';
 import { useDialog } from './use-dialog';
 
 type Mode = 'new' | 'import';
@@ -315,8 +316,15 @@ export function CreateAppDialog() {
   // inline error text from the server, vs. a debounced surprise; (2)
   // verifyBotAccess can mutate state by accepting a pending invitation, and we
   // don't want that firing on every keystroke.
+  function normalizeRepositoryUrlInput(): string {
+    const input = urlRef.current;
+    const normalized = normalizeRepositoryUrl(input?.value || '');
+    if (input) input.value = normalized;
+    return normalized;
+  }
+
   async function check() {
-    const url = (urlRef.current?.value || '').trim();
+    const url = normalizeRepositoryUrlInput();
     const fail = (text: string) => {
       setImportState('error');
       setStatus({ tone: 'err', text });
@@ -361,7 +369,7 @@ export function CreateAppDialog() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     const name = (nameRef.current?.value || '').trim();
-    const repoUrl = (urlRef.current?.value || '').trim();
+    const repoUrl = mode === 'import' ? normalizeRepositoryUrlInput() : '';
     setError('');
     if (!name) return;
 
@@ -539,7 +547,8 @@ export function CreateAppDialog() {
                 id="import-url"
                 ref={urlRef}
                 name="repoUrl"
-                type="url"
+                type="text"
+                inputMode="url"
                 autoComplete="off"
                 spellCheck="false"
                 width="flex"
@@ -547,7 +556,10 @@ export function CreateAppDialog() {
                 hint="muted"
                 ring="seamless"
                 className="font-mono text-sm"
-                placeholder="https://github.com/owner/repo"
+                placeholder="github.com/owner/repo"
+                onBlur={() => {
+                  normalizeRepositoryUrlInput();
+                }}
                 onInput={() => {
                   // Any edit invalidates the previous check; the user must
                   // click again. Without this they could verify repo A, edit

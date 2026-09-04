@@ -6,10 +6,8 @@
  * reject unsupported protocols through its existing validation path. Only a
  * genuinely scheme-less value gets the helpful HTTPS default.
  */
-const URI_SCHEME = /^[a-z][a-z\d+.-]*:/i;
+import { normalizeSchemeLessUrl } from '../../lib/url';
 
 export function normalizeMadeUrl(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed || URI_SCHEME.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+  return normalizeSchemeLessUrl(value);
 }

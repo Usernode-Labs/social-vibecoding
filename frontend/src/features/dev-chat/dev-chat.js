@@ -5519,7 +5519,12 @@ const DevChat = {
         // res.json() throwing here used to masquerade as "Network error".
         const data = await res.json().catch(() => ({}));
         if (stillCurrent()) {
-          PlatformUI.toast(data.error || 'Failed to promote');
+          const friendly = data.message
+            || (data.error === 'proposal_not_ready'
+              ? 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.'
+              : data.error)
+            || 'Failed to promote';
+          PlatformUI.toast(friendly);
           restoreBtn();
         } else {
           // No context-free popup chasing the user to another page —
@@ -6007,9 +6012,38 @@ const DevChat = {
           // terminal states still render no proposal action.
           let propose = null;
           if (session?.status === 'active') {
-            propose = Number(DevChat._proposing) === Number(session.id)
-              ? { kind: 'pending' }
-              : { kind: 'ready' };
+            if (Number(DevChat._proposing) === Number(session.id)) {
+              propose = { kind: 'pending' };
+            } else if (session.source !== 'cli_handoff' || session.proposal_state === 'ready') {
+              propose = { kind: 'ready' };
+            } else {
+              const blocked = {
+                draft: {
+                  label: 'Not ready to propose',
+                  reason: 'Upload and submit this change before proposing it to the group.',
+                },
+                uploaded: {
+                  label: 'Not ready to propose',
+                  reason: 'Submit the uploaded change for staging and checks before proposing it.',
+                },
+                deploying: {
+                  label: 'Deploying staging…',
+                  reason: 'Staging is still deploying. You can propose after it is ready and checks pass.',
+                },
+                checking: {
+                  label: 'Checks running…',
+                  reason: 'Proposal checks are still running. You can propose after they pass.',
+                },
+                failed: {
+                  label: 'Checks need attention',
+                  reason: 'Resolve the staging or check failure before proposing this change.',
+                },
+              }[session.proposal_state] || {
+                label: 'Not ready to propose',
+                reason: 'This proposal is still being prepared. Try again when staging and checks are ready.',
+              };
+              propose = { kind: 'blocked', ...blocked };
+            }
           } else if (session
               && (session.status === 'promoted'
                 || session.status === 'merging'
@@ -7374,7 +7408,8 @@ const DevChat = {
           || Number(DevChat.currentSession.id) !== Number(session.id)) return;
       // Lifecycle-relevant scalars decide whether anything visible changed;
       // copy them onto the live row either way.
-      const watch = ['status', 'check_state', 'merge_conflict_state', 'behind_main',
+      const watch = ['status', 'check_state', 'proposal_state',
+                     'merge_conflict_state', 'behind_main',
                      'yes_count', 'no_count', 'majority', 'merged_at',
                      // #1442: the freshness measurement. `behind_main` above
                      // is written through from the same pass, but these are

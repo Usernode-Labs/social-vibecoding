@@ -344,11 +344,13 @@ function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): Re
               className="dc-pr-btn dc-pr-btn-promote"
               disabled={r.propose.kind !== 'ready'}
               aria-busy={r.propose.kind === 'pending' ? 'true' : undefined}
+              title={r.propose.kind === 'blocked' ? r.propose.reason : undefined}
               onClick={r.propose.kind === 'ready' ? () => controller()?.promotePR?.() : undefined}
             >
               {r.propose.kind === 'pending'
                 ? <><span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>{' Proposing…'}</>
-                : r.propose.kind === 'completed' ? 'Already proposed' : 'Propose to group'}
+                : r.propose.kind === 'completed' ? 'Already proposed'
+                  : r.propose.kind === 'blocked' ? r.propose.label : 'Propose to group'}
             </button>
           ) : null}
           {r.status2.kind === 'merged'
