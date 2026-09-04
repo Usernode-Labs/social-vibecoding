@@ -50,7 +50,7 @@ test('the head declares color-scheme for both grounds', () => {
   );
   assert.match(
     src,
-    /html\.dark\s*\{[^}]*background-color:\s*#0b0b0c[^}]*color-scheme:\s*dark[^}]*\}/,
+    /html\.dark\s*\{[^}]*background-color:\s*#000115[^}]*color-scheme:\s*dark[^}]*\}/,
     'the dark ground rule must also declare color-scheme: dark'
   );
 });
@@ -105,7 +105,7 @@ test('setAppearance normalises its arguments', () => {
 
 function loadNativeChrome({
   dark = false,
-  background = 'rgb(11, 11, 12)',
+  background = 'rgb(0, 1, 21)',
   capabilities = ['setAppearance'],
   getBridgeInfoImpl,
   setAppearanceImpl,
@@ -184,10 +184,10 @@ function loadNativeChrome({
 }
 
 test('the resolved appearance is read back off the document', async () => {
-  const dark = loadNativeChrome({ dark: true, background: 'rgb(11, 11, 12)' });
+  const dark = loadNativeChrome({ dark: true, background: 'rgb(0, 1, 21)' });
   await dark.ready;
   assert.deepEqual(plain(dark.calls.setAppearance), [
-    { scheme: 'dark', background: '#0b0b0c' },
+    { scheme: 'dark', background: '#000115' },
   ]);
 
   // Reading the ground back off the rendered document — rather than
@@ -207,7 +207,7 @@ test('it publishes on boot and on every theme change', async () => {
   assert.equal(harness.calls.setAppearance.length, 1);
 
   harness.setDark(true);
-  harness.setBackground('rgb(11, 11, 12)');
+  harness.setBackground('rgb(0, 1, 21)');
   harness.fireThemeChange();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(harness.calls.setAppearance.length, 2);

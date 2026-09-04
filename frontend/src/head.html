@@ -51,7 +51,7 @@
        and Theme.apply() below adds that class in the same head-blocking pass
        that fixes the background. */
     html { background-color: #fffeea; color-scheme: light; }
-    html.dark { background-color: #0b0b0c; color-scheme: dark; }
+    html.dark { background-color: #000115; color-scheme: dark; }
   </style>
   <script>
     // Theme module — Light / Dark / System mode selector.
@@ -90,16 +90,16 @@
         }
       }
 
-      // The two page grounds. Dark is tailwind.config.js's zinc-950, the
-      // body's `dark:bg-zinc-950` (frontend/scripts/build-shell.mjs). LIGHT
-      // IS THE WALLPAPER'S CREAM — the homescreen design's page, which
-      // app.css paints (with its washes and star) on the launcher, the app
-      // view and their peer screens; messages and the admin console keep
-      // the body's zinc-100 on top of it. The critical <style> above and
-      // the theme-color meta both need these BEFORE any stylesheet has
-      // loaded, which is the whole point. public/manifest.webmanifest
-      // carries the light one too, for the standalone install's splash.
-      const GROUND = { light: '#fffeea', dark: '#0b0b0c' };
+      // The two page grounds: THE WALLPAPER'S CREAM, and that cream
+      // inverted — the homescreen design's page and its dark derivation,
+      // which app.css paints (with its washes and star, re-tuned for dark)
+      // on the launcher, the app view and their peer screens; messages and
+      // the admin console keep the body's zinc-100 / zinc-950 on top of it.
+      // The critical <style> above and the theme-color meta both need these
+      // BEFORE any stylesheet has loaded, which is the whole point.
+      // public/manifest.webmanifest carries the light one too, for the
+      // standalone install's splash.
+      const GROUND = { light: '#fffeea', dark: '#000115' };
 
       function apply() {
         const mode = get();

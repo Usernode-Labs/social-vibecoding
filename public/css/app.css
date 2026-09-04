@@ -1377,8 +1377,21 @@ html, body {
    every engine drew it differently (Firefox drops blend modes inside an
    SVG image, for one); a raster is the same everywhere.
 
-   DARK MODE KEEPS ITS GROUND. The mock is a light-mode design; on the
-   near-black page the body keeps zinc-950 and paints no layers. */
+   DARK MODE IS THE SAME WALLPAPER ON THE INVERTED GROUND. The mock is a
+   light-mode design, so the dark one is derived from it rather than drawn:
+   the ground is the cream inverted (#000115 — near black, a breath of
+   blue), and every colour layer keeps its OWN hue on top of it. A plain
+   inversion was tried first and lost the washes: inverted pastels sit a
+   few lightness points above the inverted ground, which near black is
+   nothing. So the washes are re-tuned instead — same lavender, rose and
+   ember, the same alphas and geometry, at a lightness that reads on the
+   dark ground (the ember a notch lower than the other two, since it is
+   the most saturated of the three). The star stays periwinkle, which
+   lifts off dark by itself, and the grain keeps its gold at a lower
+   opacity, so it reads as a faint speckle rather than a glow. The .dark
+   rule below sets those four values; everything else — the zoom surface,
+   the cleared bar, the launch cover, the landing root — follows through
+   the same custom properties in both modes. */
 body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
   --home-ground: #fffeea;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
@@ -1407,8 +1420,14 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   background: var(--home-wallpaper);
 }
 .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
-  background: #0b0b0c; /* zinc-950, the body's own dark ground */
-  --un-zoom-bg: var(--bg-primary);
+  --home-ground: #000115;
+  --home-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.18'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+  --home-wallpaper:
+    var(--home-star) right 32px top 0 / 97px 78px no-repeat,
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
 }
 /* WIDE VIEWPORTS. The three discs above are the phone frame's, anchored in
    px to its corners, and on a desktop window they shrink into the corners
@@ -1416,8 +1435,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    more washes join them — the same three tints, sized in viewport units so
    they scale with the window rather than with the phone, and placed across
    the middle of the page where the frame's discs never reach. The dark rule
-   above still wins here (it is the more specific selector), so dark mode
-   stays unpainted at every width. */
+   above is the more specific selector, so it would keep the phone layers
+   at every width on its own — the second rule here gives dark the same
+   four extra washes, in its own tints. */
 @media (min-width: 640px) {
   body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
     --home-wallpaper:
@@ -1430,6 +1450,18 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(248, 228, 238, 0.65), rgba(248, 228, 238, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(253, 232, 228, 0.7), rgba(253, 232, 228, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(237, 228, 244, 0.55), rgba(237, 228, 244, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
+  }
+  .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+    --home-wallpaper:
+      var(--home-star) right 32px top 0 / 97px 78px no-repeat,
+      var(--home-grain) 0 0 / 240px 240px repeat,
+      radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(80, 48, 105, 0.65), rgba(80, 48, 105, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(117, 36, 77, 0.65), rgba(117, 36, 77, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(118, 31, 15, 0.7), rgba(118, 31, 15, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(80, 48, 105, 0.55), rgba(80, 48, 105, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
   }
 }
 /* THE BAR OVER THE WALLPAPER. On every wallpaper route the header's
@@ -1448,24 +1480,26 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
-/* THE CANVAS UNDER THE PUSH is cream too — <html>'s own background, set
-   inline in the head (frontend/src/head.html) so the first paint is never
-   white, moved from the old zinc-100 grey to the wallpaper's base when the
-   wallpaper became the platform's light ground. It is what the page
-   transition shows wherever its snapshots do not reach: the seam of the
-   iOS push and a frame of the Android fade. Nothing route-scoped is
-   needed for it any more; theme-color and the manifest carry the same
-   value, so the browser chrome and a cold launch frame the page in it. */
-html:not(.dark) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) .app-launch-cover {
-  background-color: #fffeea;
+/* THE CANVAS UNDER THE PUSH is the ground too — <html>'s own background,
+   set inline in the head (frontend/src/head.html) so the first paint is
+   never white, moved from the old zinc greys to the wallpaper's base in
+   each mode when the wallpaper became the platform's ground. It is what
+   the page transition shows wherever its snapshots do not reach: the seam
+   of the iOS push and a frame of the Android fade. Nothing route-scoped
+   is needed for it any more; theme-color and the manifest carry the same
+   value, so the browser chrome and a cold launch frame the page in it.
+   The launch cover reads the same ground, so the app opens on the page's
+   colour in both modes. */
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) .app-launch-cover {
+  background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
    fixed, full-viewport overlay with its own opaque `bg-white` (it covers
    whatever the signed-in shell has left on the page), so the body's
    wallpaper never showed through it. It takes the same shorthand the body
    paints — inherited from the body's rule, which is on because this root
-   is showing — and dark mode keeps its own ground. */
-html:not(.dark) #auth-landing-screen {
+   is showing — in both modes. */
+#auth-landing-screen {
   background: var(--home-wallpaper);
 }
 
