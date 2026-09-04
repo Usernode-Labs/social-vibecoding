@@ -63,6 +63,7 @@ import { Button } from '@/components/ui/button';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { normalizeMadeUrl } from './made-url';
 import { AUTH_SCREEN_IDS, hiddenFirst, hiddenLast, useAuthScreensPatch } from './shared';
 import {
   ChipRow,
@@ -308,17 +309,31 @@ export function MoreScreen() {
     }
   }, []);
 
+  /**
+   * Make a bare domain useful before the browser or API gets a chance to
+   * reject it. Writing the canonical value back also makes the assistance
+   * visible instead of silently changing what is saved.
+   */
+  const normalizeMadeUrlInput = useCallback(() => {
+    const input = madeUrl.current;
+    if (!input) return '';
+    const normalized = normalizeMadeUrl(input.value);
+    input.value = normalized;
+    return normalized;
+  }, []);
+
   const onSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       const value = token.current;
+      const normalizedMadeUrl = normalizeMadeUrlInput();
       setSaving(true);
       try {
         const res = await fetch('/api/public/waitlist/more/' + encodeURIComponent(value || ''), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            made_url: madeUrl.current?.value.trim() || undefined,
+            made_url: normalizedMadeUrl || undefined,
             made_note: madeNote.current?.value.trim() || undefined,
             group_name: groupName.current?.value.trim() || undefined,
             group_size: groupSize.current?.value || undefined,
@@ -354,7 +369,7 @@ export function MoreScreen() {
       }
       setSaving(false);
     },
-    [lossHad, lossKinds, tools],
+    [lossHad, lossKinds, normalizeMadeUrlInput, tools],
   );
 
   /**
@@ -463,9 +478,14 @@ export function MoreScreen() {
             <input
               ref={madeUrl}
               id="more-made-url"
-              type="url"
+              type="text"
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               maxLength={2000}
               placeholder="https://"
+              onBlur={normalizeMadeUrlInput}
               className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
             />
             <input

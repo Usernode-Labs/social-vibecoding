@@ -138,6 +138,13 @@ const inputVariants = cva('', {
         'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
       composerTight:
         'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100',
+      // The Activity feed's inline reply field. It sits directly on the page
+      // ground, so it takes the white card surface rather than the zinc-100
+      // ground itself. The rounded one-row field opens into a compact
+      // multi-line box, capped at four lines before its own scrollbar takes
+      // over. Call site: features/dev-board/card/feed-thread.tsx.
+      activityReply:
+        'resize-none overflow-y-auto max-h-24 rounded-2xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-1 text-xs leading-5 text-zinc-900 dark:text-zinc-100',
       // The DEV chat's composer. The same fill and box as `composer` above —
       // it sits on a chat pane too — but the two shape utilities are written
       // at the very END of its string rather than in front of the radius, so

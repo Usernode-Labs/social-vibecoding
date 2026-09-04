@@ -1526,9 +1526,9 @@
       "expectSelector": "#dev-actions #dev-kanban-filterbar #dev-kanban-search"
     },
     {
-      "name": "An Activity row can be replied to without opening it",
+      "name": "An Activity row has an auto-growing reply box and send arrow (#1584)",
       "path": "/?demo=1#app/usernode-2d5619/activity",
-      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-thread input[aria-label=\"Reply to this item\"]"
+      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
     },
     {
       "name": "The view strip marks Activity as the one you are on",
@@ -2997,6 +2997,11 @@
       "path": "/?demo=1&sort=active#apps",
       "expectSelector": "#browse-list[data-sort=\"active\"] .browse-row",
       "expectText": "merged in 30d"
+    },
+    {
+      "name": "Dark mode pins by deep link and paints the launcher on the inverted ground",
+      "path": "/?shot=dark",
+      "expectSelector": "html.dark #home-screen:not(.hidden)"
     }
   ],
   "governance": {
