@@ -3003,6 +3003,11 @@
       "path": "/?demo=1&sort=active#apps",
       "expectSelector": "#browse-list[data-sort=\"active\"] .browse-row",
       "expectText": "merged in 30d"
+    },
+    {
+      "name": "Dark mode pins by deep link and paints the launcher on the inverted ground",
+      "path": "/?shot=dark",
+      "expectSelector": "html.dark #home-screen:not(.hidden)"
     }
   ],
   "governance": {

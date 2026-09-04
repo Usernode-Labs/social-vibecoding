@@ -120,11 +120,12 @@ export function BrowseScreen() {
           rule that paints the wallpaper on this route — see "The home
           ground" in app.css), not white: a sticky bar needs an opaque fill
           for the rows to scroll under, and a white one read as a slab
-          across a cream page. Dark mode keeps the page's own ground.
+          across a cream page. Dark mode reads the same variable, which the
+          body's dark rule points at the inverted ground.
       */}
       <div
         id="browse-search-bar"
-        className={`${onDetail ? 'hidden ' : ''}sticky top-0 z-20 px-3 pt-3 pb-2 bg-[color:var(--home-ground)] dark:bg-zinc-950`}
+        className={`${onDetail ? 'hidden ' : ''}sticky top-0 z-20 px-3 pt-3 pb-2 bg-[color:var(--home-ground)]`}
       >
         <div className="relative max-w-xl">
           <SearchIcon
