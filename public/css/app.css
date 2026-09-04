@@ -2913,28 +2913,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    fast enough for the cover to be gone by the time the push lands, which
    is the "some apps" in the report.
 
-   WHAT ACTUALLY CAUSES IT IS STILL OPEN, and nothing below fixes it. A
-   view transition over the document root renders the app's top corners
-   SQUARE for its first frame or two before they snap round: an <iframe>
-   is always its own compositing layer, and that layer does not pick up
-   an ancestor's rounded clip in the transition's snapshot in time. Every
-   clip stated here is on an ancestor, which is exactly what it ignores.
-   Measured by freezing a real startViewTransition() and stepping
-   currentTime, so it is a property of the transition rather than of
-   timing. Substituting a plain <div> for the frame renders round at
-   t=0, which is what identifies the layer as the cause.
-
-   Do not spend time on these — all still square at t=0:
-   `will-change: transform` on the host, `clip-path` on the host,
-   `clip-path` on the frame, `isolation: isolate` + `contain: paint`,
-   `opacity: 0.999`, `translate3d(0,0,0)` and `backface-visibility:
-   hidden` on the frame. The only thing that fixed it was a
-   `view-transition-name` on #app-frame-host, which is not a free win:
-   naming hoists the sheet out of the root snapshot into a group of its
-   own, so it stops travelling with the page — and on an app-to-app
-   switch from the header chip the app window is the ONLY thing that
-   moves, so that trade has to be made deliberately rather than
-   stumbled into.
+   None of the clips here survives a VIEW TRANSITION, and that took a
+   third rule to fix — see "THE SHEET IS ITS OWN GROUP" below.
 
    So the radius is restated on each of them, and .app-launch-host takes
    an `overflow: hidden` of its own so the clip also exists one level
@@ -2949,6 +2929,55 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 #app-frame-host #app-iframe,
 #app-frame-host .app-launch-cover {
   border-radius: inherit;
+}
+
+/* ── THE SHEET IS ITS OWN GROUP ────────────────────────────────────────
+   Every clip above is on an ANCESTOR of the frame, and an ancestor's
+   clip is exactly what an <iframe> does not pick up. A view transition
+   over the document root rendered the app's top corners SQUARE for its
+   first frame or two and then snapped them round — the micro-flicker
+   reported against #1656. An iframe is always its own compositing
+   layer, and that layer reached the transition's snapshot before the
+   rounded clip did.
+
+   Naming the host hoists it out of the root snapshot into a group of
+   its own, so it is captured WITH its corners already resolved and the
+   snapshot has nothing left to clip. Same mechanism as
+   #platform-header's name above, and the two notes are worth reading
+   together — that one carries the rules a named group has to obey.
+
+   MEASURED, because this is a place where guessing costs a release.
+   Freeze a real startViewTransition() (`await vt.ready`, then pause
+   every animation from document.getAnimations() and step currentTime)
+   rather than screenshotting a live one: a 260ms transition outruns a
+   screenshot loop and gives false positives. At t=0, all of these were
+   still square and are not worth trying again — `will-change:
+   transform` on the host, `clip-path` on the host, `clip-path` on the
+   frame, `isolation: isolate` + `contain: paint`, `opacity: 0.999`,
+   `translate3d(0,0,0)`, `backface-visibility: hidden`. Substituting a
+   plain <div> for the frame renders round at t=0, which is what
+   identified the layer rather than the CSS as the cause.
+
+   WHAT THIS COSTS, stated so nobody has to rediscover it: a named group
+   no longer travels with ::view-transition-group(root). The sheet holds
+   still while the page's parallax runs under it. On a push that is
+   nearly free — the wallpaper still slides and carries the spatial cue,
+   and the frame is arriving anyway — but switching apps from the header
+   chip is the case to think about, because there the app window is the
+   only thing that changes. It does not lose its cue: the name exists on
+   both sides with identical geometry, so the group's morph is a no-op
+   and old/new CROSS-FADE in place. A fade instead of a slide, which is
+   the trade this rule makes deliberately.
+
+   The alternative was to name it and re-apply the kit's push animation
+   to the group so it travelled too. Rejected: app.css overrides only
+   two of the four halves (push/old and pop/new, and only under
+   html.un-ios.in-native-webview); the rest live in the centrally hosted
+   native.css, so a local copy would be a private fork of a motion spec
+   that silently desyncs the next time the kit is tuned, with no check
+   to catch it. */
+#app-frame-host {
+  view-transition-name: app-sheet;
 }
 
 /* CHROMELESS TAKES IT ALL BACK OFF. The chromeless route is
