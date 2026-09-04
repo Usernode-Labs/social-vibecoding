@@ -1,5 +1,5 @@
 // Route tests for the manual "In progress" claims on GitHub issues:
-//   POST   /api/apps/:slug/github-issues/:number/claim  (upsert own claim)
+//   POST   /api/apps/:slug/github-issues/:number/claim  (claim + self-assign)
 //   DELETE /api/apps/:slug/github-issues/:number/claim  (clear own / admin)
 //
 // Claims are per-user (UNIQUE app_id, github_issue_number, user_id): many
@@ -118,6 +118,13 @@ test('POST upserts the caller\'s own claim (create) and announces it in the thre
     assert.match(q.sql, /DO UPDATE SET claimed_at = NOW\(\)/);
     assert.deepStrictEqual(q.params, [1, 2, 7]);
 
+    // #1648: taking the work also casts/moves the caller's assignee vote to
+    // their own username. This stays in Usernode's topic metadata; it does
+    // not mutate the GitHub issue.
+    const assignment = capturedQueries.find((c) => /INSERT INTO topic_attribute_votes/.test(c.sql));
+    assert.ok(assignment, 'claim also upserts the caller\'s assignee vote');
+    assert.deepStrictEqual(assignment.params, [1, 'issue', 2, 'assignee', 'tester', 7]);
+
     // Fresh claim → on-the-record note in the issue's own thread + push.
     assert.strictEqual(sysMsgs.length, 1);
     assert.strictEqual(sysMsgs[0].content, 'tester claimed this issue');
@@ -145,6 +152,8 @@ test('POST by a second user coexists — same upsert, no 409 path', async () => 
     assert.strictEqual(res.status, 200);
     const q = capturedQueries.find((c) => /INSERT INTO issue_claims/.test(c.sql));
     assert.deepStrictEqual(q.params, [1, 2, 8], 'second user writes their OWN row');
+    const assignment = capturedQueries.find((c) => /INSERT INTO topic_attribute_votes/.test(c.sql));
+    assert.deepStrictEqual(assignment.params, [1, 'issue', 2, 'assignee', 'maya', 8]);
   } finally {
     server.close();
   }
@@ -167,6 +176,9 @@ test('POST renewal (created=false) refreshes silently — no thread message', as
     assert.strictEqual(body.created, false);
     assert.strictEqual(sysMsgs.length, 0, 'renewals do not spam the thread');
     assert.strictEqual(pushed.length, 1, 'panels still refresh (fresh expiry clock)');
+    const assignment = capturedQueries.find((c) => /INSERT INTO topic_attribute_votes/.test(c.sql));
+    assert.ok(assignment, 'renewal repairs the caller\'s self-assignment');
+    assert.deepStrictEqual(assignment.params, [1, 'issue', 2, 'assignee', 'tester', 7]);
   } finally {
     server.close();
   }

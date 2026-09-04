@@ -18,7 +18,7 @@ export function OpenRouterSection() {
   return (
     <div data-settings-section="openrouter" className="hidden">
       <SectionHeading title={<>OpenRouter &amp; Codex</>}>
-        OpenRouter is the default coding-agent option after you add or claim a key. GLM 5.3 is preferred when your OpenRouter catalog exposes it, and you can select any other available model. Keys are encrypted at rest and injected only for a turn.
+        OpenRouter is the default coding-agent option after you add or claim a key. GLM 5.3 Flash is preferred when your OpenRouter catalog exposes it, and you can select any other available model. Keys are encrypted at rest and injected only for a turn.
       </SectionHeading>
       <div id="settings-openrouter-beta-gated" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs text-zinc-600 dark:text-zinc-400 mb-3">
         Codex/OpenRouter is being rolled out gradually and isn't available for your account yet.

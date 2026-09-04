@@ -68,15 +68,39 @@ function relTime(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
+/**
+ * Turn the chat endpoint's oldest-first rows into the compact human preview.
+ *
+ * The websocket command that creates a reply is named `chat`, but persisted
+ * human rows use `msg_type: "message"`. Keep untyped legacy rows too; every
+ * other kind is a system/event entry that the card itself already represents.
+ */
+export function feedThreadPreview(rows: any[]): {
+  messages: FeedThreadMessage[];
+  total: number;
+} {
+  const human = rows.filter((r: any) => !r.msg_type || r.msg_type === 'message');
+  return {
+    messages: human.slice(-PREVIEW).map((r: any) => ({
+      id: r.id,
+      author: r.username || 'someone',
+      content: String(r.content || ''),
+      createdAt: r.created_at,
+    })),
+    total: human.length,
+  };
+}
+
+export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
   return (
     <div className="flex gap-1.5 text-xs leading-snug">
       <span className="shrink-0 font-medium text-zinc-700 dark:text-zinc-300">{m.author}</span>
       {/* Plain text, never markdown and never innerHTML. This is the one
           surface in the feed that renders something a person typed, and it
           renders it as a text child so React escapes it — the topic page is
-          where the full, formatted thread lives. */}
-      <span className="min-w-0 flex-1 text-zinc-600 dark:text-zinc-400 break-words">{m.content}</span>
+          where the full, formatted thread lives. `whitespace-pre-wrap` keeps
+          the line breaks the multiline composer deliberately accepts. */}
+      <span className="min-w-0 flex-1 whitespace-pre-wrap text-zinc-600 dark:text-zinc-400 break-words">{m.content}</span>
       <span className="shrink-0 text-zinc-400 dark:text-zinc-500">{relTime(m.createdAt)}</span>
     </div>
   );
@@ -169,15 +193,10 @@ export function FeedThread({
       // `msg_type` carries system and agent entries into this stream too. The
       // preview is for what PEOPLE said — a build notice under a feed row is
       // noise, and the row's own card already says where the work has got to.
-      const human = rows.filter((r: any) => !r.msg_type || r.msg_type === 'chat');
+      const preview = feedThreadPreview(rows);
       patchThread(key, {
-        messages: human.slice(-PREVIEW).map((r: any) => ({
-          id: r.id,
-          author: r.username || 'someone',
-          content: String(r.content || ''),
-          createdAt: r.created_at,
-        })),
-        total: human.length,
+        messages: preview.messages,
+        total: preview.total,
         loading: false,
         loaded: true,
       });
