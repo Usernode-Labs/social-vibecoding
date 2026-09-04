@@ -20,7 +20,7 @@ Use the matching skill whenever its description fits:
 Claude Code, Codex, and OpenCode load the full workflow bodies only when a task
 selects a skill.
 
-## Know your base commit before you write code — the checkout will not tell you
+## Know your base commit and create its work branch before you write code
 
 - **This checkout can be a fork whose `main` is far behind the platform
   repository, and nothing in it says so.** A session dispatched onto a
@@ -31,19 +31,35 @@ selects a skill.
   quote a SHA. **Do not assume the branch you were handed is based
   correctly**, and do not reach for the fork's default branch as the base —
   that is the thing most likely to be stale.
-- **Establish the base commit before the first edit, then verify it.** It
-  comes from the work order (`prepare_work`), from the guided hand-off's
-  `Base commit:` line, or — with neither to hand — from asking. Then run
-  `git rev-parse HEAD` and compare all forty characters. This is the check
-  step 2 of the `usernode-proposal` skill already makes, hoisted here on
-  purpose: a skill body loads only when a task selects that skill, so a
-  session that arrives on a branch somebody else cut never reads it.
-- **If they disagree, stop and ask — do not merge `upstream/main` yourself.**
-  Which commit a proposal is diffed against decides what the group is voting
-  on, so changing it is not the agent's call. A wrong base IS caught, but only
-  at `submit_work` (`mirrorForkBranch` → `base_mismatch`) — after the change
-  is written, when the remedy has become a rebase across everything that moved
-  underneath it.
+- **Establish the base commit before the first edit.** It comes from the work
+  order (`prepare_work`), from the guided hand-off's `Base commit:` line, or —
+  with neither to hand — from asking. Inspect the current checkout with
+  `git status --short --branch`, `git rev-parse HEAD`, and
+  `git rev-parse --abbrev-ref HEAD`; compare all forty characters of `HEAD`.
+  This is the check step 2 of the `usernode-proposal` skill already makes,
+  hoisted here on purpose: a skill body loads only when a task selects that
+  skill, so a session that arrives on a branch somebody else cut never reads
+  it.
+- **Never implement or commit proposal work directly on `main`, `master`, or
+  another default branch.** Unless the harness already supplied a dedicated
+  non-default branch at the exact base, create and check out a uniquely named
+  proposal branch at that SHA before editing:
+
+  ```sh
+  git switch -c <proposal-branch> <40-character-base-sha>
+  git rev-parse HEAD
+  git rev-parse --abbrev-ref HEAD
+  ```
+
+  Work and commit only on that branch. If the base object is missing locally,
+  fetch that exact SHA and repeat the switch; never substitute a branch tip.
+- **A mismatched `HEAD` is a reason to branch from the known base, not to merge
+  or rebase the default branch.** Creating the proposal branch from the exact
+  SHA leaves commits on the previous branch untouched. If switching in place
+  would overwrite tracked changes, preserve them by using an isolated
+  worktree or stop and ask before moving them. Which commit a proposal is
+  diffed against decides what the group is voting on; a wrong base is caught
+  only at submission, after the expensive work is already done.
 
 ## `public/index.html` is a GENERATED artifact — edit `frontend/`, never commit outputs
 
@@ -131,10 +147,10 @@ between them is about the SURFACE each is drawn for, not about styling.
 
 - **The platform shell** — `frontend/@/components/ui/**`. shadcn primitives,
   hand-rolled, `cssVariables: false`, in the platform's `zinc`/`violet`
-  palette. Twenty modules today: `alert`, `anchored-panel`, `button`, `chat`,
-  `chip`, `dialog`, `feed`, `field`, `grouped-list`, `icon-tile`, `icons`,
-  `input`, `label`, `page-header`, `progress-ring`, `select`, `skeleton`,
-  `switch`, `tabs`, `textarea`.
+  palette. Twenty-one modules today: `alert`, `anchored-panel`, `button`,
+  `chat`, `chip`, `dialog`, `feed`, `field`, `grouped-list`, `icon-tile`,
+  `icons`, `input`, `label`, `page-header`, `password-input`, `progress-ring`,
+  `select`, `skeleton`, `switch`, `tabs`, `textarea`.
   Count them in the directory rather than trusting this line — it has been
   stale before, and a primitive nobody knows exists gets hand-written instead.
   Variants are `cva` tables; every class in them is a complete literal, because

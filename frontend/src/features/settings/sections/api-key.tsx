@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 
 import { AiBudgetRow } from '../../header/ai-budget';
@@ -78,13 +78,19 @@ export function ApiKeySection() {
         </div>
       </div>
       <div className="flex gap-2">
-        <Input
+        {/*
+            The width moves to the wrapper because the wrapper is what the
+            flex row now lays out; the field fills it. settings.js keeps
+            writing this element's `value` and `placeholder` by id, and both
+            survive a toggle: the field is uncontrolled, and React rewrites
+            only the props that CHANGED between renders — here, the `type`.
+        */}
+        <PasswordInput
           id="settings-api-key"
-          type="password"
           placeholder="sk-ant-..."
           autoComplete="off"
           spellCheck="false"
-          width="flex"
+          wrapperClassName="flex-1 min-w-0"
           className="font-mono"
         />
         {/*
