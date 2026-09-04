@@ -191,7 +191,12 @@ function AppTile({ app, current }: { app: SwitcherApp; current: boolean }) {
             || event.shiftKey || event.altKey) return;
         event.preventDefault();
         void AppContext.dismissForNav();
-        if (!current) window.App?.navigateToApp?.(app.slug, 'app');
+        // `current` describes the app context, not whether this destination is
+        // already on screen. Home can publish the self-hosted platform app as
+        // its context, and Board/Activity routes keep their app current too.
+        // Once the anchor default is prevented, gating here turns all of those
+        // legitimate "open this app" activations into a no-op (#1641).
+        window.App?.navigateToApp?.(app.slug, 'app');
       }}
     >
       {/* The ring sits OUTSIDE the tile's own hairline, offset in the sheet's

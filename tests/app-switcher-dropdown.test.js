@@ -282,6 +282,33 @@ test('the app strip revalidates on every open without clearing cached rows', () 
     'the last successful strip stays visible while it revalidates');
 });
 
+test('every app tile opens its app, even when that app is the current context', () => {
+  const start = SHEET.indexOf('function AppTile(');
+  const end = SHEET.indexOf('\nexport function AppsSwitcherSheet', start);
+  assert.ok(start >= 0 && end > start, 'located the AppTile component');
+  const tile = SHEET.slice(start, end);
+
+  // The ring and aria-current remain useful state, but they cannot disable the
+  // destination. Home publishes the self-hosted platform app as its context,
+  // and an app's Board/Activity routes publish that same app too; in either
+  // case selecting its tile still means "open the app" (#1641).
+  const activation = tile.slice(tile.indexOf('onClick={(event) => {'));
+  const preventAt = activation.indexOf('event.preventDefault();');
+  const navigateAt = activation.indexOf("window.App?.navigateToApp?.(app.slug, 'app');");
+  assert.ok(preventAt >= 0 && navigateAt > preventAt,
+    'a plain activation must route through App.navigateToApp after cancelling the anchor default');
+  assert.doesNotMatch(activation.slice(preventAt, navigateAt), /if\s*\([^)]*current/,
+    'the visual current marker must not suppress app navigation');
+
+  // Modified activations keep the real anchor's native new-tab/new-window
+  // behaviour; only an ordinary primary activation is intercepted.
+  assert.match(activation,
+    /if \(event\.button !== 0 \|\| event\.metaKey \|\| event\.ctrlKey[\s\S]{0,100}?event\.altKey\) return;/,
+    'modified clicks must return before preventDefault');
+  assert.ok(activation.indexOf('event.altKey) return;') < preventAt,
+    'the modified-click escape hatch must run before the anchor default is cancelled');
+});
+
 test('the panel is deliberately wider than the rails, and still fits', () => {
   const block = switcherDesktopBlock();
   const closed = block.slice(block.indexOf('#apps-switcher-sheet {'),
