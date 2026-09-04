@@ -6661,22 +6661,35 @@ span.gc-vote-btn-icon { cursor: default; }
    the sheet, as surface that exists only to be covered and to show
    through the shoulders.
 
-   `:has(+ .dc-session-body)` rather than a rule on the strip, because the
-   strip is not always the element above: #dc-banners is `display: contents`
-   (see view.tsx), so a sync / credits / new-change banner is itself a flex
-   child of #dc-view and takes that place whenever one is up. The extension
-   inherits its background-color from whichever element it belongs to, so
-   the shoulders show the strip's grey normally and the banner's tint when
-   a banner is the layer being sat on — which is the honest answer either
-   way.
-
-   It is a pseudo-element, NOT padding plus a negative margin. Padding
+   IT IS A PSEUDO-ELEMENT, not padding plus a negative margin. Padding
    would have to be re-derived for every element that can occupy this slot
-   (the strip and four banner shells, each with its own vertical padding),
+   (the strip and five banner shells, each with its own vertical padding),
    and a negative margin would drag the next sibling up with it. This
-   takes no layout at all. */
-#dc-view > :has(+ .dc-session-body) { position: relative; }
-#dc-view > :has(+ .dc-session-body)::after {
+   takes no layout at all, and `background-color: inherit` means the
+   shoulders show whichever surface is actually being sat on — the strip's
+   grey normally, a banner's tint when a banner is up.
+
+   TWO SELECTORS, BECAUSE THE HOST IS NOT ALWAYS THE STRIP. #dc-banners is
+   `display: contents` (see view.tsx), so a sync / credits / new-change
+   banner paints as a flex child of #dc-view and stands between the strip
+   and the sheet whenever one is up.
+
+   `:has(+ .dc-session-body)` cannot express that, and silently: an element
+   with `display: contents` generates no box, but it is STILL A SIBLING —
+   the property changes box generation, not the DOM. So #dc-banners itself
+   matched that selector in both states, its ::after inherited the host's
+   transparent background, and the extension never painted at all. Hence
+   the two real hosts, named:
+
+     - the strip, when #dc-banners is empty (which is the ordinary case), and
+     - the LAST banner inside it, when it is not.
+
+   A banner needs `position: relative` for the same reason both lift layers
+   do: the sheet has to paint over the overhang, and positioned siblings
+   paint after unpositioned ones. */
+#dc-view > #dc-banners > * { position: relative; }
+#dc-view > #dc-session-header:has(+ #dc-banners:empty)::after,
+#dc-view > #dc-banners > :last-child::after {
   content: '';
   position: absolute;
   left: 0;

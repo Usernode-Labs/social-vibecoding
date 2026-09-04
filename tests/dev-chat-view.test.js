@@ -294,21 +294,34 @@ test('the layer above the sheet extends a full radius behind it', () => {
   // inverts the effect: the sheet reads as a hole in the page rather than a
   // card on the strip.
   //
-  // It hangs off `:has(+ .dc-session-body)` because the strip is not always
-  // the element above. #dc-banners is `display: contents`, so a sync /
-  // credits / new-change banner is itself a flex child of #dc-view and takes
-  // that place whenever one is up.
+  // TWO HOSTS, and this is the test's real subject. #dc-banners is
+  // `display: contents`, so a sync / credits / new-change banner paints as a
+  // flex child of #dc-view and stands between the strip and the sheet
+  // whenever one is up. `:has(+ .dc-session-body)` looked like it covered
+  // both and covered NEITHER: `display: contents` changes box generation,
+  // not the DOM, so #dc-banners is still the sheet's previous sibling and
+  // matched that selector in both states — while generating no box, so its
+  // ::after inherited a transparent background and nothing ever painted.
+  // Measured with a pixel probe, not by eye, which is how it got past once.
   const CSS = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
-  const at = CSS.indexOf('#dc-view > :has(+ .dc-session-body)::after');
-  assert.ok(at > 0, 'the extension rule is declared');
-  const rule = CSS.slice(at, CSS.indexOf('}', at));
+  // Comments stripped: the rule above this one EXPLAINS the superseded
+  // selector, so a plain grep would match its own post-mortem.
+  const RULES = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/:has\(\+ \.dc-session-body\)/.test(RULES),
+    'that selector can only ever match the display:contents host');
+  const at = RULES.indexOf('#dc-view > #dc-session-header:has(+ #dc-banners:empty)::after');
+  assert.ok(at > 0, 'the strip is one host, for the ordinary no-banner case');
+  const rule = RULES.slice(at, RULES.indexOf('}', at));
+  assert.match(rule, /#dc-view > #dc-banners > :last-child::after/,
+    'and the LAST BANNER is the other, sharing the one declaration');
   assert.match(rule, /height: 1\.75rem;/, 'one full radius, the same token');
   assert.match(rule, /background-color: inherit;/,
-    'so the shoulders show the strip normally and a banner\'s tint when one '
-    + 'is up — whichever element is actually being sat on');
+    'so the shoulders show whichever surface is actually being sat on');
+  assert.match(RULES, /#dc-view > #dc-banners > \* \{ position: relative; \}/,
+    'a banner has to be positioned or the sheet cannot paint over its overhang');
   assert.match(VIEW_TSX, /id="dc-banners" className="contents"/,
-    'which is only true while the banners are `display: contents`');
+    'which is the arrangement both hosts exist for');
 });
 
 // ── 4. #194's hint, which used to be a second author ───────────────────
