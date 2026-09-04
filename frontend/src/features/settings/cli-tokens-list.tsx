@@ -13,12 +13,24 @@
  * disable-on-click, its refetch and its status reporting, so the component
  * hands it the id and the button and forgets.
  *
- * Markup is like-for-like with the DOM the module built — same classes, same
- * order, same two text nodes.
+ * Credential-row markup is like-for-like with the DOM the module built — same
+ * classes, same order, same two text nodes. The completed empty state is the
+ * one deliberate addition: it explains how running a local coding agent
+ * creates the first credential, with each terminal command copyable in place.
  */
+
+import { useState, type ReactNode } from 'react';
+
+import { Button } from '@/components/ui/button';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { cliTokensStore } from './cli-tokens-store.js';
+
+const REPOSITORY_SETUP = `git clone https://github.com/Usernode-Labs/social-vibecoding.git
+cd social-vibecoding`;
+const CODEX_COMMAND = 'codex';
+const CLAUDE_COMMAND = 'claude';
+const PROPOSAL_PROMPT = 'Create a proposal for <app name> that <describe the change you want>.';
 
 type CliTokenView = {
   id: string | null;
@@ -33,12 +45,103 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Settings : null) || null;
 }
 
+function ui(): any {
+  return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
+}
+
+function CopyableCode({ label, value }: { label: string; value: string }) {
+  const [buttonLabel, setButtonLabel] = useState('Copy');
+  return (
+    <div className="flex items-start gap-2 mt-2">
+      <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre text-xs font-mono text-zinc-700 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2"><code>{value}</code></pre>
+      <Button
+        type="button"
+        layout="shrink"
+        variant="outline"
+        size="xsText"
+        ink="muted"
+        className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
+        aria-label={`Copy ${label}`}
+        onClick={async () => {
+          const ok = await ui()?.copyText?.(value);
+          setButtonLabel(ok ? 'Copied' : 'Copy failed');
+          if (!ok) ui()?.toast?.('Couldn’t copy. Select the text and copy it manually', { error: true });
+          setTimeout(() => setButtonLabel('Copy'), 1500);
+        }}
+      >
+        {buttonLabel}
+      </Button>
+    </div>
+  );
+}
+
+function SetupStep({ n, title, children }: {
+  n: number;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <li className="flex items-start gap-3">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 dark:bg-violet-950 text-xs font-semibold text-violet-700 dark:text-violet-300" aria-hidden="true">
+        {n}
+      </span>
+      <div className="min-w-0 flex-1">
+        <h4 className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{title}</h4>
+        {children}
+      </div>
+    </li>
+  );
+}
+
+function CliSetupEmptyState() {
+  return (
+    <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+      <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">No CLI credentials yet</h3>
+      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+        Set up a local coding agent from your terminal. Your first authorization will add its credential here.
+      </p>
+      <ol className="mt-4 space-y-4">
+        <SetupStep n={1} title="Clone the repository">
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+            Clone Social Vibecoding and enter the checkout.
+          </p>
+          <CopyableCode label="repository setup commands" value={REPOSITORY_SETUP} />
+        </SetupStep>
+        <SetupStep n={2} title="Start your coding agent">
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+            Run either Codex or Claude Code from the repository directory.
+          </p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Codex</div>
+              <CopyableCode label="Codex command" value={CODEX_COMMAND} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Claude Code</div>
+              <CopyableCode label="Claude Code command" value={CLAUDE_COMMAND} />
+            </div>
+          </div>
+        </SetupStep>
+        <SetupStep n={3} title="Ask it to create a proposal">
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+            Replace the placeholders with the app and change you have in mind, then send the prompt.
+          </p>
+          <CopyableCode label="example proposal prompt" value={PROPOSAL_PROMPT} />
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+            Follow the agent&rsquo;s instructions. It will ask you to authorize access on a Social Vibecoding web page; review and approve the request there, then return to your terminal.
+          </p>
+        </SetupStep>
+      </ol>
+    </div>
+  );
+}
+
 export function CliTokensListView({ phase, tokens }: CliTokensState) {
   if (phase === 'idle') return null;
   // A bare text node, as `list.textContent = 'Loading credentials…'` produced.
   if (phase === 'loading') return <>Loading credentials…</>;
   if (!tokens.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-400">No CLI credentials.</p>;
+    return <CliSetupEmptyState />;
   }
   return (
     <>

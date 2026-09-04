@@ -1276,12 +1276,19 @@
       return this._cliAuthPromise;
     },
 
-    // True when the page carries ?demo=1. The server only honours it in
-    // staging (see routes/cli-auth.js), so this is safe to send always.
-    _cliTokensDemo() {
+    // The two read-only CLI credential fixtures the staging server knows:
+    // rows for the everyday review route, or #1609's instruction-rich empty
+    // state. All boolean callers use _cliTokensDemo(); the credential fetch
+    // also needs the exact value so it can select the right fixture.
+    _cliTokensDemoValue() {
       try {
-        return new URLSearchParams(window.location.search).get('demo') === '1';
-      } catch { return false; }
+        const flag = new URLSearchParams(window.location.search).get('demo');
+        return flag === '1' || flag === 'cli-empty' ? flag : null;
+      } catch { return null; }
+    },
+
+    _cliTokensDemo() {
+      return this._cliTokensDemoValue() !== null;
     },
 
     // ── Claude & ChatGPT connectors ──────────────────────────────────────
@@ -1931,7 +1938,8 @@
         const query = this._cliTokenCursor
           ? `?limit=50&cursor=${encodeURIComponent(this._cliTokenCursor)}`
           : '?limit=50';
-        const demoQ = this._cliTokensDemo() ? '&demo=1' : '';
+        const demo = this._cliTokensDemoValue();
+        const demoQ = demo ? `&demo=${encodeURIComponent(demo)}` : '';
         const response = await fetch(`/api/me/cli-tokens${query}${demoQ}`, {
           credentials: 'same-origin',
           cache: 'no-store',

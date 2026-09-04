@@ -649,7 +649,7 @@ test('the "Settings → Change password" prose is a real link', () => {
 
 // ── Staging mock data ──────────────────────────────────────────────────
 
-test('the CLI credentials list has a staging ?demo=1 injection', () => {
+test('the CLI credentials list has staging row and empty-state fixtures', () => {
   assert.match(cliAuthJs, /function demoCliTokens\(\)/, 'demo rows are defined');
   assert.match(cliAuthJs,
     /req\.query\.demo === '1' && process\.env\.USERNODE_ENV === 'staging'/,
@@ -658,6 +658,11 @@ test('the CLI credentials list has a staging ?demo=1 injection', () => {
     "the strict query allowlist admits 'demo'");
   assert.match(cliAuthJs, /staging-demo-cli-1/, 'rows are obviously fake');
   assert.match(cliAuthJs, /demo: true/, 'rows are flagged so Revoke is suppressed');
+  assert.match(cliAuthJs, /\['1', 'cli-empty'\]\.includes\(req\.query\?\.demo\)/,
+    'the early staging gate admits both exact read-only fixtures');
+  assert.match(cliAuthJs,
+    /req\.query\.demo === 'cli-empty'[\s\S]{0,180}tokens: \[\], next_cursor: null, demo: true/,
+    'the empty-state fixture returns no credential rows');
   // Strictly read-only — the demo branch must not touch the DB.
   const fnStart = cliAuthJs.indexOf('function demoCliTokens()');
   const fn = cliAuthJs.slice(fnStart, fnStart + 1600);
@@ -665,15 +670,21 @@ test('the CLI credentials list has a staging ?demo=1 injection', () => {
     'fabricated in memory, never written');
 });
 
-test('settings.js passes ?demo=1 through to the credentials list', () => {
+test('settings.js passes the selected CLI fixture through to the credentials list', () => {
+  assert.match(settingsJs, /_cliTokensDemoValue\(\)\s*\{/,
+    'the selected fixture value has one parser');
+  assert.match(settingsJs, /flag === '1' \|\| flag === 'cli-empty'/,
+    'only the two declared fixture values are accepted');
   assert.match(settingsJs, /_cliTokensDemo\(\)\s*\{/, 'the passthrough helper exists');
   // Scoped to _loadCliTokens, not the whole module — the point is that the
   // passthrough is on the request this function builds. The window grew
   // when the capability gate (_cliAuthAvailable — skip the fetch entirely
   // where the CLI surface is 404'd) landed above the query construction.
   const load = settingsJs.slice(settingsJs.indexOf('    async _loadCliTokens(reset) {'));
-  assert.match(load.slice(0, 2600), /_cliTokensDemo\(\) \? '&demo=1' : ''/,
-    'the page-level ?demo=1 reaches the endpoint');
+  assert.match(load.slice(0, 3000), /const demo = this\._cliTokensDemoValue\(\)/,
+    'the credential fetch reads the exact selected fixture');
+  assert.match(load.slice(0, 3000), /`&demo=\$\{encodeURIComponent\(demo\)\}`/,
+    'the page-level fixture reaches the endpoint without string concatenation hazards');
   assert.match(settingsJs, /!token\.demo/, 'Revoke is suppressed on demo rows');
 });
 
@@ -681,7 +692,7 @@ test('settings.js passes ?demo=1 through to the credentials list', () => {
 
 test('the screen itself is never gated on USERNODE_ENV', () => {
   // The whole shell/routing surface must be identical in staging and prod;
-  // only DATA (the ?demo=1 rows in cli-auth.js) may differ.
+  // only DATA (the read-only fixtures in cli-auth.js) may differ.
   assert.doesNotMatch(settingsJs, /USERNODE_ENV/,
     'no environment gating in the client module');
   for (const marker of ["parts[0] === 'settings'", '  navigateToSettings(section) {', '  _exitSettings() {']) {
@@ -710,11 +721,15 @@ test('dapp.json covers the settings screen and its deep links', () => {
     bare.some((t) => (t.expectSelector || '').includes('settings-screen')),
     'the bare-route check asserts the screen is actually visible',
   );
-  // Data-dependent sections must go through the staging demo injection.
+  // Data-dependent sections must go through their staging demo injection.
   for (const t of tests) {
-    if (/#settings\/(app-ai|agent-files|cli)/.test(t.path)) {
+    if (/#settings\/(app-ai|agent-files)/.test(t.path)) {
       assert.match(t.path, /demo=1/,
         `${t.path} needs ?demo=1 — its table is staging:private / not cloned`);
+    }
+    if (/#settings\/cli/.test(t.path)) {
+      assert.match(t.path, /demo=(?:1|cli-empty)/,
+        `${t.path} needs an explicit CLI review fixture`);
     }
   }
   // #1102: and one check drives a real history traversal, which is the only
@@ -1442,9 +1457,32 @@ test('the credential list renders its three host states', () => {
   assert.equal(cliRows({ phase: 'idle', tokens: [] }), '');
   assert.equal(shellMarkup().includes('<div id="cli-tokens-list" class="space-y-2"></div>'),
     true, 'and the prerendered document agrees');
-  // The two the module used to write with `textContent`.
+  // Loading is the bare text node the module used to write with textContent.
   assert.match(cliRows({ phase: 'loading', tokens: [] }), /Loading credentials…/);
-  assert.match(cliRows({ phase: 'ready', tokens: [] }), /No CLI credentials\./);
+  // #1609 deliberately replaces the old one-line empty state once loading
+  // has completed. It must not leak into `idle`, whose blank render above is
+  // the hydration contract.
+  const empty = cliRows({ phase: 'ready', tokens: [] });
+  assert.match(empty, /No CLI credentials yet/);
+  assert.match(empty, /Set up a local coding agent from your terminal/);
+  assert.match(empty, /git clone https:\/\/github\.com\/Usernode-Labs\/social-vibecoding\.git/);
+  assert.match(empty, /cd social-vibecoding/);
+  assert.match(empty, /<code>codex<\/code>/);
+  assert.match(empty, /<code>claude<\/code>/);
+  assert.match(empty,
+    /Create a proposal for &lt;app name&gt; that &lt;describe the change you want&gt;\./);
+  assert.match(empty, /authorize access on a Social Vibecoding web page/);
+  assert.equal((empty.match(/>Copy<\/button>/g) || []).length, 4,
+    'repository setup, each alternative agent, and the prompt copy separately');
+  const copyLabels = empty.match(/aria-label="Copy [^"]+"/g) || [];
+  assert.equal(copyLabels.length, 4);
+  assert.equal(new Set(copyLabels).size, 4, 'every Copy control has a distinct accessible name');
+  const source = read(CLI_LIST);
+  assert.match(source, /PlatformUI/);
+  assert.match(source, /copyText\?\.\(value\)/,
+    'the shared helper keeps the clipboard fallback used elsewhere in the shell');
+  assert.match(source, /ok \? 'Copied' : 'Copy failed'/,
+    'a rejected copy never claims success');
 });
 
 test('only a live, non-demo credential offers Revoke', () => {

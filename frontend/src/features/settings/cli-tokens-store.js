@@ -38,9 +38,9 @@ import { createStore } from '../../lib/plain-store.js';
 /**
  * `idle` renders NOTHING, which is exactly the empty `<div id="cli-tokens-list">`
  * that sections/cli.tsx ships and the SSG prerender emits. The list is fetched
- * when the section opens, so a first render that drew the "No CLI credentials."
- * line would be a hydration mismatch — which console.errors, and a console
- * error on any route fails proposal checks.
+ * when the section opens, so a first render that drew #1609's local-agent
+ * setup walkthrough would be a hydration mismatch — which console.errors,
+ * and a console error on any route fails proposal checks.
  */
 export const INITIAL_CLI_TOKENS = /** @type {CliTokensState} */ ({ phase: 'idle', tokens: [] });
 
