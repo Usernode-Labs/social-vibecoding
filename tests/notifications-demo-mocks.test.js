@@ -273,6 +273,11 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
 
 // ── POST /api/notifications/read kind scoping ───────────────────────────
 
+// The ROUTE's kind scoping, which is unchanged. #1610 removed the last CLIENT
+// that sent `exclude_kinds` (the bell's mark-all, which used to skip the
+// session kinds because a second surface counted them), but the parameter is
+// how any scoped clear is expressed and an unpinned SQL builder is how one
+// silently starts clearing the wrong rows.
 test('POST /read {all, kinds} and {all, exclude_kinds} reach the service scoped', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('production', pool);

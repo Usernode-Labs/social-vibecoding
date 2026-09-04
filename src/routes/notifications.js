@@ -331,8 +331,11 @@ function notificationsRoutes(config) {
           .slice(0, messageBookmarks.MAX_SAVED);
         // Staging-only demo rows (?demo=1) — see stagingMockNotifications.
         // First page only (they'd duplicate on cursor follow-ups), unread
-        // count bumped to match so the client's red-badge subtraction
-        // (account unread minus loaded session-kind unread) stays honest.
+        // count bumped to match so the bell's number counts the mocks it is
+        // showing. (It used to be phrased as keeping a subtraction honest:
+        // the client held back the session kinds for a second badge on
+        // #improve-btn. #1610 folded that count into the bell, so the total
+        // is simply the total now.)
         //
         // Only the UNREAD mocks are counted. This used to add `mocks.length`
         // outright, which was right while every mock was unread; one of them

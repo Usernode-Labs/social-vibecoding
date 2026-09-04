@@ -736,22 +736,11 @@ const Improve = {
     if (improveStore.get().working !== working) improveStore.set({ working });
   },
 
-  /**
-   * The green session count, from Notifications._renderBadge.
-   *
-   * That module is loaded as a classic SCRIPT by two test files, so it cannot
-   * import this store and reaches it by name instead — the same constraint
-   * dev-chat.js documents. It used to write `textContent` and toggle `hidden`
-   * on a span inside the hamburger; the span is inside a React-owned button
-   * now, so it publishes the two numbers and the component renders them.
-   */
-  setSessionBadge(unread, done) {
-    const sessionUnread = Number(unread) || 0;
-    const sessionDone = Number(done) || 0;
-    const cur = improveStore.get();
-    if (cur.sessionUnread === sessionUnread && cur.sessionDone === sessionDone) return;
-    improveStore.set({ sessionUnread, sessionDone });
-  },
+  // setSessionBadge is GONE (#1610). Notifications._renderBadge used to
+  // publish the unread session count here so this button could render it;
+  // that count is part of the bell's number now, because the bell's list is
+  // the only place a session notification can be marked read. `working`
+  // above is the one indicator this button still carries.
 
   /**
    * Where the PLATFORM's build has got to, from
