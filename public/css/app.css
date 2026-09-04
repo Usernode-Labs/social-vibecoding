@@ -1350,6 +1350,15 @@ html, body {
    surfaces, not pages. An engine without :has() (none the shell supports)
    simply keeps that everywhere.
 
+   THE CREAM IS DIMMED. The export's page is #FFFEEA — 98% relative
+   luminance, which is white with a cast to the eye, and a bright one: the
+   greys most apps sit on (zinc-100, iOS's grouped background) are 88-90%.
+   The ground here is the same hue at that luminance, #F4F2E4 (88%), and
+   each wash is lowered by the same lightness step (about 3 points) so it
+   keeps the presence it had on the export's cream rather than sinking
+   into the dimmer page. The white cards read as cards on it, which on the
+   export's page they only just did.
+
    THE DISCS are the export's blurred circles as radial gradients: each
    holds its fill to (r - 2σ), is at half opacity at r, and is gone by
    (r + 2σ), which is a gaussian edge to within what the eye reads. The two
@@ -1379,7 +1388,7 @@ html, body {
 
    DARK MODE IS THE SAME WALLPAPER ON THE INVERTED GROUND. The mock is a
    light-mode design, so the dark one is derived from it rather than drawn:
-   the ground is the cream inverted (#000115 — near black, a breath of
+   the ground is the cream inverted (#0b0d1b — near black, a breath of
    blue), and every colour layer keeps its OWN hue on top of it. A plain
    inversion was tried first and lost the washes: inverted pastels sit a
    few lightness points above the inverted ground, which near black is
@@ -1393,7 +1402,7 @@ html, body {
    the cleared bar, the launch cover, the landing root — follows through
    the same custom properties in both modes. */
 body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
-  --home-ground: #fffeea;
+  --home-ground: #f4f2e4;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
      the body's descendants, so this is where it has to follow the ground:
@@ -1414,13 +1423,13 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   --home-wallpaper:
     var(--home-star) right 32px top 0 / 97px 78px no-repeat,
     var(--home-grain) 0 0 / 240px 240px repeat,
-    radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px) 0 0 / 100% 100% no-repeat,
-    radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px) 0 0 / 100% 100% no-repeat,
-    radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
   background: var(--home-wallpaper);
 }
 .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
-  --home-ground: #000115;
+  --home-ground: #0b0d1b;
   --home-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.18'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
   --home-wallpaper:
     var(--home-star) right 32px top 0 / 97px 78px no-repeat,
@@ -1443,13 +1452,13 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
     --home-wallpaper:
       var(--home-star) right 32px top 0 / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
-      radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px) 0 0 / 100% 100% no-repeat,
-      radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px) 0 0 / 100% 100% no-repeat,
-      radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px) 0 0 / 100% 100% no-repeat,
-      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(237, 228, 244, 0.65), rgba(237, 228, 244, 0) 70%) 0 0 / 100% 100% no-repeat,
-      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(248, 228, 238, 0.65), rgba(248, 228, 238, 0) 70%) 0 0 / 100% 100% no-repeat,
-      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(253, 232, 228, 0.7), rgba(253, 232, 228, 0) 70%) 0 0 / 100% 100% no-repeat,
-      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(237, 228, 244, 0.55), rgba(237, 228, 244, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
+      radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(229, 216, 239, 0.65), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(245, 215, 230, 0.65), rgba(245, 215, 230, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(252, 219, 212, 0.7), rgba(252, 219, 212, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(229, 216, 239, 0.55), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
   }
   .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
     --home-wallpaper:
