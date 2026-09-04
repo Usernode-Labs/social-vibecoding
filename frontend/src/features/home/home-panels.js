@@ -509,7 +509,25 @@ const HomePanels = {
       demo: !!app.demo,
       added: !!(window.Home && Home.isYours && Home.isYours(app)),
       icon,
+      blurb: HomePanels.appBlurb(app),
+      contributors: Number(app.contributor_count) || 0,
     };
+  },
+
+  // The card's sentence. There is no description COLUMN on `apps` — the
+  // directory's rows derive a meta line instead — so the one place an app can
+  // say what it is in its own words is its manifest, and the row already
+  // carries the whole of it (`manifest_snapshot` is a non-secret column).
+  // Absent or blank on most apps today, and the card draws nothing rather
+  // than a filler sentence: an invented blurb is worse than a short card.
+  // Capped here as well as at the manifest reader, because the snapshot is
+  // whatever the app's own repository last committed.
+  appBlurb(app) {
+    const snap = app && app.manifest_snapshot;
+    const raw = snap && typeof snap === 'object' ? snap.description : null;
+    if (typeof raw !== 'string') return null;
+    const text = raw.replace(/\s+/g, ' ').trim();
+    return text ? text.slice(0, 160) : null;
   },
 
   // ── Create app ─────────────────────────────────────────────────────
@@ -567,6 +585,11 @@ const HomePanels = {
     const target = numeric ? Number(c.progress.target) : 1;
     return {
       id: String(c.id),
+      // The organiser's category, as the card's well draws it. Free text on
+      // the template (a VARCHAR, not an enum), so it is normalised here and
+      // capped: the well is a 62px square and a 50-character category would
+      // fill the card with a word.
+      label: String(c.label || 'OTHER').toUpperCase().slice(0, 18),
       goal: String(c.goal || ''),
       // The task is the row's tooltip — the one place the dropped detail still
       // surfaces without costing height.
@@ -616,8 +639,32 @@ const HomePanels = {
       // motivating number, and the ring is already showing the fraction.
       lead: hasPoints ? `${remaining.toLocaleString('en-US')} pts left` : counted,
       sub: hasPoints ? counted : null,
+      deadline: HomePanels.seasonDeadline(panel),
       label: hasPoints ? `${counted}, ${remaining.toLocaleString('en-US')} points left` : counted,
     };
+  },
+
+  // How long the SEASON has left, as the cards say it: "7 days left".
+  // Every open challenge in a season ends when the season does, so this is
+  // one fact about the block rather than a field on each row — which is why
+  // it is stated beside the ring and, on a yes-or-no challenge, in the pill
+  // that has no progress to show.
+  //
+  // Rounded UP, so the last 23 hours read "1 day left" rather than "0";
+  // under an hour reads "Ends today", and a season already past its end
+  // returns null rather than a negative count (the panel is only built for a
+  // running season, so that is a clock skew case, not a state).
+  seasonDeadline(panel) {
+    const raw = panel && panel.season && panel.season.ends_at;
+    if (!raw) return null;
+    const ends = Date.parse(raw);
+    if (!Number.isFinite(ends)) return null;
+    const ms = ends - Date.now();
+    if (ms <= 0) return null;
+    const hours = ms / 3600000;
+    if (hours < 1) return 'Ends today';
+    const days = Math.ceil(hours / 24);
+    return days === 1 ? '1 day left' : `${days} days left`;
   },
 
   // Real hash navigation (not a router call) so the Challenges screen gets a

@@ -254,12 +254,19 @@ const CHALLENGE_EXPANDED_LIMIT = 40;
 // the card render its compact "nothing running" state.
 async function fetchCurrentSeason(pool) {
   const { rows } = await pool.query(
-    `SELECT id, name FROM seasons
+    `SELECT id, name, ends_at FROM seasons
       WHERE internal = FALSE AND is_active = TRUE
         AND starts_at <= NOW() AND ends_at >= NOW()
       ORDER BY starts_at DESC, id DESC LIMIT 1`
   );
   return rows[0] || null;
+}
+
+// The staging demo season always ends SEVEN DAYS from now, so the card's
+// "7 days left" is the same string on every capture rather than counting
+// down towards a fixed date and eventually reading "ended".
+function demoSeasonEndsAt() {
+  return new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
 }
 
 async function buildChallengesPanel(pool, user, opts) {
@@ -347,7 +354,11 @@ async function buildChallengesPanel(pool, user, opts) {
   }
 
   return {
-    season: { id: Number(season.id), name: season.name },
+    // `ends_at` rides along so the client can say how long is left. It is
+    // the SEASON's deadline, not a per-challenge one — every open challenge
+    // in a season ends with it — so it is stated once on the block rather
+    // than repeated on each row.
+    season: { id: Number(season.id), name: season.name, ends_at: season.ends_at },
     total: totalRows[0]?.total ?? challenges.length,
     done: totalRows[0]?.done ?? 0,
     points_remaining: pointsRemaining,
@@ -485,7 +496,7 @@ function demoChallengesPanel(opts) {
   if (variant === 'few') {
     const few = [rows[0], rows[1]];
     return {
-      season: { id: 900500, name: 'Staging Demo Season — Topochain' },
+      season: { id: 900500, name: 'Staging Demo Season — Topochain', ends_at: demoSeasonEndsAt() },
       total: 2,
       done: 0,
       points_remaining: null,
@@ -503,7 +514,7 @@ function demoChallengesPanel(opts) {
   //
   const all = expanded ? [...rows, ...overflow, ...finished] : rows;
   return {
-    season: { id: 900500, name: 'Staging Demo Season — Topochain' },
+    season: { id: 900500, name: 'Staging Demo Season — Topochain', ends_at: demoSeasonEndsAt() },
     total: expanded ? all.length : 7,
     done: expanded ? 3 : 2,
     points_remaining: null,

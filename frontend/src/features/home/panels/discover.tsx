@@ -1,48 +1,61 @@
 /**
- * The Discover block: the admin-curated tiles, the most-used apps this viewer
+ * The Discover block: the admin-curated apps, the most-used apps this viewer
  * doesn't have yet, and the way into the `#apps` directory.
  *
- * ── One shape at every width ──────────────────────────────────────────
+ * ── The lane is a RAIL OF CARDS now, not a grid of icons ──────────────
  *
- * It used to be two (#949), because the widget's registry footprint was
- * asymmetric — 4x1 on a phone, 2x2 on desktop — so a phone got the title bar
- * and the featured lane and nothing else. THE UI OVERHAUL made Discover a
- * fixed section, so the Popular lane renders everywhere. That is the point of
- * an area called Discover rather than a strip of curated tiles: the curated
- * lane alone is whatever an admin got round to featuring.
+ * It was six 40px icon tiles in a grid inside the block's white card, so the
+ * most an area called Discover could say about an app was its name, clamped
+ * to two lines at 9.6px. The homescreen design draws it as the reference
+ * does: a horizontal rail of cards, each with art, the app's name, its own
+ * sentence and how many people built it — which is what makes the area answer
+ * "should I open this?" rather than "here are some logos".
  *
- * ── The browse control ALWAYS renders ─────────────────────────────────
+ * What that costs and why it is paid: a rail is taller than a lane (a card is
+ * ~13rem against the tile's ~5.25rem). The block's height cap is long gone —
+ * a section is as tall as its content — and the launcher is a scrolling feed,
+ * so the cost is scroll rather than clipping. What it buys is the sentence: an
+ * app that says what it is gets opened, and the directory is one tap away for
+ * everything else.
  *
- * It is THE discovery path, so it must not depend on curation existing. With
- * nothing left to feature the tile lane is dropped entirely — rather than
- * drawn empty — and one centred line takes its place. The control rides in the
- * TITLE BAR rather than a footer of its own: Discover has one destination, so
- * it belongs beside the title rather than in 27px of chrome under two lanes.
+ * ── BOTH LANES SURVIVE, as two rails ──────────────────────────────────
  *
- * ── The tiles keep Home's wiring ──────────────────────────────────────
+ * Featured, then "Popular" (the most-used apps this viewer doesn't have).
+ * The reference draws ONE rail, and merging the two would halve the block's
+ * height — but the second lane is a deliberate decision (#949 hid it on
+ * phones; the fix that brought it back at every width is asserted from
+ * dapp.json), and a redesign is not the place to quietly undo it. Same card
+ * in both, so the block reads as one idea at two levels of curation.
+ *
+ * ── The tiles keep Home's wiring ─────────────────────────────────────
  *
  * `Home._wireDiscoveryCards(lane)` binds tap-to-open, the modified-click
- * anchor and the +/✓ badge, exactly as it bound the featured row this
- * replaced. It attaches listeners to nodes and writes no markup, so calling it
- * from an effect keeps one owner for the subtree — the same split app-grid.tsx
- * makes for the canvas recognizer. Per LANE, not per block: Discover draws
- * two, and a lane whose tiles were never wired looks identical in a screenshot
- * while every tap in it is dead.
+ * anchor and the +/✓ badge. It selects on `.app-card`, `.card-add-btn` and
+ * `.card-menu-btn`, so the CARD keeps those class names however it is drawn;
+ * it attaches listeners and writes no markup, which is what keeps one owner
+ * for the subtree. Per LANE, not per block: a lane whose cards were never
+ * wired looks identical in a screenshot while every tap in it is dead.
  */
 
-import { useEffect, useRef, type CSSProperties } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { CheckIcon, PlusWideIcon } from '@/components/ui/icons';
 
 import type { IconView } from '../grid-store';
 import type { DiscoverTileView, DiscoverView } from '../panels-store';
-import { PanelShell } from './ui';
+import { PanelShell, tintOf } from './ui';
 
 function home(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
 }
 
-function TileIcon({ icon }: { icon: IconView }) {
+/**
+ * The card's art block. An uploaded image FILLS it — that is the one case
+ * that looks like the design's own artwork — while an emoji or an initial is
+ * a glyph centred on the tint, which is the honest rendering of "this app has
+ * no art yet" and still gives the card its colour.
+ */
+function CardArt({ icon }: { icon: IconView }) {
   if (icon.kind === 'image') {
     return (
       <img
@@ -50,44 +63,44 @@ function TileIcon({ icon }: { icon: IconView }) {
         alt=""
         loading="lazy"
         draggable={false}
-        className="w-full h-full rounded-lg object-cover"
+        className="home-discover-art-img"
       />
     );
   }
   if (icon.kind === 'emoji') {
-    return <span className="text-xl leading-none" aria-hidden="true">{icon.emoji}</span>;
+    return <span className="home-discover-art-emoji" aria-hidden="true">{icon.emoji}</span>;
   }
-  return <>{icon.letter}</>;
+  return <span className="home-discover-art-letter" aria-hidden="true">{icon.letter}</span>;
 }
 
 /**
- * One compact discovery tile — the same markup in both lanes, carrying
- * `.app-card` + `data-slug` so `Home._wireDiscoveryCards` binds it exactly as
- * it bound the row this replaced.
+ * One discovery card.
  *
- * The icon carries NO `w-10 h-10`: app.css sizes it fluidly (100% of its
- * track, capped at the 2.5rem it always drew at) because a lane's six tracks
- * are only ~32px wide in the narrowest window, where a fixed 40px box would
- * overflow its track and be clipped by the panel.
+ * `.app-card` and `data-slug` are the contract with `_wireDiscoveryCards` and
+ * with dapp.json's own Discover check, so they stay whatever the card looks
+ * like. `home-discover-tile` does NOT stay: it named a 40px tile in a grid,
+ * the CSS that sized it is retired with the grid, and a class that says
+ * "tile" on a 152px card is a name the next reader has to disbelieve.
+ *
+ * The blurb and the contributor line are both CONDITIONAL. Most apps declare
+ * no description (there is no such column on `apps` — it comes off the
+ * manifest snapshot, see HomePanels.appBlurb), and a card with nothing to say
+ * says nothing rather than padding itself with filler. The name and the art
+ * are the floor.
  */
-function DiscoverTile({ tile }: { tile: DiscoverTileView }) {
+function DiscoverCard({ tile }: { tile: DiscoverTileView }) {
   const { added } = tile;
   return (
     <div
-      className="app-card home-discover-tile relative flex flex-col items-center gap-1 cursor-pointer"
+      className={`app-card home-discover-card ${tintOf(tile.slug)} relative flex flex-col cursor-pointer`}
       data-slug={tile.slug}
       data-status={tile.status}
       {...(tile.demo ? { 'data-demo': 'true' } : null)}
     >
-      <div className="home-discover-icon-wrap relative">
-        <div
-          className="app-icon-tile home-discover-icon rounded-lg overflow-hidden flex items-center justify-center font-bold text-base"
-          data-icon={tile.icon.kind}
-        >
-          <TileIcon icon={tile.icon} />
-        </div>
+      <div className="home-discover-art relative">
+        <CardArt icon={tile.icon} />
         <button
-          className={`card-add-btn absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
+          className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
             added
               ? 'bg-emerald-500 border-emerald-500 text-white'
               : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
@@ -99,22 +112,32 @@ function DiscoverTile({ tile }: { tile: DiscoverTileView }) {
           aria-pressed={added}
         >
           {added
-            ? <CheckIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" />
-            : <PlusWideIcon className="w-3 h-3" strokeWidth="3" aria-hidden="true" />}
+            ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />
+            : <PlusWideIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" />}
         </button>
       </div>
-      {/*
-          TWO LINES, like the launcher tile's own label. A lane is six tracks
-          wide at every width (see .home-discover-tiles), so a track is ~55px on
-          a phone — and a single truncated line turned most of these into
-          "Opinio…", "ClearS…", "Watch…": a row of tiles nobody could read,
-          which is a poor advertisement for an area called Discover. The clamp
-          is in app.css beside the launcher label's, because `line-clamp` is
-          three properties and one of them is prefixed.
-      */}
-      <span className="home-discover-name text-[0.6rem] leading-tight w-full text-center text-zinc-600 dark:text-zinc-300">
-        {tile.name}
-      </span>
+      <div className="flex flex-col gap-0.5 px-2.5 pt-2 pb-2.5">
+        {/*
+            ONE LINE, truncated. The two-line clamp this name used to carry
+            was for a 55px grid track, where a single line rendered most of
+            them as "Opinio…"; a card is 152px and gives a real name the room
+            to be read, so a second line would only ever be spent on the
+            longest few.
+        */}
+        <span className="home-discover-name truncate whitespace-nowrap text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
+          {tile.name}
+        </span>
+        {tile.blurb ? (
+          <span className="home-discover-blurb text-[12px] leading-snug text-zinc-600 dark:text-zinc-400">
+            {tile.blurb}
+          </span>
+        ) : null}
+        {tile.contributors ? (
+          <span className="home-discover-meta pt-0.5 text-[12px] leading-none text-zinc-500 dark:text-zinc-400">
+            {tile.contributors === 1 ? '1 contributor' : `${tile.contributors} contributors`}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -124,7 +147,7 @@ function Lane({ tiles, extraClass }: { tiles: DiscoverTileView[]; extraClass?: s
 
   // Re-bind whenever the tiles change identity — a slug added or removed
   // replaces the element the handler was on. Home owns every callback; this
-  // owns only WHEN the binding happens, which used to be the tail of _wire.
+  // owns only WHEN the binding happens.
   useEffect(() => {
     const el = laneRef.current;
     if (el) home()?._wireDiscoveryCards?.(el);
@@ -133,57 +156,42 @@ function Lane({ tiles, extraClass }: { tiles: DiscoverTileView[]; extraClass?: s
   return (
     <div
       ref={laneRef}
-      className={`home-panel-rows home-discover-lane home-discover-tiles${
-        extraClass ? ` ${extraClass}` : ''
-      }`}
-      // ONE TRACK PER TILE, never fewer — which is the same no-wrap invariant
-      // the fixed six tracks gave (see .home-discover-tiles in app.css: a lane
-      // is budgeted at one row, and anything that wraps is clipped), stated
-      // against the DATA rather than against a constant. Six was the count
-      // either lane could ever produce, so a five-tile featured lane spent a
-      // sixth of its width on an empty track and squeezed the five names that
-      // were left. The floor of four keeps a lane of one or two from stretching
-      // its labels across the whole card. The icons do not change size — their
-      // wrapper caps at 40px and centres — so this widens the NAME and nothing
-      // else, which is the thing that had no room.
-      style={{ '--lane-tracks': Math.max(tiles.length, 4) } as CSSProperties}
+      className={`home-discover-lane home-discover-rail${extraClass ? ` ${extraClass}` : ''}`}
     >
-      {tiles.map((tile) => <DiscoverTile key={tile.slug} tile={tile} />)}
+      {tiles.map((tile) => <DiscoverCard key={tile.slug} tile={tile} />)}
     </div>
   );
 }
 
+/**
+ * NO CARD AROUND THE RAILS. `PanelShell` still draws the article — it is what
+ * carries `data-panel` and the lane stamps — but without the white plate: the
+ * cards ARE the surface now, and a white box behind a row of tinted cards is
+ * a second frame around things that already have one. It also lets the rail
+ * bleed to both screen edges, which is the affordance that says the row
+ * continues (see `.home-discover-rail` in app.css).
+ */
 export function DiscoverPanel({ view }: { view: DiscoverView }) {
   return (
     <PanelShell
       panelKey={view.key}
       expanded={false}
+      plate="none"
       stamps={{ featured: view.featured.length, popular: view.popular.length }}
     >
       {view.featured.length ? (
         <Lane tiles={view.featured} />
       ) : (
-        <p className="home-panel-rows home-discover-lane home-discover-empty flex items-center justify-center px-2.5 text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
+        <p className="home-discover-lane home-discover-empty flex items-center justify-center px-2.5 text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
           Nothing featured right now. Browse the directory.
         </p>
       )}
       {/*
-          No popular apps → no divider and no second lane, rather than a second
-          apology stacked under the first. The featured lane (or its note) then
-          has the whole box, which is exactly the pre-#949 rendering.
+          No popular apps → no divider and no second rail, rather than a second
+          apology stacked under the first.
       */}
       {view.popular.length ? (
         <>
-          {/*
-              A CAPTION, not a heading. It was `text-[0.9375rem]` — the size
-              the block's own title used to be — which was fine while that
-              title sat in a bar above it and this was the second-largest thing
-              in the card. The title is the section label OUTSIDE the card now,
-              at that same size, so an equal-sized "Popular" inside it read as a
-              second area rather than as the divider between two lanes of one.
-              12px muted is the shell's caption, and it is what the widget
-              strip's own header uses.
-          */}
           <div className="home-discover-divider flex-none flex items-center px-2.5">
             <span className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">Popular</span>
           </div>

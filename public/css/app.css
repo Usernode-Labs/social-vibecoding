@@ -2375,6 +2375,154 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   padding: 0.5rem 0.625rem;
 }
 
+/* ── THE CARD LANGUAGE: TINTS ───────────────────────────────
+   Discover's app cards and Challenges' challenge cards are the same object
+   in two sizes — a tinted plate with art on it — and they share one palette
+   so the launcher reads as one page rather than two lists that happened to
+   get colours. Five tints, assigned by a hash of the app slug / challenge id
+   (see tintOf in panels/ui.tsx) rather than by position, so a card keeps its
+   colour as the lane reorders around it.
+
+   Raw hex, like the wallpaper above and for the same reason: these are the
+   design's own tints, not steps of a Tailwind scale, and `zinc`/`violet` are
+   the only scales the product is allowed to name (see the palette rule in
+   tests/admin-ui-registry.test.js). `--tint-art` is the deeper block the
+   icon sits on; `--tint-line` is the hairline that keeps a pale card off a
+   pale wallpaper.
+
+   Dark mode does what the wallpaper does: the same hues, re-tuned to a
+   lightness that reads on the inverted ground rather than inverted into
+   mud. */
+.home-tint-1 { --tint-bg: #e3efe0; --tint-line: #cfe0ca; --tint-art: #cfe3c7; }
+.home-tint-2 { --tint-bg: #dfeaf6; --tint-line: #c9dcee; --tint-art: #c6dcf0; }
+.home-tint-3 { --tint-bg: #e9e2f2; --tint-line: #d9cfe8; --tint-art: #ded2ef; }
+.home-tint-4 { --tint-bg: #fbe6d5; --tint-line: #f2d5bd; --tint-art: #f7ddc6; }
+.home-tint-5 { --tint-bg: #f8dde8; --tint-line: #eec7d6; --tint-art: #f4d6de; }
+.dark .home-tint-1 { --tint-bg: #1b2a1f; --tint-line: #2c4433; --tint-art: #22331f; }
+.dark .home-tint-2 { --tint-bg: #17263a; --tint-line: #27405e; --tint-art: #1b2f47; }
+.dark .home-tint-3 { --tint-bg: #241f38; --tint-line: #3a3157; --tint-art: #2b2442; }
+.dark .home-tint-4 { --tint-bg: #33231a; --tint-line: #50392a; --tint-art: #3d2a1f; }
+.dark .home-tint-5 { --tint-bg: #331d28; --tint-line: #513043; --tint-art: #3e2231; }
+
+/* ── Discover: the card rail ────────────────────────────────
+   The lane was a GRID of six 40px icon tiles inside the block's white card:
+   the most an area called Discover could say about an app was its name,
+   clamped to two lines at 9.6px. It is a horizontal rail of cards now — art,
+   name, the app's own sentence, and how many people built it — which is what
+   the design asks for and what makes the area answer "should I open this?"
+
+   IT BLEEDS TO BOTH SCREEN EDGES. The negative margin cancels the section's
+   px-3 gutter so the first card starts on the text's left edge and the last
+   one runs off the right, which is the affordance: a card cut by the edge
+   says there are more. #home-screen states `overflow-x: hidden` (see the
+   gesture rule above, pinned by tests/home-vertical-scroll-only.test.js), so
+   the overhang is clipped by the feed rather than widening it.
+
+   `touch-action: pan-x` for the same reason the switcher's app rail carries
+   it: without it a diagonal drag that starts here is claimed by the vertical
+   feed and the rail never moves. A VERTICAL drag still reaches the page —
+   the browser only takes the axis this element declares. */
+.home-discover-rail {
+  display: flex;
+  gap: 0.625rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: none;
+  margin-inline: -0.75rem;
+  padding-inline: 0.75rem;
+  /* Room for the cards' own shadow-less hairline to not be clipped, and for
+     a focus ring on the last card. */
+  padding-block: 0.125rem;
+}
+.home-discover-rail::-webkit-scrollbar { display: none; }
+
+/* 9.5rem is the reference's card at a 390pt phone (150/390 of the frame),
+   and it is a fixed width on purpose: cards that flex would resize as the
+   lane's count changes, and the rail's whole affordance is that the row
+   continues past the edge at a constant rhythm. */
+.home-discover-card {
+  flex: 0 0 auto;
+  width: 9.5rem;
+  scroll-snap-align: start;
+  border-radius: 0.875rem;
+  background: var(--tint-bg);
+  border: 1px solid var(--tint-line);
+  overflow: hidden;
+  cursor: pointer;
+}
+.home-discover-art {
+  height: 7.5rem;
+  background: var(--tint-art);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* The app's own icon, at the size the art block can carry. An emoji is a
+   glyph and scales with font-size; an uploaded image fills the block, which
+   is the one case that looks like the reference's own art. */
+.home-discover-art-emoji { font-size: 2.75rem; line-height: 1; }
+.home-discover-art-img { width: 100%; height: 100%; object-fit: cover; }
+.home-discover-art-letter { font-size: 2.25rem; line-height: 1; font-weight: 700; opacity: .45; }
+/* Two lines, ellipsised — the reference's own treatment. `line-clamp` is
+   three properties and one of them is prefixed, which is why it is here
+   rather than as utilities beside the element. */
+.home-discover-blurb {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+/* ── Challenges: the plate, and the cards on it ─────────────
+   The block was one white card of divided rows. It is a PLATE holding the
+   season summary and one tinted card per challenge — the reference's shape —
+   and the plate is what keeps them reading as one area rather than four
+   things that happen to be adjacent.
+
+   TRANSLUCENT, not the white card the block used to be. The three steps
+   before this one put a wallpaper behind the page; an opaque white rectangle
+   here covers it exactly where the page is tallest. At 55% the grouping
+   still reads, the tints stay crisp, and the washes carry on through. The
+   blur is what stops the wallpaper's grain reading through as noise under
+   the text; it degrades to plain translucency where it is unsupported. */
+.home-challenges-plate {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 1rem;
+  padding: 0.625rem;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.dark .home-challenges-plate {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+.home-challenge-card {
+  border-radius: 0.875rem;
+  background: var(--tint-bg);
+  border: 1px solid var(--tint-line);
+}
+/* The white pill under each title: the challenge's state on one line. It is
+   opaque white on the tint in both modes — a translucent pill over a tinted
+   card over a translucent plate is three layers of glass to read one number
+   through. */
+.home-challenge-pill {
+  background: #fff;
+  border-radius: 9999px;
+}
+.dark .home-challenge-pill { background: rgba(0, 0, 0, 0.35); }
+/* The art well on a challenge card. Lighter than the card so the
+   illustration sits ON something, the same relationship the Discover card's
+   art block has to its footer. */
+.home-challenge-art {
+  background: rgba(255, 255, 255, 0.6);
+}
+.dark .home-challenge-art { background: rgba(255, 255, 255, 0.08); }
+
 /* ── Create-app widget ──────────────────────────────────────
    A 1x1 tile: the whole thing is the button, since a single cell has no
    room for chrome around one.
