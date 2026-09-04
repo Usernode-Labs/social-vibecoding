@@ -67,8 +67,19 @@ export function stampProps(stamps: PanelStamps | undefined) {
  * the proposal checks.
  */
 export function tintOf(key: string): string {
-  let h = 0;
-  for (let i = 0; i < key.length; i += 1) h = ((h * 31) + key.charCodeAt(i)) | 0;
+  // FNV-1a, which is what a rolling `* 31` hash is not: multiply-then-fold
+  // clusters badly over short strings that share a shape (an app slug, a
+  // challenge id), and the first draft put four of five demo cards on the
+  // same tint. The xor-then-multiply order is the fix, and the final
+  // avalanche step is what keeps two slugs differing in one letter apart.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i += 1) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x2545f491);
+  h ^= h >>> 13;
   return `home-tint-${(Math.abs(h) % 5) + 1}`;
 }
 
