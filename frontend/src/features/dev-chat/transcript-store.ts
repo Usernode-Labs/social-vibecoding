@@ -167,7 +167,8 @@ export type TranscriptRow =
      * explicit is what lets an already-proposed card stay visibly disabled
      * across success re-renders, status polls and a fresh session load.
      */
-    propose: { kind: 'ready' } | { kind: 'pending' } | { kind: 'completed' } | null;
+    propose: { kind: 'ready' } | { kind: 'pending' } | { kind: 'completed' }
+      | { kind: 'blocked'; label: string; reason: string } | null;
     /** MergeStatus's badge for the card, or the merged sentence. */
     status2: { kind: 'none' } | { kind: 'merged' } | { kind: 'badge'; html: string };
   }

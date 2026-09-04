@@ -245,6 +245,44 @@ test('stagingUrl renders the FULL card with a live Preview + Propose', () => {
   assert.doesNotMatch(html, /disabled[^>]*>Preview staging</, 'Preview is NOT disabled when a URL exists');
 });
 
+test('managed CLI handoff keeps Propose disabled until its authoritative state is ready (#1650)', () => {
+  const h = makeDevChat();
+  const messages = [{
+    role: 'system', content: 'Staging deployed!', changesReady: true,
+    stagingUrl: 'https://preview.example.org', _slug: 'managed-ready',
+  }];
+  const checking = activeSession({
+    source: 'cli_handoff', proposal_state: 'checking', check_state: 'pending',
+  });
+
+  let html = h.render(messages, checking);
+  assert.deepEqual(h.changesRow().propose, {
+    kind: 'blocked', label: 'Checks running…',
+    reason: 'Proposal checks are still running. You can propose after they pass.',
+  });
+  assert.match(html, /disabled[^>]*title="Proposal checks are still running/,
+    'the unavailable action is disabled and explains why');
+  assert.match(html, /Checks running…/, 'the visible label communicates progress');
+
+  html = h.render(messages, { ...checking, proposal_state: 'ready', check_state: 'passing' });
+  assert.deepEqual(h.changesRow().propose, { kind: 'ready' });
+  assert.doesNotMatch(html, /disabled[^>]*>Propose to group</,
+    'the same action enables when the server reports ready');
+  assert.match(html, />Propose to group</);
+});
+
+test('live session refresh watches managed proposal readiness (#1650)', () => {
+  assert.match(SRC, /const watch = \['status', 'check_state', 'proposal_state'/,
+    'checks_ready refetches must copy the state that enables the button');
+});
+
+test('ordinary active sessions preserve their build-on-propose action (#1650)', () => {
+  const h = makeDevChat();
+  h.render([{ role: 'system', content: 'Changes ready.', changesReady: true }],
+    activeSession({ proposal_state: undefined, check_state: null, staging_url: null }));
+  assert.deepEqual(h.changesRow().propose, { kind: 'ready' });
+});
+
 test('a plain no-changes status line renders NO card', () => {
   const { render } = makeDevChat();
   const html = render([
@@ -415,6 +453,26 @@ test('promotePR failure (non-OK) re-enables the button and restores its label (#
   assert.doesNotMatch(html, /aria-busy/, 'aria-busy cleared');
   assert.doesNotMatch(html, /Proposing/, 'and the spinner is gone');
   assert.deepEqual(h.alerts, ['Nope'], 'server error surfaced via alert');
+});
+
+test('promotePR humanizes a stale proposal readiness rejection (#1650)', async () => {
+  const h = makeDevChat();
+  h.render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'prm-not-ready' },
+  ], activeSession({ id: 7 }));
+  h.setFetch(async () => ({
+    ok: false,
+    json: async () => ({ error: 'proposal_not_ready' }),
+  }));
+
+  await h.DevChat.promotePR();
+
+  assert.deepEqual(h.alerts, [
+    'This proposal is not ready yet. Wait for staging and checks to finish, then try again.',
+  ]);
+  assert.deepEqual(h.changesRow().propose, { kind: 'ready' },
+    'a readiness race remains retryable after the friendly explanation');
 });
 
 test('promotePR failure (network error) re-enables the button and restores its label (#558)', async () => {
