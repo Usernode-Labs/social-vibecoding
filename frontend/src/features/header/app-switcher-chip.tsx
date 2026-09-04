@@ -142,9 +142,9 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
         id="app-switcher-btn"
         type="button"
         className={'pointer-events-auto inline-flex items-center gap-1 max-w-full h-7 '
-          + 'pl-3.5 pr-2.5 rounded-full align-middle un-touch-target '
-          + 'bg-zinc-50 text-zinc-900 hover:bg-white '
-          + 'dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700'}
+          + 'pl-3.5 pr-2.5 rounded-full align-middle un-touch-target font-bold '
+          + 'border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] '
+          + 'text-[color:var(--brand-ink)]'}
         aria-haspopup="dialog"
         aria-expanded={open ? 'true' : 'false'}
         aria-label={spokenSubtitle ? `${text}, ${spokenSubtitle}: open the menu` : `${text}: open the menu`}
@@ -175,7 +175,7 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
             </span>
           ) : null}
         </span>
-        <ChevronDownIcon className="w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+        <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
       </button>
     </h1>
   );

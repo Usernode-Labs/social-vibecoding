@@ -404,7 +404,7 @@ test('Discover is one bordered block: two lanes, and no chrome of its own', () =
   assert.doesNotMatch(src, /home-panel-bar/, 'and no title bar');
   // The browse control rides in the SECTION HEADING instead, and it is still
   // the same #home-browse-btn the old footer carried.
-  assert.match(PANEL_SRC.sections, /action=\{<><BrowseLink \/>/);
+  assert.match(PANEL_SRC.sections, /action=\{<BrowseLink \/>\}/, "the heading action is the browse link alone — the ⋮ is gone");
   assert.match(PANEL_SRC.ui, /home-panel-browse/);
   // The second lane is separated by a hairline, so it reads as part of the
   // same block rather than a second card. The hairline used to be a
