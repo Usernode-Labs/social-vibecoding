@@ -2877,38 +2877,76 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    background to hide anything with.
 
    Geometry is the design's (Streamlined Concept, node 736:4306): a 28px
-   top radius, a 1px hairline and a two-layer shadow. `border-top` and
-   `border-inline` only — the sheet runs off the bottom of the screen and
-   a bottom edge would draw a line across it. */
+   top radius, a 1px hairline and a two-layer shadow.
+
+   THE HAIRLINE IS `border-top` ONLY, and that is the whole of it. The
+   sheet is as wide as the screen and runs off the bottom, so a border on
+   any other side is not an edge of anything — it draws a 1px rule down
+   the left and right of the display for the entire height of the app,
+   which reads as a letterboxed frame around it rather than as a card.
+   Only the top edge is a real boundary here, because it is the only side
+   where the sheet actually meets the page ground. */
 #app-frame-host {
   border-radius: 1.75rem 1.75rem 0 0;
   border-top: 1px solid var(--app-sheet-line);
-  border-left: 1px solid var(--app-sheet-line);
-  border-right: 1px solid var(--app-sheet-line);
   box-shadow:
     0 6px 12px -6px var(--app-sheet-shadow-near),
     0 8px 24px -4px var(--app-sheet-shadow-far);
 }
 
-/* Belt and braces for the clip. `overflow: hidden` + a radius on the host
-   is the whole fix in Chrome and Firefox; WebKit has a long-standing bug
-   where an <iframe> ignores an ancestor's border-radius, so the frame
-   carries the radius itself as well. Same value, stated twice on purpose
-   — an iframe rounding to a DIFFERENT radius than the box clipping it is
-   worse than either alone. */
-#app-frame-host > .app-launch-host,
-#app-frame-host #app-iframe {
+/* THE CLIP, STATED AT EVERY LEVEL, because one level is not enough here.
+
+   #app-frame-host's own `overflow: hidden` (an inline style, see
+   features/app-frame/app-frame.tsx) is the whole fix in Chrome and
+   Firefox for content that stays on its parent's layer. Two things in
+   this subtree do not:
+
+   - #app-iframe. WebKit has a long-standing bug where an <iframe>
+     ignores an ancestor's border-radius outright.
+   - .app-launch-cover. It cross-fades on `opacity` (see its rule further
+     down) WHILE the kit runs its own transform animation over the
+     document root, so for the length of the launch it is a promoted
+     compositing layer — and a promoted layer can paint a frame or two
+     before it picks up an ancestor's rounded clip. That is a square
+     corner appearing and then snapping round again mid-animation, and it
+     shows up only on apps slow enough to boot that the cover is still on
+     screen when the push lands.
+
+   So the radius is restated on each of them, and .app-launch-host takes
+   an `overflow: hidden` of its own so the clip also exists one level
+   closer to the cover than the host's. Same value everywhere, via
+   `inherit` — a child rounding to a DIFFERENT radius than the box
+   clipping it is worse than either alone. */
+#app-frame-host > .app-launch-host {
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+#app-frame-host #app-iframe,
+#app-frame-host .app-launch-cover {
   border-radius: inherit;
 }
 
-/* CHROMELESS TAKES IT ALL BACK OFF. On `#app/<slug>/app` the bar is not
-   transparent, it is GONE — App.setChromeless publishes false and
-   platform-header.tsx's useHiddenClass puts `hidden` on the element — so
-   the frame starts at the top of the viewport. A sheet needs something to
-   be a sheet ON, and there is nothing above it there: the radius would
-   round the app's top corners against the bare page ground and the shadow
-   would fall on nothing. Chromeless means the app IS the screen, so it
-   goes back to filling it edge to edge. */
+/* CHROMELESS TAKES IT ALL BACK OFF. The chromeless route is
+   `#app/<slug>/full` — `const chromeless = tab === 'full'` in app.js's
+   restoreFromHash, which then rewrites tab to 'app', so the ordinary
+   in-app route `#app/<slug>/app` is NOT this and keeps the sheet. There
+   the bar is not transparent, it is GONE (App.setChromeless publishes the
+   header's visibility off and platform-header.tsx's useHiddenClass puts
+   `hidden` on the element), so the frame starts at the top of the
+   viewport. A sheet needs something to be a sheet ON, and there is
+   nothing above it: the radius would round the app's top corners against
+   the bare page ground and the shadow would fall on nothing. Chromeless
+   means the app IS the screen, so it goes back to filling it edge to
+   edge.
+
+   Keyed on the header's `hidden` class rather than on App.chromeless
+   because that flag has no DOM presence to select on. The cost is that
+   the class arrives via the visibility store's re-render, so LEAVING
+   chromeless through the pill can show one square frame before the sheet
+   returns. Worth knowing about; not worth a body-class write from
+   app.js to pre-empt, since the transition it happens under is a
+   full-document one either way. */
 body:has(#platform-header.hidden) #app-frame-host {
   border-radius: 0;
   border: 0;
