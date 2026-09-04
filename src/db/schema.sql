@@ -27,11 +27,11 @@ UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_app
 -- src/routes/apps.js) — a non-admin may create iff their live app count is
 -- below this number, so deleting an app frees a slot (mirrors the server-
 -- wide maxApps cap). Default 0 means "cannot create until an admin raises
--- it", matching the old can_create_apps default-off behaviour. Admins
--- bypass enforcement entirely — their quota is purely cosmetic. The client
--- still sees a derived `canCreateApps` boolean (computed in auth/me as
--- isAdmin || liveCount < app_quota) so the home screen needs no change; the
--- numeric quota is surfaced only through the admin API. `can_create_apps`
+-- it", matching the old can_create_apps default-off behaviour. Full admins
+-- bypass enforcement entirely; view-only admins keep their ordinary quota.
+-- The client sees both a derived `canCreateApps` boolean (computed in auth/me
+-- as canAdminWrite || liveCount < app_quota) and the numeric quota used by the
+-- create dialog. `can_create_apps`
 -- is KEPT for now purely as the one-shot backfill source below — dropping
 -- it (and the derived canCreateApps plumbing) is deferred work.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 0;

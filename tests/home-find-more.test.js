@@ -78,11 +78,12 @@ const SCHEMA = read('src/db/schema.sql');
 const APPS_ROUTE = read('src/routes/apps.js');
 
 // `search` drives the screenshot-state deep links the module reads off
-// location (?shot=create-disabled, ?shot=discover-empty).
-function makeHome({ search = '' } = {}) {
+// location (?shot=create-enabled, ?shot=create-disabled,
+// ?shot=discover-empty).
+function makeHome({ search = '', canCreateApps = true } = {}) {
   const sandbox = {
     console,
-    App: { user: { id: 1, canCreateApps: true } },
+    App: { user: { id: 1, canCreateApps } },
     document: {
       getElementById: () => null,
       querySelector: () => null,
@@ -208,6 +209,15 @@ test('featuredApps: ?shot=discover-empty forces the empty state', () => {
   assert.equal(shot.featuredApps(apps).length, 0, 'the deep link empties it');
   // Paint-only: a DIFFERENT shot value must not touch this list.
   assert.equal(makeHome({ search: '?shot=create-disabled' }).featuredApps(apps).length, 1);
+});
+
+test('the create-widget shot paths pin both quota treatments', () => {
+  assert.equal(makeHome({ canCreateApps: false }).canCreate(), false,
+    'the ordinary state follows the authenticated quota');
+  assert.equal(makeHome({ search: '?shot=create-enabled', canCreateApps: false }).canCreate(), true,
+    'the enabled review path does not depend on capture-admin privileges');
+  assert.equal(makeHome({ search: '?shot=create-disabled', canCreateApps: true }).canCreate(), false,
+    'the locked review path stays deterministic too');
 });
 
 // ── popularApps selection (#949) ──────────────────────────────────
@@ -498,7 +508,7 @@ test('the browse action routes through the hash for a real history entry', () =>
   assert.match(PANELS_SRC, /label: 'Browse all apps'/);
 });
 
-test('the create widget renders in both states, and only one is tappable', () => {
+test('the create widget renders in both states and keeps quota details reachable', () => {
   const { HP, sandbox } = makePanels();
   const createHtml = () => renderComponent(
     'frontend/src/features/home/panels/create.tsx', 'CreatePanel',
@@ -518,10 +528,12 @@ test('the create widget renders in both states, and only one is tappable', () =>
   assert.ok(off.length > 100, 'the widget renders for a viewer with no quota');
   assert.match(off, /data-create-enabled="false"/);
   assert.match(off, /home-create-widget--disabled/);
-  assert.match(off, /aria-disabled="true"/);
-  assert.match(off, /Ask an admin to enable app creation/, 'the hint is its tooltip');
+  assert.doesNotMatch(off, /aria-disabled/,
+    'the available open-quota-details action is not disabled to assistive technology');
+  assert.match(off, /View app quota\. Ask an admin to enable app creation/,
+    'the available action and the lock reason are both announced');
   // NOT the disabled ATTRIBUTE: that swallows pointer events, which would
-  // kill the explanatory toast AND the widget's own drag.
+  // prevent the viewer from opening the dialog to read their quota.
   assert.doesNotMatch(off, /<button[^>]*\sdisabled/);
 });
 
@@ -543,19 +555,15 @@ test('Create app is a fixed section, for every account', () => {
   assert.doesNotMatch(registry, /canCreateApps|quota/i);
 });
 
-test('a viewer with no quota gets the hint on tap, not a dead tile', () => {
-  // One constant, three surfaces: the tooltip, the toast, and the inert
-  // note in the widget's ⋮ menu.
+test('a viewer with no quota can open the dialog to inspect it', () => {
+  // The compact locked state still carries the shared hint in its tooltip
+  // and menu note; tapping now opens the detailed used-of-limit row.
   assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account\.'/);
-  // The branch used to live in `_wire`, which read the stamped attribute back
-  // off the painted markup and then either handed the button to
-  // Home.wireCreateButtons() or bound a toast. It is one handler on the
-  // element now, reading the same fact from the view model.
   const btn = PANEL_SRC.create.slice(PANEL_SRC.create.indexOf('onClick={'));
-  assert.match(btn, /if \(view\.canCreate\)/);
-  assert.match(btn, /App\?\.showCreateModal\?\.\(\)/, 'the enabled tile opens the create modal');
-  assert.match(btn, /PlatformUI\?\.toast\?\.\(/, 'the disabled one explains itself');
-  assert.match(btn, /CREATE_DISABLED_HINT/, 'with the shared sentence');
+  assert.match(btn, /App\?\.showCreateModal\?\.\(\)/,
+    'both enabled and locked tiles open the create modal');
+  assert.doesNotMatch(btn, /PlatformUI\?\.toast\?\.\(/,
+    'a generic toast cannot replace the exact quota display');
   // The menu carries the same sentence as an inert row.
   assert.match(PANELS_SRC, /key === 'create' && window\.Home[\s\S]*?CREATE_DISABLED_HINT/);
 });
