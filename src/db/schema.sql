@@ -5666,6 +5666,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS external_agent_tasks_open_request_idx
   ON external_agent_tasks (user_id, app_id, request_key)
   WHERE status = 'open';
 
+-- ── Release the slots a shared session stranded ──────────────────────
+--
+-- `share: true` leaves the work order OPEN on purpose — the agent keeps
+-- committing onto the in-progress card — and stamps `session_id` on the row.
+-- The promote that ends that arrangement is `submit_work({ proposalId,
+-- branch, propose: true })`, which carries no taskId, so until the fix in
+-- services/external-agent-tasks.js + services/mcp-tools.js nothing ever
+-- closed those rows. Each one held a slot of its owner's ten-open-work-order
+-- bound until it expired fourteen days later; one account hit the cap with
+-- ten rows it could not see, none of which were work it was still doing.
+--
+-- Forward-only and idempotent, like the backfills above: it can only move
+-- rows OUT of 'open', so a later boot finds nothing left to do, and it never
+-- touches a session that is still being built.
+--
+-- Two outcomes, because the two are not the same story:
+--   'submitted' — the session reached the group (promoted / merging /
+--                 merged). The work order did its job; only the bookkeeping
+--                 was missing.
+--   'abandoned' — the session was archived. The work was put away, and
+--                 recording it as submitted would claim something false.
+--
+-- `session_id` is ON DELETE SET NULL, so a row whose session is gone keeps
+-- no handle at all — those are left to the expiry, which is the only honest
+-- reading of them.
+UPDATE external_agent_tasks t
+SET status = CASE WHEN s.status = 'archived' THEN 'abandoned' ELSE 'submitted' END
+FROM chat_sessions s
+WHERE t.session_id = s.id
+  AND t.status = 'open'
+  AND s.status NOT IN ('active', 'paused');
+
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a
 -- second coding-agent backend (codex_openrouter) without breaking the

@@ -1526,6 +1526,80 @@ async function findOpenTaskByRequest(pool, userId, appId, requestKey) {
   }
 }
 
+// The open task a SHARED piece of work is sitting on (#1347 + this fix).
+//
+// `share: true` is documented to leave the work order OPEN — the whole point
+// is that the agent keeps committing onto the in-progress card — and it
+// stamps `session_id` on the task on its way past. So after a share, the
+// only handle on that reservation is the session id: the promote that
+// finishes the job is documented as `submit_work({ proposalId, branch,
+// propose: true })` and carries no taskId at all.
+//
+// Without this lookup the closing UPDATE below is guarded by a `task` that is
+// always null on that path, so every share -> promote leaked one of the ten
+// open-work-order slots until its 14-day expiry. Three of them in one
+// afternoon is what surfaced it.
+//
+// `expires_at` is deliberately NOT filtered here, unlike the request lookup
+// above: an expired row no longer counts against the cap, but closing it is
+// still the honest bookkeeping, and the cap is not the only thing that reads
+// `status`.
+async function findOpenTaskBySession(pool, userId, sessionId) {
+  if (!(Number.isInteger(Number(sessionId)) && Number(sessionId) > 0)) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM external_agent_tasks
+        WHERE user_id = $1 AND session_id = $2 AND status = 'open'
+        ORDER BY id DESC LIMIT 1`,
+      [userId, Number(sessionId)]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    // Advisory, like every other lookup on this path: a submission that has
+    // already landed must never fail over its own bookkeeping.
+    log.warn('external-agent-tasks', 'session task lookup failed', { sessionId, err: err.message });
+    return null;
+  }
+}
+
+// Close the work order a session is carrying, if it still has one open.
+//
+// Called from two places for the two ways a share reaches the vote:
+//   * inside submitProposalUpdate, when the push landed on something already
+//     up for a vote (targetKind 'proposal'); and
+//   * from services/mcp-tools.js, after `propose: true` has promoted an
+//     active session — that promote is a loopback to the session route,
+//     which knows nothing about work orders.
+//
+// Returns the id it closed, or null. Never throws: the caller is always past
+// the point where the work itself has landed.
+async function closeTaskForSession(pool, userId, sessionId, fields = {}) {
+  const task = await findOpenTaskBySession(pool, userId, sessionId);
+  if (!task) return null;
+  try {
+    await pool.query(
+      `UPDATE external_agent_tasks
+          SET status = 'submitted',
+              submitted_branch = COALESCE($4, submitted_branch),
+              submitted_via = COALESCE($5, submitted_via),
+              submitted_source = COALESCE($6, submitted_source),
+              submitted_client_id = COALESCE($7, submitted_client_id)
+        WHERE id = $1 AND session_id = $2 AND user_id = $3 AND status = 'open'`,
+      [
+        task.id, Number(sessionId), userId,
+        fields.branch || null,
+        SUBMIT_VIA.includes(fields.submittedVia) ? fields.submittedVia : null,
+        fields.source ? normalizeSource(fields.source) : null,
+        fields.clientId || null,
+      ]
+    );
+    return task.id;
+  } catch (err) {
+    log.warn('external-agent-tasks', 'session task close failed', { taskId: task.id, err: err.message });
+    return null;
+  }
+}
+
 // The proposals ALREADY up for a vote on this request (#1216), whoever opened
 // them. `linked_issues` is the Mayor's declared linkage and is also what a
 // connector submission records (linkedIssuesFor); `created_from_issue_number`
@@ -2217,6 +2291,24 @@ async function submitUpdate(deps, params, proposalId) {
       // submission that has already landed on GitHub.
       log.warn('external-agent-tasks', 'update task stamp failed', { taskId: task.id, err: err.message });
     }
+  } else if (result.targetKind === 'proposal') {
+    // No taskId was passed — which is the DOCUMENTED shape for continuing a
+    // proposal, not an omission — and the push landed on something already up
+    // for the group's vote. If this session is carrying a work order from an
+    // earlier `share: true`, the work it reserved is now in front of the
+    // group and the reservation is finished.
+    //
+    // Only 'proposal'. A push onto an ACTIVE session is the next commit on
+    // work still being built, and share's contract is that the order stays
+    // open across exactly those. The promote that ends that case closes the
+    // order from services/mcp-tools.js instead, because promoting is a
+    // separate route call made after this function has already returned.
+    await closeTaskForSession(pool, user.id, proposalId, {
+      branch,
+      submittedVia: result.submittedVia,
+      source,
+      clientId,
+    });
   }
 
   return {
@@ -3040,6 +3132,13 @@ module.exports = {
   attributionError,
   loadOpenTask,
   loadAnyTask,
+  // The share -> promote pair. Both are the fix for work orders that a
+  // shared session left OPEN for the whole 14-day expiry: the lookup is the
+  // only handle on that reservation once the taskId has gone out of scope,
+  // and the close is called from services/mcp-tools.js the moment
+  // `propose: true` puts the session in front of the group.
+  findOpenTaskBySession,
+  closeTaskForSession,
   // Both used by routes/dev-flow.js (#1049) to RE-RENDER a work order the
   // user already has — the in-platform walkthrough is resumable, so
   // reopening the chat must show the same branch and base commit rather
