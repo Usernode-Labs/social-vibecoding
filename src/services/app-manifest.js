@@ -91,7 +91,13 @@ const MANIFEST_FILENAME = 'dapp.json';
 // 20-slot floor: the previous ceiling had no room for a single further
 // check, so any proposal declaring one at all was blocked. That is the
 // state this bump clears, not one feature's three checks.
-const MAX_DECLARED_TESTS = 480;
+//
+// Raised 480 → 500 when the manifest reached 461 and crossed that same
+// headroom floor again. At the measured ~3.9s per check over a pool of 8,
+// a full 500-check suite is ~244s of ideal work; the paired 490s deadline
+// in services/visuals.js preserves the 2x margin, and its 620s outer timeout
+// preserves the 120s media/sentinel buffer above that deadline.
+const MAX_DECLARED_TESTS = 500;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
