@@ -400,18 +400,40 @@ test('the block-producer queue has one pending and one released row', () => {
     'the other six users are not in the queue');
 });
 
-test('3 waitlist_signups covering pending/unconfirmed/released', () => {
+test('4 waitlist_signups covering pending/unconfirmed/released/legacy-region', () => {
   const start = body.indexOf('INSERT INTO waitlist_signups');
   assert.ok(start > 0, 'the admin Waitlist screen reads waitlist_signups, which a staging clone empties');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   const ids = block.match(/^\s*\(9005\d\d, '/gm) || [];
-  assert.equal(ids.length, 3);
-  assert.equal((block.match(/@example\.invalid/g) || []).length, 3,
+  assert.equal(ids.length, 4);
+  assert.equal((block.match(/@example\.invalid/g) || []).length, 4,
     'every fixture address is .invalid — nothing here is ever mailed');
   // One row per state that renders differently on the screen.
   assert.match(block, /NULL, NULL, NULL, NULL\)/, 'one unconfirmed, answer-less, pending row');
   assert.match(block, /NOW\(\) - INTERVAL '20 days', \$1,/, 'one released row linked to a fixture user');
-  assert.equal((block.match(/'::jsonb/g) || []).length, 2, 'two rows carry survey answers');
+  assert.equal((block.match(/'::jsonb/g) || []).length, 3, 'three rows carry survey answers');
+});
+
+// The two country fixtures are the whole point of the ISO-list change being
+// reviewable: an admin opening "Survey answers" has to see a NAME. 900500
+// carries the country the curated list could not express, and 900503 carries
+// a namespaced retired region so the two render distinguishably side by side.
+test('the waitlist fixtures seed both a real country and a retired region', () => {
+  const start = body.indexOf('INSERT INTO waitlist_signups');
+  const block = body.slice(start, body.indexOf('INSERT INTO user_enrollments', start));
+  assert.match(block, /"country": "UY"/, 'Uruguay — the country from the report (#1527)');
+  assert.match(block, /"country": "X-LA"/,
+    'and a namespaced retired region, which must NOT read as Laos');
+  // ON CONFLICT DO NOTHING means the literal only lands on a virgin DB, so
+  // both are re-asserted for a re-cloned staging database.
+  for (const [id, code] of [['900500', 'UY'], ['900503', 'X-LA']]) {
+    assert.ok(
+      new RegExp(`\\[${id}, '${code}'\\]`).test(block),
+      `row ${id}'s country is re-asserted by a follow-up UPDATE`
+    );
+  }
+  assert.equal((block.match(/UPDATE waitlist_signups/g) || []).length, 2,
+    'one UPDATE per re-asserted fixture, and no broader rewrite');
 });
 
 test('user_enrollments: a mix of season-wide (NULL event) and event-scoped rows, every row carrying the same season_id', () => {
