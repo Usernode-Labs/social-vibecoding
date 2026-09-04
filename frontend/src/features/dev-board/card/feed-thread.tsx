@@ -68,6 +68,29 @@ function relTime(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+/**
+ * Turn the chat endpoint's oldest-first rows into the compact human preview.
+ *
+ * The websocket command that creates a reply is named `chat`, but persisted
+ * human rows use `msg_type: "message"`. Keep untyped legacy rows too; every
+ * other kind is a system/event entry that the card itself already represents.
+ */
+export function feedThreadPreview(rows: any[]): {
+  messages: FeedThreadMessage[];
+  total: number;
+} {
+  const human = rows.filter((r: any) => !r.msg_type || r.msg_type === 'message');
+  return {
+    messages: human.slice(-PREVIEW).map((r: any) => ({
+      id: r.id,
+      author: r.username || 'someone',
+      content: String(r.content || ''),
+      createdAt: r.created_at,
+    })),
+    total: human.length,
+  };
+}
+
 function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
   return (
     <div className="flex gap-1.5 text-xs leading-snug">
@@ -169,15 +192,10 @@ export function FeedThread({
       // `msg_type` carries system and agent entries into this stream too. The
       // preview is for what PEOPLE said — a build notice under a feed row is
       // noise, and the row's own card already says where the work has got to.
-      const human = rows.filter((r: any) => !r.msg_type || r.msg_type === 'chat');
+      const preview = feedThreadPreview(rows);
       patchThread(key, {
-        messages: human.slice(-PREVIEW).map((r: any) => ({
-          id: r.id,
-          author: r.username || 'someone',
-          content: String(r.content || ''),
-          createdAt: r.created_at,
-        })),
-        total: human.length,
+        messages: preview.messages,
+        total: preview.total,
         loading: false,
         loaded: true,
       });
