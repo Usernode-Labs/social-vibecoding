@@ -1481,6 +1481,10 @@ test('the local-agent setup guide is always-visible section markup', () => {
   const copyLabels = guide.match(/aria-label="Copy [^"]+"/g) || [];
   assert.equal(copyLabels.length, 4);
   assert.equal(new Set(copyLabels).size, 4, 'every Copy control has a distinct accessible name');
+  assert.equal((guide.match(/items-stretch overflow-hidden rounded-md border/g) || []).length, 4,
+    'each command and its Copy control share one clipped, bordered field');
+  assert.equal((guide.match(/border-l border-zinc-200/g) || []).length, 4,
+    'each integrated Copy control is separated from its code by one divider');
   const source = read(CLI_GUIDE);
   assert.match(source, /PlatformUI/);
   assert.match(source, /copyText\?\.\(value\)/,

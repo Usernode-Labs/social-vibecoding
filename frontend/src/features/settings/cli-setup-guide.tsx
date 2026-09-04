@@ -24,15 +24,15 @@ function ui(): any {
 function CopyableCode({ label, value }: { label: string; value: string }) {
   const [buttonLabel, setButtonLabel] = useState('Copy');
   return (
-    <div className="flex items-start gap-2 mt-2">
-      <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre text-xs font-mono text-zinc-700 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-2"><code>{value}</code></pre>
+    <div className="mt-2 flex min-w-0 items-stretch overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900">
+      <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre px-3 py-2 text-xs font-mono text-zinc-700 dark:text-zinc-300"><code>{value}</code></pre>
       <Button
         type="button"
         layout="shrink"
-        variant="outline"
-        size="xsText"
-        ink="muted"
-        className="inline-flex items-center justify-center min-h-[44px] sm:min-h-[36px]"
+        variant="unstyled"
+        size="none"
+        ink="none"
+        className="inline-flex min-h-[44px] min-w-[88px] items-center justify-center border-l border-zinc-200 dark:border-zinc-700 px-3 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
         aria-label={`Copy ${label}`}
         onClick={async () => {
           const ok = await ui()?.copyText?.(value);
