@@ -421,12 +421,15 @@ function authRoutes(config) {
     // already does one users lookup, and every request paying for a join
     // it never renders would be the wrong trade.
     let profile = { displayName: null, bio: null, avatarUrl: null, links: { github: null, x: null } };
-    // Derived app-creation affordance: admins always can; everyone else
-    // can iff their live (non-errored) app count is below their quota
-    // (see users.app_quota in schema.sql). Computing the count here keeps
-    // the client contract a single boolean — the home screen reads only
-    // `canCreateApps` and needs no change as the quota feature lands.
-    let canCreateApps = !!req.user.isAdmin;
+    // App-creation quota: the same live (non-errored) app count enforced by
+    // POST /api/apps and /fork. Keep the numbers as well as the derived
+    // boolean so the create dialog can say "N of M used" instead of reducing
+    // the policy to an unexplained locked button. Full admins bypass the
+    // quota; view-only admins do not (the write routes use canAdminWrite too).
+    const appQuotaLimit = Math.max(0, Number(req.user.appQuota) || 0);
+    const appQuotaUnlimited = !!req.user.canAdminWrite;
+    let appQuotaUsed = null;
+    let canCreateApps = appQuotaUnlimited;
     // Preferred development flow (#1049). Read here rather than in the
     // per-request session hydration for the same reason as the profile
     // block above: this endpoint already pays for one users lookup, and
@@ -443,7 +446,13 @@ function authRoutes(config) {
                      AND credential.purpose = 'coding_agent'
                      AND credential.status = 'valid'
                 ) AS openrouter_credential_valid,
-                av.id AS avatar_id
+                av.id AS avatar_id,
+                (
+                  SELECT COUNT(*)::int
+                    FROM apps owned_app
+                   WHERE owned_app.created_by = u.id
+                     AND owned_app.status <> 'error'
+                ) AS app_quota_used
            FROM users u
            LEFT JOIN user_avatars av ON av.user_id = u.id
           WHERE u.id = $1`,
@@ -463,6 +472,10 @@ function authRoutes(config) {
         ? rows[0].dev_flow_preference
         : null;
       profile = shapeProfile(rows[0]);
+      if (rows[0]) {
+        const used = Number(rows[0].app_quota_used);
+        appQuotaUsed = Number.isInteger(used) && used >= 0 ? used : 0;
+      }
     } catch {}
     // #1055 staging fixture: report a saved BYOK key so the composer's
     // session-options menu renders its "Change your API key (…7f2c)" branch
@@ -476,15 +489,9 @@ function authRoutes(config) {
       hasApiKey = true;
       keyLast4 = '7f2c';
     }
-    if (!canCreateApps) {
-      try {
-        const { rows: countRows } = await pool.query(
-          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
-          [req.user.id]
-        );
-        const liveCount = countRows[0]?.n ?? 0;
-        canCreateApps = (req.user.appQuota ?? 0) > 0 && liveCount < (req.user.appQuota ?? 0);
-      } catch {}
+    if (appQuotaUsed != null) {
+      canCreateApps = appQuotaUnlimited
+        || (appQuotaLimit > 0 && appQuotaUsed < appQuotaLimit);
     }
     // Memoised for 30s inside the service, so this costs nothing on the boot
     // path of every tab; null is a perfectly good answer (the button hides).
@@ -500,12 +507,18 @@ function authRoutes(config) {
         // string the admin panel / banners render.
         canAdminWrite: !!req.user.canAdminWrite,
         role: !req.user.isAdmin ? 'user' : (req.user.adminReadonly ? 'view_admin' : 'admin'),
-        // Derived per-user app-creation affordance: isAdmin || (live app
-        // count < app_quota). The home screen hides the "Create new app"
-        // affordance for anyone who can't create — see the canCreate
-        // helper in frontend/src/features/home/home.js. The numeric quota itself is only
-        // surfaced through the admin API.
+        // Derived per-user app-creation affordance. Kept for the home-screen
+        // treatment; the numbers below explain that state in the create
+        // dialog. A null used/remaining value means the count query was not
+        // available, never a fabricated zero.
         canCreateApps,
+        appCreationQuota: {
+          used: appQuotaUsed,
+          limit: appQuotaUnlimited ? null : appQuotaLimit,
+          remaining: appQuotaUnlimited || appQuotaUsed == null
+            ? null
+            : Math.max(0, appQuotaLimit - appQuotaUsed),
+        },
         // Experimental: opt-in AI progress estimate for coding runs
         // (Settings → Experimental). Default OFF.
         aiProgressEstimate: !!req.user.aiProgressEstimate,

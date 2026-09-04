@@ -1692,8 +1692,8 @@ const Home = {
   // account — dimmed and self-explaining where the viewer has no app quota,
   // rather than swapped for a hint paragraph in a trailing section. Its button
   // carries its own handler; CREATE_DISABLED_HINT below is still the one
-  // wording of the locked case, shared by the tooltip, the tap toast and the
-  // ⋮ menu's inert note.
+  // wording of the locked case, shared by the tooltip and the ⋮ menu's inert
+  // note. A tap opens the create dialog, where the exact quota is shown.
 
   // ── Usernode widget section (iOS in-app only) ──────────────────────
   //
@@ -3865,9 +3865,8 @@ const Home = {
   // copy stays put.
   // The one wording of "you can't create apps right now". The create WIDGET
   // is on every home screen regardless of quota, so this string is what the
-  // disabled tile shows in three places at once: its tooltip, the toast a
-  // tap produces, and the inert note in its ⋮ menu. One constant so those
-  // three can never drift.
+  // disabled tile shows in its tooltip and the inert note in its ⋮ menu. The
+  // dialog it opens carries the exact used-of-limit numbers.
   CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account.',
 
   // `wireCreateButtons()` lived here: `document.querySelectorAll('.home-create-btn')`,

@@ -22,9 +22,10 @@
  *   2. It is the majority rendering — most accounts carry no quota — so
  *      "absent" would read as a missing feature rather than a locked one.
  *
- * The disabled state must NOT be a `disabled` attribute: a disabled element
- * swallows pointer events, which would kill the explanatory toast.
- * `aria-disabled` plus a branch in the handler keeps it tappable.
+ * The locked treatment belongs to the widget, not to the button: the button's
+ * available action is now "open the quota details", so marking that control
+ * disabled to assistive technology would be false. `data-create-enabled` and
+ * the dimmed class still describe whether app creation itself is available.
  *
  * ── What the conversion retired ───────────────────────────────────────
  *
@@ -46,7 +47,7 @@ function win(): any {
 }
 
 export function CreatePanel({ view }: { view: CreateView }) {
-  const label = view.canCreate ? 'Create a new app' : view.hint;
+  const label = view.canCreate ? 'Create a new app' : `View app quota. ${view.hint}`;
   return (
     // ONE SHAPE. It used to be two: the widget's grid footprint was 4x1 below
     // 640px and 1x1 at and above it, so the content flipped on the same `sm:`
@@ -62,19 +63,15 @@ export function CreatePanel({ view }: { view: CreateView }) {
       <button
         type="button"
         className="home-create-btn home-create-tile w-full rounded-xl p-4 flex flex-row items-center justify-center text-center gap-3 transition-colors"
-        {...(view.canCreate ? null : { 'aria-disabled': true })}
         title={label}
         aria-label={label}
         onClick={(e) => {
           e.stopPropagation();
-          if (view.canCreate) {
-            win().App?.showCreateModal?.();
-            return;
-          }
-          // Deliberately not a no-op: a dead tap on a dimmed tile reads as
-          // broken, where a toast reads as locked. Same string as the tooltip
-          // and the ⋮ note.
-          win().PlatformUI?.toast?.(win().Home?.CREATE_DISABLED_HINT || view.hint);
+          // Both states open the same dialog. At the limit, its quota row
+          // explains the lock and its submit button is disabled; hiding the
+          // dialog behind a generic toast would make the numbers unreachable
+          // precisely when they matter most.
+          win().App?.showCreateModal?.();
         }}
       >
         <span

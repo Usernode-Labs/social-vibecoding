@@ -1768,7 +1768,8 @@ test('the Create widget reads the viewer’s quota through Home', () => {
 
   const locked = renderBlock('create', { home: { canCreate: () => false } }).html;
   assert.match(locked, /data-create-enabled="false"/);
-  assert.match(locked, /aria-disabled="true"/);
+  assert.doesNotMatch(locked, /aria-disabled/,
+    'the locked tile still has an available action: opening quota details');
   assert.doesNotMatch(locked, /\sdisabled[=\s>]/, 'never the disabled ATTRIBUTE');
 });
 
