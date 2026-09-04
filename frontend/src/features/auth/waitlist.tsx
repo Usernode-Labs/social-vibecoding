@@ -78,6 +78,9 @@ import {
   ChipRow,
   MsgTone,
   msgClass,
+  // Aliased: `options` is already the name of this screen's fetched
+  // options object, and the helper renders a map of them.
+  options as opts,
   useWaitlistOptions,
 } from './waitlist-shared';
 
@@ -416,15 +419,13 @@ export function WaitlistScreen() {
               <option value="">
                 Select a country&hellip;
               </option>
-              {Object.entries(options?.countries || {}).map(([region, codes]) => (
-                <optgroup key={region} label={region}>
-                  {Object.entries(codes).map(([code, name]) => (
-                    <option key={code} value={code}>
-                      {name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
+              {/* One flat alphabetical list of all 249 ISO 3166-1 countries
+                  and territories. It was six <optgroup> region buckets until
+                  #1527: they left ~200 places unselectable and hid the ones
+                  they did carry from an alphabetical scan. The server sends
+                  the map already sorted by English name, so insertion order
+                  IS display order and nothing sorts here. */}
+              {opts(options?.countries)}
             </select>
           </div>
           <div>

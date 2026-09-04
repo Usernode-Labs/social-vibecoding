@@ -3,9 +3,9 @@
 // #1001 — the two model-backed rungs of the quick-reply ladder, unit-tested
 // against a stubbed Anthropic client:
 //
-//   llm.requireQuickReplies    the FORCED pills-only continuation on the
-//                              turn's own model (rung 2 — "the Mayor authors
-//                              its own pills"), and
+//   llm.requireQuickReplies    the pills-only continuation on the turn's own
+//                              model (rung 2 — "the Mayor authors its own
+//                              pills"), and
 //   llm.generateQuickReplies   the cheap Haiku backstop (rung 3),
 //
 // plus llm.buildQuickReplyContext, the compact digest they share.
@@ -125,9 +125,9 @@ test('only user and assistant rows reach the digest', () => {
   assert.match(ctx, /User: hello there/);
 });
 
-// ── requireQuickReplies — the forced continuation ────────────────────
+// ── requireQuickReplies — the pills-only continuation ────────────────
 
-test('the forced call pins the one tool and asks for nothing else', async () => {
+test('the continuation pins the one tool and asks for nothing else', async () => {
   await withStub(() => toolUseResponse(['Preview the Season 1 default', 'Propose it to the group']),
     async (calls) => {
       const out = await llm.requireQuickReplies({
@@ -138,10 +138,22 @@ test('the forced call pins the one tool and asks for nothing else', async () => 
       });
       assert.equal(calls.length, 1, 'exactly one request — never a loop');
       const { params } = calls[0];
-      assert.deepEqual(params.tool_choice, { type: 'tool', name: 'suggest_replies' },
-        'the tool is FORCED — this is what guarantees a set comes back');
+      // IT USED TO BE `{ type: 'tool', name: 'suggest_replies' }`. Fable 5.1
+      // removed forced tool use — `any` and `tool` are both a 400 — and this
+      // call runs on THE TURN'S OWN MODEL, so a Fable session would have hit
+      // it on every turn. Silently: it throws, and resolveTurnPills catches
+      // and drops to the Haiku rung, so the only symptom is worse pills on
+      // one model. `auto` + a system prompt naming the tool is the
+      // documented replacement.
+      assert.deepEqual(params.tool_choice, { type: 'auto' },
+        'never a forced call again — it is a 400 on Fable 5.1');
       assert.equal(params.tools.length, 1,
         'only suggest_replies is exposed, so the call cannot dispatch anything');
+      assert.equal(params.tools[0].strict, true,
+        'strict on the TOOL is what replaces the forced call\'s schema '
+        + 'guarantee — it is a field of the tool, not of tool_choice');
+      assert.match(params.system, /Call suggest_replies now/,
+        'and the instruction naming the tool is what replaces the rest of it');
       assert.equal(params.model, 'claude-opus-5',
         "the turn's own served model, so the pills are in the Mayor's voice");
       assert.ok(params.max_tokens <= 500, 'a pills-only reply needs no room to ramble');
@@ -154,8 +166,8 @@ test('the forced call pins the one tool and asks for nothing else', async () => 
     });
 });
 
-test('a text-free forced response is the expected shape, not an error', async () => {
-  // Forcing a tool suppresses the text block. That is precisely why
+test('a text-free response is the expected shape, not an error', async () => {
+  // A pills-only continuation carries no text block. That is precisely why
   // enforcement is a SECOND call: the user-visible text already streamed
   // from the first one, so there is nothing to suppress.
   await withStub(() => ({
@@ -167,8 +179,10 @@ test('a text-free forced response is the expected shape, not an error', async ()
   });
 });
 
-test('the forced call throws when no tool_use comes back', async () => {
-  // A refusal or a max_tokens truncation. The caller drops to the next rung.
+test('the continuation throws when no tool_use comes back', async () => {
+  // A refusal, a max_tokens truncation — or, now that the call is not
+  // forced, a model that simply answers in prose. All three are this rung's
+  // failure and the caller drops to the next one.
   await withStub(() => textResponse('I would rather not.'), async () => {
     await assert.rejects(
       () => llm.requireQuickReplies({ context: 'x', tool: TOOL, model: 'claude-opus-5' }),
@@ -176,7 +190,7 @@ test('the forced call throws when no tool_use comes back', async () => {
   });
 });
 
-test('the forced call refuses to run without a tool shape', async () => {
+test('the continuation refuses to run without a tool shape', async () => {
   // The schema is defined once, in routes/sessions.js, beside its sanitizer.
   await withStub(() => toolUseResponse(['a']), async (calls) => {
     await assert.rejects(
@@ -236,7 +250,10 @@ test('both rungs render the SAME rules text they are handed', async () => {
   const systems = [];
   await withStub((params) => {
     systems.push(params.system);
-    return params.tool_choice
+    // The continuation is the one that exposes a tool; the backstop asks
+    // for JSON prose. (It used to switch on `tool_choice`, which both now
+    // reach — rung 2 sends `auto`.)
+    return params.tools
       ? toolUseResponse(['a'])
       : textResponse('{"replies":["a"]}');
   }, async () => {

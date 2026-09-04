@@ -207,6 +207,11 @@ function makeHarness() {
     DevChat,
     getEl,
     composer,
+    // The kit stub the module reads as `window.PlatformUI`. Exposed so a
+    // test can swap in a menu recorder — dev-chat.js resolves it at call
+    // time, and inside the vm context `window` IS this sandbox.
+    kit: sandbox.PlatformUI,
+    sandbox,
     runnerView: () => JSON.parse(JSON.stringify(runnerView)),
     runnerHtml: () => renderComponent(
       'frontend/src/features/dev-chat/composer-chrome.tsx', 'RunnerControlsView',
@@ -234,8 +239,8 @@ function guidanceMap() {
         long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
       },
     },
-    'claude-fable-5': {
-      label: 'Fable 5',
+    'claude-fable-5-1': {
+      label: 'Fable 5.1',
       changeSize: {
         short: 'design, taste, and difficult coding',
         long: 'Design and taste (how a screen looks, reads, and feels) plus the most difficult coding work.',
@@ -284,40 +289,105 @@ test('the seed MODELS map carries no price and no measured figures', () => {
 
 // ── 2. option text: what kind of work, not how big ──────────────────
 
-test('the composer\'s options are bare model NAMES (#1589)', () => {
-  // A native select's closed control shows the selected option's own text,
-  // so the guidance below set its width: 276px of a 344px strip on a phone,
-  // which put the label above the control and the credit meter below it.
-  // Names bring it to 89px and the row is one line. Measured in a browser at
-  // both option texts.
+test('the composer\'s picker is a sheet button naming the model (#1589)', () => {
+  // #1589's finding was about a CLOSED <select>: it shows the selected
+  // option's own text, so the guidance set its width — 276px of a 344px
+  // strip on a phone, which put the label above the control and the credit
+  // meter below it. Names brought it to 89px and the row to one line.
+  //
+  // The control is a button opening the kit's menu now, so there are no
+  // options in the markup at all — but the closed control is still exactly
+  // the name, which is what that measurement was about.
   const { html } = render();
-  const options = html.match(/<option[^>]*>[^<]*<\/option>/g) || [];
-  assert.deepEqual(
-    options.map((o) => o.replace(/<[^>]*>/g, '')),
-    ['Sonnet 5', 'Opus 5', 'Fable 5'],
-    `expected bare names; got: ${options}`
-  );
+  assert.ok(!/<option/.test(html), `no native dropdown survives; got: ${html}`);
+  assert.match(html, /<button[^>]*id="dc-model-select"[^>]*aria-haspopup="menu"/);
+  assert.match(html, /<span class="dc-model-name">Opus 5<\/span>/);
+  assert.ok(!html.includes('general coding work'),
+    'the guidance belongs to the OPEN sheet — in the closed control it is '
+    + 'the width problem #1589 measured.');
   assert.ok(!html.includes('simple, small changes'),
-    'the guidance is not in the composer at all now — not in an option, not '
-    + 'in a title. A viewer reading this control has already chosen.');
+    'and the unselected models are not in the composer\'s markup at all.');
 });
 
-test('the declared checks follow the copy they guard (#1589)', () => {
-  // dapp.json pinned the guidance INSIDE the composer's options, which is
-  // exactly what this change moves. The two checks keep their route and
-  // their selectors and now assert the names, so the picker is still
-  // guarded in a browser — against a regression of THIS decision. The copy
-  // positioning they used to guard is asserted on the shared helper below,
-  // and still rendered by the Generate-proposal picker.
+test('…and the sheet\'s rows carry the guidance the button cannot (2B)', () => {
+  // The blurb comes back where there is room for it: one row, one line. It
+  // is `changeSize.short` rather than `modelOptionText`, because the row
+  // already opens with the name and the helper would repeat it.
+  const { view } = render();
+  assert.deepEqual(view().models.options, [
+    { id: 'claude-sonnet-5', label: 'Sonnet 5', blurb: 'simple, small changes' },
+    { id: 'claude-opus-5', label: 'Opus 5', blurb: 'general coding work' },
+    {
+      id: 'claude-fable-5-1',
+      label: 'Fable 5.1',
+      blurb: 'design, taste, and difficult coding',
+    },
+  ]);
+  assert.equal(view().models.selectedLabel, 'Opus 5');
+});
+
+test('openModelSheet asks the kit, marks the current row, and picks (2B)', () => {
+  // The mirror of openVenueSheet: the kit sets row labels with textContent,
+  // so the blurb and the tick ride IN the label, and the tick trails the
+  // row exactly as build-venues.js puts it.
+  const h = makeHarness();
+  h.DevChat.MODELS = guidanceMap();
+  h.DevChat.selectedModel = 'claude-opus-5';
+  h.DevChat._currentVenueId = () => 'usernode-claude';
+  let opened = null;
+  h.sandbox.PlatformUI = {
+    hasKit: () => true,
+    menu: (opts) => { opened = opts; return Promise.resolve(null); },
+  };
+  h.DevChat.openModelSheet(null);
+  assert.ok(opened, 'the kit menu was never opened');
+  assert.match(opened.title, /model/i);
+  // `Array.from` rather than `.map`: `items` was built inside the vm
+  // context, so its Array prototype is that realm's and deepEqual compares
+  // prototypes.
+  assert.deepEqual(Array.from(opened.items, (i) => i.label), [
+    'Sonnet 5 \u2014 simple, small changes',
+    'Opus 5 \u2014 general coding work \u2713',
+    'Fable 5.1 \u2014 design, taste, and difficult coding',
+  ]);
+  opened.items[2].handler();
+  assert.equal(h.DevChat.selectedModel, 'claude-fable-5-1');
+});
+
+test('openModelSheet is a no-op without the kit, exactly as the venue sheet is', () => {
+  const h = makeHarness();
+  h.DevChat.MODELS = guidanceMap();
+  h.DevChat.selectedModel = 'claude-opus-5';
+  h.DevChat._currentVenueId = () => 'usernode-claude';
+  h.sandbox.PlatformUI = { hasKit: () => false, menu: () => {
+    throw new Error('menu must not be reached without a kit');
+  } };
+  h.DevChat.openModelSheet(null);
+  assert.equal(h.DevChat.selectedModel, 'claude-opus-5');
+});
+
+test('the declared checks follow the control they guard (#1589, 2B)', () => {
+  // These two used to select `#dc-model-select option[value=…]`, one per
+  // model. A sheet has no options in the document — only the SELECTED model
+  // is on screen — so the pair became what a browser can still see: the
+  // closed control is a menu button naming the model, and no native
+  // dropdown is left in the composer. The guidance positioning they once
+  // guarded is asserted on the shared helper below, and still rendered by
+  // the Generate-proposal picker.
   const dapp = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', 'dapp.json'), 'utf8'));
   const picker = dapp.tests.filter(
-    (t) => (t.expectSelector || '').includes('#dc-model-select option'));
-  assert.equal(picker.length, 2, 'both option checks are still declared');
-  assert.deepEqual(picker.map((t) => t.expectText).sort(), ['Fable 5', 'Opus 5']);
+    (t) => (t.expectSelector || '').includes('dc-model-select')
+      || (t.expectSelector || '').includes('#dc-composer-controls:not(:has(select))'));
+  assert.equal(picker.length, 2, 'both picker checks are still declared');
+  assert.ok(picker.some((t) => /aria-haspopup="menu"/.test(t.expectSelector)
+    && t.expectText === 'Opus 5'), 'the closed control is still guarded');
+  assert.ok(picker.some((t) => /:not\(:has\(select\)\)/.test(t.expectSelector)),
+    'and so is the absence of the <select> this replaced');
   for (const t of picker) {
     assert.ok(!/coding work|design, taste/.test(t.expectText || ''),
-      'a check still asking for the guidance here would fail on every build');
+      'a check asking for the guidance in the CLOSED control would fail on '
+      + 'every build — it lives in the open sheet now');
   }
 });
 
@@ -331,7 +401,7 @@ test('the guidance copy survives on the helper, for the picker that has room', (
   const text = (id) => DevChat.modelOptionText(DevChat.MODELS[id]);
   assert.equal(text('claude-sonnet-5'), 'Sonnet 5: simple, small changes');
   assert.equal(text('claude-opus-5'), 'Opus 5: general coding work');
-  assert.equal(text('claude-fable-5'), 'Fable 5: design, taste, and difficult coding');
+  assert.equal(text('claude-fable-5-1'), 'Fable 5.1: design, taste, and difficult coding');
   const APP_VIEW = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
   );
@@ -361,7 +431,7 @@ test('OpenRouter sessions show their pinned model and never show the Claude mode
   assert.doesNotMatch(html, /id="dc-model-select"/);
   assert.doesNotMatch(html, /Sonnet 5: simple, small changes/);
   assert.doesNotMatch(html, /Opus 5: general coding work/);
-  assert.doesNotMatch(html, /Fable 5: design, taste, and difficult coding/);
+  assert.doesNotMatch(html, /Fable 5.1: design, taste, and difficult coding/);
 });
 
 test('the OpenRouter model button opens the provider-locked catalog', () => {
@@ -395,7 +465,7 @@ test('no option implies a size ladder between Opus and Fable', () => {
   // names, so its markup would pass this vacuously.
   const { DevChat } = makeHarness();
   const all = Object.values(DevChat.MODELS).map((m) => DevChat.modelOptionText(m)).join(' | ');
-  assert.ok(!all.includes('Fable 5: big or tricky work'));
+  assert.ok(!all.includes('Fable 5.1: big or tricky work'));
   assert.ok(!all.includes('a few files'));
   // #809: Opus is the general-purpose coding model, not one reserved for
   // big or tricky changes — the old restrictive wording must not return.
@@ -459,15 +529,17 @@ test('the caption text itself survives, for the picker that is met once', () => 
   assert.match(APP_VIEW, /DevChat\.modelNoteText\(m\)/, 'and that popup still calls it');
 });
 
-test('the dropdown still follows the selection without a caption to update', () => {
-  // The picker's `change` is the component's onChange now, dispatching into
-  // `_onModelPicked` — which also republishes, so the model carries the new
-  // selection rather than the element keeping it.
+test('the picker still follows the selection without a caption to update', () => {
+  // The sheet's handler dispatches into `_onModelPicked` — which also
+  // republishes, so the model carries the new selection AND the closed
+  // control's label, rather than an element keeping either.
   const { DevChat, view } = render({ selected: 'claude-opus-5' });
   assert.equal(view().models.selected, 'claude-opus-5');
-  DevChat._onModelPicked('claude-fable-5');
-  assert.equal(DevChat.selectedModel, 'claude-fable-5');
-  assert.equal(view().models.selected, 'claude-fable-5');
+  assert.equal(view().models.selectedLabel, 'Opus 5');
+  DevChat._onModelPicked('claude-fable-5-1');
+  assert.equal(DevChat.selectedModel, 'claude-fable-5-1');
+  assert.equal(view().models.selected, 'claude-fable-5-1');
+  assert.equal(view().models.selectedLabel, 'Fable 5.1');
 });
 
 test('the Fable option owns difficult coding without displacing Opus as the general pick', () => {
@@ -478,7 +550,7 @@ test('the Fable option owns difficult coding without displacing Opus as the gene
   // this copy out of the composer's own markup.
   const { DevChat } = makeHarness();
   const text = (id) => DevChat.modelOptionText(DevChat.MODELS[id]);
-  assert.equal(text('claude-fable-5'), 'Fable 5: design, taste, and difficult coding');
+  assert.equal(text('claude-fable-5-1'), 'Fable 5.1: design, taste, and difficult coding');
   assert.notEqual(text('claude-opus-5'), 'Opus 5: big or tricky coding');
   assert.equal(text('claude-opus-5'), 'Opus 5: general coding work');
 });
@@ -490,9 +562,12 @@ test('a model with no guidance renders a bare label', () => {
   // is that a meta with no `changeSize` reaches the picker at all rather
   // than rendering an empty option, and that no caption comes back with it.
   const models = { 'claude-opus-5': { label: 'Opus 5' } };
-  const { html } = render({ models });
+  const { html, view } = render({ models });
 
-  assert.ok(html.includes('>Opus 5</option>'), 'expected a bare label option');
+  assert.ok(html.includes('<span class="dc-model-name">Opus 5</span>'),
+    'expected the bare label on the closed control');
+  assert.deepEqual(view().models.options, [
+    { id: 'claude-opus-5', label: 'Opus 5', blurb: '' }]);
   assert.ok(!html.includes('best for'));
 });
 
@@ -500,7 +575,7 @@ test('an option with no label at all falls back to the model id', () => {
   // The composer reads `meta.label` directly now instead of going through
   // modelOptionText, so its own empty case has to be its own.
   const { html } = render({ models: { 'claude-opus-5': {} } });
-  assert.ok(html.includes('>claude-opus-5</option>'),
+  assert.ok(html.includes('<span class="dc-model-name">claude-opus-5</span>'),
     'an id is a worse name than "Opus 5" and a much better one than nothing');
 });
 
