@@ -12,6 +12,7 @@ const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const staging = require('../services/staging');
+const topicAttrs = require('../services/topic-attributes');
 const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
 const docker = require('../services/docker');
@@ -37,6 +38,97 @@ const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
 const modelFallback = require('../services/model-fallback');
+
+// Imported pull requests are proposal-shaped work before they are promoted:
+// their GitHub description, testing notes, check run and community attributes
+// already exist, even though their lifecycle status is still active/paused.
+// The ordinary session list deliberately stays lightweight and private, so
+// enrich only imported Underway rows in a second, id-scoped read after the
+// owner/shared visibility query has selected which rows the viewer may see.
+async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId) {
+  const list = Array.isArray(sessions) ? sessions : [];
+  const ids = list
+    .filter((s) => s && s.source === 'imported'
+      && (s.status === 'active' || s.status === 'paused'))
+    .map((s) => Number(s.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  if (!ids.length) return list;
+
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.app_id, cs.pr_number, cs.pr_url, cs.pr_title,
+            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body,
+            cs.staging_url, cs.testing_md, cs.testing_path, cs.testing_paths,
+            cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+            cs.source, cs.imported_pr_author, cs.imported_pr_head_repo,
+            cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.external_agent,
+            cs.merge_conflict_state, cs.behind_main, cs.conflict_files,
+            cs.conflict_checked_at, cs.console_check_state, cs.console_errors,
+            cs.console_checked_at, cs.check_state, cs.test_results,
+            cs.checks_checked_at, cs.checks_commit_sha, cs.checks_base_sha,
+            cs.checks_base_verdict, cs.checks_base_behind_by,
+            cs.mergeability, cs.mergeability_files,
+            cs.mergeability_files_complete, cs.freshness_main_sha,
+            cs.freshness_merge_base_sha, cs.freshness_behind_by,
+            cs.freshness_ahead_by, cs.freshness_checked_at,
+            cs.freshness_error, cs.check_phase, cs.check_trigger,
+            cs.platform_env_state, cs.platform_env_detail,
+            cs.check_error_detail, cs.requires_explicit_approval,
+            (SELECT jsonb_object_agg(
+                      sv.kind || '_' || sv.capture_index || '_' || sv.media,
+                      jsonb_build_object(
+                        'id', sv.id,
+                        'path', sv.captured_path,
+                        'viewport', sv.captured_viewport,
+                        'fellBack', sv.before_fell_back))
+               FROM session_visuals sv WHERE sv.session_id = cs.id) AS visuals_agg
+       FROM chat_sessions cs
+       JOIN users u ON u.id = cs.user_id
+      WHERE cs.id = ANY($1::int[])
+        AND cs.source = 'imported'
+        AND cs.status IN ('active', 'paused')`,
+    [ids]
+  );
+
+  const rowsByApp = new Map();
+  for (const row of rows) {
+    if (!rowsByApp.has(row.app_id)) rowsByApp.set(row.app_id, []);
+    rowsByApp.get(row.app_id).push(row);
+  }
+
+  const attrsById = new Map();
+  for (const [appId, appRows] of rowsByApp) {
+    const summaries = await topicAttrs.summarizeForProposals(
+      pool,
+      appId,
+      appRows.map((row) => ({ id: row.id, linked_issues: row.linked_issues })),
+      viewerUserId || null
+    );
+    for (const row of appRows) {
+      attrsById.set(row.id, summaries.get(row.id) || topicAttrs.emptySummary());
+    }
+  }
+
+  const detailsById = new Map();
+  for (const row of rows) {
+    const attrs = attrsById.get(row.id) || topicAttrs.emptySummary();
+    const detail = {
+      ...row,
+      visuals: visuals.shapeAgg(row.visuals_agg),
+      ...staging.previewDisplayState(row),
+      priority: attrs.priority,
+      assignee: attrs.assignee,
+      category: attrs.category,
+    };
+    delete detail.app_id;
+    delete detail.visuals_agg;
+    detailsById.set(row.id, detail);
+  }
+
+  return list.map((session) => {
+    const detail = detailsById.get(session.id);
+    return detail ? { ...session, ...detail } : session;
+  });
+}
 
 // The six build venues (#1281). The browser's copy is VENUES in
 // public/js/build-venues.js and it is the authoritative list; this is the
@@ -1243,7 +1335,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const viewerLogin = rows.some((s) => s.source === 'imported')
         ? (await require('../services/github-link').linkStatus(pool, req.user.id)).login || null
         : null;
-      const sessions = rows.map((s) => {
+      let sessions = rows.map((s) => {
         const live = workerProgress.get(s.id);
         return {
           ...s,
@@ -1258,6 +1350,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             : {}),
         };
       });
+      sessions = await enrichImportedUnderwaySessions(pool, sessions, req.user.id);
       const totals = sessions.reduce(
         (acc, s) => {
           if (s.status === 'paused') acc.paused += 1;
@@ -1633,16 +1726,21 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // GET /api/apps/:slug/shared-sessions
   //   Every user's explicitly-shared (shared_at IS NOT NULL) in-flight
   //   sessions on this app — the rows the Dev board renders at the
-  //   bottom of everyone's "In progress" area. Deliberately metadata
-  //   only: no pr_url / cc_session_id / anything enabling dev-chat
-  //   access — the dev-chat endpoints stay owner-scoped, so "no way to
-  //   open the owner's dev chat" is enforced by authorization, not just
-  //   missing UI. staging_url IS included (same exposure /promoted
-  //   already grants proposals) so viewers get a Preview affordance,
+  //   bottom of everyone's "In progress" area. Ordinary sessions remain
+  //   deliberately metadata-only: no pr_url / cc_session_id / anything
+  //   enabling dev-chat access — the dev-chat endpoints stay owner-scoped,
+  //   so "no way to open the owner's dev chat" is enforced by authorization,
+  //   not just missing UI. Imported PR rows are enriched after this privacy
+  //   query with the proposal metadata that is already group-visible on
+  //   promotion; their GitHub description/checks/attributes exist while
+  //   Underway and should not disappear merely because voting has not begun.
+  //   staging_url IS included (same exposure /promoted already grants
+  //   proposals) so viewers get a Preview affordance,
   //   plus a derived can_preview boolean — "the branch has pushed
   //   changes" — so the card can offer an on-demand rebuild via
-  //   ensure-staging even after the idle staging GC has nulled
-  //   staging_url. pr_number itself stays withheld.
+  //   ensure-staging even after the idle staging GC has nulled staging_url.
+  //   pr_number itself stays withheld for ordinary sessions; imported rows
+  //   receive it only in the id-scoped proposal enrichment.
   //
   //   That boolean was `pr_number IS NOT NULL` (#689), which was a fine
   //   proxy while every shared session was a proposal in waiting. It is
@@ -1668,9 +1766,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   itself is view-level), and the card renders them as "#N" chips
   //   linking to each issue's in-app discussion.
   //   check_state / check_phase are the same review-state metadata the
-  //   promoted feed exposes. They let an explicitly shared Underway card
-  //   say that its preview is building, tests are running, or checks have
-  //   finished without exposing the test result payload or error detail.
+  //   promoted feed exposes. They let an ordinary explicitly shared
+  //   Underway card say that its preview is building, tests are running, or
+  //   checks have finished without exposing the test result payload or
+  //   error detail. Imported rows receive those full details in the scoped
+  //   enrichment described above.
   //
   //   `transcript_shared` (+ `message_count` for its label) is the ONE
   //   addition that widens what a viewer can reach: it says the owner took
@@ -1716,10 +1816,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          ORDER BY cs.shared_at ASC`,
         [app.id]
       );
-      const sessions = rows.map((s) => ({
+      let sessions = rows.map((s) => ({
         ...s,
         busy: isSessionBusy(s.id),
       }));
+      sessions = await enrichImportedUnderwaySessions(pool, sessions, req.user?.id || null);
 
       // Staging-only demo rows (?demo=1): read-only visual states a boot
       // seed can't hold live (busy spinner, Preview pill). Fake ids in the
@@ -2569,6 +2670,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // live path delivers the same shape via the visuals_ready event).
       // Best-effort — a visuals hiccup must not break opening the session.
       const session = rows[0];
+      // #1650: a managed local handoff cannot be proposed merely because it
+      // is active. Its exact submitted head must have live staging and a
+      // terminal passing verdict, and the in-memory build/check/capture gates
+      // matter too. Publish the SAME state the CLI status endpoint and
+      // promotion preflight compute so the Changes ready card can disable its
+      // action before a doomed request. Ordinary Dev sessions deliberately do
+      // not get this field: their promote path may still build on demand.
+      if (session.source === 'cli_handoff') {
+        session.proposal_state = require('./proposal-handoff')
+          .publicSessionStatus(session).state;
+      }
       try {
         session.visuals = await visuals.getForSession(pool, session.id);
       } catch { session.visuals = null; }

@@ -637,6 +637,15 @@ function appRoutes(config) {
       // a round-trip each.
       const adminAppIds = await appAdmins.getAdminAppIdsForUser(pool, req.user?.id);
 
+      // How many people BUILT each app, for the Discover cards on the
+      // launcher. One round trip for the whole page over the shared
+      // contributor definition (services/contributors.js), rather than the
+      // per-app fetch the directory's detail view makes: the cards show the
+      // number and never the names, so the ranked list would be all cost.
+      const contributorCounts = await contributors.loadContributorCounts(
+        pool, rows.map((a) => a.id)
+      );
+
       const apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
         // each) and lets the home tile show a "fix secrets" warning
@@ -730,6 +739,7 @@ function appRoutes(config) {
           ? a.last_failure : null;
         return {
           ...appAccess.stripAppSecrets(a),
+          contributor_count: contributorCounts.get(a.id) || 0,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,

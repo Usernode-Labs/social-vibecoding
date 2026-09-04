@@ -154,6 +154,15 @@ export const ArrowRightShortIcon = stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0
 
 export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
 
+/**
+ * The dev composer's send mark (Streamlined Concept). Its button is a 44px
+ * circle now rather than a rectangle carrying the word "Send", so the arrow
+ * IS the label — drawn on the full 24 grid, like PlusWideIcon and for the
+ * same reason: it is the content of a round control, not a glyph beside a
+ * word.
+ */
+export const ArrowUpIcon = stroked('ArrowUpIcon', 'M12 19V5M5 12l7-7 7 7');
+
 export const Bars3Icon = stroked('Bars3Icon', 'M4 6h16M4 12h16M4 18h16');
 
 export const PlusIcon = stroked('PlusIcon', 'M12 5v14M5 12h14');

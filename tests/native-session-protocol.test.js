@@ -217,6 +217,7 @@ test('encrypted credential carries the exact canonical account id without wideni
   ]);
   assert.match(plaintext.account.accountId, /^[1-9][0-9]*$/);
   assert.equal(plaintext.account.accountId, accountId);
+  assert.equal(plaintext.credential.bearerExpiresAt, '2026-11-24T12:00:00.000Z');
 
   const compactJwe = await compactEncryptCredential(plaintext, keys);
   assert.equal(compactJwe.includes(accountId), false,
@@ -345,7 +346,10 @@ test('native handoff hides ticket authority and exact redemption replays byte-id
   assert.equal(first, second);
   assert.equal(pool.tickets.size, 1);
   assert.equal(pool.attempts.size, 1);
-  assert.equal(JSON.parse(first).data.ticket.startsWith('nst_'), true);
+  const ticket = JSON.parse(first).data;
+  assert.equal(ticket.ticket.startsWith('nst_'), true);
+  assert.equal(ticket.issuedAt, '2026-08-26T12:00:00.000Z');
+  assert.equal(ticket.expiresAt, '2026-08-26T12:05:00.000Z');
 });
 
 test('an exchanged exact attempt replays its ticket after issuance expiry', async () => {

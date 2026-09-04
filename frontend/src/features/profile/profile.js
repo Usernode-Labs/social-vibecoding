@@ -529,8 +529,8 @@ const Profile = {
     }
   },
 
-  // Re-read the session user so App.user (and therefore the identity card
-  // and the drawer row) reflects what was actually stored.
+  // Re-read the session user so App.user — and therefore the identity card
+  // this screen draws from it — reflects what was actually stored.
   async _refreshUser() {
     try {
       const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
@@ -538,7 +538,6 @@ const Profile = {
       const body = await res.json();
       if (body && body.user && window.App) {
         App.user = body.user;
-        if (typeof App.applyUserAvatar === 'function') App.applyUserAvatar();
       }
     } catch (_) { /* keep the stale copy — the next load corrects it */ }
   },

@@ -130,9 +130,13 @@ export function init() {
       const exhausted = remaining === 0;
       bountyCheckbox.disabled = exhausted;
       bountyRow.classList.toggle('opacity-60', exhausted);
-      if (remaining === null) bountyNote.textContent = '';
+      // #1582: the row's own line says what a bounty DOES, so the price of
+      // ticking the box is stated here, beside the live figure. It is on
+      // screen in every state the box can be ticked in — including the one
+      // where the budget fetch failed and there is no figure to show.
+      if (remaining === null) bountyNote.textContent = 'Costs 1 kudos';
       else if (exhausted) bountyNote.textContent = `You've used all ${limit} kudos this week. Resets Monday 00:00 UTC.`;
-      else bountyNote.textContent = `${remaining} of ${limit} kudos left this week`;
+      else bountyNote.textContent = `Costs 1 kudos. ${remaining} of ${limit} left this week`;
       bountyRow.classList.remove('hidden');
     };
     // The selected option uses a darker violet on hover so it keeps its

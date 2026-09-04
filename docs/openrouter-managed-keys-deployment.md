@@ -39,7 +39,7 @@ In `Usernode-Labs/social-vibecoding`, open **Settings → Secrets and variables
 | Variable | `OPENROUTER_MANAGED_DAILY_LIMIT_USD` | Recommended | Positive USD amount per child key per day; deploy default is `1`. |
 | Variable | `OPENROUTER_MANAGED_WORKSPACE_ID` | Recommended | Dedicated funded OpenRouter workspace id. |
 | Variable | `OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY` | Optional | Set `true` to require a verified GitHub or X identity before claiming. The deploy default is `false`, which allows any authenticated account. |
-| Variable | `OPENROUTER_DEFAULT_CODEX_MODEL` | Optional | Preferred model slug; deploy default is `z-ai/glm-5.3`. |
+| Variable | `OPENROUTER_DEFAULT_CODEX_MODEL` | Optional | Preferred model slug; deploy default is `z-ai/glm-5.3-flash`. |
 
 `CODEX_OPENROUTER_ENABLED` remains `true` by default. An existing
 `CODEX_OPENROUTER_BETA_USER_IDS` allowlist still restricts eligibility when it
@@ -52,7 +52,7 @@ workflow. The deploy writes the management key into `/opt/usernode/.env`,
 which remains mode `0600`, and restarts the platform. No database seed or
 manual per-user key creation is required.
 
-If `z-ai/glm-5.3` is not present in a particular key's live OpenRouter model
+If `z-ai/glm-5.3-flash` is not present in a particular key's live OpenRouter model
 catalog, Usernode selects the normal compatible fallback for that user. The
 model picker is never restricted to GLM: every model exposed by the user's
 key remains available.

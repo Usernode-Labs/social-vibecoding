@@ -75,6 +75,7 @@ import {
   stopWatchingCreation,
   watchCreation,
 } from './creation-progress-store.js';
+import { normalizeRepositoryUrl } from './repository-url';
 import { useDialog } from './use-dialog';
 
 type Mode = 'new' | 'import';
@@ -86,6 +87,13 @@ interface ImportStatus {
   tone: 'none' | 'ok' | 'err';
   text: string;
   spinner?: boolean;
+}
+
+interface AppCreationQuota {
+  used: number | null;
+  /** Null means the viewer is a full admin and has no app-slot limit. */
+  limit: number | null;
+  remaining: number | null;
 }
 
 const IDLE_STATUS: ImportStatus = { tone: 'none', text: '' };
@@ -102,6 +110,54 @@ function statusClass(status: ImportStatus): string {
   if (status.tone === 'ok') return 'text-sm mt-2 import-status--ok';
   if (status.tone === 'err') return 'text-sm mt-2 import-status--err';
   return 'text-sm mt-2';
+}
+
+function quotaFromUser(user: unknown): AppCreationQuota | null {
+  // A deterministic finite-quota state for proposal captures. It changes
+  // paint only: POST /api/apps still enforces the authenticated viewer's real
+  // quota. Without this, the capture identity (a full admin) can only show the
+  // unlimited branch and the user-facing "used of limit" state is invisible
+  // to review.
+  try {
+    if (new URLSearchParams(location.search).get('shot') === 'create-quota') {
+      return { used: 1, limit: 2, remaining: 1 };
+    }
+  } catch {
+    /* prerender / non-browser test */
+  }
+
+  const raw = (user as { appCreationQuota?: Partial<AppCreationQuota> } | null)?.appCreationQuota;
+  if (!raw) return null;
+  const validCount = (value: unknown) => value === null
+    || (typeof value === 'number' && Number.isInteger(value) && value >= 0);
+  if (!validCount(raw.used) || !validCount(raw.limit) || !validCount(raw.remaining)) return null;
+  return {
+    used: raw.used as number | null,
+    limit: raw.limit as number | null,
+    remaining: raw.remaining as number | null,
+  };
+}
+
+function quotaHeadline(quota: AppCreationQuota): string {
+  if (quota.limit === null) {
+    return quota.used == null
+      ? 'No app limit'
+      : `${quota.used} ${quota.used === 1 ? 'app' : 'apps'} · no limit`;
+  }
+  if (quota.used == null) return `${quota.limit} ${quota.limit === 1 ? 'slot' : 'slots'}`;
+  return `${quota.used} of ${quota.limit} app ${quota.limit === 1 ? 'slot' : 'slots'} used`;
+}
+
+function quotaDetail(quota: AppCreationQuota): string {
+  if (quota.limit === null) return 'Admin accounts can create apps without a slot limit.';
+  if (quota.used == null || quota.remaining == null) {
+    return 'Current usage is unavailable. The server will still enforce your quota.';
+  }
+  if (quota.limit === 0) return 'Ask an admin to assign app slots to your account.';
+  if (quota.remaining === 0) {
+    return 'Delete one of your apps or ask an admin to raise your quota before creating another.';
+  }
+  return `${quota.remaining} ${quota.remaining === 1 ? 'slot' : 'slots'} available.`;
 }
 
 export function CreateAppDialog() {
@@ -121,6 +177,11 @@ export function CreateAppDialog() {
   const [collabVis, setCollabVis] = useState<Vis>('public');
   const [viewVis, setViewVis] = useState<Vis>('public');
   const [error, setError] = useState('');
+  // Loaded when the dialog opens, not during prerender. Besides avoiding a
+  // redundant boot request, that keeps this new dynamic row out of the static
+  // shell and lets the first client render remain byte-identical.
+  const [quota, setQuota] = useState<AppCreationQuota | null>(null);
+  const [quotaLoading, setQuotaLoading] = useState(false);
   // The app this dialog is now reporting on. Null until a POST succeeds,
   // which is what keeps the FIRST render byte-identical to the
   // prerendered shell — the progress subtree exists only after a user
@@ -131,6 +192,8 @@ export function CreateAppDialog() {
   const dialog = useDialog('create', {
     onOpen: () => {
       applyMode('new');
+      setQuota(quotaFromUser(window.App?.user));
+      void refreshQuota();
       setTimeout(() => nameRef.current?.focus(), 0);
     },
     // Verbatim from App.hideCreateModal: reset the form, clear the error, and
@@ -142,6 +205,8 @@ export function CreateAppDialog() {
       applyMode('new');
       setCollabVis('public');
       setViewVis('public');
+      setQuota(null);
+      setQuotaLoading(false);
       // Drop the progress view too, so the next open lands on the form.
       // The build carries on server-side either way — closing this is
       // dismissing a report, not cancelling anything.
@@ -219,6 +284,26 @@ export function CreateAppDialog() {
     }
   }
 
+  async function refreshQuota() {
+    setQuotaLoading(true);
+    try {
+      const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const next = quotaFromUser(data?.user);
+      if (next) setQuota(next);
+      // Keep the shell's snapshot in step with the fresh quota answer. The
+      // create widget derives its locked treatment from this same user object
+      // on its next ordinary Home.load().
+      if (data?.user && window.App) window.App.user = data.user;
+    } catch {
+      // Keep the boot snapshot if one was available. The submit route remains
+      // the security boundary and reports any quota refusal itself.
+    } finally {
+      setQuotaLoading(false);
+    }
+  }
+
   // Verbatim from App.handleImportCheck.
   //
   //   idle ─┬─ Check click ─→ checking ─┬─ ok    (name field reveals,
@@ -231,8 +316,15 @@ export function CreateAppDialog() {
   // inline error text from the server, vs. a debounced surprise; (2)
   // verifyBotAccess can mutate state by accepting a pending invitation, and we
   // don't want that firing on every keystroke.
+  function normalizeRepositoryUrlInput(): string {
+    const input = urlRef.current;
+    const normalized = normalizeRepositoryUrl(input?.value || '');
+    if (input) input.value = normalized;
+    return normalized;
+  }
+
   async function check() {
-    const url = (urlRef.current?.value || '').trim();
+    const url = normalizeRepositoryUrlInput();
     const fail = (text: string) => {
       setImportState('error');
       setStatus({ tone: 'err', text });
@@ -277,7 +369,7 @@ export function CreateAppDialog() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     const name = (nameRef.current?.value || '').trim();
-    const repoUrl = (urlRef.current?.value || '').trim();
+    const repoUrl = mode === 'import' ? normalizeRepositoryUrlInput() : '';
     setError('');
     if (!name) return;
 
@@ -331,6 +423,11 @@ export function CreateAppDialog() {
       setError('Network error');
     }
   }
+
+  const quotaBlocksCreation = !!quota
+    && quota.limit !== null
+    && quota.used !== null
+    && quota.used >= quota.limit;
 
   return (
     <DialogRoot
@@ -393,6 +490,26 @@ export function CreateAppDialog() {
         <h2 id="create-title" className="text-lg font-bold mb-4">
           {mode === 'import' ? 'Import existing app' : 'Create a new app'}
         </h2>
+        {(quotaLoading || quota) ? (
+          <div
+            id="create-app-quota"
+            className="mb-4 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-800/60"
+            aria-live="polite"
+            data-quota-state={!quota ? 'loading' : (quotaBlocksCreation ? 'spent' : 'available')}
+          >
+            <div className="flex items-baseline justify-between gap-3 text-sm">
+              <span className="font-medium text-zinc-700 dark:text-zinc-200">App quota</span>
+              <strong className="text-right text-zinc-900 dark:text-zinc-100">
+                {quota ? quotaHeadline(quota) : 'Checking…'}
+              </strong>
+            </div>
+            {quota ? (
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                {quotaDetail(quota)}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <div className="flex p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
           <button
             type="button"
@@ -430,7 +547,8 @@ export function CreateAppDialog() {
                 id="import-url"
                 ref={urlRef}
                 name="repoUrl"
-                type="url"
+                type="text"
+                inputMode="url"
                 autoComplete="off"
                 spellCheck="false"
                 width="flex"
@@ -438,7 +556,10 @@ export function CreateAppDialog() {
                 hint="muted"
                 ring="seamless"
                 className="font-mono text-sm"
-                placeholder="https://github.com/owner/repo"
+                placeholder="github.com/owner/repo"
+                onBlur={() => {
+                  normalizeRepositoryUrlInput();
+                }}
                 onInput={() => {
                   // Any edit invalidates the previous check; the user must
                   // click again. Without this they could verify repo A, edit
@@ -573,7 +694,13 @@ export function CreateAppDialog() {
             >
               Cancel
             </button>
-            <Button type="submit" id="create-submit" layout="flex">
+            <Button
+              type="submit"
+              id="create-submit"
+              layout="flex"
+              disabledStyle="block"
+              disabled={quotaBlocksCreation}
+            >
               {mode === 'import' ? 'Import' : 'Create'}
             </Button>
           </div>

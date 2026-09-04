@@ -355,7 +355,7 @@
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "a6530980cc1485e6e7d5",
+      "fingerprint": "f42a87aa607f67670a39",
       "count": 1,
       "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
     },

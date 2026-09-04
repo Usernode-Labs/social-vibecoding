@@ -618,7 +618,7 @@ test('priority / category are a VISIBLE no-op on session cards', () => {
   // A dev session carries no such metadata, so hiding it would be silently
   // wrong — it stays, and the column SAYS why the filter didn't apply.
   assert.match(html, /Dark mode work/, 'the session survives an inapplicable filter');
-  assert.match(html, /Dev sessions don&#x27;t carry priority, category or assignee/);
+  assert.match(html, /Regular dev sessions don&#x27;t carry priority, category or assignee/);
   assert.match(html, /not filtered by priority/);
 
   // The predicate itself keeps the attribute filters as an explicit no-op.
@@ -636,6 +636,50 @@ test('a named person filters sessions by author while Unassigned stays a no-op',
   assert.equal(AppView._devCardMatches('session', session, { ...none, assignee: 'sam' }), false);
   assert.equal(AppView._devCardMatches('session', session,
     { ...none, assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED }), true);
+});
+
+test('an imported Underway PR uses proposal attributes, not regular-session exemptions', () => {
+  const AppView = makeAppView();
+  const imported = {
+    id: 88,
+    source: 'imported',
+    session_title: 'Imported checks work',
+    username: 'maya',
+    priority: { top: 'high', count: 1 },
+    category: { top: 'bug', count: 1 },
+    assignee: { top: 'sam', count: 1 },
+  };
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, priority: 'high', category: 'bug', assignee: 'sam' }), true);
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, priority: 'low' }), false);
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED }), false);
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, needsVote: true }), false, 'voting has not started yet');
+});
+
+test('imported Underway cards do not trigger the regular-session filter exception note', () => {
+  const AppView = makeAppView();
+  AppView._ghIssues = [];
+  AppView._envIssueNumbers = new Set();
+  AppView._proposals = [];
+  AppView._govProposals = [];
+  AppView._merged = [];
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedTotal = 0;
+  AppView._mergedHasMore = false;
+  AppView._archivedSessions = [];
+  AppView._sharedSessions = [];
+  AppView._mySessions = [{
+    id: 88, source: 'imported', session_title: 'Imported checks work', status: 'active',
+    priority: { top: 'high', count: 1 },
+    created_at: '2026-06-01T01:00:00Z', last_activity_at: '2026-06-01T01:00:00Z',
+  }];
+  AppView._kanbanFilters = { ...none, priority: 'high' };
+  const html = kanbanHtml(AppView);
+  assert.match(html, /Imported checks work/);
+  assert.doesNotMatch(html, /Regular dev sessions don&#x27;t carry/);
 });
 
 // ── #1112: the column is titled "Underway", keyed `inprogress` ─────────────

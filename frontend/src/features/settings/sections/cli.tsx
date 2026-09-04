@@ -1,5 +1,6 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 
+import { CliSetupGuide } from '../cli-setup-guide';
 import { CliTokensList } from '../cli-tokens-list';
 
 /**
@@ -17,6 +18,7 @@ export function CliSection() {
         <SectionHeading title={<>CLI &amp; coding-agent access</>}>
           Credentials approved for the Social Vibecoding CLI, Codex, Claude Code, or OpenCode. Revoking an active credential takes effect immediately.
         </SectionHeading>
+        <CliSetupGuide />
         <div id="cli-tokens-list" className="space-y-2">
           <CliTokensList />
         </div>

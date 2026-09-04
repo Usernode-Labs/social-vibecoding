@@ -12,6 +12,17 @@
  *
  * Shape:
  *   {
+ *     "description": "...",                    // one line, what the app IS.
+ *                                             // The launcher's Discover cards
+ *                                             // draw it; there is no such
+ *                                             // column on `apps`, and the
+ *                                             // directory derives a meta line
+ *                                             // instead. Read off the stored
+ *                                             // manifest snapshot by the
+ *                                             // client and capped at 160
+ *                                             // chars there; absent on most
+ *                                             // apps, and the card simply
+ *                                             // draws no sentence.
  *     "secrets": [
  *       {
  *         "key": "ECHO_APP_SECRET_KEY",       // env var name
@@ -91,7 +102,15 @@ const MANIFEST_FILENAME = 'dapp.json';
 // 20-slot floor: the previous ceiling had no room for a single further
 // check, so any proposal declaring one at all was blocked. That is the
 // state this bump clears, not one feature's three checks.
-const MAX_DECLARED_TESTS = 480;
+//
+// Raised 480 → 530 when the manifest reached 461 and crossed the 20-slot
+// floor again (19 left), which made the unit suite red on main itself and so
+// on every proposal after it. Same arithmetic, same coupled move: 530 checks
+// at ~3.9s over a pool of 8 is ~258s of ideal work, so TESTS_DEADLINE_MS
+// goes 470s → 520s to keep the 2x margin (clears it by ~3s), and because the
+// deadline has passed 480s this time RUN_TIMEOUT_MS moves too, 600s → 640s,
+// to stay the required 120s above it.
+const MAX_DECLARED_TESTS = 530;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

@@ -267,8 +267,14 @@ test('the three up-one-level screens pass their own target', () => {
     '…and that state alone gets the chevron; the rest get the house');
   assert.match(adminConsoleJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
     'the admin section chevron pops to the console menu; its root gets home');
-  assert.match(settingsJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#settings' : undefined\)/,
-    'the settings section chevron pops to the settings menu; its root gets home');
+  // Settings resolves its section target through _upHref (#1565): the menu
+  // when the menu is what sits below the entry, and the address the viewer
+  // came from when they arrived from elsewhere in the app. Its root still
+  // gets the house.
+  assert.match(settingsJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/,
+    'the settings section chevron points where its back press goes');
+  assert.match(settingsJs, /_upHref\(\) \{[\s\S]{0,400}return '#settings';/,
+    '…which is still the menu unless something else of ours is below');
 });
 
 // ── The converted back controls ────────────────────────────────────────

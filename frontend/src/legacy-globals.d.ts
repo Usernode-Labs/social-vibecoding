@@ -76,6 +76,11 @@ declare global {
         id?: number;
         username?: string;
         avatarUrl?: string | null;
+        appCreationQuota?: {
+          used: number | null;
+          limit: number | null;
+          remaining: number | null;
+        };
         [key: string]: unknown;
       } | null;
       eventsWs?: WebSocket | null;

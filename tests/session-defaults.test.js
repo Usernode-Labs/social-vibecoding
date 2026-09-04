@@ -34,7 +34,7 @@ function makePool({ prefRow = null, credRow = null }) {
 const BASE_CONFIG = {
   codexOpenrouterEnabled: true,
   openrouterBetaUserIds: [],
-  openrouterDefaultCodexModel: 'openai/gpt-5.3-codex',
+  openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash',
   dataEncryptionKey: 'test-data-key',
 };
 
@@ -83,7 +83,7 @@ test('no preference and a usable OpenRouter key → live-catalog OpenRouter defa
   };
   credentialStore.readMetadata = async () => ({ id: 2, status: 'valid', revision: 5 });
   credentialStore.readSecret = async () => 'sk-or-v1-existing';
-  agentModels.listOpenRouterModels = async () => ({ recommendedModelId: 'z-ai/glm-5.3' });
+  agentModels.listOpenRouterModels = async () => ({ recommendedModelId: 'z-ai/glm-5.3-flash' });
   t.after(() => {
     credentialStore.readMetadata = originals.readMetadata;
     credentialStore.readSecret = originals.readSecret;
@@ -91,11 +91,11 @@ test('no preference and a usable OpenRouter key → live-catalog OpenRouter defa
   });
   const { pool } = makePool({ prefRow: null });
   const out = await resolveDefaultAgentPreference(pool, 7, {
-    ...BASE_CONFIG, openrouterDefaultCodexModel: 'z-ai/glm-5.3',
+    ...BASE_CONFIG, openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash',
   });
   assert.deepEqual(out, {
     backend: 'codex_openrouter', provider: 'openrouter',
-    model: 'z-ai/glm-5.3', reasoningEffort: null,
+    model: 'z-ai/glm-5.3-flash', reasoningEffort: null,
   });
 });
 
@@ -124,7 +124,7 @@ test('Codex default without model → operator default model used', async () => 
   });
   const out = await resolveDefaultAgentPreference(pool, 7, BASE_CONFIG);
   assert.equal(out.backend, 'codex_openrouter');
-  assert.equal(out.model, 'openai/gpt-5.3-codex');
+  assert.equal(out.model, 'z-ai/glm-5.3-flash');
 });
 
 test('Codex default with no model and no operator default → Claude fallback', async () => {

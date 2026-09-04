@@ -1,4 +1,5 @@
 {
+  "description": "Build small web apps together — every change is proposed, previewed and merged by a group vote.",
   "icon": {
     "emoji": "🏗️"
   },
@@ -375,7 +376,7 @@
       "key": "OPENROUTER_DEFAULT_CODEX_MODEL",
       "group": "AI & coding agents",
       "required": false,
-      "default": "z-ai/glm-5.3",
+      "default": "z-ai/glm-5.3-flash",
       "description": "Preferred OpenRouter model for new coding-agent sessions. The complete key-visible catalog remains selectable; if this slug is absent, Usernode safely recommends another compatible model."
     },
     {
@@ -555,9 +556,9 @@
       "expectText": "[Mock] Your in-progress session"
     },
     {
-      "name": "The Improve panel: a busy change row pulses from live state (#1038)",
+      "name": "The Improve panel: a busy change row spins the standard arc from live state (#1038, #1597)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel a[href$=\"/sessions/990102\"] .animate-pulse"
+      "expectSelector": "#improve-panel a[href$=\"/sessions/990102\"] .dc-status-spinner-arc"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
@@ -593,14 +594,14 @@
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-submit:not(:disabled)"
     },
     {
-      "name": "Challenges: EVERY row draws a track, and the card holds them (#911, #980)",
+      "name": "Challenges: a counted challenge draws its meter inside the pill (#911, #980)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
+      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card .home-challenge-pill .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
     },
     {
-      "name": "Challenges: the season ring leads the card, and a yes-or-no row still draws a track",
+      "name": "Challenges: the season ring leads the plate, and a yes-or-no card draws no meter",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-panel-row:not(:has(.tabular-nums)) .home-panel-bar-track[role=progressbar][aria-valuemax=\"1\"]"
+      "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-challenge-card:not(:has(.home-panel-bar-track)) .home-challenge-pill .home-panel-glyph"
     },
     {
       "name": "Challenges: with nothing running it says so, and shows only that (#947)",
@@ -843,20 +844,20 @@
     },
     {
       "name": "The Create app section sits below the grid and opens the create flow",
-      "path": "/?demo=1",
+      "path": "/?demo=1&shot=create-enabled",
       "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"flex-row\"]",
       "expectText": "Create app"
     },
     {
       "name": "The Create app widget is present but locked without app quota",
       "path": "/?demo=1&shot=create-disabled",
-      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn[aria-disabled=\"true\"]",
+      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn:not([disabled])",
       "expectText": "Create app"
     },
     {
-      "name": "Discover renders both lanes at every width: curated tiles, then Popular",
+      "name": "Discover renders both lanes at every width: curated cards, then Popular",
       "path": "/?demo=1",
-      "expectSelector": "#home-body [data-panel-slot=\"discover\"] .home-panel .home-discover-popular .app-card:not(:has(.users-badge))",
+      "expectSelector": "#home-body [data-panel-slot=\"discover\"] .home-panel .home-discover-popular.home-discover-rail .app-card.home-discover-card:not(:has(.users-badge))",
       "expectText": "Browse all apps"
     },
     {
@@ -945,6 +946,12 @@
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-import-state=\"idle\"]",
       "expectText": "Create a new app"
+    },
+    {
+      "name": "Create-app modal shows current app quota and usage (#1611)",
+      "path": "/?shot=create-quota#create",
+      "expectSelector": ".un-modal #create-app-quota[data-quota-state=\"available\"]",
+      "expectText": "1 of 2 app slots used"
     },
     {
       "name": "Issue cards keep ONE primary action; the claim moves into the ⋯ menu",
@@ -1537,9 +1544,9 @@
       "expectSelector": "#dev-actions #dev-kanban-filterbar #dev-kanban-search"
     },
     {
-      "name": "An Activity row can be replied to without opening it",
+      "name": "An Activity row has an auto-growing reply box and send arrow (#1584)",
       "path": "/?demo=1#app/usernode-2d5619/activity",
-      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-thread input[aria-label=\"Reply to this item\"]"
+      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
     },
     {
       "name": "The view strip marks Activity as the one you are on",
@@ -1594,55 +1601,63 @@
       "expectText": "What issues are open right now?"
     },
     {
-      "name": "Stopped composer hides the save icon — you can just send (#810)",
+      "name": "Stopped composer offers Send, not save — you can just send (#810)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-form #dc-save-draft-btn[hidden]"
+      "expectSelector": "#dc-form .dc-card-row #dc-send-btn.dc-circle-send[aria-label=\"Send\"]"
     },
     {
-      "name": "Mid-turn composer ships the save-as-draft icon beside Stop (#798, #810)",
+      "name": "Mid-turn with an EMPTY box, the one circle is Stop (#798, #810)",
       "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-form #dc-save-draft-btn:not([hidden])",
+      "expectSelector": "#dc-form .dc-card-row #dc-send-btn.dc-btn-stop[aria-label=\"Stop\"]",
       "expectText": "sending unlocks when Claude finishes"
     },
     {
-      "name": "Mid-turn shortcut hint says Ctrl+Enter saves a draft (#920)",
+      "name": "…and typing turns that same circle into a green Save (#810)",
+      "path": "/?shot=busy-typed#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form .dc-card-row #dc-send-btn.dc-circle-save[aria-label=\"Save as draft\"]"
+    },
+    {
+      "name": "Mid-turn, the busy placeholder is what names saving for later (#920)",
       "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-shortcut-hint",
-      "expectText": "to save as draft"
+      "expectSelector": "#dc-input[placeholder*=\"save it for later\"]"
     },
     {
-      "name": "Stopped composer's shortcut hint still says Ctrl+Enter sends (#920)",
+      "name": "Mid-turn venue selector visibly explains why it is unavailable (#1593)",
+      "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-venue-select:disabled[data-venue-busy=\"1\"] .dc-venue-busy",
+      "expectText": "Thinking…"
+    },
+    {
+      "name": "The circle carries the keystroke the retired hint line named (#920)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-shortcut-hint",
-      "expectText": "to send"
+      "expectSelector": "#dc-send-btn[title=\"Send (Ctrl+Enter)\"]"
     },
     {
-      "name": "The chat-model picker and the credit meter share one line (#1353)",
+      "name": "The credit meter and the chat-model picker share one line (#1353)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-venue-detail ~ #dc-budget"
+      "expectSelector": ".dc-card-row > #dc-budget ~ #dc-venue-detail"
     },
     {
-      "name": "The attach button rides with the suggested replies (#1353)",
+      "name": "The suggested replies sit on the ground ABOVE the card (#1353)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": ".dc-composer-actions > #dc-attach-btn + #dc-quick-replies"
+      "expectSelector": ".dc-composer-actions:not(:has(#dc-attach-btn)) + #dc-form.dc-card"
     },
     {
-      "name": "…and that row sits directly above the send button (#1353)",
+      "name": "…and the attach control moved onto the card's own row (#1353)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": ".dc-composer-actions ~ #dc-form #dc-send-btn",
-      "expectText": "Send"
+      "expectSelector": "#dc-form.dc-card > .dc-card-row > #dc-attach-btn"
     },
     {
-      "name": "Opus 5 reads as the general coding pick, not big-or-tricky-only (#809)",
+      "name": "The composer's picker names the model and nothing else (#1589)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-model-select option[value=\"claude-opus-5\"]",
-      "expectText": "general coding work"
+      "expectText": "Opus 5"
     },
     {
-      "name": "Fable 5 reads as design, taste, and difficult coding",
+      "name": "The picker's longest option is a name, so the row fits one line (#1589)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-model-select option[value=\"claude-fable-5\"]",
-      "expectText": "design, taste, and difficult coding"
+      "expectText": "Fable 5"
     },
     {
       "name": "Saved drafts render above the composer with send/edit/trash (#798)",
@@ -2191,6 +2206,12 @@
       "expectSelector": "[data-settings-section=\"password\"]:not(.hidden) #cp-save"
     },
     {
+      "name": "OpenRouter settings name GLM 5.3 Flash as the preferred coding model (#1592)",
+      "path": "/#settings/openrouter",
+      "expectSelector": "[data-settings-section=\"openrouter\"]:not(.hidden) #settings-openrouter-models-wrap",
+      "expectText": "GLM 5.3 Flash"
+    },
+    {
       "name": "Settings deep-links App AI permissions with the seeded demo grants",
       "path": "/?demo=1#settings/app-ai",
       "expectText": "Staging demo app A"
@@ -2201,10 +2222,10 @@
       "expectSelector": "[data-settings-section=\"agent-files\"]:not(.hidden) #agent-files-instructions-list [data-agent-file]"
     },
     {
-      "name": "Settings deep-links CLI & coding-agent access (the credential list itself stays server-gated on staging)",
-      "path": "/?demo=1#settings/cli",
-      "expectText": "CLI & coding-agent access",
-      "expectSelector": "[data-settings-nav=\"cli\"][aria-selected=\"true\"]"
+      "name": "Settings CLI access empty state explains how to start a local coding agent (#1609)",
+      "path": "/?demo=cli-empty#settings/cli",
+      "expectText": "Set up a local coding agent",
+      "expectSelector": "[data-settings-section=\"cli\"]:not(.hidden) #cli-setup-guide ol"
     },
     {
       "name": "Settings deep-links the Language section",
@@ -2425,11 +2446,6 @@
       "expectSelector": "#profile-screen:not(.hidden) #profile-root"
     },
     {
-      "name": "Home carries the entrance to Profile, without the native bridge",
-      "path": "/",
-      "expectSelector": "#home-account-row"
-    },
-    {
       "name": "Topochain leaderboard shows standings, not a red error, between events",
       "path": "/#leaderboard/topochain",
       "expectSelector": "#leaderboard-screen:not(.hidden) #tc-lb-body :is(table, [data-tc-lb-empty])"
@@ -2582,9 +2598,9 @@
       "expectText": "Spinning the preview back up…"
     },
     {
-      "name": "The bounty row states the weekly kudos allowance (#964)",
+      "name": "The bounty row says what a kudos bounty does (#1582)",
       "path": "/?shot=feedback",
-      "expectText": "pledges 1 of your weekly kudos"
+      "expectText": "encourages someone to take it up and solve it"
     },
     {
       "name": "A spent allowance says so instead of showing a count (#964)",
@@ -2858,6 +2874,12 @@
       "expectSelector": "[role=\"menuitem\"][title*=\"pushes back onto the same proposal\"]"
     },
     {
+      "name": "An already-proposed change cannot be proposed twice (#1602)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990406",
+      "expectSelector": "#dc-pr-card .dc-pr-btn-promote:disabled",
+      "expectText": "Already proposed"
+    },
+    {
       "name": "An archived session starts new work instead of resurrecting itself (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990408",
       "expectSelector": "[role=\"menuitem\"][title*=\"comes back as its own proposal\"]"
@@ -2956,9 +2978,9 @@
       "expectSelector": "#dev-feed .dev-feed-entry > .gc-vote-item"
     },
     {
-      "name": "Feed issue rows carry an inline-comment slot",
+      "name": "Feed issue rows show recent comments with relative ages (#1585)",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-comments[data-comments-for]"
+      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time"
     },
     {
       "name": "The page ground carries the reskin's grey, not the old white (#1400)",
@@ -2996,6 +3018,11 @@
       "path": "/?demo=1&sort=active#apps",
       "expectSelector": "#browse-list[data-sort=\"active\"] .browse-row",
       "expectText": "merged in 30d"
+    },
+    {
+      "name": "Dark mode pins by deep link and paints the launcher on the inverted ground",
+      "path": "/?shot=dark",
+      "expectSelector": "html.dark #home-screen:not(.hidden)"
     }
   ],
   "governance": {

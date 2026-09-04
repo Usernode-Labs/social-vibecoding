@@ -3716,6 +3716,144 @@ test('an update with no GitHub link, or no GitHub at all, is refused before the 
   assert.deepEqual(calls, [], 'the attribution gate is never skipped — the submission is refused instead');
 });
 
+// ── The work order a shared session strands ────────────────────────────
+//
+// `share: true` leaves the work order OPEN on purpose — the whole point is
+// that the agent keeps committing onto the in-progress card — and stamps
+// `session_id` on the row on its way past. The promote that ENDS that
+// arrangement is documented as `submit_work({ proposalId, branch, propose:
+// true })` and carries no taskId, so the closing UPDATE, which is guarded by
+// a task resolved only from `taskId`, never ran. Every share -> promote
+// leaked one of the ten open-work-order slots for the fourteen days until it
+// expired; an account hit the cap holding ten rows it could not see, none of
+// them work it was still doing.
+//
+// The fix is a second handle on the reservation — the session id — and these
+// tests pin what it may and may not close.
+
+const SESSION_TASK_SQL = "AND session_id = $2 AND status = 'open'";
+
+test('a shared session\'s open work order is found by its session id', async () => {
+  const queries = [];
+  const pool = fakePool([[SESSION_TASK_SQL, [{ id: 91, session_id: 512 }]]], queries);
+  const found = await svc.findOpenTaskBySession(pool, 3, 512);
+  assert.equal(found.id, 91);
+  assert.deepEqual(queries[0].params, [3, 512], 'scoped to the owner, never to the session alone');
+  // A submission is past the point of no return by the time this runs, so a
+  // lookup that cannot answer must degrade to "no task", never throw.
+  const broken = { async query() { throw new Error('pg is down'); } };
+  assert.equal(await svc.findOpenTaskBySession(broken, 3, 512), null);
+  // And a garbage id never reaches the database at all.
+  const untouched = [];
+  const spy = fakePool([], untouched);
+  for (const bad of [null, undefined, 0, -1, 'abc', 1.5]) {
+    assert.equal(await svc.findOpenTaskBySession(spy, 3, bad), null, String(bad));
+  }
+  assert.deepEqual(untouched, []);
+});
+
+test('closing a session\'s work order stamps it submitted, and is a no-op when there is none', async () => {
+  const queries = [];
+  const pool = fakePool([
+    [SESSION_TASK_SQL, [{ id: 91, session_id: 512 }]],
+    ['UPDATE external_agent_tasks', []],
+  ], queries);
+  const closed = await svc.closeTaskForSession(pool, 3, 512, {
+    branch: 'my-fix', submittedVia: 'update_branch', source: 'work_order', clientId: 'cli-1',
+  });
+  assert.equal(closed, 91);
+  const update = queries.find((q) => q.sql.includes('UPDATE external_agent_tasks'));
+  assert.match(update.sql, /SET status = 'submitted'/);
+  // Owner AND session AND still-open, all three: a row somebody else's
+  // submission closed in between must not be re-stamped by this one.
+  assert.match(update.sql, /WHERE id = \$1 AND session_id = \$2 AND user_id = \$3 AND status = 'open'/);
+  assert.deepEqual(update.params, [91, 512, 3, 'my-fix', 'update_branch', 'work_order', 'cli-1']);
+  // An unrecognised submittedVia is dropped rather than sent — the column
+  // carries a CHECK constraint, and a write that violates it would throw
+  // inside a call whose work has already landed.
+  const q2 = [];
+  const pool2 = fakePool([
+    [SESSION_TASK_SQL, [{ id: 92, session_id: 512 }]],
+    ['UPDATE external_agent_tasks', []],
+  ], q2);
+  await svc.closeTaskForSession(pool2, 3, 512, { submittedVia: 'made-up' });
+  assert.equal(q2.find((q) => q.sql.includes('UPDATE')).params[4], null);
+
+  // Nothing open: no write, and no complaint.
+  const q3 = [];
+  const none = fakePool([[SESSION_TASK_SQL, []]], q3);
+  assert.equal(await svc.closeTaskForSession(none, 3, 512, {}), null);
+  assert.equal(q3.filter((q) => q.sql.includes('UPDATE')).length, 0);
+});
+
+// The two halves of the leak, through submitWork itself. `taskId` is absent
+// on both — that is the documented shape for continuing a proposal, not an
+// omission.
+function submitUpdateNoTask({ targetKind, taskRows }) {
+  const queries = [];
+  const pool = fakePool([
+    ['JOIN apps a ON a.id = s.app_id', [{ app_slug: 'recipe-box' }]],
+    [SESSION_TASK_SQL, taskRows],
+    ['UPDATE external_agent_tasks', []],
+  ], queries);
+  return withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, proposalId: 512, branch: 'my-fix', source: 'work_order',
+      updateProposal: async () => ({
+        ...UPDATE_OK, body: { ...UPDATE_OK.body, targetKind },
+      }),
+    }
+  )).then((result) => ({ result, queries }));
+}
+
+test('an update that lands on a proposal closes the work order its share left open', async () => {
+  const { result, queries } = await submitUpdateNoTask({
+    targetKind: 'proposal', taskRows: [{ id: 93, session_id: 512 }],
+  });
+  assert.equal(result.ok, true);
+  const update = queries.find((q) => q.sql.includes('UPDATE external_agent_tasks'));
+  assert.ok(update, 'the reservation is finished — the work is in front of the group');
+  assert.equal(update.params[0], 93);
+});
+
+test('an update that lands on a session leaves it open — share\'s contract is exactly that', async () => {
+  const { result, queries } = await submitUpdateNoTask({
+    targetKind: 'session', taskRows: [{ id: 94, session_id: 512 }],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(queries.filter((q) => q.sql.includes('UPDATE external_agent_tasks')).length, 0,
+    'nobody is voting on this yet; the agent is meant to keep committing');
+  // It is not even LOOKED UP — the close is the only reason to ask.
+  assert.equal(queries.filter((q) => q.sql.includes(SESSION_TASK_SQL)).length, 0);
+});
+
+test('an explicit taskId still closes its own row, whatever the push landed on', async () => {
+  // The pre-existing contract, unchanged: a work order submitted BY ID is
+  // finished when it is submitted. Only the taskId-less shape was leaking.
+  const { queries } = await submitUpdateWork({}, {
+    updateProposal: async () => ({ ...UPDATE_OK, body: { ...UPDATE_OK.body, targetKind: 'session' } }),
+  });
+  const update = queries.find((q) => q.sql.includes('UPDATE external_agent_tasks'));
+  assert.ok(update);
+  assert.equal(update.params[0], 44);
+});
+
+test('the schema releases the slots the leak already stranded', () => {
+  const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
+  const sweep = schema.slice(schema.indexOf('Release the slots a shared session stranded'));
+  const from = sweep.indexOf('UPDATE external_agent_tasks t');
+  const stmt = sweep.slice(from, sweep.indexOf(';', from) + 1);
+  assert.match(stmt, /FROM chat_sessions s/);
+  assert.match(stmt, /t\.status = 'open'/);
+  // Forward-only: a session still being BUILT keeps its reservation, which
+  // is the whole point of share leaving it open.
+  assert.match(stmt, /s\.status NOT IN \('active', 'paused'\)/);
+  // And an archived session's work was put away, not submitted — recording
+  // it as submitted would claim something that did not happen.
+  assert.match(stmt, /WHEN s\.status = 'archived' THEN 'abandoned' ELSE 'submitted' END/);
+});
+
 // ── pushForkBranchToAppBranch: the gates that run before any git ────────
 
 // A public-read stub shaped like githubPublic: { ok, status, body }.
