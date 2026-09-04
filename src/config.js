@@ -364,6 +364,14 @@ function load() {
     waitlistFollowXUrl: process.env.WAITLIST_FOLLOW_X_URL || '',
     waitlistFollowLinkedinUrl: process.env.WAITLIST_FOLLOW_LINKEDIN_URL || '',
     waitlistFollowInstagramUrl: process.env.WAITLIST_FOLLOW_INSTAGRAM_URL || '',
+    // Optional shared secrets for partners who proxy waitlist signups
+    // server-to-server, so their whole audience does not share one IP
+    // budget. Comma-separated `label:secret` pairs; the label names the
+    // caller in throttle logs and in its own rate-limit bucket. Unset
+    // means the feature is off and every caller is anonymous — it must
+    // never make the public join endpoint fail. See
+    // src/services/waitlist-integrator.js.
+    waitlistIntegrationKeys: process.env.WAITLIST_INTEGRATION_KEYS || '',
     // Account-linking OAuth is separate from the waitlist. GitHub requires
     // a dedicated OAuth app because an OAuth app has one callback URL. X can
     // reuse the waitlist client when its app has both callbacks registered.
@@ -679,6 +687,9 @@ function load() {
   console.log(`  IDENTITY_CREDIT_POLICY=${config.identityCreditPolicy}`);
   console.log(`  GITHUB_LINK=${config.githubLinkClientId && config.githubLinkClientSecret ? '(enabled)' : '(disabled)'}`);
   console.log(`  X_LINK=${(config.xLinkClientId && config.xLinkClientSecret) || (config.waitlistXClientId && config.waitlistXClientSecret) ? '(enabled)' : '(disabled)'}`);
+  console.log(`  WAITLIST_CONNECT=github:${config.waitlistGithubClientId && config.waitlistGithubClientSecret ? 'on' : 'off'} x:${config.waitlistXClientId && config.waitlistXClientSecret ? 'on' : 'off'} linkedin:${config.waitlistLinkedinClientId && config.waitlistLinkedinClientSecret ? 'on' : 'off'}`);
+  console.log(`  WAITLIST_FOLLOW=x:${config.waitlistFollowXUrl ? 'set' : 'unset'} linkedin:${config.waitlistFollowLinkedinUrl ? 'set' : 'unset'} instagram:${config.waitlistFollowInstagramUrl ? 'set' : 'unset'}`);
+  console.log(`  WAITLIST_INTEGRATION_KEYS=${(() => { const n = require('./services/waitlist-integrator').parseIntegrationKeys(config.waitlistIntegrationKeys).length; return n ? `(${n} configured)` : '(not set)'; })()}`);
   console.log(`  LOG_LEVEL=${config.logLevel}`);
   console.log(`  CLI_AUTH=${config.cliAuthEnabled ? config.cliAuthOrigin : '(disabled in staging)'}`);
   console.log(`  MAX_APPS=${config.maxApps}`);

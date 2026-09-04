@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const log = require('../services/logger');
 const { clientIp } = require('../services/client-ip');
@@ -21,16 +22,30 @@ function retryPhrase(seconds) {
 // skips the limiter entirely for FULL admins — gated on canAdminWrite,
 // not isAdmin, so view-only admins stay limited like regular users (same
 // gate as the app-quota bypass, issue #311).
-function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, exemptAdmins = false }) {
+// `skipSuccessfulRequests` is the mirror of skipFailedRequests: it refunds
+// anything that finishes < 400, so the bucket counts only FAILURES. Right
+// where the abuse being bounded is itself a stream of failures (guessing an
+// unguessable token) and honest traffic essentially never produces one.
+//
+// `key` overrides how a request is bucketed — return a string to use it, or
+// a falsy value to fall through to the keyByUser / IP default below. That
+// fallthrough is load-bearing: the waitlist token bucket keys on the path
+// token, and one route in the same family carries no token.
+function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, key = null }) {
   const options = {
     windowMs,
     max,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     skipFailedRequests,
+    skipSuccessfulRequests,
     // `ipKeyGenerator` collapses IPv6 to a subnet prefix so a single client
     // can't bypass the limit by rotating addresses within its /56.
-    keyGenerator: (req) => {
+    keyGenerator: (req, res) => {
+      if (key) {
+        const custom = key(req, res);
+        if (custom) return String(custom);
+      }
       if (keyByUser && req.user?.id) return `user:${req.user.id}`;
       return ipKeyGenerator(clientIp(req));
     },
@@ -439,27 +454,119 @@ const topochainMobilePushRegistrationLimiter = makeLimiter({
   message: 'Too many push registration updates. Slow down for a minute.',
 });
 
-// Public waitlist join: 5 / 15 min / IP. Anonymous write endpoint on the
-// landing page — tight enough to stop bulk email harvesting/spam, loose
-// enough that a genuine visitor retrying a typo never hits it.
-const waitlistJoinLimiter = makeLimiter({
-  windowMs: 15 * 60 * 1000,
+const WAITLIST_WINDOW_MS = 15 * 60 * 1000;
+const MORE_TOKEN_RE = /^[a-f0-9]{48}$/;
+
+// Public waitlist join, no integration key: 5 / 15 min / IP. Anonymous write
+// endpoint on the landing page — tight enough to stop bulk email harvesting
+// and spam, loose enough that a genuine visitor retrying a typo never hits
+// it. This is the bucket every unkeyed caller lands in, unchanged.
+const waitlistJoinAnonLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
   max: 5,
   name: 'waitlist-join',
   message: 'Too many signups from this address. Try again in a few minutes.',
 });
 
+// A trusted integrator (see services/waitlist-integrator) proxies many
+// distinct people through one server address, so the IP bucket above would
+// cap an entire agency at five signups per window. Two buckets replace it,
+// and BOTH are charged:
+//
+//   * per end user, when the integrator forwards a usable visitor address —
+//     the same 5 / 15 min a direct visitor gets, so a keyed request is never
+//     LOOSER for the person making it;
+//   * per client, always — a 200 / 15 min ceiling so a leaked key is a
+//     bounded faucet rather than an open one.
+//
+// With no forwarded address there is nothing finer to key on, so the client
+// ceiling is the only bound; that is the cost of not forwarding one.
+const waitlistJoinClientLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 200,
+  name: 'waitlist-join-client',
+  key: (req) => `wl:${req.waitlistIntegrator?.label || 'unknown'}`,
+  message: 'Too many signups from this integration. Try again in a few minutes.',
+});
+
+const waitlistJoinClientUserLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 5,
+  name: 'waitlist-join-client-user',
+  key: (req) => (req.waitlistEndUserIp
+    ? `wl:${req.waitlistIntegrator?.label || 'unknown'}:${req.waitlistEndUserIp}`
+    : null),
+  message: 'Too many signups from this address. Try again in a few minutes.',
+});
+
+// Dispatch on trusted-integrator status, same shape as issueKindLimiter.
+// waitlistIntegratorAuth runs earlier in the chain and only ever ATTACHES
+// req.waitlistIntegrator, so an absent/expired/wrong key simply falls back
+// to the anonymous bucket instead of erroring.
+function waitlistJoinLimiter(req, res, next) {
+  if (!req.waitlistIntegrator) return waitlistJoinAnonLimiter(req, res, next);
+  return waitlistJoinClientLimiter(req, res, (err) => {
+    if (err) return next(err);
+    if (!req.waitlistEndUserIp) return next();
+    return waitlistJoinClientUserLimiter(req, res, next);
+  });
+}
+
 // Waitlist token routes (confirm link, stage-2 survey read/save): these are
-// authenticated by an unguessable 48-hex token, so the IP bucket only has to
+// authenticated by an unguessable 48-hex token, so the bucket only has to
 // bound token scanning, not stop a genuine visitor. Kept separate from
 // waitlist-join on purpose — one real journey (join, survey save, emailed
 // confirm click, survey reload) makes 5+ requests, which used to exhaust the
 // 5/15-min join bucket and bounce the user's own confirm link (#1296).
+//
+// Keyed on the TOKEN, not the address: a shared exit address (an office, a
+// carrier NAT, a corporate proxy) put every stage-2 visitor in one 60-request
+// bucket, and the #more screen polls while it waits for a confirmation. One
+// person's poll could throttle a stranger's. Falls back to the IP key when
+// there is no path token, which is how POST /confirm (email + code, no token)
+// stays covered by this same limiter.
 const waitlistTokenLimiter = makeLimiter({
-  windowMs: 15 * 60 * 1000,
-  max: 60,
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 240,
   name: 'waitlist-token',
+  key: (req) => (MORE_TOKEN_RE.test(req.params?.token || '') ? `token:${req.params.token}` : null),
+  message: 'Too many requests for this link. Try again in a few minutes.',
+});
+
+// Per-token keying is not by itself an enumeration defence: a scanner
+// presents a DIFFERENT token every request, so it would get a fresh bucket
+// each time. This is the half that bounds scanning, and it is the reason the
+// two are mounted together on every token route.
+//
+// skipSuccessfulRequests is what makes 40 a safe number: a scan necessarily
+// 404s, while an honest visitor holding a real token essentially never fails,
+// so their reads and saves are refunded and never approach the ceiling.
+const waitlistTokenScanLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 40,
+  name: 'waitlist-token-scan',
+  skipSuccessfulRequests: true,
   message: 'Too many waitlist requests from this address. Try again in a few minutes.',
+});
+
+// POST /api/public/waitlist/confirm carries an email and a six-digit code
+// and no token, so the scan limiter above is its only per-address bound —
+// and 40 failures is far too much room for a 6-digit code against one known
+// address. Bucket per address instead: 10 attempts / 15 min.
+//
+// The key is a SHA-256 of the normalized email, never the address itself:
+// limiter keys live in memory keyed by string and show up in nothing that is
+// logged, and a hash keeps it that way while still bucketing exactly.
+const waitlistCodeConfirmLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 10,
+  name: 'waitlist-code-confirm',
+  key: (req) => {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!email) return null;
+    return `email:${crypto.createHash('sha256').update(email).digest('hex')}`;
+  },
+  message: 'Too many code attempts for that address. Try again in a few minutes.',
 });
 
 // Exact public-profile reads deliberately have no directory/search endpoint;
@@ -539,4 +646,4 @@ const userDirectoryLimiter = makeLimiter({
   message: 'Too many directory lookups. Please slow down.',
 });
 
-module.exports = { userDirectoryLimiter, dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistTokenLimiter, mailTestLimiter };
+module.exports = { userDirectoryLimiter, dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, mailTestLimiter };
