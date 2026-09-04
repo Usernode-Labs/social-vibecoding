@@ -272,13 +272,29 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
-  /** The chat-model picker, as data. Null on every venue that has none. */
+  /**
+   * The chat-model picker, as data. Null on every venue that has none.
+   *
+   * NAMES ONLY in the composer (#1589). A native select's closed control
+   * shows the selected option's own text, so `modelOptionText`'s guidance
+   * ("Fable 5: design, taste, and difficult coding") set the control's width:
+   * 276px of a 344px strip on a phone, which pushed the label above it and
+   * the credit meter below it — three lines for a row that holds two things.
+   * Names bring it to 89px and the row fits on one line, measured.
+   *
+   * The guidance is not dropped, it stays where there is room for it: the
+   * Generate-proposal picker — the one a first-timer meets, in a dialog, with
+   * a caption under each option — still renders `modelOptionText`, which is
+   * untouched. That is the same split #1353 drew when it took the caption out
+   * of this strip, and the reason nothing restates it here in a title either:
+   * a viewer reading this control has already chosen.
+   */
   _modelPickerView() {
     if (DevChat._currentVenueId() !== 'usernode-claude') return null;
     return {
       options: Object.entries(DevChat.MODELS).map(([id, meta]) => ({
         id,
-        label: DevChat.modelOptionText(meta),
+        label: (meta && meta.label) || id,
       })),
       selected: DevChat.selectedModel,
     };
@@ -6156,19 +6172,30 @@ const DevChat = {
     };
   },
 
-  /** #990's trailing dots, as data. */
+  /**
+   * #990's trailing dots, as data.
+   *
+   * ONE INDICATOR AT A TIME (#1590). A live step already draws a spinning
+   * arc, names itself and counts its own seconds; dots underneath it are a
+   * second answer to the same question, and on a bounce they climb into the
+   * row above. So the dots are for the window where NOTHING is live — the
+   * ladder frozen on a ✓ while the turn is still running, which is the
+   * silent gap #990 was actually about.
+   *
+   * This started as the same rule for live CODING runs only ("that row
+   * already carries a scrolling log and an ETA"), which was the reasoning
+   * generalised: every live row carries its own cue, the coding run's is
+   * merely the loudest.
+   */
   _activitySpec() {
     if (!DevChat.isStreaming || !DevChat._activity) return null;
-    // Suppressed while a coding agent's own live log is painting progress:
-    // that row already carries a scrolling log and an ETA, so dots pinned
-    // underneath read as noise. The pre-log gap is still covered, because
-    // that status line is not a live CC run yet.
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
       const m = DevChat.messages[i];
       if (!m || m.role !== 'system') continue;
+      // Frozen rows say nothing about what is happening NOW, so keep
+      // walking past them — the same search the live-CC-run check made.
       if (!m._active) continue;
-      if (DevChat._isLiveCcRun(m)) return null;
-      break;
+      return null;
     }
     return { label: DevChat._activity.label || '' };
   },

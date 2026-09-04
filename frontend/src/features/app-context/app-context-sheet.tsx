@@ -323,16 +323,13 @@ export function AppsSwitcherSheet(): ReactNode {
             // modal into a kit that is still dismissing a sheet loses the
             // modal. Same ordering AppTile uses for navigation.
             //
-            // The gate matches the home grid's create tile: without it this
-            // was the one create affordance offered to viewers the server
-            // would refuse, whose only feedback would have been the failure.
+            // At-limit viewers still open the dialog: its quota row explains
+            // the state and its submit button is disabled. Keeping a toast
+            // gate here would make this entry disagree with the home Create
+            // button and hide the exact usage the viewer came to inspect.
             onClick={() => {
               const win = window as any;
               void AppContext.dismissForNav().then(() => {
-                if (win.Home?.canCreate && !win.Home.canCreate()) {
-                  win.PlatformUI?.toast?.(win.Home?.CREATE_DISABLED_HINT || '');
-                  return;
-                }
                 win.App?.showCreateModal?.();
               });
             }}

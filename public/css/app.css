@@ -5888,9 +5888,15 @@ span.gc-vote-btn-icon { cursor: default; }
 /* #990: the trailing activity indicator is the dots on a .dc-status-line row,
    so it sits flush under the step ladder it belongs to instead of indented
    like the retired standalone spinner. Only the doubled vertical padding
-   (2px from the row + 4px from the dots) needs trimming. */
+   (2px from the row + 4px from the dots) needs trimming.
+
+   #1590: the TOP of that trimmed padding has to clear the bounce. A dot is
+   6px and dc-dot-bounce lifts it 6px, so 2px of headroom left it rising 4px
+   out of its own row and into the ladder line above — the overlap that was
+   reported. 6px is exactly the travel, so the dot lands flush with the row's
+   top edge at the peak and nothing crosses it. */
 .dc-activity-line { padding: 0 0 4px; }
-.dc-activity-line .dc-streaming-dots { padding: 2px 0; }
+.dc-activity-line .dc-streaming-dots { padding: 6px 0 2px; }
 .dc-activity-label { font-size: 11px; color: var(--text-muted); }
 
 @keyframes dc-dot-bounce {

@@ -844,14 +844,14 @@
     },
     {
       "name": "The Create app section sits below the grid and opens the create flow",
-      "path": "/?demo=1",
+      "path": "/?demo=1&shot=create-enabled",
       "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"flex-row\"]",
       "expectText": "Create app"
     },
     {
       "name": "The Create app widget is present but locked without app quota",
       "path": "/?demo=1&shot=create-disabled",
-      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn[aria-disabled=\"true\"]",
+      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn:not([disabled])",
       "expectText": "Create app"
     },
     {
@@ -946,6 +946,12 @@
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-import-state=\"idle\"]",
       "expectText": "Create a new app"
+    },
+    {
+      "name": "Create-app modal shows current app quota and usage (#1611)",
+      "path": "/?shot=create-quota#create",
+      "expectSelector": ".un-modal #create-app-quota[data-quota-state=\"available\"]",
+      "expectText": "1 of 2 app slots used"
     },
     {
       "name": "Issue cards keep ONE primary action; the claim moves into the ⋯ menu",
@@ -1527,9 +1533,9 @@
       "expectSelector": "#dev-actions #dev-kanban-filterbar #dev-kanban-search"
     },
     {
-      "name": "An Activity row can be replied to without opening it",
+      "name": "An Activity row has an auto-growing reply box and send arrow (#1584)",
       "path": "/?demo=1#app/usernode-2d5619/activity",
-      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-thread input[aria-label=\"Reply to this item\"]"
+      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
     },
     {
       "name": "The view strip marks Activity as the one you are on",
@@ -1629,16 +1635,16 @@
       "expectText": "Send"
     },
     {
-      "name": "Opus 5 reads as the general coding pick, not big-or-tricky-only (#809)",
+      "name": "The composer's picker names the model and nothing else (#1589)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-model-select option[value=\"claude-opus-5\"]",
-      "expectText": "general coding work"
+      "expectText": "Opus 5"
     },
     {
-      "name": "Fable 5 reads as design, taste, and difficult coding",
+      "name": "The picker's longest option is a name, so the row fits one line (#1589)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-model-select option[value=\"claude-fable-5\"]",
-      "expectText": "design, taste, and difficult coding"
+      "expectText": "Fable 5"
     },
     {
       "name": "Saved drafts render above the composer with send/edit/trash (#798)",

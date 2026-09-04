@@ -26,6 +26,8 @@ const { kanbanHtml, feedHtml } = require('./lib/dev-card-html');
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const APP_VIEW_SRC = read('public/js/app-view.js');
+const BOARD_FRAME_SRC = read('frontend/src/features/dev-board/board-frame.tsx');
+const FILTERS_SRC = read('frontend/src/features/dev-board/kanban-filters.tsx');
 
 function makeAppView(over) {
   const o = over || {};
@@ -177,6 +179,35 @@ test('the flag is cleared when the board stops being this app\'s', () => {
 });
 
 // ── what the surfaces do with it ───────────────────────────────────────
+
+test('the empty filter host reserves the loaded search row height', () => {
+  // The filter island deliberately draws nothing until its first publish.
+  // The frame therefore has to reserve the space itself; relying on the "+"
+  // masked the bug only until that button was hidden for a read-only viewer
+  // of the self-hosted app.
+  assert.match(FILTERS_SRC, /if \(!mounted\) return null;/,
+    'the loading filter island has no child that could hold the row open');
+  assert.match(
+    BOARD_FRAME_SRC,
+    /readOnly && selfHosted \? 'hidden' : ''/,
+    'the add button cannot be the loading spacer for every viewer'
+  );
+
+  const host = BOARD_FRAME_SRC.match(
+    /id="dev-kanban-filterbar" className="([^"]+)"/
+  );
+  assert.ok(host, 'the filter host keeps a literal, auditable class list');
+  const hostClasses = host[1].split(/\s+/);
+  assert.ok(!hostClasses.includes('empty:hidden'),
+    'an empty host must remain in layout while the filters load');
+
+  const reservedHeight = hostClasses.find((cls) => cls.startsWith('min-h-'));
+  const searchStart = FILTERS_SRC.match(/const SEARCH_CLS = '([^']+)'/);
+  assert.ok(searchStart, 'the search field starts with a literal height utility');
+  const searchHeight = searchStart[1].split(/\s+/).find((cls) => cls.startsWith('h-'));
+  assert.equal(reservedHeight?.slice('min-'.length), searchHeight,
+    'the empty frame and loaded search occupy the same baseline row');
+});
 
 test('an unloaded board draws placeholders, not four empty columns', () => {
   const AppView = makeAppView();
