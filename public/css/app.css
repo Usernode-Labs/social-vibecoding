@@ -7480,15 +7480,19 @@ a.drawer-ver--fork:hover {
        a desktop browser. If the header's height ever moves, this moves with
        it — tests/app-switcher-dropdown.test.js pins the pair.
 
-       FLOATING AGAIN, by 0.5rem. It hung flush off the bar while the bar
-       was a zinc slab: the chip that opens it is IN that bar, so the two
-       read as one piece of chrome and a seam between them was a seam in the
-       middle of one object. The wallpaper routes cleared the bar's surface,
-       and a white panel touching a bar with no fill read as a card stuck to
-       the top edge of the page. Half a rem of ground between the chip and
-       the panel puts it back under the chip as a menu, and the brand
-       hairline (below) ties it to the chip's own ring. */
-    top: calc(var(--platform-header-h) + var(--platform-safe-top) + 0.5rem);
+       FLUSH, NOT FLOATING. There were 0.5rem of daylight here, on the
+       argument that a gap makes the panel read as its own surface. It reads
+       better hanging off the bar: the chip that opens it is IN that bar, so
+       the two are one piece of chrome and a seam between them was a seam in
+       the middle of one object. The panel's own border and shadow do the
+       separating. That held when the wallpaper routes cleared the bar's
+       surface, and for a second reason: every panel the bar opens starts on
+       this same line and every backdrop stops at it (the "header stays
+       live" rule, tests/header-stays-live.test.js), so a gap here alone
+       would put the menu on a different line from the Improve rail. What
+       did change is the hairline: the brand one (below), so the menu ties
+       to the chip's own ring rather than to a zinc bar it no longer sits on. */
+    top: calc(var(--platform-header-h) + var(--platform-safe-top));
     left: 50%;
     right: auto;
     bottom: auto;
@@ -7508,7 +7512,7 @@ a.drawer-ver--fork:hover {
        what keeps a narrow desktop window from a panel touching both edges. */
     width: 36rem;
     max-width: calc(100vw - 1.5rem);
-    max-height: calc(100dvh - var(--platform-header-h) - var(--platform-safe-top) - 2rem);
+    max-height: calc(100dvh - var(--platform-header-h) - var(--platform-safe-top) - 1.5rem);
     border-width: 1px;
     border-color: var(--brand-line);
     /* The kit's own desktop menu radius (--un-radius-card, native.css), which

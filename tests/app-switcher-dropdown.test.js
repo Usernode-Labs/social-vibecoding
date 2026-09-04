@@ -312,19 +312,17 @@ test('the panel is deliberately wider than the rails, and still fits', () => {
     + 'or the panel touches both edges the moment the desktop rule engages');
 });
 
-test('the panel floats half a rem under the header, on the brand hairline', () => {
-  // It met the bar flush while the bar was a zinc slab (the chip is IN the
-  // bar, so a gap was a seam through one object). The wallpaper routes
-  // cleared the bar's surface, and a white panel touching a bar with no
-  // fill read as a card stuck to the top of the page; 0.5rem of ground puts
-  // it back under the chip as a menu, tied to the chip by the same hairline.
+test('the panel meets the header rather than floating under it', () => {
   const block = switcherDesktopBlock();
   const closed = block.slice(block.indexOf('#apps-switcher-sheet {'),
     block.indexOf('#apps-switcher-sheet[data-open]'));
   const top = closed.match(/top:\s*calc\(([^;]*)\);/);
   assert.ok(top, 'the dropdown states its top');
-  assert.match(top[1], /\+\s*0\.5rem\s*$/,
-    'the header height and the safe-area inset, plus the half-rem gap and nothing else');
+  assert.doesNotMatch(top[1], /\+\s*[\d.]+rem/,
+    'the header height and the safe-area inset, and nothing added to them: '
+    + 'the chip is IN the bar, so a gap is a seam through one object');
+  // The bar has no surface on the wallpaper routes, so what ties the menu to
+  // the chip is the hairline they share, not a slab they both sit on.
   assert.match(closed, /border-color:\s*var\(--brand-line\)/,
     'the hairline is the brand one the chip itself wears');
 });
