@@ -128,10 +128,10 @@ const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '4';
 // container's agree by construction.
 const TEST_CONCURRENCY = process.env.TEST_CONCURRENCY || '8';
 const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
-// 420s → 470s (#1417), moved together with MAX_DECLARED_TESTS 430 → 480 in
+// 470s → 490s, moved together with MAX_DECLARED_TESTS 480 → 500 in
 // services/app-manifest.js — the two are one decision, and the note on that
-// constant says so. A full 480-check suite is ~234s of ideal work at the
-// measured ~3.9s per check over this pool of 8; 470s keeps the 2x margin
+// constant says so. A full 500-check suite is ~244s of ideal work at the
+// measured ~3.9s per check over this pool of 8; 490s keeps the 2x margin
 // tests/checks-budget.test.js pins, which is what stops a real manifest's
 // tail being cut on every build. RUN_TIMEOUT_MS above stayed at 600s then: it
 // only has to clear this by 120s, and it cleared it by 130s.
