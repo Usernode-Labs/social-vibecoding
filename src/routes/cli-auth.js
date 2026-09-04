@@ -84,15 +84,15 @@ function isCliSurfaceEnabled(config) {
 
 // The real CLI surface stays completely disabled in staging: preview code
 // must never mint, approve or use a credential. The one review-only
-// exception is an authenticated GET of the fabricated Settings rows. It
-// reaches cliBrowserRoutes after cookie auth and returns demoCliTokens()
-// before touching cli_access_tokens; every method, sub-path and non-demo
-// request still gets the early 404 below.
+// exceptions are authenticated GETs of the Settings review fixtures. They
+// reach cliBrowserRoutes after cookie auth and return fabricated rows or the
+// deliberate empty state before touching cli_access_tokens; every method,
+// sub-path and non-demo request still gets the early 404 below.
 function isStagingCliTokensDemo(req) {
   return process.env.USERNODE_ENV === 'staging'
     && req.method === 'GET'
     && req.path === '/api/me/cli-tokens'
-    && req.query?.demo === '1';
+    && ['1', 'cli-empty'].includes(req.query?.demo);
 }
 
 function cliAuthGate(config) {
@@ -905,6 +905,27 @@ function cliBrowserRoutes(config) {
     });
     if (ok) next();
   }
+
+  // #1609: the instruction-rich empty state needs its own staging route.
+  // Answer it before userRate so a screenshot fixture does not touch any DB
+  // table at all. Cookie auth has already run before this router is mounted;
+  // the early gate above admits only this exact GET in staging, and malformed
+  // query shapes fall through to the strict parser on the normal route.
+  router.get('/api/me/cli-tokens', (req, res, next) => {
+    const keys = Object.keys(req.query || {});
+    const limit = req.query.limit;
+    const validLimit = limit == null
+      || (typeof limit === 'string' && /^[1-9][0-9]*$/.test(limit)
+        && Number.isSafeInteger(Number(limit)) && Number(limit) <= 100);
+    const exactEmptyDemo = keys.every((key) => ['limit', 'demo'].includes(key))
+      && keys.every((key) => !Array.isArray(req.query[key]))
+      && req.query.demo === 'cli-empty'
+      && validLimit;
+    if (process.env.USERNODE_ENV === 'staging' && exactEmptyDemo) {
+      return res.json({ tokens: [], next_cursor: null, demo: true });
+    }
+    return next();
+  });
 
   router.get('/api/cli/device/approval', userRate, async (req, res) => {
     const keys = Object.keys(req.query || {});

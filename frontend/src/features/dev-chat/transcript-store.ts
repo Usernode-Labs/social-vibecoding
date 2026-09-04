@@ -162,9 +162,12 @@ export type TranscriptRow =
     preview: { enabled: boolean; url: string; title: string };
     /** #127's "Test this change", when the session carries testing guidance. */
     test: { enabled: boolean; url: string } | null;
-    canPropose: boolean;
-    /** #558: the propose request is in flight — the button spins and locks. */
-    proposePending: boolean;
+    /**
+     * The proposal action's complete lifecycle. Keeping the completed state
+     * explicit is what lets an already-proposed card stay visibly disabled
+     * across success re-renders, status polls and a fresh session load.
+     */
+    propose: { kind: 'ready' } | { kind: 'pending' } | { kind: 'completed' } | null;
     /** MergeStatus's badge for the card, or the merged sentence. */
     status2: { kind: 'none' } | { kind: 'merged' } | { kind: 'badge'; html: string };
   }

@@ -8653,14 +8653,20 @@ body.is-offline [data-offline-disabled] {
 }
 
 /* Mid-turn the venue cannot change — the running turn is already in one.
-   Same treatment the composer's other controls get while streaming. */
+   Keep the control's shape and contrast instead of fading it into an inert
+   dropdown: the lock and status below explain why it cannot be opened. */
 .dc-venue-select:disabled {
-  opacity: 0.45;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
 .dc-venue-select:disabled:hover {
   border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.dc-venue-select:disabled .dc-venue-name {
   color: var(--text-muted);
 }
 
@@ -8692,6 +8698,23 @@ body.is-offline [data-offline-disabled] {
   font-size: 9px;
   line-height: 1;
   opacity: 0.7;
+}
+
+.dc-venue-busy {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 0.15rem;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.dc-venue-busy-icon {
+  width: 0.7rem;
+  height: 0.7rem;
+  flex: none;
 }
 
 /* The slot above the composer, which now carries the fallback sentence
