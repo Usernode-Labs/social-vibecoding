@@ -93,9 +93,9 @@ export function stampProps(stamps: PanelStamps | undefined) {
  * zinc-500 — the shell's secondary ink), so the type itself is a MOVE rather
  * than a restyle.
  *
- * THE HOMESCREEN DESIGN then restyled it: 20px bold in the primary ink, the
- * area title rather than a caption, with the area's link beside it at 16px
- * medium in the brand periwinkle (--brand-ink) and no glyph in front of it.
+ * THE HOMESCREEN DESIGN then restyled it: 16px bold in the primary ink, the
+ * area title rather than a caption, with the area's link beside it at 14px
+ * semibold in the brand periwinkle (--brand-ink) and no glyph in front of it.
  * The row's shape — label, link, ⋮ — is unchanged.
  */
 export function SectionHeading({ children, action }: {
@@ -103,7 +103,7 @@ export function SectionHeading({ children, action }: {
   action?: ReactNode;
 }) {
   return (
-    <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-[1.25rem] font-bold leading-tight text-zinc-900 dark:text-zinc-100">
+    <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-base font-bold leading-tight text-zinc-900 dark:text-zinc-100">
       <span className="min-w-0 flex-1 truncate whitespace-nowrap">{children}</span>
       {action}
     </h2>
@@ -150,7 +150,7 @@ export function BrowseLink() {
     <button
       type="button"
       id="home-browse-btn"
-      className="home-panel-browse shrink-0 flex items-center gap-1 text-[16px] font-medium text-[color:var(--brand-ink)] hover:underline whitespace-nowrap"
+      className="home-panel-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--brand-ink)] hover:underline whitespace-nowrap"
       title="Browse every app in the directory"
       aria-label="Browse all apps"
       onClick={(e) => {
@@ -212,7 +212,7 @@ export function LeaderboardLink() {
   return (
     <button
       type="button"
-      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[16px] font-medium text-[color:var(--brand-ink)] hover:underline whitespace-nowrap"
+      className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--brand-ink)] hover:underline whitespace-nowrap"
       title="Open the Leaderboard screen"
       aria-label="Open leaderboard"
       onClick={(e) => {

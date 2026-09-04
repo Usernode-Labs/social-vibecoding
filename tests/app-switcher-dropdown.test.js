@@ -106,7 +106,7 @@ test('--platform-header-h is the height the header markup actually builds', () =
   const declared = CSS.match(/^\s*--platform-header-h:\s*([\d.]+)rem;$/m);
   assert.ok(declared, ':root declares --platform-header-h in rem');
 
-  // The bar is a flex row: `py-N` top and bottom around a 28px content row.
+  // The bar is a flex row: `py-N` top and bottom around a 48px content row.
   // Read the padding out of the markup rather than restating it, so changing
   // it fails HERE rather than as a panel that has quietly drifted off the bar
   // it hangs from. No hairline — the reskin took the border off both top bars,
@@ -118,18 +118,18 @@ test('--platform-header-h is the height the header markup actually builds', () =
   assert.ok(!/\bborder-b\b/.test(className),
     'no hairline under the bar — if one comes back this arithmetic gains a pixel');
 
-  // The content row is 28px = `h-7`, held open from both directions by the
+  // The content row is 48px = `h-12`, held open from both directions by the
   // rules tests/header-height-parity.test.js owns (a floor that survives every
   // child being hidden, and a ceiling no direct child may exceed). All this
-  // needs from that file is that the row is still stated in h-7 terms.
-  assert.match(HEADER, /\bh-7\b/,
-    'the header still states its content row as h-7 — see '
+  // needs from that file is that the row is still stated in h-12 terms.
+  assert.match(HEADER, /\bh-12\b/,
+    'the header still states its content row as h-12 — see '
     + 'tests/header-height-parity.test.js for the floor and the ceiling');
 
-  // Tailwind's scale is 0.25rem per step; h-7 is 1.75rem.
-  const expected = (Number(py[1]) * 0.25 * 2) + 1.75;
+  // Tailwind's scale is 0.25rem per step; h-12 is 3rem.
+  const expected = (Number(py[1]) * 0.25 * 2) + 3;
   assert.equal(Number(declared[1]), expected,
-    `--platform-header-h must equal py-${py[1]} * 2 + h-7 = ${expected}rem`);
+    `--platform-header-h must equal py-${py[1]} * 2 + h-12 = ${expected}rem`);
 });
 
 // ── The dropdown ───────────────────────────────────────────────────────

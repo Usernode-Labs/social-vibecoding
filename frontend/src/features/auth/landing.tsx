@@ -637,20 +637,21 @@ export function LandingScreen() {
       {/*
           Mirrors #platform-header's shape (height, padding, safe-area) so
           both shells read identically — same HEADER HEIGHT
-          INVARIANT: `py-3` around a 28px content row, i.e.
-          52px + safe-area, with `h-7` on the back-button wrapper as the
-          floor and nothing inside allowed to exceed 28px. The CTAs below
-          used to break that twice over — `sm:py-2 sm:text-sm` made them
-          36px at `sm` and up (a 61px bar), and the bordered one was still
-          30px at `py-1.5` — so they now declare `h-7` outright. The
-          20px back-button wrapper is fixed-WIDTH on purpose too: toggling
-          the button's `hidden` must not shift the title.
+          INVARIANT: `py-3` around a 48px content row, i.e.
+          72px + safe-area, with `h-12` on the back-button wrapper as the
+          floor and nothing inside allowed to exceed 48px. (The row was 28px
+          until the homescreen design's 48px chip and bell grew it.) The
+          CTAs below used to break the old row twice over — `sm:py-2
+          sm:text-sm` made them 36px at `sm` and up (a 61px bar), and the
+          bordered one was still 30px at `py-1.5` — so they declare the row
+          height outright. The back-button wrapper is fixed-WIDTH on purpose
+          too: toggling the button's `hidden` must not shift the title.
       */}
       <header
         id="landing-header"
         className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 shrink-0"
       >
-        <div className="w-7 h-7 shrink-0 flex items-center justify-center">
+        <div className="w-12 h-12 shrink-0 flex items-center justify-center">
           <button
             id="landing-back-btn"
             type="button"
@@ -677,7 +678,7 @@ export function LandingScreen() {
               journey, or when a gated app below routes to #signup.
           */}
           {/*
-              `h-7 inline-flex items-center` — pinned to the header's 28px
+              `h-12 inline-flex items-center` — pinned to the header's 48px
               content row, exactly like #app-mode-switch, rather than sized by
               padding. Padding-sizing is what broke this bar twice over: the
               `sm:py-2 sm:text-sm` bump these used to carry made them 36px (a
@@ -691,7 +692,7 @@ export function LandingScreen() {
             <a
               href="#login"
               id="landing-signin-cta"
-              className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
+              className="h-12 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
               onClick={onLeaveCta}
             >
               Sign in
@@ -700,7 +701,7 @@ export function LandingScreen() {
               href="#waitlist"
               id="landing-waitlist-cta"
               data-offline-disabled=""
-              className="h-7 inline-flex items-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+              className="h-12 inline-flex items-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={onLeaveCta}
             >
               Join waitlist
@@ -710,7 +711,7 @@ export function LandingScreen() {
           <div id="landing-back-to-waiting" className={session ? '' : 'hidden'}>
             <a
               href="#waiting"
-              className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
+              className="h-12 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
             >
               Your queue status
             </a>
