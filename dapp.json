@@ -1606,6 +1606,12 @@
       "expectText": "to save as draft"
     },
     {
+      "name": "Mid-turn venue selector visibly explains why it is unavailable (#1593)",
+      "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-venue-select:disabled[data-venue-busy=\"1\"] .dc-venue-busy",
+      "expectText": "Thinking…"
+    },
+    {
       "name": "Stopped composer's shortcut hint still says Ctrl+Enter sends (#920)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-shortcut-hint",
@@ -2577,9 +2583,9 @@
       "expectText": "Spinning the preview back up…"
     },
     {
-      "name": "The bounty row states the weekly kudos allowance (#964)",
+      "name": "The bounty row says what a kudos bounty does (#1582)",
       "path": "/?shot=feedback",
-      "expectText": "pledges 1 of your weekly kudos"
+      "expectText": "encourages someone to take it up and solve it"
     },
     {
       "name": "A spent allowance says so instead of showing a count (#964)",
@@ -2851,6 +2857,12 @@
       "name": "A promoted proposal is continued rather than restarted (#1071)",
       "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990406",
       "expectSelector": "[role=\"menuitem\"][title*=\"pushes back onto the same proposal\"]"
+    },
+    {
+      "name": "An already-proposed change cannot be proposed twice (#1602)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990406",
+      "expectSelector": "#dc-pr-card .dc-pr-btn-promote:disabled",
+      "expectText": "Already proposed"
     },
     {
       "name": "An archived session starts new work instead of resurrecting itself (#1071)",
