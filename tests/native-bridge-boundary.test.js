@@ -283,6 +283,31 @@ test('exact-session calls carry both closure-only root and realm claims', async 
   assert.equal(Object.isFrozen(status.runtimeStatus), true);
 });
 
+test('settings state is bound to the exact established native session', async () => {
+  const loaded = loadBridge({
+    capabilities: [
+      'privilegedBridgeCapability',
+      'establishNativeSession',
+      'getSettingsState',
+    ],
+  });
+
+  assert.equal(await loaded.sandbox.usernode.getSettingsState(), null);
+  assert.equal(loaded.nativePosts.length, 0,
+    'settings must fail locally rather than cross native without a session');
+
+  await establishRealm(loaded);
+  assert.deepEqual(
+    await loaded.sandbox.usernode.getSettingsState(),
+    SETTINGS_SNAPSHOT,
+  );
+
+  const settingsPost = loaded.nativePosts.at(-1);
+  assert.equal(settingsPost.method, 'getSettingsState');
+  assert.equal(settingsPost.privilegedCapability, 'navigation-capability');
+  assert.equal(settingsPost.realmSessionClaim, 'realm-41');
+});
+
 test('login preparation is root-privileged without borrowing session authority',
   async () => {
     const loaded = loadBridge({
@@ -704,11 +729,22 @@ test('legacy shortcut management gets a full request budget after probing',
 
 test('a degraded capability probe fails closed and never latches a negative',
   async () => {
+    const errorMethods = { getSettingsState: 'transient settings failure' };
     const loaded = loadBridge({
-      capabilities: ['privilegedBridgeCapability', 'getSettingsState'],
-      silentMethods: ['getBridgeInfo'],
+      capabilities: [
+        'privilegedBridgeCapability',
+        'establishNativeSession',
+        'getSettingsState',
+      ],
+      errorMethods,
       timeoutScale: 0.01,
     });
+
+    await establishRealm(loaded);
+    assert.equal(await loaded.sandbox.usernode.getSettingsState(), null);
+    delete errorMethods.getSettingsState;
+    loaded.nativePosts.length = 0;
+    loaded.silentMethods.push('getBridgeInfo');
 
     assert.equal(await loaded.sandbox.usernode.getSettingsState(), null,
       'a read whose handshake could not be negotiated resolves its fallback');
@@ -723,10 +759,9 @@ test('a degraded capability probe fails closed and never latches a negative',
       'the reason is recorded so the Settings screen can name it'
     );
 
-    // THE REGRESSION THIS PINS: the old bridge remembered "not supported"
-    // from that one timeout and sent every later privileged call unsigned
-    // for the life of the document, which a hardened build refuses — the
-    // sticky "Could not load Usernode app settings" of issue #978.
+    // A transient native rejection cleared the cached root capability above.
+    // The following inconclusive re-probe must not become a sticky
+    // "unsupported" answer for this still-admitted session.
     loaded.unsilence('getBridgeInfo');
     assert.deepEqual(
       await loaded.sandbox.usernode.getSettingsState(),
@@ -755,10 +790,16 @@ test('chrome reads record WHY they came back empty', async () => {
   // "unavailable"), so the reason has to travel out of band or the UI can
   // only ever say "something went wrong".
   const timedOut = loadBridge({
-    capabilities: ['privilegedBridgeCapability', 'getSettingsState'],
+    capabilities: [
+      'privilegedBridgeCapability',
+      'establishNativeSession',
+      'getSettingsState',
+    ],
     silentMethods: ['getSettingsState'],
     timeoutScale: 0.01,
   });
+
+  await establishRealm(timedOut);
 
   assert.equal(await timedOut.sandbox.usernode.getSettingsState(), null);
   const timeout = timedOut.sandbox.usernode
@@ -773,10 +814,16 @@ test('chrome reads record WHY they came back empty', async () => {
   );
 
   const rejected = loadBridge({
-    capabilities: ['privilegedBridgeCapability', 'getSettingsState'],
+    capabilities: [
+      'privilegedBridgeCapability',
+      'establishNativeSession',
+      'getSettingsState',
+    ],
     errorMethods: { getSettingsState: 'terms provider unavailable' },
     timeoutScale: 0.01,
   });
+
+  await establishRealm(rejected);
 
   assert.equal(await rejected.sandbox.usernode.getSettingsState(), null);
   const nativeError = rejected.sandbox.usernode
