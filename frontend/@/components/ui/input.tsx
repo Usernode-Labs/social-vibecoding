@@ -154,6 +154,19 @@ const inputVariants = cva('', {
       // for. Call site: features/dev-chat/composer.tsx.
       devComposer:
         'rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
+      // The dev composer's field once the composer became one CARD
+      // (Streamlined Concept). It contributes no box at all — no fill, no
+      // border, no radius, no padding — because the card around it is the
+      // box, and anything here would draw a second one inside the first.
+      // Pair it with `ring={false}`: the focus cue is the card's, not the
+      // field's, for the same reason.
+      //
+      // Kept as its own value rather than folded onto `groupRow`, which is
+      // also box-less: that one sits in a native-kit `.un-group-row` and
+      // carries `py-2` to line up with the row's hairline. This field's
+      // vertical rhythm is the card's padding, so it contributes none.
+      devCard:
+        'bg-transparent border-0 rounded-none p-0 text-[17px] leading-6 text-zinc-900 dark:text-zinc-100',
     },
     // The placeholder colour, written between the box and the focus ring in
     // every string that has it. Named `hint`, not `placeholder`, because

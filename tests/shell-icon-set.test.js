@@ -357,11 +357,19 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // the most conditional glyph in the shell: it needs a target AND a target
     // that is not the platform's own self-hosted row (which has no reachable
     // App tab). New with the toggle, so it has never prerendered.
-    // ── The dev chat composer's five glyphs ─────────────────────────
+    // ── The dev chat composer's glyphs ──────────────────────────────
     // None of them can prerender: the composer is written into #dc-view at
     // runtime by `renderChatView`, and the prerendered document ships that
     // element empty. The three draft-row actions are further behind state —
     // a row exists only once something is saved.
+    //
+    // ArrowUpIcon joins them (Streamlined Concept). The send button is a
+    // circle now and the arrow IS its label, where the word "Send" used to
+    // be — so the composer draws one more glyph than it did, in the same
+    // place, under the same runtime-only condition.
+    'M12 19V5M5 12l7-7 7 7',
+    // The paperclip. Still exported and still drawn by the group chat's
+    // composer; the dev composer's attach control is a bare PLUS now.
     'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
     'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
     'M17 21v-8H7v8',

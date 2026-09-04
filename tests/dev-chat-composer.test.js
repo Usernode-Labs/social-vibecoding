@@ -85,8 +85,13 @@ function makeDevChat(over = {}) {
 // ── 1. The six writers are one publish ─────────────────────────────────
 
 test('every writer that reached into the bar publishes instead', () => {
+  // `_syncShortcutHint` is not in this list any more: the hint line it wrote
+  // is gone (Streamlined Concept), its two spellings surviving as the one
+  // circle's `title`. `_syncSaveDraftBtn` stayed — it is the republish every
+  // KEYSTROKE goes through, and the circle's shape now depends on whether the
+  // field has text.
   for (const fn of [
-    '_setStreamingUI', '_syncSaveDraftBtn', '_syncShortcutHint',
+    '_setStreamingUI', '_syncSaveDraftBtn',
     '_renderSavedDrafts', '_setAttachError', '_refreshModelSelect',
   ]) {
     const at = DEV_CHAT_SRC.indexOf(`  ${fn}(`);
