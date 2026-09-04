@@ -1937,7 +1937,7 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-layout .messages-thread-pane.messages-no-selection"
     },
     {
-      "name": "The notifications strip reads Unread, Messages, All \u2014 and opens on Unread",
+      "name": "The notifications strip reads Unread, Messages, All — and opens on Unread",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-messages + #notifications-tab-all"
     },
@@ -3011,6 +3011,33 @@
       "name": "Dark mode pins by deep link and paints the launcher on the inverted ground",
       "path": "/?shot=dark",
       "expectSelector": "html.dark #home-screen:not(.hidden)"
+    },
+    {
+      "name": "A failed turn is drawn as a failure, not the pipeline's green tick",
+      "path": "/#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "#dc-messages .dc-failure .dc-failure-text",
+      "expectText": "This turn failed: the coding agent exited before writing a result. Send your message again to retry."
+    },
+    {
+      "name": "The coding run is a card and its facts are chips",
+      "path": "/#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "details.dc-cc-attached .dc-cc-attached-summary .dc-cc-chips .dc-cc-steps"
+    },
+    {
+      "name": "Capture routes past the first sit behind a disclosure",
+      "path": "/#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "#dc-pr-card .usn-visual-more > .usn-visual-more-summary",
+      "expectText": "All 4 screens"
+    },
+    {
+      "name": "A phone-viewport capture is drawn in a device outline (#768)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "#dc-pr-card .usn-visual-more .usn-visual-phone"
+    },
+    {
+      "name": "A route with no production version renders an empty tile, not one lone tile",
+      "path": "/#app/usernode-2d5619/dev/sessions/990412",
+      "expectSelector": "#dc-pr-card .usn-visual-empty"
     }
   ],
   "governance": {

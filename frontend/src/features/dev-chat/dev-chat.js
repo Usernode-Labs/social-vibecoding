@@ -3246,6 +3246,10 @@ const DevChat = {
           // #664: the worker proxy's one-time "switched to your API key"
           // notice — rehydrate the marker so the row keeps its subtle
           // inline-notice styling on reload.
+          // #894's `turnError`, which nothing read until now: five paths in
+          // routes/sessions.js persist it and the row came back as an
+          // ordinary system status, wearing the pipeline's green ✓.
+          if (m.metadata.turnError) m.turnError = true;
           if (m.metadata.billingSwitch) m.billingSwitch = true;
           if (m.metadata.ccLog) m.ccLog = m.metadata.ccLog;
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
@@ -3761,7 +3765,7 @@ const DevChat = {
                 // #786: quickReplies ride the status event so a
                 // restart-recovery breadcrumb repaints the pill bar live
                 // (the server persists them on the same system row).
-                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 // #990: a step line means work is under way with nothing else
                 // painting yet — put the dots where the next message will
                 // land, and keep them there until it does. Set before the
@@ -4263,7 +4267,7 @@ const DevChat = {
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
         // #786: carry quickReplies (see the POST-SSE status handler).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         // #990: keep a live cue where the next message will land — see the
         // POST-SSE status handler. Set before the render so both channels
         // emit the indicator inside the same innerHTML write.
@@ -6165,6 +6169,20 @@ const DevChat = {
             elapsed, stamp,
             body: { kind: 'md', html: DevChat.renderMarkdown(msg.ccOutput) },
           });
+          return;
+        }
+        // A FAILED TURN, which until now fell through to the generic row
+        // below and came back wearing that row's green ✓ (see the `failure`
+        // row in ./transcript-store.ts).
+        //
+        // `turnError` only — NOT `stagingFailed`. A staging-build failure
+        // carries `changesReady: true` and renders the Changes-ready card
+        // with its Preview disabled, which is the honest reading: the commit
+        // exists and is proposable, only the preview did not build. Routing
+        // it here would take that card away and lose the Propose action with
+        // it.
+        if (msg.turnError) {
+          rows.push({ t: 'failure', key, html: msg.content || '', text: msg.content || '', stamp });
           return;
         }
         // #664: mid-turn payer switch onto the user's own API key. A key glyph

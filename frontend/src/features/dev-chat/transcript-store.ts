@@ -94,6 +94,26 @@ export type TranscriptRow =
     /** #937's escalation: the row grows a Force stop button. */
     forceStop?: boolean;
   }
+  /**
+   * A turn that FAILED.
+   *
+   * `turnError: true` has been on the wire since #894 — five paths in
+   * routes/sessions.js set it (the repo-less refusal, two credit-check
+   * bailouts, the catch-all turn error and the auto-session planning miss)
+   * — and nothing read it. Both live status handlers built their message
+   * from an explicit whitelist that omitted the flag, and the reload
+   * hydration never mapped it, so a failed turn fell through to the
+   * generic system row and came back wearing the pipeline's green ✓.
+   *
+   * There is no title/body split, because the server does not write one:
+   * every producer sends a complete sentence ("This turn failed: … Send
+   * your message again to retry."). A fixed heading above it would say the
+   * same thing twice. And there is no retry BUTTON: the same paths send
+   * `quickReplies: turnPills('failed')`, so the one-tap retry is already
+   * in the pill bar over the composer, which is where every other
+   * suggested next message lives.
+   */
+  | { t: 'failure'; key: string; text: string; html?: string; stamp: string }
   /** The scout's spec-draft card, under its status line. */
   | {
     t: 'spec';

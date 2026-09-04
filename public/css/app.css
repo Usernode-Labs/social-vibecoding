@@ -3297,6 +3297,102 @@ body:has(#platform-header.hidden) #app-frame-host {
   font-weight: 700;
 }
 
+/* ── Before / after captures ──────────────────────────────
+   AppView.visualsTilesHtml builds these as innerHTML into two hosts — the
+   dev chat's Changes-ready card and the board's proposal detail — so the
+   media keeps its inline style and only the parts added here are classed.
+
+   Three things the strip could not say before:
+
+   .usn-visual-phone — a `viewport: 'mobile'` capture. #768 said so in the
+     row label, "(mobile)", which a reader takes in only AFTER wondering why
+     the shot looks oddly cropped. The outline says it first. The label
+     stays: it is what a screen reader gets, and it survives with no CSS.
+
+   .usn-visual-empty — the side that has no capture. It used to render
+     NOTHING, so a new page came out as one lone tile beside a caption, and
+     a missing half is indistinguishable from a capture that failed. A
+     drawn, dashed placeholder is the difference between "there is nothing
+     to compare" and "something went wrong".
+
+   .usn-visual-more — every route after the first. They stacked inline, so
+     a three-route capture put three full-width strips between a proposal's
+     title and its actions. */
+.usn-visual-media { display: block; min-width: 0; }
+.usn-visual-phone {
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 4px 3px;
+  background: var(--bg-secondary);
+}
+.usn-visual-phone > * { border-radius: 7px !important; }
+.usn-visual-empty {
+  /* Takes its PARTNER's height — the row is `align-items: stretch`, so a
+     placeholder that is visibly a different size from the tile beside it
+     would read as a third thing rather than as the other half of a pair. */
+  height: 100%;
+  min-height: 96px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.usn-visual-figure { display: flex; flex-direction: column; }
+.usn-visual-figure > .usn-visual-empty { flex: 1; }
+.usn-visual-more { margin: 2px 0 0; }
+.usn-visual-more-summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 4px 0;
+}
+.usn-visual-more-summary::-webkit-details-marker { display: none; }
+.usn-visual-more-summary::marker { display: none; }
+.usn-visual-more-summary::after { content: ' \203A'; }
+.usn-visual-more[open] > .usn-visual-more-summary::after { content: ' \02C5'; }
+
+/* ── A failed turn ────────────────────────────────────────
+   A CARD, not a status row, because a failure is not a step in the ladder
+   above it — it is the end of that ladder. As a row it inherited both the
+   ladder's shape and the ladder's tick: `turnError` has been persisted by
+   routes/sessions.js since #894 and nothing read it, so every failed turn
+   came back green.
+
+   --state-blocked is the platform's "this blocks you" red — the same token
+   the board's checks-failing pill and the merge badges take, so a failure
+   reads the same here as it does anywhere else in the product. It is a
+   TINT plus a hairline rather than a fill: this sits inside a scrolling
+   transcript, and a saturated block at message width is a stop sign for
+   something the next message usually recovers from.
+
+   No action button. The producers that set `turnError` also send
+   `quickReplies: turnPills('failed')`, so the one-tap retry is already in
+   the pill bar over the composer, with every other suggested next message.
+   A second one here would be two controls for one act. */
+.dc-failure {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--state-blocked);
+  background: var(--state-blocked-bg);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.dc-failure-icon {
+  flex: none;
+  color: var(--state-blocked);
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.dc-failure-text { flex: 1; min-width: 0; }
+.dc-failure-text a { color: var(--accent); }
+
 /* ── PR card ────────────────────────────────────────────── */
 
 .dc-pr-card {
@@ -4399,8 +4495,24 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
    streams inline below as plain monospaced text (no border, no
    background). Open by default; click the summary to collapse. */
 
+/* THE RUN IS A CARD. It was a status line with a log hanging off it: the
+   summary ran on across three wrapped lines and the log bled to the pane's
+   edges with no boundary, so the thing a reader watches longest on this
+   screen was the one thing on it with no shape. The card gives the run an
+   edge, and the facts inside it become chips (see ProgressChips in
+   features/dev-chat/transcript.tsx).
+
+   The surface is --bg-secondary, not a hue. "A coding run is happening" is
+   not a state in the platform's vocabulary — --state-progress means
+   something is IN FLIGHT toward a merge, and a run is neither good news nor
+   bad. Tinting it would put a fifth colour on a screen whose colours already
+   mean one thing each; the card's own edge is what separates it. */
 .dc-cc-attached {
-  margin: 0;
+  margin: 8px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  overflow: hidden;
 }
 
 .dc-cc-attached-summary {
@@ -4410,10 +4522,64 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
      dedicated chevron span on the right). */
   cursor: pointer;
   list-style: none;
+  /* A COLUMN now: the head, the chip row and the note stack. It stays a
+     <summary> because a collapsed <details> renders nothing else. */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 10px 12px;
 }
 .dc-cc-attached-summary::-webkit-details-marker { display: none; }
 .dc-cc-attached-summary::marker { display: none; }
-.dc-cc-attached-summary:hover { background: var(--bg-code); }
+.dc-cc-attached-summary:hover { background: var(--bg-tertiary); }
+
+/* Row 1 — the glyph, the label, the chevron and the id/timestamp. */
+.dc-cc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Row 2 — the facts. They WRAP; the old inline run ellipsized instead, and
+   the 640px block used to hide the activity snippet outright. */
+.dc-cc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+.dc-cc-chips > * {
+  flex: none;
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 2px 8px;
+  border-radius: 7px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A chip with no value is still IN the DOM — the spans are addressed by
+   class from tests and declared checks, so they render empty rather than
+   disappearing. This is what keeps them from drawing an empty pill. */
+.dc-cc-chips > :empty { display: none; }
+
+/* Row 3 — the two sentences (the guess, the cohort hint), full width. */
+.dc-cc-note {
+  display: block;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.dc-cc-note:empty { display: none; }
 
 /* Click affordance — sits to the right of "Claude Code is
    running…" before the id/ts span. Two distinct glyphs (▸ when
@@ -4461,14 +4627,18 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   /* Indent under the status icon so log lines align with the
      status text, not the icon. 22px = icon width (14) + gap (6) +
      2px breathing room. */
-  padding: 2px 0 4px 22px;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 240px;
   overflow-y: auto;
-  margin: 0;
-  background: transparent;
-  border: none;
+  /* Inside the card now, as its own panel. The 22px indent that used to
+     align it under the status icon aligned it under nothing once the icon
+     moved into a header row. */
+  margin: 0 12px 12px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-light);
 }
 
 /* ── #50: progress indicator — elapsed ticker + live activity ──
@@ -4486,86 +4656,44 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   flex-shrink: 0;
 }
 
+/* The four fact spans take their box from `.dc-cc-chips > *`; what is left
+   here is each one's own voice. The `max-width: 40%` these carried is gone
+   with the inline row — a chip that wraps needs no share of one line. */
 .dc-cc-current {
-  color: var(--text-muted);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 40%;
-  min-width: 0;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 10.5px;
 }
 
-.dc-cc-steps {
-  color: var(--text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
 
 /* #892: the DETERMINISTIC stage readout (Claude is working / Committing /
    Pushing …). Styled like the step count — upright, not italic — because
    unlike the AI guess beside it this is derived from markers the run
    genuinely emitted and cannot be wrong. */
-.dc-cc-phase {
-  color: var(--text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
 
 /* #892: population context ("most runs finish in 2–10 min"). Extra-muted:
    it is background information about how long runs take in general, not a
    claim about this run, so it must not compete with the countdown. */
 .dc-cc-cohort {
-  color: var(--text-muted);
-  opacity: 0.65;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
+  display: block;
+  opacity: 0.75;
 }
+.dc-cc-cohort:not(:empty)::before { content: '\00b7\00a0'; }
 
 /* Experimental AI progress estimate (opt-in): italic and extra-muted so
    the guess reads as tentative next to the honest timer/step count. */
 .dc-cc-estimate {
-  color: var(--text-muted);
-  opacity: 0.75;
   font-style: italic;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 40%;
-  min-width: 0;
 }
 
-/* Narrow viewports: drop the activity snippet (the log itself is one
-   tap away) but keep the elapsed timer at all widths. The AI progress
-   estimate (#286) is kept visible — it can't sit inline next to the
-   timer on a phone, so the summary row is allowed to wrap and the
-   estimate drops onto its own full-width line beneath the status line
-   (full text, no ellipsis). */
-@media (max-width: 640px) {
-  .dc-cc-current { display: none; }
-  /* #892: the cohort line is the first thing to go on a phone — the
-     countdown and the stage label carry the same information more
-     directly, and three muted suffixes on one narrow row is clutter. */
-  .dc-cc-cohort { display: none; }
-  .dc-cc-attached-summary { flex-wrap: wrap; }
-  .dc-cc-estimate {
-    /* order:1 sorts the estimate after the (order:0) timer + timestamp
-       so the status line stays intact on row 1 and the estimate wraps
-       onto its own full-width row beneath it. */
-    order: 1;
-    flex-basis: 100%;
-    max-width: 100%;
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-  }
-}
+/* THE 640px BLOCK IS GONE, and its absence is the point.
+   It hid `.dc-cc-current` and `.dc-cc-cohort` outright and re-ordered the
+   estimate onto its own row, because four muted spans could not share one
+   inline line on a phone. Every one of those was a workaround for the
+   inline row: chips wrap by construction and the two sentences already have
+   a row of their own, so the narrow case now costs a line of height instead
+   of a fact. `.dc-cc-current` in particular — the answer to "what is it
+   doing right now" — used to vanish at exactly the width where the log
+   behind it is hardest to open. */
 
 /* Sibling of .dc-cc-attached-log for the post-turn ccOutput
    markdown summary (rather than a monospaced live-log). Same
@@ -4574,12 +4702,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-cc-attached-md {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-faint);
-  padding: 4px 0 6px 22px;
+  color: var(--text-secondary);
   max-height: 360px;
   overflow-y: auto;
-  background: transparent;
-  border: none;
+  margin: 0 12px 12px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-light);
 }
 /* Tighten markdown spacing inside the muted summary block — the
    default .dc-msg-content treatment is too generous for a summary

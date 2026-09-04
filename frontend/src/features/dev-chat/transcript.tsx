@@ -64,6 +64,27 @@ function StatusIcon({ kind }: { kind: 'spinner' | 'check' | 'key' | 'flag' }): R
 }
 
 /**
+ * A failed turn. See the `failure` row in ./transcript-store.ts for why this
+ * exists at all and why it carries no heading and no retry button.
+ *
+ * A CARD rather than a status row, and that is the whole point: the ladder of
+ * `✓` rows above it is a pipeline reading itself out, and a failure is not a
+ * step in that pipeline — it is the end of it. Given a row it inherited the
+ * ladder's shape and, until now, the ladder's green tick.
+ */
+function Failure({ r }: { r: Extract<TranscriptRow, { t: 'failure' }> }): ReactNode {
+  return (
+    <div className="dc-failure" role="status">
+      <span className="dc-failure-icon" aria-hidden="true">{'\u2297'}</span>
+      {r.html !== undefined
+        ? <span className="dc-failure-text" dangerouslySetInnerHTML={{ __html: r.html }} />
+        : <span className="dc-failure-text">{r.text}</span>}
+      <Stamp text={r.stamp} />
+    </div>
+  );
+}
+
+/**
  * The elapsed suffix. A live row re-derives its label from `nowStore` on the
  * 1s heartbeat; `data-elapsed-since` stays in the markup because
  * `_syncElapsedTicker` reads it to decide whether the heartbeat runs at all.
@@ -135,19 +156,53 @@ function CcLog({ r }: { r: Extract<TranscriptRow, { t: 'ccLog' }> }): ReactNode 
 }
 
 /**
- * The live run's summary spans, all of which tick.
+ * The run's FACTS, as chips.
  *
- * The elapsed suffix renders HERE, between the phase label and the AI guess,
- * because that is where the string template put it — current · steps · phase ·
- * elapsed · estimate (countdown inside it) · cohort. It is the one span of the
- * six that also appears on a row with no progress at all, which is why it is
- * passed in rather than living in the model's `progress` object.
+ * They were four inline spans joined by `· ` inside the summary, on the same
+ * line as "Claude Code is running" — a run-on that truncated the two things
+ * a reader actually wants (which file, how long) and pushed the rest onto a
+ * second and third line. On a phone it was worse: the 640px block below
+ * `display: none`d `.dc-cc-current` outright, so the answer to "what is it
+ * doing" simply vanished at the width where you most want it.
+ *
+ * Chips wrap instead of truncating, so the narrow case loses a line of
+ * height rather than a fact. Each span keeps its class — two declared checks
+ * select `.dc-cc-attached-summary .dc-cc-cohort`, and the elapsed/countdown/
+ * cohort spans still carry the `data-*` the 1s heartbeat finds by
+ * `querySelector` on `#dc-messages`, which nesting does not disturb.
+ *
+ * An empty chip renders as an empty span rather than nothing, and app.css
+ * hides it with `:empty`. That is deliberate: the spans are addressed by
+ * class from tests and checks, and a chip that disappears from the DOM
+ * whenever its value is blank is a selector that fails for a reason nobody
+ * can see.
  */
-function ProgressSpans(
+function ProgressChips(
   { p, elapsed }: {
     p: NonNullable<Extract<TranscriptRow, { t: 'attached' }>['progress']>;
     elapsed: ElapsedSpec;
   },
+): ReactNode {
+  return (
+    <>
+      <span className="dc-cc-current">{p.current}</span>
+      <span className="dc-cc-steps">{p.steps ? `${p.steps} steps` : ''}</span>
+      <span className="dc-cc-phase">{p.phase}</span>
+      <Elapsed e={elapsed} />
+    </>
+  );
+}
+
+/**
+ * …and the run's two SENTENCES, on their own row under the chips.
+ *
+ * The estimate and the cohort hint are prose, not facts: one is a guess and
+ * says so, the other is a statement about other people's runs. As chips they
+ * would be a paragraph in a pill. They keep the `data-countdown-to` /
+ * `data-cohort-since` hooks the ticker reads.
+ */
+function ProgressNote(
+  { p }: { p: NonNullable<Extract<TranscriptRow, { t: 'attached' }>['progress']> },
 ): ReactNode {
   const { now } = useStoreState(nowStore);
   const w = fmt();
@@ -163,24 +218,20 @@ function ProgressSpans(
     ? w.runCohortHint(Math.max(0, now - p.cohortSince))
     : '';
   return (
-    <>
-      <span className="dc-cc-current">{p.current ? `· ${p.current}` : ''}</span>
-      <span className="dc-cc-steps">{p.steps ? `· ${p.steps} steps` : ''}</span>
-      <span className="dc-cc-phase">{p.phase ? `· ${p.phase}` : ''}</span>
-      <Elapsed e={elapsed} />
+    <span className="dc-cc-note">
       <span
         className="dc-cc-estimate"
         title="Experimental: a small AI model's rough guess from the progress log. May be wrong."
       >
-        {p.estimate ? `· ✦ AI guess: ${p.estimate}` : ''}
+        {p.estimate ? `\u2726 AI guess: ${p.estimate}` : ''}
         {p.estimate && p.countdownTo != null
           ? <span className="dc-cc-countdown" data-countdown-to={p.countdownTo}>{countdown}</span>
           : null}
       </span>
       {p.cohortSince != null
-        ? <span className="dc-cc-cohort" data-cohort-since={p.cohortSince}>{hint ? ` · ${hint}` : ''}</span>
+        ? <span className="dc-cc-cohort" data-cohort-since={p.cohortSince}>{hint}</span>
         : null}
-    </>
+    </span>
   );
 }
 
@@ -192,16 +243,25 @@ function Attached({ r }: { r: Extract<TranscriptRow, { t: 'attached' }> }): Reac
       data-default-open={r.details.defaultOpen ? '1' : '0'}
       open={open} onToggle={onToggle}
     >
+      {/* TWO ROWS INSIDE THE SUMMARY, not one line. Everything a collapsed
+          card shows has to live in the <summary> — a <details> hides every
+          other child — so the head and the chip row are siblings here rather
+          than the chips being a block under the disclosure. */}
       <summary className="dc-status-line dc-cc-attached-summary">
-        <StatusIcon kind={r.icon} />
-        {r.html !== undefined
-          ? <span dangerouslySetInnerHTML={{ __html: ` ${r.html}` }} />
-          : ` ${r.text}`}
-        {r.progress
-          ? <ProgressSpans p={r.progress} elapsed={r.elapsed} />
-          : <Elapsed e={r.elapsed} />}
-        <span className="dc-cc-attached-chevron" aria-hidden="true"></span>
-        <Stamp text={r.stamp} />
+        <span className="dc-cc-head">
+          <StatusIcon kind={r.icon} />
+          {r.html !== undefined
+            ? <span dangerouslySetInnerHTML={{ __html: ` ${r.html}` }} />
+            : ` ${r.text}`}
+          <span className="dc-cc-attached-chevron" aria-hidden="true"></span>
+          <Stamp text={r.stamp} />
+        </span>
+        <span className="dc-cc-chips">
+          {r.progress
+            ? <ProgressChips p={r.progress} elapsed={r.elapsed} />
+            : <Elapsed e={r.elapsed} />}
+        </span>
+        {r.progress ? <ProgressNote p={r.progress} /> : null}
       </summary>
       {r.body.kind === 'log'
         ? <pre className="dc-cc-attached-log" data-persist-id={r.body.persistId}>{r.body.text}</pre>
@@ -469,6 +529,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
 function Row({ r }: { r: TranscriptRow }): ReactNode {
   switch (r.t) {
     case 'status': return <StatusLine r={r} />;
+    case 'failure': return <Failure r={r} />;
     case 'spec': return <SpecCard r={r} />;
     case 'issueDraft': return <IssueDraftCard r={r} />;
     case 'ccLog': return <CcLog r={r} />;
@@ -529,4 +590,4 @@ export function DevChatTranscript(): ReactNode {
   );
 }
 
-export { StatusLine, Attached, ChangesCard, Bubble, LiveContent, Row };
+export { StatusLine, Failure, Attached, ChangesCard, Bubble, LiveContent, Row };

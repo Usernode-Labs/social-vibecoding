@@ -68,6 +68,7 @@ async function migrate(config) {
   // Must run AFTER seedStagingSharedSession — it forks that fixture's rows.
   await seedStagingForkedChat(pool, config);
   await seedStagingCcProgressRun(pool, config);
+  await seedStagingTranscriptShowcase(pool, config);
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingCcCohortRuns(pool, config);
   await seedStagingPlatformIssueDrafts(pool, config);
@@ -3393,6 +3394,167 @@ async function seedStagingCcProgressRun(pool, config) {
     appId,
     owner: owner.username,
     sessionId,
+  });
+}
+
+// The dev chat's own vocabulary, staged as ONE conversation.
+//
+// The individual fixtures above each isolate a single element — a progress
+// run, an estimate, a cohort hint, an issue draft. That is right for
+// regression review and wrong for judging how the screen READS: a transcript
+// is a sequence, and the question "does a failure stand out from the ticks
+// above it" cannot be answered by a session that contains only a failure.
+//
+// So this one is deliberately a whole turn-and-a-bit, in order: a request,
+// the thinking ladder, a reply, a coding run that finished, the Changes-ready
+// card with its before/after strip, and then a second turn that FAILS. Every
+// element added by the transcript work is on this one route.
+//
+// Its id is explicit so the route is stable for dapp.json and for the
+// before/after screenshots. 990412 continues the 9904xx dev-session block
+// (990401-990411 are taken).
+const STAGING_TRANSCRIPT_SESSION_ID = 990412;
+
+async function seedStagingTranscriptShowcase(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging transcript fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const owner = await getStagingCheckViewer(pool, 'Staging transcript fixture');
+  if (!owner) return;
+
+  const stagingUrl = 'https://usernode-2d5619--s990412.example.invalid';
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_number, pr_title, pr_url, session_title,
+        status, staging_url, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/transcript-showcase', 4242,
+             '[staging fixture] Say how long a proposal has been waiting',
+             'https://github.com/example/example/pull/4242',
+             '[staging fixture] Say how long a proposal has been waiting',
+             'active', $4,
+             NOW() - INTERVAL '26 minutes', NOW() - INTERVAL '3 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
+    [STAGING_TRANSCRIPT_SESSION_ID, appId, owner.id, stagingUrl]
+  );
+
+  const { rows: already } = await pool.query(
+    'SELECT 1 FROM chat_session_messages WHERE session_id = $1 LIMIT 1',
+    [STAGING_TRANSCRIPT_SESSION_ID]
+  );
+
+  if (!already.length) {
+    // Same vocabulary worker.js emits, so the summary helpers get realistic
+    // input rather than prose that happens to look like a log.
+    const progressLog = [
+      '[refresh]',
+      '[claude (mode build)]',
+      '… Finding where a proposal card decides what to show under its title',
+      'Reading frontend/src/features/dev-board/card/dev-card.tsx',
+      '  ⎿ Read: 412 lines',
+      '$ grep -rn "votesRequired" src/services',
+      '  ⎿ 7 lines',
+      'Reading src/services/merge-status.js',
+      '  ⎿ Read: 268 lines',
+      '… The wait is measured from the promotion, not from the session',
+      'Editing src/services/merge-status.js',
+      '  ⎿ Edit: ok',
+      'Editing frontend/src/features/dev-board/card/dev-card.tsx',
+      '  ⎿ Edit: ok',
+      '$ node --test tests/merge-status.test.js',
+      '  ⎿ 11 lines',
+      '[commit]',
+      '[push]',
+      '[done]',
+    ];
+
+    const ccOutput = [
+      '**Changed**',
+      '',
+      '- `src/services/merge-status.js` — `waitingSince(pr)`, measured from the',
+      '  promotion rather than from when the session was created.',
+      '- `dev-card.tsx` — one line under the title on a proposal that is in vote',
+      '  and has no votes yet.',
+      '',
+      '**Not changed**',
+      '',
+      '- Merged and closed cards. The wait has an answer there and it is not news.',
+    ].join('\n');
+
+    // The failure is the point of the second turn: `turnError` is what the
+    // transcript reads to draw it as a failure rather than as another ✓ row.
+    // The text is a real producer's — routes/sessions.js's catch-all — so the
+    // fixture cannot drift into copy the product does not write.
+    const messages = [
+      { role: 'user', content: '[staging fixture] Can a proposal card say how long it has been waiting for its first vote?', metadata: {}, minutesAgo: 26 },
+      { role: 'system', content: 'Thinking about your request...', metadata: {}, minutesAgo: 26 },
+      { role: 'system', content: 'Reading the repo\u2019s GitHub issues', metadata: {}, minutesAgo: 25 },
+      { role: 'assistant', content: 'Yes — and it is a smaller change than it sounds. `merge-status.js` already derives the lifecycle for every card, so the wait is one more field on the same object rather than a new query. I will measure it from the promotion, not from when the session was created: a change can sit in a session for days before anyone is asked to vote on it.', model: 'claude-opus-5', metadata: { costCents: 3 }, minutesAgo: 25 },
+      { role: 'system', content: 'Spinning up coding agent (Claude Opus 5)...', metadata: {}, minutesAgo: 24 },
+      { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 24 },
+      { role: 'system', content: 'Claude Code progress', metadata: { progressLog }, minutesAgo: 24 },
+      { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, ccOutcome: 'success', durationMs: 268000 }, minutesAgo: 20 },
+      { role: 'system', content: 'Changes ready', metadata: { changesReady: true, stagingUrl, prNumber: 4242, prUrl: 'https://github.com/example/example/pull/4242' }, minutesAgo: 19 },
+      { role: 'user', content: '[staging fixture] Round it to the nearest hour past a day.', metadata: {}, minutesAgo: 4 },
+      { role: 'system', content: 'This turn failed: the coding agent exited before writing a result. Send your message again to retry.', metadata: { turnError: true }, minutesAgo: 3 },
+    ];
+
+    for (const m of messages) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, model, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5, NOW() - ($6::int * INTERVAL '1 minute'))`,
+        [STAGING_TRANSCRIPT_SESSION_ID, m.role, m.content, m.model || null,
+         JSON.stringify(m.metadata), m.minutesAgo]
+      );
+    }
+  }
+
+  // …and the captures the Changes-ready card carries. FOUR groups, chosen so
+  // the strip has to answer every question it can be asked: an ordinary pair,
+  // a phone-viewport pair, a route with no production version (after-only),
+  // and one whose "before" fell back to the home page. Only the first is
+  // visible without opening "All 4 screens", which is the arrangement under
+  // review.
+  const PNG_1X1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const vis = [
+    { id: '9'.repeat(31) + '0', kind: 'before', idx: 0, path: '/' },
+    { id: '9'.repeat(31) + '1', kind: 'after', idx: 0, path: '/' },
+    { id: '9'.repeat(31) + '2', kind: 'before', idx: 1, path: '/', viewport: 'mobile' },
+    { id: '9'.repeat(31) + '3', kind: 'after', idx: 1, path: '/', viewport: 'mobile' },
+    { id: '9'.repeat(31) + '4', kind: 'after', idx: 2, path: '/waiting' },
+    { id: '9'.repeat(31) + '5', kind: 'before', idx: 3, path: '/settings', fellBack: true },
+    { id: '9'.repeat(31) + '6', kind: 'after', idx: 3, path: '/settings' },
+  ];
+  for (const r of vis) {
+    await pool.query(
+      `INSERT INTO session_visuals
+         (id, session_id, commit_hash, kind, media, content_type, data,
+          captured_path, capture_index, captured_viewport, before_fell_back)
+       SELECT $1, $2, NULL, $3, 'png', 'image/png', $4, $5, $6, $7, $8
+        WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2)
+       ON CONFLICT (id) DO NOTHING`,
+      [r.id, STAGING_TRANSCRIPT_SESSION_ID, r.kind, PNG_1X1, r.path, r.idx,
+       r.viewport || null, !!r.fellBack]
+    );
+  }
+
+  log.info('db', 'Staging transcript fixture seeded', {
+    appId, owner: owner.username,
+    sessionId: STAGING_TRANSCRIPT_SESSION_ID,
+    inserted: rowCount,
   });
 }
 

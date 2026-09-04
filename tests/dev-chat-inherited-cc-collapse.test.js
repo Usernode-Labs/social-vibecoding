@@ -160,8 +160,12 @@ test('inherited status + attached progressLog renders COLLAPSED (ccrun)', () => 
   assert.match(html, /data-persist-id="101:ccrun"/, 'persist id keyed off the status row');
   // The summary stays informative while collapsed.
   assert.match(html, /Claude Code is running/, 'status text still in the summary');
-  assert.match(html, /class="dc-cc-current">· Editing public\/js\/dev-chat\.js</, 'activity snippet still in the summary');
-  assert.match(html, /class="dc-cc-steps">· 2 steps</, 'step counter still in the summary');
+  // Chips now, so the `· ` separators are gone: the gap between chips is
+  // the gap. Both facts are still in the SUMMARY — a collapsed <details>
+  // renders nothing else, so anything a closed card shows has to be there.
+  assert.match(html, /class="dc-cc-chips"/, 'the facts are a chip row');
+  assert.match(html, /class="dc-cc-current">Editing public\/js\/dev-chat\.js</, 'activity snippet still in the summary');
+  assert.match(html, /class="dc-cc-steps">2 steps</, 'step counter still in the summary');
   assert.match(html, /dc-cc-attached-chevron/, 'chevron affordance still rendered');
   assert.match(html, /\(took [^)]+\)/, 'duration still shown on the summary');
 });
