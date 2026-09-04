@@ -1333,22 +1333,22 @@ html, body {
    which is the viewport, so a long feed cannot stretch a wash across two
    screens.
 
-   `body:has(#home-screen:not(.hidden))` is the route test, and
-   `body:has(#app-view:not(.hidden))` its in-app twin. The shell swaps
-   screens by toggling `.hidden` on their roots (see
-   frontend/src/lib/visibility-store.ts and App.SCREEN_IDS), so "the home
-   root is showing" IS "we are on the home route", read from the DOM with
-   no class for a module to publish. INSIDE AN APP the same wallpaper is
-   painted and the same bar cleared, so tapping an app from the launcher
-   leaves the bar exactly as it was: the app frame covers everything below
-   it, and what shows of the wallpaper there is the band behind the bell —
-   the point being that nothing about the bar changes between the two
-   routes, so there is nothing for the push to animate. (The platform
-   surfaces an app can show in its own frame — the Dev board, a session —
-   sit on the wallpaper too, as the launcher's cards do.) Everywhere else
-   the body keeps its `bg-zinc-100` ground and the bar its zinc-200
-   surface. An engine without :has() (none the shell supports) simply
-   keeps that everywhere.
+   `body:has(:is(<roots>):not(.hidden))` is the route test. The shell
+   swaps screens by toggling `.hidden` on their roots (see
+   frontend/src/lib/visibility-store.ts and App.SCREEN_IDS), so "this root
+   is showing" IS "we are on this route", read from the DOM with no class
+   for a module to publish. THE ROOTS are the launcher and everything the
+   design treats as its peers — the app view (so tapping an app from the
+   launcher leaves the bar exactly as it was: the frame covers everything
+   below it, the wallpaper shows as the band behind the bell, and the push
+   has nothing to animate in the bar), the leaderboard, the profile, the
+   directory, settings, and the anonymous landing shell, so a signed-out
+   visitor lands on the same page. The platform surfaces an app shows in
+   its own frame (the Dev board, a session) sit on the wallpaper too, as
+   the launcher's cards do. Messages and the admin console keep the
+   `bg-zinc-100` ground and the zinc-200 bar: both are dense working
+   surfaces, not pages. An engine without :has() (none the shell supports)
+   simply keeps that everywhere.
 
    THE DISCS are the export's blurred circles as radial gradients: each
    holds its fill to (r - 2σ), is at half opacity at r, and is gone by
@@ -1379,8 +1379,7 @@ html, body {
 
    DARK MODE KEEPS ITS GROUND. The mock is a light-mode design; on the
    near-black page the body keeps zinc-950 and paints no layers. */
-body:has(#home-screen:not(.hidden)),
-body:has(#app-view:not(.hidden)) {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
   --home-ground: #fffeea;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -1407,8 +1406,7 @@ body:has(#app-view:not(.hidden)) {
     radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
   background: var(--home-wallpaper);
 }
-.dark body:has(#home-screen:not(.hidden)),
-.dark body:has(#app-view:not(.hidden)) {
+.dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
   background: #0b0b0c; /* zinc-950, the body's own dark ground */
   --un-zoom-bg: var(--bg-primary);
 }
@@ -1421,8 +1419,7 @@ body:has(#app-view:not(.hidden)) {
    above still wins here (it is the more specific selector), so dark mode
    stays unpainted at every width. */
 @media (min-width: 640px) {
-  body:has(#home-screen:not(.hidden)),
-  body:has(#app-view:not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
     --home-wallpaper:
       var(--home-star) right 32px top 0 / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
@@ -1435,10 +1432,11 @@ body:has(#app-view:not(.hidden)) {
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(237, 228, 244, 0.55), rgba(237, 228, 244, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
   }
 }
-/* THE BAR OVER THE WALLPAPER. On the home route and inside an app the
-   header's zinc-200 surface goes, so the wallpaper (and the star) run up
-   behind the bell — the one place the design's "page ground runs to the
-   top of the screen" is literal. The controls on it carry their own
+/* THE BAR OVER THE WALLPAPER. On every wallpaper route the header's
+   zinc-200 surface goes, so the wallpaper (and the star) run up behind the
+   bell — the one place the design's "page ground runs to the top of the
+   screen" is literal. (#landing-header never had a surface; it sits on
+   the body's ground already.) The controls on it carry their own
    periwinkle fill and hairline (--brand-tint / --brand-line), so they
    still lift off cream and off dark alike. Everywhere else the bar keeps
    its surface — see the "THE BAR'S OWN SURFACE" note in
@@ -1447,34 +1445,28 @@ body:has(#app-view:not(.hidden)) {
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(#home-screen:not(.hidden)) #platform-header,
-body:has(#app-view:not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
-/* THE CANVAS UNDER THE PUSH. The page transition animates snapshots of the
-   root — the iOS push slides the new page in over the old, which parallaxes
-   away; the Android one cross-fades them — and whatever the snapshots do not
-   cover at a given frame is the document CANVAS, which is <html>'s own
-   background: the #eaeaea that frontend/src/head.html sets inline so the
-   first paint is never white. On the wallpaper routes that grey showed
-   through at the seam of the push (and for a frame of the fade), as a page
-   sliding over a grey field. The canvas takes the wallpaper's base colour on
-   the same route test, so the seam is cream on cream; the washes and the
-   star ride in the snapshots as before. Light only: <html> keeps the dark
-   ground the head sets when .dark is on, and :not(.dark) keeps this rule's
-   :has() from outranking that one. */
-html:not(.dark):has(#home-screen:not(.hidden)),
-html:not(.dark):has(#app-view:not(.hidden)) {
+/* THE CANVAS UNDER THE PUSH is cream too — <html>'s own background, set
+   inline in the head (frontend/src/head.html) so the first paint is never
+   white, moved from the old zinc-100 grey to the wallpaper's base when the
+   wallpaper became the platform's light ground. It is what the page
+   transition shows wherever its snapshots do not reach: the seam of the
+   iOS push and a frame of the Android fade. Nothing route-scoped is
+   needed for it any more; theme-color and the manifest carry the same
+   value, so the browser chrome and a cold launch frame the page in it. */
+html:not(.dark) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) .app-launch-cover {
   background-color: #fffeea;
 }
-/* THE LAUNCH COVER, on the same routes. It hides the app frame while it
-   loads, on --bg-primary — white — which under the cleared bar is a white
-   slab arriving on a cream page. On the wallpaper routes it takes the
-   wallpaper's base colour instead, so the app's icon and name arrive on the
-   page they were tapped from, and the app's own white replaces it only once
-   the app has painted. Dark mode keeps --bg-primary. */
-html:not(.dark) body:has(#app-view:not(.hidden)) .app-launch-cover {
-  background-color: #fffeea;
+/* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
+   fixed, full-viewport overlay with its own opaque `bg-white` (it covers
+   whatever the signed-in shell has left on the page), so the body's
+   wallpaper never showed through it. It takes the same shorthand the body
+   paints — inherited from the body's rule, which is on because this root
+   is showing — and dark mode keeps its own ground. */
+html:not(.dark) #auth-landing-screen {
+  background: var(--home-wallpaper);
 }
 
 /* ── App cards ─────────────────────────────────────────── */
@@ -7488,13 +7480,15 @@ a.drawer-ver--fork:hover {
        a desktop browser. If the header's height ever moves, this moves with
        it — tests/app-switcher-dropdown.test.js pins the pair.
 
-       FLUSH, NOT FLOATING. There were 0.5rem of daylight here, on the
-       argument that a gap makes the panel read as its own surface. It reads
-       better hanging off the bar: the chip that opens it is IN that bar, so
-       the two are one piece of chrome and a seam between them was a seam in
-       the middle of one object. The panel's own border and shadow do the
-       separating. */
-    top: calc(var(--platform-header-h) + var(--platform-safe-top));
+       FLOATING AGAIN, by 0.5rem. It hung flush off the bar while the bar
+       was a zinc slab: the chip that opens it is IN that bar, so the two
+       read as one piece of chrome and a seam between them was a seam in the
+       middle of one object. The wallpaper routes cleared the bar's surface,
+       and a white panel touching a bar with no fill read as a card stuck to
+       the top edge of the page. Half a rem of ground between the chip and
+       the panel puts it back under the chip as a menu, and the brand
+       hairline (below) ties it to the chip's own ring. */
+    top: calc(var(--platform-header-h) + var(--platform-safe-top) + 0.5rem);
     left: 50%;
     right: auto;
     bottom: auto;
@@ -7514,8 +7508,9 @@ a.drawer-ver--fork:hover {
        what keeps a narrow desktop window from a panel touching both edges. */
     width: 36rem;
     max-width: calc(100vw - 1.5rem);
-    max-height: calc(100dvh - var(--platform-header-h) - var(--platform-safe-top) - 1.5rem);
+    max-height: calc(100dvh - var(--platform-header-h) - var(--platform-safe-top) - 2rem);
     border-width: 1px;
+    border-color: var(--brand-line);
     /* The kit's own desktop menu radius (--un-radius-card, native.css), which
        is what this surface now is. */
     border-radius: 0.75rem;
