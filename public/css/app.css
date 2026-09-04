@@ -8972,12 +8972,19 @@ body.is-offline [data-offline-disabled] {
   padding: 0 0.75rem 0.5rem 2.75rem;
 }
 #dev-feed .dev-feed-comment {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
   font-size: 0.75rem;
   line-height: 1.5;
   color: rgb(82 82 91); /* zinc-600 */
   padding: 0.15rem 0;
 }
 .dark #dev-feed .dev-feed-comment { color: rgb(212 212 216); /* zinc-300 */ }
+#dev-feed .dev-feed-comment-main {
+  flex: 1;
+  min-width: 0;
+}
 #dev-feed .dev-feed-comment-author {
   font-weight: 500;
   color: rgb(63 63 70); /* zinc-700 */
@@ -8989,6 +8996,13 @@ body.is-offline [data-offline-disabled] {
    undo the compactness that makes this worth showing inline at all. */
 #dev-feed .dev-feed-comment-body { display: inline; }
 #dev-feed .dev-feed-comment-body > * { display: inline; margin: 0; }
+#dev-feed .dev-feed-comment-time {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: rgb(161 161 170); /* zinc-400 */
+}
+.dark #dev-feed .dev-feed-comment-time { color: rgb(113 113 122); /* zinc-500 */ }
 #dev-feed .dev-feed-comment-more {
   font-size: 0.6875rem;
   color: rgb(161 161 170); /* zinc-400 */

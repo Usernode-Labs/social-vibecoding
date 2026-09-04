@@ -2957,9 +2957,9 @@
       "expectSelector": "#dev-feed .dev-feed-entry > .gc-vote-item"
     },
     {
-      "name": "Feed issue rows carry an inline-comment slot",
+      "name": "Feed issue rows show recent comments with relative ages (#1585)",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-comments[data-comments-for]"
+      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time"
     },
     {
       "name": "The page ground carries the reskin's grey, not the old white (#1400)",
