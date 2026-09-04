@@ -292,17 +292,17 @@ function testTimeoutMs(env) {
 // Whole-suite deadline. On expiry the pool stops dispatching and abandons
 // what is in flight; undispatched checks simply produce no frame and the
 // platform derives the missing set from the sentinel. Sits below the
-// orchestrator's 600s docker timeout so the container always gets to emit
+// orchestrator's 620s docker timeout so the container always gets to emit
 // its sentinel rather than being killed mid-suite.
 function testsDeadlineMs(env) {
-  // 420000 → 470000 (#1417), moved with MAX_DECLARED_TESTS 430 → 480 and the
+  // 470000 → 490000, moved with MAX_DECLARED_TESTS 480 → 500 and the
   // platform-side TESTS_DEADLINE_MS. The two defaults are asserted equal by
   // tests/checks-budget.test.js precisely so a container running without the
   // env var cannot silently apply a shorter budget than the platform planned
   // — which would cut a full manifest's tail while the platform reported the
   // suite as merely unfinished.
   const raw = parseInt((env || {}).TESTS_DEADLINE_MS, 10);
-  return (Number.isFinite(raw) && raw > 0) ? raw : 470000;
+  return (Number.isFinite(raw) && raw > 0) ? raw : 490000;
 }
 
 // Whether this run also produces the before/after media artifacts. The
@@ -1381,7 +1381,7 @@ async function runTests(browser, tests, opts) {
   const o = opts || {};
   const concurrency = Math.max(1, Number(o.concurrency) || 8);
   const perTestMs = Number(o.testTimeoutMs) > 0 ? Number(o.testTimeoutMs) : 25000;
-  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 470000;
+  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 490000;
   const now = typeof o.now === 'function' ? o.now : () => Date.now();
 
   if (!list.length) {
