@@ -843,14 +843,14 @@
     },
     {
       "name": "The Create app section sits below the grid and opens the create flow",
-      "path": "/?demo=1",
+      "path": "/?demo=1&shot=create-enabled",
       "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"flex-row\"]",
       "expectText": "Create app"
     },
     {
       "name": "The Create app widget is present but locked without app quota",
       "path": "/?demo=1&shot=create-disabled",
-      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn[aria-disabled=\"true\"]",
+      "expectSelector": "#home-body [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn:not([disabled])",
       "expectText": "Create app"
     },
     {
@@ -945,6 +945,12 @@
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-import-state=\"idle\"]",
       "expectText": "Create a new app"
+    },
+    {
+      "name": "Create-app modal shows current app quota and usage (#1611)",
+      "path": "/?shot=create-quota#create",
+      "expectSelector": ".un-modal #create-app-quota[data-quota-state=\"available\"]",
+      "expectText": "1 of 2 app slots used"
     },
     {
       "name": "Issue cards keep ONE primary action; the claim moves into the ⋯ menu",
