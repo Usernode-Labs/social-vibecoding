@@ -1328,10 +1328,13 @@ html, body {
    the fixed 100dvh column that the header and the screen roots all sit
    in, so one background here runs under both — the bar is cleared over it
    (below) and the star lands behind the bell, where the design puts it —
-   and it never scrolls: the grid and panels move over a wallpaper, not
-   under a banner. The gradient layers are sized to the body (100% 100%),
-   which is the viewport, so a long feed cannot stretch a wash across two
-   screens.
+   and the washes never scroll: the grid and panels move over a wallpaper,
+   not under a banner. The star is the one layer that rides the page — its
+   position reads `--home-star-y`, which frontend/src/lib/wallpaper-scroll.ts
+   writes on <html> from the visible screen's scroll offset, so it slides
+   away under the bar with the tiles and returns with them. The gradient
+   layers are sized to the body (100% 100%), which is the viewport, so a
+   long feed cannot stretch a wash across two screens.
 
    `body:has(:is(<roots>):not(.hidden))` is the route test. The shell
    swaps screens by toggling `.hidden` on their roots (see
@@ -1421,7 +1424,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
      value, and the 640px rule below swaps in the wider one. Each layer is
      `<image> <position> / <size> <repeat>`, the colour rides on the last. */
   --home-wallpaper:
-    var(--home-star) right 32px top 0 / 97px 78px no-repeat,
+    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
     var(--home-grain) 0 0 / 240px 240px repeat,
     radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -1432,7 +1435,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   --home-ground: #0b0d1b;
   --home-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.18'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
   --home-wallpaper:
-    var(--home-star) right 32px top 0 / 97px 78px no-repeat,
+    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
     var(--home-grain) 0 0 / 240px 240px repeat,
     radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
     radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -1450,7 +1453,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 @media (min-width: 640px) {
   body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
     --home-wallpaper:
-      var(--home-star) right 32px top 0 / 97px 78px no-repeat,
+      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -1462,7 +1465,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   }
   .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
     --home-wallpaper:
-      var(--home-star) right 32px top 0 / 97px 78px no-repeat,
+      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
