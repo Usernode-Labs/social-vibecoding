@@ -236,11 +236,16 @@ export function AppsSwitcherSheet(): ReactNode {
   const close = useCallback(() => AppContext.close(), []);
 
   // The viewer's apps, in the home grid's own "Your apps" order — the one
-  // answer to "which apps are mine" the platform already has. Loaded when the
-  // sheet opens, never during the first render: the prerender ships an empty
-  // strip and a fetch there would be a hydration mismatch.
+  // answer to "which apps are mine" the platform already has. Revalidated on
+  // EVERY open: create/import reloads Home and Discover's add/remove action
+  // updates Home's app cache, but this island keeps its own state for the
+  // lifetime of the shell. Treating the first response as permanent left that
+  // copy stale until a page reload.
+  // Keep the previous rows while this fetch runs, so reopening never flashes an
+  // empty strip. Nothing loads during the first render: the prerender ships an
+  // empty strip and a fetch there would be a hydration mismatch.
   useEffect(() => {
-    if (!open || apps) return;
+    if (!open) return;
     let live = true;
     (async () => {
       try {
@@ -258,7 +263,7 @@ export function AppsSwitcherSheet(): ReactNode {
       }
     })();
     return () => { live = false; };
-  }, [open, apps]);
+  }, [open]);
 
   // Every way into an app funnels through improveStore.slug, so recording
   // recency here rather than in AppTile's click handler counts a home tile, an

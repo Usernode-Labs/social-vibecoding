@@ -266,6 +266,22 @@ test('the sheet markup is one panel — the presentation is entirely CSS', () =>
 
 // ── The panel's contents ───────────────────────────────────────────────
 
+test('the app strip revalidates on every open without clearing cached rows', () => {
+  const start = SHEET.indexOf('// The viewer\'s apps, in the home grid');
+  const end = SHEET.indexOf('// Every way into an app funnels through', start);
+  assert.ok(start >= 0 && end > start, 'located the app-list loading effect');
+  const effect = SHEET.slice(start, end);
+
+  assert.match(effect, /if \(!open\) return;/,
+    'a closed sheet does not fetch during prerender or while hidden');
+  assert.doesNotMatch(effect, /if \(!open\s*\|\||\|\|\s*apps\)/,
+    'a previous response must not suppress the next open-time refresh');
+  assert.match(effect, /\}, \[open\]\);/,
+    'each closed-to-open transition reruns the request');
+  assert.doesNotMatch(effect, /setApps\(null\)/,
+    'the last successful strip stays visible while it revalidates');
+});
+
 test('the panel is deliberately wider than the rails, and still fits', () => {
   const block = switcherDesktopBlock();
   const closed = block.slice(block.indexOf('#apps-switcher-sheet {'),
