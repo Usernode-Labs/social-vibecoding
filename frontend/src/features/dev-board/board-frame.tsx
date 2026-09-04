@@ -275,23 +275,23 @@ export function DevBoardFrame({
           around each repaint would be a race waiting to happen. Keeping BOTH
           the filter host and the button up here means the row is stable, React
           never reconciles inside the host, and the module never writes outside
-          it. `_renderKanbanFilterBar()` fills it on kanban and
-          `_clearKanbanFilterBar()` empties it on the feed, which has no filters.
+          it. `_renderKanbanFilterBar()` fills the shared Board/Activity strip.
       */}
       <div id="dev-actions" className="flex items-center gap-2 px-3 pt-2 shrink-0">
         {/*
-            Legacy innerHTML host for the filter chips. Ships EMPTY and is
-            filled by AppView._renderKanbanFilterBar(); `empty:hidden` keeps it
-            from claiming the row's width on the feed, where it stays empty.
+            Legacy portal host for the filter strip. It ships EMPTY because the
+            store is published only after the first data load, but `min-h-8`
+            reserves the search field's one-row height from the frame's first
+            paint. Without that reservation, a read-only self-hosted view —
+            where the adjacent "+" is hidden — grows by 32px when the search
+            arrives and pushes the scrolling board down. `min-height`, rather
+            than a fixed height, still lets active chips wrap onto extra rows.
         */}
-        <div id="dev-kanban-filterbar" className="flex-1 min-w-0 empty:hidden" />
+        <div id="dev-kanban-filterbar" className="flex-1 min-w-0 min-h-8" />
         {/*
-            `ml-auto` is load-bearing on the FEED: the filter host above is
-            `empty:hidden` there, so it stops claiming the row's width and
-            without the margin the "+" (the row's only remaining item) would
-            collapse to the LEFT edge — where its `right-0` dropdown then
-            opens off the left side of the viewport. On kanban the host's
-            `flex-1` already fills the row, so the auto margin is a no-op.
+            The filter host's `flex-1` places the "+" at the right edge on both
+            Board and Activity. Keep `ml-auto` as the button wrapper's own
+            defensive alignment; with the always-present host it is a no-op.
         */}
         <div className={`relative ml-auto ${readOnly && selfHosted ? 'hidden' : ''}`}>
           <button

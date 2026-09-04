@@ -1199,9 +1199,9 @@ test('the drag overlay draws the whole canvas and doubles as the hit-test', () =
   assert.match(CSS, /\.home-grid-cell::before \{[^}]*inset: -4px/);
 });
 
-// A gesture-only surface is invisible to the before/after captures and to
-// every declared check, so it needs a URL.
-test('the overlay and the locked create tile are both URL-reachable', () => {
+// Gesture-only and account-dependent surfaces are invisible to the
+// before/after captures and to every declared check, so they need URLs.
+test('the overlay and both create-quota treatments are URL-reachable', () => {
   assert.match(HOME, /shot !== 'home-grid'/);
   // Re-painted on EVERY render, unlike ?shot=card-menu's once-only flag: the
   // grid's innerHTML is replaced whenever a payload lands, which wipes the
@@ -1214,7 +1214,8 @@ test('the overlay and the locked create tile are both URL-reachable', () => {
   // real gesture nothing can navigate to.
   assert.match(HOME, /listEl\.classList\.add\('un-reordering'\)/);
   const canCreate = HOME.match(/canCreate\(\) \{[\s\S]*?\n {2}\},/)[0];
-  assert.match(canCreate, /'shot'\) === 'create-disabled'/);
+  assert.match(canCreate, /shot === 'create-enabled'/);
+  assert.match(canCreate, /shot === 'create-disabled'/);
   // Pure UI state: neither link writes anything or is env-gated, so the
   // production "before" side works the moment this ships.
   assert.doesNotMatch(canCreate, /fetch|IS_STAGING/);
@@ -1768,7 +1769,8 @@ test('the Create widget reads the viewer’s quota through Home', () => {
 
   const locked = renderBlock('create', { home: { canCreate: () => false } }).html;
   assert.match(locked, /data-create-enabled="false"/);
-  assert.match(locked, /aria-disabled="true"/);
+  assert.doesNotMatch(locked, /aria-disabled/,
+    'the locked tile still has an available action: opening quota details');
   assert.doesNotMatch(locked, /\sdisabled[=\s>]/, 'never the disabled ATTRIBUTE');
 });
 
