@@ -166,7 +166,7 @@ function ChallengeCard({ row, deadline }: { row: ChallengeRowView; deadline: str
           ) : null}
           {meter.binary ? null : (
             <span
-              className="home-panel-bar-track absolute left-2.5 right-2.5 bottom-1 block h-[3px] rounded-full bg-black/10 overflow-hidden dark:bg-white/15"
+              className="home-panel-bar-track absolute left-0 right-0 bottom-0 block h-[3px] bg-black/10 overflow-hidden dark:bg-white/15"
               role="progressbar"
               aria-valuenow={meter.current}
               aria-valuemin={0}
@@ -175,11 +175,15 @@ function ChallengeCard({ row, deadline }: { row: ChallengeRowView; deadline: str
             >
               <span
                 className={row.done
-                  ? 'home-panel-bar-fill block h-full rounded-full bg-emerald-500'
-                  : 'home-panel-bar-fill block h-full rounded-full bg-[color:var(--brand-ink)]'}
-                // A FLOOR, not a percentage: see the meter note in the module
-                // header. 0% must still show that there is a track here.
-                style={{ width: `max(10px, ${meter.pct}%)` }}
+                  ? 'home-panel-bar-fill block h-full bg-emerald-500'
+                  : 'home-panel-bar-fill block h-full bg-[color:var(--brand-ink)]'}
+                // A FLOOR, not a bare percentage. The track is flush with the
+                // pill's bottom edge, so its first --home-pill-radius is
+                // inside the corner and clipped; a fill shorter than that is
+                // drawn and invisible. --home-meter-floor is that radius plus
+                // the stub that has to remain (app.css states both), so a
+                // challenge at 0 of 5 reads as a track not yet run.
+                style={{ width: `max(var(--home-meter-floor), ${meter.pct}%)` }}
               />
             </span>
           )}

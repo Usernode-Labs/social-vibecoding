@@ -2512,7 +2512,25 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    through. */
 .home-challenge-pill {
   background: #fff;
-  border-radius: 9999px;
+  /* AN EXPLICIT RADIUS, not 9999px, and the meter below is the reason.
+     A stadium's radius is half its height, so it changes with the type and
+     with the viewer's text size — and the meter runs along the BOTTOM EDGE,
+     where the corner is what decides how much of a short fill is visible at
+     all. Pinning the radius makes that inset a known number instead of a
+     consequence, which is what lets --home-meter-floor be stated. At this
+     pill's height the two render identically. */
+  --home-pill-radius: 1rem;
+  /* THE SHORTEST FILL THAT STILL READS. The meter is flush with the pill's
+     bottom, so its bottom row only exists between the two corners: the
+     first `--home-pill-radius` of the fill is inside the left curve and is
+     clipped away. A floor of radius + 0.625rem therefore leaves ~10px of
+     visible stub on a challenge at zero, which is the whole point of having
+     a floor — "not started" has to read as a track not yet run rather than
+     as no track at all. tests/home-panels-render.test.js pins the
+     relationship, and scripts/measure-meter-zero.mjs measures the rendered
+     result rather than trusting the arithmetic. */
+  --home-meter-floor: calc(var(--home-pill-radius) + 0.625rem);
+  border-radius: var(--home-pill-radius);
 }
 .dark .home-challenge-pill { background: rgba(0, 0, 0, 0.35); }
 /* The art well on a challenge card. Lighter than the card so the

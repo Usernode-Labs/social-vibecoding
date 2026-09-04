@@ -174,6 +174,7 @@ const SECTIONS = 'frontend/src/features/home/panels/sections.tsx';
 const PANEL_SOURCES = ['ui', 'challenges', 'discover', 'create', 'sections']
   .map((n) => [`panels/${n}.tsx`, read(`frontend/src/features/home/panels/${n}.tsx`)]);
 const PANELS_TSX = PANEL_SOURCES.map(([, src]) => src).join('\n');
+const challengesSrc = () => PANEL_SOURCES.find(([n]) => n.endsWith('challenges.tsx'))[1];
 const SECTION_VIEWS = {
   discover: 'DiscoverSectionView',
   challenges: 'ChallengesSectionView',
@@ -503,6 +504,46 @@ test('render: a numeric row at zero still renders an (empty) bar', () => {
 // The cap is gone (a section grows to its content), so the second fix is the
 // one the first could not afford: a second LINE. The lane, its three tokens
 // and the bar geometry derived from them are retired with it.
+
+test('the zero-progress meter clears the pill corner that clips it', () => {
+  // THE ONE NUMBER THIS BLOCK CANNOT GUESS. A challenge card's meter is flush
+  // with the bottom edge of a rounded pill, so the first `--home-pill-radius`
+  // of its fill is inside the corner and is painted over. A fill shorter than
+  // that radius is laid out and invisible — which is precisely the "0 of 5"
+  // case the floor exists for.
+  //
+  // So the floor is stated AS the radius plus the stub that has to remain,
+  // rather than as a number somebody measured once. This pins that shape:
+  // change the radius and the floor follows it, and a bare pixel value here
+  // fails rather than silently swallowing the zero state again.
+  //
+  // The rendered result is measured by scripts/measure-meter-zero.mjs, which
+  // reads painted pixels off a screenshot (the hit-test tree does not model an
+  // ancestor's rounded clip and reports the fill as fully visible). At the
+  // values below it paints 12px on the pill's last row.
+  const pill = CSS.slice(CSS.indexOf('.home-challenge-pill {'),
+    CSS.indexOf('}', CSS.indexOf('.home-challenge-pill {')));
+  const radius = /--home-pill-radius:\s*([\d.]+)rem/.exec(pill);
+  assert.ok(radius, 'the pill states an explicit radius — a stadium 9999px would vary with the type');
+  assert.match(
+    pill,
+    /--home-meter-floor:\s*calc\(var\(--home-pill-radius\)\s*\+\s*([\d.]+)rem\)/,
+    'and the meter floor is that radius plus a stub, not a bare number'
+  );
+  const stub = /--home-meter-floor:\s*calc\(var\(--home-pill-radius\)\s*\+\s*([\d.]+)rem\)/.exec(pill)[1];
+  assert.ok(Number(stub) >= 0.5,
+    `the stub is ${stub}rem — under 0.5rem there is nothing left to see once the corner takes its share`);
+  assert.match(
+    challengesSrc(),
+    /width: `max\(var\(--home-meter-floor\), \$\{meter\.pct\}%\)`/,
+    'and the fill uses the floor rather than a percentage alone'
+  );
+  assert.match(
+    challengesSrc(),
+    /home-panel-bar-track absolute left-0 right-0 bottom-0/,
+    'the meter is flush with the pill on all three edges — the geometry the floor is derived from'
+  );
+});
 
 test('the lane is gone: a row is two lines and every row draws a track', () => {
   // COMMENTS STRIPPED. The rules that replaced the lane explain it by name —
