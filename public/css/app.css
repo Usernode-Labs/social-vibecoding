@@ -2428,6 +2428,22 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 .home-challenge-art {
   background: rgba(255, 255, 255, 0.6);
 }
+/* THE FALLBACK WORD, when a challenge's kind carries no icon. A category is
+   free text on the template and is usually one word — "ONBOARDING" at 9px
+   with letter-spacing measures wider than the 62px well, and a single
+   unbreakable word does not wrap, so it ran straight out of the square.
+   Breaking anywhere is what a well can do that a line of prose should not,
+   and two lines is what the box has room for; a longer one ellipsises rather
+   than pushing the card taller. The tracking goes with it — at this size it
+   was buying width the well does not have. */
+.home-challenge-art-word {
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
 .dark .home-challenge-art { background: rgba(255, 255, 255, 0.08); }
 
 /* ── Create-app widget ──────────────────────────────────────

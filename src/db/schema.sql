@@ -3507,6 +3507,18 @@ CREATE TABLE IF NOT EXISTS challenge_kinds (
   created_at   TIMESTAMPTZ,
   updated_at   TIMESTAMPTZ
 );
+-- The picture a challenge of this kind shows on the launcher's Challenges
+-- cards. It lives on the KIND rather than on the template or the challenge
+-- because that is the controlled vocabulary an organiser already picks from
+-- (`challenge_templates.kind` is a real FK to this table), so one setting
+-- gives every challenge of that kind the same face — which is what makes a
+-- column of cards scannable rather than a column of different drawings.
+--
+-- One or two characters, so an emoji including the joined ones. Anything
+-- longer is refused by the writer; anything absent (a kind with no icon, or
+-- a template with no kind at all) falls back to the challenge's category
+-- word, which is the only other per-challenge mark there is.
+ALTER TABLE challenge_kinds ADD COLUMN IF NOT EXISTS icon VARCHAR(16);
 
 -- `challenge_templates` — a reusable challenge definition; one or more
 -- `challenges` rows instantiate it per event (referenced there as

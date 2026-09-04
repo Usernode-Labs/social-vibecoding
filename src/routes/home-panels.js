@@ -184,6 +184,7 @@ function buildChallengeRow(r) {
   return {
     id: Number(r.id),
     label: String(r.t_category || 'OTHER').toUpperCase(),
+    icon: r.kind_icon || null,
     goal: eff('goal'),
     task: eff('task'),
     reward: eff('reward'),
@@ -303,10 +304,16 @@ async function buildChallengesPanel(pool, user, opts) {
             (SELECT COALESCE(SUM(ua.points), 0) FROM user_activities ua
               WHERE ua.user_id = $1 AND ua.challenge_id = c.id) AS my_points,
             ${MY_BLOCKS_SQL} AS my_blocks,
-            ${DONE_EXPR} AS my_done
+            ${DONE_EXPR} AS my_done,
+            ck.icon AS kind_icon
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
        LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+       -- The card's picture, from the KIND the challenge resolves to (its own
+       -- override, else its template's). One join, no extra round trip, and
+       -- the icon is null for a challenge whose kind is unset or has none —
+       -- which the card falls back from rather than drawing a blank.
+       LEFT JOIN challenge_kinds ck ON ck.id = COALESCE(c.kind, ct.kind)
       WHERE se.season_id = $2 AND ${scopeWhere}
       ORDER BY (${DONE_EXPR}) ASC,
                (c.featured IS NOT TRUE) ASC,
@@ -397,6 +404,7 @@ function demoChallengesPanel(opts) {
       id: 900512,
       label: 'ONCHAIN',
       goal: 'Staging demo challenge — test the demo dApps',
+      icon: '🧪',
       task: 'Open eight of the demo dApps and leave a note on each.',
       reward: 'Up to 2,100 pts',
       cta: { label: 'Get Started', link: 'https://example.invalid/staging-demo' },
@@ -409,6 +417,7 @@ function demoChallengesPanel(opts) {
       id: 900510,
       label: 'BUG',
       goal: 'Staging demo challenge — report a reproducible bug',
+      icon: '🐞',
       task: 'Find and file a reproducible bug report against the testnet client.',
       reward: '250 points',
       cta: null,
@@ -426,6 +435,7 @@ function demoChallengesPanel(opts) {
       id: 900511,
       label: 'SOCIAL',
       goal: 'Staging demo challenge — share the season announcement',
+      icon: '📣',
       task: 'Share the season announcement post on social media.',
       reward: '50 points',
       cta: null,
@@ -437,6 +447,7 @@ function demoChallengesPanel(opts) {
       id: 900516,
       label: 'COMMUNITY',
       goal: 'Staging demo challenge — vote on five proposals',
+      icon: '🗳️',
       task: 'Cast a vote on five open proposals from other builders.',
       reward: '900 pts',
       cta: null,
@@ -453,6 +464,7 @@ function demoChallengesPanel(opts) {
       id: 900513,
       label: 'COMMUNITY',
       goal: 'Staging demo challenge — give kudos to five builders',
+      icon: '👏',
       task: 'Send kudos on five merged proposals from other builders.',
       reward: '1500',
       cta: null,
@@ -470,6 +482,7 @@ function demoChallengesPanel(opts) {
       id: 900514,
       label: 'FLASH',
       goal: 'Staging demo challenge — closed: live feedback session',
+      icon: '🎧',
       task: 'Joined the live feedback call and left notes.',
       reward: '500 points',
       cta: null,
@@ -481,6 +494,7 @@ function demoChallengesPanel(opts) {
       id: 900515,
       label: 'TECHNICAL',
       goal: 'Staging demo challenge — closed: stress load round',
+      icon: '🏋️',
       task: 'The stress-load round has finished.',
       reward: 'Up to 500 pts',
       cta: null,

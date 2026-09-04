@@ -585,10 +585,15 @@ const HomePanels = {
     const target = numeric ? Number(c.progress.target) : 1;
     return {
       id: String(c.id),
-      // The organiser's category, as the card's well draws it. Free text on
-      // the template (a VARCHAR, not an enum), so it is normalised here and
-      // capped: the well is a 62px square and a 50-character category would
-      // fill the card with a word.
+      // The card's picture, from the challenge's KIND (see challenge_kinds.icon
+      // in schema.sql — one setting gives every challenge of a kind the same
+      // face). Null on a kind that has none, and on a template with no kind,
+      // which is what the category below is the fallback for.
+      icon: typeof c.icon === 'string' && c.icon.trim() ? c.icon.trim().slice(0, 8) : null,
+      // The organiser's category, upper-cased — the fallback the well draws
+      // when there is no icon. Free text on the template (a VARCHAR, not an
+      // enum), so it is normalised here and capped: the well is a 62px square
+      // and a 50-character category would fill the card with a word.
       label: String(c.label || 'OTHER').toUpperCase().slice(0, 18),
       goal: String(c.goal || ''),
       // The task is the row's tooltip — the one place the dropped detail still

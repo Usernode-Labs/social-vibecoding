@@ -83,7 +83,13 @@ export interface ChallengeMeterView {
 
 export interface ChallengeRowView {
   id: string;
-  /** The organiser's category, upper-cased — what the card's well draws. */
+  /**
+   * The card's picture, from the challenge's kind — null when that kind has
+   * none, or the template names no kind. `label` is what the well draws in
+   * its place.
+   */
+  icon: string | null;
+  /** The organiser's category, upper-cased — the well's fallback. */
   label: string;
   goal: string;
   /** The task, folded into the row's tooltip — the one place it still shows. */

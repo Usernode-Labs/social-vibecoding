@@ -101,16 +101,18 @@ function SeasonRing({ view }: { view: SeasonView }) {
  *   │ art  │  ( ○  7 days left        500 pts )
  *   └──────┘    ▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░
  *
- * The well holds the challenge's CATEGORY, which is the only per-challenge
- * mark there is. The design draws bespoke illustrations here; there is no
- * artwork field on a challenge (see challenge_templates in schema.sql — an
- * organiser writes a category, a goal, a task and a reward), and a decorative
- * emoji picked by hashing the row would be a picture that means nothing
- * sitting where the design puts a picture that means something. The category
- * is a real fact, it differs between challenges, and the card's tint carries
- * the colour the well would have. If per-challenge artwork is ever worth
- * having, it is a field on the template and this is the one place that
- * changes.
+ * The well holds the challenge's ICON, set on its KIND (`challenge_kinds.icon`
+ * — the controlled vocabulary a template already points at, so one setting
+ * gives every challenge of that kind the same face, which is what makes a
+ * column of cards scannable rather than a column of different drawings).
+ *
+ * With no icon it falls back to the CATEGORY word, which is the only other
+ * per-challenge mark there is — never to a decorative emoji hashed out of the
+ * row, which would be a picture that means nothing sitting where the design
+ * puts a picture that means something. The word gets its own class because it
+ * needs what a glyph does not: a single long category ("ONBOARDING") is one
+ * unbreakable word wider than a 62px well, so `.home-challenge-art-word` lets
+ * it break and clamps it to two lines.
  *
  * The state well is the ✓/○ INSIDE the pill rather than beside the title,
  * which is what lets the title start at the same x on every card whether or
@@ -125,9 +127,18 @@ function ChallengeCard({ row, deadline }: { row: ChallengeRowView; deadline: str
       title={row.tip}
       onClick={() => panels()?.goToChallenges?.()}
     >
-      <span className="home-challenge-art shrink-0 w-[3.875rem] h-[3.875rem] rounded-xl flex items-center justify-center px-1 text-center text-[9px] font-semibold uppercase leading-tight tracking-wide text-zinc-500 dark:text-zinc-400">
-        {row.label}
-      </span>
+      {row.icon ? (
+        <span
+          className="home-challenge-art shrink-0 w-[3.875rem] h-[3.875rem] rounded-xl flex items-center justify-center text-[2rem] leading-none"
+          aria-hidden="true"
+        >
+          {row.icon}
+        </span>
+      ) : (
+        <span className="home-challenge-art home-challenge-art-word shrink-0 w-[3.875rem] h-[3.875rem] rounded-xl flex items-center justify-center px-1 text-center text-[9px] font-semibold uppercase leading-tight text-zinc-500 dark:text-zinc-400">
+          {row.label}
+        </span>
+      )}
       <div className="min-w-0 flex-1">
         <div className="home-panel-goal truncate whitespace-nowrap text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
           {row.goal}
