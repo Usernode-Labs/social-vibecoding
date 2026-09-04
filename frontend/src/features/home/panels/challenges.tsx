@@ -143,7 +143,17 @@ function ChallengeCard({ row, deadline }: { row: ChallengeRowView; deadline: str
         <div className="home-panel-goal truncate whitespace-nowrap text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
           {row.goal}
         </div>
-        <div className="home-challenge-pill relative overflow-hidden mt-1.5 flex items-center gap-2 pl-2.5 pr-2.5 pt-1.5 pb-2.5">
+        {/*
+            SYMMETRIC PADDING. It was `pt-1.5 pb-2.5` — 4px of extra room
+            along the bottom, left over from when the meter was a 3px rail
+            flush with the pill's bottom edge and the text had to clear it.
+            The meter is the capsule at the left now, so that clearance has
+            nothing to clear: it just pushed the state, the deadline and the
+            reward above the pill's centre. `py-2` keeps the pill exactly as
+            tall as it was — 16px of vertical padding either way — and puts
+            its contents in the middle of it.
+        */}
+        <div className="home-challenge-pill relative overflow-hidden mt-1.5 flex items-center gap-2 px-2.5 py-2">
           {meter.binary ? (
             /*
                 A YES-OR-NO CHALLENGE IS A CIRCLE, and only that. It has no
