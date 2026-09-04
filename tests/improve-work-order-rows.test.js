@@ -13,8 +13,9 @@
 //   1. A work order costs no worker, no container and no branch, so it must
 //      not be counted in the session budget the caps are denominators for.
 //   2. It is never `busy`: its agent runs on the user's own machine, where
-//      the platform cannot see whether a turn is in flight. A pulsing dot
-//      there would be an invention.
+//      the platform cannot see whether a turn is in flight. A spinner
+//      turning there would be an invention (#1597 made it a spinner; it
+//      was a pulsing dot when this was written).
 //   3. It points at the REQUEST. There is no transcript to open, and a row
 //      that navigates into a dead end is worse than one that admits what it
 //      is — which is why the destination travels ON the row rather than
@@ -205,7 +206,7 @@ test('a work order row points at its request, not at a session page', () => {
   // prepare_work accepts a bare brief with no request behind it.
   assert.match(fn, /: `#app\/\$\{task\.app_slug\}\/dev`/, 'and a fallback for one without');
   assert.match(fn, /busy: false/,
-    'the agent runs where the platform cannot see it; a pulsing dot would be invented');
+    'the agent runs where the platform cannot see it; a spinner would be invented');
   assert.match(fn, /kind: 'task'/);
 });
 
