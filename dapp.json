@@ -1596,21 +1596,25 @@
       "expectText": "What issues are open right now?"
     },
     {
-      "name": "Stopped composer hides the save icon — you can just send (#810)",
+      "name": "Stopped composer offers Send, not save — you can just send (#810)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-form #dc-save-draft-btn[hidden]"
+      "expectSelector": "#dc-form .dc-card-row #dc-send-btn.dc-circle-send[aria-label=\"Send\"]"
     },
     {
-      "name": "Mid-turn composer ships the save-as-draft icon beside Stop (#798, #810)",
+      "name": "Mid-turn with an EMPTY box, the one circle is Stop (#798, #810)",
       "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-form #dc-save-draft-btn:not([hidden])",
+      "expectSelector": "#dc-form .dc-card-row #dc-send-btn.dc-btn-stop[aria-label=\"Stop\"]",
       "expectText": "sending unlocks when Claude finishes"
     },
     {
-      "name": "Mid-turn shortcut hint says Ctrl+Enter saves a draft (#920)",
+      "name": "…and typing turns that same circle into a green Save (#810)",
+      "path": "/?shot=busy-typed#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form .dc-card-row #dc-send-btn.dc-circle-save[aria-label=\"Save as draft\"]"
+    },
+    {
+      "name": "Mid-turn, the busy placeholder is what names saving for later (#920)",
       "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-shortcut-hint",
-      "expectText": "to save as draft"
+      "expectSelector": "#dc-input[placeholder*=\"save it for later\"]"
     },
     {
       "name": "Mid-turn venue selector visibly explains why it is unavailable (#1593)",
@@ -1619,26 +1623,24 @@
       "expectText": "Thinking…"
     },
     {
-      "name": "Stopped composer's shortcut hint still says Ctrl+Enter sends (#920)",
+      "name": "The circle carries the keystroke the retired hint line named (#920)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-shortcut-hint",
-      "expectText": "to send"
+      "expectSelector": "#dc-send-btn[title=\"Send (Ctrl+Enter)\"]"
     },
     {
-      "name": "The chat-model picker and the credit meter share one line (#1353)",
+      "name": "The credit meter and the chat-model picker share one line (#1353)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-venue-detail ~ #dc-budget"
+      "expectSelector": ".dc-card-row > #dc-budget ~ #dc-venue-detail"
     },
     {
-      "name": "The attach button rides with the suggested replies (#1353)",
+      "name": "The suggested replies sit on the ground ABOVE the card (#1353)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": ".dc-composer-actions > #dc-attach-btn + #dc-quick-replies"
+      "expectSelector": ".dc-composer-actions:not(:has(#dc-attach-btn)) + #dc-form.dc-card"
     },
     {
-      "name": "…and that row sits directly above the send button (#1353)",
+      "name": "…and the attach control moved onto the card's own row (#1353)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": ".dc-composer-actions ~ #dc-form #dc-send-btn",
-      "expectText": "Send"
+      "expectSelector": "#dc-form.dc-card > .dc-card-row > #dc-attach-btn"
     },
     {
       "name": "The composer's picker names the model and nothing else (#1589)",

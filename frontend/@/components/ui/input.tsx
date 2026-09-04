@@ -154,6 +154,19 @@ const inputVariants = cva('', {
       // for. Call site: features/dev-chat/composer.tsx.
       devComposer:
         'rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
+      // The dev composer's field once the composer became one CARD
+      // (Streamlined Concept). It contributes no box at all — no fill, no
+      // border, no radius, no padding — because the card around it is the
+      // box, and anything here would draw a second one inside the first.
+      // Pair it with `ring={false}`: the focus cue is the card's, not the
+      // field's, for the same reason.
+      //
+      // Kept as its own value rather than folded onto `groupRow`, which is
+      // also box-less: that one sits in a native-kit `.un-group-row` and
+      // carries `py-2` to line up with the row's hairline. This field's
+      // vertical rhythm is the card's padding, so it contributes none.
+      devCard:
+        'bg-transparent border-0 rounded-none p-0 text-[17px] leading-6 text-zinc-900 dark:text-zinc-100',
     },
     // The placeholder colour, written between the box and the focus ring in
     // every string that has it. Named `hint`, not `placeholder`, because
@@ -169,7 +182,22 @@ const inputVariants = cva('', {
     mono: { true: 'font-mono', false: '' },
     ring: {
       true: 'focus:outline-none focus:ring-2 focus:ring-violet-500',
+      // NO RULE AT ALL — which means the browser's own focus ring still
+      // draws. That is deliberate for `groupRow`, whose `.un-group` clips an
+      // outward ring and whose row carries a `focus-within:` tint instead:
+      // the UA outline is the only cue those fields have left.
       false: '',
+      // Suppresses the UA outline WITHOUT drawing a ring of our own — which
+      // `false` does not do, and the difference is a blue box nobody asked
+      // for. For a field that contributes no box: the dev composer's, where
+      // the card around it is the only edge and a ring inside that card would
+      // be a second one.
+      //
+      // The focus cue is the CARET. That is sound for a text field — the
+      // blinking cursor is exactly what tells you where typing goes — and it
+      // is why this value must not spread to buttons or selects, which have
+      // no caret and would be left with no focus indicator at all.
+      bare: 'focus:outline-none',
       // The dialogs' fields also drop the border colour while focused, so the
       // ring reads as the only edge.
       seamless:
