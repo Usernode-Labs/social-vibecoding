@@ -1967,9 +1967,11 @@ function issueRoutes(config) {
   // creates it, any later click renews it (fresh TTL clock), other
   // users' claims are untouched and irrelevant (no 409, ever). The
   // target must be a currently-open GitHub issue — same positive-
-  // confirmation policy as the bounty route above. Claims are platform-
-  // local: no GitHub write. Expiry is a read-time filter in the
-  // /github-issues enrichment (ISSUE_CLAIM_TTL_DAYS).
+  // confirmation policy as the bounty route above. A successful claim also
+  // moves the caller's assignee vote to their own username, so taking the
+  // work and assigning it are one gesture. Both writes are platform-local:
+  // no GitHub write. Expiry is a read-time filter in the /github-issues
+  // enrichment (ISSUE_CLAIM_TTL_DAYS).
   // ----------------------------------------------------------------
   router.post('/api/apps/:slug/github-issues/:number/claim', async (req, res) => {
     const issueNumber = parseInt(req.params.number, 10);
@@ -2017,6 +2019,15 @@ function issueRoutes(config) {
         [app.id, issueNumber, req.user.id]
       );
       const created = !!rows[0]?.created;
+
+      // #1648: claiming is an explicit statement that the caller is taking
+      // the issue, so mirror it into the existing community-voted assignee
+      // field. Do this on renewals too: re-claiming repairs a missing or
+      // independently changed self-assignment. Releasing remains separate —
+      // it must not erase metadata that the user may have edited afterward.
+      await topicAttrs.castVote(
+        pool, app.id, 'issue', issueNumber, 'assignee', req.user.username, req.user.id
+      );
 
       if (created) {
         // On-the-record note in the issue's own discussion thread (which
