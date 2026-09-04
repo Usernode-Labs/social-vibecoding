@@ -350,10 +350,20 @@ const App = {
         App.enterAuthed(user);
         return;
       }
-    } else if (res) {
+    } else if (App._answeredSignedOut(res)) {
       // A real answer with a real "no" (401/403). Only reachable online —
       // error responses never enter the SW cache — so this is authoritative.
       App._dropCachedSession();
+      await App.enterAnonymous();
+      return;
+    } else if (res) {
+      // Answered, but not ABOUT the session (#1608): a 500 from a database
+      // hiccup, a 502 from the proxy, a 429. The cookie is untouched and
+      // still live, so dropping the cached trace here would put the sign-in
+      // screen in front of a session the server still holds — the dead end
+      // this issue is about. Boot anonymous (there is no snapshot to paint)
+      // but leave the cache alone, and let the next read settle it.
+      try { window.Offline?.nudge(); } catch (err) { /* ignore */ }
       await App.enterAnonymous();
       return;
     }
@@ -363,6 +373,24 @@ const App = {
     // offline state and refuses submits (see auth-screens.js).
     try { window.Offline?.nudge(); } catch (err) { /* ignore */ }
     await App.enterAnonymous();
+  },
+
+  // Does this answer mean the SESSION is over? Only the two statuses the API
+  // returns for that: 401 (no session) from /api/auth/me itself and 403 from
+  // the platform-access gate. Everything else a response can carry — 500 when
+  // the session lookup query fails (middleware/auth.js answers "Session check
+  // failed" with one), 502/503 from the proxy, 429 — says nothing about the
+  // cookie, which is still sitting in the browser and still valid.
+  //
+  // Collapsing those into "signed out" is what produced the reported dead end
+  // (#1608): the shell dropped to the sign-in screen while the server still
+  // held a live session, and the session-mint boundary then refused the
+  // credentials with "Sign out before signing in again." from a shell that
+  // has no sign-out to offer. The client recovery in
+  // frontend/src/features/auth/shared.ts closes that door from the other
+  // side; this is the side that stops the user arriving there at all.
+  _answeredSignedOut(res) {
+    return !!res && (res.status === 401 || res.status === 403);
   },
 
   // /api/auth/me with a deadline. Resolves to the Response, or throws when
@@ -409,6 +437,16 @@ const App = {
       // Still unreachable — stay on the snapshot and say so on screen. This
       // is where the offline strip belongs: the shell is up and READABLE,
       // and the thing the viewer needs to know is that it is not live.
+      try { window.Offline?.nudge(); } catch (e) { /* ignore */ }
+      App._publishBootSession({ unknown: true });
+      return;
+    }
+    if (!res.ok && !App._answeredSignedOut(res)) {
+      // Answered, but not ABOUT the session (#1608). A signed-in reload that
+      // lands on a 500 must not end with the sign-in screen in front of a
+      // session the server still holds: keep the snapshot, say we could not
+      // tell, and let the next reconcile settle it. Same treatment as no
+      // answer at all, because that is exactly what this is.
       try { window.Offline?.nudge(); } catch (e) { /* ignore */ }
       App._publishBootSession({ unknown: true });
       return;
