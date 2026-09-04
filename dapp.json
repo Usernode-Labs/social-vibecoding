@@ -1532,9 +1532,9 @@
       "expectSelector": "#dev-actions #dev-kanban-filterbar #dev-kanban-search"
     },
     {
-      "name": "An Activity row can be replied to without opening it",
+      "name": "An Activity row has an auto-growing reply box and send arrow (#1584)",
       "path": "/?demo=1#app/usernode-2d5619/activity",
-      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-thread input[aria-label=\"Reply to this item\"]"
+      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
     },
     {
       "name": "The view strip marks Activity as the one you are on",
