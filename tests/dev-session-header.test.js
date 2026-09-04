@@ -120,6 +120,9 @@ test('the venue button is the LAST direct child, with the attributes the check r
   assert.match(html, /data-venue-current="usernode-openrouter"/);
   assert.match(html, /aria-haspopup="menu"/);
   assert.match(html, /class="dc-venue-name">Usernode · OpenRouter</);
+  assert.match(html, /class="dc-venue-caret"[^>]*>▾</);
+  assert.doesNotMatch(html, /data-venue-busy|Thinking…|dc-venue-busy/,
+    'idle keeps the ordinary dropdown affordance');
   // LAST: nothing is rendered after it. The portal puts these children
   // directly under `#dc-session-header`, so `>` and `:last-child` both hold.
   assert.match(html, /<\/button>$/, 'the strip ends with the venue button');
@@ -151,12 +154,28 @@ test('an unknown venue renders no button rather than half of one', () => {
   assert.doesNotMatch(headerHtml(v), /dc-venue-select/);
 });
 
-test('mid-turn the venue cannot be changed', () => {
+test('mid-turn the venue is visibly and accessibly locked', () => {
   // A running turn holds the worker, and moving it under itself is the
-  // failure the old `agentSelect.disabled` guarded against.
+  // failure the old `agentSelect.disabled` guarded against. The explicit
+  // status is the touch-visible explanation for why tapping does nothing.
   const { view } = makeDevChat({ isStreaming: true });
   assert.equal(view(SESSION).venue.disabled, true);
-  assert.match(headerHtml(view(SESSION)), /<button[^>]*disabled=""/);
+  const html = headerHtml(view(SESSION));
+  assert.match(html, /<button[^>]*data-venue-busy="1"[^>]*disabled=""/);
+  assert.match(html, /aria-label="[^"].*Unavailable while the agent is thinking\./);
+  assert.match(html, /title="Wait for the current response to finish[^"].*"/);
+  assert.match(html, /class="dc-venue-busy"[^>]*>[\s\S]*Thinking…/);
+  assert.doesNotMatch(html, /dc-venue-caret|>▾</,
+    'the dropdown caret does not contradict the locked state');
+});
+
+test('the busy screenshot route paints the same locked venue without faking a live turn', () => {
+  const { DevChat, sandbox, view } = makeDevChat();
+  sandbox.location.search = '?shot=busy-drafts';
+
+  assert.equal(DevChat.isStreaming, false, 'the deterministic route does not start a turn');
+  assert.equal(view(SESSION).venue.disabled, true);
+  assert.match(headerHtml(view(SESSION)), /data-venue-busy="1"[\s\S]*Thinking…/);
 });
 
 // ── 2. The rest of the strip ───────────────────────────────────────────

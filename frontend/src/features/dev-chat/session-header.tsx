@@ -5,7 +5,7 @@
 
 import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
-import { EyeIcon, PencilSparklesIcon } from '@/components/ui/icons';
+import { EyeIcon, LockIcon, PencilSparklesIcon } from '@/components/ui/icons';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
@@ -64,6 +64,7 @@ export function MergeStatusPill({ life }: { life: MergeLife }): ReactNode {
  * attributes and the position all stay exactly as `selectorHtml` wrote them.
  */
 function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']> }): ReactNode {
+  const busyTitle = 'Wait for the current response to finish before changing where this session is built.';
   return (
     <button
       type="button"
@@ -71,13 +72,24 @@ function VenueSelect({ venue }: { venue: NonNullable<SessionHeaderState['venue']
       className="dc-venue-select"
       data-venue-change="1"
       data-venue-current={venue.id}
+      data-venue-busy={venue.disabled ? '1' : undefined}
       aria-haspopup="menu"
+      aria-label={venue.disabled ? `${venue.label}. Unavailable while the agent is thinking.` : undefined}
       disabled={venue.disabled}
-      title={venue.title}
-      onClick={(e: MouseEvent<HTMLButtonElement>) => controller()?.openVenueSheet?.(e.currentTarget)}
+      title={venue.disabled ? busyTitle : venue.title}
+      onClick={venue.disabled
+        ? undefined
+        : (e: MouseEvent<HTMLButtonElement>) => controller()?.openVenueSheet?.(e.currentTarget)}
     >
       <span className="dc-venue-name">{venue.label}</span>
-      <span className="dc-venue-caret" aria-hidden="true">{'▾'}</span>
+      {venue.disabled ? (
+        <span className="dc-venue-busy" aria-hidden="true">
+          <LockIcon className="dc-venue-busy-icon" />
+          <span>Thinking…</span>
+        </span>
+      ) : (
+        <span className="dc-venue-caret" aria-hidden="true">{'▾'}</span>
+      )}
     </button>
   );
 }
