@@ -174,6 +174,7 @@ const SECTIONS = 'frontend/src/features/home/panels/sections.tsx';
 const PANEL_SOURCES = ['ui', 'challenges', 'discover', 'create', 'sections']
   .map((n) => [`panels/${n}.tsx`, read(`frontend/src/features/home/panels/${n}.tsx`)]);
 const PANELS_TSX = PANEL_SOURCES.map(([, src]) => src).join('\n');
+const challengesSrc = () => PANEL_SOURCES.find(([n]) => n.endsWith('challenges.tsx'))[1];
 const SECTION_VIEWS = {
   discover: 'DiscoverSectionView',
   challenges: 'ChallengesSectionView',
@@ -401,26 +402,29 @@ test('visibleSlots: tolerates an empty/absent challenge list', () => {
 
 // ── Rendering ─────────────────────────────────────────────────────
 
-test('render: a binary not-done row draws an EMPTY two-state track, not nothing', () => {
-  // It used to draw no bar at all, and the panel reserved a 14px lane on every
-  // row anyway so the goals would still share a baseline — which left this row
-  // with a hole where its numeric neighbours had progress, and pushed every
-  // goal in the list 7px above its row's centre. A two-state track (0 of 1) is
-  // what removes the mixed list: there is no row without a bar any more.
+test('render: a yes-or-no challenge draws NO meter, and no count either', () => {
+  // THIS REVERSES #911, on purpose. That change gave every row a two-state
+  // track because the list was mixed: the row reserved a 14px lane for a bar
+  // on every row so the goals would share a baseline, which left a yes-or-no
+  // challenge with a HOLE where its numeric neighbours had progress.
+  //
+  // The hole was a property of the ROW. A challenge is a card now and its
+  // state lives in a pill, which reserves nothing: a card with no meter is a
+  // pill with nothing under it, the same shape as every other pill, and its
+  // ○/✓ says the whole of what there is to say. So the track goes, and the
+  // mixed list it was introduced to fix cannot come back in this shape.
   const { html } = renderWith({ registry: [], hidden: [], panels: [panel()] });
   assert.match(html, /home-panel-glyph[^"]*rounded-full/, 'the well, not a chip');
-  assert.match(html, /role="progressbar"/, 'every row has one now');
-  assert.match(html, /aria-valuenow="0"[^>]*aria-valuemin="0"[^>]*aria-valuemax="1"/);
-  assert.match(html, /width:0%/);
-  // …and the ROW prints no count. "0/1" beside the goal of a challenge nobody
-  // counted reads as a measurement that was taken; the empty track says the
-  // same thing without claiming one. Scoped to the row, because the ring above
-  // it prints its own fraction and that one is the point of the ring.
-  const row = html.slice(html.indexOf('home-panel-row '), html.indexOf('home-panel-footer'));
-  // As a TEXT NODE (`>0/1<`), not a bare substring: `bg-violet-500/10` carries
-  // the characters `0/1` in the middle of a class name, and the ring above the
-  // row prints its own fraction — which is what the ring is for.
-  assert.doesNotMatch(row, />0\/1</, 'a binary row carries no count');
+  const card = html.slice(html.indexOf('home-challenge-card'), html.indexOf('home-panel-footer'));
+  assert.doesNotMatch(card, /role="progressbar"/,
+    'a yes-or-no challenge has no progress to draw');
+  // …and it prints no count. "0/1" beside the goal of a challenge nobody
+  // counted reads as a measurement that was taken. Scoped to the card,
+  // because the ring above prints its own fraction and that IS the ring.
+  //
+  // As a TEXT NODE (`>0/1<`), not a bare substring: a class name can carry
+  // the characters `0/1` in the middle of it.
+  assert.doesNotMatch(card, />0\/1</, 'a yes-or-no challenge carries no count');
   assert.doesNotMatch(html, /Not done yet/, 'the wordy chip is gone at this density');
   assert.match(html, /250 pts/);
   assert.match(html, /Report a reproducible bug/);
@@ -438,7 +442,11 @@ test('render: a done row gets the ✓ glyph, not a chip or an earned-points line
   // The literal character, not `&#10003;`: React writes a text child as text
   // and the string renderer wrote the entity. Same glyph on screen.
   assert.match(html, /✓/);
-  assert.match(html, /text-emerald-700/);
+  // A FILLED well, not tinted text on a tinted disc. The ✓ sits inside the
+  // card's white pill now, at 16px rather than 28px, and a pale emerald disc
+  // on white read as a smudge at that size — so the disc carries the colour
+  // and the glyph goes white on it.
+  assert.match(html, /home-panel-glyph[^"]*bg-emerald-500 text-white/);
   assert.doesNotMatch(html, /You earned/, 'dropped — the row is one line now');
   assert.doesNotMatch(html, /Done<\/span>/);
 });
@@ -455,21 +463,22 @@ test('render: a numeric row gets a progressbar with truthful aria values', () =>
   assert.match(html, /aria-valuenow="3"/);
   assert.match(html, /aria-valuemin="0"/);
   assert.match(html, /aria-valuemax="8"/);
-  assert.match(html, /width:38%/);
-  // The compact count; the metric label rides the aria-label so the row
-  // stays one line.
-  assert.match(html, /3\/8/);
+  assert.match(html, /width:max\(var\(--home-meter-floor\), 38%\)/,
+    'the fill states its floor alongside the percentage — see the geometry test below');
   assert.match(html, /aria-label="[^"]*3 of 8 Apps tested"/);
-  // The track is the row's SECOND LINE and spans the text column by layout —
-  // `w-full` inside the flex child that holds both lines — rather than by an
-  // absolute inset copied out of the row's own padding. That is what retired
-  // `left: 1.75rem` (px-2.5 + glyph + gap-2, restated as a literal), which had
-  // to be edited by hand whenever the gutter or the glyph moved.
-  assert.match(html, /home-panel-bar-track block h-1\.5 w-full rounded-full/);
-  assert.doesNotMatch(html, /home-panel-bar-track[^"]*absolute/,
-    'the bar no longer rides the row\'s bottom edge');
+  // THE COUNT IS ON THE CAPSULE, which is the whole reason the capsule earns
+  // the space a 3px rail did not need: it states progress, the exact figure
+  // and doneness in one element, where the rail could only state the first.
+  assert.match(html, />3\/8</);
+  // The capsule sits where a yes-or-no challenge puts its circle, at the same
+  // height, so the two line up down the list and the SHAPE is what tells them
+  // apart. It is still the progressbar the aria contract and dapp.json select
+  // on — the class stays, the geometry changed.
+  assert.match(html, /home-panel-bar-track home-challenge-meter[^"]*h-4[^"]*rounded-full/);
+  assert.doesNotMatch(html, /home-panel-bar-track absolute left-0 right-0 bottom-0/,
+    'the rail under the pill is gone; the state element carries the meter');
   assert.doesNotMatch(html, /bottom-\[3px\]/,
-    'the cramped 3px-from-the-divider geometry is gone, and is no longer a utility class');
+    'and the cramped 3px-from-the-divider geometry never came back as a utility');
 });
 
 test('render: a numeric row at zero still renders an (empty) bar', () => {
@@ -480,16 +489,22 @@ test('render: a numeric row at zero still renders an (empty) bar', () => {
     })],
   });
   const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
-  assert.match(html, /width:0%/);
-  assert.match(html, /0\/5/);
-  // A SOLID rail, not an outline. The outline existed because an empty track
-  // in a 14px lane was otherwise indistinguishable from the row's own hairline
-  // divider. On its own line at full width the outline is the problem: an
-  // empty container spanning the card asks to be looked at, and a challenge
-  // nobody has started is the last row on the list worth looking at.
-  assert.match(html, /home-panel-bar-track[^"]*bg-zinc-200 overflow-hidden dark:bg-zinc-800/);
-  assert.doesNotMatch(html, /home-panel-bar-track[^"]*border/,
-    'no hairline around an empty track');
+  // NOT `width:0%`. The fill starts at the capsule's rounded left end, so a
+  // fill narrower than that radius is laid out and then painted over by the
+  // corner — a challenge at 0 of 5 would show an empty capsule, which is the
+  // one state that most needs to say there is progress to be made here. The
+  // floor is stated as that radius plus the stub that must remain; see the
+  // geometry test below, and scripts/measure-meter-zero.mjs for what a
+  // browser actually paints.
+  assert.match(html, /width:max\(var\(--home-meter-floor\), 0%\)/);
+  assert.match(html, /aria-valuenow="0"[^>]*aria-valuemax="5"/,
+    'the aria values stay truthful even though the fill has a floor');
+  assert.match(html, />0\/5</, 'and the capsule names the count it is at');
+  // A SOLID track, not an outline: an outlined capsule beside a plain circle
+  // reads as two different kinds of control rather than two states of one.
+  assert.match(html, /home-panel-bar-track[^"]*bg-black\/10 dark:bg-white\/15/);
+  assert.doesNotMatch(html, /home-panel-bar-track[^"]*border-/,
+    'no hairline around the capsule');
 });
 
 // ── The bar's breathing room ──────────────────────────────────────
@@ -503,6 +518,45 @@ test('render: a numeric row at zero still renders an (empty) bar', () => {
 // The cap is gone (a section grows to its content), so the second fix is the
 // one the first could not afford: a second LINE. The lane, its three tokens
 // and the bar geometry derived from them are retired with it.
+
+test('the zero-progress meter shows a nub, and a small one', () => {
+  // A challenge at 0 of 5 must not draw an EMPTY capsule: "not started" still
+  // has to read as a track with something to fill. So the fill takes a floor
+  // rather than a bare percentage.
+  //
+  // THE FLOOR IS A DESIGN MINIMUM, NOT A CLIPPING CORRECTION, and this test
+  // exists in that shape because it was written the other way first. The claim
+  // was that a fill narrower than the capsule's corner radius is painted over
+  // by the cap, so the floor had to CLEAR the radius — true of the 3px rail
+  // this replaced, which was flush with a corner as tall as itself, and false
+  // of the capsule: its cap is a semicircle of half its height, so a 5px fill
+  // still covers 14.8px of the 16px it is tall. That reasoning put the floor
+  // at 14px, a quarter of the track, which read as real progress on a
+  // challenge nobody had begun.
+  //
+  // What is pinned now is that the floor stays well UNDER the radius — the
+  // opposite bound — so the argument cannot quietly come back.
+  const meter = CSS.slice(CSS.indexOf('.home-challenge-meter {'),
+    CSS.indexOf('}', CSS.indexOf('.home-challenge-meter {')));
+  const radius = /--home-meter-radius:\s*([\d.]+)rem/.exec(meter);
+  const floor = /--home-meter-floor:\s*([\d.]+)rem/.exec(meter);
+  assert.ok(radius && floor, 'both are stated as plain values, in rem');
+  assert.ok(Number(floor[1]) > 0, 'zero would be no floor at all');
+  assert.ok(Number(floor[1]) <= Number(radius[1]) * 0.9,
+    `the floor is ${floor[1]}rem against a ${radius[1]}rem radius — a floor at or `
+    + 'above the radius is the over-generous one the clipping argument produced');
+  assert.match(
+    challengesSrc(),
+    /width: `max\(var\(--home-meter-floor\), \$\{meter\.pct\}%\)`/,
+    'and the fill uses the floor rather than a percentage alone'
+  );
+  // The bar that rode the pill's bottom edge is gone: the capsule carries the
+  // progress now, in the place the circle sits on a yes-or-no challenge.
+  assert.doesNotMatch(challengesSrc(), /home-panel-bar-track absolute left-0 right-0 bottom-0/,
+    'no rule under the pill — the state element is the meter');
+  assert.match(challengesSrc(), /home-panel-bar-track home-challenge-meter/,
+    'the capsule IS the track, which is what dapp.json and the aria contract select on');
+});
 
 test('the lane is gone: a row is two lines and every row draws a track', () => {
   // COMMENTS STRIPPED. The rules that replaced the lane explain it by name —
@@ -573,35 +627,46 @@ test('a numeric challenge at full target draws a full bar AND the ✓', () => {
       })],
     })],
   });
-  assert.match(html, /width:100%/);
+  assert.match(html, /width:max\(var\(--home-meter-floor\), 100%\)/,
+    'the floor never shortens a full capsule — max() takes the percentage here');
   assert.match(html, /aria-valuenow="5"[^>]*aria-valuemax="5"/);
-  assert.match(html, /5\/5/);
-  assert.match(html, /home-panel-glyph[^>]*text-emerald-700[^>]*>✓</);
+  assert.match(html, /aria-label="[^"]*5 of 5 Proposals voted"/);
+  // A FINISHED COUNTED CHALLENGE KEEPS ITS CAPSULE, in emerald, rather than
+  // collapsing to the tick a yes-or-no one shows. The tick was the other
+  // option and it was tempting — one shape for "finished" reads fastest down a
+  // column — but it throws away the figure a counted challenge is about, and
+  // "5/5" on a full capsule says finished just as plainly.
+  assert.match(html, />5\/5</);
+  assert.match(html, /home-panel-bar-fill[^"]*bg-emerald-500/);
+  assert.doesNotMatch(html, /home-panel-glyph/,
+    'a counted challenge draws no circle in any state — the capsule is its state');
 });
 
-test('both well states occupy the same 28px box, so the goal never shifts', () => {
-  // A ✓ that sized itself intrinsically would move the goal text between an
-  // open row and a done one, which is visible as a jitter down a list where
-  // some rows are done. Both states are pinned to w-7 h-7.
+test('both well states occupy the same box, so the pill\'s text never shifts', () => {
+  // A ✓ that sized itself intrinsically would move the text beside it between
+  // an open challenge and a done one, which is visible as a jitter down a
+  // list where some are done. Both states are pinned to the same square.
   //
-  // The bar no longer has a stake in this. Its `left: 1.75rem` used to be
-  // px-2.5 (10) + glyph (10) + gap-2 (8) restated as a literal, so the well's
-  // width was load-bearing for TWO things; the track spans its own line by
-  // layout now, and only the goal's left edge depends on this.
-  const rows = ({ done, current }) => renderWith({
+  // 16px, not the 28px the row used to give it. The well is inside the card's
+  // white PILL now rather than beside a 56px row's goal, and a 28px disc in a
+  // pill that is barely taller than that is the pill's whole height. The bar
+  // has no stake in it either way: it is flush with the pill's edges, so
+  // nothing about it is derived from the well's width.
+  // A YES-OR-NO challenge, because the circle is now that challenge's state
+  // alone: a counted one draws a capsule instead, and comparing the two
+  // shapes is the point of the pair rather than an accident to guard against.
+  const rows = ({ done }) => renderWith({
     registry: [], hidden: [], panels: [panel({
-      challenges: [challenge({
-        metric: { kind: 'count', label: 'Kudos', target: 5 },
-        progress: { done, current, target: 5 },
-      })],
+      challenges: [challenge({ progress: { done, current: null, target: null } })],
     })],
   }).html;
-  assert.match(rows({ done: false, current: 0 }), /home-panel-glyph shrink-0 w-7 h-7 rounded-full/);
-  assert.match(rows({ done: true, current: 5 }), /home-panel-glyph shrink-0 w-7 h-7 rounded-full/);
-  assert.match(rows({ done: false, current: 0 }), /home-panel-row flex items-center gap-2\.5 px-2\.5/);
+  assert.match(rows({ done: false }), /home-panel-glyph shrink-0 w-4 h-4 rounded-full/);
+  assert.match(rows({ done: true }), /home-panel-glyph shrink-0 w-4 h-4 rounded-full/);
+  assert.match(rows({ done: false }),
+    /home-challenge-card [^"]*flex items-center gap-3 p-2\.5/);
 });
 
-test('render: the row drops the category, task and CTA — task becomes the tooltip', () => {
+test('render: the card SHOWS the category and drops the task and CTA', () => {
   const p = panel({
     challenges: [challenge({
       label: 'COMMUNITY',
@@ -610,10 +675,19 @@ test('render: the row drops the category, task and CTA — task becomes the tool
     })],
   });
   const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
-  assert.doesNotMatch(html, /COMMUNITY/, 'the category pill is gone at this density');
-  assert.doesNotMatch(html, /<a href=/, 'no per-row Start button');
+  // THE CATEGORY IS BACK, and in the one place the design leaves for it. It
+  // was dropped when a challenge was a 56px row: a category pill on a single
+  // line, beside the goal, the count and the reward, was the fourth thing
+  // competing for the width. A card has a WELL — the square the design fills
+  // with an illustration — and there is no artwork field on a challenge (an
+  // organiser writes a category, a goal, a task and a reward), so the well
+  // shows the category rather than an emoji hashed out of the row. It is a
+  // real fact, it differs between challenges, and the tint carries the colour
+  // the picture would have.
+  assert.match(html, /home-challenge-art[^>]*>COMMUNITY</, 'the well names the category');
+  assert.doesNotMatch(html, /<a href=/, 'still no per-challenge Start button');
   assert.doesNotMatch(html, /example\.invalid/);
-  // The task survives only as the row tooltip.
+  // The task survives only as the card's tooltip.
   assert.match(html, /title="[^"]*Find and file a reproducible bug report\."/);
 });
 
@@ -651,7 +725,12 @@ test('render: the footer carries the expand toggle and the way out', () => {
   assert.match(html, /home-panel-footer/);
   assert.match(html, /home-panel-expand[^>]*data-panel-key="challenges"/);
   assert.match(html, /See all 8 challenges/);
-  assert.equal((html.match(/home-panel-row\b(?!s)/g) || []).length, 4);
+  // Counted by `data-challenge-id` and by the card class rather than by
+  // `home-panel-row`: a challenge is a card now, and that class belongs to the
+  // 56px divided row it replaced. It survives on the EMPTY state's one note
+  // line, which is still a row, so counting it here would have counted a
+  // different thing in the two branches.
+  assert.equal((html.match(/home-challenge-card/g) || []).length, 4);
   assert.equal((html.match(/data-challenge-id/g) || []).length, 4);
   assert.doesNotMatch(html, /home-panel-more/, 'the old link ROW is gone');
   // And the separate way out, bottom right. It NAMES its destination — the
@@ -859,14 +938,14 @@ test('render: each panel is its own bordered article, in its own host', () => {
   assert.doesNotMatch(out.html, /Rank/, 'an unknown panel key is skipped, not thrown on');
 
   // Every host draws, and each draws exactly ONE block — never one shared
-  // card, never two stacked in the same section. Discover and Challenges are
-  // bordered articles under their own section label; Create is the dashed
-  // tile it has always been (and it now carries a label above it like the
-  // rest, so the stack reads as one list of labelled areas).
+  // card, never two stacked in the same section. Each is an <article> under
+  // its own section label; what they sit ON now differs by block (see
+  // PanelShell's `plate`), so this counts the article and not its plate:
+  // Discover has none at all, because its cards are the surface.
   for (const key of ['discover', 'challenges']) {
     const host = out.host(key);
-    assert.equal((host.innerHTML.match(/<article class="home-panel /g) || []).length, 1,
-      `${key}: one bordered block`);
+    assert.equal((host.innerHTML.match(/<article class="home-panel[ "]/g) || []).length, 1,
+      `${key}: one block`);
     assert.equal((host.innerHTML.match(/home-area-label/g) || []).length, 1,
       `${key}: its OWN label row`);
     assert.ok(!host._classes.has('hidden'), `${key}: shown`);
@@ -912,33 +991,39 @@ test('every text node in a row is single-line — no wrapping anywhere', () => {
   });
   const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
 
-  // Pull out every <span> inside a row and require each to opt out of
-  // wrapping. A new chip added without nowrap fails here.
-  const rowHtml = html.slice(html.indexOf('home-panel-row'));
+  // Pull out every <span> inside a card and require each to opt out of
+  // wrapping. A new item added to the pill without nowrap fails here.
+  const rowHtml = html.slice(html.indexOf('home-challenge-card'));
   const spans = rowHtml.match(/<span class="[^"]*"/g) || [];
-  assert.ok(spans.length >= 3, 'goal + count + reward at least');
+  assert.ok(spans.length >= 3, 'the well, the state, the deadline and the reward at least');
   for (const span of spans) {
-    // The well, the pip inside it, and the bar's track and fill carry no
-    // text; every span that CAN hold text must opt out of wrapping.
-    if (/home-panel-glyph|home-panel-bar-(fill|track)|rounded-full border-2/.test(span)) continue;
+    // The well, the state pip and the meter's track and fill carry no text;
+    // every span that CAN hold text must opt out of wrapping.
+    // The well, the state pip, the capsule and its fill carry no prose. The
+    // capsule's COUNT is exempt for a different reason: it is "1/3", which
+    // has nothing to wrap at, and it is centred rather than laid in a row.
+    if (/home-panel-glyph|home-panel-bar-(fill|track)|home-challenge-art|relative px-1\.5 text-\[10\.5px\]/.test(span)) continue;
     assert.match(span, /whitespace-nowrap|truncate/,
-      `a row span may not wrap: ${span}`);
+      `a card span may not wrap: ${span}`);
   }
 
   // The goal specifically: truncate (ellipsis) rather than clip-with-no-hint.
-  assert.match(html, /home-panel-goal[^"]*min-w-0 truncate whitespace-nowrap/);
-  // Line two is the track and holds no text, so it is exempt above — but it
-  // must be the row's LAST child, or a chip would render under the bar.
+  assert.match(html, /home-panel-goal truncate whitespace-nowrap/);
+  // The meter holds no text, so it is exempt above — but it must be the
+  // pill's LAST child, or an item would render under it rather than beside
+  // the others.
   assert.match(html, /home-panel-bar-track[\s\S]*?<\/span><\/div><\/div>/);
-  // The reward chip is the one most likely to wrap — multi-word and shrink-0.
-  // It is a TINTED PILL now rather than bold accent text: a column of blue
-  // "250 pts" read down the card before any of the goals beside them did, and
-  // the goal is what a row is about. `rounded-full` sits between the two
-  // classes this line has always been about, so it is matched loosely.
-  assert.match(html, /shrink-0 whitespace-nowrap[^"]*text-\[11px\] font-medium text-violet-700/);
-  assert.match(html, /bg-violet-500\/10/, 'the tint is what makes it findable at all');
-  // The count.
-  assert.match(html, /shrink-0 whitespace-nowrap text-\[11px\] tabular-nums/);
+  // The reward is the item most likely to wrap — multi-word and shrink-0. It
+  // is plain semibold text on the pill now rather than a tinted chip: the
+  // chip existed to keep the reward findable among a row's four competing
+  // items, and a pill of three has no crowd to stand out from. It is also the
+  // only bold thing on the line, which does the same job at no cost.
+  assert.match(html, /shrink-0 whitespace-nowrap text-\[12\.5px\] font-semibold/);
+  // The COUNT is gone from the pill, and with it the last thing competing
+  // for that width. It is the meter now; the exact figure stays in the
+  // meter's aria-label, where the assistive reading of "3 of 8" belongs.
+  assert.doesNotMatch(html, /tabular-nums/,
+    'no count beside the reward — the meter states progress and the pill states the rest');
 });
 
 test('the title bar and the footer controls are single-line too', () => {
@@ -1523,15 +1608,19 @@ test('each block is a full-width child of the section, not separately bounded', 
   for (const [name, html] of [['populated', populated], ['empty state', empty]]) {
     assert.doesNotMatch(html, /home-section-block/,
       `${name}: the column is the only width cap now`);
-    // The bordered block IS the article — no wrapper. The heading is a
-    // SIBLING of it, not a box around it: one block per section since the
-    // widgets became fixed areas, so the label has exactly one thing to name
-    // and the card is left holding only its content.
-    assert.match(html, /<article class="home-panel home-panel-card /,
+    // The block IS the article — no wrapper. The heading is a SIBLING of it,
+    // not a box around it: one block per section since the widgets became
+    // fixed areas, so the label has exactly one thing to name.
+    //
+    // Matched WITHOUT naming the plate: what an article sits on is a per-block
+    // decision now (PanelShell's `plate` — Challenges takes the translucent
+    // one, Discover none at all), and this test is about the article being the
+    // block rather than about which surface it wears.
+    assert.match(html, /<article class="home-panel[ "]/,
       `${name}: the block is the article itself`);
     assert.doesNotMatch(html, /home-panel-bar[^-]/,
-      `${name}: no control bar inside the card — the heading carries them`);
-    assert.match(html, /<\/h2><article class="home-panel home-panel-card /,
+      `${name}: no control bar inside the block — the heading carries them`);
+    assert.match(html, /<\/h2><article class="home-panel[ "]/,
       `${name}: the label is the block's immediate previous sibling`);
   }
   const css = read('public/css/app.css');
@@ -1626,7 +1715,7 @@ test('every window.<global> the widgets read is actually published', () => {
   }
 });
 
-test('the Discover widget renders the curated tiles when Home is reachable', () => {
+test('the Discover widget renders the curated cards when Home is reachable', () => {
   const featured = [
     { slug: 'alpha', name: 'Alpha', icon_emoji: '🅰', featured: true },
     { slug: 'beta', name: 'Beta', featured: true },
@@ -1634,8 +1723,14 @@ test('the Discover widget renders the curated tiles when Home is reachable', () 
   const { html } = renderBlock('discover', {
     home: { featuredApps: () => featured, isYours: () => false, _apps: featured },
   });
-  assert.match(html, /home-discover-tiles/, 'the tile row, not the empty note');
-  assert.match(html, /class="app-card home-discover-tile[^"]*" data-slug="alpha"/);
+  assert.match(html, /home-discover-rail/, 'the card rail, not the empty note');
+  // `.app-card` and `data-slug` are the contract with Home._wireDiscoveryCards
+  // and with dapp.json's own Discover check, so they survive the redesign
+  // whatever the card looks like. `home-discover-tile` does NOT: it named a
+  // 40px tile in a grid, and a class that says "tile" on a 152px card is a
+  // name the next reader has to disbelieve.
+  assert.match(html, /class="app-card home-discover-card [^"]*" data-slug="alpha"/);
+  assert.doesNotMatch(html, /home-discover-tile\b/, 'the grid tile is retired, not renamed in place');
   assert.match(html, /Browse all apps/, 'and the browse control is always there');
   assert.doesNotMatch(html, /Nothing featured right now/);
 
@@ -1868,64 +1963,57 @@ test('dapp.json’s home-widget checks describe markup this module emits', () =>
   assert.ok(emptyHtml.includes(bare.expectText), `the note says "${bare.expectText}"`);
 });
 
-// The one-cell phone budget and the two-cell desktop budget, derived by hand
-// in app.css and pinned here exactly as that comment instructs — a token
-// moved on one side without the other mis-sizes the widget silently.
-test('the Discover lanes fit the cells their footprint buys', () => {
+// The rail's geometry, derived by hand in app.css and pinned here exactly as
+// that comment instructs — a value moved on one side without the other
+// mis-sizes the cards silently.
+test('the Discover rail is a fixed-width row that bleeds to both screen edges', () => {
   const css = read('public/css/app.css');
-  // Six explicit tracks, one per tile either lane can produce. auto-fill
-  // followed the pixel width and wrapped to a second (clipped) row in a
-  // 640-800px window.
-  // ONE TRACK PER TILE, floored at four (discover.tsx sets --lane-tracks) —
-  // still explicit, still never fewer tracks than tiles, so a lane is still
-  // exactly one row. Six is the fallback and the ceiling.
-  assert.match(css,
-    /\.home-discover-tiles \{[\s\S]*?grid-template-columns: repeat\(var\(--lane-tracks, 6\), minmax\(0, 1fr\)\)/);
+  // A GRID OF SIX TRACKS IS GONE, and with it the whole cell budget this test
+  // used to be about. The lane was six 40px icon tiles fitted to one grid
+  // cell on a phone and two on desktop; the block is a section that grows to
+  // its content, and the design draws a horizontal rail of cards. So the
+  // sums, `--lane-tracks`, the icon-wrapper cap and the .app-card padding
+  // override all went with the grid that needed them.
+  // Rule-shaped and anchored, like the other retirement assertions in this
+  // file: what should survive is the COMMENT recording what each rule did and
+  // why it went, so only a rule at the start of a line counts as the thing
+  // coming back.
+  assert.doesNotMatch(css, /^\.home-discover-tiles[\s,{]/m,
+    'the tile grid and its track arithmetic are retired');
+  assert.doesNotMatch(css, /^\s*--lane-tracks:/m,
+    'no track count to keep in step with a lane cap');
+  assert.doesNotMatch(PANELS_TSX, /'--lane-tracks'/, 'and nothing sets one');
+
+  // A CARD IS A FIXED WIDTH, not a flexed one: cards that flexed would resize
+  // as a lane's count changed, and the rail's whole affordance is that the row
+  // continues past the edge at a constant rhythm.
+  assert.match(css, /\.home-discover-card \{[^}]*flex: 0 0 auto/);
+  assert.match(css, /\.home-discover-card \{[^}]*width: 9\.5rem/);
+
+  // IT BLEEDS. The negative inline margin cancels the section's px-3 gutter so
+  // the first card starts on the text's left edge and the last runs off the
+  // right — a card cut by the edge is what says there are more. The padding
+  // puts the first card back on the text edge; the two must move together.
+  assert.match(css, /\.home-discover-rail \{[^}]*margin-inline: -0\.75rem/);
+  assert.match(css, /\.home-discover-rail \{[^}]*padding-inline: 0\.75rem/);
+  // #home-screen states `overflow-x: hidden` (pinned by
+  // tests/home-vertical-scroll-only.test.js), which is what clips that
+  // overhang instead of letting it widen the feed.
+  assert.match(css, /#home-screen[\s\S]{0,400}?overflow-x:\s*hidden/);
+
+  // `pan-x`, for the same reason the switcher's app rail carries it: without
+  // it a diagonal drag starting here is claimed by the vertical feed and the
+  // rail never moves. A vertical drag still reaches the page, because the
+  // browser only takes the axis this element declares.
+  assert.match(css, /\.home-discover-rail \{[^}]*touch-action: pan-x/);
+  assert.match(css, /\.home-discover-rail \{[^}]*overflow-x: auto/);
+
+  // The lane cap and the rail agree on how many cards can exist. The rail
+  // scrolls, so this is no longer a fitting constraint — but a cap that drifts
+  // far from what a viewer will ever swipe to is a payload nobody reads.
   assert.match(HOME, /FEATURED_LIMIT: 6/);
-  assert.match(HOME, /POPULAR_LIMIT: 6/, 'the lane cap equals the track count');
-  // Both lanes split anything spare instead of the first one taking it — but
-  // from a CONTENT basis (`1 1 auto`), not the `1 1 0` a fixed tile could
-  // afford. A zero basis in a section is circular: each lane contributed 0 to
-  // the height the article asked for, so the article collapsed to its title
-  // bar and both lanes clipped their tiles in half.
-  assert.match(css, /\.home-discover-lane \{[^}]*flex: 1 1 auto/);
-  assert.match(css, /\.home-discover-tiles \{[^}]*align-content: center/);
-  // The fluid icon caps at the 40px the tile always drew at — and the CAP
-  // is on the WRAPPER. On the icon itself, `width: 100%` resolves against a
-  // shrink-to-fit parent (the tile is `flex-col items-center`), which is
-  // circular: the icons rendered at whatever their glyph measured — 12px for
-  // an emoji, 30px for an image — instead of a uniform 40px.
-  assert.match(css, /\.home-discover-icon-wrap \{[^}]*width: 100%/);
-  assert.match(css, /\.home-discover-icon-wrap \{[^}]*max-width: 2\.5rem/);
-  assert.match(css, /\.home-discover-icon \{[^}]*aspect-ratio: 1 \/ 1/);
-  assert.match(PANELS_TSX, /className="home-discover-icon-wrap relative"/,
-    'and the markup gives that wrapper its class');
+  assert.match(HOME, /POPULAR_LIMIT: 6/);
 
-  // .app-card's own padding must NOT apply to a discovery tile: the lane
-  // supplies the inset, and inheriting the launcher tile's 8px added 16px
-  // per tile — enough to put the phone widget at 116px of a 116px cell,
-  // with no room left for a larger system text size. The selector is two
-  // classes deep because .app-card's padding is declared later in the file.
-  assert.match(css, /\.home-discover-tiles \.home-discover-tile \{[^}]*padding: 0/);
-
-  // THE HEIGHT IS A SUM, not a budget any more. Both lanes used to have to
-  // fit inside a rectangle — one grid cell on a phone, the 16rem height cap
-  // on desktop — and this asserted they did. The block is a section that
-  // grows to its content now, so the same arithmetic describes what it DRAWS:
-  //
-  //   border 2 + title bar 27 + lane 72 + divider 19 + lane 72 = 192px
-  //
-  // Kept because the terms are still real tokens that can drift apart, and
-  // because a lane that stops summing (a zero flex basis, say) collapses the
-  // article and clips the tiles — which is exactly what shipped once.
-  // No title bar in the sum any more: it became the section's label row,
-  // OUTSIDE the card (frontend/src/features/home/panels/ui.tsx). The caption
-  // lane grew by one line at the same time — a tile name gets two, because a
-  // 55px track had been rendering most of them as "Opinio…".
-  const lane = 84;     // 8 + 40 icon + 4 gap + 24 two-line caption + 8
-  const divider = 19;  // 1px rule + the ~18px "Popular" caption row
-  assert.equal(2 + lane + divider + lane, 189);
-  assert.match(css, /second lane\s+=\s+84px/, 'and app.css shows the same sum');
   // No ceiling either lane could be clipped by.
   assert.doesNotMatch(css, /--home-panel-max-h:/);
 });

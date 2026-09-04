@@ -86,7 +86,6 @@ import { SearchIcon } from '@/components/ui/icons';
 
 import { AppGrid } from './app-grid';
 import { AppsMore } from './apps-more';
-import { AccountPanel } from './panels/account';
 import { ChallengesSection, CreateSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
 import { WidgetStrip } from './widget-strip';
@@ -274,28 +273,22 @@ export function HomeScreen() {
         <ChallengesSection />
         <CreateSection />
         {/*
-            ── AREA 5: YOU ────────────────────────────────────────────
+            THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth
+            area held one row — an avatar, "Profile", "Your points, settings
+            and account" — as the entrance the retired hamburger took away.
+            The chip's menu has carried that entrance since #1443: a "You"
+            group with #switcher-row-profile and #switcher-row-settings in
+            it, pinned by the destination-order check in dapp.json. So the
+            row was a second door to the same screen, on the one screen
+            people open to reach their apps, and the design's own answer is
+            a Profile tab in a bottom bar rather than a card at the foot of
+            the launcher. Home ends on "make something" now.
 
-            The entrance to Profile, and through it to Settings and Admin.
-            Profile's only link used to be a hamburger row, and the drawer
-            went with the hamburger — which left all three reachable only by
-            typing the hash. LAST, because the reading order this section
-            block states for itself ends with you, and putting an account row
-            first would push the launcher grid down for something nobody
-            opens Home to do.
-
-            Not a `<Section>`: it has no title bar, no ⋮ and no panel model,
-            the same reason CreatePanel is not one. It is one row.
+            App.applyUserAvatar went with it: Home's pair was the only one
+            left (the header chip's copy was retired in the same #1443
+            round), so the function had no nodes to write to. Profile's own
+            editor re-reads the picture from App.user when it saves.
         */}
-        <section id="home-account-section" className="px-3 pb-3">
-          {/*
-              `mt-4` is gone from this section: the heading's own `pt-4` is the
-              gap now, so all five areas are spaced by one rule instead of this
-              one being spaced by hand.
-          */}
-          <SectionHeading>You</SectionHeading>
-          <AccountPanel />
-        </section>
         {/*
             #home-panels — the widgets' FALLBACK host — is gone with the
             placement it existed for. It caught the moment before the first

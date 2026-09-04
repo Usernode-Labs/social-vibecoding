@@ -49,6 +49,13 @@ export interface DiscoverTileView {
   /** Is this app already in "Your apps"? Drives the badge's whole treatment. */
   added: boolean;
   icon: IconView;
+  /**
+   * The app's own one-line description, from its manifest — null when it
+   * declares none, which is most apps. The card draws nothing in its place.
+   */
+  blurb: string | null;
+  /** How many people built it. 0 hides the line rather than printing "0". */
+  contributors: number;
 }
 
 export interface DiscoverView {
@@ -76,6 +83,14 @@ export interface ChallengeMeterView {
 
 export interface ChallengeRowView {
   id: string;
+  /**
+   * The card's picture, from the challenge's kind — null when that kind has
+   * none, or the template names no kind. `label` is what the well draws in
+   * its place.
+   */
+  icon: string | null;
+  /** The organiser's category, upper-cased — the well's fallback. */
+  label: string;
   goal: string;
   /** The task, folded into the row's tooltip — the one place it still shows. */
   tip: string;
@@ -97,6 +112,12 @@ export interface SeasonView {
   sub: string | null;
   /** The whole fact in one string, for the ring's accessible name. */
   label: string;
+  /**
+   * "7 days left" — how long the SEASON has to run, or null between seasons
+   * and when the payload carries no end date. One fact about the block, not
+   * a field on each row: every open challenge ends when the season does.
+   */
+  deadline: string | null;
 }
 
 export interface ChallengesView {

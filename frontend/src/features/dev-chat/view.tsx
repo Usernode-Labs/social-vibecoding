@@ -61,10 +61,25 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
       {s.proposalHint ? <div className={HINT}>{HINT_TEXT}</div> : null}
       {/* The ELEMENT keeps a CONSTANT className: `PlatformUI.attachScreenFx`
           writes a hairline/blur class onto it once the chat scrolls, and
-          React never rewrites a className whose prop has not changed. */}
+          React never rewrites a className whose prop has not changed.
+
+          `rounded-b-lg` is #1588. This strip is the second bar on the screen —
+          the platform header sits directly above it and curves its own bottom
+          corners away (`rounded-b-lg` there too, the same 0.75rem token), so a
+          square-cornered bar underneath read as an unfinished copy of it. Both
+          bars now let the page ground show through the same two notches.
+
+          The header's `-mb-1` companion is deliberately NOT copied. That
+          overlap exists to make the SCREEN below it read as rounded-topped,
+          and what sits below this strip is the transcript's own scroller;
+          pulling it 4px up under the curve would put a message row in the
+          notch. The corners are what was asked for and what matches.
+
+          No `overflow-hidden` here either, for the reason the header's own
+          note gives. */}
       <div
         id="dc-session-header"
-        className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0"
+        className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0 rounded-b-lg"
       >
         <SessionHeader />
       </div>

@@ -79,7 +79,13 @@ export interface ComposerState {
   venueNoteHtml: string;
   /** #1281: a launchpad stands in the composer's place, so it is hidden. */
   hidden: boolean;
-  /** Usernode · Claude's chat-model picker. Null on every other venue. */
+  /**
+   * Usernode · Claude's chat-model picker. Null on every other venue.
+   *
+   * The options carry bare model NAMES (#1589) — the guidance they used to
+   * carry set the closed control's width and wrapped the credit meter onto a
+   * second line. It still reads in full in the Generate-proposal picker.
+   */
   models: { options: ModelOptionView[]; selected: string } | null;
   /** OpenRouter's session-pinned model row. Null on every other venue. */
   openRouter: {
