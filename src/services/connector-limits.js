@@ -160,11 +160,26 @@ async function checkActiveCap(pool, config, user) {
 // order the caller already holds is free even at the cap, and after the
 // `restart` branch, so starting one over frees its own slot before the
 // count is taken.
+//
+// `session_id IS NULL` — the same clause listOpenWorkOrders selects on, and
+// that is the whole point: the denominator has to be the list the user can
+// actually SEE. A work order the connector has shared (#1347) keeps its row
+// open on purpose, and the Improve panel excludes it because the share
+// already shows on the Dev board as a session card. Counting it here charged
+// it a second budget as well, one with no card to pause and no row in any
+// list — a user at this cap was told to "submit one" while the panel showed
+// them nothing to submit.
+//
+// Nothing is widened by dropping them: sharing obeys checkActiveCap above,
+// which is the real bound on a session with a live preview behind it. This
+// cap is what it says it is — how many work orders are held open and NOT yet
+// handed anywhere.
 async function checkOpenWorkOrders(pool, userId) {
   const open = await countOr(
     pool,
     `SELECT COUNT(*) AS cnt FROM external_agent_tasks
-      WHERE user_id = $1 AND status = 'open' AND expires_at > NOW()`,
+      WHERE user_id = $1 AND status = 'open' AND expires_at > NOW()
+        AND session_id IS NULL`,
     [userId],
     'open-tasks'
   );
