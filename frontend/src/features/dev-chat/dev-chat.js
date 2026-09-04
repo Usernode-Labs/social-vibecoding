@@ -6172,19 +6172,30 @@ const DevChat = {
     };
   },
 
-  /** #990's trailing dots, as data. */
+  /**
+   * #990's trailing dots, as data.
+   *
+   * ONE INDICATOR AT A TIME (#1590). A live step already draws a spinning
+   * arc, names itself and counts its own seconds; dots underneath it are a
+   * second answer to the same question, and on a bounce they climb into the
+   * row above. So the dots are for the window where NOTHING is live — the
+   * ladder frozen on a ✓ while the turn is still running, which is the
+   * silent gap #990 was actually about.
+   *
+   * This started as the same rule for live CODING runs only ("that row
+   * already carries a scrolling log and an ETA"), which was the reasoning
+   * generalised: every live row carries its own cue, the coding run's is
+   * merely the loudest.
+   */
   _activitySpec() {
     if (!DevChat.isStreaming || !DevChat._activity) return null;
-    // Suppressed while a coding agent's own live log is painting progress:
-    // that row already carries a scrolling log and an ETA, so dots pinned
-    // underneath read as noise. The pre-log gap is still covered, because
-    // that status line is not a live CC run yet.
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
       const m = DevChat.messages[i];
       if (!m || m.role !== 'system') continue;
+      // Frozen rows say nothing about what is happening NOW, so keep
+      // walking past them — the same search the live-CC-run check made.
       if (!m._active) continue;
-      if (DevChat._isLiveCcRun(m)) return null;
-      break;
+      return null;
     }
     return { label: DevChat._activity.label || '' };
   },
