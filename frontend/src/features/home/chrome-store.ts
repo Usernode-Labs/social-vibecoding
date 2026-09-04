@@ -43,15 +43,46 @@ export interface WidgetStripState {
   tiles: WidgetTileView[];
 }
 
+/**
+ * The Android launcher re-pin notice (#1489), as one dismissible line above
+ * the grid.
+ *
+ * iOS pins are migrated silently by `Home._healWidgetUrls()`. Android's are
+ * owned by the launcher, which exposes no readable registry and no removal,
+ * so a stale icon has to be REMEMBERED rather than observed — hence the
+ * shadow log behind `kind` here:
+ *
+ *   'stale'   — recorded pins carry the old chromed address. `apps` names
+ *               them and the notice offers a sequential re-add.
+ *   'unknown' — nothing recorded, so the device MAY have pinned icons before
+ *               the change shipped. Generic wording, no batch action, `apps`
+ *               empty.
+ *
+ * `active: false` is the initial value for the same reason the strip's is:
+ * the prerendered document ships the hidden section, so hydration cannot
+ * mismatch (AGENTS.md — a hydration console.error on #home fails checks).
+ */
+export interface RePinNoticeState {
+  active: boolean;
+  kind: 'stale' | 'unknown';
+  apps: { slug: string; name: string }[];
+  /** The 'unknown' variant's "where do I find it?" line. */
+  helpVisible: boolean;
+  /** A sequential re-add is in flight; the buttons are inert. */
+  busy: boolean;
+}
+
 export interface HomeChromeState {
   /** 0 hides "Show all N apps"; otherwise the count it names. */
   moreCount: number;
   strip: WidgetStripState;
+  rePin: RePinNoticeState;
 }
 
 export const INITIAL_CHROME: HomeChromeState = {
   moreCount: 0,
   strip: { active: false, helpVisible: false, tiles: [] },
+  rePin: { active: false, kind: 'unknown', apps: [], helpVisible: false, busy: false },
 };
 
 export const chromeStore = createStore<HomeChromeState>(INITIAL_CHROME);

@@ -518,6 +518,14 @@ const ADDED_IDS = {
   // #notifications-load-older, the real pager, renders only on All.)
   'notifications-tab-all': 'The whole archive, LAST. The strip narrows left to right — the count you came for, the one kind you answer, then the archive holding both — so the unfiltered tab sits behind the two filtered ones rather than between them. It is where the footer link at the bottom of a filtered tab goes — see #notifications-see-older — and the only tab that pages more rows in.',
   'notifications-tab-messages': 'The sheet\'s SECOND tab, between Unread and All. A message notification is one row in a flat chronological feed that also carries every session, proposal and kudos row, so it sinks fast on a busy account; this is the one place to catch up on conversations regardless. Its own \'All messages\' entry (#notifications-all-messages, rendered only while the tab is active and so not in the static markup) leads to the #messages screen the app chip\'s Messages row also opens.',
+  // ── #1489: the Android launcher re-pin notice ────────────────────
+  // The only id the notice puts in the COLD document. Everything inside it
+  // (#home-repin-notice and its two buttons) renders from an effect that
+  // reads the shadow pin log out of localStorage, so the first render has to
+  // be the empty hidden section the prerender ships — the island rule, whose
+  // failure mode is a hydration console error on #home and therefore a
+  // failed check on every proposal.
+  'home-repin-notice-section': 'Host for the one-time "re-add your home screen icons" prompt above the launcher grid (#1489). Ships hidden and empty; shown only on Android, only where the pin log remembers an icon added on the pre-#1489 chromed address, and only until the viewer answers it once.',
   'notifications-screen-mark-all': 'Mark-all-read on the sheet — same controller action as the drawer\'s #notifications-mark-all, React-wired instead of id-bound. Same naming note as the tab row above. It sat at the far RIGHT END of that tab row, in tab-sized ink on the same baseline as the three tabs, so a control that changes data read as a fourth place to go; it is a row UNDER the Unread tab now, with the list it empties, and renders nowhere else.',
 };
 

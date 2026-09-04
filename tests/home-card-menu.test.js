@@ -99,7 +99,7 @@ function makeHomeEnv(user) {
     alert: () => {},
     confirm: () => true,
     setTimeout, clearTimeout, setInterval, clearInterval,
-    URL,
+    URL, URLSearchParams,
     location: { search: '', origin: 'https://sv.test' },
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -793,7 +793,7 @@ test('menu click: reveals the section and auto-adds when there is room', async (
   await Home._menuAddShortcut(baseApp({ is_favorited: true }));
   assert.equal(Home._widgetSectionVisible, true, 'click reveals the section');
   assert.equal(added.length, 1, 'app auto-added when the widget has room');
-  assert.equal(added[0].url, 'https://sv.test/app/demo-app');
+  assert.equal(added[0].url, 'https://sv.test/app/demo-app/full');
 });
 
 test('menu click: full widget shakes instead of adding', async () => {
@@ -920,7 +920,7 @@ test('icon heal: has_icon:false entries are silently re-added once', async () =>
   // the foreign shortcut are left alone. The re-add is marked silent so
   // the app skips the add-the-widget walkthrough.
   assert.equal(added.length, 1);
-  assert.equal(added[0].url, 'https://sv.test/app/demo-app');
+  assert.equal(added[0].url, 'https://sv.test/app/demo-app/full');
   assert.equal(added[0].silent, true);
   // Second refresh: already tried — no repeat even though the mock
   // still reports has_icon:false.
@@ -1161,7 +1161,7 @@ test('icon heal: a system light→dark flip re-sends every canvas tile once', as
   setDark(true);
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(added.length, 1, 'exactly the canvas tile re-sends');
-  assert.equal(added[0].url, 'https://sv.test/app/demo-app');
+  assert.equal(added[0].url, 'https://sv.test/app/demo-app/full');
   assert.equal(added[0].silent, true, 're-send stays silent — no walkthrough');
   const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
   assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:dark:`, 'dark source recorded');
@@ -1853,7 +1853,7 @@ test('a foreground re-fetches the registry, not just the snapshot', async () => 
   await flushAsync();
   assert.equal(Home._widgetItems.length, 2, 'the registry was re-read');
   assert.equal(added.length, 1, 'and the new entry gets its icon');
-  assert.equal(added[0].url, 'https://sv.test/app/second');
+  assert.equal(added[0].url, 'https://sv.test/app/second/full');
 });
 
 // A foreground whose registry read failed learned nothing, so it must
@@ -1955,4 +1955,211 @@ test('menu: shortcut item hidden when unsupported or app not running', () => {
       `hidden on ${status} apps`
     );
   }
+});
+
+// ── The Android launcher pin log (#1489) ────────────────────────────────
+//
+// The pinned-shortcut bridge has no readable registry, no remove and no
+// reorder: the launcher owns the icon. So a stale address can only be
+// REMEMBERED, never observed, and the shadow log below is that memory. Its
+// one job is to let the home screen ask a person to re-add, exactly once.
+
+const PIN_LOG = 'sv:homescreen_pins';
+const readLog = (sandbox) => JSON.parse(sandbox.localStorage.getItem(PIN_LOG));
+// The vm context is another realm, so objects it builds are not
+// reference-equal to this realm's Object.prototype. Round-trip before a
+// deep compare.
+const plain = (v) => JSON.parse(JSON.stringify(v));
+
+function makeAndroidHome() {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const added = [];
+  sandbox.usernode = {
+    addHomeScreenShortcut: async (p) => { added.push(p); },
+  };
+  Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
+  Home._apps = [
+    baseApp({ slug: 'weather', name: 'Weather' }),
+    baseApp({ slug: 'ledger', name: 'Ledger' }),
+  ];
+  Home._iconTileDataUrl = () => 'data:image/png;base64,AA==';
+  Home._ensureDarkIconCapability = async () => null;
+  return { Home, sandbox, added };
+}
+
+test('pin log: adding a launcher shortcut records the app and the address it got (#1489)', async () => {
+  const { Home, sandbox, added } = makeAndroidHome();
+  await Home._addShortcutForApp(Home._apps[0]);
+  assert.equal(added.length, 1);
+  assert.equal(added[0].url, 'https://sv.test/app/weather/full');
+  const rec = readLog(sandbox);
+  assert.equal(rec.v, 1);
+  assert.equal(rec.pins.weather.url, 'https://sv.test/app/weather/full');
+  assert.equal(Home._stalePins(rec).length, 0, 'a pin made now is already current');
+});
+
+test('pin log: an entry on the old address is stale, and the notice names it (#1489)', () => {
+  const { Home, sandbox } = makeAndroidHome();
+  Home._savePinLog({
+    v: 1,
+    firstSeenAt: Date.now() - 1000,
+    prompt: { dismissedAt: null, actionedAt: null },
+    pins: { weather: { url: 'https://sv.test/app/weather', pinnedAtMs: 1 } },
+  });
+  assert.deepEqual(plain(Home._stalePins(readLog(sandbox))), [{ slug: 'weather', name: 'Weather' }]);
+  const view = Home.rePinNoticeView();
+  assert.equal(view.active, true);
+  assert.equal(view.kind, 'stale');
+  assert.deepEqual(plain(view.apps).map((a) => a.slug), ['weather']);
+  // The card menu says "Re-pin", not "Add": the icon is already on the
+  // launcher and a second "Add" reads as a duplicate. The item is a
+  // "Your apps" affordance, so the card has to be one of the viewer's.
+  const item = Home.menuItemsFor(
+    baseApp({ slug: 'weather', name: 'Weather', is_favorited: true })
+  ).find((i) => i.key === 'add-to-homescreen');
+  assert.equal(item.label, 'Re-pin to phone home screen');
+});
+
+test('pin log: a pin for an app the viewer no longer has is not stale (#1489)', () => {
+  const { Home, sandbox } = makeAndroidHome();
+  Home._savePinLog({
+    v: 1,
+    firstSeenAt: Date.now() - 1000,
+    prompt: { dismissedAt: null, actionedAt: null },
+    pins: { retired: { url: 'https://sv.test/app/retired', pinnedAtMs: 1 } },
+  });
+  assert.deepEqual(plain(Home._stalePins(readLog(sandbox))), []);
+});
+
+test('the re-pin notice is one-shot: dismissing or acting retires it for good (#1489)', () => {
+  for (const field of ['dismissedAt', 'actionedAt']) {
+    const { Home } = makeAndroidHome();
+    Home._savePinLog({
+      v: 1,
+      firstSeenAt: Date.now() - 1000,
+      prompt: { dismissedAt: null, actionedAt: null, [field]: Date.now() },
+      pins: { weather: { url: 'https://sv.test/app/weather', pinnedAtMs: 1 } },
+    });
+    assert.equal(Home.rePinNoticeView().active, false, `${field} suppresses the notice`);
+  }
+  const { Home, sandbox } = makeAndroidHome();
+  Home._dismissRePinNotice();
+  assert.ok(readLog(sandbox).prompt.dismissedAt, 'dismissal is persisted, not per-session');
+  assert.equal(Home.rePinNoticeView().active, false);
+});
+
+test('the re-pin notice never appears off the launcher mechanism, and writes nothing (#1489)', () => {
+  for (const mechanism of ['widget', 'unsupported']) {
+    const { Home, sandbox } = makeAndroidHome();
+    Home._shortcutSupport = { mechanism };
+    assert.equal(Home.rePinNoticeView().active, false, `inactive on ${mechanism}`);
+    assert.equal(sandbox.localStorage.getItem(PIN_LOG), null,
+      'reading the view model must not seed a log on a device that has no launcher pins');
+  }
+});
+
+test('an un-aged device sees the generic notice, but only inside the window (#1489)', () => {
+  // A device that pinned icons BEFORE this build is indistinguishable from a
+  // fresh install: there is no log to consult. The window is the stated
+  // approximation, and it retires itself.
+  const { Home } = makeAndroidHome();
+  Home._seedPinLog();
+  const view = Home.rePinNoticeView();
+  assert.equal(view.active, true);
+  assert.equal(view.kind, 'unknown');
+  assert.deepEqual(plain(view.apps), []);
+
+  const aged = makeAndroidHome();
+  aged.Home._savePinLog({
+    v: 1,
+    firstSeenAt: Date.now() - aged.Home.PIN_LOG_UNKNOWN_WINDOW_MS - 1000,
+    prompt: { dismissedAt: null, actionedAt: null },
+    pins: {},
+  });
+  assert.equal(aged.Home.rePinNoticeView().active, false,
+    'past the window the guess has expired');
+});
+
+test('re-adding runs one app at a time and stops at the first refusal (#1489)', async () => {
+  const { Home, sandbox } = makeAndroidHome();
+  const seen = [];
+  let inFlight = 0;
+  sandbox.usernode.addHomeScreenShortcut = async (p) => {
+    inFlight += 1;
+    assert.equal(inFlight, 1, 'Android raises one system dialog per icon');
+    await new Promise((r) => setImmediate(r));
+    inFlight -= 1;
+    seen.push(p.url);
+    if (seen.length === 2) throw new Error('cancelled');
+  };
+  Home._savePinLog({
+    v: 1,
+    firstSeenAt: Date.now() - 1000,
+    prompt: { dismissedAt: null, actionedAt: null },
+    pins: {
+      weather: { url: 'https://sv.test/app/weather', pinnedAtMs: 1 },
+      ledger: { url: 'https://sv.test/app/ledger', pinnedAtMs: 1 },
+    },
+  });
+  await Home._rePinStaleShortcuts();
+  assert.deepEqual(seen, [
+    'https://sv.test/app/weather/full',
+    'https://sv.test/app/ledger/full',
+  ]);
+  const rec = readLog(sandbox);
+  assert.equal(rec.pins.weather.url, 'https://sv.test/app/weather/full', 'the accepted one is recorded');
+  assert.equal(rec.pins.ledger.url, 'https://sv.test/app/ledger', 'the refused one is untouched');
+  assert.equal(rec.prompt.actionedAt, null,
+    'a partial run never retires the notice, so the remaining icon can still be fixed');
+  assert.equal(Home.rePinNoticeView().active, true);
+});
+
+test('re-adding every stale pin retires the notice (#1489)', async () => {
+  const { Home, sandbox } = makeAndroidHome();
+  Home._savePinLog({
+    v: 1,
+    firstSeenAt: Date.now() - 1000,
+    prompt: { dismissedAt: null, actionedAt: null },
+    pins: { weather: { url: 'https://sv.test/app/weather', pinnedAtMs: 1 } },
+  });
+  await Home._rePinStaleShortcuts();
+  assert.ok(readLog(sandbox).prompt.actionedAt);
+  assert.equal(Home.rePinNoticeView().active, false);
+});
+
+test('the two ?shot= links synthesise the notice without reading or writing storage (#1489)', () => {
+  for (const [shot, kind] of [['repin-android', 'stale'], ['repin-android-generic', 'unknown']]) {
+    const { Home, sandbox } = makeAndroidHome();
+    // No mechanism at all: the capture browser is a desktop Chrome, which is
+    // exactly why the links must not consult _shortcutSupport.
+    Home._shortcutSupport = { mechanism: 'unsupported' };
+    sandbox.location.search = `?shot=${shot}`;
+    const view = Home.rePinNoticeView();
+    assert.equal(view.active, true, `${shot} renders the notice`);
+    assert.equal(view.kind, kind);
+    assert.equal(sandbox.localStorage.getItem(PIN_LOG), null, 'a capture writes nothing');
+  }
+});
+
+test('widget-icon diagnostics carry the pinned address and the launcher log (#1489)', () => {
+  const { Home } = makeAndroidHome();
+  Home._savePinLog({
+    v: 1,
+    firstSeenAt: 1000,
+    prompt: { dismissedAt: null, actionedAt: null },
+    pins: { weather: { url: 'https://sv.test/app/weather', pinnedAtMs: 5 } },
+  });
+  const diag = Home.widgetIconDiagnostics();
+  assert.equal(diag.pinLog.seeded, true);
+  assert.deepEqual(plain(diag.pinLog.pins), [
+    { slug: 'weather', url: 'https://sv.test/app/weather', pinnedAtMs: 5, urlOk: false, stale: true },
+  ]);
+  // On iOS the launcher block is absent entirely; the per-entry URL flags are
+  // what that screen reports instead.
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._widgetItems = [{ id: 'a', name: 'Weather', url: 'https://sv.test/app/weather/full' }];
+  const ios = Home.widgetIconDiagnostics();
+  assert.equal(ios.pinLog, null);
+  assert.equal(ios.entries[0].url, 'https://sv.test/app/weather/full');
+  assert.equal(ios.entries[0].urlOk, true);
 });

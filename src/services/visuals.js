@@ -106,9 +106,14 @@ const CONTENT_TYPES = {
 // pass is unchanged, but the suite that follows it now has its own 420s
 // budget, and the container needs room to finish that budget and still emit
 // its sentinel. This is the OUTER bound — the suite stops dispatching at
-// TESTS_DEADLINE_MS long before we get here, so hitting 600s means the
+// TESTS_DEADLINE_MS long before we get here, so hitting it means the
 // container is genuinely wedged, not merely busy.
-const RUN_TIMEOUT_MS = 600 * 1000;
+//
+// 600s → 650s (#1489), the first time this constant has had to move: the
+// suite budget below went to 520s with the MAX_DECLARED_TESTS 480 → 530
+// bump, and this one must stay 120s clear of it so the media pass that runs
+// first still has room. It is an outer bound, not a budget.
+const RUN_TIMEOUT_MS = 650 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 
 // The capture container drives up to TEST_CONCURRENCY headless pages at
@@ -124,14 +129,15 @@ const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '4';
 // container's agree by construction.
 const TEST_CONCURRENCY = process.env.TEST_CONCURRENCY || '8';
 const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
-// 420s → 470s (#1417), moved together with MAX_DECLARED_TESTS 430 → 480 in
-// services/app-manifest.js — the two are one decision, and the note on that
-// constant says so. A full 480-check suite is ~234s of ideal work at the
-// measured ~3.9s per check over this pool of 8; 470s keeps the 2x margin
-// tests/checks-budget.test.js pins, which is what stops a real manifest's
-// tail being cut on every build. RUN_TIMEOUT_MS above stays at 600s: it only
-// has to clear this by 120s, and it clears it by 130s.
-const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '470000';
+// 420s → 470s (#1417) → 520s (#1489), moved each time together with
+// MAX_DECLARED_TESTS (430 → 480 → 530) in services/app-manifest.js — the two
+// are one decision, and the note on that constant says so. A full 530-check
+// suite is ~258s of ideal work at the measured ~3.9s per check over this
+// pool of 8; 520s keeps the 2x margin tests/checks-budget.test.js pins,
+// which is what stops a real manifest's tail being cut on every build.
+// RUN_TIMEOUT_MS above moved with it this time: it has to clear this by
+// 120s, and 470s was the last deadline 600s could carry.
+const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '520000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.

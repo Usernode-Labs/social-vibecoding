@@ -160,3 +160,136 @@ test('onReorder saves the tile order the strip currently shows', async () => {
     'optimistic mirror matches'
   );
 });
+
+// ── The URL migration pass (#1489) ──────────────────────────────────────
+//
+// A bridge re-add is an in-place refresh KEYED ON URL (NATIVE-BRIDGE.md), so
+// a pinned entry cannot be moved to a new address by re-adding it: that
+// creates a second entry and leaves the first one pinned. The migration is
+// therefore four calls in a fixed order, and the order is the contract these
+// tests pin.
+
+// A Home wired to a fake widget registry. `calls` records the bridge
+// sequence; `registry` is the mutable list the stubs read and write.
+function makeUrlHealHome({ items, failRemove = false }) {
+  const calls = [];
+  let registry = items.slice();
+  let nextId = 900;
+  const sandbox = {
+    console,
+    App: { user: { id: 1 } },
+    PlatformUI: { toast: () => {} },
+    document: {
+      getElementById: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      body: { appendChild: () => {} },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    URL, URLSearchParams,
+    location: { origin: 'https://sv.example', search: '' },
+    localStorage: {
+      _d: {},
+      getItem(k) { return Object.prototype.hasOwnProperty.call(this._d, k) ? this._d[k] : null; },
+      setItem(k, v) { this._d[k] = String(v); },
+      removeItem(k) { delete this._d[k]; },
+    },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    unNative: { attachReorder: () => ({ detach: () => {} }) },
+    usernode: {
+      addHomeScreenShortcut: async (payload) => {
+        calls.push({ m: 'add', url: payload.url });
+        registry = registry.concat([{ id: `new-${nextId++}`, name: payload.name, url: payload.url }]);
+      },
+      getHomeScreenShortcuts: async () => {
+        calls.push({ m: 'get' });
+        return { items: registry.slice() };
+      },
+      removeHomeScreenShortcut: async (id) => {
+        calls.push({ m: 'remove', id });
+        if (failRemove) throw new Error('denied');
+        registry = registry.filter((it) => it.id !== id);
+      },
+      reorderHomeScreenShortcuts: async (ids) => { calls.push({ m: 'reorder', ids }); },
+    },
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  const Home = sandbox.__Home;
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._widgetItems = registry.slice();
+  Home._apps = [
+    { slug: 'weather', name: 'Weather', icon_emoji: '🌤' },
+    { slug: 'ledger', name: 'Ledger', icon_emoji: '📒' },
+  ];
+  Home._iconTileDataUrl = () => 'data:image/png;base64,AA==';
+  Home._ensureDarkIconCapability = async () => null;
+  return { Home, calls, current: () => registry };
+}
+
+test('one pass migrates ONE stale pin: add, read back, remove, reorder (#1489)', async () => {
+  const { Home, calls } = makeUrlHealHome({
+    items: [
+      { id: 'a', name: 'Weather', url: 'https://sv.example/app/weather' },
+      { id: 'b', name: 'Ledger', url: 'https://sv.example/app/ledger' },
+    ],
+  });
+  await Home._healWidgetUrls();
+  assert.deepEqual(calls.map((c) => c.m), ['add', 'get', 'remove', 'reorder', 'get'],
+    'add BEFORE remove, with a read-back in between to learn the new id');
+  assert.equal(calls[0].url, 'https://sv.example/app/weather/full');
+  assert.equal(calls[2].id, 'a', 'the stale entry is the one removed');
+  const reorder = calls.find((c) => c.m === 'reorder');
+  assert.equal(reorder.ids.length, 2);
+  assert.ok(reorder.ids[0].startsWith('new-'),
+    'the replacement is put back at the original entry’s index, not appended');
+  assert.equal(reorder.ids[1], 'b', 'the untouched pin keeps its place');
+  assert.match(Home._urlHealOutcome, /^migrated weather$/);
+  // ONE per pass: the second stale entry is still stale afterwards, because
+  // add-before-remove puts the registry transiently over the widget's
+  // eight-tile capacity and two at once would hide a tile.
+  assert.ok(Home._widgetItems.some((it) => it.url === 'https://sv.example/app/ledger'));
+});
+
+test('a pass with nothing stale left touches the bridge not at all (#1489)', async () => {
+  const { Home, calls } = makeUrlHealHome({
+    items: [{ id: 'a', name: 'Weather', url: 'https://sv.example/app/weather/full' }],
+  });
+  await Home._healWidgetUrls();
+  assert.deepEqual(calls, []);
+  assert.equal(Home._urlHealOutcome, 'nothing to migrate');
+});
+
+test('a rejected remove leaves the duplicate rather than losing the pin (#1489)', async () => {
+  const { Home, calls } = makeUrlHealHome({
+    items: [{ id: 'a', name: 'Weather', url: 'https://sv.example/app/weather' }],
+    failRemove: true,
+  });
+  await Home._healWidgetUrls();
+  assert.deepEqual(calls.map((c) => c.m), ['add', 'get', 'remove']);
+  assert.match(Home._urlHealOutcome, /^failed on weather: /);
+  // Both entries are present: the user sees two tiles for one app, which the
+  // next pass heals. The alternative ordering would have lost the pin.
+  assert.equal(Home._widgetItems.length, 2);
+  assert.ok(Home._widgetItems.some((it) => it.url === 'https://sv.example/app/weather'));
+  assert.ok(Home._widgetItems.some((it) => it.url === 'https://sv.example/app/weather/full'));
+});
+
+test('a foreign pin is never migrated, and an app that has not loaded is left un-tried (#1489)', async () => {
+  const { Home, calls } = makeUrlHealHome({
+    items: [
+      { id: 'f', name: 'Other', url: 'https://elsewhere.example/app/other' },
+      { id: 'g', name: 'Gone', url: 'https://sv.example/app/gone' },
+    ],
+  });
+  await Home._healWidgetUrls();
+  assert.deepEqual(calls, [], 'nothing to do: one foreign, one app not in the list');
+  assert.ok(!Home._urlHealTried.has('g'),
+    'an app that has not loaded yet stays a candidate for a later pass');
+});

@@ -1032,6 +1032,7 @@ const Home = {
     chromeStore.set({
       moreCount: count || 0,
       strip: Home.widgetSectionView(),
+      rePin: Home.rePinNoticeView(),
     });
   },
 
@@ -1720,6 +1721,147 @@ const Home = {
     };
   },
 
+  // ── The Android re-pin notice (#1489) ───────────────────────────────
+  //
+  // iOS pins are migrated silently (_healWidgetUrls). Android's are owned by
+  // the launcher: the platform cannot rewrite one and cannot remove one, so
+  // the best available outcome is an informed person tapping twice. This is
+  // the view model behind that one dismissible line.
+  //
+  // Two sources, one notice:
+  //
+  //   'stale'   — the log holds >=1 pin whose URL is not the /full spelling.
+  //               Precise: the notice names those apps and offers to re-add
+  //               them.
+  //   'unknown' — the log has no pins at all AND was seeded inside the
+  //               retirement window. A device that pinned icons before
+  //               #1489 shipped is INDISTINGUISHABLE from a fresh install,
+  //               so this is a stated approximation: the wording is generic
+  //               and the action only shows where to look. The accepted cost
+  //               is that a fresh install may see one dismissible line it
+  //               did not need; the alternative (show nothing without
+  //               positive evidence) makes the prompt dead code for exactly
+  //               the population it exists for.
+  _rePinBusy: false,
+  _rePinHelpVisible: false,
+  // Screenshot-state deep links, read straight off location.search in the
+  // style of ?shot=create-disabled and ?shot=discover-empty above. Both
+  // SYNTHESISE the view model: no localStorage read, no _shortcutSupport
+  // read, no writes. That is what lets them work in a desktop browser and
+  // what stops a capture session dismissing a real person's notice.
+  //
+  // Deliberately NOT env-gated, same reasoning as ?shot=improve: pure UI
+  // state with no writes, and an IS_STAGING-only link would starve the
+  // production "before" shot forever.
+  //
+  // The demo names are the two the widget-icon diagnostics demo already
+  // uses (settings.js DEMO_WIDGET_ICON_DIAGNOSTICS: demo-1 Weather, demo-2
+  // Ledger), so the two demo surfaces describe one consistent fictional
+  // device.
+  _rePinShot() {
+    try {
+      return new URLSearchParams(location.search).get('shot');
+    } catch (_) { return null; }
+  },
+  rePinNoticeView() {
+    const shot = Home._rePinShot();
+    if (shot === 'repin-android') {
+      return {
+        active: true,
+        kind: 'stale',
+        apps: [{ slug: 'weather', name: 'Weather' }, { slug: 'ledger', name: 'Ledger' }],
+        helpVisible: !!Home._rePinHelpVisible,
+        busy: false,
+      };
+    }
+    if (shot === 'repin-android-generic') {
+      return {
+        active: true,
+        kind: 'unknown',
+        apps: [],
+        helpVisible: !!Home._rePinHelpVisible,
+        busy: false,
+      };
+    }
+    const inactive = { active: false, kind: 'unknown', apps: [], helpVisible: false, busy: false };
+    if (Home._shortcutSupport?.mechanism !== 'pinned-shortcut') return inactive;
+    const rec = Home._loadPinLog();
+    // Checked before anything else: this is the one-shot guarantee.
+    if (rec && (rec.prompt.dismissedAt || rec.prompt.actionedAt)) return inactive;
+    const stale = rec ? Home._stalePins(rec) : [];
+    if (stale.length) {
+      return {
+        active: true,
+        kind: 'stale',
+        apps: stale,
+        helpVisible: !!Home._rePinHelpVisible,
+        busy: !!Home._rePinBusy,
+      };
+    }
+    // No record at all (private mode, cleared storage) counts as unknown-age
+    // too, but with no seed timestamp there is no window to be inside, so
+    // treat the seed as "now" and show it.
+    const firstSeenAt = rec ? rec.firstSeenAt : Date.now();
+    if (Date.now() - firstSeenAt >= Home.PIN_LOG_UNKNOWN_WINDOW_MS) return inactive;
+    return {
+      active: true,
+      kind: 'unknown',
+      apps: [],
+      helpVisible: !!Home._rePinHelpVisible,
+      busy: false,
+    };
+  },
+  // Permanent by design: a pin made from this build forward already carries
+  // /full, so the notice can never have new legitimate cause to return.
+  _dismissRePinNotice() {
+    const rec = Home._seedPinLog();
+    rec.prompt.dismissedAt = Date.now();
+    Home._savePinLog(rec);
+    Home._rePinHelpVisible = false;
+    Home.render();
+  },
+  _toggleRePinHelp() {
+    Home._rePinHelpVisible = !Home._rePinHelpVisible;
+    Home.render();
+  },
+  // SEQUENTIAL, and that is a requirement rather than a style choice:
+  // Android raises a system confirmation per icon, so firing these
+  // concurrently stacks dialogs on top of each other.
+  async _rePinStaleShortcuts() {
+    if (Home._rePinBusy) return;
+    const rec = Home._loadPinLog();
+    if (!rec) return;
+    const stale = Home._stalePins(rec);
+    if (!stale.length) return;
+    Home._rePinBusy = true;
+    Home.render();
+    try {
+      await Home._ensureDarkIconCapability();
+      for (const entry of stale) {
+        const app = (Home._apps || []).find((a) => a.slug === entry.slug);
+        if (!app) continue;
+        const payload = Home._shortcutPayloadFor(app);
+        try {
+          await window.usernode.addHomeScreenShortcut(payload);
+        } catch (_) {
+          // Cancelled at the system dialog, or refused. Stop the loop and
+          // leave the remaining entries stale, so the notice persists and
+          // actionedAt is never set on a partial run.
+          break;
+        }
+        rec.pins[entry.slug] = { url: payload.url, pinnedAtMs: Date.now() };
+        Home._savePinLog(rec);
+      }
+      if (!Home._stalePins(rec).length) {
+        rec.prompt.actionedAt = Date.now();
+        Home._savePinLog(rec);
+      }
+    } finally {
+      Home._rePinBusy = false;
+      Home.render();
+    }
+  },
+
   // One pinned shortcut, as the strip draws it. Same three icon kinds as the
   // home card, tagged with the same `kind` so the tile treatment (app.css)
   // can single out the letter fallback for its fainter glyph colour — and
@@ -2016,7 +2158,99 @@ const Home = {
       if (Home._shortcutSupport?.mechanism === 'widget') {
         return Home._refreshWidgetItems();
       }
+      // Android pins straight to the launcher and exposes NO readable
+      // registry, so staleness can never be observed there — it has to be
+      // remembered. Seeding the log here is what distinguishes "this device
+      // has never pinned since #1489 shipped" from "this device has a clean
+      // log", which is the whole basis of the re-pin notice below.
+      if (Home._shortcutSupport?.mechanism === 'pinned-shortcut') {
+        Home._seedPinLog();
+        Home.render();
+      }
     }).catch(() => { /* stay null — item simply never renders */ });
+  },
+
+  // ── Android launcher pin log (#1489) ────────────────────────────────
+  //
+  // What exists on the Android path, before this: NOTHING. _probeShortcutSupport
+  // fetches the registry only for `widget`; _addShortcutForApp refreshes and
+  // re-renders only for `widget`; the two other sv: records
+  // (sv:widget_dark_icons, sv:widget_icon_src) are written exclusively from
+  // widget-gated code. The bridge itself exposes only
+  // getHomeScreenShortcutSupport + addHomeScreenShortcut for pinned-shortcut
+  // devices — there is no getHomeScreenShortcuts, no remove, no reorder.
+  //
+  // So a stale launcher icon is undetectable by observation. This record is
+  // the shadow copy that makes it detectable by memory instead:
+  //
+  //   { v: 1, firstSeenAt, prompt: { dismissedAt, actionedAt },
+  //     pins: { <slug>: { url, pinnedAtMs } } }
+  //
+  // Single-mechanism on purpose: iOS has a readable registry and does not
+  // need a shadow copy, and keeping the log Android-only keeps the detection
+  // rule unambiguous. Absence of the whole record is itself meaningful —
+  // see _rePinNoticeKind.
+  PIN_LOG_KEY: 'sv:homescreen_pins',
+  // Unknown-age prompts retire themselves after this long, so a device that
+  // never pinned anything cannot carry the notice forever.
+  PIN_LOG_UNKNOWN_WINDOW_MS: 30 * 24 * 60 * 60 * 1000,
+  _loadPinLog() {
+    try {
+      const rec = JSON.parse(localStorage.getItem(Home.PIN_LOG_KEY));
+      if (!rec || typeof rec !== 'object' || rec.v !== 1) return null;
+      return {
+        v: 1,
+        firstSeenAt: Number(rec.firstSeenAt) || 0,
+        prompt: {
+          dismissedAt: Number(rec.prompt?.dismissedAt) || null,
+          actionedAt: Number(rec.prompt?.actionedAt) || null,
+        },
+        pins: (rec.pins && typeof rec.pins === 'object') ? rec.pins : {},
+      };
+    } catch (_) { return null; /* private mode / corrupt -> unknown-age */ }
+  },
+  _savePinLog(rec) {
+    try {
+      localStorage.setItem(Home.PIN_LOG_KEY, JSON.stringify(rec));
+    } catch (_) { /* private mode — dismissal simply does not persist */ }
+    return rec;
+  },
+  _seedPinLog() {
+    const existing = Home._loadPinLog();
+    if (existing) return existing;
+    return Home._savePinLog({
+      v: 1,
+      firstSeenAt: Date.now(),
+      prompt: { dismissedAt: null, actionedAt: null },
+      pins: {},
+    });
+  },
+  // Called after a resolved add on a pinned-shortcut device. Records the URL
+  // that was ACTUALLY sent, so a later build changing the spelling again
+  // marks these stale without any further bookkeeping.
+  _recordPin(slug, url) {
+    if (!slug) return;
+    const rec = Home._seedPinLog();
+    rec.pins[slug] = { url: String(url || ''), pinnedAtMs: Date.now() };
+    Home._savePinLog(rec);
+  },
+  _pinUrlCurrent(url) {
+    try {
+      return /^\/app\/[^/]+\/full\/?$/.test(new URL(String(url || ''), location.origin).pathname);
+    } catch (_) { return false; }
+  },
+  // Recorded pins whose URL is not the spelling we pin today.
+  _stalePins(rec) {
+    const out = [];
+    for (const [slug, pin] of Object.entries(rec?.pins || {})) {
+      if (Home._pinUrlCurrent(pin && pin.url)) continue;
+      // A renamed or removed app leaves an unresolvable entry: skip it
+      // rather than offering to re-pin something that no longer exists.
+      const app = (Home._apps || []).find((a) => a.slug === slug);
+      if (!app) continue;
+      out.push({ slug, name: app.name || slug });
+    }
+    return out;
   },
 
   // ── iOS widget mirror ───────────────────────────────────────────────
@@ -2480,10 +2714,159 @@ const Home = {
   _healInFlight: null,
   _healWidgetIcons() {
     if (Home._healInFlight) return Home._healInFlight;
-    const pass = Home._healWidgetIconsPass()
+    // URL migration runs FIRST and the icon pass runs after it, on the same
+    // serialised in-flight promise (#1489). Order matters: a migration
+    // re-adds under a new id, and the icon pass compares recorded sources
+    // against ids — running it first would record against an id the
+    // migration is about to retire.
+    const pass = Home._healWidgetUrls()
+      .then(() => Home._healWidgetIconsPass())
       .finally(() => { Home._healInFlight = null; });
     Home._healInFlight = pass;
     return pass;
+  },
+
+  // ── URL migration (#1489) ───────────────────────────────────────────
+  //
+  // Pins created before #1489 carry the CHROMED address, so tapping them
+  // opens the app inside the platform with two stacked headers. This pass
+  // rewrites them in place, silently, the next time the widget registry is
+  // reconciled: the tile does not move, does not lose its position and does
+  // not flicker, and nobody has to re-add anything.
+  //
+  // ── Why this cannot ride along inside the icon pass ─────────────────
+  //
+  // A re-add is an in-place refresh KEYED ON URL (NATIVE-BRIDGE.md). Send a
+  // DIFFERENT url and the native side has no way to know which existing
+  // entry you meant, so it creates a NEW one. Migration is therefore
+  // add -> read -> remove -> reorder, four calls, not the icon pass's one.
+  //
+  // (#1472's commit message claimed "the old hash form remains readable so
+  // an existing native widget heals in place the next time its entries are
+  // reconciled". That was never true for exactly this reason: the icon pass
+  // only ever re-adds for ICON reasons, and its re-add refreshes the entry
+  // it already matched rather than respelling it.)
+  //
+  // ── Ordering rules, both load-bearing ──────────────────────────────
+  //
+  // ADD BEFORE REMOVE. An interruption between the two leaves a DUPLICATE
+  // (self-healing on the next pass, because the old entry is still stale)
+  // rather than a LOST pin. The reverse ordering trades a cosmetic glitch
+  // for permanent data loss on the device.
+  //
+  // ONE PER PASS. Add-before-remove puts the registry transiently at
+  // WIDGET_CAPACITY + 1, and the iOS medium widget renders prefix(8), so a
+  // ninth entry is invisible for the moment it exists. One at a time bounds
+  // that to a single entry.
+  _urlHealTried: null,
+  _urlHealAt: 0,
+  _urlHealOutcome: null,
+  // True when this entry's URL is already the spelling we pin today.
+  _widgetUrlCurrent(item) {
+    try {
+      const parsed = new URL(String(item?.url || ''), location.origin);
+      return /^\/app\/[^/]+\/full\/?$/.test(parsed.pathname);
+    } catch (_) {
+      return false;
+    }
+  },
+  async _healWidgetUrls() {
+    if (Home._shortcutSupport?.mechanism !== 'widget') {
+      Home._urlHealOutcome = 'skipped, not the widget mechanism';
+      return;
+    }
+    const bridge = window.usernode;
+    if (!bridge
+        || typeof bridge.addHomeScreenShortcut !== 'function'
+        || typeof bridge.getHomeScreenShortcuts !== 'function'
+        || typeof bridge.removeHomeScreenShortcut !== 'function') {
+      Home._urlHealOutcome = 'skipped, no shortcut bridge';
+      return;
+    }
+    const items = Home._widgetItems;
+    if (!Array.isArray(items)) {
+      Home._urlHealOutcome = 'skipped, registry not loaded';
+      return;
+    }
+    const tried = (Home._urlHealTried ||= new Set());
+    // ONE per pass: the first stale entry whose app has loaded and which
+    // has not already failed this session. Foreign pins (no slug) and
+    // entries whose app is not in the list yet are left alone — the latter
+    // deliberately un-tried, so a later pass retries once apps land.
+    let index = -1;
+    let target = null;
+    let app = null;
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
+      if (tried.has(item.id) || Home._widgetUrlCurrent(item)) continue;
+      const slug = Home._widgetSlugFor(item);
+      if (!slug) continue;
+      const found = (Home._apps || []).find((a) => a.slug === slug);
+      if (!found) continue;
+      index = i;
+      target = item;
+      app = found;
+      break;
+    }
+    if (!target) {
+      Home._urlHealOutcome = 'nothing to migrate';
+      return;
+    }
+    tried.add(target.id);
+    Home._urlHealAt = Date.now();
+    // The payload's icon must be right before the send, same reason the
+    // icon pass resolves it first: an un-probed capability would send a
+    // single face the next pass immediately re-sends as a pair.
+    await Home._ensureDarkIconCapability();
+    const knownIds = new Set(items.map((it) => it.id));
+    let after = null;
+    try {
+      // 1. ADD under the new URL. Creates a second entry, by design.
+      await bridge.addHomeScreenShortcut({
+        ...Home._shortcutPayloadFor(app),
+        silent: true,
+      });
+      // 2. READ BACK to learn the new entry's id.
+      const resp = await bridge.getHomeScreenShortcuts();
+      after = (resp && Array.isArray(resp.items)) ? resp.items : null;
+      if (!after) throw new Error('registry unreadable after add');
+      const added = after.find((it) => !knownIds.has(it.id)
+        && Home._widgetSlugFor(it) === app.slug);
+      if (!added) throw new Error('new entry not found');
+      // 3. REMOVE the stale entry.
+      await bridge.removeHomeScreenShortcut(target.id);
+      // 4. REORDER so the tile keeps its place instead of jumping to the
+      //    end of the strip.
+      const ids = after
+        .filter((it) => it.id !== target.id && it.id !== added.id)
+        .map((it) => it.id);
+      ids.splice(Math.min(index, ids.length), 0, added.id);
+      if (typeof bridge.reorderHomeScreenShortcuts === 'function') {
+        await bridge.reorderHomeScreenShortcuts(ids);
+      }
+      // Carry the recorded icon source across to the new id, so the icon
+      // pass does not immediately re-download artwork that is already
+      // correct; reap the retired id in the same write.
+      const srcMap = Home._loadIconSrcMap();
+      if (srcMap[target.id] !== undefined) srcMap[added.id] = srcMap[target.id];
+      delete srcMap[target.id];
+      try {
+        localStorage.setItem(Home._iconSrcKey, JSON.stringify(srcMap));
+      } catch (_) { /* private mode - the icon pass re-sends once */ }
+      // The icon pass reads Home._widgetItems, so hand it the post-migration
+      // registry rather than the snapshot the migration invalidated.
+      try {
+        const fresh = await bridge.getHomeScreenShortcuts();
+        if (fresh && Array.isArray(fresh.items)) Home._widgetItems = fresh.items;
+      } catch (_) { /* keep what we have */ }
+      Home._urlHealOutcome = `migrated ${app.slug}`;
+    } catch (err) {
+      // Anything after a successful add leaves a duplicate, which the next
+      // pass resolves: the stale entry is still stale, so it is still a
+      // migration candidate once `tried` is cleared on the next load.
+      Home._urlHealOutcome = `failed on ${app.slug}: ${String((err && err.message) || err)}`;
+      if (Array.isArray(after)) Home._widgetItems = after;
+    }
   },
   // Last-pass telemetry, for the Settings → "Widget icons" row. Kept
   // here rather than derived there: by the time someone opens Settings
@@ -2587,15 +2970,22 @@ const Home = {
       && Array.isArray(Home._widgetItems);
   },
 
-  // Widget entries deep-link `origin/app/<slug>`. The old hash form remains
-  // readable so an existing native widget heals in place the next time its
-  // entries are reconciled. Anything else was pinned by another dapp.
+  // Widget entries deep-link `origin/app/<slug>/full` (#1489). THREE older
+  // spellings stay readable — the chromed clean path from #1472, and the two
+  // hash forms before it — because that is how _healWidgetUrls identifies
+  // what to migrate. Anything else was pinned by another dapp.
+  //
+  // The `/full` branch is load-bearing beyond the migration: without it
+  // every pin created after #1489 reads as slug === null, which makes it
+  // "foreign" in widgetTileView (an anonymous letter tile with no app
+  // behind it) and drops it out of _widgetSlugs(), so the card menu would
+  // offer "Add to Usernode widget" for an app already on the widget.
   _widgetSlugFor(item) {
     const url = String(item?.url || '');
     try {
       const parsed = new URL(url, location.origin);
       if (parsed.origin !== location.origin) return null;
-      const clean = parsed.pathname.match(/^\/app\/([^/]+)\/?$/);
+      const clean = parsed.pathname.match(/^\/app\/([^/]+)(?:\/full)?\/?$/);
       if (clean) return decodeURIComponent(clean[1]);
       const legacy = parsed.hash.match(/^#app\/([^/]+)(?:\/app)?$/);
       return legacy ? decodeURIComponent(legacy[1]) : null;
@@ -2759,9 +3149,17 @@ const Home = {
           run: () => Home._revealWidgetSection(),
         });
       } else {
+        // Android, and the platform remembers pinning this app with the old
+        // chromed address (#1489): name the fix, so it stays reachable per
+        // app whether or not the home-screen notice was dismissed.
+        const stalePin = !isWidget
+          && shortcutSupport.mechanism === 'pinned-shortcut'
+          && Home._stalePins(Home._loadPinLog()).some((p) => p.slug === app.slug);
         items.push({
           key: 'add-to-homescreen',
-          label: isWidget ? 'Add to Usernode widget' : 'Add to phone home screen',
+          label: isWidget
+            ? 'Add to Usernode widget'
+            : (stalePin ? 'Re-pin to phone home screen' : 'Add to phone home screen'),
           run: () => Home._menuAddShortcut(app),
         });
       }
@@ -3121,7 +3519,20 @@ const Home = {
     const dual = variant ? variant === 'dual' : Home._widgetDarkIcons === true;
     const payload = {
       name: app.name,
-      url: `${location.origin}/app/${encodeURIComponent(app.slug)}`,
+      // The CHROMELESS route (#1489). A pin used to carry the chromed
+      // `/app/<slug>`, so a widget tap opened the app INSIDE the platform
+      // and stacked the platform header above the app's own — two title
+      // bars and ~100px gone before any app content. `/full` is the same
+      // route a share link opens: the app fills the screen, with the
+      // floating "Open in Usernode" pill as the way back in.
+      //
+      // Deliberately a literal template rather than
+      // App._appUrl(slug, 'app', null, null, { chromeless: true }):
+      // _routeSearch() copies location.search byte-for-byte, so a pin
+      // created while the tab happened to carry ?demo=1 or ?shot=card-menu
+      // would bake that query into a URL persisted on the device for
+      // months.
+      url: `${location.origin}/app/${encodeURIComponent(app.slug)}/full`,
       icon_url: app.icon_url
         ? new URL(app.icon_url, location.origin).href
         : Home._widgetIconDataUrl(app, dual ? 'light' : Home._widgetScheme()),
@@ -3142,6 +3553,28 @@ const Home = {
   //
   // Pure read: no bridge calls, no sends. Settings re-renders it after
   // asking Home to refresh the registry, so the caller controls I/O.
+  //
+  // The Android half of the same screen (#1489): what the pin log remembers,
+  // which entries are stale, and whether the notice has been answered.
+  _pinLogDiagnostics() {
+    if (Home._shortcutSupport?.mechanism !== 'pinned-shortcut') return null;
+    const rec = Home._loadPinLog();
+    if (!rec) return { seeded: false, pins: [], dismissedAt: null, actionedAt: null };
+    const stale = new Set(Home._stalePins(rec).map((p) => p.slug));
+    return {
+      seeded: true,
+      firstSeenAt: rec.firstSeenAt || 0,
+      dismissedAt: rec.prompt.dismissedAt,
+      actionedAt: rec.prompt.actionedAt,
+      pins: Object.entries(rec.pins).map(([slug, pin]) => ({
+        slug,
+        url: String(pin?.url || ''),
+        pinnedAtMs: Number(pin?.pinnedAtMs) || 0,
+        urlOk: Home._pinUrlCurrent(pin && pin.url),
+        stale: stale.has(slug),
+      })),
+    };
+  },
   widgetIconDiagnostics() {
     const srcMap = Home._loadIconSrcMap();
     const entries = (Home._widgetItems || []).map((item) => {
@@ -3152,6 +3585,12 @@ const Home = {
       return {
         id: item.id,
         name: item.name || slug || item.id,
+        // #1489: which address this entry actually carries, and whether it is
+        // the chromeless spelling. Without this row a migration stuck behind
+        // a rejecting bridge is completely invisible — the failure mode is
+        // "the app opens with two headers", which no log line reports.
+        url: String(item.url || ''),
+        urlOk: Home._widgetUrlCurrent(item),
         // A shortcut pinned by another dapp, or one whose SV app hasn't
         // loaded — either way this pass can't heal it.
         foreign: !slug,
@@ -3182,6 +3621,11 @@ const Home = {
       confirmTried: Home._darkIconConfirmTried,
       lastHealAt: Home._lastHealAt || 0,
       lastHealOutcome: Home._lastHealOutcome,
+      urlHealAt: Home._urlHealAt || 0,
+      urlHealOutcome: Home._urlHealOutcome,
+      // Android has no readable registry, so `entries` is always empty there
+      // and this shadow log is the only account of what was pinned (#1489).
+      pinLog: Home._pinLogDiagnostics(),
       readError,
       entries,
     };
@@ -3196,9 +3640,15 @@ const Home = {
       // a single face that the next heal pass immediately re-sends as a
       // pair — a wasted round trip and a visible double refresh.
       await Home._ensureDarkIconCapability();
-      await window.usernode.addHomeScreenShortcut(Home._shortcutPayloadFor(app));
+      const payload = Home._shortcutPayloadFor(app);
+      await window.usernode.addHomeScreenShortcut(payload);
       if (Home._shortcutSupport?.mechanism === 'widget') {
         await Home._refreshWidgetItems();
+        Home.render();
+      } else if (Home._shortcutSupport?.mechanism === 'pinned-shortcut') {
+        // The launcher cannot be read back, so this is the only record that
+        // this app was ever pinned, and with which spelling (#1489).
+        Home._recordPin(app.slug, payload.url);
         Home.render();
       }
       return true;

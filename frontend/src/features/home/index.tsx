@@ -10,9 +10,9 @@
  * visibility subscription below. What lives inside it has moved on, one host at
  * a time:
  *
- *   * `<AppGrid/>`, `<WidgetStrip/>` and `<AppsMore/>` are stateful islands
- *     rendering plain view models `home.js` pushes (./grid-store.ts and
- *     ./chrome-store.ts);
+ *   * `<AppGrid/>`, `<WidgetStrip/>`, `<RePinNotice/>` and `<AppsMore/>` are
+ *     stateful islands rendering plain view models `home.js` pushes
+ *     (./grid-store.ts and ./chrome-store.ts);
  *   * `<DiscoverSection/>`, `<ChallengesSection/>` and `<CreateSection/>` are
  *     the same arrangement for the three blocks below the grid, from
  *     ./panels-store.ts.
@@ -89,6 +89,7 @@ import { AppsMore } from './apps-more';
 import { AccountPanel } from './panels/account';
 import { ChallengesSection, CreateSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
+import { RePinNotice } from './repin-notice';
 import { WidgetStrip } from './widget-strip';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -182,6 +183,15 @@ export function HomeScreen() {
             there.
         */}
         <WidgetStrip />
+        {/*
+            Android in-app only: the one-time launcher re-pin prompt (#1489).
+            Same host and the same "ships empty and hidden" contract as the
+            strip above, and deliberately the OTHER platform — iOS pins are
+            migrated silently by Home._healWidgetUrls(), while a launcher pin
+            can only be re-added by the person who placed it. See
+            repin-notice.tsx.
+        */}
+        <RePinNotice />
         {/*
             ── AREA 1 of 4: YOUR APPS ─────────────────────────────────
 
