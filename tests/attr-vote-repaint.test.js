@@ -206,3 +206,38 @@ test('re-anchor: no-op when no popover is open', () => {
   AppView._refreshAttrCards();
   assert.equal(queried, false);
 });
+
+test('an unset imported Underway attribute anchors to its session card', () => {
+  const { AppView, sandbox } = makeSandbox();
+  const card = fakeEl({ getBoundingClientRect: () => ({ bottom: 80, left: 30 }) });
+  const selectors = [];
+  sandbox.document = fakeDoc({}, (selector) => {
+    selectors.push(selector);
+    return selector.includes('data-shared-session-row') ? card : null;
+  });
+
+  const anchor = AppView._attrAnchorFor('assignee', 'proposal', 88);
+  assert.equal(selectors.length, 2);
+  assert.match(selectors[1], /data-proposal-row="88"/);
+  assert.match(selectors[1], /data-shared-session-row="88"/);
+  assert.equal(anchor.dataset.attrTargetType, 'proposal');
+  assert.equal(anchor.dataset.attrTargetRef, '88');
+  assert.equal(anchor.getBoundingClientRect().left, 30);
+});
+
+test('an imported Underway attribute vote updates the session cache before repaint', () => {
+  const { AppView } = makeSandbox();
+  const mine = { id: 88, source: 'imported', assignee: null };
+  AppView._proposals = [];
+  AppView._merged = [];
+  AppView._mySessions = [mine];
+  AppView._sharedSessions = [];
+
+  AppView._applyAttrSummary('proposal', 88, 'assignee', {
+    options: [{ value: 'bruno', count: 2 }],
+    myValue: 'bruno',
+  });
+  assert.equal(mine.assignee.top, 'bruno');
+  assert.equal(mine.assignee.count, 2);
+  assert.equal(mine.assignee.myValue, 'bruno');
+});
