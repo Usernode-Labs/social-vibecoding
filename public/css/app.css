@@ -6083,18 +6083,42 @@ span.gc-vote-btn-icon { cursor: default; }
    pane's ground rather than sitting in a bordered bar, which is why the bar
    around it drops its `border-t` and the card carries the elevation. */
 .dc-card {
+  /* The elevation is a variable so the focus rule below can add a ring to it
+     without restating it — two copies of a shadow list drift the first time
+     one of them is tuned. */
+  --dc-card-elevation: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -8px rgba(0, 0, 0, 0.14);
   background: var(--bg-primary);
   border-radius: 1.5rem;
   padding: 0.875rem 1rem 0.625rem;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -8px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--dc-card-elevation);
+  transition: box-shadow 120ms ease;
 }
 /* Dark mode gets a hairline instead of a shadow: a drop shadow on a dark
-   ground is invisible, so the card would lose its edge entirely. */
+   ground is invisible, so the card would lose its edge entirely.
+   `0 0 #0000` rather than `none`, because the focus rule appends to this
+   value and `none, <shadow>` is not a valid box-shadow list. */
 :root.dark .dc-card,
 .dark .dc-card {
+  --dc-card-elevation: 0 0 #0000;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  box-shadow: none;
+}
+
+/* FOCUS LIVES ON THE CARD, not on the field.
+   The field draws no box of its own — see the `bare` ring in
+   @/components/ui/input.tsx — so the only edge that can carry a focus cue is
+   the one around everything, and a blinking caret is a thin cue on a surface
+   this wide.
+   `:focus-within` rather than `:focus`: the card is one control group, and
+   reaching the attach button or the model picker by keyboard is still "you
+   are in the composer". Those controls keep their own rings on top of this —
+   they have no caret, so the card's ring alone would not say which of them
+   is live. */
+.dc-card:focus-within {
+  box-shadow: var(--dc-card-elevation), 0 0 0 2px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dc-card { transition: none; }
 }
 
 .dc-card-row {
