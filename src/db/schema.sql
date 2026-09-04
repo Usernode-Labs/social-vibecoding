@@ -27,11 +27,11 @@ UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_app
 -- src/routes/apps.js) — a non-admin may create iff their live app count is
 -- below this number, so deleting an app frees a slot (mirrors the server-
 -- wide maxApps cap). Default 0 means "cannot create until an admin raises
--- it", matching the old can_create_apps default-off behaviour. Admins
--- bypass enforcement entirely — their quota is purely cosmetic. The client
--- still sees a derived `canCreateApps` boolean (computed in auth/me as
--- isAdmin || liveCount < app_quota) so the home screen needs no change; the
--- numeric quota is surfaced only through the admin API. `can_create_apps`
+-- it", matching the old can_create_apps default-off behaviour. Full admins
+-- bypass enforcement entirely; view-only admins keep their ordinary quota.
+-- The client sees both a derived `canCreateApps` boolean (computed in auth/me
+-- as canAdminWrite || liveCount < app_quota) and the numeric quota used by the
+-- create dialog. `can_create_apps`
 -- is KEPT for now purely as the one-shot backfill source below — dropping
 -- it (and the derived canCreateApps plumbing) is deferred work.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 0;
@@ -3507,6 +3507,18 @@ CREATE TABLE IF NOT EXISTS challenge_kinds (
   created_at   TIMESTAMPTZ,
   updated_at   TIMESTAMPTZ
 );
+-- The picture a challenge of this kind shows on the launcher's Challenges
+-- cards. It lives on the KIND rather than on the template or the challenge
+-- because that is the controlled vocabulary an organiser already picks from
+-- (`challenge_templates.kind` is a real FK to this table), so one setting
+-- gives every challenge of that kind the same face — which is what makes a
+-- column of cards scannable rather than a column of different drawings.
+--
+-- One or two characters, so an emoji including the joined ones. Anything
+-- longer is refused by the writer; anything absent (a kind with no icon, or
+-- a template with no kind at all) falls back to the challenge's category
+-- word, which is the only other per-challenge mark there is.
+ALTER TABLE challenge_kinds ADD COLUMN IF NOT EXISTS icon VARCHAR(16);
 
 -- `challenge_templates` — a reusable challenge definition; one or more
 -- `challenges` rows instantiate it per event (referenced there as
@@ -5653,6 +5665,38 @@ WHERE request_key IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS external_agent_tasks_open_request_idx
   ON external_agent_tasks (user_id, app_id, request_key)
   WHERE status = 'open';
+
+-- ── Release the slots a shared session stranded ──────────────────────
+--
+-- `share: true` leaves the work order OPEN on purpose — the agent keeps
+-- committing onto the in-progress card — and stamps `session_id` on the row.
+-- The promote that ends that arrangement is `submit_work({ proposalId,
+-- branch, propose: true })`, which carries no taskId, so until the fix in
+-- services/external-agent-tasks.js + services/mcp-tools.js nothing ever
+-- closed those rows. Each one held a slot of its owner's ten-open-work-order
+-- bound until it expired fourteen days later; one account hit the cap with
+-- ten rows it could not see, none of which were work it was still doing.
+--
+-- Forward-only and idempotent, like the backfills above: it can only move
+-- rows OUT of 'open', so a later boot finds nothing left to do, and it never
+-- touches a session that is still being built.
+--
+-- Two outcomes, because the two are not the same story:
+--   'submitted' — the session reached the group (promoted / merging /
+--                 merged). The work order did its job; only the bookkeeping
+--                 was missing.
+--   'abandoned' — the session was archived. The work was put away, and
+--                 recording it as submitted would claim something false.
+--
+-- `session_id` is ON DELETE SET NULL, so a row whose session is gone keeps
+-- no handle at all — those are left to the expiry, which is the only honest
+-- reading of them.
+UPDATE external_agent_tasks t
+SET status = CASE WHEN s.status = 'archived' THEN 'abandoned' ELSE 'submitted' END
+FROM chat_sessions s
+WHERE t.session_id = s.id
+  AND t.status = 'open'
+  AND s.status NOT IN ('active', 'paused');
 
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a

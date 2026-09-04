@@ -206,6 +206,13 @@ export function FeedbackDialog() {
             real gate either way, and a bounty that can't be placed never
             costs the user their filed issue. Same utility classes as
             #feedback-state-row above, so no new Tailwind names appear.
+
+            #1582 shortened this line to what a bounty DOES. What it used to
+            also carry — that ticking the box spends 1 of the viewer's weekly
+            kudos — moved into the note below rather than going away: this
+            control spends a real allowance, so the cost has to stay on
+            screen. The note already had the live remaining figure and is the
+            right place for it.
         */}
         <div id="feedback-bounty-row" className="hidden mt-2">
           <label className="flex items-start gap-2 cursor-pointer select-none">
@@ -214,7 +221,7 @@ export function FeedbackDialog() {
               <span className="font-medium text-zinc-700 dark:text-zinc-300">
                 Put a kudos bounty on this:
               </span>
-              pledges 1 of your weekly kudos to whoever's merged proposal closes this issue
+              encourages someone to take it up and solve it
               <br />
               <span id="feedback-bounty-note" className="text-zinc-500 dark:text-zinc-500">
               </span>

@@ -25,7 +25,10 @@ const indexHtml = read('public/index.html');
 const shellSource = read('frontend/src/Shell.tsx');
 // #1079 chunk B moved the drawer (#header-menu-panel) out of Shell.tsx into its
 // own island — same markup, same comments, new file.
-const homeAccount = read('frontend/src/features/home/panels/account.tsx');
+// The entrance to #profile. It was a row at the foot of Home; Home dropped
+// that area once the chip's menu carried the same door (#1443), so the live
+// one is a row of the menu.
+const switcherSheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
 const nativeChrome = read('public/js/native-chrome.js');
 const profileJs = read('frontend/src/features/profile/profile.js');
 // #1083 chunk F did the same for the screen itself: <main id="profile-screen">
@@ -45,29 +48,29 @@ const profileViewTsx = read('frontend/src/features/profile/profile-view.tsx');
 const profileSheetTsx = read('frontend/src/features/profile/profile-edit-sheet.tsx');
 const profilePublicTsx = read('frontend/src/features/profile/public-profile-card.tsx');
 
-// ─── The entrance ships visible, on Home ────────────────────────────────
+// ─── The entrance ships visible, in the chip's menu ─────────────────────
 //
 // The row was in the hamburger drawer until the Streamlined Concept retired
-// it. Home carries the entrance now — which is what keeps Profile reachable
-// at all, and with it Settings and Admin.
+// it, then at the foot of Home for a while, and it is a row of the chip's
+// menu now — which is what keeps Profile reachable at all, and with it
+// Settings and Admin. dapp.json pins its POSITION among the destinations;
+// this pins that it ships visible and navigates by hash.
 
-test('Home ships the profile entrance, with no `hidden` class', () => {
-  const anchor = indexHtml.slice(
-    indexHtml.indexOf('<a id="home-account-row"'),
-    indexHtml.indexOf('</a>', indexHtml.indexOf('<a id="home-account-row"'))
-  );
-  assert.ok(anchor, 'the account anchor must exist in the shipped shell');
+test('the menu ships the profile entrance, with no `hidden` class', () => {
+  const at = indexHtml.indexOf('id="switcher-row-profile"');
+  assert.ok(at > -1, 'the profile row must exist in the shipped shell');
+  const anchor = indexHtml.slice(indexHtml.lastIndexOf('<a ', at), indexHtml.indexOf('</a>', at));
   const classAttr = (anchor.match(/class="([^"]*)"/) || [])[1] || '';
   assert.ok(!/\bhidden\b/.test(classAttr),
     'the row must ship visible — a `hidden` class puts it back behind the bridge');
-  assert.match(homeAccount, /href="#profile"/, 'and hash navigation drives the screen');
+  assert.match(anchor, /href="#profile"/, 'and hash navigation drives the screen');
 });
 
 test('nothing gates the profile entrance on getProfileInfo any more', () => {
   // The capability probe was the only thing keeping #profile off the web.
   // /challenges-api/me/* scopes to the platform session server-side since the
   // topochain merge, so the screen works in any browser.
-  assert.doesNotMatch(homeAccount, /getProfileInfo/);
+  assert.doesNotMatch(switcherSheet, /getProfileInfo/);
   const chromeCode = nativeChrome
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.ok(!/_initDrawerRows/.test(chromeCode),
@@ -431,24 +434,6 @@ test('the stale "organiser flag" comments are gone', () => {
     'the header must explain what the list means now, and what it used to mean');
   assert.doesNotMatch(header, /completed challenges from the in-process/,
     'the old header described the /challenges-api grid read that is gone');
-});
-
-test('the account row can show the viewer’s picture', () => {
-  const app = read('public/js/app.js');
-  assert.match(indexHtml, /id="home-account-avatar"/);
-  assert.match(indexHtml, /id="home-account-glyph"/);
-  // Ships hidden with NO src, so a signed-out shell requests nothing.
-  const img = indexHtml.slice(indexHtml.indexOf('<img id="home-account-avatar"'));
-  assert.match(img.slice(0, 200), /class="hidden/);
-  assert.doesNotMatch(img.slice(0, 200), /\ssrc=/);
-  assert.match(app, /applyUserAvatar\(\) \{/);
-  assert.match(app, /App\.applyUserAvatar\(\);/, 'called on sign-in');
-  // The writer follows the row: same pair, same contract, new ids.
-  const at = app.indexOf('  applyUserAvatar() {');
-  const fn = app.slice(at, app.indexOf('\n  },', at));
-  assert.match(fn, /getElementById\('home-account-avatar'\)/);
-  assert.ok(!fn.includes('switcher-avatar'),
-    'the chip names the app, not the viewer — it carries no avatar');
 });
 
 test('?shot=profile-edit opens the sheet for the screenshot capture', () => {

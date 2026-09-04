@@ -90,6 +90,8 @@ Reliability dimensions:
 - a global summary and the existing provider/backend/component/model/billing groups;
 - invocation, logical-run, retry, fallback, outcome, token, cache, cost, and
   availability totals;
+- average, median, and p95 known cost for each model group, calculated only
+  from invocations whose cost is available;
 - count maps for every categorical diagnostic;
 - availability, total, average, median, and p95 for every numeric diagnostic;
 - UTC daily trend buckets with the same diagnostic statistics.

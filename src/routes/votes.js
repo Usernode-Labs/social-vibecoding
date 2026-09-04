@@ -35,6 +35,23 @@ function importGithubClient() {
   return usesMockGithubForImports() ? githubMock : github;
 }
 
+// #1647: importing a pull request is an explicit "I'm taking this" action,
+// just like starting native proposal work. Record that ownership through the
+// same vote service as the assignee picker so proposal cards, filters and the
+// PM view all observe one source of truth. This deliberately writes against
+// the proposal id (not a linked issue): an imported PR belongs to its
+// importer even when its origin issue was previously assigned to somebody
+// else.
+async function selfAssignImportedProposal(pool, appId, sessionId, user) {
+  const username = typeof user?.username === 'string' ? user.username.trim() : '';
+  if (!user?.id || !username) {
+    throw new Error('Importing user has no assignable identity');
+  }
+  await topicAttrs.castVote(
+    pool, appId, 'proposal', sessionId, 'assignee', username, user.id
+  );
+}
+
 // Staging-only mock PR proposals for GET /api/apps/:slug/promoted,
 // appended only when the request carries ?demo=1 (forwarded from the
 // page URL by _demoQS in app-view.js). Sibling of stagingMockIssues in
@@ -2434,8 +2451,12 @@ function voteRoutes(config) {
       // Browser imports join the shared In-progress board first. Automated
       // submission paths may opt into the historical straight-to-vote flow
       // with `promote: true`.
-      const { rows: inserted } = await pool.query(
-        `INSERT INTO chat_sessions
+      const importClient = await pool.connect();
+      let inserted;
+      try {
+        await importClient.query('BEGIN');
+        ({ rows: inserted } = await importClient.query(
+          `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
             source, imported_pr_head_sha, imported_pr_author, imported_pr_head_repo,
             promoted_at, shared_at, created_at,
@@ -2445,24 +2466,34 @@ function voteRoutes(config) {
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
             CASE WHEN $7::text = 'active' THEN NOW() END,
             NOW(), $11, $12, $13::jsonb, $14, $15)
-         RETURNING id, status`,
-        [
-          app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
-          pr.title || `PR #${prNumber}`, initialStatus,
-          headSha, pr.user?.login || null, headRepoFullName,
-          importTesting.testingMd, importTesting.testingPath,
-          importTesting.testingPaths ? JSON.stringify(importTesting.testingPaths) : null,
-          // Always an array, never null: the column is INTEGER[] NOT NULL
-          // DEFAULT '{}', so an import with no request writes the empty
-          // array the omitted column used to default to — byte-identical to
-          // the row this route wrote before the field existed.
-          importLinkedIssues,
-          // #1333. The imported PR's body, mirrored on the way in. The route
-          // already holds `pr`, so this costs no extra GitHub call and the
-          // proposal reports a description from its very first read.
-          pr.body || null,
-        ]
-      );
+           RETURNING id, status`,
+          [
+            app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
+            pr.title || `PR #${prNumber}`, initialStatus,
+            headSha, pr.user?.login || null, headRepoFullName,
+            importTesting.testingMd, importTesting.testingPath,
+            importTesting.testingPaths ? JSON.stringify(importTesting.testingPaths) : null,
+            // Always an array, never null: the column is INTEGER[] NOT NULL
+            // DEFAULT '{}', so an import with no request writes the empty
+            // array the omitted column used to default to — byte-identical to
+            // the row this route wrote before the field existed.
+            importLinkedIssues,
+            // #1333. The imported PR's body, mirrored on the way in. The route
+            // already holds `pr`, so this costs no extra GitHub call and the
+            // proposal reports a description from its very first read.
+            pr.body || null,
+          ]
+        ));
+        await selfAssignImportedProposal(
+          importClient, app.id, inserted[0].id, req.user
+        );
+        await importClient.query('COMMIT');
+      } catch (err) {
+        await importClient.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        importClient.release();
+      }
       const sessionId = inserted[0].id;
       const session = {
         id: sessionId, app_id: app.id, app_slug: app.slug, user_id: req.user.id,
@@ -5437,6 +5468,7 @@ module.exports = {
   // The request an imported pull request implements (#1217), likewise.
   parseImportLinkedIssues,
   MAX_IMPORT_LINKED_ISSUES,
+  selfAssignImportedProposal,
   recordVote,
   // (#1115) The applied-close demo rows live here because they belong to the
   // Completed stream, but GET /api/apps/:slug/governance/:id in issues.js has

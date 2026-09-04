@@ -196,12 +196,22 @@ test('a pane with no saved width renders none, rather than a zero', () => {
   assert.match(open, /id="dc-spec-viewer" class="dc-spec-viewer dc-spec-viewer-open"><\/div>/);
 });
 
-test('the composer bar keeps the safe-area inset when it drops its border', () => {
+test('the composer bar keeps the safe-area inset when it drops its padding', () => {
   // #1348: in a launchpad the composer is hidden and the venue note is
-  // usually absent, so the border and padding go — an empty bordered strip
-  // reads as a broken composer. The INSET is not part of that: this is still
-  // the bottom of the screen.
-  assert.match(html(SESSION), /id="dc-composer-bar" class="shrink-0 platform-safe-bar border-t/);
+  // usually absent, so the framing goes — an empty framed strip reads as a
+  // broken composer. The INSET is not part of that: this is still the bottom
+  // of the screen.
+  //
+  // Streamlined Concept retired the `border-t`. The composer is a CARD that
+  // floats on the pane's ground and carries its own elevation, so a rule
+  // above it drew a second edge across a shape that already had one. What is
+  // left is padding, and it must stay ASYMMETRIC — a narrow top, a full
+  // bottom — because the card's own radius does the insetting the old bar did
+  // with a uniform `p-2`.
+  assert.match(html(SESSION),
+    /id="dc-composer-bar" class="shrink-0 platform-safe-bar px-3 pb-3 pt-1"/);
+  assert.doesNotMatch(html(SESSION), /id="dc-composer-bar"[^>]*border-t/,
+    'the card draws its own edge; a rule above it would be a second one');
   assert.match(html({ ...SESSION, barEmpty: true }),
     /id="dc-composer-bar" class="shrink-0 platform-safe-bar"/);
 });
@@ -240,6 +250,29 @@ test('the header ELEMENT keeps a constant className, because the kit writes one'
   const at = VIEW_TSX.indexOf('id="dc-session-header"');
   const tag = VIEW_TSX.slice(at, VIEW_TSX.indexOf('>', at));
   assert.match(tag, /className="[^"{]*"/);
+});
+
+test('the strip curves its bottom corners like the bar above it (#1588)', () => {
+  // Two bars stack on this screen and only one of them was shaped. The
+  // platform header curves its bottom corners away so the page ground shows
+  // through two notches; this strip sits directly under it and was square.
+  // Same token on both, so they cannot drift apart.
+  const at = VIEW_TSX.indexOf('id="dc-session-header"');
+  const tag = VIEW_TSX.slice(at, VIEW_TSX.indexOf('>', at));
+  // #1571 doubled the radius on both bars together. The token is asserted
+  // rather than merely "some rounded-b-*" so that enlarging one bar and not
+  // the other fails here, which is the drift this test exists to catch.
+  assert.match(tag, /rounded-b-2xl/);
+  const HEADER = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'platform-header.tsx'),
+    'utf8',
+  );
+  assert.match(HEADER, /rounded-b-2xl -mb-2/, 'which is the header\'s own radius');
+  // The header's `-mb-2` is NOT copied: it exists to make the screen below it
+  // read as rounded-topped, and below this strip is the transcript scroller.
+  assert.doesNotMatch(tag, /-mb-2/);
+  // And nothing may clip the corners' contents — same rule as the header.
+  assert.doesNotMatch(tag, /overflow-hidden/);
 });
 
 // ── 4. #194's hint, which used to be a second author ───────────────────

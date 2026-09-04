@@ -1,7 +1,6 @@
 'use strict';
 
 const crypto = require('crypto');
-const { iso } = require('../../routes/topochain/helpers');
 const {
   PROTOCOL,
   AUDIENCE,
@@ -34,6 +33,13 @@ class NativeSessionProtocolError extends Error {
 
 function protocolError(status, code, message) {
   throw new NativeSessionProtocolError(status, code, message);
+}
+
+// Android's desugared Instant parser accepts canonical UTC `Z`, but not the
+// platform v4 API's equivalent `+00:00` spelling. Keep the native wire format
+// explicit at this boundary.
+function nativeInstant(date) {
+  return date.toISOString();
 }
 
 async function withTransaction(pool, fn) {
@@ -254,7 +260,7 @@ function buildCredentialPlaintext({
       reference: credentialReference,
       generation: 1,
       bearerToken,
-      bearerExpiresAt: iso(bearerExpiresAt),
+      bearerExpiresAt: nativeInstant(bearerExpiresAt),
     },
     account: {
       accountId: String(account.id),
@@ -472,8 +478,8 @@ class NativeSessionProtocol {
           requestDigest: attempt.request_digest,
           exchangeChallenge,
           network,
-          issuedAt: iso(now),
-          expiresAt: iso(expiresAt),
+          issuedAt: nativeInstant(now),
+          expiresAt: nativeInstant(expiresAt),
         },
       });
       const sealed = sealReplay({

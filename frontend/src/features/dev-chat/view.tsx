@@ -24,7 +24,12 @@ const HINT_TEXT
 
 /** The composer bar's two class runs, as complete literals for Tailwind. */
 const BAR = {
-  framed: 'shrink-0 platform-safe-bar border-t border-zinc-200 dark:border-zinc-800 p-2',
+  // Streamlined Concept: no `border-t` any more. The composer is a CARD that
+  // floats on the pane's ground and carries its own elevation, so a rule
+  // above it would draw a second edge across a shape that already has one.
+  // The padding narrows with it — the card's own radius does the insetting
+  // the old bar did with a full `p-2`.
+  framed: 'shrink-0 platform-safe-bar px-3 pb-3 pt-1',
   bare: 'shrink-0 platform-safe-bar',
 } as const;
 
@@ -61,10 +66,29 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
       {s.proposalHint ? <div className={HINT}>{HINT_TEXT}</div> : null}
       {/* The ELEMENT keeps a CONSTANT className: `PlatformUI.attachScreenFx`
           writes a hairline/blur class onto it once the chat scrolls, and
-          React never rewrites a className whose prop has not changed. */}
+          React never rewrites a className whose prop has not changed.
+
+          `rounded-b-2xl` is #1588. This strip is the second bar on the screen —
+          the platform header sits directly above it and curves its own bottom
+          corners away (`rounded-b-2xl` there too, the same 1rem token), so a
+          square-cornered bar underneath read as an unfinished copy of it. Both
+          bars now let the page ground show through the same two notches.
+          It was `rounded-b-lg` on both until #1571 enlarged the header's
+          corner; this one moves with it by construction, not by coincidence
+          — tests/dev-chat-view.test.js asserts the two files carry the same
+          token so they cannot drift apart.
+
+          The header's `-mb-2` companion is deliberately NOT copied. That
+          overlap exists to make the SCREEN below it read as rounded-topped,
+          and what sits below this strip is the transcript's own scroller;
+          pulling it 8px up under the curve would put a message row in the
+          notch. The corners are what was asked for and what matches.
+
+          No `overflow-hidden` here either, for the reason the header's own
+          note gives. */}
       <div
         id="dc-session-header"
-        className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0"
+        className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0 rounded-b-2xl"
       >
         <SessionHeader />
       </div>

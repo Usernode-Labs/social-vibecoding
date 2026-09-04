@@ -154,10 +154,14 @@ test('the change control is disabled mid-turn, in both places that paint it', ()
   // The RENDER's site is the model now — `_headerVenue` resolves `disabled`
   // from the same flag, and the component renders it — so the two sites are
   // one derivation and one in-place write rather than two in-place writes.
-  assert.match(DEV_CHAT_SRC, /disabled: !!DevChat\.isStreaming/,
-    'the render resolves it from the streaming flag');
+  assert.match(DEV_CHAT_SRC, /disabled: DevChat\._chatBusyForPaint\(\)/,
+    'the render resolves it from the streaming paint seam');
   assert.match(HEADER_TSX, /disabled=\{venue\.disabled\}/,
     'and the component is the only thing that writes it on the render path');
+  assert.match(HEADER_TSX, /data-venue-busy=\{venue\.disabled \? '1' : undefined\}/,
+    'the disabled state has a stable visible-check hook');
+  assert.match(HEADER_TSX, /<LockIcon[\s\S]*Thinking…/,
+    'the disabled state explains itself without relying on a mouse cursor');
   const sites = DEV_CHAT_SRC.match(
     /getElementById\('dc-venue-select'\)/g
   ) || [];

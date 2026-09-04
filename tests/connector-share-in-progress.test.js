@@ -191,6 +191,88 @@ test('sharing twice pushes onto the SAME card instead of making a second', async
   assert.equal(advanced[0].id, 77, 'advanced through the ordinary update path');
 });
 
+// ── 2b. Each payload has to FIT the route it is posted to ──────────────
+//
+// The share path talks to two different routes — share-in-progress to create
+// the card, update-from-fork to advance it — and for a while it built ONE
+// payload and sent it to both. Both routes parse their body with `exactKeys`,
+// which does not ignore an unknown field: it refuses the whole request. So a
+// key accepted by one and not the other is not a cosmetic mismatch, it is an
+// outage on the path that does not accept it.
+//
+// That is what shipped. `externalAgent` is a share-in-progress field, and
+// sending it to update-from-fork made EVERY reshare fail with
+// `invalid_request` — sharing a second time onto the same card, which is the
+// documented way to keep committing to shared work, could not work at all.
+// The stub in the test above accepts any payload, so nothing caught it.
+//
+// These two tests close that by reading the ROUTE's own key lists rather than
+// restating them here: a field added to one payload and not to the matching
+// route now fails at `npm test` instead of in production.
+
+function acceptedKeys(parserName) {
+  const at = ROUTE_SRC.indexOf(`function ${parserName}(body)`);
+  assert.ok(at > 0, `${parserName} is still the body parser — re-anchor this test`);
+  const call = /exactKeys\(body, \[([^\]]*)\]/.exec(ROUTE_SRC.slice(at, at + 900));
+  assert.ok(call, `${parserName} still validates with exactKeys`);
+  return new Set(call[1].split(',').map((k) => k.trim().replace(/^'|'$/g, '')).filter(Boolean));
+}
+
+async function payloadFor(task, extra = {}) {
+  let seen = null;
+  await svc.submitWork(shareDeps([], task), {
+    user: { id: 3 },
+    clientName: 'Claude',
+    taskId: 31,
+    branch: 'my-branch',
+    share: true,
+    title: 'Dark mode',
+    body: 'Half of it works.',
+    testing: { testingPaths: [{ path: '/', viewport: 'desktop' }], testingSteps: '1. Look.' },
+    expectedHeadSha: 'a'.repeat(40),
+    shareWork: async (slug, payload) => {
+      seen = payload;
+      return { ok: true, status: 200, body: { sessionId: 77 } };
+    },
+    updateProposal: async (slug, id, payload) => {
+      seen = payload;
+      return { ok: true, status: 200, body: { headSha: 'abc' } };
+    },
+    ...extra,
+  });
+  assert.ok(seen, 'the route was called');
+  return seen;
+}
+
+test('the CREATE payload is a body share-in-progress will accept', async () => {
+  const payload = await payloadFor(TASK_ROW);
+  const accepted = acceptedKeys('parseShareInProgressBody');
+  for (const key of Object.keys(payload)) {
+    assert.ok(accepted.has(key), `share-in-progress rejects an unknown \`${key}\``);
+  }
+  // And the badge is here, on the call that CREATES the card — which is the
+  // only moment there is anything to set it on.
+  assert.equal(payload.externalAgent, 'claude-code');
+});
+
+test('the RESHARE payload is a body update-from-fork will accept', async () => {
+  const payload = await payloadFor(SHARED_TASK);
+  const accepted = acceptedKeys('parseUpdateFromForkBody');
+  for (const key of Object.keys(payload)) {
+    assert.ok(accepted.has(key), `update-from-fork rejects an unknown \`${key}\``);
+  }
+  // Named explicitly as well as caught by the sweep above, because this one
+  // field is the whole bug and a future edit should have to read why.
+  assert.ok(!('externalAgent' in payload),
+    'the badge is set when the card is created; a reshare advances a card '
+    + 'that already carries it, and update-from-fork refuses the field');
+  // The rest of the payload still travels — this is not "send less".
+  assert.equal(payload.branch, 'my-branch');
+  assert.equal(payload.title, 'Dark mode');
+  assert.equal(payload.description, 'Half of it works.');
+  assert.deepEqual(payload.linkedIssues, [4]);
+});
+
 test('a plain submit on shared work is refused, and names the call that promotes it', async () => {
   const queries = [];
   const result = await svc.submitWork(shareDeps(queries, SHARED_TASK), {

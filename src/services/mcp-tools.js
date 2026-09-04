@@ -2843,6 +2843,25 @@ function registerTools(server, ctx) {
         }
         if (attempt.ok) {
           proposed = true;
+          // The work order this session was carrying, if any, is finished
+          // now. `share: true` deliberately leaves it OPEN so the agent can
+          // keep committing onto the in-progress card, and the promote that
+          // ends that arrangement carries no taskId — it is documented as
+          // proposalId + branch + propose — so nothing downstream of the
+          // share ever closed the row. Each one then held a slot of the
+          // caller's open-work-order cap until it expired 14 days later.
+          //
+          // Done here rather than inside submitWork because the promote is a
+          // separate loopback that runs after it has already returned, and
+          // this is the first moment the work is genuinely in front of the
+          // group. Advisory: it never throws, and a promote that landed is
+          // never failed over its own bookkeeping.
+          await externalAgentTasks.closeTaskForSession(pool, user.id, proposalId, {
+            branch,
+            submittedVia: result.submittedVia,
+            source,
+            clientId: clientId || null,
+          });
           // Promote may have lazily created the PR (a session has none until
           // this moment) — fold it in so the answer names what the group is
           // now voting on.

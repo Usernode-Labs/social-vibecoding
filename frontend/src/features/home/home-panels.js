@@ -509,7 +509,25 @@ const HomePanels = {
       demo: !!app.demo,
       added: !!(window.Home && Home.isYours && Home.isYours(app)),
       icon,
+      blurb: HomePanels.appBlurb(app),
+      contributors: Number(app.contributor_count) || 0,
     };
+  },
+
+  // The card's sentence. There is no description COLUMN on `apps` — the
+  // directory's rows derive a meta line instead — so the one place an app can
+  // say what it is in its own words is its manifest, and the row already
+  // carries the whole of it (`manifest_snapshot` is a non-secret column).
+  // Absent or blank on most apps today, and the card draws nothing rather
+  // than a filler sentence: an invented blurb is worse than a short card.
+  // Capped here as well as at the manifest reader, because the snapshot is
+  // whatever the app's own repository last committed.
+  appBlurb(app) {
+    const snap = app && app.manifest_snapshot;
+    const raw = snap && typeof snap === 'object' ? snap.description : null;
+    if (typeof raw !== 'string') return null;
+    const text = raw.replace(/\s+/g, ' ').trim();
+    return text ? text.slice(0, 160) : null;
   },
 
   // ── Create app ─────────────────────────────────────────────────────
@@ -518,21 +536,21 @@ const HomePanels = {
   //
   // IT IS ON EVERY HOME SCREEN, FOR EVERY ACCOUNT. An account with no app
   // quota gets the same widget in the same cell — dimmed, and tapping it
-  // says why — rather than having it silently absent. Two reasons this is
+  // opens the dialog with exact usage — rather than having it silently
+  // absent. Two reasons this is
   // the right shape and not a conditional placement:
   //
-  //   1. canCreateApps is DERIVED per request (isAdmin || live app count <
-  //      app_quota — see /api/auth/me), so it flips without any user action:
+  //   1. canCreateApps is DERIVED per request (full-admin write access or
+  //      live app count < app_quota — see /api/auth/me), so it flips without
+  //      any user action:
   //      creating your one allowed app, an admin editing your quota, an app
   //      erroring out. Conditional placement would turn each of those flips
   //      into a layout mutation that re-packs the grid under the user.
   //   2. It's the majority rendering — most accounts carry no quota — so
   //      "absent" would read as a missing feature rather than a locked one.
   //
-  // The disabled state must NOT be a `disabled` attribute: a disabled
-  // element swallows pointer events, which would kill both the explanatory
-  // toast AND the widget's participation in the drag recognizer. aria-disabled
-  // plus a branch in the click handler keeps it draggable and tappable.
+  // The locked treatment belongs to the widget, not to a disabled button:
+  // that button's available action is opening the exact quota details.
   createView(panel) {
     return {
       key: panel.key,
@@ -567,6 +585,16 @@ const HomePanels = {
     const target = numeric ? Number(c.progress.target) : 1;
     return {
       id: String(c.id),
+      // The card's picture, from the challenge's KIND (see challenge_kinds.icon
+      // in schema.sql — one setting gives every challenge of a kind the same
+      // face). Null on a kind that has none, and on a template with no kind,
+      // which is what the category below is the fallback for.
+      icon: typeof c.icon === 'string' && c.icon.trim() ? c.icon.trim().slice(0, 8) : null,
+      // The organiser's category, upper-cased — the fallback the well draws
+      // when there is no icon. Free text on the template (a VARCHAR, not an
+      // enum), so it is normalised here and capped: the well is a 62px square
+      // and a 50-character category would fill the card with a word.
+      label: String(c.label || 'OTHER').toUpperCase().slice(0, 18),
       goal: String(c.goal || ''),
       // The task is the row's tooltip — the one place the dropped detail still
       // surfaces without costing height.
@@ -616,8 +644,32 @@ const HomePanels = {
       // motivating number, and the ring is already showing the fraction.
       lead: hasPoints ? `${remaining.toLocaleString('en-US')} pts left` : counted,
       sub: hasPoints ? counted : null,
+      deadline: HomePanels.seasonDeadline(panel),
       label: hasPoints ? `${counted}, ${remaining.toLocaleString('en-US')} points left` : counted,
     };
+  },
+
+  // How long the SEASON has left, as the cards say it: "7 days left".
+  // Every open challenge in a season ends when the season does, so this is
+  // one fact about the block rather than a field on each row — which is why
+  // it is stated beside the ring and, on a yes-or-no challenge, in the pill
+  // that has no progress to show.
+  //
+  // Rounded UP, so the last 23 hours read "1 day left" rather than "0";
+  // under an hour reads "Ends today", and a season already past its end
+  // returns null rather than a negative count (the panel is only built for a
+  // running season, so that is a clock skew case, not a state).
+  seasonDeadline(panel) {
+    const raw = panel && panel.season && panel.season.ends_at;
+    if (!raw) return null;
+    const ends = Date.parse(raw);
+    if (!Number.isFinite(ends)) return null;
+    const ms = ends - Date.now();
+    if (ms <= 0) return null;
+    const hours = ms / 3600000;
+    if (hours < 1) return 'Ends today';
+    const days = Math.ceil(hours / 24);
+    return days === 1 ? '1 day left' : `${days} days left`;
   },
 
   // Real hash navigation (not a router call) so the Challenges screen gets a
@@ -686,9 +738,8 @@ const HomePanels = {
       items.push({ label: 'Browse all apps', handler: () => { location.hash = '#apps'; } });
     }
     // The create widget's menu carries the ask-an-admin sentence as an inert
-    // note when the viewer has no quota — the same string the tile's tooltip
-    // and its tap toast use, so the explanation is reachable from the
-    // widget's own affordance rather than only by tapping it.
+    // note when the viewer has no quota — the same compact string as the
+    // tile's tooltip, while a tap opens the detailed quota in the dialog.
     if (key === 'create' && window.Home && typeof Home.canCreate === 'function' && !Home.canCreate()) {
       items.push({
         label: Home.CREATE_DISABLED_HINT || 'Ask an admin to enable app creation for your account.',

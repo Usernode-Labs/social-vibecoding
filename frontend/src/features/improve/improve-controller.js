@@ -631,6 +631,38 @@ const Improve = {
    */
   _tasks: [],
 
+  /**
+   * Publish a session that was just created in this tab.
+   *
+   * DevChat owns session creation, but the Improve panel owns a separate
+   * cross-app cache. Waiting for its next /active-sessions response leaves a
+   * successful new session looking absent, and a preload issued before the
+   * POST can arrive afterwards and erase a naive optimistic row. Invalidate
+   * that older request and publish the server-created row immediately; the
+   * normal load on panel open remains the authoritative follow-up.
+   */
+  onSessionCreated(session, appSlug) {
+    if (!session || session.id == null) return;
+    const existing = Improve._all.find((candidate) => (
+      String(candidate.id) === String(session.id)
+    ));
+    const row = {
+      ...(existing || {}),
+      ...session,
+      app_slug: session.app_slug || existing?.app_slug || appSlug || null,
+    };
+    if (!row.app_slug) return;
+
+    // Any request already in flight describes the world before this POST.
+    Improve._loadToken += 1;
+    Improve._all = [
+      row,
+      ...Improve._all.filter((existing) => String(existing.id) !== String(row.id)),
+    ];
+    improveStore.set({ loadingSessions: false, sessionsLoaded: true });
+    Improve._rebucket();
+  },
+
   _rebucket() {
     const { slug, name } = improveStore.get();
     const mine = [];

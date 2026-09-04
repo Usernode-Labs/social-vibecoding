@@ -942,18 +942,29 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
 // caller's own token — the route applies every gate — reopening a paused
 // session first, since an external update usually lands on one.
 
-function proposeHarness(platform) {
+function proposeHarness(platform, { taskRows = [] } = {}) {
   const gh = require('../src/services/github');
   const githubLink = require('../src/services/github-link');
   const realGhEnabled = gh.isEnabled;
   const realLinkEnabled = githubLink.isEnabled;
   gh.isEnabled = () => true;
   githubLink.isEnabled = () => true;
-  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  // SQL-aware, because the promote now has bookkeeping of its own to do:
+  // `taskRows` is the open work order the session is carrying (none by
+  // default), and `queries` is what the tool actually asked the database.
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (sql.includes("AND session_id = $2 AND status = 'open'")) return { rows: taskRows };
+      return { rows: [{ app_slug: 'recipe-box' }] };
+    },
+  };
   const { handlers, calls, restore } = connector(platform, { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
   return {
     handlers,
     calls,
+    queries,
     restore: () => {
       restore();
       gh.isEnabled = realGhEnabled;
@@ -1081,6 +1092,93 @@ test('propose on a target that is already a proposal promotes nothing', async ()
     assert.match(res.structuredContent.nextStep, /already up for the group's vote/);
     assert.ok(!h.calls.some((c) => c.pathname.includes('/promote')),
       'a proposal already up for a vote is never re-promoted');
+  } finally {
+    h.restore();
+  }
+});
+
+// ── The work order the promote has to close ────────────────────────────
+//
+// `share: true` leaves the work order OPEN by design — the agent keeps
+// committing onto the in-progress card — and stamps `session_id` on the row.
+// The promote that ends that arrangement is this call, and it carries no
+// taskId, so nothing downstream of the share ever closed the reservation:
+// each share -> promote held a slot of the caller's ten-open-work-order cap
+// for the fourteen days until it expired.
+//
+// It is closed HERE rather than inside the service because the promote is a
+// separate loopback that runs after submitWork has already returned, and
+// this is the first moment the work is genuinely in front of the group.
+
+const CLOSE_SQL = "SET status = 'submitted'";
+
+test('a successful promote closes the work order the share left open', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_branch', targetKind: 'session', resumeRequired: false,
+      };
+    }
+    if (pathname.endsWith('/promote')) return { prNumber: 77 };
+    return {};
+  }, { taskRows: [{ id: 91, session_id: 3140 }] });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.equal(res.structuredContent.proposed, true);
+    const close = h.queries.find((q) => q.sql.includes(CLOSE_SQL));
+    assert.ok(close, 'the reservation is finished — the work is up for the vote');
+    // Scoped to the caller as well as to the session: `user` here is the
+    // connector's own account, and a work order belongs to an ACCOUNT.
+    assert.deepEqual(close.params.slice(0, 4), [91, 3140, 7, 'my-fix']);
+    assert.equal(close.params[4], 'update_branch');
+  } finally {
+    h.restore();
+  }
+});
+
+test('a promote that failed leaves the work order open — the work is not up for a vote', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_branch', targetKind: 'session', resumeRequired: false,
+      };
+    }
+    if (pathname.endsWith('/promote')) {
+      return { __http: { ok: false, status: 409, body: { error: 'promoted_cap' } } };
+    }
+    if (pathname.endsWith('/resume')) return { ok: true };
+    return {};
+  }, { taskRows: [{ id: 91, session_id: 3140 }] });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.equal(res.structuredContent.proposed, false);
+    assert.equal(h.queries.filter((q) => q.sql.includes(CLOSE_SQL)).length, 0,
+      'the commit is safe on the session and the agent is told to try again — the order is still live');
+  } finally {
+    h.restore();
+  }
+});
+
+test('a promote with no work order behind it writes nothing', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_branch', targetKind: 'session', resumeRequired: false,
+      };
+    }
+    if (pathname.endsWith('/promote')) return { prNumber: 77 };
+    return {};
+  });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.equal(res.structuredContent.proposed, true);
+    assert.equal(h.queries.filter((q) => q.sql.includes(CLOSE_SQL)).length, 0);
   } finally {
     h.restore();
   }

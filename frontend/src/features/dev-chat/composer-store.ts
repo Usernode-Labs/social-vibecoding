@@ -13,7 +13,12 @@
  *     textarea's `placeholder`; and the OpenRouter row's `disabled`.
  *   - `_syncSaveDraftBtn` wrote `hidden`, `disabled` and `title` on the save
  *     icon — and called `_syncShortcutHint`, which wrote the hint's
- *     `innerHTML`, because the two flip on exactly the same events.
+ *     `innerHTML`, because the two flip on exactly the same events. Both
+ *     controls are gone now: the save icon folded into the one circle (see
+ *     SendButtonView) and the hint went with it, its two spellings surviving
+ *     as that circle's `title`. `_syncSaveDraftBtn` remains as the republish
+ *     every keystroke goes through, because the circle's shape depends on
+ *     whether the field has text.
  *   - `_renderSavedDrafts` rebuilt `#dc-drafts` and toggled its active class.
  *   - `_setAttachError` wrote the error line's text and its `hidden` class.
  *   - `_refreshModelSelect` rewrote the picker's `<option>`s in place so a
@@ -51,7 +56,13 @@ export interface ModelOptionView {
 }
 
 /**
- * The send button, in the four shapes `_setStreamingUI` painted by hand.
+ * The one circle at the end of the control row, in the five shapes it takes.
+ *
+ * It is ONE button because the composer has one primary action at a time, and
+ * which one it is follows the turn: send while idle, stop while a turn runs,
+ * save the moment there is text to park. That replaced a Send button beside a
+ * separate save icon, where the two were laid out as peers and only one of
+ * them was ever the thing to press.
  *
  * `stopping` and `busy` are both disabled spinners and are still separate:
  * #889's requested-but-not-yet-landed stop says so in words beside the
@@ -59,10 +70,21 @@ export interface ModelOptionView {
  * click cannot honour.
  */
 export type SendButtonView =
-  /** Idle. The button says Send and submitting sends. */
+  /** Idle. Submitting sends. */
   | { kind: 'send' }
-  /** A stoppable turn. Red square; submitting stops. */
+  /** A stoppable turn, nothing typed. Red square; submitting stops. */
   | { kind: 'stop' }
+  /**
+   * A turn is running AND there is text in the box, which is #810's state:
+   * sending is impossible, so parking the text is the only thing to do with
+   * it. Green; submitting saves the draft, which BLANKS the field — and a
+   * blank field is `stop` again, which is how Stop comes back.
+   *
+   * It outranks `stop`, `stopping` and `busy`, all three: while a turn runs,
+   * text in the box is always the more useful of the two actions, and the
+   * user reaches Stop by clearing the field or by saving.
+   */
+  | { kind: 'save' }
   /** #889: the stop is in flight. Muted spinner and a word for it. */
   | { kind: 'stopping' }
   /** #1378 / wrap-up: still running, nothing to press. */
@@ -79,7 +101,13 @@ export interface ComposerState {
   venueNoteHtml: string;
   /** #1281: a launchpad stands in the composer's place, so it is hidden. */
   hidden: boolean;
-  /** Usernode · Claude's chat-model picker. Null on every other venue. */
+  /**
+   * Usernode · Claude's chat-model picker. Null on every other venue.
+   *
+   * The options carry bare model NAMES (#1589) — the guidance they used to
+   * carry set the closed control's width and wrapped the credit meter onto a
+   * second line. It still reads in full in the Generate-proposal picker.
+   */
   models: { options: ModelOptionView[]; selected: string } | null;
   /** OpenRouter's session-pinned model row. Null on every other venue. */
   openRouter: {
@@ -94,15 +122,7 @@ export interface ComposerState {
   attachError: string | null;
   /** The field's placeholder — the busy copy while a turn runs. */
   placeholder: string;
-  /** #810's save icon: present only while a turn runs, live only with text. */
-  saveDraft: { hidden: boolean; disabled: boolean; title: string };
   send: SendButtonView;
-  /**
-   * #920's hint under the box. RAW HTML, because both spellings carry the
-   * same `<kbd>` markup the template shipped inline and the constants are
-   * what `_onComposerShortcut` is documented against.
-   */
-  shortcutHintHtml: string;
 }
 
 export const composerStore = createStore<ComposerState>({
@@ -113,7 +133,5 @@ export const composerStore = createStore<ComposerState>({
   drafts: { rows: [], busy: false },
   attachError: null,
   placeholder: '',
-  saveDraft: { hidden: true, disabled: true, title: '' },
   send: { kind: 'send' },
-  shortcutHintHtml: '',
 });
