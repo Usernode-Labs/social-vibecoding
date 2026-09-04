@@ -1438,6 +1438,31 @@ body:has(#home-screen:not(.hidden)) #platform-header,
 body:has(#app-view:not(.hidden)) #platform-header {
   background-color: transparent;
 }
+/* THE CANVAS UNDER THE PUSH. The page transition animates snapshots of the
+   root — the iOS push slides the new page in over the old, which parallaxes
+   away; the Android one cross-fades them — and whatever the snapshots do not
+   cover at a given frame is the document CANVAS, which is <html>'s own
+   background: the #eaeaea that frontend/src/head.html sets inline so the
+   first paint is never white. On the wallpaper routes that grey showed
+   through at the seam of the push (and for a frame of the fade), as a page
+   sliding over a grey field. The canvas takes the wallpaper's base colour on
+   the same route test, so the seam is cream on cream; the washes and the
+   star ride in the snapshots as before. Light only: <html> keeps the dark
+   ground the head sets when .dark is on, and :not(.dark) keeps this rule's
+   :has() from outranking that one. */
+html:not(.dark):has(#home-screen:not(.hidden)),
+html:not(.dark):has(#app-view:not(.hidden)) {
+  background-color: #fffeea;
+}
+/* THE LAUNCH COVER, on the same routes. It hides the app frame while it
+   loads, on --bg-primary — white — which under the cleared bar is a white
+   slab arriving on a cream page. On the wallpaper routes it takes the
+   wallpaper's base colour instead, so the app's icon and name arrive on the
+   page they were tapped from, and the app's own white replaces it only once
+   the app has painted. Dark mode keeps --bg-primary. */
+html:not(.dark) body:has(#app-view:not(.hidden)) .app-launch-cover {
+  background-color: #fffeea;
+}
 
 /* ── App cards ─────────────────────────────────────────── */
 
