@@ -302,11 +302,14 @@ export function PlatformHeader() {
           `position:relative` with z-index:auto, so without it two positioned
           siblings paint in DOM order and the screen wins.
 
-          ON THE HOME ROUTE THE SURFACE IS CLEARED. app.css paints the home
-          wallpaper on the body and sets this bar's background to transparent
-          under `body:has(#home-screen:not(.hidden))`, so the cream ground
-          and its star run up behind the bell as the design draws them. The
-          zinc-200 here is what every other route still gets.
+          ON THE HOME ROUTE AND INSIDE AN APP THE SURFACE IS CLEARED. app.css
+          paints the home wallpaper on the body and sets this bar's background
+          to transparent under `body:has(#home-screen:not(.hidden))` and
+          `body:has(#app-view:not(.hidden))`, so the cream ground and its
+          star run up behind the bell as the design draws them — and the bar
+          is the same object on both sides of the launcher → app push, so
+          that push has nothing to animate in it. The zinc-200 here is what
+          every other route still gets.
 
           No `overflow-hidden` here, ever: see the badge rule in app.css and
           tests/header-height-parity.test.js. Height is untouched — the radius

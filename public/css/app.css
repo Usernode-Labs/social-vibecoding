@@ -1320,8 +1320,8 @@ html, body {
    yellow paper grain, three gaussian-blurred colour discs and a blue
    halftone star tucked into the top-right corner.
 
-   PAINTED ON THE BODY, on the home route only. The body is the fixed
-   100dvh column that the header and the #home-screen scroller both sit
+   PAINTED ON THE BODY, on the home route and inside an app. The body is
+   the fixed 100dvh column that the header and the screen roots all sit
    in, so one background here runs under both — the bar is cleared over it
    (below) and the star lands behind the bell, where the design puts it —
    and it never scrolls: the grid and panels move over a wallpaper, not
@@ -1329,13 +1329,22 @@ html, body {
    which is the viewport, so a long feed cannot stretch a wash across two
    screens.
 
-   `body:has(#home-screen:not(.hidden))` is the route test. The shell
-   swaps screens by toggling `.hidden` on their roots (see
-   frontend/src/lib/visibility-store.ts), so "the home root is showing" IS
-   "we are on the home route", read from the DOM with no class for a
-   module to publish. Everywhere else the body keeps its `bg-zinc-100`
-   ground and the bar its zinc-200 surface. An engine without :has()
-   (none the shell supports) simply keeps that everywhere.
+   `body:has(#home-screen:not(.hidden))` is the route test, and
+   `body:has(#app-view:not(.hidden))` its in-app twin. The shell swaps
+   screens by toggling `.hidden` on their roots (see
+   frontend/src/lib/visibility-store.ts and App.SCREEN_IDS), so "the home
+   root is showing" IS "we are on the home route", read from the DOM with
+   no class for a module to publish. INSIDE AN APP the same wallpaper is
+   painted and the same bar cleared, so tapping an app from the launcher
+   leaves the bar exactly as it was: the app frame covers everything below
+   it, and what shows of the wallpaper there is the band behind the bell —
+   the point being that nothing about the bar changes between the two
+   routes, so there is nothing for the push to animate. (The platform
+   surfaces an app can show in its own frame — the Dev board, a session —
+   sit on the wallpaper too, as the launcher's cards do.) Everywhere else
+   the body keeps its `bg-zinc-100` ground and the bar its zinc-200
+   surface. An engine without :has() (none the shell supports) simply
+   keeps that everywhere.
 
    THE DISCS are the export's blurred circles as radial gradients: each
    holds its fill to (r - 2σ), is at half opacity at r, and is gone by
@@ -1366,7 +1375,8 @@ html, body {
 
    DARK MODE KEEPS ITS GROUND. The mock is a light-mode design; on the
    near-black page the body keeps zinc-950 and paints no layers. */
-body:has(#home-screen:not(.hidden)) {
+body:has(#home-screen:not(.hidden)),
+body:has(#app-view:not(.hidden)) {
   --home-ground: #fffeea;
   --home-star: url("data:image/png;base64,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");
   --home-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.3'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
@@ -1381,7 +1391,8 @@ body:has(#home-screen:not(.hidden)) {
   background-position: right 32px top 0, 0 0, 0 0, 0 0, 0 0;
   background-size: 97px 78px, 240px 240px, 100% 100%, 100% 100%, 100% 100%;
 }
-.dark body:has(#home-screen:not(.hidden)) {
+.dark body:has(#home-screen:not(.hidden)),
+.dark body:has(#app-view:not(.hidden)) {
   background-color: #0b0b0c; /* zinc-950, the body's own dark ground */
   background-image: none;
 }
@@ -1394,7 +1405,8 @@ body:has(#home-screen:not(.hidden)) {
    above still wins here (it is the more specific selector), so dark mode
    stays unpainted at every width. */
 @media (min-width: 640px) {
-  body:has(#home-screen:not(.hidden)) {
+  body:has(#home-screen:not(.hidden)),
+  body:has(#app-view:not(.hidden)) {
     background-image:
       var(--home-star),
       var(--home-grain),
@@ -1410,18 +1422,20 @@ body:has(#home-screen:not(.hidden)) {
     background-size: 97px 78px, 240px 240px, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
   }
 }
-/* THE BAR OVER THE WALLPAPER. On the home route the header's zinc-200
-   surface goes, so the wallpaper (and the star) run up behind the bell —
-   the one place the design's "page ground runs to the top of the screen"
-   is literal. The controls on it carry their own periwinkle fill and
-   hairline (--brand-tint / --brand-line), so they still lift off cream and
-   off dark alike. Everywhere else the bar keeps its surface — see the
-   "THE BAR'S OWN SURFACE" note in platform-header.tsx for why it has one.
-   The view-transition group note above (#platform-header is opaque) has a
-   home-route exception here: during the push from home into an app the
-   incoming page slides under a bar with no fill, which is the iOS reading
-   of a translucent bar rather than a defect. */
-body:has(#home-screen:not(.hidden)) #platform-header {
+/* THE BAR OVER THE WALLPAPER. On the home route and inside an app the
+   header's zinc-200 surface goes, so the wallpaper (and the star) run up
+   behind the bell — the one place the design's "page ground runs to the
+   top of the screen" is literal. The controls on it carry their own
+   periwinkle fill and hairline (--brand-tint / --brand-line), so they
+   still lift off cream and off dark alike. Everywhere else the bar keeps
+   its surface — see the "THE BAR'S OWN SURFACE" note in
+   platform-header.tsx for why it has one. The view-transition group note
+   above (#platform-header is opaque) has its exception here, and it is
+   what makes the launcher → app push read as one bar: both routes paint
+   the same wallpaper under the same cleared bar, so the bar's snapshot is
+   identical on both sides of the transition and only the page moves. */
+body:has(#home-screen:not(.hidden)) #platform-header,
+body:has(#app-view:not(.hidden)) #platform-header {
   background-color: transparent;
 }
 
