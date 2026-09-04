@@ -59,7 +59,7 @@ const MOBILE_VIEWPORT = { width: 390, height: 844 };
 // Dedicated capture identity (seeded by src/db/migrate.js). A non-admin
 // service account so the public artifacts (/visuals/:id is unauthenticated;
 // PR bodies embed them on GitHub) never show anyone's personal data or
-// admin-only UI. The capture run is capped at RUN_TIMEOUT_MS (600s); 15
+// admin-only UI. The capture run is capped at RUN_TIMEOUT_MS (620s); 15
 // minutes covers the lazy image build + retry comfortably.
 const CAPTURE_USERNAME = 'usernode-capture';
 // Separate view-only-admin identity (is_admin + admin_readonly; seeded by
@@ -105,10 +105,12 @@ const CONTENT_TYPES = {
 // Raised 240s → 600s when every declared check started running: the media
 // pass is unchanged, but the suite that follows it now has its own 420s
 // budget, and the container needs room to finish that budget and still emit
-// its sentinel. This is the OUTER bound — the suite stops dispatching at
-// TESTS_DEADLINE_MS long before we get here, so hitting 600s means the
+// its sentinel. Raised 600s → 620s with the 480 → 500 declared-check bump:
+// the paired suite deadline is now 490s and this keeps 130s for the media
+// pass and sentinel. This is the OUTER bound — the suite stops dispatching at
+// TESTS_DEADLINE_MS long before we get here, so hitting 620s means the
 // container is genuinely wedged, not merely busy.
-const RUN_TIMEOUT_MS = 600 * 1000;
+const RUN_TIMEOUT_MS = 620 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 
 // The capture container drives up to TEST_CONCURRENCY headless pages at
@@ -124,14 +126,14 @@ const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '4';
 // container's agree by construction.
 const TEST_CONCURRENCY = process.env.TEST_CONCURRENCY || '8';
 const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
-// 420s → 470s (#1417), moved together with MAX_DECLARED_TESTS 430 → 480 in
+// 470s → 490s, moved together with MAX_DECLARED_TESTS 480 → 500 in
 // services/app-manifest.js — the two are one decision, and the note on that
-// constant says so. A full 480-check suite is ~234s of ideal work at the
-// measured ~3.9s per check over this pool of 8; 470s keeps the 2x margin
+// constant says so. A full 500-check suite is ~244s of ideal work at the
+// measured ~3.9s per check over this pool of 8; 490s keeps the 2x margin
 // tests/checks-budget.test.js pins, which is what stops a real manifest's
-// tail being cut on every build. RUN_TIMEOUT_MS above stays at 600s: it only
-// has to clear this by 120s, and it clears it by 130s.
-const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '470000';
+// tail being cut on every build. RUN_TIMEOUT_MS above moves to 620s with it,
+// preserving the same 130s outer buffer.
+const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '490000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.

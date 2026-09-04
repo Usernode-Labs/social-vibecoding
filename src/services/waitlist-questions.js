@@ -178,6 +178,17 @@ function str(v, max) {
   return s.length > max ? null : s;
 }
 
+// Match any explicit URI scheme, not just HTTP. An unsupported scheme should
+// keep flowing to the validator below and be rejected; only a genuinely bare
+// domain gets the helpful HTTPS default.
+const URI_SCHEME = /^[a-z][a-z\d+.-]*:/i;
+
+function normalizeMadeUrl(value) {
+  const madeUrl = str(value, 2000);
+  if (!madeUrl || URI_SCHEME.test(madeUrl)) return madeUrl;
+  return `https://${madeUrl}`;
+}
+
 // Stage 1: email plus a couple of optional context questions. NOTHING
 // here is required — the doc's "Simpler waitlist flow proposal" settled
 // on an email-only join, and Andrea and Evan agreed it in its comments
@@ -233,7 +244,7 @@ function validateStage2(body) {
 
   // Moved here from stage 1: "link something you've made" is one of the
   // things that helps you move up, not a gate on joining.
-  const madeUrl = str(body?.made_url, 2000);
+  const madeUrl = normalizeMadeUrl(body?.made_url);
   if (madeUrl) {
     if (!/^https?:\/\/\S+\.\S+/i.test(madeUrl)) {
       return { ok: false, error: 'That does not look like a link. It should start with https://' };
@@ -352,6 +363,7 @@ module.exports = {
   LOSS_KINDS,
   COUNTRIES,
   countryCodes,
+  normalizeMadeUrl,
   validateStage1,
   validateStage2,
   publicOptions,
