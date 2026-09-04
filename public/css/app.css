@@ -29,6 +29,12 @@
   --accent: #0a6ee0;
   --accent-light: #1f86ff;
   --accent-tint: rgba(10, 110, 224, 0.08);
+  /* The accent as a FILL you can put dark ink on — violet-100, the pale end
+     of the same ramp. `--accent-tint` is a translucent overlay for hovers and
+     stripes; this is an opaque surface, which is what the dev composer's send
+     circle needs so its halo reads against it. */
+  --accent-wash: #d6e9ff;
+  --accent-wash-ink: #0062cc;
   /* Text ON the accent — the outgoing message bubble is the only place the
      shell puts type on a saturated fill, and it must not follow the page. */
   --accent-ink: #ffffff;
@@ -858,6 +864,11 @@ html.un-kb .platform-safe-sheet {
   --accent: #5aa9ff;
   --accent-light: #8cc4ff;
   --accent-tint: rgba(90, 169, 255, 0.14);
+  /* violet-950 and violet-300: the wash goes DARK here for the same reason
+     the bubble does — a pale fill on a near-black page is the brightest thing
+     on screen, and this is a control, not the message. */
+  --accent-wash: #00264d;
+  --accent-wash-ink: #85bcff;
   --accent-ink: #0b0b0c;
   /* One step UP from the page here, not white: the page is near-black, so a
      bubble has to be lighter than it or it stops being a bubble. */
@@ -4191,8 +4202,7 @@ a.dc-flow-action {
   flex: 0 0 auto;
 }
 
-.dc-draft-btn,
-.dc-save-draft-btn {
+.dc-draft-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4211,24 +4221,11 @@ a.dc-flow-action {
 .dc-draft-trash:hover:not(:disabled) { color: #ef4444; border-color: #ef4444; }
 .dc-draft-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Save icon in the composer, sized to sit level with the Send button. */
-.dc-save-draft-btn {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-}
-.dc-save-draft-btn:not(:disabled) { color: var(--text-secondary); }
-.dc-save-draft-btn:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--bg-tertiary);
-}
-.dc-save-draft-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-/* #810: the icon only exists while a TURN IS RUNNING. Needed explicitly —
-   the shared `.dc-draft-btn, .dc-save-draft-btn { display: inline-flex }`
-   rule above has the same specificity as the UA `[hidden]` rule and, being
-   an author sheet, would otherwise keep the button visible. */
-.dc-save-draft-btn[hidden] { display: none; }
+/* The composer's own save icon lived here, a 34px bordered square beside the
+   Send button. It is the one circle's GREEN STATE now (.dc-circle-save):
+   while a turn runs, text in the box makes saving the only useful action, so
+   it takes the button rather than sitting next to it. The rows' own
+   .dc-draft-send above is a different control — it sends a saved draft. */
 
 /* ── File attachments (#450) ───────────────────────────── */
 
@@ -6100,23 +6097,159 @@ span.gc-vote-btn-icon { cursor: default; }
   40% { transform: translateY(-6px); opacity: 1; }
 }
 
-/* ── Send button streaming state ───────────────────────── */
+/* ── The dev composer's one circle ──────────────────────── */
 
+/* Streamlined Concept. This was a 64x38 rectangle carrying the word "Send",
+   with a separate save icon beside it and a shortcut-hint line under the
+   pair. It is one 44px circle now, and which action it performs follows the
+   turn — see SendButtonView in features/dev-chat/composer-store.ts.
+
+   The SIZE is the point of keeping a fixed box: the label swaps between an
+   arrow, a floppy, a square and a spinner, and the row must not reflow under
+   it. 44px is also the platform's tap target, which the old 38px height was
+   under. */
 .dc-send-btn {
-  min-width: 64px;
+  width: 44px;
+  height: 44px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 9999px;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 38px;
+  flex-shrink: 0;
 }
 
-.dc-btn-streaming { background: var(--bg-tertiary) !important; cursor: not-allowed; }
+/* Idle. A pale fill with a wider, fainter ring of the same hue — the halo is
+   what makes a low-contrast circle read as the row's one primary action
+   without shouting like a filled accent button would. */
+.dc-circle-send {
+  background: var(--accent-wash) !important;
+  color: var(--accent-wash-ink);
+  box-shadow: 0 0 0 6px rgba(31, 134, 255, 0.10);
+}
+.dc-circle-send:hover { background: var(--accent-light) !important; color: #fff; }
+
+/* A turn is running and there is text to park (#810's rule, moved onto the
+   button). Green because it is a SAVE, not a send and not an interrupt: the
+   same emerald the product already spends on "done" states. Filled rather
+   than washed, because unlike Send it is standing where the red Stop was and
+   has to read as a deliberate swap rather than a disabled Stop. */
+.dc-circle-save {
+  background: #10b981 !important;
+  color: #fff;
+  box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.14);
+}
+.dc-circle-save:hover { background: #059669 !important; }
+
+/* ── The card ───────────────────────────────────────────── */
+
+/* One surface holding the field and one row of controls. It floats on the
+   pane's ground rather than sitting in a bordered bar, which is why the bar
+   around it drops its `border-t` and the card carries the elevation. */
+.dc-card {
+  /* The elevation is a variable so the focus rule below can add a ring to it
+     without restating it — two copies of a shadow list drift the first time
+     one of them is tuned. */
+  --dc-card-elevation: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -8px rgba(0, 0, 0, 0.14);
+  background: var(--bg-primary);
+  border-radius: 1.5rem;
+  padding: 0.875rem 1rem 0.625rem;
+  box-shadow: var(--dc-card-elevation);
+  transition: box-shadow 120ms ease;
+}
+/* Dark mode gets a hairline instead of a shadow: a drop shadow on a dark
+   ground is invisible, so the card would lose its edge entirely.
+   `0 0 #0000` rather than `none`, because the focus rule appends to this
+   value and `none, <shadow>` is not a valid box-shadow list. */
+:root.dark .dc-card,
+.dark .dc-card {
+  --dc-card-elevation: 0 0 #0000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+
+/* FOCUS LIVES ON THE CARD, not on the field.
+   The field draws no box of its own — see the `bare` ring in
+   @/components/ui/input.tsx — so the only edge that can carry a focus cue is
+   the one around everything, and a blinking caret is a thin cue on a surface
+   this wide.
+   `:focus-within` rather than `:focus`: the card is one control group, and
+   reaching the attach button or the model picker by keyboard is still "you
+   are in the composer". Those controls keep their own rings on top of this —
+   they have no caret, so the card's ring alone would not say which of them
+   is live. */
+.dc-card:focus-within {
+  box-shadow: var(--dc-card-elevation), 0 0 0 2px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dc-card { transition: none; }
+}
+
+.dc-card-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+/* The row's bare glyph buttons — attach, and anything that joins it. No fill
+   and no border: the card is the box, and a bordered control inside it would
+   draw a second one. The 28px box keeps the glyphs on one baseline; the
+   first one pulls left so its optical edge lines up with the field's text
+   above it rather than its padding box. */
+.dc-row-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.dc-card-row > .dc-row-btn:first-of-type { margin-left: -4px; }
+
+/* The chat-model picker, stripped to text plus the caret its sibling draws.
+   `appearance: none` is what removes the native box AND the native caret, so
+   the ChevronDownIcon beside it is not a second one. */
+.dc-model-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  max-width: 100%;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+/* The caret is a sibling of the <select>, not inside it, so it inherits from
+   this row rather than from the field — which left it invisible in dark mode
+   until this said otherwise. */
+.dc-venue-detail-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+/* What still stacks above the card: the runner chip, the saved drafts, the
+   pending attachments, the attach error and the suggested replies. Each is
+   its own row on the pane's ground, so the card keeps one shape whatever is
+   in flight. */
+.dc-above-card:empty { display: none; }
+.dc-above-card { margin-bottom: 0.5rem; }
+
+/* The three busy surfaces carry their own ink now: the button renders with
+   `ink="none"` so that each state class owns both halves of its surface. */
+.dc-btn-streaming { background: var(--bg-tertiary) !important; color: var(--text-secondary); cursor: not-allowed; }
 .dc-btn-streaming:hover { background: var(--bg-tertiary) !important; }
 
 /* Stop-turn affordance (#28): red button with a square glyph, replaces
    the emerald Send button while the turn is interruptible (mayor1 / cc
    phases). Phase-2 falls back to the spinner state above. */
-.dc-btn-stop { background: #dc2626 !important; cursor: pointer; }
+.dc-btn-stop { background: #dc2626 !important; color: #fff; cursor: pointer; }
 .dc-btn-stop:hover { background: #b91c1c !important; }
 .dc-stop-icon {
   width: 12px;
@@ -6133,9 +6266,14 @@ span.gc-vote-btn-icon { cursor: default; }
    rather than "still needs pressing". */
 .dc-btn-stopping {
   background: var(--bg-tertiary) !important;
+  color: var(--text-secondary);
   cursor: not-allowed;
   gap: 6px;
 }
+/* The circle has no room for a word beside the spinner. The label survives
+   in the button's `aria-label` and `title`, which is where a 44px control
+   has to carry it. */
+.dc-btn-stopping .dc-btn-stopping-label { display: none; }
 .dc-btn-stopping:hover { background: var(--bg-tertiary) !important; }
 /* A touch smaller than the button's own text-sm so the widest state of
    this button stays close to the Send/Stop width and the composer beside

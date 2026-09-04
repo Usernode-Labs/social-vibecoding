@@ -234,11 +234,15 @@ test('the dev-chat composer bar carries platform-safe-bar', () => {
   assert.ok(idx > -1, '#dc-messages is missing from view.tsx');
   assert.match(DEV_VIEW.slice(idx, idx + 1200), /id="dc-composer-bar"/,
     "the dev-chat composer's bar wrapper moved — re-anchor this test");
-  // #1348: the border and padding are dropped when a launchpad has emptied
-  // the bar, so that they do not frame nothing. The INSET is not part of
-  // that — it is the bottom of the screen either way, and a transcript
-  // running under the home indicator is the bug this test exists for. So
-  // platform-safe-bar must be in BOTH class runs, unlike border-t.
+  // #1348: the framing is dropped when a launchpad has emptied the bar, so
+  // that it does not frame nothing. The INSET is not part of that — it is the
+  // bottom of the screen either way, and a transcript running under the home
+  // indicator is the bug this test exists for. So platform-safe-bar must be
+  // in BOTH class runs, unlike the padding.
+  //
+  // Streamlined Concept retired the `border-t`: the composer is a card that
+  // floats on the pane's ground and carries its own elevation, so a rule
+  // above it drew a second edge. What is left to drop is the padding.
   //
   // The two runs are complete literals rather than one string with a
   // conditional tail, because Tailwind's extractor is a regex over source
@@ -249,9 +253,15 @@ test('the dev-chat composer bar carries platform-safe-bar', () => {
   assert.match(bare[1], /platform-safe-bar/,
     'the safe-area inset must never be conditional');
   assert.match(framed[1], /platform-safe-bar/);
-  assert.doesNotMatch(bare[1], /border-t/,
-    'the border is the part that goes when there is nothing to frame');
-  assert.match(framed[1], /border-t/);
+  assert.doesNotMatch(bare[1], /p[xytb]?-\d/,
+    'the padding is the part that goes when there is nothing to frame');
+  assert.match(framed[1], /px-3 pb-3 pt-1/,
+    'and it is asymmetric on purpose: the card\'s own radius does the '
+    + 'insetting the old uniform p-2 did');
+  for (const run of [bare[1], framed[1]]) {
+    assert.doesNotMatch(run, /border-t/,
+      'the card draws its own edge; a rule above it would be a second one');
+  }
 });
 
 test('the general-chat composer bar carries platform-safe-bar, on both branches', () => {
