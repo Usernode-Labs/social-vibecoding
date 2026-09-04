@@ -95,14 +95,17 @@ import '../notifications/mount';
 // The anchor's own classes, hoisted out of the JSX so the `hidden` suffix is
 // the ONLY thing that varies between the two states — the string itself has to
 // stay byte-identical to the hand-written shell's (tests/baselines).
-// The board draws the bar's three glyph controls — back, chat, bell — as dark
-// glyphs on a light DISC, and the accent pill beside them as the one filled
-// thing. Discs at 28px, not the board's larger circle: the header's content
-// row is pinned to 28px (tests/header-height-parity.test.js, and #909 before
-// it), so the ratio scales rather than the row.
+// The homescreen design draws the bar's glyph controls — back, bell — and the
+// app chip beside them all the same way: periwinkle ink on a periwinkle tint
+// with a hairline one step darker (--brand-ink / --brand-tint / --brand-line
+// in app.css, which also carry the dark values, so no dark: variants here).
+// Discs at 28px, not the design's larger circle: the header's content row is
+// pinned to 28px (tests/header-height-parity.test.js, and #909 before it), so
+// the ratio scales rather than the row. The hairline is inside the h-7 box
+// (border-box), so the row's ceiling holds.
 const BACK_BTN_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-full'
-  + ' bg-zinc-50 text-zinc-900 hover:bg-white'
-  + ' dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 un-touch-target';
+  + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
+  + ' text-[color:var(--brand-ink)] un-touch-target';
 
 /** Where the header's home glyph points. NavLink owns the spelling. */
 function homeHref(): string {
@@ -298,6 +301,12 @@ export function PlatformHeader() {
           `z-10` is load-bearing — #home-screen and #messages-screen set
           `position:relative` with z-index:auto, so without it two positioned
           siblings paint in DOM order and the screen wins.
+
+          ON THE HOME ROUTE THE SURFACE IS CLEARED. app.css paints the home
+          wallpaper on the body and sets this bar's background to transparent
+          under `body:has(#home-screen:not(.hidden))`, so the cream ground
+          and its star run up behind the bell as the design draws them. The
+          zinc-200 here is what every other route still gets.
 
           No `overflow-hidden` here, ever: see the badge rule in app.css and
           tests/header-height-parity.test.js. Height is untouched — the radius
@@ -516,7 +525,7 @@ export function PlatformHeader() {
           <a
             id="notifications-btn"
             href="#notifications"
-            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target bg-zinc-50 text-zinc-900 hover:bg-white dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)]"
             aria-label="Notifications"
             aria-haspopup="dialog"
             onClick={(event) => {
