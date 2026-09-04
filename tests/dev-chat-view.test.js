@@ -249,15 +249,18 @@ test('the strip curves its bottom corners like the bar above it (#1588)', () => 
   // Same token on both, so they cannot drift apart.
   const at = VIEW_TSX.indexOf('id="dc-session-header"');
   const tag = VIEW_TSX.slice(at, VIEW_TSX.indexOf('>', at));
-  assert.match(tag, /rounded-b-lg/);
+  // #1571 doubled the radius on both bars together. The token is asserted
+  // rather than merely "some rounded-b-*" so that enlarging one bar and not
+  // the other fails here, which is the drift this test exists to catch.
+  assert.match(tag, /rounded-b-2xl/);
   const HEADER = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'platform-header.tsx'),
     'utf8',
   );
-  assert.match(HEADER, /rounded-b-lg/, 'which is the header\'s own radius');
-  // The header's `-mb-1` is NOT copied: it exists to make the screen below it
+  assert.match(HEADER, /rounded-b-2xl -mb-2/, 'which is the header\'s own radius');
+  // The header's `-mb-2` is NOT copied: it exists to make the screen below it
   // read as rounded-topped, and below this strip is the transcript scroller.
-  assert.doesNotMatch(tag, /-mb-1/);
+  assert.doesNotMatch(tag, /-mb-2/);
   // And nothing may clip the corners' contents — same rule as the header.
   assert.doesNotMatch(tag, /overflow-hidden/);
 });
