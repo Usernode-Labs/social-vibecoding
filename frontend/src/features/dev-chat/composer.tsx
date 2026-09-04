@@ -16,7 +16,7 @@
  * `renderChatView`, re-bound on every render because the element was new.
  */
 
-import { type ChangeEvent, type ReactNode } from 'react';
+import { type MouseEvent, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -58,11 +58,10 @@ const ROW_BTN
   = 'dc-row-btn shrink-0 text-zinc-700 dark:text-zinc-200 hover:text-violet-600'
   + ' dark:hover:text-violet-400 transition-colors';
 
-// The chat-model picker, bare. `.dc-model-select` strips the native
-// appearance so the row reads as text with a caret; the caret beside it is
-// this component's, because a stripped <select> draws none.
 const MUTED_XS = 'text-xs text-zinc-500 dark:text-zinc-400';
 
+// The chat-model picker, bare. It reads as text with a caret, and
+// `.dc-model-select` (app.css) is what strips the button back to that.
 const MODEL_SELECT
   = 'dc-model-select text-[13px] text-zinc-900 dark:text-zinc-100 focus:outline-none'
   + ' focus:ring-2 focus:ring-violet-500 rounded';
@@ -209,7 +208,6 @@ function SavedDrafts({ rows, busy }: { rows: SavedDraftView[]; busy: boolean }):
 
 export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
   const { items } = useStoreState(attachStripStore);
-  const onModel = (e: ChangeEvent<HTMLSelectElement>) => controller()?._onModelPicked?.(e.target.value);
   return (
     <>
       {/* What is left of the venue statement (#1086) once the control itself
@@ -298,22 +296,36 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
             <BudgetPillBar />
             {s.models ? (
               <div id="dc-venue-detail" className="dc-venue-detail dc-venue-detail-inline">
-                {/* #1589 stands: the CLOSED control is the model's NAME and
-                    nothing else. The guidance ("general coding work") reads
-                    in the open list and in the Generate-proposal picker —
-                    here it would set the control's width and push the circle
-                    off the row. The label is gone with the box: a bare
-                    "Opus 5 ⌄" beside the meter needs no "Chat model:" in
-                    front of it, and the accessible name survives on the
-                    select itself. */}
-                <label className="sr-only" htmlFor="dc-model-select">Chat model</label>
-                <select
-                  id="dc-model-select" className={MODEL_SELECT}
-                  value={s.models.selected} onChange={onModel}
+                {/* The SHEET, not a <select> (2B). The venue control in the
+                    session header opens the kit's anchored menu — a bottom
+                    action sheet on touch, a popover on desktop — and this is
+                    the only other picker on the screen, so it was the one
+                    remaining native dropdown beside it. `openModelSheet`
+                    (dev-chat.js) is the mirror of `openVenueSheet`.
+
+                    That is also what gives the guidance somewhere to live:
+                    #1589 dropped "general coding work" from this control
+                    because a <select>'s CLOSED box shows whatever its
+                    selected option says, and the long one set the row's
+                    width. A sheet row is not the closed control, so each
+                    model can carry its blurb in the open list while the
+                    button stays the model's NAME and nothing else.
+
+                    The caret is INSIDE the button now. It used to be a
+                    sibling because a stripped <select> draws none and could
+                    not contain one; with a button there is no reason for
+                    half the control to be unclickable. */}
+                <button
+                  type="button" id="dc-model-select" className={MODEL_SELECT}
+                  aria-haspopup="menu"
+                  aria-label={`Chat model: ${s.models.selectedLabel}`}
+                  onClick={(e: MouseEvent<HTMLButtonElement>) => (
+                    controller()?.openModelSheet?.(e.currentTarget)
+                  )}
                 >
-                  {s.models.options.map((o) => <option value={o.id} key={o.id}>{o.label}</option>)}
-                </select>
-                <ChevronDownIcon width={14} height={14} aria-hidden="true" />
+                  <span className="dc-model-name">{s.models.selectedLabel}</span>
+                  <ChevronDownIcon width={14} height={14} aria-hidden="true" />
+                </button>
               </div>
             ) : null}
             <span className="flex-1"></span>

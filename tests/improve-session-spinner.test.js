@@ -40,6 +40,7 @@ const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 const DEV_CHAT_LIST = read('frontend/src/features/dev-chat/session-list.tsx');
 const APP_CSS = read('public/css/app.css');
 const MANIFEST = JSON.parse(read('dapp.json'));
+const appManifest = require('../src/services/app-manifest');
 
 /** The `stateOf` table on its own — three branches, one per state. */
 function stateOfBody() {
@@ -154,8 +155,26 @@ test('the Improve busy-row check selects the arc, and no check was added', () =>
     'retargeted with the markup — .animate-pulse now matches nothing there');
   assert.equal(busy[0].path, '/?shot=improve&demo=1#app/usernode-2d5619/dev');
 
-  // The manifest is near its ceiling (MAX_DECLARED_TESTS, and the suite
-  // reserves 20 more on top), so this change retargets rather than adds.
-  assert.ok(MANIFEST.tests.length <= 459,
-    `declared checks grew to ${MANIFEST.tests.length}; #1597 adds none`);
+  // …and it RETARGETS rather than adds, which is what the equality above
+  // pins: one check owns the busy mock row, before and after.
+  //
+  // This used to be `MANIFEST.tests.length <= 459` — the manifest's size on
+  // the day #1597 was written, standing in for "near the ceiling, so add
+  // nothing". An absolute count cannot say "THIS change adds none": every
+  // later proposal that declares a check breaks it, whoever wrote it, and
+  // the manifest passed 459 almost immediately. It has been red on main —
+  // and therefore on every proposal opened since — rather than catching
+  // anything.
+  //
+  // The ceiling concern is real and belongs here, so it is stated as the
+  // arithmetic the MAX_DECLARED_TESTS note in services/app-manifest.js
+  // actually documents: the manifest keeps 20 slots clear of the cap, and
+  // crossing that floor is what makes the reader drop checks silently. That
+  // is stable against other people's work, and tests/checks-budget.test.js
+  // asserts the consequence (ceilingDropped === 0) from the other side.
+  const ceiling = appManifest.MAX_DECLARED_TESTS;
+  assert.ok(MANIFEST.tests.length <= ceiling - 20,
+    `declared checks are at ${MANIFEST.tests.length} of ${ceiling}; the `
+    + 'manifest keeps 20 slots clear, and raising the cap is a coupled '
+    + 'change with TESTS_DEADLINE_MS — see services/app-manifest.js');
 });
