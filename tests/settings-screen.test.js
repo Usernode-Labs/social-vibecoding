@@ -488,17 +488,55 @@ test('a bare #settings means the MENU on mobile, the default on desktop', () => 
     'and never rewrite the address while we are on another route');
 });
 
-test('handleBack only pops an entry we pushed ourselves', () => {
+test('handleBack pops whenever this document put something below', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    handleBack() {'));
-  const head = fn.slice(0, 1400);
+  const head = fn.slice(0, 2000);
   assert.match(head, /if \(!Settings\._open\) return false;/,
     'a press outside the screen is never consumed');
   assert.match(head, /if \(!Settings\._isMobile\(\) \|\| Settings\._level !== 2\) return false;/,
     'desktop and the menu level fall through to navigateHome');
-  assert.match(head, /if \(Settings\._pushedFromMenu\) \{[\s\S]{0,400}history\.back\(\)/,
-    'history.back only for our own pushed entry');
+  // #1565: our own pushed menu entry is not the only thing that can be down
+  // there. An in-app link into a section — the profile editor's
+  // "Settings -> Username" — pushes one too, and back belongs on the screen
+  // the viewer came from, not on a menu they never saw.
+  assert.match(head,
+    /if \(Settings\._pushedFromMenu \|\| Settings\._entryBelow\(\)\) \{[\s\S]{0,900}history\.back\(\)/,
+    'history.back whenever there is an entry of ours below');
   assert.match(head, /history\.replaceState\(null, '', '#settings'\)/,
-    'a deep link REPLACES instead, so back cannot bounce forever');
+    'a COLD deep link REPLACES instead, so back cannot bounce forever');
+});
+
+test('"is there an entry below" is the router\'s answer, not a guess (#1565)', () => {
+  // Nothing else can tell a cold deep link from an in-app one: history.length
+  // counts other documents and document.referrer says nothing about a
+  // fragment change. So app.js records it, in the ONE funnel both events run
+  // through, and Settings reads it.
+  const route = appJs.slice(appJs.indexOf('  _routeFromHash() {'));
+  const body = route.slice(0, 700);
+  assert.match(body, /App\._previousRoute = App\._currentRoute;/);
+  assert.match(body, /if \(arriving !== App\._currentRoute\)/,
+    'a traversal fires popstate AND hashchange, so the duplicate must be a no-op');
+  assert.match(appJs, /App\._currentRoute = location\.hash \|\| '';/,
+    'seeded with the address the document loaded at');
+  assert.match(appJs, /previousRoute\(\) \{\s*return App\._previousRoute;/,
+    'and published for the screens that claim the back chevron');
+
+  const below = sliceMethod(settingsJs, '_entryBelow');
+  assert.match(below, /window\.App\?\.previousRoute\?\.\(\) != null/);
+  assert.match(below, /catch/,
+    'a shell that cannot answer is treated as a cold deep link');
+});
+
+test('the level-2 chevron points where handleBack actually goes (#1565)', () => {
+  // The href is not decorative: app.js's back-btn handler follows it when no
+  // screen claims the press, and a native or middle click uses it directly.
+  const up = sliceMethod(settingsJs, '_upHref');
+  assert.match(up, /Settings\._pushedFromMenu \|\| !Settings\._entryBelow\(\)[\s\S]{0,80}'#settings'/,
+    'the menu is the target when the menu is what is below');
+  assert.match(up, /window\.App\.previousRoute\(\) \|\| undefined/,
+    'otherwise the address the viewer came from; home falls back to the home href');
+  const chrome = sliceMethod(settingsJs, '_syncChrome');
+  assert.match(chrome, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/);
 });
 
 test('a menu tap is a real hash navigation', () => {
@@ -562,11 +600,12 @@ test('_syncChrome drives the header through App, not the DOM', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    _syncChrome() {'));
   const head = fn.slice(0, 1400);
   // #1036: the second argument is the anchor's href — inside a section the
-  // chevron pops to the settings menu, so that is where it points. LEVEL 2
-  // ONLY: the mobile drill-in's chevron is the only way up a level inside this
-  // screen, while the root's arrow is gone with the other two account screens'
-  // (Profile and Admin — see App.navigateToProfile). `'home'` is hidden.
-  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#settings' : undefined\)/);
+  // chevron pops to whatever is below it, which _upHref resolves (#1565).
+  // LEVEL 2 ONLY: the mobile drill-in's chevron is the only way up a level
+  // inside this screen, while the root's arrow is gone with the other two
+  // account screens' (Profile and Admin — see App.navigateToProfile).
+  // `'home'` is hidden.
+  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/);
   assert.match(head, /App\.setHeaderTitle\(/,
     'setHeaderTitle mirrors document.title for the native AppBar');
   assert.doesNotMatch(head, /getElementById\('header-title'\)/,
