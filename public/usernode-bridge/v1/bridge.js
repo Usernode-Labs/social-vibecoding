@@ -119,6 +119,7 @@
     getWalletState: true,
     getNodeStatus: true,
     manageStaking: true,
+    getSettingsState: true,
     setNodeSleepEnabled: true,
     resetZkChallenge: true,
     getSocialPushState: true,
