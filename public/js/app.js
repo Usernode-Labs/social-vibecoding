@@ -90,6 +90,31 @@ const App = {
   // actually leave the page.
   _isRestoring: false,
 
+  // ── Is there anywhere of OURS below this history entry? (#1565) ──────
+  //
+  // A screen that claims the back chevron has to answer that, and nothing
+  // else in the platform can: `history.length` counts entries from other
+  // documents, `document.referrer` says nothing about a fragment change, and
+  // a cold deep link to `#settings/username` and an in-app link to the same
+  // address are indistinguishable once they have been applied.
+  //
+  // So the router remembers. `_currentRoute` is the address on screen and
+  // `_previousRoute` the one before it — `''` for home, and NULL only while
+  // this document has not navigated at all since it loaded, which is exactly
+  // the case where back leaves the app.
+  //
+  // Both are written in _routeFromHash, the one funnel popstate and
+  // hashchange share, and seeded in bindEvents with the address the document
+  // loaded at so the FIRST navigation already has a real answer.
+  _previousRoute: null,
+  _currentRoute: null,
+
+  // The address this document was showing before the current one, or null
+  // when it has not navigated since it loaded. `''` means home.
+  previousRoute() {
+    return App._previousRoute;
+  },
+
   // ── Display-only session snapshot (#1021) ───────────────────────────
   // A tiny durable record that THIS DEVICE was signed in, written on every
   // successful boot/login and read only when /api/auth/me cannot be
@@ -2795,6 +2820,9 @@ const App = {
     // is what makes a sibling-fragment hash switch render what a cold load
     // at that fragment renders. _applyRouteShots dedupes on the hash, so the
     // traversal's duplicate pair still applies them exactly once.
+    // The address this document LOADED at, so the first navigation away from
+    // it records a real previous route rather than null (#1565).
+    App._currentRoute = location.hash || '';
     window.addEventListener('popstate', () => App._routeFromHash());
     window.addEventListener('hashchange', () => App._routeFromHash());
   },
@@ -2805,6 +2833,15 @@ const App = {
   // address having moved (boot, the auth screens, the alias rewrites) don't
   // drag the shot appliers along.
   _routeFromHash() {
+    // Recorded before the router runs, and guarded on a real change: one
+    // history traversal fires popstate AND hashchange, so this runs twice in
+    // a tick with the address already settled (#1102). Without the guard the
+    // duplicate would overwrite the previous route with the current one.
+    const arriving = location.hash || '';
+    if (arriving !== App._currentRoute) {
+      App._previousRoute = App._currentRoute;
+      App._currentRoute = arriving;
+    }
     App.restoreFromHash();
     App._applyRouteShots();
   },
