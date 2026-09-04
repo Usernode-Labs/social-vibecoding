@@ -3334,7 +3334,6 @@ const DevChat = {
       DevChat.messages = DevChat._hydrateChangesReadyFromSession(session, DevChat.messages);
       // #647: flag the rows this session inherited from an auto session so
       // their Claude Code disclosures render collapsed by default.
-      DevChat._markInheritedMessages(DevChat.messages, session);
       // Spin a still-running background rebuild's row on load. Rebuilds take
       // minutes (the self-app's DB clone alone is ~4:45), so a reload lands
       // mid-build often enough to matter, and a static gear next to
@@ -6610,57 +6609,45 @@ const DevChat = {
     DevChat._syncSaveDraftBtn();
   },
 
-  // ── Inherited (cloned auto-session) history (#647) ────────
-  //
-  // A session started from an issue's generated proposal
-  // (POST /api/sessions/:id/clone-headless) copies the auto session's whole
-  // conversation into itself. Those inherited Claude Code blocks used to
-  // open expanded — in practice two 60-215 line logs plus a ~2kB summary —
-  // burying the spec card, the "Changes ready" card and the follow-up
-  // message under a wall of log output on first entry. They now default to
-  // collapsed; anything the session produces for the human afterwards
-  // (live or finished) keeps the expanded default.
-  //
-  // The server marks each copied row with metadata.inheritedFrom (the
-  // source session id) — the only durable signal, since the copy doesn't
-  // carry created_at over and the ids are contiguous with the human's own
-  // later turns.
-
-  // The deterministic opening of the follow-up message the clone appends
-  // (buildHeadlessFollowUpMessage in src/routes/sessions.js). Used only by
-  // the legacy fallback below.
-  _CLONE_FOLLOWUP_PREFIX: 'This session was cloned from an auto session',
-
-  // Flag inherited rows in place. Marker-driven for sessions cloned after
-  // #647 shipped; for older clones (no marker on any row) fall back to the
-  // follow-up message as the boundary — everything BEFORE it was copied,
-  // the follow-up itself and everything after belong to the human session.
-  // When neither signal is present nothing is flagged and the session keeps
-  // today's all-expanded behaviour.
-  _markInheritedMessages(messages, session) {
-    if (!Array.isArray(messages) || !messages.length) return messages;
-    let sawMarker = false;
-    for (const m of messages) {
-      if (m && m.metadata && m.metadata.inheritedFrom) {
-        m.inherited = true;
-        sawMarker = true;
-      }
-    }
-    if (sawMarker) return messages;
-    if (!session || !session.cloned_from_session_id) return messages;
-    const boundary = messages.findIndex((m) => m
-      && m.role === 'assistant'
-      && String(m.content || '').startsWith(DevChat._CLONE_FOLLOWUP_PREFIX));
-    if (boundary < 0) return messages;
-    for (let i = 0; i < boundary; i++) messages[i].inherited = true;
-    return messages;
-  },
+  // #647's inherited-history pass lived here and is retired. It existed to
+  // give ONE class of Claude Code disclosure a collapsed default; every
+  // disclosure has that default now (see _ccDefaultOpen below), so the flag
+  // it computed had no reader left, and `metadata.inheritedFrom` — which the
+  // clone route still stamps, and clone-headless-suggestions.test.js still
+  // pins — had no reader on the client at all. A flag nothing consults is a
+  // trap for whoever next believes it means something.
 
   // Should a Claude Code disclosure (dc-cc-attached) start expanded?
-  // Everything defaults open — the live-run log is meant to be watched —
-  // except rows inherited from a cloned auto session.
-  _ccDefaultOpen(msg) {
-    return !(msg && msg.inherited);
+  //
+  // NO — none of them, which is now the whole rule. It used to be "everything
+  // open except rows inherited from a cloned auto session" (#647), on the
+  // argument that the live-run log is meant to be watched.
+  //
+  // That argument belonged to a summary that could not carry the run. It is a
+  // card now, and its header holds exactly what the log was watched FOR: the
+  // file being edited, the step count, the elapsed timer, the phase, and the
+  // AI guess with its countdown. The log underneath is the detail behind
+  // those facts, and at 60-215 lines it is the largest thing in the
+  // transcript by an order of magnitude.
+  //
+  // #647 had already found this and fixed it for one case. Its note is worth
+  // reading in full: two inherited logs plus a summary "burying the spec
+  // card, the Changes ready card and the follow-up message under a wall of
+  // log output on first entry". Nothing about that is specific to a clone —
+  // a twelve-turn session of the human's own is twelve open logs, and no
+  // reader wants eleven of them. This is #647's finding applied where it
+  // always applied.
+  //
+  // Anyone who opens one keeps it open: _applyDetailsPersistence round-trips
+  // the flag per message through localStorage, so being wrong here costs one
+  // click, once, on the run you actually care about.
+  //
+  // It takes the message and ignores it. This is the seam every disclosure
+  // asks, and a caller that keeps passing its row is what makes a future
+  // exception — a live run, say — a change to this function rather than to
+  // four call sites.
+  _ccDefaultOpen(_msg) {
+    return false;
   },
 
   // ── <details> open/closed persistence ─────────────────────

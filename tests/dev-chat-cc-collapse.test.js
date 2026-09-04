@@ -1,6 +1,16 @@
-// #647: Claude Code disclosures inherited from a cloned auto session must
-// render COLLAPSED by default, while everything the human's own session
-// produces (live or finished) keeps the expanded default.
+// EVERY Claude Code disclosure renders COLLAPSED by default.
+//
+// #647 is where this started: it found that inherited history — two 60-215
+// line logs plus a ~2kB summary — buried the spec card, the Changes-ready
+// card and the follow-up message "under a wall of log output on first
+// entry", and closed those rows. Nothing in that finding was specific to a
+// clone. A twelve-turn session of the human's own is twelve open logs.
+//
+// What made the expanded default defensible was a summary that could not
+// carry the run. The summary is a card now and its header holds what the log
+// was watched for — the file being edited, the step count, the timer, the
+// phase, the AI guess — so the log is the detail behind facts already on
+// screen. This file is #647's rule, generalised.
 //
 // Three render branches emit <details class="dc-cc-attached">:
 //   - a status row paired with an attached progressLog  (persist kind ccrun)
@@ -10,16 +20,18 @@
 // inherited row — relying on _applyDetailsPersistence to close it after
 // paint would flash the whole log for a frame.
 //
-// Also covers _markInheritedMessages: the metadata.inheritedFrom marker the
-// clone route stamps, and the legacy fallback keyed off the canonical
-// follow-up prefix for clones that predate the marker.
+// It no longer covers _markInheritedMessages: that pass computed a flag whose
+// only consumer was the inherited-vs-own distinction, and the distinction is
+// gone, so the pass went with it. The clone route still stamps
+// metadata.inheritedFrom and clone-headless-suggestions.test.js still pins
+// that — the marker is durable server state, it simply has no client reader.
 //
 // Harness mirrors tests/dev-chat-changes-ready-card.test.js: load
 // dev-chat.js (a plain browser script) into a vm context with stubbed
 // browser globals, drive renderMessages() against a fake #dc-messages whose
 // innerHTML is captured, and assert on the HTML.
 //
-// Run with: node --test tests/dev-chat-inherited-cc-collapse.test.js
+// Run with: node --test tests/dev-chat-cc-collapse.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -144,16 +156,16 @@ function assertExpanded(tag) {
   assert.match(tag, /\sopen(=""|)>/, 'open attribute present');
 }
 
-// ── inherited rows collapse ────────────────────────────────
+// ── all three branches collapse ────────────────────────────
 
-test('inherited status + attached progressLog renders COLLAPSED (ccrun)', () => {
+test('status + attached progressLog renders COLLAPSED (ccrun)', () => {
   const { render } = makeDevChat();
   const html = render([
     {
       id: 101, role: 'system', content: 'Claude Code is running...',
-      inherited: true, durationMs: 252000,
+      durationMs: 252000,
     },
-    { id: 102, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES, inherited: true },
+    { id: 102, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES },
   ], activeSession());
 
   assertCollapsed(attachedTag(html));
@@ -170,12 +182,12 @@ test('inherited status + attached progressLog renders COLLAPSED (ccrun)', () => 
   assert.match(html, /\(took [^)]+\)/, 'duration still shown on the summary');
 });
 
-test('inherited ccOutput row renders COLLAPSED (ccout)', () => {
+test('a ccOutput row renders COLLAPSED (ccout)', () => {
   const { render } = makeDevChat();
   const html = render([
     {
       id: 201, role: 'system', content: 'Claude Code finished',
-      ccOutput: 'Added the thing.\n\n- one\n- two', inherited: true, durationMs: 198000,
+      ccOutput: 'Added the thing.\n\n- one\n- two', durationMs: 198000,
     },
   ], activeSession());
 
@@ -184,31 +196,35 @@ test('inherited ccOutput row renders COLLAPSED (ccout)', () => {
   assert.match(html, /dc-cc-attached-md/, 'the markdown body is still present, just collapsed');
 });
 
-test('inherited ORPHAN progressLog row renders COLLAPSED (ccrunorphan)', () => {
+test('an ORPHAN progressLog row renders COLLAPSED (ccrunorphan)', () => {
   const { render } = makeDevChat();
   // A lone progress row with no pairable predecessor/successor status line.
   const html = render([
     { id: 301, role: 'user', content: 'do the thing' },
-    { id: 302, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES, inherited: true },
+    { id: 302, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES },
   ], activeSession());
 
   assertCollapsed(attachedTag(html));
   assert.match(html, /data-persist-id="302:ccrunorphan"/, 'orphan persist id');
 });
 
-// ── own-turn rows stay expanded ────────────────────────────
+// ── nothing is exempt, including a LIVE run ────────────────
 
-test('an UNMARKED finished turn stays EXPANDED (ordinary sessions unchanged)', () => {
+test('a finished turn collapses (this is the case #647 left expanded)', () => {
   const { render } = makeDevChat();
   const html = render([
     { id: 401, role: 'system', content: 'Claude Code is running...', durationMs: 120000 },
     { id: 402, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES },
   ], activeSession());
 
-  assertExpanded(attachedTag(html));
+  assertCollapsed(attachedTag(html));
 });
 
-test('an UNMARKED live (_active) turn stays EXPANDED so the log streams open', () => {
+test('a LIVE (_active) turn collapses too — the card header is the progress now', () => {
+  // This is the one that used to be argued the other way ("so the log streams
+  // open"). The chips carry the file, the step count and the ticking timer,
+  // and the spinner is on the header, so a closed card still shows a run
+  // running and what it is doing. What it hides is the transcript of it.
   const { render } = makeDevChat();
   const html = render([
     { id: 501, role: 'system', content: 'Claude Code is running...', _active: true },
@@ -216,24 +232,25 @@ test('an UNMARKED live (_active) turn stays EXPANDED so the log streams open', (
   ], activeSession());
 
   const tag = attachedTag(html);
-  assertExpanded(tag);
+  assertCollapsed(tag);
   assert.match(html, /dc-status-spinner-arc/, 'live row keeps its arc spinner');
+  assert.match(html, /class="dc-cc-chips"/, 'and the facts stay on the closed card');
 });
 
-test('an UNMARKED ccOutput row stays EXPANDED', () => {
+test('a ccOutput row collapses', () => {
   const { render } = makeDevChat();
   const html = render([
     { id: 601, role: 'system', content: 'Claude Code finished', ccOutput: 'Done.' },
   ], activeSession());
 
-  assertExpanded(attachedTag(html));
+  assertCollapsed(attachedTag(html));
 });
 
-test('a clone mixes both: inherited collapsed, the human own later turn expanded', () => {
+test('a clone is no longer a special case — every run collapses alike', () => {
   const { render } = makeDevChat();
   const html = render([
-    { id: 701, role: 'system', content: 'Claude Code is running...', inherited: true },
-    { id: 702, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES, inherited: true },
+    { id: 701, role: 'system', content: 'Claude Code is running...' },
+    { id: 702, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES },
     { id: 703, role: 'assistant', content: 'This session was cloned from an auto session that ran unattended on GitHub issue #42.' },
     { id: 704, role: 'user', content: 'tweak it' },
     { id: 705, role: 'system', content: 'Claude Code is running...' },
@@ -242,8 +259,19 @@ test('a clone mixes both: inherited collapsed, the human own later turn expanded
 
   const tags = html.match(/<details class="dc-cc-attached"[^>]*>/g) || [];
   assert.equal(tags.length, 2, 'both runs render a disclosure');
-  assertCollapsed(tags[0]);
-  assertExpanded(tags[1]);
+  for (const tag of tags) assertCollapsed(tag);
+});
+
+test('the rule is one function, so a future exception has one home', () => {
+  const { DevChat } = makeDevChat();
+  assert.equal(DevChat._ccDefaultOpen({}), false);
+  assert.equal(DevChat._ccDefaultOpen({ _active: true }), false);
+  assert.equal(DevChat._ccDefaultOpen(null), false);
+  // The retired pass and the flag it wrote are gone with it.
+  assert.equal(typeof DevChat._markInheritedMessages, 'undefined',
+    'the inherited pass computed a flag nothing reads any more');
+  assert.equal(typeof DevChat._CLONE_FOLLOWUP_PREFIX, 'undefined',
+    'and the legacy boundary prefix it needed');
 });
 
 // ── already-collapsed disclosures are untouched ────────────
@@ -262,69 +290,4 @@ test('cclog / mayorraw / ccfull disclosures still render without `open`', () => 
     assert.doesNotMatch(tag, /\sopen(\s|>)/, 'stays closed by default');
     assert.doesNotMatch(tag, /data-default-open/, 'no default-open flag added');
   }
-});
-
-// ── _markInheritedMessages ─────────────────────────────────
-
-test('_markInheritedMessages flags every row carrying metadata.inheritedFrom', () => {
-  const { DevChat } = makeDevChat();
-  const msgs = [
-    { id: 1, role: 'system', content: 'Claude Code is running...', metadata: { inheritedFrom: 55 } },
-    { id: 2, role: 'system', content: 'Claude Code finished', metadata: { ccOutput: 'x', inheritedFrom: 55 } },
-    { id: 3, role: 'assistant', content: 'This session was cloned from an auto session that ran unattended on GitHub issue #42.', metadata: {} },
-    { id: 4, role: 'user', content: 'go on' },
-  ];
-  DevChat._markInheritedMessages(msgs, activeSession({ cloned_from_session_id: 55 }));
-
-  assert.equal(msgs[0].inherited, true);
-  assert.equal(msgs[1].inherited, true);
-  assert.ok(!msgs[2].inherited, 'the appended follow-up is NOT inherited');
-  assert.ok(!msgs[3].inherited, 'later human rows are NOT inherited');
-});
-
-test('_markInheritedMessages falls back to the follow-up boundary for legacy clones', () => {
-  const { DevChat } = makeDevChat();
-  const msgs = [
-    { id: 1, role: 'user', content: 'Please work on GitHub issue #42.' },
-    { id: 2, role: 'system', content: 'Claude Code is running...' },
-    { id: 3, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES },
-    { id: 4, role: 'assistant', content: 'This session was cloned from an auto session that ran unattended on GitHub issue #42.' },
-    { id: 5, role: 'user', content: 'build it' },
-    { id: 6, role: 'system', content: 'Claude Code is running...' },
-  ];
-  DevChat._markInheritedMessages(msgs, activeSession({ cloned_from_session_id: 55 }));
-
-  assert.deepEqual(msgs.map((m) => !!m.inherited), [true, true, true, false, false, false]);
-});
-
-test('_markInheritedMessages is a no-op on a non-cloned session', () => {
-  const { DevChat } = makeDevChat();
-  const msgs = [
-    { id: 1, role: 'system', content: 'Claude Code is running...' },
-    { id: 2, role: 'assistant', content: 'This session was cloned from an auto session that ran unattended on GitHub issue #42.' },
-  ];
-  DevChat._markInheritedMessages(msgs, activeSession());
-  assert.ok(msgs.every((m) => !m.inherited), 'nothing flagged without cloned_from_session_id');
-});
-
-test('_markInheritedMessages leaves a legacy clone alone when no follow-up row matches', () => {
-  const { DevChat } = makeDevChat();
-  const msgs = [
-    { id: 1, role: 'system', content: 'Claude Code is running...' },
-    { id: 2, role: 'assistant', content: 'Something else entirely.' },
-  ];
-  DevChat._markInheritedMessages(msgs, activeSession({ cloned_from_session_id: 55 }));
-  assert.ok(msgs.every((m) => !m.inherited), 'degrades to today behaviour, never guesses');
-});
-
-test('the marker wins over the fallback (no boundary scan when markers exist)', () => {
-  const { DevChat } = makeDevChat();
-  const msgs = [
-    { id: 1, role: 'user', content: 'unmarked leading row' },
-    { id: 2, role: 'system', content: 'Claude Code finished', metadata: { inheritedFrom: 55 } },
-    { id: 3, role: 'assistant', content: 'This session was cloned from an auto session that ran unattended on GitHub issue #42.' },
-  ];
-  DevChat._markInheritedMessages(msgs, activeSession({ cloned_from_session_id: 55 }));
-  assert.ok(!msgs[0].inherited, 'the fallback did not run');
-  assert.equal(msgs[1].inherited, true);
 });
