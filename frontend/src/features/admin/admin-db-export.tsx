@@ -143,6 +143,10 @@ function DbExportSection() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [guidanceOpen, setGuidanceOpen] = useState(false);
+  // #1606: the confirm panel's password field is unmaskable like every other
+  // password field on the platform. Reset with the panel, so reopening it
+  // never starts revealed.
+  const [showPassword, setShowPassword] = useState(false);
   const phraseRef = useRef<HTMLInputElement | null>(null);
   const alive = useRef(true);
   const timers = useRef<Array<ReturnType<typeof setTimeout>>>([]);
@@ -180,6 +184,7 @@ function DbExportSection() {
     setConfirming(false);
     setPhrase('');
     setPassword('');
+    setShowPassword(false);
     setError(null);
     loadStatus();
   };
@@ -296,9 +301,22 @@ function DbExportSection() {
             <input id="admin-db-export-phrase" ref={phraseRef} type="text" autoComplete="off" spellCheck={false}
               placeholder="EXPORT" className={`${FIELD} font-mono`}
               value={phrase} onChange={(e) => setPhrase(e.target.value)} />
-            <input id="admin-db-export-password" type="password" autoComplete="current-password"
-              placeholder="Your password" className={FIELD}
-              value={password} onChange={(e) => setPassword(e.target.value)} />
+            {/* Show/hide, same affordance the platform fields grew in #1606.
+                Hand-written rather than the shell's PasswordInput: the console
+                is the other surface and builds from its own class vocabulary
+                (tests/admin-ui-registry.test.js). */}
+            <div className="relative">
+              <input id="admin-db-export-password" type={showPassword ? 'text' : 'password'} autoComplete="current-password"
+                placeholder="Your password" className={`${FIELD} pr-16`}
+                value={password} onChange={(e) => setPassword(e.target.value)} />
+              <button id="admin-db-export-password-toggle" type="button"
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((on) => !on)}>
+                {showPassword ? 'Hide' : 'Show'}
+              </button>
+            </div>
           </div>
           <p id="admin-db-export-error"
             className={`${error ? '' : 'hidden '}text-xs text-red-700 dark:text-red-400 mt-2`}>{error}</p>

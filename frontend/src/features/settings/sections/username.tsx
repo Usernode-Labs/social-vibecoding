@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 
 /**
  * Change username — POST /api/me/username.
@@ -44,9 +45,8 @@ export function UsernameSection() {
             spellCheck={false}
             placeholder="New username"
           />
-          <Input
+          <PasswordInput
             id="cu-password"
-            type="password"
             autoComplete="current-password"
             placeholder="Current password"
           />

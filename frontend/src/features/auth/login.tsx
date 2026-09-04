@@ -53,6 +53,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { KeyIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -846,11 +847,10 @@ export function LoginScreen() {
               >
                 Password
               </label>
-              <Input
+              <PasswordInput
                 ref={password}
                 id="login-password"
                 name="password"
-                type="password"
                 required={true}
                 autoComplete="current-password"
                 {...AUTHFIELD}
@@ -979,10 +979,9 @@ export function LoginScreen() {
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   New password
                 </label>
-                <Input
+                <PasswordInput
                   ref={otpNewPassword}
                   id="otp-new-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="at least 8 characters"
@@ -992,10 +991,9 @@ export function LoginScreen() {
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Confirm password
                 </label>
-                <Input
+                <PasswordInput
                   ref={otpConfirmPassword}
                   id="otp-confirm-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="re-enter password"
@@ -1051,10 +1049,9 @@ export function LoginScreen() {
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   New password
                 </label>
-                <Input
+                <PasswordInput
                   ref={recoveryNewPassword}
                   id="recovery-new-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="at least 8 characters"
@@ -1064,10 +1061,9 @@ export function LoginScreen() {
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Confirm new password
                 </label>
-                <Input
+                <PasswordInput
                   ref={recoveryConfirmPassword}
                   id="recovery-confirm-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="re-enter new password"
@@ -1184,10 +1180,9 @@ export function LoginScreen() {
               <h2 className="text-lg font-bold text-center">Choose a new password</h2>
               <div>
                 <label className={LABEL} htmlFor="reset-new-password">New password</label>
-                <Input
+                <PasswordInput
                   ref={resetNewPassword}
                   id="reset-new-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="at least 8 characters"
@@ -1195,10 +1190,9 @@ export function LoginScreen() {
               </div>
               <div>
                 <label className={LABEL} htmlFor="reset-confirm-password">Confirm new password</label>
-                <Input
+                <PasswordInput
                   ref={resetConfirmPassword}
                   id="reset-confirm-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="re-enter new password"

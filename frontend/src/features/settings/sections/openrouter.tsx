@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 
@@ -47,7 +48,8 @@ export function OpenRouterSection() {
           Or use your personal OpenRouter API key
         </Label>
         <div className="flex gap-2">
-          <Input id="settings-openrouter-key" type="password" placeholder="sk-or-..." autoComplete="off" spellCheck={false} width="flex" className="font-mono" />
+          {/* Same shape as #settings-api-key above — see the note there. */}
+          <PasswordInput id="settings-openrouter-key" placeholder="sk-or-..." autoComplete="off" spellCheck={false} wrapperClassName="flex-1 min-w-0" className="font-mono" />
           <Button id="settings-openrouter-save" layout="shrink">
             Test &amp; save
           </Button>
