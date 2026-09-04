@@ -211,7 +211,12 @@ test('each venue gets its own model control, and the others get none', () => {
   DevChat.MODELS = { 'claude-opus-5': { label: 'Opus 5' } };
   DevChat.selectedModel = 'claude-opus-5';
   assert.deepEqual(view().models, {
-    options: [{ id: 'claude-opus-5', label: 'Opus 5' }], selected: 'claude-opus-5',
+    // `blurb` is the sheet row's second half; '' when the server sends no
+    // changeSize. `selectedLabel` is the closed control, which is a button
+    // naming the model rather than a <select> now.
+    options: [{ id: 'claude-opus-5', label: 'Opus 5', blurb: '' }],
+    selected: 'claude-opus-5',
+    selectedLabel: 'Opus 5',
   });
   assert.equal(view().openRouter, null);
 
