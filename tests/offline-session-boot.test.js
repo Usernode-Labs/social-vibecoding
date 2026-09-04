@@ -130,6 +130,31 @@ test('boot distinguishes "server said no" from "server said nothing"', () => {
   assert.match(init, /enterAuthed\(snap\.user\)/);
 });
 
+test('only 401/403 mean the session is over — a 500 says nothing about it (#1608)', () => {
+  // The reported dead end starts here. middleware/auth.js answers a failed
+  // session lookup with 500, and boot read every non-ok answer as a
+  // sign-out: the cached trace was dropped and the sign-in screen painted
+  // over a cookie the server still honours. The credentials typed into it
+  // then hit the session-mint boundary's 409 with no way out.
+  const predicate = appMethod('_answeredSignedOut');
+  assert.match(predicate, /res\.status === 401 \|\| res\.status === 403/);
+
+  const init = appMethod('init');
+  assert.match(init, /else if \(App\._answeredSignedOut\(res\)\) \{\s*\/\/[\s\S]{0,300}?App\._dropCachedSession\(\);/,
+    'the authoritative "no" is the only branch that drops the cache');
+
+  const rec = APP.slice(APP.indexOf('async _reconcileSession({'),
+    APP.indexOf('// ── Staged boot'));
+  const unsure = rec.slice(rec.indexOf('if (!res.ok && !App._answeredSignedOut(res))'));
+  assert.ok(unsure.startsWith('if (!res.ok && !App._answeredSignedOut(res))'),
+    'reconciling has an "answered, but not about the session" branch');
+  const unsureBranch = unsure.slice(0, unsure.indexOf('\n    if (!res.ok) {'));
+  assert.match(unsureBranch, /_publishBootSession\(\{ unknown: true \}\)/,
+    'a joiner is told we could not tell, exactly as for no answer at all');
+  assert.ok(!/_dropCachedSession|location\.reload/.test(unsureBranch),
+    'a signed-in reload that meets a 500 stays signed in');
+});
+
 test('the boot session check has a deadline', () => {
   // Without it, a stalled-but-open socket holds boot forever — the white
   // screen half of the bug — even when a snapshot is sitting right there.

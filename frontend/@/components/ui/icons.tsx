@@ -504,10 +504,22 @@ export const EllipsisHorizontalIcon = ({ id, className, ...rest }: IconProps) =>
 );
 EllipsisHorizontalIcon.displayName = 'EllipsisHorizontalIcon';
 
-/** "Open the staging preview" — the eye, and the same eye struck through. */
+/**
+ * "Open the staging preview" — the eye, and the same eye struck through.
+ *
+ * The two `d` strings are named constants rather than inline attributes for
+ * one reason: tests/shell-icon-set.test.js reads this module's path data as
+ * the QUOTED literals in it, and compares the prerendered document against
+ * that set. Inline `d="…"` on the element is invisible to it, which read as
+ * a re-inlined glyph the moment the eye started shipping in the document
+ * (#1606 put it on every password field). The rendered output is unchanged.
+ */
+const EYE_OUTLINE = 'M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z';
+const EYE_SLASH = 'M4 20 20 4';
+
 export const EyeIcon = ({ id, className, strokeWidth = '2', ...rest }: IconProps) => (
   <svg id={id} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} {...rest}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d={EYE_OUTLINE} />
     <circle cx="12" cy="12" r="2.75" />
   </svg>
 );
@@ -515,9 +527,9 @@ EyeIcon.displayName = 'EyeIcon';
 
 export const EyeOffIcon = ({ id, className, strokeWidth = '2', ...rest }: IconProps) => (
   <svg id={id} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} {...rest}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d={EYE_OUTLINE} />
     <circle cx="12" cy="12" r="2.75" />
-    <path strokeLinecap="round" d="M4 20 20 4" />
+    <path strokeLinecap="round" d={EYE_SLASH} />
   </svg>
 );
 EyeOffIcon.displayName = 'EyeOffIcon';

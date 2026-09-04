@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { SectionHeading, StatusLine } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 
 /**
  * Change password (issue #282). Default form calls POST /api/me/password
@@ -20,22 +20,19 @@ export function PasswordSection() {
         </SectionHeading>
         <div className="space-y-2">
           <div id="cp-current-row">
-            <Input
+            <PasswordInput
               id="cp-current"
-              type="password"
               autoComplete="current-password"
               placeholder="Current password"
             />
           </div>
-          <Input
+          <PasswordInput
             id="cp-new"
-            type="password"
             autoComplete="new-password"
             placeholder="New password (at least 8 characters)"
           />
-          <Input
+          <PasswordInput
             id="cp-confirm"
-            type="password"
             autoComplete="new-password"
             placeholder="Confirm new password"
           />

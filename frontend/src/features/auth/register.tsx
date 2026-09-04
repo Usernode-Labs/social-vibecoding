@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -188,11 +189,10 @@ export function RegisterScreen() {
               >
                 Password
               </label>
-              <Input
+              <PasswordInput
                 ref={password}
                 id="reg-password"
                 name="password"
-                type="password"
                 required={true}
                 autoComplete="new-password"
                 {...AUTHFIELD}

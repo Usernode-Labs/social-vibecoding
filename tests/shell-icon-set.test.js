@@ -279,10 +279,12 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // ── The Dev card's glyphs (#1367's card chunk) ──────────────────
     // The card family renders inside #dev-feed / #dev-kanban-board /
     // #gc-thread-head, all of which app-view.js mounts at runtime on the Dev
-    // route — none is in <Shell/>, so none prerenders. The eye and the ⋯ dots
-    // are circles rather than paths, so they never appear in this list at
-    // all (the drag grip was a third such glyph until the board's
-    // drag-to-reorder was retired).
+    // route — none is in <Shell/>, so none prerenders. The ⋯ dots are
+    // circles rather than paths, so they never appear in this list at all
+    // (the drag grip was a second such glyph until the board's
+    // drag-to-reorder was retired). The EYE is a path again — #1606 named
+    // its two `d` strings so this test can see them, and its outline now
+    // prerenders on every password field. Only the slash below stays absent.
     // PencilSquareIcon — the author-only inline title edit on a topic head.
     'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
     // ── The dev chat's banner glyphs ────────────────────────────────
@@ -298,6 +300,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // WarningTriangleIcon — the sync banner's idle and failed states, and the
     // exhausted-credits banner.
     'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z',
+    // EyeOffIcon's slash (#1606). Its other two marks are the eye itself,
+    // which every password field prerenders; the slash is drawn only once a
+    // viewer has revealed a value, which no cold document has done.
+    'M4 20 20 4',
     // CheckLongIcon — the sync banner's settled success.
     'M4.5 12.75l6 6 9-13.5',
     // UserCircleIcon — the credits banner's connect-an-account variant.
