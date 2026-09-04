@@ -82,6 +82,66 @@ test('submission and row-navigation behavior stay on their existing seams', () =
     'using the composer does not open its Activity row');
 });
 
+test('a successfully posted reply survives the inline-thread reload', () => {
+  const preview = mod().feedThreadPreview([
+    {
+      id: 40,
+      username: null,
+      content: 'Build started',
+      msg_type: 'system',
+      created_at: '2026-09-04T09:00:00Z',
+    },
+    {
+      id: 41,
+      username: 'alice',
+      content: 'Existing reply',
+      msg_type: 'message',
+      created_at: '2026-09-04T10:00:00Z',
+    },
+    {
+      id: 42,
+      username: 'bob',
+      content: 'Newly posted reply',
+      msg_type: 'message',
+      created_at: '2026-09-04T11:00:00Z',
+    },
+  ]);
+
+  assert.deepEqual(preview, {
+    messages: [
+      {
+        id: 41,
+        author: 'alice',
+        content: 'Existing reply',
+        createdAt: '2026-09-04T10:00:00Z',
+      },
+      {
+        id: 42,
+        author: 'bob',
+        content: 'Newly posted reply',
+        createdAt: '2026-09-04T11:00:00Z',
+      },
+    ],
+    total: 2,
+  });
+});
+
+test('the inline reply preview preserves composer line breaks', () => {
+  const html = renderToHtml(createElement(mod().MessageLine, {
+    m: {
+      id: 42,
+      author: 'bob',
+      content: 'First line\nSecond line',
+      createdAt: '2026-09-04T11:00:00Z',
+    },
+  }));
+
+  assert.match(html, /class="[^"]*whitespace-pre-wrap[^"]*"/,
+    'the browser must preserve newlines instead of collapsing them to spaces');
+  assert.match(html, />First line\nSecond line<\/span>/,
+    'the reply remains plain escaped text with its original newline');
+});
+
 test('the Activity staging route requires both the textarea and arrow', () => {
   const check = dapp.tests.find((entry) => entry.name.includes('#1584'));
   assert.ok(check, 'a declared check names this change');

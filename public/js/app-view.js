@@ -4851,9 +4851,16 @@ const AppView = {
       const botTag = isBot
         ? ' <span class="text-[0.9375rem] text-sky-700 dark:text-sky-400">bot</span>'
         : '';
+      const age = relTime(c.createdAt);
+      const ageHtml = age
+        ? `<span class="dev-feed-comment-time">${escapeHtml(age)}</span>`
+        : '';
       return `<div class="dev-feed-comment">
-          <span class="dev-feed-comment-author">${author}</span>${botTag}
-          <span class="dev-feed-comment-body">${renderMd(c.body || '')}</span>
+          <span class="dev-feed-comment-main">
+            <span class="dev-feed-comment-author">${author}</span>${botTag}
+            <span class="dev-feed-comment-body">${renderMd(c.body || '')}</span>
+          </span>
+          ${ageHtml}
         </div>`;
     }).join('');
     return `${more}${rows}`;

@@ -749,6 +749,7 @@ async function aggregateReport(poolOrConfig, { days = 14 } = {}) {
              CASE WHEN COUNT(output_tokens) = 0 THEN NULL ELSE SUM(output_tokens) END AS output_tokens,
              CASE WHEN COUNT(reasoning_output_tokens) = 0 THEN NULL ELSE SUM(reasoning_output_tokens) END AS reasoning_output_tokens,
              CASE WHEN COUNT(cost_usd) = 0 THEN NULL ELSE SUM(cost_usd) END AS total_known_cost_usd,
+             AVG(cost_usd) AS average_cost_usd,
              COUNT(*) FILTER (WHERE cost_usd IS NULL) AS unavailable_cost_count,
              COUNT(input_tokens) AS input_tokens_available_count,
              COUNT(cache_read_input_tokens) AS cache_read_input_tokens_available_count,
@@ -886,6 +887,7 @@ async function aggregateReport(poolOrConfig, { days = 14 } = {}) {
       p95: nullableNumber(row.p95_duration_ms),
     },
     knownCostUsd: {
+      average: nullableNumber(row.average_cost_usd),
       median: nullableNumber(row.median_cost_usd),
       p95: nullableNumber(row.p95_cost_usd),
     },

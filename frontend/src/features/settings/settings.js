@@ -2476,7 +2476,7 @@
       const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
       if (intro) {
-        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. OpenRouter is preferred after you add or claim a key; GLM 5.3 is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
+        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. OpenRouter is preferred after you add or claim a key; GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
       }
       if (modelLabel) modelLabel.textContent = 'OpenRouter model';
       const betaGate = document.getElementById('settings-openrouter-beta-gated');
