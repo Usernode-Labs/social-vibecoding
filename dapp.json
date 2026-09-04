@@ -376,7 +376,7 @@
       "key": "OPENROUTER_DEFAULT_CODEX_MODEL",
       "group": "AI & coding agents",
       "required": false,
-      "default": "z-ai/glm-5.3",
+      "default": "z-ai/glm-5.3-flash",
       "description": "Preferred OpenRouter model for new coding-agent sessions. The complete key-visible catalog remains selectable; if this slug is absent, Usernode safely recommends another compatible model."
     },
     {
@@ -2191,6 +2191,12 @@
       "name": "Settings deep-links the Password section",
       "path": "/#settings/password",
       "expectSelector": "[data-settings-section=\"password\"]:not(.hidden) #cp-save"
+    },
+    {
+      "name": "OpenRouter settings name GLM 5.3 Flash as the preferred coding model (#1592)",
+      "path": "/#settings/openrouter",
+      "expectSelector": "[data-settings-section=\"openrouter\"]:not(.hidden) #settings-openrouter-models-wrap",
+      "expectText": "GLM 5.3 Flash"
     },
     {
       "name": "Settings deep-links App AI permissions with the seeded demo grants",

@@ -129,7 +129,7 @@ test('default-open managed provisioning does not require an identity and returns
       limitReset: 'daily',
     };
   };
-  agentModels.listOpenRouterModels = async () => ({ recommendedModelId: 'z-ai/glm-5.3' });
+  agentModels.listOpenRouterModels = async () => ({ recommendedModelId: 'z-ai/glm-5.3-flash' });
   notifications.notifyManagedOpenRouterAdmins = async () => { notificationsSent += 1; return []; };
   const pool = {
     query: async (sql) => ({
@@ -146,7 +146,7 @@ test('default-open managed provisioning does not require an identity and returns
       openrouterOrigin: 'https://usernode.dev',
       openrouterManagedDailyLimitUsd: 1,
       openrouterManagedWorkspaceId: 'workspace-123',
-      openrouterDefaultCodexModel: 'z-ai/glm-5.3',
+      openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash',
       dataEncryptionKey: 'test-data-key',
     },
   });
@@ -156,7 +156,7 @@ test('default-open managed provisioning does not require an identity and returns
   assert.equal(stored.apiKey, 'sk-or-v1-issued-once');
   assert.equal(stored.metadata.source, 'usernode_managed');
   assert.equal(stored.metadata.managedKeyId, 17);
-  assert.equal(defaultModel, 'z-ai/glm-5.3');
+  assert.equal(defaultModel, 'z-ai/glm-5.3-flash');
   assert.equal(result.apiKey, 'sk-or-v1-issued-once');
   assert.equal(result.shownOnce, undefined, 'route, not persistence, adds the one-time response marker');
   assert.equal(result.managed.status, 'active');
@@ -237,6 +237,7 @@ function loadManagedVerificationConfig(value) {
   const keys = [
     'DATABASE_URL', 'SESSION_SECRET', 'ADMIN_USERNAME', 'ADMIN_PASSWORD',
     'USERNODE_ENV', 'OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY',
+    'OPENROUTER_DEFAULT_CODEX_MODEL',
   ];
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   Object.assign(process.env, {
@@ -248,6 +249,7 @@ function loadManagedVerificationConfig(value) {
   });
   if (value === undefined) delete process.env.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY;
   else process.env.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY = value;
+  delete process.env.OPENROUTER_DEFAULT_CODEX_MODEL;
 
   const realLog = console.log;
   console.log = () => {};
@@ -263,7 +265,9 @@ function loadManagedVerificationConfig(value) {
 }
 
 test('managed-key verification defaults off and can be enabled explicitly', () => {
-  assert.equal(loadManagedVerificationConfig(undefined).openrouterManagedRequireVerifiedIdentity, false);
+  const defaults = loadManagedVerificationConfig(undefined);
+  assert.equal(defaults.openrouterManagedRequireVerifiedIdentity, false);
+  assert.equal(defaults.openrouterDefaultCodexModel, 'z-ai/glm-5.3-flash');
   assert.equal(loadManagedVerificationConfig('false').openrouterManagedRequireVerifiedIdentity, false);
   assert.equal(loadManagedVerificationConfig('true').openrouterManagedRequireVerifiedIdentity, true);
   assert.equal(managed.requiresVerifiedIdentity({}), false);
@@ -288,6 +292,8 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   assert.match(admin, /patch\('\/api\/admin\/openrouter-keys\/:id'/);
   assert.match(admin, /delete\('\/api\/admin\/openrouter-keys\/:id'/);
   assert.match(settingsSection, /Save this key now/);
+  assert.match(settingsSection, /GLM 5\.3 Flash/);
+  assert.match(settings, /GLM 5\.3 Flash/);
   assert.ok(
     settings.indexOf("{ key: 'openrouter'") < settings.indexOf("{ key: 'api-key'"),
     'OpenRouter precedes the Anthropic key in the AI settings group',
@@ -295,6 +301,8 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   assert.match(deploy, /secrets\.USERNODE_OPENROUTER_MANAGEMENT_API_KEY/);
   assert.match(deploy, /OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=\$\{\{ vars\.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY \|\| 'false' \}\}/);
   assert.match(envExample, /OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=false/);
+  assert.match(deploy, /OPENROUTER_DEFAULT_CODEX_MODEL=\$\{\{ vars\.OPENROUTER_DEFAULT_CODEX_MODEL \|\| 'z-ai\/glm-5\.3-flash' \}\}/);
+  assert.match(envExample, /OPENROUTER_DEFAULT_CODEX_MODEL=z-ai\/glm-5\.3-flash/);
   assert.ok(appManifest.PLATFORM_ENV_UNWRITABLE.has('OPENROUTER_MANAGEMENT_API_KEY'));
   const declaration = manifest.platform_env.find((item) => item.key === 'OPENROUTER_MANAGEMENT_API_KEY');
   assert.equal(declaration.private, true);
@@ -302,15 +310,19 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
     (item) => item.key === 'OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY',
   );
   assert.equal(verificationDeclaration.default, 'false');
+  const modelDeclaration = manifest.platform_env.find(
+    (item) => item.key === 'OPENROUTER_DEFAULT_CODEX_MODEL',
+  );
+  assert.equal(modelDeclaration.default, 'z-ai/glm-5.3-flash');
   assert.match(routes, /verificationRequired/);
   assert.match(settings, /provisioning\.verificationRequired && !provisioning\.verified/);
 });
 
-test('configured GLM is preferred without filtering the remaining model catalog', async (t) => {
+test('configured GLM 5.3 Flash is preferred without filtering the remaining model catalog', async (t) => {
   const original = require('../src/services/openrouter-client').fetchUserModels;
   require('../src/services/openrouter-client').fetchUserModels = async () => [
     { id: 'vendor/cheap', pricing: { prompt: '0', completion: '0' }, supported_parameters: ['tools'], context_length: 64000 },
-    { id: 'z-ai/glm-5.3', pricing: { prompt: '0.000001', completion: '0.000002' }, supported_parameters: ['tools'], context_length: 64000 },
+    { id: 'z-ai/glm-5.3-flash', pricing: { prompt: '0.000000075', completion: '0.00000025' }, supported_parameters: ['tools'], context_length: 1310720 },
     { id: 'vendor/other', pricing: { prompt: '0.000003', completion: '0.000004' }, supported_parameters: ['tools'], context_length: 64000 },
   ];
   t.after(() => {
@@ -325,11 +337,11 @@ test('configured GLM is preferred without filtering the remaining model catalog'
     config: {
       openrouterApiBase: 'https://openrouter.ai/api/v1',
       openrouterOrigin: 'https://usernode.dev',
-      openrouterDefaultCodexModel: 'z-ai/glm-5.3',
+      openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash',
     },
   });
-  assert.equal(catalog.recommendedModelId, 'z-ai/glm-5.3');
+  assert.equal(catalog.recommendedModelId, 'z-ai/glm-5.3-flash');
   assert.deepEqual(catalog.models.map((model) => model.id), [
-    'vendor/cheap', 'z-ai/glm-5.3', 'vendor/other',
+    'vendor/cheap', 'z-ai/glm-5.3-flash', 'vendor/other',
   ]);
 });
