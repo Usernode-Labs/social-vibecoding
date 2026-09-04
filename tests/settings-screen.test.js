@@ -1447,6 +1447,7 @@ test('sign-out closes once, then uses terminal protocol 2 or web navigation',
 
 
 const CLI_LIST = 'frontend/src/features/settings/cli-tokens-list.tsx';
+const CLI_GUIDE = 'frontend/src/features/settings/cli-setup-guide.tsx';
 const cliRows = (state) => renderComponent(CLI_LIST, 'CliTokensListView', state);
 
 test('the credential list renders its three host states', () => {
@@ -1459,30 +1460,39 @@ test('the credential list renders its three host states', () => {
     true, 'and the prerendered document agrees');
   // Loading is the bare text node the module used to write with textContent.
   assert.match(cliRows({ phase: 'loading', tokens: [] }), /Loading credentials…/);
-  // #1609 deliberately replaces the old one-line empty state once loading
-  // has completed. It must not leak into `idle`, whose blank render above is
-  // the hydration contract.
+  // The completed empty state remains credential-specific; #1609's setup
+  // guide is always-visible section markup instead of a list phase.
   const empty = cliRows({ phase: 'ready', tokens: [] });
-  assert.match(empty, /No CLI credentials yet/);
-  assert.match(empty, /Set up a local coding agent from your terminal/);
-  assert.match(empty, /git clone https:\/\/github\.com\/Usernode-Labs\/social-vibecoding\.git/);
-  assert.match(empty, /cd social-vibecoding/);
-  assert.match(empty, /<code>codex<\/code>/);
-  assert.match(empty, /<code>claude<\/code>/);
-  assert.match(empty,
+  assert.match(empty, /No CLI credentials\./);
+});
+
+test('the local-agent setup guide is always-visible section markup', () => {
+  const guide = renderComponent(CLI_GUIDE, 'CliSetupGuide');
+  assert.match(guide, /Set up a local coding agent/);
+  assert.match(guide, /git clone https:\/\/github\.com\/Usernode-Labs\/social-vibecoding\.git/);
+  assert.match(guide, /cd social-vibecoding/);
+  assert.match(guide, /<code>codex<\/code>/);
+  assert.match(guide, /<code>claude<\/code>/);
+  assert.match(guide,
     /Create a proposal for &lt;app name&gt; that &lt;describe the change you want&gt;\./);
-  assert.match(empty, /authorize access on a Social Vibecoding web page/);
-  assert.equal((empty.match(/>Copy<\/button>/g) || []).length, 4,
+  assert.match(guide, /authorize access on a Social Vibecoding web page/);
+  assert.equal((guide.match(/>Copy<\/button>/g) || []).length, 4,
     'repository setup, each alternative agent, and the prompt copy separately');
-  const copyLabels = empty.match(/aria-label="Copy [^"]+"/g) || [];
+  const copyLabels = guide.match(/aria-label="Copy [^"]+"/g) || [];
   assert.equal(copyLabels.length, 4);
   assert.equal(new Set(copyLabels).size, 4, 'every Copy control has a distinct accessible name');
-  const source = read(CLI_LIST);
+  const source = read(CLI_GUIDE);
   assert.match(source, /PlatformUI/);
   assert.match(source, /copyText\?\.\(value\)/,
     'the shared helper keeps the clipboard fallback used elsewhere in the shell');
   assert.match(source, /ok \? 'Copied' : 'Copy failed'/,
     'a rejected copy never claims success');
+  const shell = shellMarkup();
+  assert.match(shell, /id="cli-setup-guide"/,
+    'the SSG output contains the guide before capability detection or credential loading');
+  const load = sliceMethod(settingsJs, '_loadCliTokens');
+  assert.doesNotMatch(load, /section\.classList\.add\('hidden'\)/,
+    'an unavailable credential API never hides the setup guide with its parent section');
 });
 
 test('only a live, non-demo credential offers Revoke', () => {

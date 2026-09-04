@@ -1901,15 +1901,13 @@
 
       // Don't ask for a surface this deployment doesn't serve — the 404
       // would be a console error even though the code below handles it.
-      // Hiding the section is the same outcome the 404 branch produces,
-      // so staging and production differ only in whether the request is
-      // made at all.
       // Staging disables the real CLI surface, but ?demo=1 is a read-only
       // fixture endpoint specifically meant to make this section reviewable.
       // Let that mock path through while still suppressing every real token
-      // request when auth/me advertises cliAuthEnabled=false.
+      // request when auth/me advertises cliAuthEnabled=false. The surrounding
+      // section remains visible because its local-agent guide is useful even
+      // when this deployment cannot list or revoke credentials.
       if (!this._cliTokensDemo() && !(await this._cliAuthAvailable())) {
-        section.classList.add('hidden');
         return;
       }
 
@@ -1946,7 +1944,6 @@
         });
         if (loadId !== this._cliTokenLoadId) return;
         if (response.status === 404) {
-          section.classList.add('hidden');
           return;
         }
         if (!response.ok) throw new Error('Could not load CLI credentials.');
