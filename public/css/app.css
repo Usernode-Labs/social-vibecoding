@@ -901,7 +901,11 @@ html.un-kb .platform-safe-sheet {
   --un-navbar-bg: rgba(255, 255, 255, 0.82);
   --un-radius-card: 12px;
   /* The tile-zoom overlay surface: the app view's screens paint on the
-     body background, so the moving card must match it exactly. */
+     body background, so the moving card must match it exactly. On the
+     wallpaper routes the body's ground is the cream, and the same rule
+     that paints it re-points this at --home-ground (see "The home
+     ground") — otherwise the card zooms open WHITE and snaps to cream
+     when the kit lifts its surface. */
   --un-zoom-bg: var(--bg-primary);
 }
 
@@ -1320,22 +1324,43 @@ html, body {
    yellow paper grain, three gaussian-blurred colour discs and a blue
    halftone star tucked into the top-right corner.
 
-   PAINTED ON THE BODY, on the home route only. The body is the fixed
-   100dvh column that the header and the #home-screen scroller both sit
+   PAINTED ON THE BODY, on the home route and inside an app. The body is
+   the fixed 100dvh column that the header and the screen roots all sit
    in, so one background here runs under both — the bar is cleared over it
    (below) and the star lands behind the bell, where the design puts it —
-   and it never scrolls: the grid and panels move over a wallpaper, not
-   under a banner. The gradient layers are sized to the body (100% 100%),
-   which is the viewport, so a long feed cannot stretch a wash across two
-   screens.
+   and the washes never scroll: the grid and panels move over a wallpaper,
+   not under a banner. The star is the one layer that rides the page — its
+   position reads `--home-star-y`, which frontend/src/lib/wallpaper-scroll.ts
+   writes on <html> from the visible screen's scroll offset, so it slides
+   away under the bar with the tiles and returns with them. The gradient
+   layers are sized to the body (100% 100%), which is the viewport, so a
+   long feed cannot stretch a wash across two screens.
 
-   `body:has(#home-screen:not(.hidden))` is the route test. The shell
+   `body:has(:is(<roots>):not(.hidden))` is the route test. The shell
    swaps screens by toggling `.hidden` on their roots (see
-   frontend/src/lib/visibility-store.ts), so "the home root is showing" IS
-   "we are on the home route", read from the DOM with no class for a
-   module to publish. Everywhere else the body keeps its `bg-zinc-100`
-   ground and the bar its zinc-200 surface. An engine without :has()
-   (none the shell supports) simply keeps that everywhere.
+   frontend/src/lib/visibility-store.ts and App.SCREEN_IDS), so "this root
+   is showing" IS "we are on this route", read from the DOM with no class
+   for a module to publish. THE ROOTS are the launcher and everything the
+   design treats as its peers — the app view (so tapping an app from the
+   launcher leaves the bar exactly as it was: the frame covers everything
+   below it, the wallpaper shows as the band behind the bell, and the push
+   has nothing to animate in the bar), the leaderboard, the profile, the
+   directory, settings, and the anonymous landing shell, so a signed-out
+   visitor lands on the same page. The platform surfaces an app shows in
+   its own frame (the Dev board, a session) sit on the wallpaper too, as
+   the launcher's cards do. Messages and the admin console keep the
+   `bg-zinc-100` ground and the zinc-200 bar: both are dense working
+   surfaces, not pages. An engine without :has() (none the shell supports)
+   simply keeps that everywhere.
+
+   THE CREAM IS DIMMED. The export's page is #FFFEEA — 98% relative
+   luminance, which is white with a cast to the eye, and a bright one: the
+   greys most apps sit on (zinc-100, iOS's grouped background) are 88-90%.
+   The ground here is the same hue at that luminance, #F4F2E4 (88%), and
+   each wash is lowered by the same lightness step (about 3 points) so it
+   keeps the presence it had on the export's cream rather than sinking
+   into the dimmer page. The white cards read as cards on it, which on the
+   export's page they only just did.
 
    THE DISCS are the export's blurred circles as radial gradients: each
    holds its fill to (r - 2σ), is at half opacity at r, and is gone by
@@ -1364,26 +1389,57 @@ html, body {
    every engine drew it differently (Firefox drops blend modes inside an
    SVG image, for one); a raster is the same everywhere.
 
-   DARK MODE KEEPS ITS GROUND. The mock is a light-mode design; on the
-   near-black page the body keeps zinc-950 and paints no layers. */
-body:has(#home-screen:not(.hidden)) {
-  --home-ground: #fffeea;
+   DARK MODE IS THE SAME WALLPAPER ON THE INVERTED GROUND. The mock is a
+   light-mode design, so the dark one is derived from it rather than drawn:
+   the ground is the cream inverted (#0b0d1b — near black, a breath of
+   blue), and every colour layer keeps its OWN hue on top of it. A plain
+   inversion was tried first and lost the washes: inverted pastels sit a
+   few lightness points above the inverted ground, which near black is
+   nothing. So the washes are re-tuned instead — same lavender, rose and
+   ember, the same alphas and geometry, at a lightness that reads on the
+   dark ground (the ember a notch lower than the other two, since it is
+   the most saturated of the three). The star stays periwinkle, which
+   lifts off dark by itself, and the grain keeps its gold at a lower
+   opacity, so it reads as a faint speckle rather than a glow. The .dark
+   rule below sets those four values; everything else — the zoom surface,
+   the cleared bar, the launch cover, the landing root — follows through
+   the same custom properties in both modes. */
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+  --home-ground: #f4f2e4;
+  /* The kit's tile-zoom paints the moving #app-view on this (native.js
+     sets its inline background to the variable), and it is read from
+     the body's descendants, so this is where it has to follow the ground:
+     the card that zooms open out of a tile carries the wallpaper itself —
+     the kit lays the view out at its settled size and scales it with a
+     transform, so the star and the washes grow out of the tile and land
+     pixel-for-pixel on the body's, and nothing pops when the kit lifts
+     the surface. */
+  --un-zoom-bg: var(--home-wallpaper);
   --home-star: url("data:image/png;base64,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");
   --home-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.3'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-color: var(--home-ground);
-  background-image:
-    var(--home-star),
-    var(--home-grain),
-    radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px),
-    radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px),
-    radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px);
-  background-repeat: no-repeat, repeat, no-repeat, no-repeat, no-repeat;
-  background-position: right 32px top 0, 0 0, 0 0, 0 0, 0 0;
-  background-size: 97px 78px, 240px 240px, 100% 100%, 100% 100%, 100% 100%;
+  /* THE WHOLE WALLPAPER AS ONE SHORTHAND VALUE, so the body and the zoom
+     surface paint the identical thing. The kit assigns the moving view's
+     `background` (the shorthand) from --un-zoom-bg, so a multi-layer
+     shorthand is what that variable has to hold; the body uses the same
+     value, and the 640px rule below swaps in the wider one. Each layer is
+     `<image> <position> / <size> <repeat>`, the colour rides on the last. */
+  --home-wallpaper:
+    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
+  background: var(--home-wallpaper);
 }
-.dark body:has(#home-screen:not(.hidden)) {
-  background-color: #0b0b0c; /* zinc-950, the body's own dark ground */
-  background-image: none;
+.dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+  --home-ground: #0b0d1b;
+  --home-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.18'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+  --home-wallpaper:
+    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
 }
 /* WIDE VIEWPORTS. The three discs above are the phone frame's, anchored in
    px to its corners, and on a desktop window they shrink into the corners
@@ -1391,38 +1447,72 @@ body:has(#home-screen:not(.hidden)) {
    more washes join them — the same three tints, sized in viewport units so
    they scale with the window rather than with the phone, and placed across
    the middle of the page where the frame's discs never reach. The dark rule
-   above still wins here (it is the more specific selector), so dark mode
-   stays unpainted at every width. */
+   above is the more specific selector, so it would keep the phone layers
+   at every width on its own — the second rule here gives dark the same
+   four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(#home-screen:not(.hidden)) {
-    background-image:
-      var(--home-star),
-      var(--home-grain),
-      radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px),
-      radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px),
-      radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px),
-      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(237, 228, 244, 0.65), rgba(237, 228, 244, 0) 70%),
-      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(248, 228, 238, 0.65), rgba(248, 228, 238, 0) 70%),
-      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(253, 232, 228, 0.7), rgba(253, 232, 228, 0) 70%),
-      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(237, 228, 244, 0.55), rgba(237, 228, 244, 0) 70%);
-    background-repeat: no-repeat, repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
-    background-position: right 32px top 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0;
-    background-size: 97px 78px, 240px 240px, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+    --home-wallpaper:
+      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+      var(--home-grain) 0 0 / 240px 240px repeat,
+      radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(229, 216, 239, 0.65), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(245, 215, 230, 0.65), rgba(245, 215, 230, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(252, 219, 212, 0.7), rgba(252, 219, 212, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(229, 216, 239, 0.55), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
+  }
+  .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+    --home-wallpaper:
+      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+      var(--home-grain) 0 0 / 240px 240px repeat,
+      radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(80, 48, 105, 0.65), rgba(80, 48, 105, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(117, 36, 77, 0.65), rgba(117, 36, 77, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(118, 31, 15, 0.7), rgba(118, 31, 15, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(80, 48, 105, 0.55), rgba(80, 48, 105, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
   }
 }
-/* THE BAR OVER THE WALLPAPER. On the home route the header's zinc-200
-   surface goes, so the wallpaper (and the star) run up behind the bell —
-   the one place the design's "page ground runs to the top of the screen"
-   is literal. The controls on it carry their own periwinkle fill and
-   hairline (--brand-tint / --brand-line), so they still lift off cream and
-   off dark alike. Everywhere else the bar keeps its surface — see the
-   "THE BAR'S OWN SURFACE" note in platform-header.tsx for why it has one.
-   The view-transition group note above (#platform-header is opaque) has a
-   home-route exception here: during the push from home into an app the
-   incoming page slides under a bar with no fill, which is the iOS reading
-   of a translucent bar rather than a defect. */
-body:has(#home-screen:not(.hidden)) #platform-header {
+/* THE BAR OVER THE WALLPAPER. On every wallpaper route the header's
+   zinc-200 surface goes, so the wallpaper (and the star) run up behind the
+   bell — the one place the design's "page ground runs to the top of the
+   screen" is literal. (#landing-header never had a surface; it sits on
+   the body's ground already.) The controls on it carry their own
+   periwinkle fill and hairline (--brand-tint / --brand-line), so they
+   still lift off cream and off dark alike. Everywhere else the bar keeps
+   its surface — see the "THE BAR'S OWN SURFACE" note in
+   platform-header.tsx for why it has one. The view-transition group note
+   above (#platform-header is opaque) has its exception here, and it is
+   what makes the launcher → app push read as one bar: both routes paint
+   the same wallpaper under the same cleared bar, so the bar's snapshot is
+   identical on both sides of the transition and only the page moves. */
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) #platform-header {
   background-color: transparent;
+}
+/* THE CANVAS UNDER THE PUSH is the ground too — <html>'s own background,
+   set inline in the head (frontend/src/head.html) so the first paint is
+   never white, moved from the old zinc greys to the wallpaper's base in
+   each mode when the wallpaper became the platform's ground. It is what
+   the page transition shows wherever its snapshots do not reach: the seam
+   of the iOS push and a frame of the Android fade. Nothing route-scoped
+   is needed for it any more; theme-color and the manifest carry the same
+   value, so the browser chrome and a cold launch frame the page in it.
+   The launch cover reads the same ground, so the app opens on the page's
+   colour in both modes. */
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) .app-launch-cover {
+  background-color: var(--home-ground);
+}
+/* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
+   fixed, full-viewport overlay with its own opaque `bg-white` (it covers
+   whatever the signed-in shell has left on the page), so the body's
+   wallpaper never showed through it. It takes the same shorthand the body
+   paints — inherited from the body's rule, which is on because this root
+   is showing — in both modes. */
+#auth-landing-screen {
+  background: var(--home-wallpaper);
 }
 
 /* ── App cards ─────────────────────────────────────────── */
@@ -7447,7 +7537,13 @@ a.drawer-ver--fork:hover {
        better hanging off the bar: the chip that opens it is IN that bar, so
        the two are one piece of chrome and a seam between them was a seam in
        the middle of one object. The panel's own border and shadow do the
-       separating. */
+       separating. That held when the wallpaper routes cleared the bar's
+       surface, and for a second reason: every panel the bar opens starts on
+       this same line and every backdrop stops at it (the "header stays
+       live" rule, tests/header-stays-live.test.js), so a gap here alone
+       would put the menu on a different line from the Improve rail. What
+       did change is the hairline: the brand one (below), so the menu ties
+       to the chip's own ring rather than to a zinc bar it no longer sits on. */
     top: calc(var(--platform-header-h) + var(--platform-safe-top));
     left: 50%;
     right: auto;
@@ -7470,6 +7566,7 @@ a.drawer-ver--fork:hover {
     max-width: calc(100vw - 1.5rem);
     max-height: calc(100dvh - var(--platform-header-h) - var(--platform-safe-top) - 1.5rem);
     border-width: 1px;
+    border-color: var(--brand-line);
     /* The kit's own desktop menu radius (--un-radius-card, native.css), which
        is what this surface now is. */
     border-radius: 0.75rem;
