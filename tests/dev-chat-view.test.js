@@ -320,6 +320,21 @@ test('the layer above the sheet extends a full radius behind it', () => {
     'so the shoulders show whichever surface is actually being sat on');
   assert.match(RULES, /#dc-view > #dc-banners > \* \{ position: relative; \}/,
     'a banner has to be positioned or the sheet cannot paint over its overhang');
+  // …and the one that now abuts the sheet drops its own bottom edge, for the
+  // reason the strip did. A banner shell carries `border-b` to divide itself
+  // from the transcript; the sheet draws its own `border-top` now, so that
+  // hairline became a second rule at the same y that does NOT follow the
+  // 28px arc — it ran out across both shoulders and read as an amber box
+  // around the banner, worst in dark against the near-black ground. Borders
+  // BETWEEN stacked banners are untouched, which is why it is :last-child.
+  assert.match(RULES,
+    /#dc-view > #dc-banners > :last-child \{ border-bottom-width: 0; \}/);
+  const SHELLS = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'banners.tsx'),
+    'utf8');
+  assert.match(SHELLS, /border-b border-amber-200/,
+    'the shells still declare it — this overrides the last one, it does not '
+    + 'delete the divider between two stacked banners');
   assert.match(VIEW_TSX, /id="dc-banners" className="contents"/,
     'which is the arrangement both hosts exist for');
 });

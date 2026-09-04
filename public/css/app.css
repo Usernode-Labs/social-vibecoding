@@ -6688,6 +6688,23 @@ span.gc-vote-btn-icon { cursor: default; }
    do: the sheet has to paint over the overhang, and positioned siblings
    paint after unpositioned ones. */
 #dc-view > #dc-banners > * { position: relative; }
+/* …AND THE LAST ONE DROPS ITS OWN BOTTOM EDGE, for the same reason the
+   strip did when it became a lift layer. A banner shell carries `border-b`
+   (see features/dev-chat/banners.tsx) to divide itself from the transcript
+   below. The sheet draws its own `border-top` now, so that hairline became a
+   SECOND rule at the same y — and, unlike the sheet's, one that does not
+   follow the 28px arc, so it ran straight out across both shoulders and
+   read as an amber box drawn around the banner. Worst in dark, where
+   `dark:border-amber-900/50` on the near-black ground is the brightest
+   thing on that line. Borders BETWEEN stacked banners are untouched; only
+   the one that now abuts the sheet goes.
+
+   `border-bottom-width`, not a colour override, so the sheet meets the
+   banner with no seam at all. It beats Tailwind's `.border-b` on
+   specificity (two ids and a pseudo-class against one class), which is what
+   it takes here — /css/tailwind.css is linked AFTER this file, so an
+   equal-specificity rule would lose on source order. */
+#dc-view > #dc-banners > :last-child { border-bottom-width: 0; }
 #dc-view > #dc-session-header:has(+ #dc-banners:empty)::after,
 #dc-view > #dc-banners > :last-child::after {
   content: '';
