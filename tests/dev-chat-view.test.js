@@ -242,6 +242,26 @@ test('the header ELEMENT keeps a constant className, because the kit writes one'
   assert.match(tag, /className="[^"{]*"/);
 });
 
+test('the strip curves its bottom corners like the bar above it (#1588)', () => {
+  // Two bars stack on this screen and only one of them was shaped. The
+  // platform header curves its bottom corners away so the page ground shows
+  // through two notches; this strip sits directly under it and was square.
+  // Same token on both, so they cannot drift apart.
+  const at = VIEW_TSX.indexOf('id="dc-session-header"');
+  const tag = VIEW_TSX.slice(at, VIEW_TSX.indexOf('>', at));
+  assert.match(tag, /rounded-b-lg/);
+  const HEADER = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'platform-header.tsx'),
+    'utf8',
+  );
+  assert.match(HEADER, /rounded-b-lg/, 'which is the header\'s own radius');
+  // The header's `-mb-1` is NOT copied: it exists to make the screen below it
+  // read as rounded-topped, and below this strip is the transcript scroller.
+  assert.doesNotMatch(tag, /-mb-1/);
+  // And nothing may clip the corners' contents — same rule as the header.
+  assert.doesNotMatch(tag, /overflow-hidden/);
+});
+
 // ── 4. #194's hint, which used to be a second author ───────────────────
 
 test('the proposal hint is a field, not an insertAdjacentHTML in front of the tree', () => {
