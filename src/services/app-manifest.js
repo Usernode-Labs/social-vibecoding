@@ -91,7 +91,16 @@ const MANIFEST_FILENAME = 'dapp.json';
 // 20-slot floor: the previous ceiling had no room for a single further
 // check, so any proposal declaring one at all was blocked. That is the
 // state this bump clears, not one feature's three checks.
-const MAX_DECLARED_TESTS = 480;
+//
+// Raised 480 -> 530 (#1590) from the same state and by the same arithmetic.
+// The manifest reached 461 and crossed the 20-slot floor, which turns the
+// repo's own suite red -- and that suite is a merge-blocking check
+// (services/unit-suite.js), so every proposal was blocked, not only one
+// declaring a new check. 530 at ~3.9s over a pool of 8 is ~258s of ideal
+// work, so TESTS_DEADLINE_MS goes 470s -> 520s in services/visuals.js to
+// keep the 2x margin, and RUN_TIMEOUT_MS 600s -> 650s to stay the required
+// 120s clear of it. Same three constants, same one decision.
+const MAX_DECLARED_TESTS = 530;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

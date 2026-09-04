@@ -108,7 +108,11 @@ const CONTENT_TYPES = {
 // its sentinel. This is the OUTER bound — the suite stops dispatching at
 // TESTS_DEADLINE_MS long before we get here, so hitting 600s means the
 // container is genuinely wedged, not merely busy.
-const RUN_TIMEOUT_MS = 600 * 1000;
+//
+// 600s → 650s (#1590), riding the ceiling bump below: this only has to sit
+// 120s above TESTS_DEADLINE_MS, and 520s + 130s keeps the same margin 470s
+// + 130s had.
+const RUN_TIMEOUT_MS = 650 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 
 // The capture container drives up to TEST_CONCURRENCY headless pages at
@@ -129,9 +133,12 @@ const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
 // constant says so. A full 480-check suite is ~234s of ideal work at the
 // measured ~3.9s per check over this pool of 8; 470s keeps the 2x margin
 // tests/checks-budget.test.js pins, which is what stops a real manifest's
-// tail being cut on every build. RUN_TIMEOUT_MS above stays at 600s: it only
-// has to clear this by 120s, and it clears it by 130s.
-const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '470000';
+// tail being cut on every build.
+//
+// 470s → 520s (#1590), with the ceiling 480 → 530: 530 checks is ~258s of
+// ideal work and 2x that is ~517s. RUN_TIMEOUT_MS above moved 600s → 650s
+// with it, because it has to stay 120s clear and 600s no longer would.
+const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '520000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.
