@@ -5433,7 +5433,10 @@ const DevChat = {
   _proposing: null,
 
   async promotePR() {
-    if (!DevChat.currentSession?.id) return;
+    // #1602: the rendered completed control has no handler, and the
+    // controller independently refuses a stale/programmatic call after the
+    // authoritative session has crossed into voting.
+    if (!DevChat.currentSession?.id || DevChat.currentSession.status !== 'active') return;
     const sessionId = DevChat.currentSession.id;
     // #558: the spinner goes up the moment the button is clicked so a slow
     // request can't be double-submitted by impatient clicking, and an
@@ -5980,6 +5983,23 @@ const DevChat = {
             if (life && life.key === 'merged') status2 = { kind: 'merged' };
             else if (life && life.label) status2 = { kind: 'badge', html: MergeStatus.badgeHtml(life) };
           }
+          // #1602: proposal availability is a lifecycle, not a visibility
+          // boolean. A successful request used to make the action disappear,
+          // which left no durable acknowledgement that this exact change had
+          // already crossed into group voting. Keep the completed control on
+          // every post-proposal state, disabled and handler-free; unrelated
+          // terminal states still render no proposal action.
+          let propose = null;
+          if (session?.status === 'active') {
+            propose = Number(DevChat._proposing) === Number(session.id)
+              ? { kind: 'pending' }
+              : { kind: 'ready' };
+          } else if (session
+              && (session.status === 'promoted'
+                || session.status === 'merging'
+                || session.status === 'merged')) {
+            propose = { kind: 'completed' };
+          }
           rows.push({
             t: 'changes', key,
             status: { t: 'status', key: `${key}:s`, icon: 'check', html: msg.content || '', text: msg.content || '', elapsed: null, stamp },
@@ -5991,10 +6011,7 @@ const DevChat = {
             visualsHtml,
             preview: { enabled: canPreview, url: liveUrl, title: '' },
             test: hasTesting ? { enabled: canPreview, url: liveUrl } : null,
-            canPropose: session?.status === 'active',
-            // #558's in-flight spinner, which used to be written onto the
-            // button element the click came from. See `promotePR`.
-            proposePending: Number(DevChat._proposing) === Number(session?.id),
+            propose,
             status2,
           });
           return;
