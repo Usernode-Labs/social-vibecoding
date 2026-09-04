@@ -93,7 +93,9 @@ export function stampProps(stamps: PanelStamps | undefined) {
  * zinc-500 — the shell's secondary ink), so the type itself is a MOVE rather
  * than a restyle.
  *
- * THE HOMESCREEN DESIGN then restyled it: 16px medium in the primary ink, the
+ * THE HOMESCREEN DESIGN then restyled it: 16px at weight 550 in the primary ink (a true half-step on the
+ * variable system faces iOS, Android and macOS ship; semibold where the
+ * face has no 550), the
  * area title rather than a caption, with the area's link beside it at 14px
  * semibold in the brand periwinkle (--brand-ink) and no glyph in front of it.
  * The row's shape is label + link: the ⋮ that used to ride here is gone
@@ -104,7 +106,7 @@ export function SectionHeading({ children, action }: {
   action?: ReactNode;
 }) {
   return (
-    <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-base font-medium leading-tight text-zinc-900 dark:text-zinc-100">
+    <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-base font-[550] leading-tight text-zinc-900 dark:text-zinc-100">
       <span className="min-w-0 flex-1 truncate whitespace-nowrap">{children}</span>
       {action}
     </h2>
