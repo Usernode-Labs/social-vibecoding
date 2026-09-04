@@ -346,19 +346,26 @@ test('trash removes only that draft, and an emptied list stays empty', () => {
     'the emptied list is written, not removed, so nothing can resurrect it');
 });
 
-test('the save icon is disabled until there is text, and the cap holds', () => {
+test('the circle is Stop until there is text, and the cap holds', () => {
+  // The "disabled save icon" is gone: an empty box mid-turn is simply STOP,
+  // which is a live control rather than a greyed-out one. Same rule, one
+  // fewer dead affordance.
   const { DevChat, document, view } = makeHarness();
   open(DevChat, { streaming: true });
+  // Through the real transition: `_composerBusy` is what decides Stop vs
+  // Send, and only `_setStreamingUI` sets it. `open({streaming:true})` sets
+  // the honest `isStreaming` flag but paints nothing.
+  DevChat._setStreamingUI(true, 'claude');
   const input = document.getElementById('dc-input');
 
   DevChat._syncSaveDraftBtn();
-  assert.equal(view().saveDraft.disabled, true, 'nothing typed → nothing to save');
+  assert.equal(view().send.kind, 'stop', 'nothing typed → nothing to save');
   input.value = '   ';
   DevChat._syncSaveDraftBtn();
-  assert.equal(view().saveDraft.disabled, true, 'whitespace is not a draft');
+  assert.equal(view().send.kind, 'stop', 'whitespace is not a draft');
   input.value = 'something';
   DevChat._syncSaveDraftBtn();
-  assert.equal(view().saveDraft.disabled, false, 'text typed → save available');
+  assert.equal(view().send.kind, 'save', 'text typed → save available');
 
   for (let i = 0; i < DevChat.MAX_SAVED_DRAFTS + 3; i++) {
     input.value = `note ${i}`;
@@ -376,7 +383,7 @@ test('the composer stays typable while a turn streams', () => {
 
   DevChat._setStreamingUI(true, 'claude');
   assert.equal(view().placeholder, DevChat.COMPOSER_PLACEHOLDER_BUSY,
-    'the busy placeholder points at the save icon');
+    'the busy placeholder points at saving for later');
 
   DevChat._setStreamingUI(false);
   assert.equal(view().placeholder, DevChat.COMPOSER_PLACEHOLDER,
@@ -405,60 +412,64 @@ test('typed-but-unsent text still cannot be submitted mid-turn', () => {
 
 // ── #810: the icon is present only while a turn is RUNNING ─────────────
 
-test('the save icon is hidden while stopped and appears while a turn streams', () => {
+test('saving is offered only while a turn streams', () => {
   const { DevChat, document, view } = makeHarness();
   open(DevChat);
   const input = document.getElementById('dc-input');
-  const btn = () => view().saveDraft;
+  const kind = () => view().send.kind;
   input.value = 'something worth saving';
 
   DevChat._syncSaveDraftBtn();
-  assert.equal(btn().hidden, true, 'no save affordance when the text can just be sent');
-  assert.equal(btn().disabled, true,
-    'hidden implies inert — a stray activation cannot save while stopped');
+  assert.equal(kind(), 'send',
+    'no save affordance when the text can just be sent — the circle sends');
 
   DevChat.isStreaming = true;
   DevChat._syncSaveDraftBtn();
-  assert.equal(btn().hidden, false, 'the icon appears once the stop sign is up');
-  assert.equal(btn().disabled, false, 'and is live because there is text');
+  assert.equal(kind(), 'save', 'saving takes the circle once the stop sign is up');
 });
 
-test('every streaming transition toggles the icon (incl. the mayor2 wrap-up)', () => {
+test('every streaming transition repaints the circle (incl. the mayor2 wrap-up)', () => {
   const { DevChat, document, view } = makeHarness();
   open(DevChat);
-  const btn = () => view().saveDraft;
+  const kind = () => view().send.kind;
   document.getElementById('dc-input').value = 'a note';
 
   // _setStreamingUI is the single choke point every transition funnels
   // through (send, reconnect, phase change, finish, stop).
   DevChat.isStreaming = true;
   DevChat._setStreamingUI(true, 'claude');
-  assert.equal(btn().hidden, false, 'shown as soon as the turn starts');
-  assert.equal(btn().disabled, false);
+  assert.equal(kind(), 'save', 'as soon as the turn starts, text makes it Save');
 
   DevChat._setStreamingUI(true, 'mayor2');
-  assert.equal(btn().hidden, false, 'still shown through the un-stoppable wrap-up');
+  assert.equal(kind(), 'save',
+    'still Save through the un-stoppable wrap-up — text outranks the spinner, '
+    + 'because parking it is the only thing left to do with it');
 
   DevChat.isStreaming = false;
   DevChat._setStreamingUI(false);
-  assert.equal(btn().hidden, true, 'and gone the moment the turn settles');
-  assert.equal(btn().disabled, true);
+  assert.equal(kind(), 'send', 'and back to Send the moment the turn settles');
 });
 
-test('mid-turn, the icon is visible whether or not there is text', () => {
+test('mid-turn, the circle swaps between Stop and Save on the field alone', () => {
+  // The whole of the new rule, and the reason Stop is not lost: an empty box
+  // is Stop, and SAVING EMPTIES THE BOX — so one press of the green circle
+  // parks the note and hands the interrupt back.
   const { DevChat, document, view } = makeHarness();
   open(DevChat, { streaming: true });
+  DevChat._setStreamingUI(true, 'claude');
   const input = document.getElementById('dc-input');
-  const btn = () => view().saveDraft;
+  const kind = () => view().send.kind;
 
   DevChat._syncSaveDraftBtn();
-  assert.equal(btn().hidden, false, 'an empty box still shows the icon…');
-  assert.equal(btn().disabled, true, '…just greyed out');
+  assert.equal(kind(), 'stop', 'an empty box is the interrupt…');
 
   input.value = 'now there is something';
   DevChat._syncSaveDraftBtn();
-  assert.equal(btn().hidden, false);
-  assert.equal(btn().disabled, false);
+  assert.equal(kind(), 'save', '…and typing takes it');
+
+  DevChat._saveComposerDraft();
+  assert.equal(input.value, '', 'saving blanks the field');
+  assert.equal(kind(), 'stop', 'which is what gives Stop back');
 });
 
 test('saving is refused while stopped, not merely un-clickable', () => {
