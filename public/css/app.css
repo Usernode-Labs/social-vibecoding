@@ -2892,24 +2892,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   box-shadow:
     0 6px 12px -6px var(--app-sheet-shadow-near),
     0 8px 24px -4px var(--app-sheet-shadow-far);
-  /* DIAGNOSTIC ROUND 1 of 3 — not a proposed fix, and not to be merged
-     as one. The corner flicker on the launcher -> app push cannot be
-     reproduced locally (the kit and native.css are centrally hosted and
-     unreachable from a dev container), so the candidates are being put
-     on the preview one at a time to be observed there instead.
-
-     This one changes nothing about how the corner LOOKS — same radius,
-     same clip, same shadow. It asks the compositor to keep this
-     subtree on its own layer, so the rounded clip is rasterized once
-     instead of being re-applied on every frame of the open animation.
-     If the flicker is antialiasing noise along the curve while the
-     screen is being scaled, this removes it and nothing else changes.
-     If the flicker survives, the cause is not re-rasterization and
-     rounds 2 and 3 (which move the clip between levels) are next.
-
-     `will-change` is a hint with a real cost — it holds a layer alive
-     for as long as it is set — so if this is the answer it wants
-     narrowing to the animation rather than left on permanently. */
+  /* KEPT ON A LAYER, or the corners flicker while the app opens — see
+     "WHY BOTH PROMOTIONS" below for what this costs and why the frame
+     needs one of its own too. */
   will-change: transform;
 }
 
@@ -2927,54 +2912,14 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 
    #1656's note here had the launch cover CAUSING a corner artifact. It
    does the opposite: while the cover is up it is the topmost thing at
-   the corners, it is an ordinary div, and it clips correctly — so it
-   HIDES the artifact. That is why the flicker showed on apps that boot
-   fast enough for the cover to be gone by the time the push lands, which
-   is the "some apps" in the report.
+   the corners, it is an ordinary div, and it clips correctly — so if
+   anything it masks one. (An earlier version of this note went on to
+   explain "some apps" by how fast they boot. That was wrong too: it is
+   which of them repaint LATE. See below.)
 
-   A CORNER FLICKER ON THE LAUNCHER -> APP PUSH IS STILL OPEN, and
-   nothing here fixes it. Reported twice on the web preview; chromeless
-   is clean, which points at this radius rather than at something else.
-
-   Read the rest of this note as a record of what has been RULED OUT,
-   not as a diagnosis. It was all measured in a local harness that
-   cannot load the centrally hosted native.css or the kit, so the
-   animation it exercises is NOT the one the web preview runs — and a
-   fix that worked there did not fix the reported bug. Whatever is
-   reproduced below is a real Chromium behaviour; it is not established
-   to be the reported one.
-
-   With a synthetic view transition over the document root, the app's
-   top corners render SQUARE for its first frame or two: an <iframe> is
-   always its own compositing layer, and that layer does not pick up an
-   ancestor's rounded clip in the snapshot in time. Every clip stated
-   here is on an ancestor, which is exactly what it ignores. A
-   `view-transition-name` on #app-frame-host fixes THAT, at the cost of
-   the sheet no longer travelling with the page; it did not fix the
-   reported flicker and is deliberately not in the tree.
-
-   The launch cross-fade on its own (#app-iframe going opacity 0 -> 1)
-   does NOT reproduce anything: corners stay round across the whole
-   140ms.
-
-   Method, for whoever picks this up: freeze the animation rather than
-   screenshot it live — `await vt.ready`, pause everything from
-   document.getAnimations(), then step currentTime. A 260ms animation
-   outruns a screenshot loop and returns false positives; that is how
-   `translateZ(0)` was briefly believed to fix the synthetic case.
-   Substituting a plain <div> for the frame renders round where the
-   frame renders square, which is what points at the layer rather than
-   at the CSS.
-
-   Against the synthetic case these all still rendered square, so they
-   are not worth re-running: `will-change: transform` on the host,
-   `clip-path` on the host, `clip-path` on the frame, `isolation:
-   isolate` + `contain: paint`, `opacity: 0.999`, `translate3d(0,0,0)`
-   and `backface-visibility: hidden` on the frame.
-
-   What is still needed is a repro of the REAL push — which needs the
-   kit and native.css, so it has to be captured on the preview itself
-   rather than locally.
+   None of these clips survives an animation on its own — see "WHY BOTH
+   PROMOTIONS" below, which is the other half of the corner story and
+   the part that took the longest to find.
 
    So the radius is restated on each of them, and .app-launch-host takes
    an `overflow: hidden` of its own so the clip also exists one level
@@ -2991,27 +2936,58 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   border-radius: inherit;
 }
 
-/* DIAGNOSTIC ROUND 2 of 3 — not a proposed fix. Round 1 put
-   `will-change: transform` on the host and that took the flicker from
-   two apps down to one: Gym Tracker stopped, Todo List did not. The
-   difference between those two apps is the lead:
+/* ── WHY BOTH PROMOTIONS ───────────────────────────────────────────────
+   The corners flickered while an app opened: they would go square for a
+   frame and snap back. Both `will-change`s here are the fix, and they
+   are not redundant — they stabilise two DIFFERENT layers.
 
-     Todo List loads Google Fonts with `display=swap`. A swap repaints
-     its WHOLE document when the face arrives, and that lands inside
-     the open animation's window. Gym Tracker loads no web fonts at
-     all.
+   An <iframe> owns a compositing layer of its own, and the rounded clip
+   above is on its ANCESTORS. Every time either layer is re-rastered
+   mid-animation, the clip has to be re-applied to it, and for a frame
+   or two it is not. So the host is kept on a layer (the open animation
+   re-rasters it) and so is the frame (a repaint INSIDE the app
+   re-rasters that one, which nothing on the host can reach).
 
-   Promoting the HOST stabilises the host's layer, but an <iframe> owns
-   a layer of its own and a repaint inside the app re-rasters THAT one
-   — which is the layer the ancestor's rounded clip has to be applied
-   to. So round 2 promotes the frame itself. `will-change`, not
-   `translateZ(0)`: the latter computes to a 2D matrix and is optimised
-   away (verified — getComputedStyle returns `matrix(1, 0, 0, 1, 0, 0)`),
-   so it never creates the layer it looks like it creates.
+   This was found by elimination on the staging preview, because it
+   cannot be reproduced in a dev container: the kit and native.css are
+   centrally hosted and a dev container's egress denies that host, so
+   every local repro exercises an animation that is not the one the
+   product runs. Four confident local diagnoses were wrong for exactly
+   that reason. What identified it was that the flicker hit SOME apps:
+   promoting the host alone fixed Gym Tracker and left Todo List
+   flickering, and the difference between those two is that Todo List
+   loads Google Fonts with `display=swap` — a swap repaints the app's
+   whole document when the face arrives, inside the open animation's
+   window. Gym Tracker loads no web fonts. So "some apps" was never
+   about how fast they boot; it is about which of them repaint late.
 
-   If this is the answer, the promotion wants narrowing before merge —
-   `will-change` holds a layer alive for as long as it is set, and this
-   one would sit on every running app's frame permanently. */
+   Two traps, both paid for:
+
+   - `translateZ(0)` does NOT work here. It computes to a 2D matrix and
+     is optimised away — getComputedStyle returns
+     `matrix(1, 0, 0, 1, 0, 0)` — so it never creates the layer it looks
+     like it creates. `will-change: transform` does.
+   - Do not "verify" a fix for this by screenshotting a live animation
+     in a loop. A 260ms animation outruns the loop and the frames land
+     at different times each run, which returns false positives.
+     Freeze it instead: `await vt.ready`, pause everything from
+     document.getAnimations(), then step currentTime.
+
+   WHAT IT COSTS, so it is a decision and not an accident: `will-change`
+   holds a layer alive for as long as it is set, and these two are set
+   permanently rather than only during the animation. That is bounded —
+   #app-frame-host is a singleton, at most one app runs at a time, and
+   the frame composites on its own regardless, so the standing cost is
+   one extra full-screen layer. Scoping them to the open would need the
+   launch sequence to add and remove a class around an animation the
+   kit owns and this side does not observe; the layer is cheaper than
+   that coupling. Revisit if a profile says otherwise.
+
+   Ruled out on the preview and not worth re-running: the shadow (the
+   flicker survives `box-shadow: none`), a `view-transition-name` on
+   the host, and the launch cross-fade on its own. `border-radius: 0`
+   does stop it, by deleting the corner that flickers, so it says
+   nothing. */
 #app-frame-host #app-iframe {
   will-change: transform;
 }
