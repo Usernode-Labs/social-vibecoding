@@ -18,7 +18,7 @@
        value is a starting point only — a dark-mode viewer's first paint is
        corrected by Theme.apply() below, in the same head-blocking pass that
        adds `.dark`, so nothing flashes either way. -->
-  <meta name="theme-color" content="#eaeaea">
+  <meta name="theme-color" content="#fffeea">
   <style>
     /* WHY THIS IS INLINE AND NOT IN app.css. The page ground is a Tailwind
        utility on <body> (`bg-zinc-100 dark:bg-zinc-950`, see
@@ -50,7 +50,7 @@
        #eaeaea page. Keyed off `.dark` it tracks the resolved theme instead,
        and Theme.apply() below adds that class in the same head-blocking pass
        that fixes the background. */
-    html { background-color: #eaeaea; color-scheme: light; }
+    html { background-color: #fffeea; color-scheme: light; }
     html.dark { background-color: #0b0b0c; color-scheme: dark; }
   </style>
   <script>
@@ -90,12 +90,16 @@
         }
       }
 
-      // The two page grounds, spelled here as well as in
-      // frontend/scripts/build-shell.mjs's `bg-zinc-100 dark:bg-zinc-950` on
-      // <body>. They are tailwind.config.js's zinc-100 / zinc-950, and the
-      // critical <style> below plus the theme-color meta both need them
-      // BEFORE any stylesheet has loaded, which is the whole point.
-      const GROUND = { light: '#eaeaea', dark: '#0b0b0c' };
+      // The two page grounds. Dark is tailwind.config.js's zinc-950, the
+      // body's `dark:bg-zinc-950` (frontend/scripts/build-shell.mjs). LIGHT
+      // IS THE WALLPAPER'S CREAM — the homescreen design's page, which
+      // app.css paints (with its washes and star) on the launcher, the app
+      // view and their peer screens; messages and the admin console keep
+      // the body's zinc-100 on top of it. The critical <style> above and
+      // the theme-color meta both need these BEFORE any stylesheet has
+      // loaded, which is the whole point. public/manifest.webmanifest
+      // carries the light one too, for the standalone install's splash.
+      const GROUND = { light: '#fffeea', dark: '#0b0b0c' };
 
       function apply() {
         const mode = get();
