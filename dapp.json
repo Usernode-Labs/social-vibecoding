@@ -2420,11 +2420,6 @@
       "expectSelector": "#profile-screen:not(.hidden) #profile-root"
     },
     {
-      "name": "Home carries the entrance to Profile, without the native bridge",
-      "path": "/",
-      "expectSelector": "#home-account-row"
-    },
-    {
       "name": "Topochain leaderboard shows standings, not a red error, between events",
       "path": "/#leaderboard/topochain",
       "expectSelector": "#leaderboard-screen:not(.hidden) #tc-lb-body :is(table, [data-tc-lb-empty])"

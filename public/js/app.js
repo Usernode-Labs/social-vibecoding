@@ -656,36 +656,6 @@ const App = {
     } catch (err) { /* ignore */ }
   },
 
-  // Swap the drawer's Profile row between the generic person glyph and the
-  // viewer's own picture (#982). Called on sign-in and again after the
-  // profile editor saves, so removing a photo puts the glyph back. Both
-  // nodes are static in index.html — only which one is `hidden` changes,
-  // and the <img> gets no src until there is one, so a user with no
-  // picture never issues a request.
-  applyUserAvatar() {
-    // ONE pair: Home's account row (features/home/panels/account.tsx). A
-    // `hidden` toggle on a constant className over an element with no
-    // children — the sanctioned seam — so this stays a plain DOM write.
-    //
-    // The header chip carried a second pair for one round of #1443 and does
-    // not any more: the chip names the APP you are in, and a picture of the
-    // viewer inside it answered a different question.
-    const img = document.getElementById('home-account-avatar');
-    const glyph = document.getElementById('home-account-glyph');
-    if (!img || !glyph) return;
-    const url = App.user && App.user.avatarUrl;
-    if (url) {
-      img.src = url;
-      img.classList.remove('hidden');
-      glyph.classList.add('hidden');
-    } else {
-      img.removeAttribute('src');
-      img.classList.add('hidden');
-      glyph.classList.remove('hidden');
-    }
-  },
-
-
   enterAuthed(user) {
     if (window.NativeChrome &&
         typeof NativeChrome.prepareIdentityPublication === 'function') {
@@ -721,9 +691,6 @@ const App = {
       App.user.role = 'user';
       document.body.classList.add('is-view-as-non-admin');
     }
-
-    // #982: paint the drawer's Profile row with the viewer's picture.
-    App.applyUserAvatar();
 
     // #1284: a feedback draft that a failed screenshot capture left behind in
     // sessionStorage — tell the user it is still there. Optional call: the
