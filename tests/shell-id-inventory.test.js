@@ -58,6 +58,16 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── Home's fifth area went; Profile kept its door ───────────────
+  // The chip's menu has carried the entrance since #1443 (a "You" group
+  // holding #switcher-row-profile and #switcher-row-settings, pinned by
+  // the destination-order check in dapp.json), so the row at the foot of
+  // the launcher was a second door to the same screen. The design's own
+  // answer is a Profile tab in a bottom bar, not a card under Create app.
+  'home-account-section': 'The "You" area, last in Home\'s reading order. Home ends on "make something" now.',
+  'home-account-row': 'The row inside it, linking #profile. The entrance is #switcher-row-profile.',
+  'home-account-avatar': 'The viewer\'s picture on that row. Its writer, App.applyUserAvatar, went with it — this was the last pair it wrote to (the header chip\'s copy was retired in the same #1443 round), and Profile\'s editor re-reads App.user when it saves.',
+  'home-account-glyph': 'Its fallback person glyph.',
   // ── #1610: the completed-task count moved to the bell ───────────
   'notifications-badge-ai': 'The green session count on #improve-btn. It counted unread session-related notifications, split out of the bell\'s number so the two would not double-count. Nothing behind that button could CLEAR it: a session notification is marked read by clicking its row in the bell\'s list, by a group-chat mark-read, or by mark-all, and opening the Improve panel marks nothing. So a finished session raised a number on the one control with no way to dismiss it, and the reporter pressed Improve again looking for a notification that was in the bell. The count is folded back into #notifications-badge, which now carries `data-session-done` in its place; what is left on the button is #improve-working-dot.',
   // ── Andrea's 27 Aug 2026 waitlist review ────────────────────────
@@ -204,9 +214,9 @@ const RETIRED_IDS = {
   'header-menu-rows': 'Its scroller.',
   'header-menu-close': 'Its close control.',
   'drawer-main-rows': 'The account group inside it — #profile-account now.',
-  'drawer-row-profile': 'Profile is reached from Home\'s #home-account-row, which is the one entrance the drawer\'s removal would otherwise have taken away.',
-  'drawer-avatar': 'The viewer\'s picture on that row — #home-account-avatar, same writer (App.applyUserAvatar), same contract.',
-  'drawer-profile-glyph': 'Its fallback glyph — #home-account-glyph.',
+  'drawer-row-profile': 'Profile is #switcher-row-profile, a row of the chip\'s menu (#1443). It went to Home\'s #home-account-row first, which the menu made redundant and Home has since dropped.',
+  'drawer-avatar': 'The viewer\'s picture on that row. No surface carries one now: the chip names the APP you are in, and Home\'s copy went with its account row.',
+  'drawer-profile-glyph': 'Its fallback glyph, retired with the picture.',
   'drawer-row-settings': 'Settings is #switcher-row-settings, a row of the chip\'s menu (#1443) — it has its own page, and the menu lists everything that does.',
   'drawer-byok-dot': 'The BYOK dot on that row — #switcher-byok-dot. settings.js publishes the flag through the visibility store rather than writing the class by id, because the row renders inside a React-owned subtree.',
   'drawer-row-admin': 'Admin & moderation is #switcher-row-admin, same isAdmin gate, published rather than class-written for the same reason.',
@@ -505,10 +515,6 @@ const ADDED_IDS = {
   // screen's fully-React pattern: All | Unread tabs, Today/Earlier
   // sections, avatar-initial rows. Renders from the same notifications
   // store as the drawer's list.
-  'home-account-row': 'Home\'s entrance to Profile — the door the retired hamburger took away.',
-  'home-account-avatar': 'The viewer\'s picture on it (was #drawer-avatar).',
-  'home-account-glyph': 'Its fallback glyph (was #drawer-profile-glyph).',
-  'home-account-section': 'The section that holds it, last in Home\'s reading order.',
   'notifications-sheet': 'The Notifications SHEET root. It was #notifications-screen, a screen root in App.SCREEN_IDS — but the bell is in the header on every route, so a full-screen view had to answer "back to where?" and answered "home", wrong every time it was opened from anywhere else. A sheet presents over the current screen and dismisses back to it.',
   'notifications-sheet-overlay': 'Its backdrop.',
   'notifications-sheet-close': 'Its close control — the desktop slide-over needs a visible dismiss, as the Apps sheet has.',

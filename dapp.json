@@ -1,4 +1,5 @@
 {
+  "description": "Build small web apps together — every change is proposed, previewed and merged by a group vote.",
   "icon": {
     "emoji": "🏗️"
   },
@@ -599,14 +600,14 @@
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-submit:not(:disabled)"
     },
     {
-      "name": "Challenges: EVERY row draws a track, and the card holds them (#911, #980)",
+      "name": "Challenges: a counted challenge draws its meter inside the pill (#911, #980)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
+      "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card .home-challenge-pill .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
     },
     {
-      "name": "Challenges: the season ring leads the card, and a yes-or-no row still draws a track",
+      "name": "Challenges: the season ring leads the plate, and a yes-or-no card draws no meter",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-panel-row:not(:has(.tabular-nums)) .home-panel-bar-track[role=progressbar][aria-valuemax=\"1\"]"
+      "expectSelector": "#home-challenges-section > h2.home-area-label + article.home-panel > .home-panel-season + .home-panel-body .home-challenge-card:not(:has(.home-panel-bar-track)) .home-challenge-pill .home-panel-glyph"
     },
     {
       "name": "Challenges: with nothing running it says so, and shows only that (#947)",
@@ -860,9 +861,9 @@
       "expectText": "Create app"
     },
     {
-      "name": "Discover renders both lanes at every width: curated tiles, then Popular",
+      "name": "Discover renders both lanes at every width: curated cards, then Popular",
       "path": "/?demo=1",
-      "expectSelector": "#home-body [data-panel-slot=\"discover\"] .home-panel .home-discover-popular .app-card:not(:has(.users-badge))",
+      "expectSelector": "#home-body [data-panel-slot=\"discover\"] .home-panel .home-discover-popular.home-discover-rail .app-card.home-discover-card:not(:has(.users-badge))",
       "expectText": "Browse all apps"
     },
     {
@@ -2430,11 +2431,6 @@
       "name": "Profile screen is reachable on the web (no bridge gate) and renders",
       "path": "/#profile",
       "expectSelector": "#profile-screen:not(.hidden) #profile-root"
-    },
-    {
-      "name": "Home carries the entrance to Profile, without the native bridge",
-      "path": "/",
-      "expectSelector": "#home-account-row"
     },
     {
       "name": "Topochain leaderboard shows standings, not a red error, between events",
