@@ -284,18 +284,40 @@ test('the seed MODELS map carries no price and no measured figures', () => {
 
 // ── 2. option text: what kind of work, not how big ──────────────────
 
-test('each option reads "<label>: <what it is for>"', () => {
+test('the composer\'s options are bare model NAMES (#1589)', () => {
+  // A native select's closed control shows the selected option's own text,
+  // so the guidance below set its width: 276px of a 344px strip on a phone,
+  // which put the label above the control and the credit meter below it.
+  // Names bring it to 89px and the row is one line. Measured in a browser at
+  // both option texts.
   const { html } = render();
-  for (const expected of [
-    'Sonnet 5: simple, small changes',
-    'Opus 5: general coding work',
-    'Fable 5: design, taste, and difficult coding',
-  ]) {
-    assert.ok(
-      html.includes(expected),
-      `missing option "${expected}"; got: ${html.match(/<option[^>]*>[^<]*<\/option>/g)}`
-    );
-  }
+  const options = html.match(/<option[^>]*>[^<]*<\/option>/g) || [];
+  assert.deepEqual(
+    options.map((o) => o.replace(/<[^>]*>/g, '')),
+    ['Sonnet 5', 'Opus 5', 'Fable 5'],
+    `expected bare names; got: ${options}`
+  );
+  assert.ok(!html.includes('simple, small changes'),
+    'the guidance is not in the composer at all now — not in an option, not '
+    + 'in a title. A viewer reading this control has already chosen.');
+});
+
+test('the guidance copy survives on the helper, for the picker that has room', () => {
+  // `modelOptionText` is UNCHANGED and still the Generate-proposal picker's
+  // option text (public/js/app-view.js). The positioning it encodes —
+  // Sonnet = simple/small, Opus = general coding, Fable = design/taste plus
+  // the most difficult coding — is guarded here rather than through the
+  // composer's markup, which no longer carries it.
+  const { DevChat } = makeHarness();
+  const text = (id) => DevChat.modelOptionText(DevChat.MODELS[id]);
+  assert.equal(text('claude-sonnet-5'), 'Sonnet 5: simple, small changes');
+  assert.equal(text('claude-opus-5'), 'Opus 5: general coding work');
+  assert.equal(text('claude-fable-5'), 'Fable 5: design, taste, and difficult coding');
+  const APP_VIEW = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
+  );
+  assert.match(APP_VIEW, /DevChat\.modelOptionText\(m\)/,
+    'and that popup still calls it');
 });
 
 test('OpenRouter sessions show their pinned model and never show the Claude model picker', () => {
@@ -348,16 +370,18 @@ test('the OpenRouter model button opens the provider-locked catalog', () => {
 });
 
 test('no option implies a size ladder between Opus and Fable', () => {
-  const { html } = render();
   // The superseded copy positioned Fable as the "bigger" model. Opus is
-  // now the general coding pick and Fable the taste pick, so this exact
-  // string must not come back.
-  assert.ok(!html.includes('Fable 5: big or tricky work'));
-  assert.ok(!html.includes('a few files'));
+  // now the general coding pick and Fable the taste pick, so those strings
+  // must not come back. On the HELPER since #1589: the composer renders
+  // names, so its markup would pass this vacuously.
+  const { DevChat } = makeHarness();
+  const all = Object.values(DevChat.MODELS).map((m) => DevChat.modelOptionText(m)).join(' | ');
+  assert.ok(!all.includes('Fable 5: big or tricky work'));
+  assert.ok(!all.includes('a few files'));
   // #809: Opus is the general-purpose coding model, not one reserved for
   // big or tricky changes — the old restrictive wording must not return.
   assert.ok(
-    !html.includes('Opus 5: big or tricky coding'),
+    !all.includes('Opus 5: big or tricky coding'),
     'Opus option reverted to the superseded "big or tricky" framing'
   );
 });
@@ -428,24 +452,37 @@ test('the dropdown still follows the selection without a caption to update', () 
 });
 
 test('the Fable option owns difficult coding without displacing Opus as the general pick', () => {
-  const { html } = render();
   // The trio's positioning: Sonnet = simple/small, Opus = general
   // coding, Fable = design/taste plus the MOST difficult coding. Fable
   // gaining "difficult coding" must not revert Opus to a
-  // big-or-tricky-only framing.
-  assert.ok(html.includes('Fable 5: design, taste, and difficult coding'));
-  assert.ok(!html.includes('Opus 5: big or tricky coding'));
-  assert.ok(html.includes('Opus 5: general coding work'));
+  // big-or-tricky-only framing. Asserted on the helper since #1589 moved
+  // this copy out of the composer's own markup.
+  const { DevChat } = makeHarness();
+  const text = (id) => DevChat.modelOptionText(DevChat.MODELS[id]);
+  assert.equal(text('claude-fable-5'), 'Fable 5: design, taste, and difficult coding');
+  assert.notEqual(text('claude-opus-5'), 'Opus 5: big or tricky coding');
+  assert.equal(text('claude-opus-5'), 'Opus 5: general coding work');
 });
 
 // ── 4. missing guidance degrades, never crashes ─────────────────────
 
 test('a model with no guidance renders a bare label', () => {
+  // Since #1589 every composer option is a bare label; what this still pins
+  // is that a meta with no `changeSize` reaches the picker at all rather
+  // than rendering an empty option, and that no caption comes back with it.
   const models = { 'claude-opus-5': { label: 'Opus 5' } };
   const { html } = render({ models });
 
   assert.ok(html.includes('>Opus 5</option>'), 'expected a bare label option');
   assert.ok(!html.includes('best for'));
+});
+
+test('an option with no label at all falls back to the model id', () => {
+  // The composer reads `meta.label` directly now instead of going through
+  // modelOptionText, so its own empty case has to be its own.
+  const { html } = render({ models: { 'claude-opus-5': {} } });
+  assert.ok(html.includes('>claude-opus-5</option>'),
+    'an id is a worse name than "Opus 5" and a much better one than nothing');
 });
 
 test('a garbage MODELS entry does not throw the whole chat view', () => {

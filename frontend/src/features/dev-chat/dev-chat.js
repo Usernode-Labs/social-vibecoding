@@ -272,13 +272,29 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
-  /** The chat-model picker, as data. Null on every venue that has none. */
+  /**
+   * The chat-model picker, as data. Null on every venue that has none.
+   *
+   * NAMES ONLY in the composer (#1589). A native select's closed control
+   * shows the selected option's own text, so `modelOptionText`'s guidance
+   * ("Fable 5: design, taste, and difficult coding") set the control's width:
+   * 276px of a 344px strip on a phone, which pushed the label above it and
+   * the credit meter below it — three lines for a row that holds two things.
+   * Names bring it to 89px and the row fits on one line, measured.
+   *
+   * The guidance is not dropped, it stays where there is room for it: the
+   * Generate-proposal picker — the one a first-timer meets, in a dialog, with
+   * a caption under each option — still renders `modelOptionText`, which is
+   * untouched. That is the same split #1353 drew when it took the caption out
+   * of this strip, and the reason nothing restates it here in a title either:
+   * a viewer reading this control has already chosen.
+   */
   _modelPickerView() {
     if (DevChat._currentVenueId() !== 'usernode-claude') return null;
     return {
       options: Object.entries(DevChat.MODELS).map(([id, meta]) => ({
         id,
-        label: DevChat.modelOptionText(meta),
+        label: (meta && meta.label) || id,
       })),
       selected: DevChat.selectedModel,
     };

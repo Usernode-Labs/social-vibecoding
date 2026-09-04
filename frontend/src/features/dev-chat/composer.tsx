@@ -182,7 +182,9 @@ export function DevComposerView({ s }: { s: ComposerState }): ReactNode {
           returning null would throw on a route the checks load. */}
       <div id="dc-composer-controls" hidden={s.hidden || undefined}>
         {/* #1353: ONE status line — the model picker on the left where the
-            strip starts, the meter on the right. */}
+            strip starts, the meter on the right. #1589: and one LINE — the
+            picker shows model names rather than their guidance, which is what
+            was setting the control's width and wrapping the meter under it. */}
         <div className="flex flex-wrap items-center gap-2 mb-2">
           {s.models ? (
             <div id="dc-venue-detail" className="dc-venue-detail dc-venue-detail-inline">
