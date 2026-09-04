@@ -302,6 +302,25 @@ test('the composer\'s options are bare model NAMES (#1589)', () => {
     + 'in a title. A viewer reading this control has already chosen.');
 });
 
+test('the declared checks follow the copy they guard (#1589)', () => {
+  // dapp.json pinned the guidance INSIDE the composer's options, which is
+  // exactly what this change moves. The two checks keep their route and
+  // their selectors and now assert the names, so the picker is still
+  // guarded in a browser — against a regression of THIS decision. The copy
+  // positioning they used to guard is asserted on the shared helper below,
+  // and still rendered by the Generate-proposal picker.
+  const dapp = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'dapp.json'), 'utf8'));
+  const picker = dapp.tests.filter(
+    (t) => (t.expectSelector || '').includes('#dc-model-select option'));
+  assert.equal(picker.length, 2, 'both option checks are still declared');
+  assert.deepEqual(picker.map((t) => t.expectText).sort(), ['Fable 5', 'Opus 5']);
+  for (const t of picker) {
+    assert.ok(!/coding work|design, taste/.test(t.expectText || ''),
+      'a check still asking for the guidance here would fail on every build');
+  }
+});
+
 test('the guidance copy survives on the helper, for the picker that has room', () => {
   // `modelOptionText` is UNCHANGED and still the Generate-proposal picker's
   // option text (public/js/app-view.js). The positioning it encodes —
