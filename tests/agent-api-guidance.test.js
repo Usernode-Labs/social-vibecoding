@@ -94,14 +94,17 @@ test('AGENTS keeps always-on rules and routes conditional work to skills', () =>
 // actually pins the commit.
 test('the base-commit check is always-on, not only in the proposal skill', () => {
   const guidance = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
-  assert.match(guidance, /Know your base commit before you write code/);
+  assert.match(guidance, /Know your base commit and create its work branch before you write code/);
   assert.match(guidance, /git rev-parse HEAD/);
-  // The three clauses that make it actionable rather than a warning: the
-  // fork's default branch is the stale thing, the base has a source, and
-  // reconciling it yourself is not the agent's call.
+  // The clauses that make it actionable rather than a warning: the fork's
+  // default branch is the stale thing, the base has a source, proposal work
+  // gets its own exact-base branch, and reconciling the default branch is
+  // forbidden.
   assert.match(guidance, /fork's default branch/);
   assert.match(guidance, /prepare_work/);
-  assert.match(guidance, /do not merge `upstream\/main` yourself/);
+  assert.match(guidance, /Never implement or commit proposal work directly on `main`/);
+  assert.match(guidance, /git switch -c <proposal-branch> <40-character-base-sha>/);
+  assert.match(guidance, /not to merge\s+or rebase the default branch/);
 
   const proposal = readSkill('usernode-proposal');
   assert.match(
