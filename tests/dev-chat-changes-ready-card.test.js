@@ -280,8 +280,8 @@ test('View on GitHub uses the message-carried prUrl when the session row lacks o
 // ── #558: Propose-to-group button disable + spinner on click ──────────────
 // promotePR(btn) must, the instant it's clicked, disable the button and swap
 // its label for a spinner so a slow request can't be double-submitted; the
-// success path re-renders the card away, and both failure paths restore the
-// button so the user can retry.
+// success path re-renders it as a disabled completion, and both failure paths
+// restore the button so the user can retry.
 
 // #1078: the in-flight state moved off the button element and into the row
 // model. It had to: `renderMessages` runs on every 3s status poll, so a
@@ -300,7 +300,8 @@ test('promotePR disables the button and shows the spinner while the request is i
 
   const p = h.DevChat.promotePR();
 
-  assert.equal(h.changesRow().proposePending, true, 'the model says the request is in flight');
+  assert.deepEqual(h.changesRow().propose, { kind: 'pending' },
+    'the model says the request is in flight');
   const html = h.getHtml();
   assert.match(html, /class="dc-pr-btn dc-pr-btn-promote"[^>]*disabled/, 'button is disabled while pending');
   assert.match(html, /aria-busy="true"/, 'aria-busy set while pending');
@@ -325,7 +326,7 @@ test('promotePR re-entry guard: a second click while pending is a no-op (#558)',
   await p1;
 });
 
-test('promotePR success re-renders the card without the Propose button (#558)', async () => {
+test('promotePR success locks and relabels the proposal button (#1602)', async () => {
   const h = makeDevChat();
   // A changes-ready card is on screen for the active session.
   h.render([
@@ -337,9 +338,63 @@ test('promotePR success re-renders the card without the Propose button (#558)', 
   h.setFetch(async () => ({ ok: true, json: async () => ({ prNumber: 42, prUrl: 'https://github.com/x/y/pull/42' }) }));
   await h.DevChat.promotePR();
 
-  // status flipped to 'promoted' → renderMessages drops the (active-only) button.
+  // status flipped to 'promoted' → the same affordance acknowledges completion
+  // but can no longer issue a second request.
   assert.equal(h.DevChat.currentSession.status, 'promoted', 'session promoted');
-  assert.doesNotMatch(h.getHtml(), /Propose to group/, 'button gone after success re-render');
+  assert.match(h.getHtml(), /disabled[^>]*>Already proposed</,
+    'button is disabled and relabeled after the successful re-render');
+  assert.deepEqual(h.changesRow().propose, { kind: 'completed' });
+});
+
+test('an already-promoted session loads with a disabled completed proposal action (#1602)', () => {
+  const h = makeDevChat();
+  const html = h.render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'prm002' },
+  ], activeSession({ id: 8, status: 'promoted', pr_number: 42 }));
+
+  assert.match(html, /disabled[^>]*>Already proposed</,
+    'the completion survives a fresh render rather than becoming clickable again');
+  assert.doesNotMatch(html, />Propose to group</, 'the active label is gone');
+  assert.deepEqual(h.changesRow().propose, { kind: 'completed' });
+});
+
+test('promotePR refuses a stale call for an already-proposed session (#1602)', async () => {
+  const h = makeDevChat();
+  let calls = 0;
+  h.setFetch(async () => {
+    calls += 1;
+    return { ok: true, json: async () => ({}) };
+  });
+  h.DevChat.currentSession = activeSession({ status: 'promoted' });
+
+  await h.DevChat.promotePR();
+
+  assert.equal(calls, 0, 'no duplicate promotion request leaves the browser');
+  assert.equal(h.DevChat._proposing, null, 'no in-flight state was acquired');
+});
+
+test('merging and merged cards keep the proposal action completed (#1602)', () => {
+  for (const status of ['merging', 'merged']) {
+    const h = makeDevChat();
+    const html = h.render([
+      { role: 'system', content: 'Staging deployed!', changesReady: true,
+        stagingUrl: 'https://preview.example.org', _slug: `prm-${status}` },
+    ], activeSession({ id: 9, status }));
+    assert.match(html, /disabled[^>]*>Already proposed</, `${status} remains locked`);
+    assert.deepEqual(h.changesRow().propose, { kind: 'completed' });
+  }
+});
+
+test('paused and archived cards do not gain a proposal action (#1602)', () => {
+  for (const status of ['paused', 'archived']) {
+    const h = makeDevChat();
+    const html = h.render([
+      { role: 'system', content: 'Changes were saved.', changesReady: true, _slug: `prm-${status}` },
+    ], activeSession({ id: 10, status }));
+    assert.doesNotMatch(html, /dc-pr-btn-promote/, `${status} has no proposal action`);
+    assert.equal(h.changesRow().propose, null);
+  }
 });
 
 test('promotePR failure (non-OK) re-enables the button and restores its label (#558)', async () => {
@@ -353,7 +408,8 @@ test('promotePR failure (non-OK) re-enables the button and restores its label (#
 
   await h.DevChat.promotePR();
 
-  assert.equal(h.changesRow().proposePending, false, 'button re-enabled after a failed response');
+  assert.deepEqual(h.changesRow().propose, { kind: 'ready' },
+    'button re-enabled after a failed response');
   const html = h.getHtml();
   assert.match(html, />Propose to group</, 'original label restored');
   assert.doesNotMatch(html, /aria-busy/, 'aria-busy cleared');
@@ -372,7 +428,8 @@ test('promotePR failure (network error) re-enables the button and restores its l
 
   await h.DevChat.promotePR();
 
-  assert.equal(h.changesRow().proposePending, false, 'button re-enabled after a thrown error');
+  assert.deepEqual(h.changesRow().propose, { kind: 'ready' },
+    'button re-enabled after a thrown error');
   assert.match(h.getHtml(), />Propose to group</, 'original label restored');
   assert.deepEqual(h.alerts, ['Network error'], 'network error surfaced via alert');
 });
