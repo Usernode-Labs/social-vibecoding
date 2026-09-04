@@ -1194,6 +1194,12 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Waitlist country picker carries the whole ISO list (#1527)",
+      "path": "/?shot=anon#waitlist",
+      "expectSelector": "#waitlist-country option[value=\"UY\"]",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Landing CTA area is a compact link, not the survey",
       "path": "/?shot=anon#landing",
       "expectSelector": "#landing-waitlist a[href=\"#waitlist\"]",

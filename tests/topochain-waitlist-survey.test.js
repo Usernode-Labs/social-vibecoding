@@ -78,6 +78,36 @@ test('the known keys are surfaced, and nothing else is', () => {
     'an unrecognised answers key is not rendered');
 });
 
+// #1527 replaced the region-bucketed picker with the complete ISO 3166-1
+// list, so what is STORED in `country` is now one of three things: a real
+// alpha-2 code, one of the five namespaced legacy region answers the boot
+// migration rewrote (`X-LA` and friends), or — on a row old enough or odd
+// enough — a string that is neither. The screen has to read for a human in
+// all three cases, and the third one is still untrusted input.
+test('a stored country code is rendered as its name, not as the code', () => {
+  const html = render({ country: 'DE' });
+  assert.match(html, /Where:/);
+  assert.match(html, /Germany/, 'the alpha-2 code is looked up, not printed raw');
+  assert.ok(!/>DE</.test(html), 'and the code itself is not what an admin reads');
+});
+
+test('a retired region answer keeps saying what the person actually picked', () => {
+  // The picker no longer offers it, and nothing rewrote the answer into a
+  // country it never meant — so the label has to name the region AND mark
+  // it as one, or "Elsewhere in Latin America" reads like a place.
+  assert.match(render({ country: 'X-LA' }), /Elsewhere in Latin America \(region\)/);
+  assert.match(render({ country: 'X-EU' }), /Elsewhere in Europe \(region\)/);
+});
+
+test('an unrecognised country falls back to the stored string, escaped', () => {
+  // `countryLabel` must never throw and never blank the field: an admin
+  // reading a row wants to see whatever is actually in the database.
+  assert.match(render(HOSTILE), /Elsewhere/);
+  const nasty = render({ country: '<script>alert(1)</script>' });
+  assert.ok(!/<script>/.test(nasty), 'the fallback path escapes like every other string');
+  assert.match(nasty, /&lt;script&gt;/);
+});
+
 test('an empty answers object says so rather than rendering an empty block', () => {
   assert.match(render({}), /No survey answers\./);
 });
