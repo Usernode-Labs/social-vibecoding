@@ -2904,13 +2904,37 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    - #app-iframe. WebKit has a long-standing bug where an <iframe>
      ignores an ancestor's border-radius outright.
    - .app-launch-cover. It cross-fades on `opacity` (see its rule further
-     down) WHILE the kit runs its own transform animation over the
-     document root, so for the length of the launch it is a promoted
-     compositing layer — and a promoted layer can paint a frame or two
-     before it picks up an ancestor's rounded clip. That is a square
-     corner appearing and then snapping round again mid-animation, and it
-     shows up only on apps slow enough to boot that the cover is still on
-     screen when the push lands.
+     down), so it is on its own layer for the length of the launch.
+
+   #1656's note here had the launch cover CAUSING a corner artifact. It
+   does the opposite: while the cover is up it is the topmost thing at
+   the corners, it is an ordinary div, and it clips correctly — so it
+   HIDES the artifact. That is why the flicker showed on apps that boot
+   fast enough for the cover to be gone by the time the push lands, which
+   is the "some apps" in the report.
+
+   WHAT ACTUALLY CAUSES IT IS STILL OPEN, and nothing below fixes it. A
+   view transition over the document root renders the app's top corners
+   SQUARE for its first frame or two before they snap round: an <iframe>
+   is always its own compositing layer, and that layer does not pick up
+   an ancestor's rounded clip in the transition's snapshot in time. Every
+   clip stated here is on an ancestor, which is exactly what it ignores.
+   Measured by freezing a real startViewTransition() and stepping
+   currentTime, so it is a property of the transition rather than of
+   timing. Substituting a plain <div> for the frame renders round at
+   t=0, which is what identifies the layer as the cause.
+
+   Do not spend time on these — all still square at t=0:
+   `will-change: transform` on the host, `clip-path` on the host,
+   `clip-path` on the frame, `isolation: isolate` + `contain: paint`,
+   `opacity: 0.999`, `translate3d(0,0,0)` and `backface-visibility:
+   hidden` on the frame. The only thing that fixed it was a
+   `view-transition-name` on #app-frame-host, which is not a free win:
+   naming hoists the sheet out of the root snapshot into a group of its
+   own, so it stops travelling with the page — and on an app-to-app
+   switch from the header chip the app window is the ONLY thing that
+   moves, so that trade has to be made deliberately rather than
+   stumbled into.
 
    So the radius is restated on each of them, and .app-launch-host takes
    an `overflow: hidden` of its own so the clip also exists one level
