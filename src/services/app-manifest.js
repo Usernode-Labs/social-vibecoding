@@ -92,14 +92,13 @@ const MANIFEST_FILENAME = 'dapp.json';
 // check, so any proposal declaring one at all was blocked. That is the
 // state this bump clears, not one feature's three checks.
 //
-// Raised 480 -> 530 (#1590) from the same state and by the same arithmetic.
-// The manifest reached 461 and crossed the 20-slot floor, which turns the
-// repo's own suite red -- and that suite is a merge-blocking check
-// (services/unit-suite.js), so every proposal was blocked, not only one
-// declaring a new check. 530 at ~3.9s over a pool of 8 is ~258s of ideal
-// work, so TESTS_DEADLINE_MS goes 470s -> 520s in services/visuals.js to
-// keep the 2x margin, and RUN_TIMEOUT_MS 600s -> 650s to stay the required
-// 120s clear of it. Same three constants, same one decision.
+// Raised 480 → 530 when the manifest reached 461 and crossed the 20-slot
+// floor again (19 left), which made the unit suite red on main itself and so
+// on every proposal after it. Same arithmetic, same coupled move: 530 checks
+// at ~3.9s over a pool of 8 is ~258s of ideal work, so TESTS_DEADLINE_MS
+// goes 470s → 520s to keep the 2x margin (clears it by ~3s), and because the
+// deadline has passed 480s this time RUN_TIMEOUT_MS moves too, 600s → 640s,
+// to stay the required 120s above it.
 const MAX_DECLARED_TESTS = 530;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js

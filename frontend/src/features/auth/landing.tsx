@@ -225,6 +225,14 @@ function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp)
   );
 }
 
+// The landing bar's back disc: the same periwinkle disc as the signed-in
+// bar's back button (BACK_BTN_CLASS in header/platform-header.tsx). The
+// landing sits on the same wallpaper now, so its one glyph control is drawn
+// the same way.
+const LANDING_BACK_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-full'
+  + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
+  + ' text-[color:var(--brand-ink)]';
+
 export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
@@ -654,10 +662,7 @@ export function LandingScreen() {
           <button
             id="landing-back-btn"
             type="button"
-            className={hiddenLast(
-              !openApp,
-              'text-zinc-900 hover:text-zinc-500 dark:text-zinc-100 dark:hover:text-zinc-400',
-            )}
+            className={hiddenLast(!openApp, LANDING_BACK_CLASS)}
             aria-label="Back to apps"
             onClick={() => live.current.closeLandingApp()}
           >
@@ -700,7 +705,7 @@ export function LandingScreen() {
               href="#waitlist"
               id="landing-waitlist-cta"
               data-offline-disabled=""
-              className="h-7 inline-flex items-center rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+              className="h-7 inline-flex items-center rounded-lg border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] px-3 text-xs sm:px-5 font-medium text-[color:var(--brand-ink)] transition-colors"
               onClick={onLeaveCta}
             >
               Join waitlist

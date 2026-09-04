@@ -29,7 +29,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { SendIcon } from '@/components/ui/icons';
+import { Textarea } from '@/components/ui/textarea';
 
+import { useAutoGrow } from '../../../lib/use-auto-grow';
 import { useStoreState } from '../../../lib/use-store-state';
 import {
   feedThreadStore,
@@ -76,6 +79,66 @@ function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
       <span className="min-w-0 flex-1 text-zinc-600 dark:text-zinc-400 break-words">{m.content}</span>
       <span className="shrink-0 text-zinc-400 dark:text-zinc-500">{relTime(m.createdAt)}</span>
     </div>
+  );
+}
+
+/**
+ * The compact composer each Activity row owns.
+ *
+ * It stays separate from FeedThread's loading/posting state so the two pieces
+ * that make #1584 visible are executable in isolation: the controlled value
+ * grows a textarea, and an always-present arrow sends it. Plain Enter is not
+ * intercepted — it adds a line; submission belongs to the adjacent arrow.
+ */
+export function FeedReplyComposer({
+  draft, posting, onDraftChange, onSubmit,
+}: {
+  draft: string;
+  posting: boolean;
+  onDraftChange: (value: string) => void;
+  onSubmit: () => void | Promise<void>;
+}): ReactNode {
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(inputRef, draft);
+
+  return (
+    <form
+      className="flex items-end gap-2 pt-0.5"
+      onSubmit={(e) => { e.preventDefault(); void onSubmit(); }}
+      // The row is inside #dev-body's delegated click handler, which opens
+      // the topic for a click anywhere on a card. Every part of this composer
+      // must stay in place while somebody writes a reply.
+      onClick={(e) => e.stopPropagation()}
+    >
+      <Textarea
+        ref={inputRef}
+        rows={1}
+        box="activityReply"
+        width="flex"
+        hint="muted"
+        ring={false}
+        className="focus:outline-none focus:ring-1 focus:ring-violet-500"
+        placeholder="Reply…"
+        aria-label="Reply to this item"
+        value={draft}
+        disabled={posting}
+        onChange={(e) => onDraftChange(e.target.value)}
+      />
+      <Button
+        type="submit"
+        variant="unstyled"
+        disabledStyle="block"
+        size="icon"
+        ink="none"
+        className={'h-7 w-7 shrink-0 un-touch-target rounded-full bg-violet-600 hover:bg-violet-500 '
+          + 'text-white transition-colors inline-flex items-center justify-center'}
+        disabled={posting || !draft.trim()}
+        title="Send reply"
+        aria-label="Send reply"
+      >
+        {posting ? '…' : <SendIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+      </Button>
+    </form>
   );
 }
 
@@ -185,58 +248,12 @@ export function FeedThread({
         </div>
       ) : null}
       {canPost ? (
-        <form
-          className="flex items-center gap-2 pt-0.5"
-          onSubmit={(e) => { e.preventDefault(); void submit(); }}
-        >
-          {/* A single-line input, not the thread composer. GroupChat's shell is
-              a singleton — one `GroupChat.activeThread`, fixed ids, one draft
-              scope — so a feed of twenty rows cannot each host one. This is
-              deliberately the smaller thing: type a line, press enter. Anything
-              that wants attachments, mentions or history opens the item. */}
-          {/* WHITE, NOT `bg-zinc-100`. The thread renders BESIDE the row card,
-              directly on the page ground — and `zinc-100` is #eaeaea in this
-              shell's ramp (tailwind.config.js), which is that ground byte for
-              byte. The box was therefore invisible: a placeholder and a caret
-              floating on nothing, with no edge to say where the field was.
-              Same bug, same fix as the header's control discs, one step
-              further: those lift to zinc-50, and an input that a viewer is
-              meant to type into takes the card surface plus a real border —
-              the treatment #home-search-input already uses on the same
-              ground. */}
-          <input
-            type="text"
-            className={'min-w-0 flex-1 rounded-full border border-zinc-300 dark:border-zinc-700 '
-              + 'bg-white dark:bg-zinc-800 px-3 py-1 '
-              + 'text-xs text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 '
-              + 'dark:placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-violet-500'}
-            placeholder="Reply…"
-            aria-label="Reply to this item"
-            value={draft}
-            disabled={state.posting}
-            onChange={(e) => setDraft(e.target.value)}
-            // The row is inside #dev-body's delegated click handler, which
-            // opens the topic for a click anywhere on a card. Typing in here
-            // must not also navigate away.
-            onClick={(e) => e.stopPropagation()}
-          />
-          {/* `pill` + `xsText` is the bell drawer's invite-Accept box, which is
-              the same object as this one: a text-xs primary action inside a
-              row of a list. Through <Button> rather than written literally,
-              per tests/shell-primitive-adoption.test.js. */}
-          {draft.trim() ? (
-            <Button
-              type="submit"
-              variant="pill"
-              size="xsText"
-              className="shrink-0 un-touch-target"
-              disabled={state.posting}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {state.posting ? 'Sending…' : 'Reply'}
-            </Button>
-          ) : null}
-        </form>
+        <FeedReplyComposer
+          draft={draft}
+          posting={state.posting}
+          onDraftChange={setDraft}
+          onSubmit={submit}
+        />
       ) : null}
     </div>
   );
