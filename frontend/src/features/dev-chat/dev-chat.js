@@ -7191,8 +7191,10 @@ const DevChat = {
         + ' Claude Code or Codex on the web.',
       // Mid-turn the venue is not changeable: a running turn holds the
       // worker, and moving it under itself is the failure the old
-      // `agentSelect.disabled` guarded against. Same rule, new control.
-      disabled: !!DevChat.isStreaming,
+      // `agentSelect.disabled` guarded against. `_chatBusyForPaint` keeps
+      // the deterministic busy screenshot honest without changing any of
+      // the real streaming guards. Same rule, new control.
+      disabled: DevChat._chatBusyForPaint(),
     };
   },
 
