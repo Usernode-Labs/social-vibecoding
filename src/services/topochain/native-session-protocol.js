@@ -183,9 +183,7 @@ async function provisionWallet(client, userId) {
         AND starts_at <= NOW() AND ends_at >= NOW()
       ORDER BY starts_at DESC, id DESC LIMIT 1`
   );
-  if (!seasonRows.length) {
-    protocolError(422, 'native_session_no_active_season', 'No active season is available.');
-  }
+  if (!seasonRows.length) return null;
   const seasonId = Number(seasonRows[0].id);
 
   const { rows: existingRows } = await client.query(
@@ -209,9 +207,7 @@ async function provisionWallet(client, userId) {
         FOR UPDATE SKIP LOCKED`,
       [seasonId]
     );
-    if (!availableRows.length) {
-      protocolError(409, 'native_session_wallet_pool_exhausted', 'No on-chain accounts are available for the current season.');
-    }
+    if (!availableRows.length) return null;
     account = availableRows[0];
     await client.query(
       `UPDATE onchain_accounts
@@ -262,7 +258,7 @@ function buildCredentialPlaintext({
       bearerToken,
       bearerExpiresAt: nativeInstant(bearerExpiresAt),
     },
-    account: {
+    account: account ? {
       accountId: String(account.id),
       address: account.address,
       publicKey: account.public_key,
@@ -271,7 +267,7 @@ function buildCredentialPlaintext({
       seasonEventId: account.season_event_id == null ? null : Number(account.season_event_id),
       newlyAllocated: account.newlyAllocated,
       blockProductionReleased: bpReleased,
-    },
+    } : null,
   };
 }
 
@@ -657,7 +653,7 @@ class NativeSessionProtocol {
                  $9, $10, $11, 'valid', $12, $13)`,
         [credentialReference, request.attemptId, row.user_id,
           row.web_session_incarnation_id, request.installation.id,
-          request.installation.keyGeneration, mobileTokenId, account.id,
+          request.installation.keyGeneration, mobileTokenId, account?.id ?? null,
           row.network_id, row.chain_id, exchangeDigest, now, bearerExpiresAt]
       );
       await client.query(

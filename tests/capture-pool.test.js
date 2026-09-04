@@ -69,6 +69,7 @@ function makeBrowser({ delays = {}, log = [], mode = 'fast', missingSelectors = 
         if (mode === 'fast') throw new Error('fake: navigation refused');
         return { status: () => 200 };
       },
+      async waitForNetworkIdle() {},
       async $(sel) { return missingSelectors.includes(sel) ? null : {}; },
       async evaluate() { return true; },
       async close() {
@@ -439,6 +440,7 @@ function makeEventPage({ onGoto, onHash } = {}) {
       if (onGoto) onGoto(page);
       return { status: () => 200 };
     },
+    async waitForNetworkIdle() {},
     async $() { return {}; },
     async evaluate(fn, arg) {
       // The hash switch is the only evaluate that touches location.
@@ -453,6 +455,37 @@ function makeEventPage({ onGoto, onHash } = {}) {
   };
   return page;
 }
+
+test('cold checks separate document navigation from equivalent network-idle readiness', async () => {
+  const read = collect();
+  const calls = [];
+  const page = makeEventPage();
+  const goto = page.goto;
+  page.goto = async (url, options) => {
+    calls.push({ call: 'goto', options });
+    return goto(url);
+  };
+  page.waitForNetworkIdle = async (options) => {
+    calls.push({ call: 'network-idle', options });
+  };
+
+  await runTestGroup({ newPage: async () => page },
+    [{ index: 0, name: 'history traversal', path: '/settings', url: 'http://s/#settings' }],
+    { settleQuietMs: 0, settleMaxMs: 0 });
+
+  const { frames } = read();
+  assert.equal(frames[0].status, 'pass');
+  assert.deepEqual(calls.map((entry) => entry.call), ['goto', 'network-idle'],
+    'DOMContentLoaded completes before the independent idle observation starts');
+  assert.equal(calls[0].options.waitUntil, 'domcontentloaded',
+    'a later same-document history traversal cannot replace the document-load watcher');
+  assert.equal(calls[0].options.timeout, 30000);
+  assert.equal(calls[1].options.concurrency, 2,
+    'the readiness threshold remains networkidle2, not the stricter networkidle0');
+  assert.equal(calls[1].options.idleTime, 500);
+  assert.ok(calls[1].options.timeout > 0 && calls[1].options.timeout <= 30000,
+    'both phases share the existing navigation budget');
+});
 
 test('a hash cohort owns its own console errors, and load errors are shared', async () => {
   const read = collect();
@@ -533,6 +566,7 @@ function makeColdOnlyPage() {
       page.rendered = i === -1 ? '' : String(u).slice(i);
       return { status: () => 200 };
     },
+    async waitForNetworkIdle() {},
     // `#at-<fragment>` stands in for "the markup this sub-route renders".
     async $(sel) { return sel === `#at-${page.rendered}` ? {} : null; },
     async evaluate(fn, arg) {

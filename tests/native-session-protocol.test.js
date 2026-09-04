@@ -22,6 +22,7 @@ const {
 } = require('../src/services/topochain/native-session-crypto');
 const {
   NativeSessionProtocol,
+  provisionWallet,
   buildCredentialPlaintext,
 } = require('../src/services/topochain/native-session-protocol');
 const {
@@ -229,6 +230,42 @@ test('encrypted credential carries the exact canonical account id without wideni
     JSON.parse(Buffer.from(decrypted.plaintext).toString('utf8')),
     plaintext
   );
+});
+
+test('walletless credential stays authenticated without inventing wallet authority', () => {
+  const pair = makeKeys();
+  const request = unsignedExchangeRequest(pair);
+  const keys = validateInstallationKeys(request.installation);
+  const plaintext = buildCredentialPlaintext({
+    row: { user_id: 41, network_id: NETWORK.id, chain_id: NETWORK.chainId },
+    request,
+    keys,
+    ticketHash: sha256Hex(request.ticket),
+    exchangeDigest: exchangeSemanticDigest(request, keys),
+    credentialReference: opaque('nsc_', 9),
+    bearerToken: 'ab'.repeat(40),
+    bearerExpiresAt: new Date('2026-11-24T12:00:00.000Z'),
+    account: null,
+    bpReleased: false,
+  });
+
+  assert.equal(plaintext.subject.userId, '41');
+  assert.equal(plaintext.account, null);
+  assert.equal(plaintext.credential.bearerToken, 'ab'.repeat(40));
+});
+
+test('wallet provisioning is optional when no active season or account is available', async () => {
+  const noSeason = { query: async () => ({ rows: [] }) };
+  assert.equal(await provisionWallet(noSeason, 41), null);
+
+  const responses = [
+    { rows: [{ id: 7 }] },
+    { rows: [] },
+    { rows: [] },
+  ];
+  const noAccount = { query: async () => responses.shift() };
+  assert.equal(await provisionWallet(noAccount, 41), null);
+  assert.equal(responses.length, 0);
 });
 
 class TicketPool {
@@ -605,4 +642,5 @@ test('schema cross-binds session, attempt, installation, token, and account subj
   assert.match(schema, /FOREIGN KEY \(installation_id, installation_key_generation\)\s+REFERENCES native_installation_key_generations\(installation_id, key_generation\)/);
   assert.match(schema, /FOREIGN KEY \(mobile_auth_token_id, user_id\)[\s\S]*?ON DELETE SET NULL \(mobile_auth_token_id\)/);
   assert.match(schema, /FOREIGN KEY \(account_id, user_id\)\s+REFERENCES onchain_accounts\(id, user_id\)/);
+  assert.match(schema, /ALTER TABLE native_session_credentials\s+ALTER COLUMN account_id DROP NOT NULL/);
 });
