@@ -599,7 +599,14 @@ const App = {
     // confirming is what puts somebody on the list now, so the list place
     // and the stage-2 offer live there rather than on `waitlist-joined`,
     // which stops at the confirm step.
+    // `waitlist-more` opens the stage-2 survey for the token in the
+    // fragment (`/?shot=waitlist-more#more/<48 hex>`). The survey is an
+    // auth screen, and restoreFromHash drops an auth route outright for a
+    // signed-in user who has platform access — which every capture and
+    // proposal-check session is — so without this the screen is reachable
+    // by a real recipient and by nothing that photographs or checks it.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
+        shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'password-recovery' && shot !== 'password-recovery-sent') {
       return false;

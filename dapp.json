@@ -1232,14 +1232,14 @@
     },
     {
       "name": "Stage-2 survey says where a pending signup stands",
-      "path": "/#more/deaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddead",
+      "path": "/?shot=waitlist-more#more/deaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddead",
       "expectSelector": "#more-form #more-status-pill",
       "expectText": "Waiting for confirmation",
       "allowConsoleErrors": true
     },
     {
       "name": "Stage-2 survey says so when the signup has been admitted",
-      "path": "/#more/cafecafecafecafecafecafecafecafecafecafecafecafe",
+      "path": "/?shot=waitlist-more#more/cafecafecafecafecafecafecafecafecafecafecafecafe",
       "expectSelector": "#more-form #more-status-pill",
       "expectText": "You're in",
       "allowConsoleErrors": true

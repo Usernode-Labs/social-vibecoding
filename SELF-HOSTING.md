@@ -1582,6 +1582,11 @@ round trip lives in `src/routes/waitlist-connect.js` — the classic
 authorize/token shape for GitHub, OAuth 2.0 with mandatory PKCE (S256) and
 an HTTP Basic token exchange for X.
 
+The two routes as a caller sees them, including the `connect=` outcomes the
+round trip lands back on, are documented in
+[docs/waitlist-public-api.md](./docs/waitlist-public-api.md); what follows is
+the provider-by-provider setup.
+
 ### Configuration
 
 Ten settings, all `required: false`, all declared in `dapp.json`'s
@@ -1785,8 +1790,18 @@ has no key configured: this header is optional by design.
 from a browser on its own origin. The integration is server-to-server, which
 is also what keeps the secret out of a page anyone can view.
 
+This section is the operator half: which variable to set and why the
+bounds are what they are. The caller half — every endpoint, its request
+and response bodies, and both headers in context — is
+[docs/waitlist-public-api.md](./docs/waitlist-public-api.md), which is the
+document to hand a partner.
+
 ## Cross-references
 
+- [docs/waitlist-public-api.md](./docs/waitlist-public-api.md) — the
+  public waitlist API as an outside integrator implements against it;
+  the caller-facing half of "Waitlist social connect" and "Waitlist
+  trusted integrators" above.
 - [EXTRACT-PLAN.md](./EXTRACT-PLAN.md) — the standalone-deploy
   prerequisite, now done.
 - [src/prompts/app-conventions.md](./src/prompts/app-conventions.md)

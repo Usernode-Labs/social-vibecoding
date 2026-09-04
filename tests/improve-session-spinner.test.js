@@ -154,8 +154,19 @@ test('the Improve busy-row check selects the arc, and no check was added', () =>
     'retargeted with the markup — .animate-pulse now matches nothing there');
   assert.equal(busy[0].path, '/?shot=improve&demo=1#app/usernode-2d5619/dev');
 
-  // The manifest is near its ceiling (MAX_DECLARED_TESTS, and the suite
-  // reserves 20 more on top), so this change retargets rather than adds.
-  assert.ok(MANIFEST.tests.length <= 459,
-    `declared checks grew to ${MANIFEST.tests.length}; #1597 adds none`);
+  // The manifest is near its ceiling, so this change retargets rather than
+  // adds — which the `busy.length === 1` above is what actually proves.
+  //
+  // This used to read `MANIFEST.tests.length <= 459`, a snapshot of the count
+  // on the day #1633 was written. That number is not a property of #1597: the
+  // manifest was already at 464 when #1633 merged, so the assertion shipped
+  // failing and then blocked the next unrelated proposal that declared a
+  // check. A count freeze cannot express "this change adds none" — only a
+  // diff against the merge base could, and nothing here has one. So pin the
+  // real ceiling instead, the one the platform enforces, and let the
+  // single-owner assertion above carry the intent.
+  const appManifest = require('../src/services/app-manifest');
+  assert.equal(appManifest.readTestsWithMeta(MANIFEST).ceilingDropped, 0,
+    `declared checks (${MANIFEST.tests.length}) passed the `
+    + `${appManifest.MAX_DECLARED_TESTS}-check ceiling; the tail never runs`);
 });
