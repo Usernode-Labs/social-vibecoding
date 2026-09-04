@@ -2190,10 +2190,10 @@
       "expectSelector": "[data-settings-section=\"agent-files\"]:not(.hidden) #agent-files-instructions-list [data-agent-file]"
     },
     {
-      "name": "Settings deep-links CLI & coding-agent access (the credential list itself stays server-gated on staging)",
-      "path": "/?demo=1#settings/cli",
-      "expectText": "CLI & coding-agent access",
-      "expectSelector": "[data-settings-nav=\"cli\"][aria-selected=\"true\"]"
+      "name": "Settings CLI access empty state explains how to start a local coding agent (#1609)",
+      "path": "/?demo=cli-empty#settings/cli",
+      "expectText": "Set up a local coding agent",
+      "expectSelector": "[data-settings-section=\"cli\"]:not(.hidden) #cli-setup-guide ol"
     },
     {
       "name": "Settings deep-links the Language section",
