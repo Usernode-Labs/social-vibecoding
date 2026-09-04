@@ -1302,8 +1302,8 @@ html, body {
 /* ── The home ground ───────────────────────────────────────
    The launcher's own wallpaper, ported layer for layer from the homescreen
    design's Figma export (a 402x874 phone frame): a warm cream page, a fine
-   yellow paper grain, three gaussian-blurred colour discs and a blue
-   halftone star tucked into the top-right corner.
+   yellow paper grain, three gaussian-blurred colour discs and a pale
+   yellow star tucked into the top-right corner.
 
    PAINTED ON THE SCROLLER, NOT ON THE FEED. #home-screen is the
    overflow-y:auto box, and a background on a scroll container is fixed to
@@ -1327,15 +1327,14 @@ html, body {
    the build-scoped path parser — two more places to keep honest for two
    decorative layers. Both are ~1 KB. The grain is the export's own filter
    chain (fractalNoise → luminanceToAlpha → one discrete band → #FFEE6F at
-   50%) on one stitched tile. The star keeps the export's geometry (92x87,
-   35px in from the right) and is drawn as a halftone: soft 4px radial dots
-   screen-blended with a corner-to-corner ramp and thresholded, with the
-   ramp kept out of the fully-solid band so dot size grades continuously
-   across the star and there is no hard solid/dotted boundary.
+   50%) on one stitched tile. The star is the export's own element,
+   verbatim: a solid #FFEE6F star in a 97x78 box whose top point runs 19px
+   above the box, so the viewBox crops it exactly as the design crops it at
+   the screen edge — 32px in from the right, flush with the top.
 
-   The header is still its own zinc slab for now, so the star sits whole
-   just under it (the export runs it 19px off the top, behind the bell);
-   joining the two surfaces is its own step and moves the star up.
+   The header is still its own zinc slab for now, so it sits over the
+   star's top rather than letting it show through behind the bell; joining
+   the two surfaces is its own step.
 
    DARK MODE KEEPS ITS GROUND. The mock is a light-mode design; on the
    near-black page the scroller goes back to painting nothing of its own. */
@@ -1343,14 +1342,14 @@ html, body {
   --home-ground: #fffeea;
   background-color: var(--home-ground);
   background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='96'%3E%3Cdefs%3E%3CradialGradient id='d'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='1' stop-color='%23000'/%3E%3C/radialGradient%3E%3Cpattern id='p' width='4' height='4' patternUnits='userSpaceOnUse'%3E%3Crect width='4' height='4' fill='url(%23d)'/%3E%3C/pattern%3E%3ClinearGradient id='g' x1='.85' y1='.05' x2='.15' y2='.95'%3E%3Cstop offset='0' stop-color='%23e6e6e6'/%3E%3Cstop offset='1' stop-color='%23555555'/%3E%3C/linearGradient%3E%3Cfilter id='t' color-interpolation-filters='sRGB'%3E%3CfeComponentTransfer%3E%3CfeFuncR type='discrete' tableValues='0 0 0 1'/%3E%3CfeFuncG type='discrete' tableValues='0 0 0 1'/%3E%3CfeFuncB type='discrete' tableValues='0 0 0 1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cmask id='m'%3E%3Cg filter='url(%23t)'%3E%3Crect width='100' height='96' fill='url(%23p)'/%3E%3Crect width='100' height='96' fill='url(%23g)' style='mix-blend-mode:screen'/%3E%3C/g%3E%3C/mask%3E%3C/defs%3E%3Cpolygon points='49.9,4.0 60.8,37.4 95.9,37.4 67.5,58.0 78.3,91.4 49.9,70.7 21.5,91.4 32.4,58.0 4.0,37.4 39.1,37.4 49.9,4.0' fill='%239dcdf0' mask='url(%23m)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='97' height='78' viewBox='0 0 97 78'%3E%3Cpath d='M48.2962 -18.7969L59.1394 14.575H94.2286L65.8408 35.1999L76.684 68.5718L48.2962 47.9469L19.9084 68.5718L30.7516 35.1999L2.36378 14.575H37.453L48.2962 -18.7969Z' fill='%23FFEE6F'/%3E%3C/svg%3E"),
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.5'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E"),
     radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px),
     radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px),
     radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px);
   background-repeat: no-repeat, repeat, no-repeat, no-repeat, no-repeat;
-  background-position: right 35px top 4px, 0 0, 0 0, 0 0, 0 0;
-  background-size: 100px 96px, 240px 240px, 100% 100%, 100% 100%, 100% 100%;
+  background-position: right 32px top 0, 0 0, 0 0, 0 0, 0 0;
+  background-size: 97px 78px, 240px 240px, 100% 100%, 100% 100%, 100% 100%;
 }
 .dark #home-screen {
   background-color: transparent;
