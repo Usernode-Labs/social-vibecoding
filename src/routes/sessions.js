@@ -2569,6 +2569,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // live path delivers the same shape via the visuals_ready event).
       // Best-effort — a visuals hiccup must not break opening the session.
       const session = rows[0];
+      // #1650: a managed local handoff cannot be proposed merely because it
+      // is active. Its exact submitted head must have live staging and a
+      // terminal passing verdict, and the in-memory build/check/capture gates
+      // matter too. Publish the SAME state the CLI status endpoint and
+      // promotion preflight compute so the Changes ready card can disable its
+      // action before a doomed request. Ordinary Dev sessions deliberately do
+      // not get this field: their promote path may still build on demand.
+      if (session.source === 'cli_handoff') {
+        session.proposal_state = require('./proposal-handoff')
+          .publicSessionStatus(session).state;
+      }
       try {
         session.visuals = await visuals.getForSession(pool, session.id);
       } catch { session.visuals = null; }
