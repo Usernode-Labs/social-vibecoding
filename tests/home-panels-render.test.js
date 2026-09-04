@@ -519,6 +519,24 @@ test('render: a numeric row at zero still renders an (empty) bar', () => {
 // one the first could not afford: a second LINE. The lane, its three tokens
 // and the bar geometry derived from them are retired with it.
 
+test("the pill's padding is symmetric, so its contents sit on its centre", () => {
+  // It was `pt-1.5 pb-2.5`: 4px of extra room along the bottom, left over from
+  // when the meter was a 3px rail flush with the pill's bottom edge and the
+  // text had to clear it. The meter is the capsule at the left now, so that
+  // clearance had nothing to clear — it just pushed the state, the deadline
+  // and the reward 2px above the pill's centre, which is visible as a row of
+  // slightly-high pills down the card.
+  //
+  // Pinned as SYMMETRY rather than as a value: `py-2` today, and any other
+  // symmetric pair is fine, but a lone `pt-`/`pb-` pair is the shape of the
+  // bug and fails here.
+  const pill = /className="home-challenge-pill[^"]*"/.exec(challengesSrc());
+  assert.ok(pill, 'the pill carries its class');
+  assert.doesNotMatch(pill[0], /\bpt-/, 'no one-sided top padding');
+  assert.doesNotMatch(pill[0], /\bpb-/, 'no one-sided bottom padding');
+  assert.match(pill[0], /\bpy-\d/, 'the vertical padding is stated once, for both sides');
+});
+
 test('the zero-progress meter shows a nub, and a small one', () => {
   // A challenge at 0 of 5 must not draw an EMPTY capsule: "not started" still
   // has to read as a track with something to fill. So the fill takes a floor
