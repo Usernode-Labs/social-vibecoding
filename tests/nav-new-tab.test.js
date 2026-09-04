@@ -197,13 +197,13 @@ test('the header back/home control is a real anchor', () => {
   const shownHome = !/id="back-icon-home"[^>]*class="[^"]*\bhidden\b/.test(inner);
   const shownArrow = !/id="back-icon-arrow"[^>]*class="[^"]*\bhidden\b/.test(inner);
   assert.notEqual(shownHome, shownArrow,
-    'one glyph is hidden and the other is not — two glyphs in one 48px disc '
+    'one glyph is hidden and the other is not — two glyphs in one 28px disc '
     + 'is what a wrong `hidden` looks like');
-  // 48x48 now (28x28 before the homescreen design, 20x28 before that): the slot holds the app glyph as well as the arrow
+  // 28x28 now, not 20x28: the slot holds the app glyph as well as the arrow
   // (features/header/header-app-icon.tsx), and they never draw together. What
   // matters to the header-layout hook is that the width is FIXED, and it is.
-  assert.match(html, /<div class="w-12 h-12 shrink-0 flex items-center justify-center">/,
-    'the fixed 48x48 lead-icon wrapper the header-layout hook measures');
+  assert.match(html, /<div class="w-7 h-7 shrink-0 flex items-center justify-center">/,
+    'the fixed 28x28 lead-icon wrapper the header-layout hook measures');
 });
 
 test('the header click handler guards before it preventDefaults', () => {

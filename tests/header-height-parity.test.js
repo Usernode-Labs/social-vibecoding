@@ -3,18 +3,13 @@
 //
 // The two authored top bars — #platform-header (signed-in shell: home, app
 // view, leaderboard, profile, settings, admin console) and #landing-header
-// (anonymous shell) — are `py-3` around a 48px CONTENT ROW, i.e.
-// 72px + env(safe-area-inset-top), everywhere.
-//
-// The row was 28px (h-7, a 52px bar) until the homescreen design, whose app
-// chip and bell are 48px discs with the same 12px of padding around them;
-// the row grew to hold them and every pin below moved with it. Parity is
-// the invariant, not the number.
+// (anonymous shell) — are `py-3` around a 28px CONTENT ROW, i.e.
+// 52px + env(safe-area-inset-top), everywhere.
 //
 // It was 53px until the reskin, when both bars lost the 1px `border-b`
 // hairline they had carried: the widget language draws no rule under a top
 // bar — the page ground runs to the top of the screen and the controls float
-// on it. What this file pins is PARITY and the 48px row, not the constant, so
+// on it. What this file pins is PARITY and the 28px row, not the constant, so
 // the hairline assertion below inverted rather than disappeared: it now
 // asserts NEITHER bar has one, which is what catches a rule re-added to one
 // shell and not the other.
@@ -39,11 +34,11 @@
 // a bar that jumps as you navigate:
 //
 //   FLOOR   — the lead back-button wrapper (present in every state of both
-//             headers) carries h-12, so the row survives the title being
+//             headers) carries h-7, so the row survives the title being
 //             display:none. It stays w-5: the header-layout hook
 //             (frontend/src/features/header/use-header-layout.ts) measures it
 //             as the title's left side group.
-//   CEILING — no child of either header exceeds 48px.
+//   CEILING — no child of either header exceeds 28px.
 //
 // Prose version of the same contract lives in the "Header height invariant"
 // block in public/css/app.css.
@@ -96,7 +91,7 @@ test('both top bars carry the identical shape: py-3, no hairline, safe-area', ()
     const tag = openingTag(bar.slice);
     // 12px top+bottom padding around the content row.
     assert.match(tag, /\bpy-3\b/,
-      `#${bar.id} keeps py-3 — the 12px half of the 72px total`);
+      `#${bar.id} keeps py-3 — the 12px half of the 52px total`);
     // A bottom border is part of the height (border-box), so it is part of
     // parity — which is why this is asserted at all rather than left alone.
     // The reskin removed the hairline from BOTH bars; re-adding it to one
@@ -112,56 +107,56 @@ test('both top bars carry the identical shape: py-3, no hairline, safe-area', ()
     // The row is max(child heights); a py-* on the header itself would be
     // additive, and a hardcoded h-* would fight the safe-area inset.
     assert.doesNotMatch(tag, /\bh-\d/,
-      `#${bar.id} does not hardcode its own height — padding + the 48px row is the contract`);
+      `#${bar.id} does not hardcode its own height — padding + the 28px row is the contract`);
   }
 });
 
-test('FLOOR: each bar holds its 48px content row open', () => {
+test('FLOOR: each bar holds its 28px content row open', () => {
   for (const bar of BARS) {
-    // `h-12` on the bar's LEAD GROUP is what holds the row open when
+    // `h-7` on the bar's LEAD GROUP is what holds the row open when
     // #header-title is hidden (native WebView), and `flex items-center`
-    // centres whatever is in it inside those 48px. That is the floor, and it
+    // centres whatever is in it inside those 28px. That is the floor, and it
     // is the whole of what parity requires.
     //
     // WIDTH IS NO LONGER PART OF IT, and only on the platform bar. The fixed
-    // `w-12` box existed to (a) keep a CENTRED title from shifting as the back
+    // `w-7` box existed to (a) keep a CENTRED title from shifting as the back
     // anchor came and went and (b) hold either the arrow or the app glyph,
     // which never drew together. #1443 retired the app glyph and made the
     // chip the header's flush-left label, so the box had one occupant and no
     // centring to protect — all it did was reserve an inch of dead space at
     // the top-left of every root screen.
     //
-    // The landing bar still has its w-12 box: its title IS centred and its
+    // The landing bar still has its w-7 box: its title IS centred and its
     // back button still comes and goes, so the reason survives there. Two
     // bars, one floor, and the width rule kept exactly where it still buys
     // something.
-    const lead = withoutComments(bar.slice).match(/<div[^>]*class="([^"]*\bh-12\b[^"]*)"/);
-    assert.ok(lead, `#${bar.id} still has a lead group carrying the 48px floor`);
+    const lead = withoutComments(bar.slice).match(/<div[^>]*class="([^"]*\bh-7\b[^"]*)"/);
+    assert.ok(lead, `#${bar.id} still has a lead group carrying the 28px floor`);
     const classes = lead[1].split(/\s+/);
     assert.ok(classes.includes('flex') && classes.includes('items-center'),
-      `#${bar.id}'s lead group centres its content in those 48px`);
+      `#${bar.id}'s lead group centres its content in those 28px`);
     assert.ok(classes.includes('shrink-0'),
       `#${bar.id}'s lead group never compresses below the floor`);
     if (bar.id === 'landing-header') {
-      assert.ok(classes.includes('w-12'),
-        '#landing-header keeps its fixed 48px box — its title is centred');
+      assert.ok(classes.includes('w-7'),
+        '#landing-header keeps its fixed 28px box — its title is centred');
     }
   }
 });
 
-test('CEILING: the Improve button is exactly the 48px row', () => {
+test('CEILING: the Improve button is exactly the 28px row', () => {
   // THE UI OVERHAUL replaced #app-mode-switch with #improve-btn, and the
   // invariant transferred WITH it: this is the one child that appears in the
   // bar when an app opens, so its height IS the in-app header height. The
   // switch it replaced was 30px for a while (24px segments + 4px p-0.5 + 2px
   // border), which quietly made the in-app header 2px taller than every other
-  // screen's — the whole of #909. Pinning the replacement to h-12 is what stops
+  // screen's — the whole of #909. Pinning the replacement to h-7 is what stops
   // that recurring with a differently-shaped control.
   const tag = html.match(/<button id="improve-btn"[\s\S]*?>/)[0];
-  assert.match(tag, /\bh-12\b/,
-    "the Improve button is pinned to the header's 48px content row");
+  assert.match(tag, /\bh-7\b/,
+    "the Improve button is pinned to the header's 28px content row");
   assert.doesNotMatch(tag, /\b(?:sm:)?py-\d/,
-    'the Improve button carries no vertical padding — h-12 owns the height');
+    'the Improve button carries no vertical padding — h-7 owns the height');
   // It has a text label as well as a glyph, so it must centre its content
   // vertically rather than letting the two children set their own baseline.
   assert.match(tag, /\bitems-center\b/,
@@ -171,12 +166,12 @@ test('CEILING: the Improve button is exactly the 48px row', () => {
   // Improve met — one smudged mark rather than a state cue in front of a
   // label, worst on the spinner (whose arc carries no bounding whitespace)
   // and on the arrow-path (whose head reaches the glyph box's edge). A gap
-  // is a horizontal cost only, so the 48px ceiling above is untouched.
+  // is a horizontal cost only, so the 28px ceiling above is untouched.
   assert.match(tag, /\bgap-1\.5\b/,
     'the glyph and the label are spaced like the header group they sit in');
 });
 
-test('CEILING: the landing CTAs stay 48px at every width', () => {
+test('CEILING: the landing CTAs stay 28px at every width', () => {
   const landing = BARS.find((b) => b.id === 'landing-header').slice;
   const ctaBlock = landing.slice(landing.indexOf('id="landing-header-ctas"'));
   const anchors = ctaBlock.match(/<a [^>]*>/g) || [];
@@ -187,11 +182,11 @@ test('CEILING: the landing CTAs stay 48px at every width', () => {
     // `sm:py-2 sm:text-sm` bump made them 36px (a 61px bar on desktop), and
     // even at py-1.5 the BORDERED "Join waitlist" was 30px to its
     // borderless siblings' 28px — the 1px border is part of the box.
-    assert.match(a, /\bh-12\b/, 'landing CTA is pinned to the 48px content row');
+    assert.match(a, /\bh-7\b/, 'landing CTA is pinned to the 28px content row');
     assert.match(a, /\binline-flex\b/, 'landing CTA is a flex box so its label can centre');
-    assert.match(a, /\bitems-center\b/, 'landing CTA centres its label in those 48px');
+    assert.match(a, /\bitems-center\b/, 'landing CTA centres its label in those 28px');
     assert.doesNotMatch(a, /\b(?:sm:)?py-\d/,
-      'no vertical padding on a landing CTA — the h-12 box owns the height');
+      'no vertical padding on a landing CTA — the h-7 box owns the height');
     assert.doesNotMatch(a, /\bsm:text-(?:sm|base|lg|xl)\b/,
       'no responsive font-size bump on a landing CTA — a taller line box grows the bar');
     assert.match(a, /\btext-xs\b/, 'landing CTA keeps its 16px line box');
@@ -200,23 +195,23 @@ test('CEILING: the landing CTAs stay 48px at every width', () => {
   }
 });
 
-test('CEILING: nothing in either bar is taller than the 48px row', () => {
+test('CEILING: nothing in either bar is taller than the 28px row', () => {
   // A cheap guard against the next tall thing dropped into a header: the
-  // only heights that belong in there are h-5/h-6 (20-24px icons), h-12
-  // (the row itself) and the badges' h-[1.1rem] pills.
+  // only heights that belong in there are h-5 (20px icons), h-7 (the row
+  // itself) and the badges' h-[1.1rem] pills.
   for (const bar of BARS) {
     // py-3 lives on the header's own opening tag, not on a child.
     const children = withoutComments(bar.slice.slice(openingTag(bar.slice).length));
-    for (const cls of ['h-14', 'h-16', 'h-20', 'py-2', 'py-3', 'py-4']) {
+    for (const cls of ['h-8', 'h-9', 'h-10', 'h-12', 'py-2', 'py-3', 'py-4']) {
       assert.ok(
         !new RegExp(`\\b(?:sm:|md:|lg:)?${cls}\\b`).test(children),
-        `#${bar.id} has no ${cls} child — the content row is 48px`,
+        `#${bar.id} has no ${cls} child — the content row is 28px`,
       );
     }
     for (const cls of ['text-xl', 'text-2xl', 'text-3xl']) {
       assert.ok(
         !new RegExp(`\\b(?:sm:|md:|lg:)?${cls}\\b`).test(children),
-        `#${bar.id} has no ${cls} — a bigger line box would grow the row past 48px`,
+        `#${bar.id} has no ${cls} — a bigger line box would grow the row past 28px`,
       );
     }
   }
@@ -246,7 +241,7 @@ test('the invariant is documented where the next editor will look', () => {
   const head = block.slice(0, block.indexOf('── Header title centering'));
   assert.match(head, /#platform-header/, 'the block names both bars');
   assert.match(head, /#landing-header/, 'the block names both bars');
-  assert.match(head, /48px/, 'the block states the content-row height');
+  assert.match(head, /28px/, 'the block states the content-row height');
   assert.match(head, /header-layout/,
     'the block warns that the w-5 width is measured by the header-layout code');
   // The stale "Kept at 28px tall" claim on the retired #app-mode-switch was
@@ -256,7 +251,7 @@ test('the invariant is documented where the next editor will look', () => {
   // the rule — see features/improve/improve-button.tsx.
   const buttonSrc = fs.readFileSync(
     path.join(root, 'frontend/src/features/improve/improve-button.tsx'), 'utf8');
-  assert.match(buttonSrc, /h-12` matches the header's 48px content-row ceiling|h-12`? matches the header/,
+  assert.match(buttonSrc, /h-7` matches the header's 28px content-row ceiling|h-7`? matches the header/,
     'the Improve button comment points at the class that pins its height');
 });
 

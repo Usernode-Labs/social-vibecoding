@@ -99,11 +99,11 @@ import '../notifications/mount';
 // app chip beside them all the same way: periwinkle ink on a periwinkle tint
 // with a hairline one step darker (--brand-ink / --brand-tint / --brand-line
 // in app.css, which also carry the dark values, so no dark: variants here).
-// Discs at 48px, the design's own circle, which is also the header's content
-// row (tests/header-height-parity.test.js pins it, and #909 before it pinned
-// the 28px row this grew from). The hairline is inside the h-12 box
+// Discs at 28px, not the design's larger circle: the header's content row is
+// pinned to 28px (tests/header-height-parity.test.js, and #909 before it), so
+// the ratio scales rather than the row. The hairline is inside the h-7 box
 // (border-box), so the row's ceiling holds.
-const BACK_BTN_CLASS = 'inline-flex items-center justify-center w-12 h-12 rounded-full'
+const BACK_BTN_CLASS = 'inline-flex items-center justify-center w-7 h-7 rounded-full'
   + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
   + ' text-[color:var(--brand-ink)] un-touch-target';
 
@@ -260,13 +260,12 @@ export function PlatformHeader() {
           invariant below is untouched.
 
           HEADER HEIGHT INVARIANT (see the matching block in
-          public/css/app.css): this bar is `py-3` around a 48px content
-          row, so it is 72px + safe-area on EVERY screen. The row height
+          public/css/app.css): this bar is `py-3` around a 28px content
+          row, so it is 52px + safe-area on EVERY screen. The row height
           must not depend on which children happen to be present — the
-          `h-12` on the back-btn wrapper below is the floor (it survives
+          `h-7` on the back-btn wrapper below is the floor (it survives
           #header-title being display:none in the native WebView), and no
-          direct child may exceed 48px (the ceiling). The row was 28px
-          until the homescreen design, whose chip and bell are 48px discs.
+          direct child may exceed 28px (the ceiling).
 
           It was 53px until the reskin: there used to be a 1px `border-b`
           hairline here, and the border box counted it. The widget language
@@ -353,7 +352,7 @@ export function PlatformHeader() {
         */}
         <div
           ref={leftGroupRef}
-          className={'h-12 shrink-0 flex items-center gap-1.5 min-w-0'
+          className={'h-7 shrink-0 flex items-center gap-1.5 min-w-0'
             + (mode === 'none' ? ' hidden' : '')}
         >
           {/*
@@ -364,7 +363,7 @@ export function PlatformHeader() {
                 (App._showOnlyScreen). `inline-flex items-center` keeps the
                 20px icon centred: an <a> is `inline` where a <button> was
                 `inline-block`, and while this element is a flex item today
-                (so it is blockified anyway) the 48px header content-row floor
+                (so it is blockified anyway) the 28px header content-row floor
                 is load-bearing enough not to leave to that. No target=_blank:
                 in the native WebView that would push a plain tap out to the
                 system browser.
@@ -526,7 +525,7 @@ export function PlatformHeader() {
           <a
             id="notifications-btn"
             href="#notifications"
-            className="relative w-12 h-12 flex items-center justify-center rounded-full un-touch-target border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)]"
+            className="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] text-[color:var(--brand-ink)]"
             aria-label="Notifications"
             aria-haspopup="dialog"
             onClick={(event) => {
@@ -535,7 +534,7 @@ export function PlatformHeader() {
               (window as any).NotificationsSheet?.toggle?.();
             }}
           >
-            <BellIcon className="w-6 h-6" />
+            <BellIcon className="w-5 h-5" />
             <span
               id="notifications-badge"
               /*

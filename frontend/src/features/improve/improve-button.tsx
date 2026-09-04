@@ -73,7 +73,7 @@ import { improveStore } from './improve-store.js';
 import { Improve } from './improve-controller.js';
 
 /**
- * `h-12` matches the header's 48px content-row ceiling — the same constraint
+ * `h-7` matches the header's 28px content-row ceiling — the same constraint
  * the App/Dev switch was pinned to, and for the same reason: this is the only
  * thing that appears in the header when an app opens, so its height IS the
  * header's height there.
@@ -105,9 +105,9 @@ import { Improve } from './improve-controller.js';
 // tailwind.config.js: the scale name is an identity, not a hue), which is
 // exactly the blue the board draws.
 //
-// h-12 and no vertical padding are the header's 48px content-row ceiling,
+// h-7 and no vertical padding are the header's 28px content-row ceiling,
 // pinned by tests/header-height-parity.test.js — a filled pill keeps it by
-// taking its height from `h-12` and its shape from `rounded-full`.
+// taking its height from `h-7` and its shape from `rounded-full`.
 // No trailing margin. `mr-2.5` sat here from when this button had siblings to
 // its right; as the LAST control in the bar it was 10px of dead space between
 // Improve and the header's own px-4 edge, so the accent pill never actually
@@ -121,10 +121,10 @@ import { Improve } from './improve-controller.js';
 // the glyph box's right edge. 6px is the gap the header's own right group
 // uses between controls, so the pill's insides are spaced like the bar it
 // sits in. It costs the pill 6px of width and nothing of height, so the
-// header's 48px content row (tests/header-height-parity.test.js) is
+// header's 28px content row (tests/header-height-parity.test.js) is
 // untouched.
 const IMPROVE_BTN_CLASS =
-  'relative inline-flex items-center gap-1.5 h-12 px-5 rounded-full '
+  'relative inline-flex items-center gap-1.5 h-7 px-3 rounded-full '
   + 'bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold '
   + 'un-touch-target';
 

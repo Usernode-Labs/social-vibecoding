@@ -32,12 +32,12 @@
  * `.is-centered` on this node via classList, and a re-rendered class
  * attribute would drop it. `pointer-events-none` stays on the h1 and
  * `pointer-events-auto` on the chip inside it, so only the content-sized
- * chip takes taps and never the overlap. The 48px content-row floor
- * (tests/header-height-parity.test.js) is why the chip is `h-12`.
+ * chip takes taps and never the overlap. The 28px content-row floor
+ * (tests/header-height-parity.test.js) is why the chip is `h-7`.
  *
  * ── It reads as a control, because it is one ───────────────────────────
  *
- * The chip carries the same 48px tinted surface as #back-btn and the bell:
+ * The chip carries the same 28px tinted surface as #back-btn and the bell:
  * `bg-zinc-50 / dark:bg-zinc-800`, rounded full. Sitting on the page ground
  * as bare text, it looked like the heading it replaced — which is the one
  * thing it must not look like, since the whole design rests on people finding
@@ -141,8 +141,8 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
       <button
         id="app-switcher-btn"
         type="button"
-        className={'pointer-events-auto inline-flex items-center gap-1.5 max-w-full h-12 '
-          + 'pl-6 pr-4 rounded-full align-middle un-touch-target text-lg font-bold '
+        className={'pointer-events-auto inline-flex items-center gap-1 max-w-full h-7 '
+          + 'pl-3.5 pr-2.5 rounded-full align-middle un-touch-target font-bold '
           + 'border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)] '
           + 'text-[color:var(--brand-ink)]'}
         aria-haspopup="dialog"
@@ -175,7 +175,7 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
             </span>
           ) : null}
         </span>
-        <ChevronDownIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
+        <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
       </button>
     </h1>
   );
