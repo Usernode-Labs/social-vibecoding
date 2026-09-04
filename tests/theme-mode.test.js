@@ -86,15 +86,15 @@ test('the ground is painted before any stylesheet, and the chrome follows the th
   // that it is keyed off `.dark` rather than delegated to the OS; these two
   // assertions still own the ground colours themselves.
   const src = themeSrc();
-  assert.match(src, /html \{ background-color: #fffeea; color-scheme: light; \}/,
+  assert.match(src, /html \{ background-color: #f4f2e4; color-scheme: light; \}/,
     'the light ground is painted with no stylesheet loaded');
-  assert.match(src, /html\.dark \{ background-color: #0b0b0c; color-scheme: dark; \}/,
+  assert.match(src, /html\.dark \{ background-color: #0b0d1b; color-scheme: dark; \}/,
     'and the dark one, keyed off the class apply() has just written');
   // Written from the RESOLVED theme, not left to a prefers-color-scheme meta
   // pair: the shell's own Light/Dark override is a class on <html> that no
   // media query can see, so a viewer who picks Light on a dark OS has to get
   // the light chrome.
-  assert.match(src, /const GROUND = \{ light: '#fffeea', dark: '#0b0b0c' \};/);
+  assert.match(src, /const GROUND = \{ light: '#f4f2e4', dark: '#0b0d1b' \};/);
   const apply = src.slice(src.indexOf('function apply()'), src.indexOf('function set('));
   assert.match(apply, /meta\[name="theme-color"\]/,
     'apply() owns the chrome colour');
