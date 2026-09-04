@@ -702,9 +702,11 @@ test('render: the heading names its area and carries the ⋮ — the counter is 
   // the controls followed the title out and the card opens on its own content.
   assert.match(html, /home-area-label/);
   assert.match(html, /Challenges/);
-  assert.match(html, /home-panel-menu[^>]*data-panel-key="challenges"/);
-  assert.match(html, /home-panel-menu[\s\S]*?<\/h2>/,
-    'the ⋮ is in the heading, not in the article it names');
+  // The ⋮ followed the title out too, and then LEFT: the homescreen design's
+  // area rows are label + link and nothing else, so no heading renders it now
+  // (PanelMenuButton stays in ui.tsx for whatever surface takes "Hide widget"
+  // over). Nothing else may quietly bring it back into the card either.
+  assert.doesNotMatch(html, /home-panel-menu/, 'no ⋮ anywhere in the block');
 
   // THE COUNTER IS NOT. "· 1 of 6 · 3,900 pts left" rode here at 12px —
   // shrunk from the label's own size because at 15px it ellipsised
@@ -1275,13 +1277,18 @@ test('the block wires no drag recognizer of its own', () => {
 // Replaces the bare ✕: a destructive control with no undo, one press away on
 // a block whose whole job is to sit quietly on the home screen.
 
-test('the ⋮ button is a real touch target with menu semantics', () => {
+test('the ⋮ is not rendered, and the bare ✕ it replaced did not come back', () => {
+  // The homescreen design took the ⋮ out of the area headings. The component
+  // keeps its menu semantics for whatever mounts it next; what the rendered
+  // shell must NOT do is fall back to the destructive one-press ✕.
   const { html } = renderWith({ registry: [], hidden: [], panels: [panel()] });
-  const btn = html.match(/<button[^>]*home-panel-menu[\s\S]*?<\/button>/)[0];
-  assert.match(btn, /un-touch-target/, 'the kit pads a small glyph out to a finger');
+  assert.doesNotMatch(html, /home-panel-menu/, 'no ⋮ in the rendered headings');
+  assert.doesNotMatch(html, /home-panel-hide/, 'the ✕ is gone, not merely restyled');
+  const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));
+  const btn = ui.slice(ui.indexOf('home-panel-menu'), ui.indexOf('</button>', ui.indexOf('home-panel-menu')));
+  assert.match(btn, /un-touch-target/, 'the component still pads a small glyph out to a finger');
   assert.match(btn, /aria-haspopup="menu"/);
   assert.match(btn, /aria-label="Widget options"/);
-  assert.doesNotMatch(html, /home-panel-hide/, 'the ✕ is gone, not merely restyled');
 });
 
 test('the menu offers the destination and a deliberate hide', () => {
@@ -1677,11 +1684,11 @@ test('Discover draws no chrome of its own; its control is in the section heading
   const html = renderDiscover();
   assert.doesNotMatch(html, /home-panel-footer/);
   assert.doesNotMatch(html, /home-panel-bar[^-]/, 'and no bar — the card is two lanes');
-  // The button sits in the heading, between the label and the ⋮. Discover has
-  // ONE destination, so it belongs beside the area's name rather than in 27px
-  // of chrome above two lanes.
-  assert.match(html, /home-area-label[\s\S]*?id="home-browse-btn"[\s\S]*?home-panel-menu[\s\S]*?<\/h2>/,
-    'browse sits between the label and the ⋮, inside the heading');
+  // The button sits in the heading, after the label (the ⋮ that used to
+  // follow it is gone). Discover has ONE destination, so it belongs beside the
+  // area's name rather than in 27px of chrome above two lanes.
+  assert.match(html, /home-area-label[\s\S]*?id="home-browse-btn"[\s\S]*?<\/h2>/,
+    'browse sits after the label, inside the heading');
   // ...and in the empty branch too — it is THE discovery path.
   const empty = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
   assert.match(empty, /home-area-label[\s\S]*?id="home-browse-btn"/);
@@ -1968,10 +1975,10 @@ test('the block draws all four rows, its footer and its toggle — at any width'
     'the footer keeps the Challenges-tab door; the heading carries the leaderboard');
   // The leaderboard link (#980) with the LONG label — the compact
   // "Leaderboard" existed only for the one-cell bar. It is in the SECTION
-  // HEADING now, before the ⋮, which is where every block's chrome went when
-  // the title left the card.
-  assert.match(html, /home-area-label[\s\S]*?home-panel-lb-browse[\s\S]*?home-panel-menu[\s\S]*?<\/h2>/,
-    'inside the heading, before the ⋮ menu');
+  // HEADING now, which is where every block's chrome went when the title
+  // left the card (the ⋮ that once followed it is gone).
+  assert.match(html, /home-area-label[\s\S]*?home-panel-lb-browse[\s\S]*?<\/h2>/,
+    'inside the heading');
   assert.match(html, /home-panel-lb-browse[^>]*title="Open the Leaderboard screen"/);
   assert.match(html, /<span class="whitespace-nowrap">Open leaderboard<\/span>/);
   const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));

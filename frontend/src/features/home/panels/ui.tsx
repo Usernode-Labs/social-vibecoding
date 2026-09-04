@@ -93,17 +93,18 @@ export function stampProps(stamps: PanelStamps | undefined) {
  * zinc-500 — the shell's secondary ink), so the type itself is a MOVE rather
  * than a restyle.
  *
- * THE HOMESCREEN DESIGN then restyled it: 16px bold in the primary ink, the
+ * THE HOMESCREEN DESIGN then restyled it: 16px semibold in the primary ink, the
  * area title rather than a caption, with the area's link beside it at 14px
  * semibold in the brand periwinkle (--brand-ink) and no glyph in front of it.
- * The row's shape — label, link, ⋮ — is unchanged.
+ * The row's shape is label + link: the ⋮ that used to ride here is gone
+ * (see PanelMenuButton).
  */
 export function SectionHeading({ children, action }: {
   children: ReactNode;
   action?: ReactNode;
 }) {
   return (
-    <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-base font-bold leading-tight text-zinc-900 dark:text-zinc-100">
+    <h2 className="home-area-label flex items-center gap-2 pt-4 pb-1.5 text-base font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
       <span className="min-w-0 flex-1 truncate whitespace-nowrap">{children}</span>
       {action}
     </h2>
@@ -114,10 +115,12 @@ export function SectionHeading({ children, action }: {
  * The ⋮ that opens a block's own menu (hide this widget, and the rows
  * HomePanels.menuItems builds for it).
  *
- * It rides in the section heading beside the block's link — see
- * `SectionHeading` for why everything that is chrome ABOUT a block sits above
- * it rather than inside it. `data-panel-key` still names which block it acts
- * on, which is what it was for when the button lived in the card.
+ * NOT RENDERED since the homescreen design: the design's area rows are label
+ * + link and nothing else, so the Discover and Challenges headings dropped it.
+ * The component and HomePanels.openMenu stay — "Hide widget" has no other
+ * affordance yet, and whichever surface takes that over (an edit mode, a
+ * settings row) can mount this or call openMenu directly. `data-panel-key`
+ * names which block it acts on.
  */
 export function PanelMenuButton({ panelKey }: { panelKey: string }) {
   return (

@@ -97,7 +97,10 @@ test('a 44px tap target on a 16px control cannot fit the feed gutter', () => {
   assert.match(body, /transform:\s*translate\(-50%/, '…so it overhangs both sides');
   const hit = Number(min[1]);
 
-  // The control: the ⋮ in a home area label.
+  // The control: the ⋮ component for a home area label. It is not mounted
+  // since the homescreen design, but it is the un-touch-target control the
+  // label is built to take, so its width is still the number the rule below
+  // has to explain.
   const btn = PANEL_UI.slice(PANEL_UI.indexOf('home-panel-menu'));
   const w = btn.match(/\bw-(\d+)\b/);
   assert.ok(w, 'the ⋮ states its width in Tailwind steps');
