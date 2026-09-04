@@ -1839,14 +1839,19 @@
       "expectSelector": "#account-row-node"
     },
     {
-      "name": "Work-in-flight badge sits on the Improve button (Streamlined Concept)",
+      "name": "The completed-task badge sits on the bell, not the Improve pill (#1610)",
       "path": "/",
-      "expectSelector": "#improve-btn #notifications-badge-ai"
+      "expectSelector": "#notifications-btn #notifications-badge[data-session-done]"
     },
     {
-      "name": "Work-in-flight badge is VISIBLE when a finished dev session is unread",
+      "name": "The bell badge is VISIBLE when a finished dev session is unread (#1610)",
       "path": "/?demo=1",
-      "expectSelector": "#improve-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
+      "expectSelector": "#notifications-btn #notifications-badge:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
+    },
+    {
+      "name": "The Improve pill carries no notification count (#1610)",
+      "path": "/?demo=1",
+      "expectSelector": "#improve-btn:not(:has([id^=\"notifications-badge\"]))"
     },
     {
       "name": "Admin & moderation renders in the chip's menu for admins (#588, #1443)",

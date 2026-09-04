@@ -49,22 +49,21 @@ function methodBody(name) {
 
 // ── 1. the count is back on the bell ────────────────────────────────────
 
-test('the bell splits out session notifications and nothing else', () => {
+test('the bell counts every unread kind, plus pending invites', () => {
   // The body is a single `return`, so it is the function body as extracted.
-  const bellUnread = new Function('Notifications', methodBody('_bellUnread'));
+  const badgeTotal = new Function('Notifications', methodBody('_badgeTotal'));
 
   // Nine unread on the account: four of them messages, two of them the
-  // session kinds #improve-btn carries. Only the session pair is subtracted.
-  const count = bellUnread({
-    unread: 9,
-    _sessionUnread: () => 2,
-  });
-  assert.equal(count, 7, 'message notifications are counted on the bell again');
+  // session kinds #improve-btn used to carry. Nothing is subtracted now
+  // (#1610) — the bell is the only badge, so a split would only lose a count
+  // on a surface that could not clear it.
+  const count = badgeTotal({ unread: 9, invites: [{ appId: 1 }] });
+  assert.equal(count, 10, 'every unread kind is counted on the bell, plus invites');
 
-  // The subtraction reads the loaded items page while `unread` is the
-  // server's account-wide total, so it can overshoot on an account with more
-  // unread than one page holds. An undercount beats a negative badge.
-  assert.equal(bellUnread({ unread: 1, _sessionUnread: () => 4 }), 0);
+  assert.doesNotMatch(FE_SRC, /_bellUnread/,
+    'the session subtraction is gone, not merely unused');
+  assert.doesNotMatch(FE_SRC, /_sessionUnread\b/,
+    'and so is the half of the split it read');
 });
 
 test('nothing in notifications.js counts or paints a messages badge', () => {
@@ -74,6 +73,8 @@ test('nothing in notifications.js counts or paints a messages badge', () => {
     'the window seam the retired badge was published on is gone');
   assert.doesNotMatch(FE_SRC, /drawer-messages-badge/,
     '_renderBadge paints the bell only');
+  assert.doesNotMatch(FE_SRC, /notifications-badge-ai/,
+    'nor the retired green count on #improve-btn (#1610)');
 });
 
 // ── 2. …and off the row behind the app chip ─────────────────────────────

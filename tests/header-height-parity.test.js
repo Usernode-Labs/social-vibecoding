@@ -229,8 +229,9 @@ test('badges still overflow the row rather than being clipped', () => {
   const platform = BARS.find((b) => b.id === 'platform-header').slice;
   assert.match(platform, /id="notifications-badge"[^>]*-top-1/,
     'the bell badge still hangs off the top-right corner');
-  assert.match(platform, /id="notifications-badge-ai"[^>]*-top-1/,
-    'the work-cog badge is positioned identically to the bell badge');
+  assert.match(platform, /id="improve-working-dot"[^>]*-top-1/,
+    'and the Improve button\'s working dot hangs off the same corner (#1610 '
+    + 'retired the green count that used to sit there)');
 });
 
 test('the invariant is documented where the next editor will look', () => {

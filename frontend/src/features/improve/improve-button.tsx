@@ -35,14 +35,13 @@
  * button is the only way to reach the feedback dialog — an unsent draft with
  * no visible cue is the failure it exists to prevent.
  *
- * #1412 parked the green session count, a version dot and a
- * spinner-while-working glyph here; the Streamlined Concept re-homed all of
- * that onto the hamburger's badge cluster — see <MenuIndicators/> in
- * ../header/platform-header.tsx (the working cue is the emerald badge's
- * pulse there) — because this slot slims to a plain word and the board keeps
- * the hamburger as THE indicator cluster. The version dot has since been
- * retired outright: the leading glyph already changes for exactly the states
- * it coloured — see <ImproveIndicators/> below.
+ * The other thing is `#improve-working-dot` (top-right, emerald, pulsing):
+ * a dev session the viewer can see is mid-turn. That is the whole list.
+ * #1412 also parked a green session COUNT and a version dot here; both are
+ * retired. The version dot said in 8px of colour what the leading glyph
+ * already says in shape, and the count moved to the bell in #1610 because
+ * nothing behind this button could clear it — see <ImproveIndicators/>
+ * below for both.
  *
  * ── The slot is NOT contextual any more ────────────────────────────────
  *
@@ -165,25 +164,27 @@ function ImproveGlyph({ versionState, appDeploying }: {
   </span>;
 }
 
-// Byte-identical to the bell's own badge run, which is the point: the two are
-// twins at different corners of different controls, and a contrast/geometry
-// test diffs them as such.
-const AI_BADGE_CLS =
-  'absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full '
-  + 'bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center';
-
 /**
- * What changed while you were not looking.
+ * What is happening RIGHT NOW behind this button.
  *
- * #1412 built these for the Improve button and the Streamlined header then
- * parked them on the hamburger, because that was the control whose drawer
- * held the sessions. It does not any more: this panel is the sessions
- * surface, so the cue that says "go and look" belongs on the control that
- * opens it. The writers publish through improveStore
- * (Improve.setSessionBadge, never a classList write by id), the count carries
- * `data-session-done` for the declared checks, and a running turn shows as a
- * pulse on the emerald badge, which also appears dot-sized and empty when a
- * turn runs with nothing unread yet.
+ * #1412 built a count here — unread session-related notifications, split out
+ * of the bell's number so the two would not double-count — on the grounds
+ * that the sessions themselves are behind this button, so its badge sent you
+ * somewhere the bell could not.
+ *
+ * #1610 took the count away, because nothing here could clear it. A session
+ * notification is marked read by clicking its row in the bell's list, by a
+ * group-chat mark-read, or by mark-all; opening this panel marks nothing. So
+ * a finished session raised a number on the one control that could not
+ * dismiss it, and the reporter did exactly what the number asked — pressed
+ * Improve again, found no notification, and left the badge sitting there. The
+ * count lives on the bell now, where the list that clears it lives.
+ *
+ * What is LEFT is the pulse, and the distinction is the point: a count is an
+ * event waiting to be read, and belongs where reading happens; "a turn is
+ * running right now" is a live fact about this button, true only while it is
+ * true and needing no dismissal at all. It renders as a bare 8px emerald dot
+ * with no text and no count.
  *
  * ── #improve-version-dot is GONE, and the glyph is why ─────────────────
  *
@@ -200,29 +201,26 @@ const AI_BADGE_CLS =
  * reads them. What is gone is the second renderer.
  *
  * Two corners left, and the rule that separated them still holds: the outbox
- * dot is bottom-left and the session count top-right, so an unsent draft and
- * an unread finish cannot hide under each other. The outbox dot STAYS — it is
- * the one cue here the glyph does not cover, and an unsent feedback draft with
+ * dot is bottom-left and the working dot top-right, so an unsent draft and a
+ * running turn cannot hide under each other. The outbox dot STAYS — it is the
+ * one cue here the glyph does not cover, and an unsent feedback draft with
  * nothing to show for it is the failure it exists to prevent.
  *
- * At rest everything is `hidden` with the exact class runs the prerender
- * ships, so hydration matches.
+ * At rest it ships `hidden` with exactly the class run the prerender emits,
+ * the same shape as the outbox dot beside it — rendered rather than absent so
+ * hydration matches and the id stays in the shell's declared inventory.
  */
+const WORKING_DOT_CLS = 'absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+
 function ImproveIndicators() {
-  const { working, sessionUnread, sessionDone } = useStoreState(improveStore);
-  const showAi = working || sessionUnread > 0;
+  const { working } = useStoreState(improveStore);
   return (
-    <>
-      <span
-        id="notifications-badge-ai"
-        data-session-done={String(sessionDone)}
-        className={showAi
-          ? `${AI_BADGE_CLS}${working ? ' animate-pulse' : ''}`
-          : `hidden ${AI_BADGE_CLS}`}
-      >
-        {sessionUnread > 0 ? (sessionUnread > 99 ? '99+' : String(sessionUnread)) : ''}
-      </span>
-    </>
+    <span
+      id="improve-working-dot"
+      className={working ? WORKING_DOT_CLS : `hidden ${WORKING_DOT_CLS}`}
+      aria-hidden="true"
+    >
+    </span>
   );
 }
 
@@ -281,8 +279,8 @@ export function ImproveButton() {
       <ImproveGlyph versionState={versionState} appDeploying={deploying} />
       Improve
       {/* Bottom-LEFT, where it landed when #1412's green count took the
-          top-right corner. All three indicators are on this control again
-          now, one per corner, so nothing needs to move. */}
+          top-right corner. That count is retired (#1610) and the working
+          pulse holds the corner instead, so nothing needs to move. */}
       <span
         ref={dotRef}
         id="feedback-queue-dot"

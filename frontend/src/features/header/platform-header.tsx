@@ -528,6 +528,16 @@ export function PlatformHeader() {
             <BellIcon className="w-5 h-5" />
             <span
               id="notifications-badge"
+              /*
+                 Constant, and deliberately so. Notifications._renderBadge
+                 overwrites it with the live count of unread finished dev
+                 sessions, which is what a declared check selects on to prove
+                 the badge is showing BECAUSE work completed. Rendering it as
+                 a constant keeps the prerender, the first client render and
+                 React's reconciliation all agreeing on "0", so the painted
+                 value is never patched back out.
+              */
+              data-session-done="0"
               className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
               aria-label="Unread notifications"
             >
