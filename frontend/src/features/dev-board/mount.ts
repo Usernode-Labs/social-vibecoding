@@ -221,12 +221,6 @@ export const devBoardBridge: DevBoardBridge = {
     cardMenuStore.set({ rows });
   },
 
-  // The kanban board's filter strip. Mounted once per kanban entry; the feed
-  // has no filters and publishes `mounted: false`, which draws nothing and
-  // lets `empty:hidden` collapse the shared action row's host.
-  // The issue thread. `_renderTopicHead` rebuilds its host on every
-  // WS-driven refresh, so this mounts per fill; the previous host's entry is
-  // swept as detached.
   publishLockedNotice(locked) {
     lockedNoticeStore.set({ locked });
   },
@@ -247,6 +241,9 @@ export const devBoardBridge: DevBoardBridge = {
     issueCommentsStore.set(state);
   },
 
+  // The shared Board/Activity filter strip. Its initial `mounted: false`
+  // state draws no children while data loads; the frame keeps the host's
+  // one-row reservation in place until this mount and publish fill it.
   mountKanbanFilters(host) {
     mountLegacyPortal(host, createElement(KanbanFilters));
   },
