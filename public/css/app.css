@@ -1300,48 +1300,57 @@ html, body {
 }
 
 /* ── The home ground ───────────────────────────────────────
-   The launcher's own wallpaper, from the homescreen design mock: a warm
-   cream page with a fine yellow paper grain, three soft colour washes
-   (grey-lavender top-right, pink lower-right, peach bottom-left) and a
-   blue halftone star tucked into the top-right corner.
+   The launcher's own wallpaper, ported layer for layer from the homescreen
+   design's Figma export (a 402x874 phone frame): a warm cream page, a fine
+   yellow paper grain, three gaussian-blurred colour discs and a blue
+   halftone star tucked into the top-right corner.
 
    PAINTED ON THE SCROLLER, NOT ON THE FEED. #home-screen is the
    overflow-y:auto box, and a background on a scroll container is fixed to
    the box rather than to its contents (background-attachment's default
    `scroll` means exactly that for a scrolling element), so the washes and
    the star stay put while the grid and panels scroll over them — a
-   wallpaper, not a banner that scrolls away. It also means the layers are
-   sized against the visible viewport (100% 100%), never against the full
-   scroll height, so a long feed cannot stretch a wash across two screens.
+   wallpaper, not a banner that scrolls away. The gradient layers are sized
+   to the visible box (100% 100%), never to the scroll height, so a long
+   feed cannot stretch a wash across two screens.
 
-   Only the home screen: the page ground under everything else is still
-   the body's `bg-zinc-100`, and the header keeps its own zinc slab for now
-   (joining the two into one contiguous surface is its own step).
+   THE DISCS are the export's blurred circles as radial gradients: each
+   holds its fill to (r - 2σ), is at half opacity at r, and is gone by
+   (r + 2σ), which is a gaussian edge to within what the eye reads. The two
+   corner discs are anchored in px to their corners, as in the export; the
+   mid-height one is anchored at 59% (515/874) so it stays mid-screen on a
+   taller viewport instead of parking at one fixed offset.
 
    THE STAR AND THE GRAIN ARE INLINE SVGS, not files. app.css is the one
    asset the shell already precaches and build-scopes (/b/<sha>/css/…), and
    a url() to a sibling image would need the same treatment in sw.js and in
    the build-scoped path parser — two more places to keep honest for two
-   decorative layers. Both are tiny. The star is a real halftone: soft
-   radial dots screen-blended with a corner-to-corner ramp and then
-   thresholded, so the top-right reads solid and the lower-left edge
-   dissolves into dots, exactly as the mock draws it. The grain is one
-   thresholded feTurbulence tile, repeated.
+   decorative layers. Both are ~1 KB. The grain is the export's own filter
+   chain (fractalNoise → luminanceToAlpha → one discrete band → #FFEE6F at
+   50%) on one stitched tile. The star keeps the export's geometry (92x87,
+   35px in from the right) and is drawn as a halftone: soft 4px radial dots
+   screen-blended with a corner-to-corner ramp and thresholded, with the
+   ramp kept out of the fully-solid band so dot size grades continuously
+   across the star and there is no hard solid/dotted boundary.
+
+   The header is still its own zinc slab for now, so the star sits whole
+   just under it (the export runs it 19px off the top, behind the bell);
+   joining the two surfaces is its own step and moves the star up.
 
    DARK MODE KEEPS ITS GROUND. The mock is a light-mode design; on the
    near-black page the scroller goes back to painting nothing of its own. */
 #home-screen {
-  --home-ground: #fffbe8;
+  --home-ground: #fffeea;
   background-color: var(--home-ground);
   background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='170'%3E%3Cdefs%3E%3CradialGradient id='d'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='1' stop-color='%23000'/%3E%3C/radialGradient%3E%3Cpattern id='p' width='4' height='4' patternUnits='userSpaceOnUse'%3E%3Crect width='4' height='4' fill='url(%23d)'/%3E%3C/pattern%3E%3ClinearGradient id='g' x1='.9' y1='.05' x2='.15' y2='.95'%3E%3Cstop offset='.3' stop-color='%23fff'/%3E%3Cstop offset='1' stop-color='%23777'/%3E%3C/linearGradient%3E%3Cfilter id='t'%3E%3CfeComponentTransfer%3E%3CfeFuncR type='discrete' tableValues='0 0 0 1'/%3E%3CfeFuncG type='discrete' tableValues='0 0 0 1'/%3E%3CfeFuncB type='discrete' tableValues='0 0 0 1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cmask id='m'%3E%3Cg filter='url(%23t)'%3E%3Crect width='200' height='170' fill='url(%23p)'/%3E%3Crect width='200' height='170' fill='url(%23g)' style='mix-blend-mode:screen'/%3E%3C/g%3E%3C/mask%3E%3C/defs%3E%3Cpolygon points='113,1 126,54 181,63 134,92 142,146 100,111 51,135 72,84 33,45 88,49' fill='%2393c7ee' mask='url(%23m)'/%3E%3C/svg%3E"),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='1' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 .95 0 0 0 0 .45 16 0 0 0 -10.4'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)'/%3E%3C/svg%3E"),
-    radial-gradient(42% 32% at 66% 22%, rgba(226, 220, 228, 0.85), rgba(226, 220, 228, 0)),
-    radial-gradient(32% 24% at 84% 62%, rgba(250, 210, 220, 0.85), rgba(250, 210, 220, 0)),
-    radial-gradient(36% 26% at 12% 96%, rgba(252, 214, 212, 0.95), rgba(252, 214, 212, 0));
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='96'%3E%3Cdefs%3E%3CradialGradient id='d'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='1' stop-color='%23000'/%3E%3C/radialGradient%3E%3Cpattern id='p' width='4' height='4' patternUnits='userSpaceOnUse'%3E%3Crect width='4' height='4' fill='url(%23d)'/%3E%3C/pattern%3E%3ClinearGradient id='g' x1='.85' y1='.05' x2='.15' y2='.95'%3E%3Cstop offset='0' stop-color='%23e6e6e6'/%3E%3Cstop offset='1' stop-color='%23555555'/%3E%3C/linearGradient%3E%3Cfilter id='t' color-interpolation-filters='sRGB'%3E%3CfeComponentTransfer%3E%3CfeFuncR type='discrete' tableValues='0 0 0 1'/%3E%3CfeFuncG type='discrete' tableValues='0 0 0 1'/%3E%3CfeFuncB type='discrete' tableValues='0 0 0 1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cmask id='m'%3E%3Cg filter='url(%23t)'%3E%3Crect width='100' height='96' fill='url(%23p)'/%3E%3Crect width='100' height='96' fill='url(%23g)' style='mix-blend-mode:screen'/%3E%3C/g%3E%3C/mask%3E%3C/defs%3E%3Cpolygon points='49.9,4.0 60.8,37.4 95.9,37.4 67.5,58.0 78.3,91.4 49.9,70.7 21.5,91.4 32.4,58.0 4.0,37.4 39.1,37.4 49.9,4.0' fill='%239dcdf0' mask='url(%23m)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.5'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E"),
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px),
+    radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px),
+    radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px);
   background-repeat: no-repeat, repeat, no-repeat, no-repeat, no-repeat;
-  background-position: right -10px top 6px, 0 0, 0 0, 0 0, 0 0;
-  background-size: 176px 150px, 220px 220px, 100% 100%, 100% 100%, 100% 100%;
+  background-position: right 35px top 4px, 0 0, 0 0, 0 0, 0 0;
+  background-size: 100px 96px, 240px 240px, 100% 100%, 100% 100%, 100% 100%;
 }
 .dark #home-screen {
   background-color: transparent;
