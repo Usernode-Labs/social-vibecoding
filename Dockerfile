@@ -8,6 +8,16 @@ RUN npm ci --ignore-scripts
 WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
+# The ONE server-tree file the shell bundle imports:
+# frontend/src/features/admin/topochain/countries.ts reads the same ISO table
+# the server does rather than mirroring 249 names into a second copy that
+# would drift. Everything else this stage needs lives under frontend/, which
+# is why nothing but the stamp above was copied before — and why this stage
+# is where a `../../../src/...` import goes wrong. It resolves in every local
+# run (the whole repo is on disk) and in no image build, so the first sign is
+# a staging preview that never boots. tests/shell-build.test.js pins this
+# list against the imports themselves.
+COPY src/services/countries.json ./src/services/countries.json
 # The commit this image is being built from, so the generated document can
 # carry its OWN build identity (a <meta name="platform-build">) instead of the
 # running tab having to infer one from the first /api/version answer it sees —

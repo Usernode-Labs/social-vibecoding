@@ -13,7 +13,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 /** `GET /api/public/waitlist/options`. Every field is optional by design. */
 export interface WaitlistOptions {
-  countries?: Record<string, Record<string, string>>;
+  /** Flat `alpha2 -> name`, in display order (sorted by English name). */
+  countries?: Record<string, string>;
   discovery_sources?: Record<string, string>;
   discovery_detail_labels?: Record<string, string>;
   group_sizes?: Record<string, string>;
