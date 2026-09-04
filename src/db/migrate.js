@@ -10426,17 +10426,30 @@ async function seedStagingTopochain(pool, config) {
 
     // ─── Challenge kinds (4) ────────────────────────────────────────────
     await pool.query(
-      `INSERT INTO challenge_kinds (id, name, description, created_at, updated_at)
+      `INSERT INTO challenge_kinds (id, name, description, icon, created_at, updated_at)
        VALUES
          ('REPORT_BUG_CHALLENGE', 'Report a bug',
-          'Find and report a reproducible bug.', NOW(), NOW()),
+          'Find and report a reproducible bug.', '🐞', NOW(), NOW()),
          ('SEND_TRANSACTION_CHALLENGE', 'Send a testnet transaction',
-          'Send a transaction on the testnet (or produce a block).', NOW(), NOW()),
+          'Send a transaction on the testnet (or produce a block).', '🔗', NOW(), NOW()),
          ('SOCIAL_SHARE_CHALLENGE', 'Share on social media',
-          'Share the season announcement on social media.', NOW(), NOW()),
+          'Share the season announcement on social media.', '📣', NOW(), NOW()),
          ('INVITE_PARTICIPANT_CHALLENGE', 'Invite a participant',
-          'Invite a new participant into the competition.', NOW(), NOW())
+          'Invite a new participant into the competition.', '🤝', NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`
+    );
+    // Backfill the icon on rows seeded before the column existed. Scoped to
+    // the four the platform seeds and to a NULL icon, so an organiser who has
+    // since chosen a different face keeps it.
+    await pool.query(
+      `UPDATE challenge_kinds SET icon = v.icon, updated_at = NOW()
+         FROM (VALUES
+           ('REPORT_BUG_CHALLENGE', '🐞'),
+           ('SEND_TRANSACTION_CHALLENGE', '🔗'),
+           ('SOCIAL_SHARE_CHALLENGE', '📣'),
+           ('INVITE_PARTICIPANT_CHALLENGE', '🤝')
+         ) AS v(id, icon)
+        WHERE challenge_kinds.id = v.id AND challenge_kinds.icon IS NULL`
     );
 
     // ─── Challenge templates (5; one kind is reused across two templates) ──

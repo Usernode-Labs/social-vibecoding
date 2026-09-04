@@ -1433,7 +1433,25 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 }
 .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
-  --home-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.18'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+  /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
+     with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
+     cast a reader notices only when looking for it, and that same near-white
+     blue on a near-black page is the loudest thing on the screen. Matched in
+     CIE Lab rather than by eye — the light pair sits ~14 dE apart, and
+     #1A2239 on this ground is ~12, which is the same "there, but not
+     announcing itself". The geometry, the alpha ramp and the file are
+     untouched; only the palette entry differs. */
+  --home-star: url("data:image/png;base64,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");
+  /* NO GRAIN IN DARK MODE. The speck field is a scatter of gold dots at a
+     low opacity: on cream it is the paper's tooth, which is what the export
+     draws it as. On a near-black ground the same dots are little bright
+     points — the page read as a starfield, which is a different picture
+     from the one the design is of. Dropped rather than dimmed: at an opacity
+     low enough to stop reading as stars it was not visible at all, so the
+     layer was costing a repeat paint for nothing.  is a valid layer
+     image, so the shorthands below keep their shape and the desktop rule
+     needs no second copy. */
+  --home-grain: none;
   --home-wallpaper:
     var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
     var(--home-grain) 0 0 / 240px 240px repeat,
@@ -2223,112 +2241,27 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   pointer-events: none;
 }
 
-/* ── Discover widget ────────────────────────────────────────
-   The block is ~366px wide on a phone and ~397px on a wide desktop, and it
-   draws two lanes and the caption between them — no title bar and no footer:
+/* ── THE TILE GRID IS RETIRED ───────────────────────────────
+   `.home-discover-tiles` was six explicit grid tracks (`--lane-tracks`, set
+   from the lane's own count and floored at four), `.home-discover-icon-wrap`
+   capped the fluid icon at the 40px the tile always drew at, `.home-discover-
+   icon` held it square, `.home-discover-tiles .home-discover-tile` stripped
+   the launcher card's padding back off, and `.home-discover-name` clamped the
+   label to two lines because a ~55px track rendered most names as "Opinio…".
+   Every one of those existed to fit six icons into ONE grid cell on a phone.
 
-     border            1px top + 1px bottom          =   2px
-     tile lane         8 + 40 icon + 4 gap + 24 name + 8
-                                                     =  84px
-     divider/"Popular" caption (1 rule + ~18)        =  19px
-     second lane                                     =  84px
-                                                       -------
-                                                        189px
+   The lane is a rail of cards (see `.home-discover-rail` below) and the block
+   is a section that grows to its content, so none of that arithmetic has
+   anything left to constrain. What survives is the lane wrapper, the
+   "Popular" divider between the two rails and the empty note.
 
-   TWO TERMS OF THAT SUM CHANGED TOGETHER. The 27px TITLE BAR is gone: the
-   block's title is the section's own label above the card now and its browse
-   link went with it, so the card starts on its first lane (see
-   frontend/src/features/home/panels/ui.tsx). The NAME lane doubled, 12px to
-   24px, because a lane is one track per tile and a track is ~55px on a phone
-   — one line rendered most of these as "Opinio…", "ClearS…", "Watch…", which
-   is a poor advertisement for an area called Discover. The bar's 27px paid
-   for most of the 24px the second line costs.
-
-   It was measured against a 256px height cap while the block was a 2x2 tile,
-   and against --home-cell-h while it was a 4x1 one. There is no cap now — the
-   section is as tall as its two lanes — so the sum is a description rather
-   than a constraint. Both lanes stay `flex: 1 1 auto`, so anything spare is
-   still split evenly and each lane centres its single row of tiles in its own
-   band.
-
-   SIX EXPLICIT TRACKS, NOT auto-fill. Each lane must be exactly one row:
-   with a lane budgeted at one row, anything that wraps is clipped by
-   .home-panel-rows' overflow and silently disappears. auto-fill made the
-   track count follow the pixel width — 6 tracks on a phone and on a wide
-   desktop, but only 3-4 in a 640-800px window, where a full six tiles
-   wrapped. Six is Home.FEATURED_LIMIT / Home.POPULAR_LIMIT, so there is
-   exactly one track per tile either lane can ever produce.
-
-   The icon is FLUID for the same reason: the narrowest 5-column lane gives
-   a track ~32px, and a fixed 40px box would overflow it. It fills its track
-   up to the 40px it has always drawn at, so a phone and a wide desktop are
-   unchanged and a narrow desktop window shrinks instead of clipping. */
-.home-discover-tiles {
-  display: grid;
-  /* The track count is the LANE'S OWN (discover.tsx sets --lane-tracks from
-     the number of tiles, floored at four); the six above is the fallback and
-     still the ceiling, since six is Home.FEATURED_LIMIT / POPULAR_LIMIT. The
-     invariant the paragraph above is about — one track per tile, so a lane is
-     always exactly one row — is unchanged: it just comes from the data now
-     instead of from a constant that had to assume the worst case, which is
-     what made a five-tile lane squeeze five names to fit six columns. */
-  grid-template-columns: repeat(var(--lane-tracks, 6), minmax(0, 1fr));
-  gap: 0.375rem;
-  padding: 0.5rem 0.625rem;
-  /* One row inside a band that is taller than it needs: centre it rather
-     than hanging it off the top edge. */
-  align-content: center;
-}
-/* THE BASIS IS THE CONTENT, not the band. It was `1 1 0` while the block was
-   a fixed 2x2 TILE: there the article's height came from the grid cell, so a
-   zero basis was the way to make two lanes split a real, generous box evenly
-   instead of the first one taking it all.
-
-   A section sizes to ITS OWN CONTENT, and a zero basis in that direction is
-   circular — each lane contributed 0 to the height the article asked for, the
-   article collapsed to its title bar, and both lanes were then handed the
-   ~16px that was left and clipped their 44px tiles in half. `1 1 auto` reads
-   the same intent (share anything spare, evenly) against a basis that
-   actually exists. */
+   The NAME keeps its class and loses its clamp: on a 152px card a real name
+   has room to be read on one line, and the second line would only ever be
+   spent on the longest few. Truncation is a utility on the element now. */
 .home-discover-lane {
   flex: 1 1 auto;
 }
-/* .app-card buys these tiles their tap/drag behaviour, but NOT its padding:
-   that class is the 56px launcher tile, and its 8px (phone) / 12px (desktop)
-   inset is sized for a card that owns a whole grid cell. Inherited here it
-   added 16px to every tile, which put the phone widget at 116px of a 116px
-   cell — no headroom at all, so the first reader with larger system text
-   would have had the captions clipped. The lane's own padding is the inset;
-   the tile just holds the icon and its name.
-
-   Two classes deep on purpose: .app-card's own padding is declared LATER in
-   this file (in the phone-density block), so an equal-specificity rule here
-   would lose to it at exactly the width where it matters most. */
-.home-discover-tiles .home-discover-tile {
-  min-width: 0;
-  padding: 0;
-}
-/* THE CAP LIVES ON THE WRAPPER, NOT THE ICON. The icon's own box is a flex
-   item of a `flex-col items-center` tile, so it is shrink-to-fit: a
-   `width: 100%` on it resolves against a parent whose width comes from its
-   content, which is circular — the icons collapsed to whatever their glyph
-   happened to measure (a 12px emoji, a 30px image) instead of a uniform
-   40px. Giving the WRAPPER a definite width (the track, capped at 40px)
-   breaks the cycle: the icon then fills a box that is already decided, and
-   the +/✓ badge, which is positioned against this wrapper, keeps tracking
-   the icon's real edges at every size. */
-.home-discover-icon-wrap {
-  width: 100%;
-  max-width: 2.5rem;   /* 40px — the size the tile has always drawn at */
-  margin-inline: auto;
-}
-.home-discover-icon {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-}
-/* The "Popular" caption sits on its own hairline row between the lanes — on
-   the same 0.625rem inset lane as every other rule inside a home panel card,
-   see .home-panel-row + .home-panel-row::before above. */
+/* The "Popular" caption sits on its own hairline row between the two rails. */
 .home-discover-divider {
   position: relative;
   min-height: 1.125rem; /* 18px */
@@ -2343,37 +2276,218 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   background: var(--border-light);
   pointer-events: none;
 }
-/* THE TILE NAME GETS TWO LINES, exactly as the launcher tile's label does.
-   A lane is six explicit tracks at every width (see .home-discover-tiles), so
-   a track is ~55px on a phone — and a single truncated line rendered most of
-   these as "Opinio…", "ClearS…", "Watch…". A lane of unreadable names is a
-   poor advertisement for an area called Discover, and the height cap that
-   made one line the only affordable answer is gone (see .home-panel above):
-   a section is as tall as its content, so the second line simply costs 12px.
-   The clamp is here rather than in the component because `line-clamp` is
-   three properties and two of them are prefixed. */
-.home-discover-name {
+/* The empty state: no rail at all, one centred line in its place, so the
+   block reads as a compact strip rather than a mostly-blank box. */
+.home-discover-empty {
+  padding: 0.5rem 0.625rem;
+}
+
+/* ── THE CARD LANGUAGE: TINTS ───────────────────────────────
+   Discover's app cards and Challenges' challenge cards are the same object
+   in two sizes — a tinted plate with art on it — and they share one palette
+   so the launcher reads as one page rather than two lists that happened to
+   get colours. Five tints, assigned by a hash of the app slug / challenge id
+   (see tintOf in panels/ui.tsx) rather than by position, so a card keeps its
+   colour as the lane reorders around it.
+
+   Raw hex, like the wallpaper above and for the same reason: these are the
+   design's own tints, not steps of a Tailwind scale, and `zinc`/`violet` are
+   the only scales the product is allowed to name (see the palette rule in
+   tests/admin-ui-registry.test.js). `--tint-art` is the deeper block the
+   icon sits on; `--tint-line` is the hairline that keeps a pale card off a
+   pale wallpaper.
+
+   Dark mode does what the wallpaper does: the same hues, re-tuned to a
+   lightness that reads on the inverted ground rather than inverted into
+   mud. */
+.home-tint-1 { --tint-bg: #e3efe0; --tint-line: #cfe0ca; --tint-art: #cfe3c7; }
+.home-tint-2 { --tint-bg: #dfeaf6; --tint-line: #c9dcee; --tint-art: #c6dcf0; }
+.home-tint-3 { --tint-bg: #e9e2f2; --tint-line: #d9cfe8; --tint-art: #ded2ef; }
+.home-tint-4 { --tint-bg: #fbe6d5; --tint-line: #f2d5bd; --tint-art: #f7ddc6; }
+.home-tint-5 { --tint-bg: #f8dde8; --tint-line: #eec7d6; --tint-art: #f4d6de; }
+.dark .home-tint-1 { --tint-bg: #1b2a1f; --tint-line: #2c4433; --tint-art: #22331f; }
+.dark .home-tint-2 { --tint-bg: #17263a; --tint-line: #27405e; --tint-art: #1b2f47; }
+.dark .home-tint-3 { --tint-bg: #241f38; --tint-line: #3a3157; --tint-art: #2b2442; }
+.dark .home-tint-4 { --tint-bg: #33231a; --tint-line: #50392a; --tint-art: #3d2a1f; }
+.dark .home-tint-5 { --tint-bg: #331d28; --tint-line: #513043; --tint-art: #3e2231; }
+
+/* ── Discover: the card rail ────────────────────────────────
+   The lane was a GRID of six 40px icon tiles inside the block's white card:
+   the most an area called Discover could say about an app was its name,
+   clamped to two lines at 9.6px. It is a horizontal rail of cards now — art,
+   name, the app's own sentence, and how many people built it — which is what
+   the design asks for and what makes the area answer "should I open this?"
+
+   IT BLEEDS TO BOTH SCREEN EDGES. The negative margin cancels the section's
+   px-3 gutter so the first card starts on the text's left edge and the last
+   one runs off the right, which is the affordance: a card cut by the edge
+   says there are more. #home-screen states `overflow-x: hidden` (see the
+   gesture rule above, pinned by tests/home-vertical-scroll-only.test.js), so
+   the overhang is clipped by the feed rather than widening it.
+
+   `touch-action: pan-x` for the same reason the switcher's app rail carries
+   it: without it a diagonal drag that starts here is claimed by the vertical
+   feed and the rail never moves. A VERTICAL drag still reaches the page —
+   the browser only takes the axis this element declares. */
+.home-discover-rail {
+  display: flex;
+  gap: 0.625rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: none;
+  margin-inline: -0.75rem;
+  padding-inline: 0.75rem;
+  /* Room for the cards' own shadow-less hairline to not be clipped, and for
+     a focus ring on the last card. */
+  padding-block: 0.125rem;
+}
+.home-discover-rail::-webkit-scrollbar { display: none; }
+
+/* 9.5rem is the reference's card at a 390pt phone (150/390 of the frame),
+   and it is a fixed width on purpose: cards that flex would resize as the
+   lane's count changes, and the rail's whole affordance is that the row
+   continues past the edge at a constant rhythm. */
+.home-discover-card {
+  flex: 0 0 auto;
+  width: 9.5rem;
+  scroll-snap-align: start;
+  border-radius: 0.875rem;
+  background: var(--tint-bg);
+  border: 1px solid var(--tint-line);
+  overflow: hidden;
+  cursor: pointer;
+}
+.home-discover-art {
+  height: 7.5rem;
+  background: var(--tint-art);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* The app's own icon, at the size the art block can carry. An emoji is a
+   glyph and scales with font-size; an uploaded image fills the block, which
+   is the one case that looks like the reference's own art. */
+.home-discover-art-emoji { font-size: 2.75rem; line-height: 1; }
+.home-discover-art-img { width: 100%; height: 100%; object-fit: cover; }
+.home-discover-art-letter { font-size: 2.25rem; line-height: 1; font-weight: 700; opacity: .45; }
+/* Two lines, ellipsised — the reference's own treatment. `line-clamp` is
+   three properties and one of them is prefixed, which is why it is here
+   rather than as utilities beside the element. */
+.home-discover-blurb {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   overflow: hidden;
-  /* A FIXED two-line box, not a max — the launcher label's own reasoning
-     (.app-card-title above): a one-line name and a two-line name must occupy
-     the same height or the tiles in a lane sit on different baselines. 24px is
-     exactly two of the 12px lines `leading-tight` gives this 9.6px type. */
-  height: 1.5rem;
-  /* Same as the launcher label: a single unbroken name (a slug-style one, or
-     just "Crowdfunding" in a 55px track) stays inside its tile rather than
-     overflowing it. */
-  overflow-wrap: anywhere;
 }
 
-/* The empty state: no tile lane at all, one centred line in its place, so
-   the block reads as a compact strip rather than a mostly-blank box. */
-.home-discover-empty {
-  padding: 0.5rem 0.625rem;
+/* ── Challenges: the plate, and the cards on it ─────────────
+   The block was one white card of divided rows. It is a PLATE holding the
+   season summary and one tinted card per challenge — the reference's shape —
+   and the plate is what keeps them reading as one area rather than four
+   things that happen to be adjacent.
+
+   TRANSLUCENT, not the white card the block used to be. The three steps
+   before this one put a wallpaper behind the page; an opaque white rectangle
+   here covers it exactly where the page is tallest. At 55% the grouping
+   still reads, the tints stay crisp, and the washes carry on through. The
+   blur is what stops the wallpaper's grain reading through as noise under
+   the text; it degrades to plain translucency where it is unsupported. */
+.home-challenges-plate {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 1rem;
+  padding: 0.625rem;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
 }
+.dark .home-challenges-plate {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+.home-challenge-card {
+  border-radius: 0.875rem;
+  background: var(--tint-bg);
+  border: 1px solid var(--tint-line);
+}
+/* The white pill under each title: the challenge's state on one line. It is
+   opaque white on the tint in both modes — a translucent pill over a tinted
+   card over a translucent plate is three layers of glass to read one number
+   through. */
+.home-challenge-pill {
+  background: #fff;
+  border-radius: 9999px;
+}
+.dark .home-challenge-pill { background: rgba(0, 0, 0, 0.35); }
+/* THE COUNTED CHALLENGE'S STATE: a capsule that fills, in the place a
+   yes-or-no challenge puts its circle. It replaces a 3px rail that ran along
+   the pill's bottom edge — one element in the pill instead of one in it and a
+   rule under it, and it carries the exact count as well, which the rail had
+   no room for.
+
+   THE FLOOR IS A DESIGN MINIMUM, NOT A CLIPPING CORRECTION, and the
+   difference matters because this comment said the opposite for a while. The
+   claim was that a fill narrower than the capsule's corner radius is drawn
+   inside the cap and painted over, so the floor had to clear the radius. That
+   is true of the RAIL this replaced — 3px tall and flush with a 16px corner,
+   where the bottom row really is all corner — and false of the capsule: its
+   cap is a semicircle of half its height, so a 5px fill still covers 14.8px
+   of the 16px it is tall. Narrow, never invisible.
+
+   So the floor is simply the shortest fill that reads as "started, barely"
+   rather than as a smudge, and it is small on purpose: at the radius-derived
+   14px it was a quarter of the capsule, which read as real progress on a
+   challenge nobody had begun. tests/home-panels-render.test.js pins that it
+   stays well under the radius, and scripts/measure-meter-zero.mjs measures
+   what a browser actually paints. */
+.home-challenge-meter {
+  --home-meter-radius: 0.5rem;   /* half of h-4, the capsule's own corner */
+  --home-meter-floor: 0.375rem;  /* 6px — a nub, not a quarter of the track */
+  min-width: 3.5rem;             /* fits "12/20" with room for the fill to read */
+}
+/* The fill is a TINT, not the solid accent: the count sits on top of it, and
+   a solid fill would swallow the digits the moment progress passed them.
+
+   THE TINT IS OF THE ACCENT BLUE (violet-500 — read the hex, that scale is
+   the shell's blue), not of --brand-ink. Brand ink is a deep periwinkle
+   navy, and a navy at a third of its strength composites to a blue-GREY: it
+   read as "the track, slightly darker" rather than as progress. The accent
+   at this strength composites to an unmistakable light blue, and the count
+   in brand ink still clears 4.5:1 on it — which is the constraint that keeps
+   the fill a tint at all. */
+.home-challenge-meter-fill {
+  opacity: 0.45;
+}
+.dark .home-challenge-meter-fill {
+  opacity: 0.5;
+}
+
+/* The art well on a challenge card. Lighter than the card so the
+   illustration sits ON something, the same relationship the Discover card's
+   art block has to its footer. */
+.home-challenge-art {
+  background: rgba(255, 255, 255, 0.6);
+}
+/* THE FALLBACK WORD, when a challenge's kind carries no icon. A category is
+   free text on the template and is usually one word — "ONBOARDING" at 9px
+   with letter-spacing measures wider than the 62px well, and a single
+   unbreakable word does not wrap, so it ran straight out of the square.
+   Breaking anywhere is what a well can do that a line of prose should not,
+   and two lines is what the box has room for; a longer one ellipsises rather
+   than pushing the card taller. The tracking goes with it — at this size it
+   was buying width the well does not have. */
+.home-challenge-art-word {
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.dark .home-challenge-art { background: rgba(255, 255, 255, 0.08); }
 
 /* ── Create-app widget ──────────────────────────────────────
    A 1x1 tile: the whole thing is the button, since a single cell has no
@@ -5774,9 +5888,15 @@ span.gc-vote-btn-icon { cursor: default; }
 /* #990: the trailing activity indicator is the dots on a .dc-status-line row,
    so it sits flush under the step ladder it belongs to instead of indented
    like the retired standalone spinner. Only the doubled vertical padding
-   (2px from the row + 4px from the dots) needs trimming. */
+   (2px from the row + 4px from the dots) needs trimming.
+
+   #1590: the TOP of that trimmed padding has to clear the bounce. A dot is
+   6px and dc-dot-bounce lifts it 6px, so 2px of headroom left it rising 4px
+   out of its own row and into the ladder line above — the overlap that was
+   reported. 6px is exactly the travel, so the dot lands flush with the row's
+   top edge at the peak and nothing crosses it. */
 .dc-activity-line { padding: 0 0 4px; }
-.dc-activity-line .dc-streaming-dots { padding: 2px 0; }
+.dc-activity-line .dc-streaming-dots { padding: 6px 0 2px; }
 .dc-activity-label { font-size: 11px; color: var(--text-muted); }
 
 @keyframes dc-dot-bounce {

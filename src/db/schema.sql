@@ -27,11 +27,11 @@ UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_app
 -- src/routes/apps.js) — a non-admin may create iff their live app count is
 -- below this number, so deleting an app frees a slot (mirrors the server-
 -- wide maxApps cap). Default 0 means "cannot create until an admin raises
--- it", matching the old can_create_apps default-off behaviour. Admins
--- bypass enforcement entirely — their quota is purely cosmetic. The client
--- still sees a derived `canCreateApps` boolean (computed in auth/me as
--- isAdmin || liveCount < app_quota) so the home screen needs no change; the
--- numeric quota is surfaced only through the admin API. `can_create_apps`
+-- it", matching the old can_create_apps default-off behaviour. Full admins
+-- bypass enforcement entirely; view-only admins keep their ordinary quota.
+-- The client sees both a derived `canCreateApps` boolean (computed in auth/me
+-- as canAdminWrite || liveCount < app_quota) and the numeric quota used by the
+-- create dialog. `can_create_apps`
 -- is KEPT for now purely as the one-shot backfill source below — dropping
 -- it (and the derived canCreateApps plumbing) is deferred work.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 0;
@@ -3507,6 +3507,18 @@ CREATE TABLE IF NOT EXISTS challenge_kinds (
   created_at   TIMESTAMPTZ,
   updated_at   TIMESTAMPTZ
 );
+-- The picture a challenge of this kind shows on the launcher's Challenges
+-- cards. It lives on the KIND rather than on the template or the challenge
+-- because that is the controlled vocabulary an organiser already picks from
+-- (`challenge_templates.kind` is a real FK to this table), so one setting
+-- gives every challenge of that kind the same face — which is what makes a
+-- column of cards scannable rather than a column of different drawings.
+--
+-- One or two characters, so an emoji including the joined ones. Anything
+-- longer is refused by the writer; anything absent (a kind with no icon, or
+-- a template with no kind at all) falls back to the challenge's category
+-- word, which is the only other per-challenge mark there is.
+ALTER TABLE challenge_kinds ADD COLUMN IF NOT EXISTS icon VARCHAR(16);
 
 -- `challenge_templates` — a reusable challenge definition; one or more
 -- `challenges` rows instantiate it per event (referenced there as

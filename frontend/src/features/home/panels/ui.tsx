@@ -51,6 +51,39 @@ export function stampProps(stamps: PanelStamps | undefined) {
 }
 
 /**
+ * WHICH TINT a card wears, from a string key.
+ *
+ * Discover's app cards and Challenges' challenge cards share one five-tint
+ * palette (`.home-tint-1` … `-5` in app.css), and the tint is derived from
+ * the card's own identity — an app slug, a challenge id — rather than from
+ * its POSITION in the lane. Position would repaint the whole row whenever a
+ * lane reorders, and an app people recognise by its green card would be blue
+ * the next time they looked.
+ *
+ * Any stable spread will do, so this is the smallest one that is not a
+ * pattern: a 32-bit rolling hash, folded to 1..5. It is deterministic across
+ * the server prerender and the client, which matters — a tint that differed
+ * between them would be a hydration mismatch, which console-errors and fails
+ * the proposal checks.
+ */
+export function tintOf(key: string): string {
+  // FNV-1a, which is what a rolling `* 31` hash is not: multiply-then-fold
+  // clusters badly over short strings that share a shape (an app slug, a
+  // challenge id), and the first draft put four of five demo cards on the
+  // same tint. The xor-then-multiply order is the fix, and the final
+  // avalanche step is what keeps two slugs differing in one letter apart.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i += 1) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x2545f491);
+  h ^= h >>> 13;
+  return `home-tint-${(Math.abs(h) % 5) + 1}`;
+}
+
+/**
  * A home-screen area's LABEL, and the controls that act on the block below it.
  *
  * ── Why the title moved back out of the card ──────────────────────────
@@ -184,19 +217,39 @@ export function BrowseLink() {
  * the cap entirely.
  */
 export function PanelShell({
-  panelKey, expanded, stamps, footer, children,
+  panelKey, expanded, stamps, footer, plate = 'card', children,
 }: {
   panelKey: string;
   expanded: boolean;
   stamps?: PanelStamps;
   footer?: ReactNode;
+  /**
+   * WHAT THE BLOCK SITS ON. Three answers, because the homescreen design
+   * gave the three blocks three different ones and the article is still one
+   * component:
+   *
+   *   'card'  — the white plate the blocks have always had. Create app.
+   *   'soft'  — a translucent plate (`.home-challenges-plate`). Challenges
+   *             draws its content as tinted cards, and an opaque white
+   *             rectangle behind them would cover the wallpaper exactly
+   *             where the page is tallest.
+   *   'none'  — no plate at all. Discover's cards ARE the surface, and a
+   *             box around a row of tinted cards is a second frame around
+   *             things that already have one. It is also what lets the rail
+   *             bleed to both screen edges.
+   *
+   * `home-panel-card` rides with 'card' only: it is the name of the plate,
+   * and tests/home-panels-render.test.js asserts the pairing.
+   */
+  plate?: 'card' | 'soft' | 'none';
   children: ReactNode;
 }) {
+  const plateClass = plate === 'card'
+    ? ' home-panel-card rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden'
+    : (plate === 'soft' ? ' home-challenges-plate' : '');
   return (
     <article
-      className={`home-panel home-panel-card${
-        expanded ? ' home-panel--expanded' : ''
-      } rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden`}
+      className={`home-panel${expanded ? ' home-panel--expanded' : ''}${plateClass}`}
       data-panel={panelKey}
       {...stampProps(stamps)}
     >

@@ -12,6 +12,17 @@
  *
  * Shape:
  *   {
+ *     "description": "...",                    // one line, what the app IS.
+ *                                             // The launcher's Discover cards
+ *                                             // draw it; there is no such
+ *                                             // column on `apps`, and the
+ *                                             // directory derives a meta line
+ *                                             // instead. Read off the stored
+ *                                             // manifest snapshot by the
+ *                                             // client and capped at 160
+ *                                             // chars there; absent on most
+ *                                             // apps, and the card simply
+ *                                             // draws no sentence.
  *     "secrets": [
  *       {
  *         "key": "ECHO_APP_SECRET_KEY",       // env var name
