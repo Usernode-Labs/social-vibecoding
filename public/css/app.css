@@ -2892,6 +2892,25 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   box-shadow:
     0 6px 12px -6px var(--app-sheet-shadow-near),
     0 8px 24px -4px var(--app-sheet-shadow-far);
+  /* DIAGNOSTIC ROUND 1 of 3 — not a proposed fix, and not to be merged
+     as one. The corner flicker on the launcher -> app push cannot be
+     reproduced locally (the kit and native.css are centrally hosted and
+     unreachable from a dev container), so the candidates are being put
+     on the preview one at a time to be observed there instead.
+
+     This one changes nothing about how the corner LOOKS — same radius,
+     same clip, same shadow. It asks the compositor to keep this
+     subtree on its own layer, so the rounded clip is rasterized once
+     instead of being re-applied on every frame of the open animation.
+     If the flicker is antialiasing noise along the curve while the
+     screen is being scaled, this removes it and nothing else changes.
+     If the flicker survives, the cause is not re-rasterization and
+     rounds 2 and 3 (which move the clip between levels) are next.
+
+     `will-change` is a hint with a real cost — it holds a layer alive
+     for as long as it is set — so if this is the answer it wants
+     narrowing to the animation rather than left on permanently. */
+  will-change: transform;
 }
 
 /* THE CLIP, STATED AT EVERY LEVEL, because one level is not enough here.
