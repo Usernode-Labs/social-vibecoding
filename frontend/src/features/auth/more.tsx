@@ -88,14 +88,101 @@ interface MoreAnswers {
   followed_claim?: boolean;
 }
 
+/**
+ * Where this signup stands in the queue, derived server-side from the row's
+ * own timestamps. `state` is the one to read: it is ordered most-advanced
+ * first, so an admitted row reads as admitted even though it also carries a
+ * confirmed_at.
+ */
+interface MoreStatus {
+  state?: 'pending' | 'confirmed' | 'admitted';
+  admitted?: boolean;
+  confirmed?: boolean;
+  has_account?: boolean;
+  joined_at?: string | null;
+  confirmed_at?: string | null;
+  admitted_at?: string | null;
+}
+
 interface MorePayload {
   ok?: boolean;
+  /** Also published at the top level of the payload; this is the same value. */
+  admitted?: boolean;
+  status?: MoreStatus;
   answers?: MoreAnswers;
   oauth?: Record<string, boolean>;
   /** Public profile URLs for "Follow along". A network with none is absent. */
   follow?: Record<string, string | null>;
   /** The signup's own share link, and who has joined through it so far. */
   invite?: { url?: string | null; count?: number; emails?: string[] };
+}
+
+/**
+ * The three states the pill can be in. Written as WHOLE class strings on
+ * purpose: Tailwind's extractor is a regex over source text, so a tint
+ * assembled at runtime is a tint that never gets compiled.
+ *
+ * Shape and scale match the platform's other status pills (the app-details
+ * contributor pill, the session-row pills) rather than @/components/ui/chip,
+ * which is a `<button aria-pressed>` toggle for a filter rail. This is read-
+ * only text, and a node that says "pressed" to a screen reader when nothing
+ * can press it is the same category of mistake that component's own doc
+ * comment warns about for tabs.
+ */
+const QUEUE_PILL = {
+  pending: {
+    label: 'Waiting for confirmation',
+    tint: 'bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-700 text-amber-700 dark:text-amber-300',
+    note: 'Click the link in the email we sent, and your answers below move you up.',
+  },
+  confirmed: {
+    label: 'On the waitlist',
+    tint: 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300',
+    note: 'Your address is confirmed. Answering the questions below moves you up.',
+  },
+  admitted: {
+    label: "You're in",
+    tint: 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300',
+    note: 'Access is open for you. Check your email for the invite.',
+  },
+} as const;
+
+/**
+ * The row is always in the markup and always empty in the prerender: the
+ * pill's contents arrive with the load effect, so rendering them any earlier
+ * would be a hydration mismatch, and a mismatch console.errors, which fails
+ * proposal checks. It stays `hidden` until there is something to say, so an
+ * unrecognised `state` collapses rather than leaving a gap above the form.
+ *
+ * A `<span>` rather than @/components/ui/chip: Chip is a `<button
+ * aria-pressed>` built for filter toggles, and announcing a read-only status
+ * as a pressed button is wrong for anyone on a screen reader. This is the
+ * platform's other pill — the same class string browse-detail.tsx uses for an
+ * app's state badge.
+ */
+function StatusPill({ status }: { status: MoreStatus | null }) {
+  const key = status?.state;
+  const pill = key ? QUEUE_PILL[key] : null;
+  const note = pill && key === 'admitted' && status?.has_account
+    ? 'Access is open and your account is linked. Sign in any time.'
+    : pill?.note;
+  return (
+    <div
+      id="more-status-pill"
+      className={`flex flex-wrap items-center gap-x-3 gap-y-1${pill ? '' : ' hidden'}`}
+    >
+      {pill ? (
+        <>
+          <span
+            className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${pill.tint}`}
+          >
+            {pill.label}
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">{note}</span>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 export function MoreScreen() {
@@ -127,6 +214,13 @@ export function MoreScreen() {
    * it, so the initial markup stays what the hand-written shell shipped.
    */
   const [follow, setFollow] = useState<Record<string, string | null>>({});
+  /**
+   * The queue-position pill. `null` is the prerendered state and renders
+   * NOTHING: the interior mounts on reveal, so a pill with data in it before
+   * the fetch resolves is a hydration mismatch, which console.errors and
+   * fails proposal checks.
+   */
+  const [queue, setQueue] = useState<MoreStatus | null>(null);
   const [inviteUrl, setInviteUrl] = useState('');
   const [inviteCount, setInviteCount] = useState(0);
   const [inviteEmails, setInviteEmails] = useState<string[]>([]);
@@ -204,6 +298,7 @@ export function MoreScreen() {
 
       setConnect({ verified: a.verified || {}, oauth: payload.oauth || {} });
       setFollow(payload.follow || {});
+      setQueue(payload.status || null);
 
       if (madeUrl.current) madeUrl.current.value = a.made_url || '';
       if (madeNote.current) madeNote.current.value = a.made_note || '';
@@ -459,6 +554,7 @@ export function MoreScreen() {
           className={hiddenFirst(status !== 'ready' || saved, 'mt-6 space-y-8')}
           onSubmit={onSubmit}
         >
+          <StatusPill status={queue} />
           {/* 4 · Something you've made — relocated from the join form, where
               it used to be required. Joining takes an email now; this is one
               of the things that helps you move up instead. */}

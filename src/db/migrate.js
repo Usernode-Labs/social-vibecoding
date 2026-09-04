@@ -11622,9 +11622,15 @@ async function migrateAppDbsToPerRole(pool, config) {
 async function seedStagingPlatformMail(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
-  // Obvious, fixed token so the testing steps can name the exact URL.
-  // 48 hex chars, matching the real more_token shape.
-  const DEMO_MORE_TOKEN = 'dead'.repeat(12);
+  // Obvious, fixed tokens so the testing steps can name the exact URL.
+  // 48 hex chars each, matching the real more_token shape. Three rows,
+  // one per state the stage-2 screen's status pill can be in — the pill
+  // is derived from timestamps a tester cannot set by clicking, so
+  // without fixtures two of its three states are unreachable in a
+  // preview.
+  const DEMO_MORE_TOKEN = 'dead'.repeat(12);          // pending
+  const DEMO_CONFIRMED_TOKEN = 'beef'.repeat(12);     // confirmed, not admitted
+  const DEMO_ADMITTED_TOKEN = 'cafe'.repeat(12);      // admitted, account linked
 
   const ROWS = [
     // A staging preview never delivers, so this is the status a tester's
@@ -11682,6 +11688,51 @@ async function seedStagingPlatformMail(pool) {
       `UPDATE waitlist_signups SET confirmed_at = NULL, more_token = $2
         WHERE email = $1 AND released_at IS NULL AND linked_user_id IS NULL`,
       ['staging-demo-waitlist@example.invalid', DEMO_MORE_TOKEN]
+    );
+
+    // A signup that has confirmed its address and is still waiting. The
+    // middle state, and the one a tester cannot produce here: confirming
+    // the row above takes a click, but the pill it then shows is the
+    // point, so it needs a row that is already there.
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, answers, more_token)
+       VALUES ($1, NULL, $2)
+       ON CONFLICT (email) DO NOTHING`,
+      ['staging-demo-waitlist-confirmed@example.invalid', DEMO_CONFIRMED_TOKEN]
+    );
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET confirmed_at = COALESCE(confirmed_at, NOW() - INTERVAL '2 days'),
+              released_at = NULL,
+              linked_user_id = NULL,
+              more_token = $2
+        WHERE email = $1`,
+      ['staging-demo-waitlist-confirmed@example.invalid', DEMO_CONFIRMED_TOKEN]
+    );
+
+    // A signup that has been let in AND has redeemed the invite into an
+    // account. linked_user_id points at 900001, the canonical fake
+    // `staging-demo-user` seeded before any fixture runs — never a real
+    // account, and never whoever opened the preview. Nothing keys off
+    // this row: linkUserByEmail matches on EMAIL, and no address ending
+    // in .invalid can be registered.
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, answers, more_token)
+       VALUES ($1, NULL, $2)
+       ON CONFLICT (email) DO NOTHING`,
+      ['staging-demo-waitlist-admitted@example.invalid', DEMO_ADMITTED_TOKEN]
+    );
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET confirmed_at = COALESCE(confirmed_at, NOW() - INTERVAL '9 days'),
+              released_at = COALESCE(released_at, NOW() - INTERVAL '1 day'),
+              linked_user_id = COALESCE(
+                linked_user_id,
+                (SELECT id FROM users WHERE username = 'staging-demo-user')
+              ),
+              more_token = $2
+        WHERE email = $1`,
+      ['staging-demo-waitlist-admitted@example.invalid', DEMO_ADMITTED_TOKEN]
     );
 
     log.info('migrate', 'Staging platform-mail fixture seeded', {
