@@ -68,27 +68,30 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
           writes a hairline/blur class onto it once the chat scrolls, and
           React never rewrites a className whose prop has not changed.
 
-          `rounded-b-2xl` is #1588. This strip is the second bar on the screen —
-          the platform header sits directly above it and curves its own bottom
-          corners away (`rounded-b-2xl` there too, the same 1rem token), so a
-          square-cornered bar underneath read as an unfinished copy of it. Both
-          bars now let the page ground show through the same two notches.
-          It was `rounded-b-lg` on both until #1571 enlarged the header's
-          corner; this one moves with it by construction, not by coincidence
-          — tests/dev-chat-view.test.js asserts the two files carry the same
-          token so they cannot drift apart.
+          THE THREE-LAYER LIFT (`dc-lift`, app.css). A running app shows the
+          platform header's ground through the notches at its own two top
+          corners (#app-frame-host: a 28px top radius, a hairline, a
+          two-layer shadow). This screen repeats that move once per layer:
+          the strip rounds ITS top corners over the wallpaper, and the
+          session sheet below rounds ITS top corners over the strip. Each
+          layer therefore reveals a shoulder of the one above it, which is
+          what says the sheet is sitting ON the strip rather than abutting
+          it — the same reading the app frame gives the header.
 
-          The header's `-mb-2` companion is deliberately NOT copied. That
-          overlap exists to make the SCREEN below it read as rounded-topped,
-          and what sits below this strip is the transcript's own scroller;
-          pulling it 8px up under the curve would put a message row in the
-          notch. The corners are what was asked for and what matches.
+          This strip used to curve its BOTTOM corners away instead
+          (`rounded-b-2xl`, #1588), matching the platform header. That was
+          the second bar copying the first; it is the middle of three
+          surfaces now, so it wears the same top radius the layers above
+          and below it wear. app.css owns the geometry so all three read
+          from one token — tests/dev-chat-view.test.js pins that this file
+          asks for it by class rather than re-declaring a radius here.
 
-          No `overflow-hidden` here either, for the reason the header's own
-          note gives. */}
+          No `overflow-hidden`: the session sheet's shoulders are painted
+          OUTSIDE its own arc (see `.dc-lift` in app.css), and clipping to
+          the radius would erase exactly them. */}
       <div
         id="dc-session-header"
-        className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0 rounded-b-2xl"
+        className="flex items-center gap-2 px-3 py-2 shrink-0 dc-lift dc-lift-strip"
       >
         <SessionHeader />
       </div>
@@ -96,7 +99,7 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
           to stay exactly the flex child it was, rather than becoming a block
           child of a wrapper. */}
       <div id="dc-banners" className="contents"><DevChatBanners /></div>
-      <div className="dc-session-body flex-1 flex min-h-0">
+      <div className="dc-session-body flex-1 flex min-h-0 dc-lift dc-lift-session">
         <div id="dc-tab-chat" className="dc-chat-pane flex-1 flex flex-col min-h-0">
           {/* #1348: the launchpad is PINNED TO THE TOP of the chat area. It
               stood in the composer's place at the bottom (#1281), which is
