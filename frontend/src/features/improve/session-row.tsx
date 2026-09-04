@@ -85,22 +85,44 @@ function relTime(iso: string | null | undefined): string | null {
  * learned the code. Three states, because with paused rows filtered out of
  * these lists (see isParked in ./improve-controller.js) three is all there is:
  *
- *   - WORKING, amber and pulsing while an AI turn is in flight — the
- *     platform's own "something is building" colour, borrowed from the
- *     header's deploy dot.
+ *   - WORKING, amber, with the platform's arc spinner in the pill while an AI
+ *     turn is in flight. The amber is the platform's own "something is
+ *     building" colour, borrowed from the header's deploy dot.
  *   - READY, solid emerald once it stops: the success green that says the
  *     change is back with you.
  *   - HANDED OFF, outlined, for a work order (#1417). Its agent runs on the
  *     user's own machine, where the platform cannot see whether a turn is in
  *     flight, so the row states what it knows instead of borrowing a liveness
- *     claim this side has no way to make.
+ *     claim this side has no way to make. NO SPINNER, for the same reason the
+ *     row is never `busy`: an arc turning here would claim a liveness this
+ *     side has no way to observe.
+ *
+ * ── The pulse moved, and became a spinner (#1597) ──────────────────────
+ *
+ * The working row used to say "in progress" by PULSING its tile badge, which
+ * was the one in-progress cue on the platform that was not the arc every other
+ * surface draws: the dev screen's own session list (features/dev-chat/
+ * session-list.tsx), a proposal running its checks, "Preview building…" on a
+ * board card, "Proposing…" in a transcript, the merge-status badges, the
+ * app-launch cover. All of those are `.dc-status-spinner-arc`, so this is now
+ * too — and the reporter of #1597 read the difference exactly that way.
+ *
+ * The badge KEEPS its amber and LOSES its animation. Both halves are
+ * deliberate. The colour is what makes a column of tiles scannable without
+ * reading any of them, which is the badge's whole job; the motion is the
+ * pill's now, and one fact wants one cue — the same reasoning that retired
+ * #improve-version-dot from the button that opens this panel, where a glyph
+ * and a dot were saying the same thing twice.
  */
-function stateOf(session: SessionRowView): { label: string; pill: string; badge: string } {
+function stateOf(session: SessionRowView): {
+  label: string; pill: string; badge: string; spinner: boolean;
+} {
   if (session.busy) {
     return {
       label: 'Working',
       pill: 'bg-amber-400/20 text-amber-700 dark:text-amber-300',
-      badge: 'bg-amber-400 animate-pulse',
+      badge: 'bg-amber-400',
+      spinner: true,
     };
   }
   if (session.kind === 'task') {
@@ -108,14 +130,44 @@ function stateOf(session: SessionRowView): { label: string; pill: string; badge:
       label: 'Handed off',
       pill: 'border border-zinc-200 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400',
       badge: 'bg-white dark:bg-zinc-900 ring-1 ring-inset ring-zinc-400 dark:ring-zinc-500',
+      spinner: false,
     };
   }
   return {
     label: 'Ready',
     pill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
     badge: 'bg-emerald-500',
+    spinner: false,
   };
 }
+
+/**
+ * THE PILL'S CONSTANT HALF, and the one thing in it that is not shape.
+ *
+ * `inline-flex items-center gap-1` because the pill has two children while a
+ * turn is in flight — 4px is the gap `.gc-checks-running-badge` puts between
+ * the same arc and the same 11px semibold label on a board card, so the two
+ * surfaces space their spinner identically.
+ *
+ * The two arbitrary variants are the COLOUR. `.dc-status-spinner-arc` borders
+ * in `var(--accent)`, which is blue (#0a6ee0 light, #5aa9ff dark), and a blue
+ * arc inside an amber pill is off-palette. `border-current` takes the arc to
+ * whatever ink the pill is already carrying, so one pair of literals covers
+ * both themes and every state; `border-r-transparent` puts the gap back, since
+ * `border-current` would otherwise fill it in and draw a closed ring.
+ *
+ * Scoped HERE rather than added to app.css on purpose. `.dc-pr-btn-promote
+ * .dc-status-spinner-arc` (public/css/app.css) is the precedent for recolouring
+ * the shared arc for one surface — "the shared class stays untouched everywhere
+ * else" — and this panel is a fully React-owned island, so its override belongs
+ * in its own class run. The compiled child selector outspecifies the base class
+ * and tailwind.css loads after app.css, so it wins on both counts.
+ */
+const PILL_BASE =
+  'shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 '
+  + 'text-[11px] font-semibold '
+  + '[&>.dc-status-spinner-arc]:border-current '
+  + '[&>.dc-status-spinner-arc]:border-r-transparent ';
 
 /**
  * The 32px app tile. `xs` in the widget language's own scale
@@ -208,9 +260,14 @@ export function SessionRow({
           </span>
         ) : null}
       </span>
-      <span
-        className={'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ' + state.pill}
-      >
+      <span className={PILL_BASE + state.pill}>
+        {/* The platform's in-flight arc — `.dc-status-spinner-arc` everywhere,
+            and a DIRECT child of the pill because the colour override above
+            selects it as one. `aria-hidden`: the label beside it is what a
+            screen reader should read, and "Working" already says it. */}
+        {state.spinner ? (
+          <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>
+        ) : null}
         {state.label}
       </span>
       {unread ? (
