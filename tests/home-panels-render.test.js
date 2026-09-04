@@ -519,36 +519,32 @@ test('render: a numeric row at zero still renders an (empty) bar', () => {
 // one the first could not afford: a second LINE. The lane, its three tokens
 // and the bar geometry derived from them are retired with it.
 
-test('the zero-progress meter clears the capsule corner that clips it', () => {
-  // THE ONE NUMBER THIS BLOCK CANNOT GUESS. A counted challenge's state is a
-  // capsule that fills from its rounded left end, so a fill narrower than that
-  // end's radius is laid out inside the corner and painted over — a challenge
-  // at 0 of 5 would show an empty capsule, which is the one state that most
-  // needs to say there is progress to be made here.
+test('the zero-progress meter shows a nub, and a small one', () => {
+  // A challenge at 0 of 5 must not draw an EMPTY capsule: "not started" still
+  // has to read as a track with something to fill. So the fill takes a floor
+  // rather than a bare percentage.
   //
-  // So the floor is stated AS the radius plus the stub that has to remain,
-  // rather than as a number somebody measured once. This pins that shape:
-  // change the radius and the floor follows it, and a bare pixel value here
-  // fails rather than silently swallowing the zero state again.
+  // THE FLOOR IS A DESIGN MINIMUM, NOT A CLIPPING CORRECTION, and this test
+  // exists in that shape because it was written the other way first. The claim
+  // was that a fill narrower than the capsule's corner radius is painted over
+  // by the cap, so the floor had to CLEAR the radius — true of the 3px rail
+  // this replaced, which was flush with a corner as tall as itself, and false
+  // of the capsule: its cap is a semicircle of half its height, so a 5px fill
+  // still covers 14.8px of the 16px it is tall. That reasoning put the floor
+  // at 14px, a quarter of the track, which read as real progress on a
+  // challenge nobody had begun.
   //
-  // The rendered result is measured by scripts/measure-meter-zero.mjs, which
-  // reads painted pixels off a screenshot — the hit-test tree does not model
-  // an ancestor's rounded clip, and the count's own glyphs are drawn in the
-  // ink the fill is tinted from, so both had to be worked around before the
-  // number meant anything. At the values below a challenge at zero paints
-  // 14px of a 46px capsule.
+  // What is pinned now is that the floor stays well UNDER the radius — the
+  // opposite bound — so the argument cannot quietly come back.
   const meter = CSS.slice(CSS.indexOf('.home-challenge-meter {'),
     CSS.indexOf('}', CSS.indexOf('.home-challenge-meter {')));
-  assert.match(meter, /--home-meter-radius:\s*([\d.]+)rem/,
-    'the capsule states an explicit radius — rounded-full varies with the type');
-  assert.match(
-    meter,
-    /--home-meter-floor:\s*calc\(var\(--home-meter-radius\)\s*\+\s*([\d.]+)rem\)/,
-    'and the floor is that radius plus a stub, not a bare number'
-  );
-  const stub = /--home-meter-floor:\s*calc\(var\(--home-meter-radius\)\s*\+\s*([\d.]+)rem\)/.exec(meter)[1];
-  assert.ok(Number(stub) >= 0.25,
-    `the stub is ${stub}rem — under 0.25rem there is nothing left to see once the corner takes its share`);
+  const radius = /--home-meter-radius:\s*([\d.]+)rem/.exec(meter);
+  const floor = /--home-meter-floor:\s*([\d.]+)rem/.exec(meter);
+  assert.ok(radius && floor, 'both are stated as plain values, in rem');
+  assert.ok(Number(floor[1]) > 0, 'zero would be no floor at all');
+  assert.ok(Number(floor[1]) <= Number(radius[1]) * 0.9,
+    `the floor is ${floor[1]}rem against a ${radius[1]}rem radius — a floor at or `
+    + 'above the radius is the over-generous one the clipping argument produced');
   assert.match(
     challengesSrc(),
     /width: `max\(var\(--home-meter-floor\), \$\{meter\.pct\}%\)`/,

@@ -2428,19 +2428,24 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    rule under it, and it carries the exact count as well, which the rail had
    no room for.
 
-   AN EXPLICIT RADIUS, and the floor below is why. The capsule is drawn
-   `rounded-full`, so its radius is half its height and would move with the
-   type; the fill starts at that rounded left end, and anything narrower than
-   the radius is painted over by it. Stating the radius makes the clipped
-   amount a known number rather than a consequence.
+   THE FLOOR IS A DESIGN MINIMUM, NOT A CLIPPING CORRECTION, and the
+   difference matters because this comment said the opposite for a while. The
+   claim was that a fill narrower than the capsule's corner radius is drawn
+   inside the cap and painted over, so the floor had to clear the radius. That
+   is true of the RAIL this replaced — 3px tall and flush with a 16px corner,
+   where the bottom row really is all corner — and false of the capsule: its
+   cap is a semicircle of half its height, so a 5px fill still covers 14.8px
+   of the 16px it is tall. Narrow, never invisible.
 
-   --home-meter-floor is that radius plus the stub that has to remain, so a
-   challenge at 0 of 5 shows a short run of fill rather than an empty capsule.
-   tests/home-panels-render.test.js pins the relationship;
-   scripts/measure-meter-zero.mjs measures what a browser actually paints. */
+   So the floor is simply the shortest fill that reads as "started, barely"
+   rather than as a smudge, and it is small on purpose: at the radius-derived
+   14px it was a quarter of the capsule, which read as real progress on a
+   challenge nobody had begun. tests/home-panels-render.test.js pins that it
+   stays well under the radius, and scripts/measure-meter-zero.mjs measures
+   what a browser actually paints. */
 .home-challenge-meter {
   --home-meter-radius: 0.5rem;   /* half of h-4, the capsule's own corner */
-  --home-meter-floor: calc(var(--home-meter-radius) + 0.375rem);
+  --home-meter-floor: 0.375rem;  /* 6px — a nub, not a quarter of the track */
   min-width: 3.5rem;             /* fits "12/20" with room for the fill to read */
 }
 /* The fill is a TINT, not the solid accent: the count sits on top of it, and

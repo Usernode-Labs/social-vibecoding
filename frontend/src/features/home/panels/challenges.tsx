@@ -193,13 +193,12 @@ function ChallengeCard({ row, deadline }: { row: ChallengeRowView; deadline: str
                 className={row.done
                   ? 'home-panel-bar-fill home-challenge-meter-fill absolute inset-y-0 left-0 bg-emerald-500'
                   : 'home-panel-bar-fill home-challenge-meter-fill absolute inset-y-0 left-0 bg-violet-500'}
-                // A FLOOR, not a bare percentage. The fill starts at the
-                // capsule's rounded left end, so anything narrower than that
-                // radius is drawn inside the corner and painted over — a
-                // challenge at 0 of 5 would show an empty capsule, which is
-                // the one state that most needs to say there is progress to
-                // make here. --home-meter-floor is that radius plus the stub
-                // that has to remain; app.css states both.
+                // A FLOOR, not a bare percentage: a challenge at 0 of 5 shows
+                // a short nub rather than an empty capsule, because "not
+                // started" still has to read as a track with something to
+                // fill. It is a design minimum and a deliberately small one —
+                // app.css says why, including the clipping argument that used
+                // to be given for it and is wrong for this shape.
                 style={{ width: `max(var(--home-meter-floor), ${meter.pct}%)` }}
               />
               <span
