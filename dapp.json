@@ -538,6 +538,12 @@
       "expectText": "Change photo"
     },
     {
+      "name": "Profile: a bio with no spaces in it wraps inside the identity card (#1612)",
+      "path": "/?shot=profile-long-bio#profile",
+      "expectSelector": "#profile-identity-card p.whitespace-pre-line.break-words",
+      "expectText": "ThisIsOneUnbrokenWordThatIsFarWiderThanTheProfileCardCouldEverBe"
+    },
+    {
       "name": "Challenges tab summarises the completed set (#981)",
       "path": "/#leaderboard/challenges",
       "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid #tc-se-challenge-summary"
