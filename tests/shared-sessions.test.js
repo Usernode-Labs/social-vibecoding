@@ -78,6 +78,7 @@ function sharedRow(overrides = {}) {
 function makeDispatcher({
   sharedRows = [], shareResult = [], unshareResult = [],
   shareTranscriptResult = [], unshareTranscriptResult = [],
+  importedDetails = [], attributeBuckets = [], attributeMine = [],
 } = {}) {
   return async (sql, params) => {
     if (/FROM apps WHERE slug = \$1/.test(sql)) {
@@ -94,6 +95,16 @@ function makeDispatcher({
     }
     if (/SET transcript_shared_at = NULL/.test(sql)) {
       return { rows: unshareTranscriptResult };
+    }
+    if (/WHERE cs\.id = ANY\(\$1::int\[\]\)/.test(sql)) {
+      const wanted = new Set(params[0]);
+      return { rows: importedDetails.filter((row) => wanted.has(row.id)) };
+    }
+    if (/GROUP BY target_ref, field, norm/.test(sql)) {
+      return { rows: attributeBuckets };
+    }
+    if (/FROM topic_attribute_votes/.test(sql) && /AND user_id = \$4/.test(sql)) {
+      return { rows: attributeMine };
     }
     if (/shared_at IS NOT NULL/.test(sql)) {
       return { rows: sharedRows };
@@ -206,6 +217,70 @@ test('shared-sessions rows pass through with a busy annotation', async () => {
   } finally {
     worker.isInFlight = realIsInFlight;
     activeWorkers.clear();
+    server.close();
+  }
+});
+
+test('shared imported Underway rows gain full proposal details without widening regular sessions', async () => {
+  capturedQueries = [];
+  const regular = sharedRow({ id: 70, source: null });
+  const imported = sharedRow({
+    id: 88,
+    source: 'imported',
+    imported_pr_author: 'contributor',
+    check_state: 'error',
+  });
+  poolQueryHandler = makeDispatcher({
+    sharedRows: [regular, imported],
+    importedDetails: [{
+      ...imported,
+      app_id: APP_ROW.id,
+      pr_number: 1659,
+      pr_url: 'https://github.example/pull/1659',
+      pr_summary_md: 'Shows proposal metadata while Underway.',
+      pr_body: '## What changed\n\nImported details.',
+      testing_md: 'Inspect the Underway card and topic.',
+      testing_path: '/app/demo/dev',
+      testing_paths: [{ path: '/app/demo/dev', viewport: 'desktop' }],
+      check_phase: null,
+      check_trigger: 'pr-import',
+      check_error_detail: 'preview container failed to boot',
+      test_results: [],
+      checks_checked_at: '2026-09-04T12:00:00Z',
+      visuals_agg: null,
+    }],
+    attributeBuckets: [
+      { ref: 88, field: 'priority', display_value: 'high', count: 1, first_at: '2026-09-04T10:00:00Z' },
+      { ref: 88, field: 'assignee', display_value: 'bruno', count: 1, first_at: '2026-09-04T10:01:00Z' },
+      { ref: 88, field: 'category', display_value: 'bug', count: 1, first_at: '2026-09-04T10:02:00Z' },
+    ],
+    attributeMine: [{ ref: 88, field: 'assignee', value: 'bruno' }],
+  });
+  const server = await startServer();
+  try {
+    const { res, body } = await get(server, '/api/apps/demo/shared-sessions');
+    assert.strictEqual(res.status, 200);
+    const byId = Object.fromEntries(body.sessions.map((row) => [row.id, row]));
+    assert.equal(Object.hasOwn(byId[70], 'pr_url'), false,
+      'ordinary shared sessions retain the metadata-only response');
+    assert.equal(Object.hasOwn(byId[70], 'test_results'), false);
+
+    assert.equal(byId[88].pr_url, 'https://github.example/pull/1659');
+    assert.equal(byId[88].pr_body, '## What changed\n\nImported details.');
+    assert.equal(byId[88].testing_md, 'Inspect the Underway card and topic.');
+    assert.equal(byId[88].check_error_detail, 'preview container failed to boot');
+    assert.equal(byId[88].staging_error, 'preview container failed to boot');
+    assert.equal(byId[88].priority.top, 'high');
+    assert.equal(byId[88].assignee.top, 'bruno');
+    assert.equal(byId[88].category.top, 'bug');
+
+    const detail = capturedQueries.find(
+      (q) => /WHERE cs\.id = ANY\(\$1::int\[\]\)/.test(q.sql));
+    assert.deepStrictEqual(detail.params, [[88]],
+      'only the imported row selected by the privacy query is enriched');
+    assert.match(detail.sql, /cs\.source = 'imported'/);
+    assert.match(detail.sql, /cs\.status IN \('active', 'paused'\)/);
+  } finally {
     server.close();
   }
 });

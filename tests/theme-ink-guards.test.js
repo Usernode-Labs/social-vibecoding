@@ -184,8 +184,11 @@ test('no unpaired zinc-400 ink outside the always-dark chrome', () => {
 // surface plus a real border.
 
 test('the Activity feed reply box is not filled with the page ground', () => {
-  const src = SOURCES.find((f) => f.path.endsWith('dev-board/card/feed-thread.tsx')).text;
-  const input = src.slice(src.indexOf('<input'), src.indexOf('placeholder="Reply'));
+  const feed = SOURCES.find((f) => f.path.endsWith('dev-board/card/feed-thread.tsx')).text;
+  assert.match(feed, /<Textarea[\s\S]*?box="activityReply"/,
+    'the Activity field selects its named surface recipe');
+  const ui = SOURCES.find((f) => f.path.endsWith('components/ui/input.tsx')).text;
+  const input = ui.slice(ui.indexOf('activityReply:'), ui.indexOf('// The DEV chat', ui.indexOf('activityReply:')));
   assert.doesNotMatch(input, /\bbg-zinc-100\b/,
     'zinc-100 IS the light page ground (#eaeaea) and this box sits on it');
   assert.match(input, /\bbg-white\b/, 'the field takes the card surface in light mode');

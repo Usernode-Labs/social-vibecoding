@@ -29,6 +29,12 @@
   --accent: #0a6ee0;
   --accent-light: #1f86ff;
   --accent-tint: rgba(10, 110, 224, 0.08);
+  /* The accent as a FILL you can put dark ink on — violet-100, the pale end
+     of the same ramp. `--accent-tint` is a translucent overlay for hovers and
+     stripes; this is an opaque surface, which is what the dev composer's send
+     circle needs so its halo reads against it. */
+  --accent-wash: #d6e9ff;
+  --accent-wash-ink: #0062cc;
   /* Text ON the accent — the outgoing message bubble is the only place the
      shell puts type on a saturated fill, and it must not follow the page. */
   --accent-ink: #ffffff;
@@ -117,6 +123,14 @@
   --brand-ink: #37477b;
   --brand-tint: #e4e9f7;
   --brand-line: #c9d2f2;
+  /* The running app's sheet edge (#1571) — see "THE APP SHEET" below for
+     which element wears it and why. Straight off the design's render
+     (node 736:4306): a black-at-10% hairline, and a two-layer shadow in
+     the deck's blue-black rather than neutral grey, which is what keeps
+     it from reading as dirt over the cream ground. */
+  --app-sheet-line: rgba(0, 0, 0, 0.1);
+  --app-sheet-shadow-near: rgba(24, 39, 75, 0.12);
+  --app-sheet-shadow-far: rgba(24, 39, 75, 0.08);
   --state-blocked: #dc2626;
   --state-blocked-bg: rgba(239, 68, 68, 0.12);
   --state-blocked-fill: rgba(239, 68, 68, 0.32);
@@ -850,6 +864,11 @@ html.un-kb .platform-safe-sheet {
   --accent: #5aa9ff;
   --accent-light: #8cc4ff;
   --accent-tint: rgba(90, 169, 255, 0.14);
+  /* violet-950 and violet-300: the wash goes DARK here for the same reason
+     the bubble does — a pale fill on a near-black page is the brightest thing
+     on screen, and this is a control, not the message. */
+  --accent-wash: #00264d;
+  --accent-wash-ink: #85bcff;
   --accent-ink: #0b0b0c;
   /* One step UP from the page here, not white: the page is near-black, so a
      bubble has to be lighter than it or it stops being a bubble. */
@@ -867,6 +886,13 @@ html.un-kb .platform-safe-sheet {
   --brand-ink: #c7d0f5;
   --brand-tint: #262b45;
   --brand-line: #3a4270;
+  /* Dark inverts both halves rather than dimming them: the hairline goes
+     to white-at-low-alpha (a black one is invisible on a near-black
+     ground) and the shadow goes DEEPER, not softer, because a shadow has
+     to out-darken #0b0d1b to separate anything from it at all. */
+  --app-sheet-line: rgba(255, 255, 255, 0.12);
+  --app-sheet-shadow-near: rgba(0, 0, 0, 0.55);
+  --app-sheet-shadow-far: rgba(0, 0, 0, 0.4);
   --state-attention-bg: rgba(245, 158, 11, 0.18);
   --state-blocked: #f87171;
   --state-blocked-bg: rgba(239, 68, 68, 0.18);
@@ -901,7 +927,11 @@ html.un-kb .platform-safe-sheet {
   --un-navbar-bg: rgba(255, 255, 255, 0.82);
   --un-radius-card: 12px;
   /* The tile-zoom overlay surface: the app view's screens paint on the
-     body background, so the moving card must match it exactly. */
+     body background, so the moving card must match it exactly. On the
+     wallpaper routes the body's ground is the cream, and the same rule
+     that paints it re-points this at --home-ground (see "The home
+     ground") — otherwise the card zooms open WHITE and snaps to cream
+     when the kit lifts its surface. */
   --un-zoom-bg: var(--bg-primary);
 }
 
@@ -1320,22 +1350,43 @@ html, body {
    yellow paper grain, three gaussian-blurred colour discs and a blue
    halftone star tucked into the top-right corner.
 
-   PAINTED ON THE BODY, on the home route only. The body is the fixed
-   100dvh column that the header and the #home-screen scroller both sit
+   PAINTED ON THE BODY, on the home route and inside an app. The body is
+   the fixed 100dvh column that the header and the screen roots all sit
    in, so one background here runs under both — the bar is cleared over it
    (below) and the star lands behind the bell, where the design puts it —
-   and it never scrolls: the grid and panels move over a wallpaper, not
-   under a banner. The gradient layers are sized to the body (100% 100%),
-   which is the viewport, so a long feed cannot stretch a wash across two
-   screens.
+   and the washes never scroll: the grid and panels move over a wallpaper,
+   not under a banner. The star is the one layer that rides the page — its
+   position reads `--home-star-y`, which frontend/src/lib/wallpaper-scroll.ts
+   writes on <html> from the visible screen's scroll offset, so it slides
+   away under the bar with the tiles and returns with them. The gradient
+   layers are sized to the body (100% 100%), which is the viewport, so a
+   long feed cannot stretch a wash across two screens.
 
-   `body:has(#home-screen:not(.hidden))` is the route test. The shell
+   `body:has(:is(<roots>):not(.hidden))` is the route test. The shell
    swaps screens by toggling `.hidden` on their roots (see
-   frontend/src/lib/visibility-store.ts), so "the home root is showing" IS
-   "we are on the home route", read from the DOM with no class for a
-   module to publish. Everywhere else the body keeps its `bg-zinc-100`
-   ground and the bar its zinc-200 surface. An engine without :has()
-   (none the shell supports) simply keeps that everywhere.
+   frontend/src/lib/visibility-store.ts and App.SCREEN_IDS), so "this root
+   is showing" IS "we are on this route", read from the DOM with no class
+   for a module to publish. THE ROOTS are the launcher and everything the
+   design treats as its peers — the app view (so tapping an app from the
+   launcher leaves the bar exactly as it was: the frame covers everything
+   below it, the wallpaper shows as the band behind the bell, and the push
+   has nothing to animate in the bar), the leaderboard, the profile, the
+   directory, settings, and the anonymous landing shell, so a signed-out
+   visitor lands on the same page. The platform surfaces an app shows in
+   its own frame (the Dev board, a session) sit on the wallpaper too, as
+   the launcher's cards do. Messages and the admin console keep the
+   `bg-zinc-100` ground and the zinc-200 bar: both are dense working
+   surfaces, not pages. An engine without :has() (none the shell supports)
+   simply keeps that everywhere.
+
+   THE CREAM IS DIMMED. The export's page is #FFFEEA — 98% relative
+   luminance, which is white with a cast to the eye, and a bright one: the
+   greys most apps sit on (zinc-100, iOS's grouped background) are 88-90%.
+   The ground here is the same hue at that luminance, #F4F2E4 (88%), and
+   each wash is lowered by the same lightness step (about 3 points) so it
+   keeps the presence it had on the export's cream rather than sinking
+   into the dimmer page. The white cards read as cards on it, which on the
+   export's page they only just did.
 
    THE DISCS are the export's blurred circles as radial gradients: each
    holds its fill to (r - 2σ), is at half opacity at r, and is gone by
@@ -1364,26 +1415,75 @@ html, body {
    every engine drew it differently (Firefox drops blend modes inside an
    SVG image, for one); a raster is the same everywhere.
 
-   DARK MODE KEEPS ITS GROUND. The mock is a light-mode design; on the
-   near-black page the body keeps zinc-950 and paints no layers. */
-body:has(#home-screen:not(.hidden)) {
-  --home-ground: #fffeea;
+   DARK MODE IS THE SAME WALLPAPER ON THE INVERTED GROUND. The mock is a
+   light-mode design, so the dark one is derived from it rather than drawn:
+   the ground is the cream inverted (#0b0d1b — near black, a breath of
+   blue), and every colour layer keeps its OWN hue on top of it. A plain
+   inversion was tried first and lost the washes: inverted pastels sit a
+   few lightness points above the inverted ground, which near black is
+   nothing. So the washes are re-tuned instead — same lavender, rose and
+   ember, the same alphas and geometry, at a lightness that reads on the
+   dark ground (the ember a notch lower than the other two, since it is
+   the most saturated of the three). The star stays periwinkle, which
+   lifts off dark by itself, and the grain keeps its gold at a lower
+   opacity, so it reads as a faint speckle rather than a glow. The .dark
+   rule below sets those four values; everything else — the zoom surface,
+   the cleared bar, the launch cover, the landing root — follows through
+   the same custom properties in both modes. */
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+  --home-ground: #f4f2e4;
+  /* The kit's tile-zoom paints the moving #app-view on this (native.js
+     sets its inline background to the variable), and it is read from
+     the body's descendants, so this is where it has to follow the ground:
+     the card that zooms open out of a tile carries the wallpaper itself —
+     the kit lays the view out at its settled size and scales it with a
+     transform, so the star and the washes grow out of the tile and land
+     pixel-for-pixel on the body's, and nothing pops when the kit lifts
+     the surface. */
+  --un-zoom-bg: var(--home-wallpaper);
   --home-star: url("data:image/png;base64,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");
   --home-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n' x='0' y='0' width='100%' height='100%' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.3333' numOctaves='3' seed='8632' stitchTiles='stitch'/%3E%3CfeColorMatrix type='luminanceToAlpha'/%3E%3CfeComponentTransfer result='a'%3E%3CfeFuncA type='discrete' tableValues='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'/%3E%3C/feComponentTransfer%3E%3CfeFlood flood-color='%23FFEE6F' flood-opacity='.3'/%3E%3CfeComposite in2='a' operator='in'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-color: var(--home-ground);
-  background-image:
-    var(--home-star),
-    var(--home-grain),
-    radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px),
-    radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px),
-    radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px);
-  background-repeat: no-repeat, repeat, no-repeat, no-repeat, no-repeat;
-  background-position: right 32px top 0, 0 0, 0 0, 0 0, 0 0;
-  background-size: 97px 78px, 240px 240px, 100% 100%, 100% 100%, 100% 100%;
+  /* THE WHOLE WALLPAPER AS ONE SHORTHAND VALUE, so the body and the zoom
+     surface paint the identical thing. The kit assigns the moving view's
+     `background` (the shorthand) from --un-zoom-bg, so a multi-layer
+     shorthand is what that variable has to hold; the body uses the same
+     value, and the 640px rule below swaps in the wider one. Each layer is
+     `<image> <position> / <size> <repeat>`, the colour rides on the last. */
+  --home-wallpaper:
+    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
+  background: var(--home-wallpaper);
 }
-.dark body:has(#home-screen:not(.hidden)) {
-  background-color: #0b0b0c; /* zinc-950, the body's own dark ground */
-  background-image: none;
+.dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+  --home-ground: #0b0d1b;
+  /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
+     with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
+     cast a reader notices only when looking for it, and that same near-white
+     blue on a near-black page is the loudest thing on the screen. Matched in
+     CIE Lab rather than by eye — the light pair sits ~14 dE apart, and
+     #1A2239 on this ground is ~12, which is the same "there, but not
+     announcing itself". The geometry, the alpha ramp and the file are
+     untouched; only the palette entry differs. */
+  --home-star: url("data:image/png;base64,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");
+  /* NO GRAIN IN DARK MODE. The speck field is a scatter of gold dots at a
+     low opacity: on cream it is the paper's tooth, which is what the export
+     draws it as. On a near-black ground the same dots are little bright
+     points — the page read as a starfield, which is a different picture
+     from the one the design is of. Dropped rather than dimmed: at an opacity
+     low enough to stop reading as stars it was not visible at all, so the
+     layer was costing a repeat paint for nothing.  is a valid layer
+     image, so the shorthands below keep their shape and the desktop rule
+     needs no second copy. */
+  --home-grain: none;
+  --home-wallpaper:
+    var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+    var(--home-grain) 0 0 / 240px 240px repeat,
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
 }
 /* WIDE VIEWPORTS. The three discs above are the phone frame's, anchored in
    px to its corners, and on a desktop window they shrink into the corners
@@ -1391,38 +1491,72 @@ body:has(#home-screen:not(.hidden)) {
    more washes join them — the same three tints, sized in viewport units so
    they scale with the window rather than with the phone, and placed across
    the middle of the page where the frame's discs never reach. The dark rule
-   above still wins here (it is the more specific selector), so dark mode
-   stays unpainted at every width. */
+   above is the more specific selector, so it would keep the phone layers
+   at every width on its own — the second rule here gives dark the same
+   four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(#home-screen:not(.hidden)) {
-    background-image:
-      var(--home-star),
-      var(--home-grain),
-      radial-gradient(circle at calc(100% - 92px) 115px, rgba(237, 228, 244, 0.55) 138px, rgba(237, 228, 244, 0.275) 198px, rgba(237, 228, 244, 0) 258px),
-      radial-gradient(circle at calc(100% - 62px) 59%, rgba(248, 228, 238, 0.65) 50px, rgba(248, 228, 238, 0.325) 120px, rgba(248, 228, 238, 0) 190px),
-      radial-gradient(circle at 70px calc(100% - 69px), rgba(253, 232, 228, 0.75) 90px, rgba(253, 232, 228, 0.375) 170px, rgba(253, 232, 228, 0) 250px),
-      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(237, 228, 244, 0.65), rgba(237, 228, 244, 0) 70%),
-      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(248, 228, 238, 0.65), rgba(248, 228, 238, 0) 70%),
-      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(253, 232, 228, 0.7), rgba(253, 232, 228, 0) 70%),
-      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(237, 228, 244, 0.55), rgba(237, 228, 244, 0) 70%);
-    background-repeat: no-repeat, repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
-    background-position: right 32px top 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0, 0 0;
-    background-size: 97px 78px, 240px 240px, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+    --home-wallpaper:
+      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+      var(--home-grain) 0 0 / 240px 240px repeat,
+      radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(229, 216, 239, 0.65), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(245, 215, 230, 0.65), rgba(245, 215, 230, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(252, 219, 212, 0.7), rgba(252, 219, 212, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(229, 216, 239, 0.55), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
+  }
+  .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+    --home-wallpaper:
+      var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
+      var(--home-grain) 0 0 / 240px 240px repeat,
+      radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at 70px calc(100% - 69px), rgba(118, 31, 15, 0.75) 90px, rgba(118, 31, 15, 0.375) 170px, rgba(118, 31, 15, 0) 250px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(80, 48, 105, 0.65), rgba(80, 48, 105, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(117, 36, 77, 0.65), rgba(117, 36, 77, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(118, 31, 15, 0.7), rgba(118, 31, 15, 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(80, 48, 105, 0.55), rgba(80, 48, 105, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
   }
 }
-/* THE BAR OVER THE WALLPAPER. On the home route the header's zinc-200
-   surface goes, so the wallpaper (and the star) run up behind the bell —
-   the one place the design's "page ground runs to the top of the screen"
-   is literal. The controls on it carry their own periwinkle fill and
-   hairline (--brand-tint / --brand-line), so they still lift off cream and
-   off dark alike. Everywhere else the bar keeps its surface — see the
-   "THE BAR'S OWN SURFACE" note in platform-header.tsx for why it has one.
-   The view-transition group note above (#platform-header is opaque) has a
-   home-route exception here: during the push from home into an app the
-   incoming page slides under a bar with no fill, which is the iOS reading
-   of a translucent bar rather than a defect. */
-body:has(#home-screen:not(.hidden)) #platform-header {
+/* THE BAR OVER THE WALLPAPER. On every wallpaper route the header's
+   zinc-200 surface goes, so the wallpaper (and the star) run up behind the
+   bell — the one place the design's "page ground runs to the top of the
+   screen" is literal. (#landing-header never had a surface; it sits on
+   the body's ground already.) The controls on it carry their own
+   periwinkle fill and hairline (--brand-tint / --brand-line), so they
+   still lift off cream and off dark alike. Everywhere else the bar keeps
+   its surface — see the "THE BAR'S OWN SURFACE" note in
+   platform-header.tsx for why it has one. The view-transition group note
+   above (#platform-header is opaque) has its exception here, and it is
+   what makes the launcher → app push read as one bar: both routes paint
+   the same wallpaper under the same cleared bar, so the bar's snapshot is
+   identical on both sides of the transition and only the page moves. */
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) #platform-header {
   background-color: transparent;
+}
+/* THE CANVAS UNDER THE PUSH is the ground too — <html>'s own background,
+   set inline in the head (frontend/src/head.html) so the first paint is
+   never white, moved from the old zinc greys to the wallpaper's base in
+   each mode when the wallpaper became the platform's ground. It is what
+   the page transition shows wherever its snapshots do not reach: the seam
+   of the iOS push and a frame of the Android fade. Nothing route-scoped
+   is needed for it any more; theme-color and the manifest carry the same
+   value, so the browser chrome and a cold launch frame the page in it.
+   The launch cover reads the same ground, so the app opens on the page's
+   colour in both modes. */
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) .app-launch-cover {
+  background-color: var(--home-ground);
+}
+/* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
+   fixed, full-viewport overlay with its own opaque `bg-white` (it covers
+   whatever the signed-in shell has left on the page), so the body's
+   wallpaper never showed through it. It takes the same shorthand the body
+   paints — inherited from the body's rule, which is on because this root
+   is showing — in both modes. */
+#auth-landing-screen {
+  background: var(--home-wallpaper);
 }
 
 /* ── App cards ─────────────────────────────────────────── */
@@ -2133,112 +2267,27 @@ body:has(#home-screen:not(.hidden)) #platform-header {
   pointer-events: none;
 }
 
-/* ── Discover widget ────────────────────────────────────────
-   The block is ~366px wide on a phone and ~397px on a wide desktop, and it
-   draws two lanes and the caption between them — no title bar and no footer:
+/* ── THE TILE GRID IS RETIRED ───────────────────────────────
+   `.home-discover-tiles` was six explicit grid tracks (`--lane-tracks`, set
+   from the lane's own count and floored at four), `.home-discover-icon-wrap`
+   capped the fluid icon at the 40px the tile always drew at, `.home-discover-
+   icon` held it square, `.home-discover-tiles .home-discover-tile` stripped
+   the launcher card's padding back off, and `.home-discover-name` clamped the
+   label to two lines because a ~55px track rendered most names as "Opinio…".
+   Every one of those existed to fit six icons into ONE grid cell on a phone.
 
-     border            1px top + 1px bottom          =   2px
-     tile lane         8 + 40 icon + 4 gap + 24 name + 8
-                                                     =  84px
-     divider/"Popular" caption (1 rule + ~18)        =  19px
-     second lane                                     =  84px
-                                                       -------
-                                                        189px
+   The lane is a rail of cards (see `.home-discover-rail` below) and the block
+   is a section that grows to its content, so none of that arithmetic has
+   anything left to constrain. What survives is the lane wrapper, the
+   "Popular" divider between the two rails and the empty note.
 
-   TWO TERMS OF THAT SUM CHANGED TOGETHER. The 27px TITLE BAR is gone: the
-   block's title is the section's own label above the card now and its browse
-   link went with it, so the card starts on its first lane (see
-   frontend/src/features/home/panels/ui.tsx). The NAME lane doubled, 12px to
-   24px, because a lane is one track per tile and a track is ~55px on a phone
-   — one line rendered most of these as "Opinio…", "ClearS…", "Watch…", which
-   is a poor advertisement for an area called Discover. The bar's 27px paid
-   for most of the 24px the second line costs.
-
-   It was measured against a 256px height cap while the block was a 2x2 tile,
-   and against --home-cell-h while it was a 4x1 one. There is no cap now — the
-   section is as tall as its two lanes — so the sum is a description rather
-   than a constraint. Both lanes stay `flex: 1 1 auto`, so anything spare is
-   still split evenly and each lane centres its single row of tiles in its own
-   band.
-
-   SIX EXPLICIT TRACKS, NOT auto-fill. Each lane must be exactly one row:
-   with a lane budgeted at one row, anything that wraps is clipped by
-   .home-panel-rows' overflow and silently disappears. auto-fill made the
-   track count follow the pixel width — 6 tracks on a phone and on a wide
-   desktop, but only 3-4 in a 640-800px window, where a full six tiles
-   wrapped. Six is Home.FEATURED_LIMIT / Home.POPULAR_LIMIT, so there is
-   exactly one track per tile either lane can ever produce.
-
-   The icon is FLUID for the same reason: the narrowest 5-column lane gives
-   a track ~32px, and a fixed 40px box would overflow it. It fills its track
-   up to the 40px it has always drawn at, so a phone and a wide desktop are
-   unchanged and a narrow desktop window shrinks instead of clipping. */
-.home-discover-tiles {
-  display: grid;
-  /* The track count is the LANE'S OWN (discover.tsx sets --lane-tracks from
-     the number of tiles, floored at four); the six above is the fallback and
-     still the ceiling, since six is Home.FEATURED_LIMIT / POPULAR_LIMIT. The
-     invariant the paragraph above is about — one track per tile, so a lane is
-     always exactly one row — is unchanged: it just comes from the data now
-     instead of from a constant that had to assume the worst case, which is
-     what made a five-tile lane squeeze five names to fit six columns. */
-  grid-template-columns: repeat(var(--lane-tracks, 6), minmax(0, 1fr));
-  gap: 0.375rem;
-  padding: 0.5rem 0.625rem;
-  /* One row inside a band that is taller than it needs: centre it rather
-     than hanging it off the top edge. */
-  align-content: center;
-}
-/* THE BASIS IS THE CONTENT, not the band. It was `1 1 0` while the block was
-   a fixed 2x2 TILE: there the article's height came from the grid cell, so a
-   zero basis was the way to make two lanes split a real, generous box evenly
-   instead of the first one taking it all.
-
-   A section sizes to ITS OWN CONTENT, and a zero basis in that direction is
-   circular — each lane contributed 0 to the height the article asked for, the
-   article collapsed to its title bar, and both lanes were then handed the
-   ~16px that was left and clipped their 44px tiles in half. `1 1 auto` reads
-   the same intent (share anything spare, evenly) against a basis that
-   actually exists. */
+   The NAME keeps its class and loses its clamp: on a 152px card a real name
+   has room to be read on one line, and the second line would only ever be
+   spent on the longest few. Truncation is a utility on the element now. */
 .home-discover-lane {
   flex: 1 1 auto;
 }
-/* .app-card buys these tiles their tap/drag behaviour, but NOT its padding:
-   that class is the 56px launcher tile, and its 8px (phone) / 12px (desktop)
-   inset is sized for a card that owns a whole grid cell. Inherited here it
-   added 16px to every tile, which put the phone widget at 116px of a 116px
-   cell — no headroom at all, so the first reader with larger system text
-   would have had the captions clipped. The lane's own padding is the inset;
-   the tile just holds the icon and its name.
-
-   Two classes deep on purpose: .app-card's own padding is declared LATER in
-   this file (in the phone-density block), so an equal-specificity rule here
-   would lose to it at exactly the width where it matters most. */
-.home-discover-tiles .home-discover-tile {
-  min-width: 0;
-  padding: 0;
-}
-/* THE CAP LIVES ON THE WRAPPER, NOT THE ICON. The icon's own box is a flex
-   item of a `flex-col items-center` tile, so it is shrink-to-fit: a
-   `width: 100%` on it resolves against a parent whose width comes from its
-   content, which is circular — the icons collapsed to whatever their glyph
-   happened to measure (a 12px emoji, a 30px image) instead of a uniform
-   40px. Giving the WRAPPER a definite width (the track, capped at 40px)
-   breaks the cycle: the icon then fills a box that is already decided, and
-   the +/✓ badge, which is positioned against this wrapper, keeps tracking
-   the icon's real edges at every size. */
-.home-discover-icon-wrap {
-  width: 100%;
-  max-width: 2.5rem;   /* 40px — the size the tile has always drawn at */
-  margin-inline: auto;
-}
-.home-discover-icon {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-}
-/* The "Popular" caption sits on its own hairline row between the lanes — on
-   the same 0.625rem inset lane as every other rule inside a home panel card,
-   see .home-panel-row + .home-panel-row::before above. */
+/* The "Popular" caption sits on its own hairline row between the two rails. */
 .home-discover-divider {
   position: relative;
   min-height: 1.125rem; /* 18px */
@@ -2253,37 +2302,218 @@ body:has(#home-screen:not(.hidden)) #platform-header {
   background: var(--border-light);
   pointer-events: none;
 }
-/* THE TILE NAME GETS TWO LINES, exactly as the launcher tile's label does.
-   A lane is six explicit tracks at every width (see .home-discover-tiles), so
-   a track is ~55px on a phone — and a single truncated line rendered most of
-   these as "Opinio…", "ClearS…", "Watch…". A lane of unreadable names is a
-   poor advertisement for an area called Discover, and the height cap that
-   made one line the only affordable answer is gone (see .home-panel above):
-   a section is as tall as its content, so the second line simply costs 12px.
-   The clamp is here rather than in the component because `line-clamp` is
-   three properties and two of them are prefixed. */
-.home-discover-name {
+/* The empty state: no rail at all, one centred line in its place, so the
+   block reads as a compact strip rather than a mostly-blank box. */
+.home-discover-empty {
+  padding: 0.5rem 0.625rem;
+}
+
+/* ── THE CARD LANGUAGE: TINTS ───────────────────────────────
+   Discover's app cards and Challenges' challenge cards are the same object
+   in two sizes — a tinted plate with art on it — and they share one palette
+   so the launcher reads as one page rather than two lists that happened to
+   get colours. Five tints, assigned by a hash of the app slug / challenge id
+   (see tintOf in panels/ui.tsx) rather than by position, so a card keeps its
+   colour as the lane reorders around it.
+
+   Raw hex, like the wallpaper above and for the same reason: these are the
+   design's own tints, not steps of a Tailwind scale, and `zinc`/`violet` are
+   the only scales the product is allowed to name (see the palette rule in
+   tests/admin-ui-registry.test.js). `--tint-art` is the deeper block the
+   icon sits on; `--tint-line` is the hairline that keeps a pale card off a
+   pale wallpaper.
+
+   Dark mode does what the wallpaper does: the same hues, re-tuned to a
+   lightness that reads on the inverted ground rather than inverted into
+   mud. */
+.home-tint-1 { --tint-bg: #e3efe0; --tint-line: #cfe0ca; --tint-art: #cfe3c7; }
+.home-tint-2 { --tint-bg: #dfeaf6; --tint-line: #c9dcee; --tint-art: #c6dcf0; }
+.home-tint-3 { --tint-bg: #e9e2f2; --tint-line: #d9cfe8; --tint-art: #ded2ef; }
+.home-tint-4 { --tint-bg: #fbe6d5; --tint-line: #f2d5bd; --tint-art: #f7ddc6; }
+.home-tint-5 { --tint-bg: #f8dde8; --tint-line: #eec7d6; --tint-art: #f4d6de; }
+.dark .home-tint-1 { --tint-bg: #1b2a1f; --tint-line: #2c4433; --tint-art: #22331f; }
+.dark .home-tint-2 { --tint-bg: #17263a; --tint-line: #27405e; --tint-art: #1b2f47; }
+.dark .home-tint-3 { --tint-bg: #241f38; --tint-line: #3a3157; --tint-art: #2b2442; }
+.dark .home-tint-4 { --tint-bg: #33231a; --tint-line: #50392a; --tint-art: #3d2a1f; }
+.dark .home-tint-5 { --tint-bg: #331d28; --tint-line: #513043; --tint-art: #3e2231; }
+
+/* ── Discover: the card rail ────────────────────────────────
+   The lane was a GRID of six 40px icon tiles inside the block's white card:
+   the most an area called Discover could say about an app was its name,
+   clamped to two lines at 9.6px. It is a horizontal rail of cards now — art,
+   name, the app's own sentence, and how many people built it — which is what
+   the design asks for and what makes the area answer "should I open this?"
+
+   IT BLEEDS TO BOTH SCREEN EDGES. The negative margin cancels the section's
+   px-3 gutter so the first card starts on the text's left edge and the last
+   one runs off the right, which is the affordance: a card cut by the edge
+   says there are more. #home-screen states `overflow-x: hidden` (see the
+   gesture rule above, pinned by tests/home-vertical-scroll-only.test.js), so
+   the overhang is clipped by the feed rather than widening it.
+
+   `touch-action: pan-x` for the same reason the switcher's app rail carries
+   it: without it a diagonal drag that starts here is claimed by the vertical
+   feed and the rail never moves. A VERTICAL drag still reaches the page —
+   the browser only takes the axis this element declares. */
+.home-discover-rail {
+  display: flex;
+  gap: 0.625rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: none;
+  margin-inline: -0.75rem;
+  padding-inline: 0.75rem;
+  /* Room for the cards' own shadow-less hairline to not be clipped, and for
+     a focus ring on the last card. */
+  padding-block: 0.125rem;
+}
+.home-discover-rail::-webkit-scrollbar { display: none; }
+
+/* 9.5rem is the reference's card at a 390pt phone (150/390 of the frame),
+   and it is a fixed width on purpose: cards that flex would resize as the
+   lane's count changes, and the rail's whole affordance is that the row
+   continues past the edge at a constant rhythm. */
+.home-discover-card {
+  flex: 0 0 auto;
+  width: 9.5rem;
+  scroll-snap-align: start;
+  border-radius: 0.875rem;
+  background: var(--tint-bg);
+  border: 1px solid var(--tint-line);
+  overflow: hidden;
+  cursor: pointer;
+}
+.home-discover-art {
+  height: 7.5rem;
+  background: var(--tint-art);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* The app's own icon, at the size the art block can carry. An emoji is a
+   glyph and scales with font-size; an uploaded image fills the block, which
+   is the one case that looks like the reference's own art. */
+.home-discover-art-emoji { font-size: 2.75rem; line-height: 1; }
+.home-discover-art-img { width: 100%; height: 100%; object-fit: cover; }
+.home-discover-art-letter { font-size: 2.25rem; line-height: 1; font-weight: 700; opacity: .45; }
+/* Two lines, ellipsised — the reference's own treatment. `line-clamp` is
+   three properties and one of them is prefixed, which is why it is here
+   rather than as utilities beside the element. */
+.home-discover-blurb {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   overflow: hidden;
-  /* A FIXED two-line box, not a max — the launcher label's own reasoning
-     (.app-card-title above): a one-line name and a two-line name must occupy
-     the same height or the tiles in a lane sit on different baselines. 24px is
-     exactly two of the 12px lines `leading-tight` gives this 9.6px type. */
-  height: 1.5rem;
-  /* Same as the launcher label: a single unbroken name (a slug-style one, or
-     just "Crowdfunding" in a 55px track) stays inside its tile rather than
-     overflowing it. */
-  overflow-wrap: anywhere;
 }
 
-/* The empty state: no tile lane at all, one centred line in its place, so
-   the block reads as a compact strip rather than a mostly-blank box. */
-.home-discover-empty {
-  padding: 0.5rem 0.625rem;
+/* ── Challenges: the plate, and the cards on it ─────────────
+   The block was one white card of divided rows. It is a PLATE holding the
+   season summary and one tinted card per challenge — the reference's shape —
+   and the plate is what keeps them reading as one area rather than four
+   things that happen to be adjacent.
+
+   TRANSLUCENT, not the white card the block used to be. The three steps
+   before this one put a wallpaper behind the page; an opaque white rectangle
+   here covers it exactly where the page is tallest. At 55% the grouping
+   still reads, the tints stay crisp, and the washes carry on through. The
+   blur is what stops the wallpaper's grain reading through as noise under
+   the text; it degrades to plain translucency where it is unsupported. */
+.home-challenges-plate {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 1rem;
+  padding: 0.625rem;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
 }
+.dark .home-challenges-plate {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+.home-challenge-card {
+  border-radius: 0.875rem;
+  background: var(--tint-bg);
+  border: 1px solid var(--tint-line);
+}
+/* The white pill under each title: the challenge's state on one line. It is
+   opaque white on the tint in both modes — a translucent pill over a tinted
+   card over a translucent plate is three layers of glass to read one number
+   through. */
+.home-challenge-pill {
+  background: #fff;
+  border-radius: 9999px;
+}
+.dark .home-challenge-pill { background: rgba(0, 0, 0, 0.35); }
+/* THE COUNTED CHALLENGE'S STATE: a capsule that fills, in the place a
+   yes-or-no challenge puts its circle. It replaces a 3px rail that ran along
+   the pill's bottom edge — one element in the pill instead of one in it and a
+   rule under it, and it carries the exact count as well, which the rail had
+   no room for.
+
+   THE FLOOR IS A DESIGN MINIMUM, NOT A CLIPPING CORRECTION, and the
+   difference matters because this comment said the opposite for a while. The
+   claim was that a fill narrower than the capsule's corner radius is drawn
+   inside the cap and painted over, so the floor had to clear the radius. That
+   is true of the RAIL this replaced — 3px tall and flush with a 16px corner,
+   where the bottom row really is all corner — and false of the capsule: its
+   cap is a semicircle of half its height, so a 5px fill still covers 14.8px
+   of the 16px it is tall. Narrow, never invisible.
+
+   So the floor is simply the shortest fill that reads as "started, barely"
+   rather than as a smudge, and it is small on purpose: at the radius-derived
+   14px it was a quarter of the capsule, which read as real progress on a
+   challenge nobody had begun. tests/home-panels-render.test.js pins that it
+   stays well under the radius, and scripts/measure-meter-zero.mjs measures
+   what a browser actually paints. */
+.home-challenge-meter {
+  --home-meter-radius: 0.5rem;   /* half of h-4, the capsule's own corner */
+  --home-meter-floor: 0.375rem;  /* 6px — a nub, not a quarter of the track */
+  min-width: 3.5rem;             /* fits "12/20" with room for the fill to read */
+}
+/* The fill is a TINT, not the solid accent: the count sits on top of it, and
+   a solid fill would swallow the digits the moment progress passed them.
+
+   THE TINT IS OF THE ACCENT BLUE (violet-500 — read the hex, that scale is
+   the shell's blue), not of --brand-ink. Brand ink is a deep periwinkle
+   navy, and a navy at a third of its strength composites to a blue-GREY: it
+   read as "the track, slightly darker" rather than as progress. The accent
+   at this strength composites to an unmistakable light blue, and the count
+   in brand ink still clears 4.5:1 on it — which is the constraint that keeps
+   the fill a tint at all. */
+.home-challenge-meter-fill {
+  opacity: 0.45;
+}
+.dark .home-challenge-meter-fill {
+  opacity: 0.5;
+}
+
+/* The art well on a challenge card. Lighter than the card so the
+   illustration sits ON something, the same relationship the Discover card's
+   art block has to its footer. */
+.home-challenge-art {
+  background: rgba(255, 255, 255, 0.6);
+}
+/* THE FALLBACK WORD, when a challenge's kind carries no icon. A category is
+   free text on the template and is usually one word — "ONBOARDING" at 9px
+   with letter-spacing measures wider than the 62px well, and a single
+   unbreakable word does not wrap, so it ran straight out of the square.
+   Breaking anywhere is what a well can do that a line of prose should not,
+   and two lines is what the box has room for; a longer one ellipsises rather
+   than pushing the card taller. The tracking goes with it — at this size it
+   was buying width the well does not have. */
+.home-challenge-art-word {
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.dark .home-challenge-art { background: rgba(255, 255, 255, 0.08); }
 
 /* ── Create-app widget ──────────────────────────────────────
    A 1x1 tile: the whole thing is the button, since a single cell has no
@@ -2616,6 +2846,187 @@ body:has(#home-screen:not(.hidden)) #platform-header {
   top: 0; left: 0; width: 100%; height: 100%;
   border: 0;
   background: var(--bg-primary);
+}
+
+/* ── THE APP SHEET, and why the corner lives HERE (#1571) ──────────────
+   The running app arrives as a raised sheet on the page ground: its own
+   top radius, its own hairline, its own shadow. That is a different
+   mechanism from the one every OTHER route uses, and the split is not
+   an inconsistency — it is the only arrangement that works on both.
+
+   #platform-header carries `rounded-b-2xl -mb-2`: a notch cut out of THE
+   BAR, overlapping downward so whatever sits below reads as
+   rounded-topped. It costs the screens below it nothing, which is what
+   makes it right for them — every screen root is TRANSPARENT (the body
+   paints the ground, the roots are `flex-1 overflow-y-auto` and nothing
+   else), so there is no fill on them to round in the first place.
+
+   That notch needs a bar surface to cut, and on an app route there
+   isn't one: the rule at "THE BAR OVER THE WALLPAPER" above clears
+   #platform-header's background wherever the wallpaper shows, and
+   #app-view is on that list. So inside an app the notch produced
+   nothing at all, while the one opaque thing on the screen — the app's
+   own document, behind #app-iframe's `background: var(--bg-primary)` —
+   met the cream in a hard horizontal line corner to corner. That line
+   is what #1571 reported ("cuts out on apps … a gray horizontal line
+   not matching the background of the app"), and no radius on the bar
+   can reach it.
+
+   So the app frame rounds ITSELF. #app-frame-host is the right element
+   and not #app-view: it is React-owned end to end (see
+   features/app-frame/app-frame.tsx), it is shown only while an app is
+   actually mounted, and it is already `overflow: hidden`, so the radius
+   clips the frame with nothing further to arrange. Its sibling
+   #app-content — Dev mode, the status placeholders — keeps the header's
+   notch like every other platform surface, because like them it is
+   transparent and has nothing to round.
+
+   The shadow reaches UP into the bar's strip on purpose, which is what
+   makes the sheet read as lifted rather than abutted. Nothing clips it:
+   #app-view sets no overflow, and the bar's own `z-10` paints it above
+   the shadow without hiding it, because on this route the bar has no
+   background to hide anything with.
+
+   Geometry is the design's (Streamlined Concept, node 736:4306): a 28px
+   top radius, a 1px hairline and a two-layer shadow.
+
+   THE HAIRLINE IS `border-top` ONLY, and that is the whole of it. The
+   sheet is as wide as the screen and runs off the bottom, so a border on
+   any other side is not an edge of anything — it draws a 1px rule down
+   the left and right of the display for the entire height of the app,
+   which reads as a letterboxed frame around it rather than as a card.
+   Only the top edge is a real boundary here, because it is the only side
+   where the sheet actually meets the page ground. */
+#app-frame-host {
+  border-radius: 1.75rem 1.75rem 0 0;
+  border-top: 1px solid var(--app-sheet-line);
+  box-shadow:
+    0 6px 12px -6px var(--app-sheet-shadow-near),
+    0 8px 24px -4px var(--app-sheet-shadow-far);
+  /* KEPT ON A LAYER, or the corners flicker while the app opens — see
+     "WHY BOTH PROMOTIONS" below for what this costs and why the frame
+     needs one of its own too. */
+  will-change: transform;
+}
+
+/* THE CLIP, STATED AT EVERY LEVEL, because one level is not enough here.
+
+   #app-frame-host's own `overflow: hidden` (an inline style, see
+   features/app-frame/app-frame.tsx) is the whole fix in Chrome and
+   Firefox for content that stays on its parent's layer. Two things in
+   this subtree do not:
+
+   - #app-iframe. WebKit has a long-standing bug where an <iframe>
+     ignores an ancestor's border-radius outright.
+   - .app-launch-cover. It cross-fades on `opacity` (see its rule further
+     down), so it is on its own layer for the length of the launch.
+
+   #1656's note here had the launch cover CAUSING a corner artifact. It
+   does the opposite: while the cover is up it is the topmost thing at
+   the corners, it is an ordinary div, and it clips correctly — so if
+   anything it masks one. (An earlier version of this note went on to
+   explain "some apps" by how fast they boot. That was wrong too: it is
+   which of them repaint LATE. See below.)
+
+   None of these clips survives an animation on its own — see "WHY BOTH
+   PROMOTIONS" below, which is the other half of the corner story and
+   the part that took the longest to find.
+
+   So the radius is restated on each of them, and .app-launch-host takes
+   an `overflow: hidden` of its own so the clip also exists one level
+   closer to the cover than the host's. Same value everywhere, via
+   `inherit` — a child rounding to a DIFFERENT radius than the box
+   clipping it is worse than either alone. */
+#app-frame-host > .app-launch-host {
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+#app-frame-host #app-iframe,
+#app-frame-host .app-launch-cover {
+  border-radius: inherit;
+}
+
+/* ── WHY BOTH PROMOTIONS ───────────────────────────────────────────────
+   The corners flickered while an app opened: they would go square for a
+   frame and snap back. Both `will-change`s here are the fix, and they
+   are not redundant — they stabilise two DIFFERENT layers.
+
+   An <iframe> owns a compositing layer of its own, and the rounded clip
+   above is on its ANCESTORS. Every time either layer is re-rastered
+   mid-animation, the clip has to be re-applied to it, and for a frame
+   or two it is not. So the host is kept on a layer (the open animation
+   re-rasters it) and so is the frame (a repaint INSIDE the app
+   re-rasters that one, which nothing on the host can reach).
+
+   This was found by elimination on the staging preview, because it
+   cannot be reproduced in a dev container: the kit and native.css are
+   centrally hosted and a dev container's egress denies that host, so
+   every local repro exercises an animation that is not the one the
+   product runs. Four confident local diagnoses were wrong for exactly
+   that reason. What identified it was that the flicker hit SOME apps:
+   promoting the host alone fixed Gym Tracker and left Todo List
+   flickering, and the difference between those two is that Todo List
+   loads Google Fonts with `display=swap` — a swap repaints the app's
+   whole document when the face arrives, inside the open animation's
+   window. Gym Tracker loads no web fonts. So "some apps" was never
+   about how fast they boot; it is about which of them repaint late.
+
+   Two traps, both paid for:
+
+   - `translateZ(0)` does NOT work here. It computes to a 2D matrix and
+     is optimised away — getComputedStyle returns
+     `matrix(1, 0, 0, 1, 0, 0)` — so it never creates the layer it looks
+     like it creates. `will-change: transform` does.
+   - Do not "verify" a fix for this by screenshotting a live animation
+     in a loop. A 260ms animation outruns the loop and the frames land
+     at different times each run, which returns false positives.
+     Freeze it instead: `await vt.ready`, pause everything from
+     document.getAnimations(), then step currentTime.
+
+   WHAT IT COSTS, so it is a decision and not an accident: `will-change`
+   holds a layer alive for as long as it is set, and these two are set
+   permanently rather than only during the animation. That is bounded —
+   #app-frame-host is a singleton, at most one app runs at a time, and
+   the frame composites on its own regardless, so the standing cost is
+   one extra full-screen layer. Scoping them to the open would need the
+   launch sequence to add and remove a class around an animation the
+   kit owns and this side does not observe; the layer is cheaper than
+   that coupling. Revisit if a profile says otherwise.
+
+   Ruled out on the preview and not worth re-running: the shadow (the
+   flicker survives `box-shadow: none`), a `view-transition-name` on
+   the host, and the launch cross-fade on its own. `border-radius: 0`
+   does stop it, by deleting the corner that flickers, so it says
+   nothing. */
+#app-frame-host #app-iframe {
+  will-change: transform;
+}
+
+/* CHROMELESS TAKES IT ALL BACK OFF. The chromeless route is
+   `#app/<slug>/full` — `const chromeless = tab === 'full'` in app.js's
+   restoreFromHash, which then rewrites tab to 'app', so the ordinary
+   in-app route `#app/<slug>/app` is NOT this and keeps the sheet. There
+   the bar is not transparent, it is GONE (App.setChromeless publishes the
+   header's visibility off and platform-header.tsx's useHiddenClass puts
+   `hidden` on the element), so the frame starts at the top of the
+   viewport. A sheet needs something to be a sheet ON, and there is
+   nothing above it: the radius would round the app's top corners against
+   the bare page ground and the shadow would fall on nothing. Chromeless
+   means the app IS the screen, so it goes back to filling it edge to
+   edge.
+
+   Keyed on the header's `hidden` class rather than on App.chromeless
+   because that flag has no DOM presence to select on. The cost is that
+   the class arrives via the visibility store's re-render, so LEAVING
+   chromeless through the pill can show one square frame before the sheet
+   returns. Worth knowing about; not worth a body-class write from
+   app.js to pre-empt, since the transition it happens under is a
+   full-document one either way. */
+body:has(#platform-header.hidden) #app-frame-host {
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
 }
 
 /* ── Dev chat messages ─────────────────────────────────── */
@@ -3791,8 +4202,7 @@ a.dc-flow-action {
   flex: 0 0 auto;
 }
 
-.dc-draft-btn,
-.dc-save-draft-btn {
+.dc-draft-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3811,24 +4221,11 @@ a.dc-flow-action {
 .dc-draft-trash:hover:not(:disabled) { color: #ef4444; border-color: #ef4444; }
 .dc-draft-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Save icon in the composer, sized to sit level with the Send button. */
-.dc-save-draft-btn {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-}
-.dc-save-draft-btn:not(:disabled) { color: var(--text-secondary); }
-.dc-save-draft-btn:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--bg-tertiary);
-}
-.dc-save-draft-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-/* #810: the icon only exists while a TURN IS RUNNING. Needed explicitly —
-   the shared `.dc-draft-btn, .dc-save-draft-btn { display: inline-flex }`
-   rule above has the same specificity as the UA `[hidden]` rule and, being
-   an author sheet, would otherwise keep the button visible. */
-.dc-save-draft-btn[hidden] { display: none; }
+/* The composer's own save icon lived here, a 34px bordered square beside the
+   Send button. It is the one circle's GREEN STATE now (.dc-circle-save):
+   while a turn runs, text in the box makes saving the only useful action, so
+   it takes the button rather than sitting next to it. The rows' own
+   .dc-draft-send above is a different control — it sends a saved draft. */
 
 /* ── File attachments (#450) ───────────────────────────── */
 
@@ -5684,9 +6081,15 @@ span.gc-vote-btn-icon { cursor: default; }
 /* #990: the trailing activity indicator is the dots on a .dc-status-line row,
    so it sits flush under the step ladder it belongs to instead of indented
    like the retired standalone spinner. Only the doubled vertical padding
-   (2px from the row + 4px from the dots) needs trimming. */
+   (2px from the row + 4px from the dots) needs trimming.
+
+   #1590: the TOP of that trimmed padding has to clear the bounce. A dot is
+   6px and dc-dot-bounce lifts it 6px, so 2px of headroom left it rising 4px
+   out of its own row and into the ladder line above — the overlap that was
+   reported. 6px is exactly the travel, so the dot lands flush with the row's
+   top edge at the peak and nothing crosses it. */
 .dc-activity-line { padding: 0 0 4px; }
-.dc-activity-line .dc-streaming-dots { padding: 2px 0; }
+.dc-activity-line .dc-streaming-dots { padding: 6px 0 2px; }
 .dc-activity-label { font-size: 11px; color: var(--text-muted); }
 
 @keyframes dc-dot-bounce {
@@ -5694,23 +6097,159 @@ span.gc-vote-btn-icon { cursor: default; }
   40% { transform: translateY(-6px); opacity: 1; }
 }
 
-/* ── Send button streaming state ───────────────────────── */
+/* ── The dev composer's one circle ──────────────────────── */
 
+/* Streamlined Concept. This was a 64x38 rectangle carrying the word "Send",
+   with a separate save icon beside it and a shortcut-hint line under the
+   pair. It is one 44px circle now, and which action it performs follows the
+   turn — see SendButtonView in features/dev-chat/composer-store.ts.
+
+   The SIZE is the point of keeping a fixed box: the label swaps between an
+   arrow, a floppy, a square and a spinner, and the row must not reflow under
+   it. 44px is also the platform's tap target, which the old 38px height was
+   under. */
 .dc-send-btn {
-  min-width: 64px;
+  width: 44px;
+  height: 44px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 9999px;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 38px;
+  flex-shrink: 0;
 }
 
-.dc-btn-streaming { background: var(--bg-tertiary) !important; cursor: not-allowed; }
+/* Idle. A pale fill with a wider, fainter ring of the same hue — the halo is
+   what makes a low-contrast circle read as the row's one primary action
+   without shouting like a filled accent button would. */
+.dc-circle-send {
+  background: var(--accent-wash) !important;
+  color: var(--accent-wash-ink);
+  box-shadow: 0 0 0 6px rgba(31, 134, 255, 0.10);
+}
+.dc-circle-send:hover { background: var(--accent-light) !important; color: #fff; }
+
+/* A turn is running and there is text to park (#810's rule, moved onto the
+   button). Green because it is a SAVE, not a send and not an interrupt: the
+   same emerald the product already spends on "done" states. Filled rather
+   than washed, because unlike Send it is standing where the red Stop was and
+   has to read as a deliberate swap rather than a disabled Stop. */
+.dc-circle-save {
+  background: #10b981 !important;
+  color: #fff;
+  box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.14);
+}
+.dc-circle-save:hover { background: #059669 !important; }
+
+/* ── The card ───────────────────────────────────────────── */
+
+/* One surface holding the field and one row of controls. It floats on the
+   pane's ground rather than sitting in a bordered bar, which is why the bar
+   around it drops its `border-t` and the card carries the elevation. */
+.dc-card {
+  /* The elevation is a variable so the focus rule below can add a ring to it
+     without restating it — two copies of a shadow list drift the first time
+     one of them is tuned. */
+  --dc-card-elevation: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -8px rgba(0, 0, 0, 0.14);
+  background: var(--bg-primary);
+  border-radius: 1.5rem;
+  padding: 0.875rem 1rem 0.625rem;
+  box-shadow: var(--dc-card-elevation);
+  transition: box-shadow 120ms ease;
+}
+/* Dark mode gets a hairline instead of a shadow: a drop shadow on a dark
+   ground is invisible, so the card would lose its edge entirely.
+   `0 0 #0000` rather than `none`, because the focus rule appends to this
+   value and `none, <shadow>` is not a valid box-shadow list. */
+:root.dark .dc-card,
+.dark .dc-card {
+  --dc-card-elevation: 0 0 #0000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+
+/* FOCUS LIVES ON THE CARD, not on the field.
+   The field draws no box of its own — see the `bare` ring in
+   @/components/ui/input.tsx — so the only edge that can carry a focus cue is
+   the one around everything, and a blinking caret is a thin cue on a surface
+   this wide.
+   `:focus-within` rather than `:focus`: the card is one control group, and
+   reaching the attach button or the model picker by keyboard is still "you
+   are in the composer". Those controls keep their own rings on top of this —
+   they have no caret, so the card's ring alone would not say which of them
+   is live. */
+.dc-card:focus-within {
+  box-shadow: var(--dc-card-elevation), 0 0 0 2px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dc-card { transition: none; }
+}
+
+.dc-card-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+/* The row's bare glyph buttons — attach, and anything that joins it. No fill
+   and no border: the card is the box, and a bordered control inside it would
+   draw a second one. The 28px box keeps the glyphs on one baseline; the
+   first one pulls left so its optical edge lines up with the field's text
+   above it rather than its padding box. */
+.dc-row-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.dc-card-row > .dc-row-btn:first-of-type { margin-left: -4px; }
+
+/* The chat-model picker, stripped to text plus the caret its sibling draws.
+   `appearance: none` is what removes the native box AND the native caret, so
+   the ChevronDownIcon beside it is not a second one. */
+.dc-model-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  max-width: 100%;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+/* The caret is a sibling of the <select>, not inside it, so it inherits from
+   this row rather than from the field — which left it invisible in dark mode
+   until this said otherwise. */
+.dc-venue-detail-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+/* What still stacks above the card: the runner chip, the saved drafts, the
+   pending attachments, the attach error and the suggested replies. Each is
+   its own row on the pane's ground, so the card keeps one shape whatever is
+   in flight. */
+.dc-above-card:empty { display: none; }
+.dc-above-card { margin-bottom: 0.5rem; }
+
+/* The three busy surfaces carry their own ink now: the button renders with
+   `ink="none"` so that each state class owns both halves of its surface. */
+.dc-btn-streaming { background: var(--bg-tertiary) !important; color: var(--text-secondary); cursor: not-allowed; }
 .dc-btn-streaming:hover { background: var(--bg-tertiary) !important; }
 
 /* Stop-turn affordance (#28): red button with a square glyph, replaces
    the emerald Send button while the turn is interruptible (mayor1 / cc
    phases). Phase-2 falls back to the spinner state above. */
-.dc-btn-stop { background: #dc2626 !important; cursor: pointer; }
+.dc-btn-stop { background: #dc2626 !important; color: #fff; cursor: pointer; }
 .dc-btn-stop:hover { background: #b91c1c !important; }
 .dc-stop-icon {
   width: 12px;
@@ -5727,9 +6266,14 @@ span.gc-vote-btn-icon { cursor: default; }
    rather than "still needs pressing". */
 .dc-btn-stopping {
   background: var(--bg-tertiary) !important;
+  color: var(--text-secondary);
   cursor: not-allowed;
   gap: 6px;
 }
+/* The circle has no room for a word beside the spinner. The label survives
+   in the button's `aria-label` and `title`, which is where a 44px control
+   has to carry it. */
+.dc-btn-stopping .dc-btn-stopping-label { display: none; }
 .dc-btn-stopping:hover { background: var(--bg-tertiary) !important; }
 /* A touch smaller than the button's own text-sm so the widest state of
    this button stays close to the Send/Stop width and the composer beside
@@ -7441,7 +7985,13 @@ a.drawer-ver--fork:hover {
        better hanging off the bar: the chip that opens it is IN that bar, so
        the two are one piece of chrome and a seam between them was a seam in
        the middle of one object. The panel's own border and shadow do the
-       separating. */
+       separating. That held when the wallpaper routes cleared the bar's
+       surface, and for a second reason: every panel the bar opens starts on
+       this same line and every backdrop stops at it (the "header stays
+       live" rule, tests/header-stays-live.test.js), so a gap here alone
+       would put the menu on a different line from the Improve rail. What
+       did change is the hairline: the brand one (below), so the menu ties
+       to the chip's own ring rather than to a zinc bar it no longer sits on. */
     top: calc(var(--platform-header-h) + var(--platform-safe-top));
     left: 50%;
     right: auto;
@@ -7464,6 +8014,7 @@ a.drawer-ver--fork:hover {
     max-width: calc(100vw - 1.5rem);
     max-height: calc(100dvh - var(--platform-header-h) - var(--platform-safe-top) - 1.5rem);
     border-width: 1px;
+    border-color: var(--brand-line);
     /* The kit's own desktop menu radius (--un-radius-card, native.css), which
        is what this surface now is. */
     border-radius: 0.75rem;
@@ -8653,14 +9204,20 @@ body.is-offline [data-offline-disabled] {
 }
 
 /* Mid-turn the venue cannot change — the running turn is already in one.
-   Same treatment the composer's other controls get while streaming. */
+   Keep the control's shape and contrast instead of fading it into an inert
+   dropdown: the lock and status below explain why it cannot be opened. */
 .dc-venue-select:disabled {
-  opacity: 0.45;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
 .dc-venue-select:disabled:hover {
   border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.dc-venue-select:disabled .dc-venue-name {
   color: var(--text-muted);
 }
 
@@ -8692,6 +9249,23 @@ body.is-offline [data-offline-disabled] {
   font-size: 9px;
   line-height: 1;
   opacity: 0.7;
+}
+
+.dc-venue-busy {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 0.15rem;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.dc-venue-busy-icon {
+  width: 0.7rem;
+  height: 0.7rem;
+  flex: none;
 }
 
 /* The slot above the composer, which now carries the fallback sentence
@@ -8852,12 +9426,19 @@ body.is-offline [data-offline-disabled] {
   padding: 0 0.75rem 0.5rem 2.75rem;
 }
 #dev-feed .dev-feed-comment {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
   font-size: 0.75rem;
   line-height: 1.5;
   color: rgb(82 82 91); /* zinc-600 */
   padding: 0.15rem 0;
 }
 .dark #dev-feed .dev-feed-comment { color: rgb(212 212 216); /* zinc-300 */ }
+#dev-feed .dev-feed-comment-main {
+  flex: 1;
+  min-width: 0;
+}
 #dev-feed .dev-feed-comment-author {
   font-weight: 500;
   color: rgb(63 63 70); /* zinc-700 */
@@ -8869,6 +9450,13 @@ body.is-offline [data-offline-disabled] {
    undo the compactness that makes this worth showing inline at all. */
 #dev-feed .dev-feed-comment-body { display: inline; }
 #dev-feed .dev-feed-comment-body > * { display: inline; margin: 0; }
+#dev-feed .dev-feed-comment-time {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: rgb(161 161 170); /* zinc-400 */
+}
+.dark #dev-feed .dev-feed-comment-time { color: rgb(113 113 122); /* zinc-500 */ }
 #dev-feed .dev-feed-comment-more {
   font-size: 0.6875rem;
   color: rgb(161 161 170); /* zinc-400 */

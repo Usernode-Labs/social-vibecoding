@@ -898,7 +898,8 @@ test('the aggregate report normalizes OpenRouter per-attempt deltas and preserve
         cache_write_input_tokens_available_count: '0', output_tokens_available_count: '1',
         reasoning_output_tokens_available_count: '0', known_cost_available_count: '1',
         duration_available_count: '2', billing_path_attributed_count: '2', cache_read_hit_count: '0',
-        median_duration_ms: '100', p95_duration_ms: '190', median_cost_usd: '0.12', p95_cost_usd: '0.12',
+        median_duration_ms: '100', p95_duration_ms: '190',
+        average_cost_usd: '0.12', median_cost_usd: '0.12', p95_cost_usd: '0.12',
         provider_reported_cost_count: '0', platform_estimate_cost_count: '0', catalog_estimate_cost_count: '1',
         overall_logical_run_count: '1',
         terminal_reason_counts: { end_turn: 1, agent_error: 1 },
@@ -935,6 +936,7 @@ test('the aggregate report normalizes OpenRouter per-attempt deltas and preserve
     assert.doesNotMatch(query.sql, /prompt|messages|error_detail|user_id/);
   }
   assert.match(captured[0].sql, /COUNT\(input_tokens\) AS input_tokens_available_count/);
+  assert.match(captured[0].sql, /AVG\(cost_usd\) AS average_cost_usd/);
   assert.match(captured[0].sql, /jsonb_object_agg\(terminal_reason, reason_count\)/);
   assert.match(captured[0].sql, /NULLIF\(a\.error_code, ''\)/);
   assert.equal(report.groups[0].tokens.input, null);
@@ -946,6 +948,9 @@ test('the aggregate report normalizes OpenRouter per-attempt deltas and preserve
   assert.equal(report.groups[0].costSourceCounts.providerReported, 0);
   assert.equal(report.groups[0].logicalRunCount, 1);
   assert.equal(report.groups[0].retryInvocationCount, 1);
+  assert.deepEqual(report.groups[0].knownCostUsd, {
+    average: 0.12, median: 0.12, p95: 0.12,
+  });
   assert.deepEqual(report.groups[0].diagnostics.requestPayloadCharacters, {
     availableCount: 2, total: 2000, average: 1000, median: 900, p95: 1500,
   });

@@ -242,6 +242,13 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // SearchIcon off #home-browse-btn; it still prerenders from the home
     // search field.
     'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
+    // UserCircleIcon — the person-in-a-circle that stood in for a viewer with
+    // no picture, on Home's account row. Home dropped that area: the chip's
+    // menu has carried the entrance to Profile since #1443, so the row was a
+    // second door to the same screen. The export's one remaining call site is
+    // the dev-chat banners' `person` glyph, which renders on a session route
+    // rather than in the static document.
+    'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z',
     // ChatIcon — and it is BACK on this list, one round after leaving it. It
     // prerendered while the Improve panel's quick actions were icon-led; the
     // labels did not fit beside a glyph in the 320px DESKTOP panel ("New
@@ -350,11 +357,19 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // the most conditional glyph in the shell: it needs a target AND a target
     // that is not the platform's own self-hosted row (which has no reachable
     // App tab). New with the toggle, so it has never prerendered.
-    // ── The dev chat composer's five glyphs ─────────────────────────
+    // ── The dev chat composer's glyphs ──────────────────────────────
     // None of them can prerender: the composer is written into #dc-view at
     // runtime by `renderChatView`, and the prerendered document ships that
     // element empty. The three draft-row actions are further behind state —
     // a row exists only once something is saved.
+    //
+    // ArrowUpIcon joins them (Streamlined Concept). The send button is a
+    // circle now and the arrow IS its label, where the word "Send" used to
+    // be — so the composer draws one more glyph than it did, in the same
+    // place, under the same runtime-only condition.
+    'M12 19V5M5 12l7-7 7 7',
+    // The paperclip. Still exported and still drawn by the group chat's
+    // composer; the dev composer's attach control is a bare PLUS now.
     'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48',
     'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
     'M17 21v-8H7v8',

@@ -13,8 +13,9 @@
 //   1. A work order costs no worker, no container and no branch, so it must
 //      not be counted in the session budget the caps are denominators for.
 //   2. It is never `busy`: its agent runs on the user's own machine, where
-//      the platform cannot see whether a turn is in flight. A pulsing dot
-//      there would be an invention.
+//      the platform cannot see whether a turn is in flight. A spinner
+//      turning there would be an invention (#1597 made it a spinner; it
+//      was a pulsing dot when this was written).
 //   3. It points at the REQUEST. There is no transcript to open, and a row
 //      that navigates into a dead end is worse than one that admits what it
 //      is — which is why the destination travels ON the row rather than
@@ -28,6 +29,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
+
+const { runModules, makeStoreStub } = require('./helpers/bundle-module');
 
 const svc = require('../src/services/external-agent-tasks');
 
@@ -42,6 +46,33 @@ const ROW_TSX = read('frontend/src/features/improve/session-row.tsx');
 // navigation and its work. This file used to read app-context-rows.tsx.
 const SHEET_TSX = read('frontend/src/features/improve/improve-panel.tsx');
 const SERVICE = read('src/services/external-agent-tasks.js');
+
+function loadImproveController(fetch) {
+  const store = makeStoreStub({
+    slug: 'demo', name: 'Demo app', sessions: [], otherSessions: [],
+    sessionsLoaded: true, loadingSessions: false,
+  });
+  const sandbox = {
+    console, Promise, setTimeout, clearTimeout, fetch,
+    location: { search: '', hash: '' },
+    URLSearchParams,
+    document: { getElementById: () => null, addEventListener() {} },
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
+    imports: {
+      '../apps/app-card.js': { iconViewFor: (app) => ({ kind: 'letter', letter: app.name[0] }) },
+      '../../lib/kit-surface': { adoptKitSurface: () => null },
+      '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
+      './improve-store.js': { improveStore: store },
+      '../../lib/shell-snapshot': { saveShellSnapshot() {} },
+    },
+    tail: 'window.__improve = Improve;',
+  });
+  return { Improve: sandbox.__improve, store };
+}
 
 // A pool that answers one query and records what it was asked, so a test
 // states the shape it expects rather than an ordering.
@@ -162,6 +193,35 @@ test('the session lists are fetched before the panel is opened', () => {
     /if \(!improveStore\.get\(\)\.sessionsLoaded\) improveStore\.set\(\{ loadingSessions: true \}\)/);
 });
 
+test('a just-created session is immediate and survives an older preload', async () => {
+  let releasePreload;
+  const preloadResponse = new Promise((resolve) => { releasePreload = resolve; });
+  const { Improve, store } = loadImproveController(() => preloadResponse);
+
+  const staleLoad = Improve.loadSessions();
+  Improve.onSessionCreated({
+    id: 1596,
+    status: 'active',
+    created_at: '2026-09-04T10:00:00.000Z',
+  }, 'demo');
+
+  assert.equal(store.state.sessions.length, 1,
+    'the first panel open can render the new session without another request');
+  assert.equal(store.state.sessions[0].id, 1596);
+  assert.equal(store.state.sessions[0].appSlug, 'demo');
+  assert.equal(store.state.loadingSessions, false);
+
+  releasePreload({
+    ok: true,
+    json: async () => ({ sessions: [], externalTasks: [] }),
+  });
+  await staleLoad;
+
+  assert.equal(store.state.sessions.length, 1,
+    'a response issued before creation cannot erase the optimistic row');
+  assert.equal(store.state.sessions[0].id, 1596);
+});
+
 test('a work order is NOT counted against the session budget', () => {
   const handler = ROUTE.slice(ROUTE.indexOf("router.get('/api/me/active-sessions'"));
   const body = handler.slice(0, handler.indexOf('\n  });'));
@@ -205,7 +265,7 @@ test('a work order row points at its request, not at a session page', () => {
   // prepare_work accepts a bare brief with no request behind it.
   assert.match(fn, /: `#app\/\$\{task\.app_slug\}\/dev`/, 'and a fallback for one without');
   assert.match(fn, /busy: false/,
-    'the agent runs where the platform cannot see it; a pulsing dot would be invented');
+    'the agent runs where the platform cannot see it; a spinner would be invented');
   assert.match(fn, /kind: 'task'/);
 });
 

@@ -725,17 +725,28 @@
     handleBack() {
       if (!Settings._open) return false;
       if (!Settings._isMobile() || Settings._level !== 2) return false;
-      if (Settings._pushedFromMenu) {
-        // We pushed that entry ourselves, so the one below it IS our menu:
-        // popping routes back through popstate → restoreFromHash → route(),
-        // the same path the device back gesture takes.
+      if (Settings._pushedFromMenu || Settings._entryBelow()) {
+        // Something of ours is below this entry, so popping lands on it —
+        // routing back through popstate → restoreFromHash → route(), the
+        // same path the device back gesture takes.
+        //
+        // `_pushedFromMenu` is the case where we know exactly what that is:
+        // our own menu. It is not the only one (#1565). A link from
+        // ELSEWHERE in the app — the profile editor's "Settings → Username",
+        // which is where a viewer who wants to rename themselves is sent —
+        // pushes an entry too, and what sits below it is the screen the
+        // viewer actually came from.
+        // Replacing it with the menu stranded them a level deeper than they
+        // started: two presses to get back to Profile, the first of which
+        // went somewhere they had never been.
         history.back();
         return true;
       }
-      // Deep link (bookmark, a prose "Settings → Change password" link):
-      // nothing of ours below. REPLACE the entry with the menu rather than
-      // pushing one, so back can't bounce the viewer between the section
-      // and the menu forever.
+      // A COLD deep link — a bookmark, a push notification, a reload on the
+      // section — really does have nothing of ours below, and back would
+      // leave the app. REPLACE the entry with the menu rather than pushing
+      // one, so back can't bounce the viewer between the section and the
+      // menu forever.
       try { history.replaceState(null, '', '#settings'); } catch { /* non-fatal */ }
       Settings._level = 1;
       Settings._transition(() => {
@@ -745,6 +756,27 @@
         Settings._restoreScroll();
       }, 'pop');
       return true;
+    },
+
+    // Did this DOCUMENT put an address below the one on screen? The router
+    // is the only thing that can say (see App.previousRoute), and a shell
+    // that never answers — the vm harnesses, the prerender pass — is treated
+    // as a cold deep link, which is the conservative half: it keeps the
+    // viewer inside Settings rather than sending back somewhere that may not
+    // exist.
+    _entryBelow() {
+      try { return window.App?.previousRoute?.() != null; }
+      catch { return false; }
+    },
+
+    // Where the level-2 chevron POINTS. It has to name the same place
+    // handleBack goes, or a native/middle click lands somewhere the plain
+    // click does not — and the arrow's href is the platform's fallback
+    // answer for "back to where?" (app.js's back-btn handler follows it).
+    _upHref() {
+      if (Settings._pushedFromMenu || !Settings._entryBelow()) return '#settings';
+      // `''` is home; undefined lets setBackIcon fall back to the home href.
+      return window.App.previousRoute() || undefined;
     },
 
     // Below the sidebar breakpoint — i.e. the two-level layout is live.
@@ -1040,8 +1072,10 @@
     _syncChrome() {
       if (!window.App || Settings._chromeSuspended) return;
       const inSection = Settings._isMobile() && Settings._level === 2;
-      // #1036: the header control is a real anchor — inside a section
-      // the chevron pops to the settings menu, so that is its href.
+      // #1036: the header control is a real anchor — inside a section the
+      // chevron pops to whatever is below it, which is the settings menu
+      // unless the viewer arrived from elsewhere in the app (#1565, see
+      // _upHref), so that is its href.
       //
       // LEVEL 2 ONLY. The mobile drill-in keeps its chevron because that is
       // not a way BACK to another screen, it is the only way up a level
@@ -1052,7 +1086,7 @@
       // through it, with the header's own title saying where you are. A
       // second affordance pointing at the row you just came from was chrome.
       // `'home'` means "hidden" to setBackIcon.
-      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? '#settings' : undefined);
+      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? Settings._upHref() : undefined);
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const s = Settings._visibleSections().find((x) => x.key === Settings._section);
@@ -1276,12 +1310,19 @@
       return this._cliAuthPromise;
     },
 
-    // True when the page carries ?demo=1. The server only honours it in
-    // staging (see routes/cli-auth.js), so this is safe to send always.
-    _cliTokensDemo() {
+    // The two read-only CLI credential fixtures the staging server knows:
+    // rows for the everyday review route, or #1609's instruction-rich empty
+    // state. All boolean callers use _cliTokensDemo(); the credential fetch
+    // also needs the exact value so it can select the right fixture.
+    _cliTokensDemoValue() {
       try {
-        return new URLSearchParams(window.location.search).get('demo') === '1';
-      } catch { return false; }
+        const flag = new URLSearchParams(window.location.search).get('demo');
+        return flag === '1' || flag === 'cli-empty' ? flag : null;
+      } catch { return null; }
+    },
+
+    _cliTokensDemo() {
+      return this._cliTokensDemoValue() !== null;
     },
 
     // ── Claude & ChatGPT connectors ──────────────────────────────────────
@@ -1894,15 +1935,13 @@
 
       // Don't ask for a surface this deployment doesn't serve — the 404
       // would be a console error even though the code below handles it.
-      // Hiding the section is the same outcome the 404 branch produces,
-      // so staging and production differ only in whether the request is
-      // made at all.
       // Staging disables the real CLI surface, but ?demo=1 is a read-only
       // fixture endpoint specifically meant to make this section reviewable.
       // Let that mock path through while still suppressing every real token
-      // request when auth/me advertises cliAuthEnabled=false.
+      // request when auth/me advertises cliAuthEnabled=false. The surrounding
+      // section remains visible because its local-agent guide is useful even
+      // when this deployment cannot list or revoke credentials.
       if (!this._cliTokensDemo() && !(await this._cliAuthAvailable())) {
-        section.classList.add('hidden');
         return;
       }
 
@@ -1931,14 +1970,14 @@
         const query = this._cliTokenCursor
           ? `?limit=50&cursor=${encodeURIComponent(this._cliTokenCursor)}`
           : '?limit=50';
-        const demoQ = this._cliTokensDemo() ? '&demo=1' : '';
+        const demo = this._cliTokensDemoValue();
+        const demoQ = demo ? `&demo=${encodeURIComponent(demo)}` : '';
         const response = await fetch(`/api/me/cli-tokens${query}${demoQ}`, {
           credentials: 'same-origin',
           cache: 'no-store',
         });
         if (loadId !== this._cliTokenLoadId) return;
         if (response.status === 404) {
-          section.classList.add('hidden');
           return;
         }
         if (!response.ok) throw new Error('Could not load CLI credentials.');
@@ -2437,7 +2476,7 @@
       const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
       if (intro) {
-        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. OpenRouter is preferred after you add or claim a key; GLM 5.3 is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
+        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. OpenRouter is preferred after you add or claim a key; GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
       }
       if (modelLabel) modelLabel.textContent = 'OpenRouter model';
       const betaGate = document.getElementById('settings-openrouter-beta-gated');

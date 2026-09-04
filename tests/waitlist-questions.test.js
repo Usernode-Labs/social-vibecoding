@@ -116,12 +116,27 @@ test('stage 1 offers exactly the eight agreed discovery sources', () => {
 
 // ─── 2. Stage 2 ───────────────────────────────────────────────────────
 
-test('stage 2 takes made_url and validates it looks like a link', () => {
+test('stage 2 prepends https:// to a scheme-less made_url', () => {
   assert.equal(q.validateStage2({ made_url: 'not a link' }).ok, false);
-  const r = q.validateStage2({ made_url: 'https://example.com/repo', made_note: '  A Discord bot  ' });
+  const r = q.validateStage2({ made_url: '  example.com/repo  ', made_note: '  A Discord bot  ' });
   assert.equal(r.ok, true);
   assert.equal(r.value.made_url, 'https://example.com/repo');
   assert.equal(r.value.made_note, 'A Discord bot');
+});
+
+test('stage 2 preserves explicit web schemes and rejects unsupported ones', () => {
+  for (const url of ['https://example.com/repo', 'http://example.com/repo']) {
+    const r = q.validateStage2({ made_url: url });
+    assert.equal(r.ok, true);
+    assert.equal(r.value.made_url, url);
+  }
+  for (const url of [
+    'ftp://example.com/file',
+    'mailto:hello@example.com',
+    'javascript:alert.example.com',
+  ]) {
+    assert.equal(q.validateStage2({ made_url: url }).ok, false, `${url} is not a web URL`);
+  }
 });
 
 test('stage 2 accepts an empty body (everything optional)', () => {

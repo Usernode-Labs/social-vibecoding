@@ -1526,6 +1526,80 @@ async function findOpenTaskByRequest(pool, userId, appId, requestKey) {
   }
 }
 
+// The open task a SHARED piece of work is sitting on (#1347 + this fix).
+//
+// `share: true` is documented to leave the work order OPEN — the whole point
+// is that the agent keeps committing onto the in-progress card — and it
+// stamps `session_id` on the task on its way past. So after a share, the
+// only handle on that reservation is the session id: the promote that
+// finishes the job is documented as `submit_work({ proposalId, branch,
+// propose: true })` and carries no taskId at all.
+//
+// Without this lookup the closing UPDATE below is guarded by a `task` that is
+// always null on that path, so every share -> promote leaked one of the ten
+// open-work-order slots until its 14-day expiry. Three of them in one
+// afternoon is what surfaced it.
+//
+// `expires_at` is deliberately NOT filtered here, unlike the request lookup
+// above: an expired row no longer counts against the cap, but closing it is
+// still the honest bookkeeping, and the cap is not the only thing that reads
+// `status`.
+async function findOpenTaskBySession(pool, userId, sessionId) {
+  if (!(Number.isInteger(Number(sessionId)) && Number(sessionId) > 0)) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM external_agent_tasks
+        WHERE user_id = $1 AND session_id = $2 AND status = 'open'
+        ORDER BY id DESC LIMIT 1`,
+      [userId, Number(sessionId)]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    // Advisory, like every other lookup on this path: a submission that has
+    // already landed must never fail over its own bookkeeping.
+    log.warn('external-agent-tasks', 'session task lookup failed', { sessionId, err: err.message });
+    return null;
+  }
+}
+
+// Close the work order a session is carrying, if it still has one open.
+//
+// Called from two places for the two ways a share reaches the vote:
+//   * inside submitProposalUpdate, when the push landed on something already
+//     up for a vote (targetKind 'proposal'); and
+//   * from services/mcp-tools.js, after `propose: true` has promoted an
+//     active session — that promote is a loopback to the session route,
+//     which knows nothing about work orders.
+//
+// Returns the id it closed, or null. Never throws: the caller is always past
+// the point where the work itself has landed.
+async function closeTaskForSession(pool, userId, sessionId, fields = {}) {
+  const task = await findOpenTaskBySession(pool, userId, sessionId);
+  if (!task) return null;
+  try {
+    await pool.query(
+      `UPDATE external_agent_tasks
+          SET status = 'submitted',
+              submitted_branch = COALESCE($4, submitted_branch),
+              submitted_via = COALESCE($5, submitted_via),
+              submitted_source = COALESCE($6, submitted_source),
+              submitted_client_id = COALESCE($7, submitted_client_id)
+        WHERE id = $1 AND session_id = $2 AND user_id = $3 AND status = 'open'`,
+      [
+        task.id, Number(sessionId), userId,
+        fields.branch || null,
+        SUBMIT_VIA.includes(fields.submittedVia) ? fields.submittedVia : null,
+        fields.source ? normalizeSource(fields.source) : null,
+        fields.clientId || null,
+      ]
+    );
+    return task.id;
+  } catch (err) {
+    log.warn('external-agent-tasks', 'session task close failed', { taskId: task.id, err: err.message });
+    return null;
+  }
+}
+
 // The proposals ALREADY up for a vote on this request (#1216), whoever opened
 // them. `linked_issues` is the Mayor's declared linkage and is also what a
 // connector submission records (linkedIssuesFor); `created_from_issue_number`
@@ -2217,6 +2291,24 @@ async function submitUpdate(deps, params, proposalId) {
       // submission that has already landed on GitHub.
       log.warn('external-agent-tasks', 'update task stamp failed', { taskId: task.id, err: err.message });
     }
+  } else if (result.targetKind === 'proposal') {
+    // No taskId was passed — which is the DOCUMENTED shape for continuing a
+    // proposal, not an omission — and the push landed on something already up
+    // for the group's vote. If this session is carrying a work order from an
+    // earlier `share: true`, the work it reserved is now in front of the
+    // group and the reservation is finished.
+    //
+    // Only 'proposal'. A push onto an ACTIVE session is the next commit on
+    // work still being built, and share's contract is that the order stays
+    // open across exactly those. The promote that ends that case closes the
+    // order from services/mcp-tools.js instead, because promoting is a
+    // separate route call made after this function has already returned.
+    await closeTaskForSession(pool, user.id, proposalId, {
+      branch,
+      submittedVia: result.submittedVia,
+      source,
+      clientId,
+    });
   }
 
   return {
@@ -2521,11 +2613,6 @@ async function submitWorkLocked(deps, params) {
       ...(title ? { title: stripEnvelope(title) } : {}),
       ...(params.body ? { description: stripEnvelope(params.body) } : {}),
       ...(linkedIssuesFor(task).length ? { linkedIssues: linkedIssuesFor(task) } : {}),
-      // Which coding agent wrote it, resolved HERE rather than at the tool
-      // layer: normalizeAgent already folds the self-reported name together
-      // with the connected client's, and the badge on the shared card should
-      // read the same as the badge on a proposal from the same agent.
-      externalAgent: normalizeAgent(agent, clientName),
     };
 
     // Sharing the same task twice pushes onto the SAME card rather than making
@@ -2542,6 +2629,9 @@ async function submitWorkLocked(deps, params) {
           { retryable: true }
         );
       }
+      // `payload` AS IS — the badge is deliberately not in it. See the note
+      // on the share call below: this is the update route, and its body
+      // parser is `exactKeys`, so one unknown field refuses the whole call.
       const advanced = await params.updateProposal(slug, existing, payload);
       if (!advanced || !advanced.ok) {
         return {
@@ -2570,7 +2660,25 @@ async function submitWorkLocked(deps, params) {
       };
     }
 
-    const shared = await params.shareWork(slug, payload);
+    // THE BADGE GOES ONLY TO THE CREATE PATH, and that is not a tidy-up.
+    //
+    // These two calls are two different routes with two different body
+    // parsers, and both parsers are `exactKeys` — an unknown field is not
+    // ignored, it refuses the whole request. `externalAgent` is accepted by
+    // share-in-progress and NOT by update-from-fork, so building it into the
+    // one shared payload made every RESHARE fail with `invalid_request`:
+    // sharing a second time onto the same card, the documented way to keep
+    // committing to shared work, could not work at all.
+    //
+    // It belongs here on the merits anyway. The badge is which coding agent
+    // wrote it, resolved in the service rather than at the tool layer so a
+    // shared card reads the same as a proposal from the same agent — and it
+    // is set when the card is CREATED. A reshare advances a card that already
+    // carries it, so there was never anything for the update to say.
+    const shared = await params.shareWork(slug, {
+      ...payload,
+      externalAgent: normalizeAgent(agent, clientName),
+    });
     if (!shared || !shared.ok) {
       return {
         ok: false,
@@ -3040,6 +3148,13 @@ module.exports = {
   attributionError,
   loadOpenTask,
   loadAnyTask,
+  // The share -> promote pair. Both are the fix for work orders that a
+  // shared session left OPEN for the whole 14-day expiry: the lookup is the
+  // only handle on that reservation once the taskId has gone out of scope,
+  // and the close is called from services/mcp-tools.js the moment
+  // `propose: true` puts the session in front of the group.
+  findOpenTaskBySession,
+  closeTaskForSession,
   // Both used by routes/dev-flow.js (#1049) to RE-RENDER a work order the
   // user already has — the in-platform walkthrough is resumable, so
   // reopening the chat must show the same branch and base commit rather

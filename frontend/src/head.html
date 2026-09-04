@@ -18,7 +18,7 @@
        value is a starting point only — a dark-mode viewer's first paint is
        corrected by Theme.apply() below, in the same head-blocking pass that
        adds `.dark`, so nothing flashes either way. -->
-  <meta name="theme-color" content="#eaeaea">
+  <meta name="theme-color" content="#f4f2e4">
   <style>
     /* WHY THIS IS INLINE AND NOT IN app.css. The page ground is a Tailwind
        utility on <body> (`bg-zinc-100 dark:bg-zinc-950`, see
@@ -50,8 +50,8 @@
        #eaeaea page. Keyed off `.dark` it tracks the resolved theme instead,
        and Theme.apply() below adds that class in the same head-blocking pass
        that fixes the background. */
-    html { background-color: #eaeaea; color-scheme: light; }
-    html.dark { background-color: #0b0b0c; color-scheme: dark; }
+    html { background-color: #f4f2e4; color-scheme: light; }
+    html.dark { background-color: #0b0d1b; color-scheme: dark; }
   </style>
   <script>
     // Theme module — Light / Dark / System mode selector.
@@ -80,7 +80,18 @@
       const KEY = 'theme';
       const _listeners = [];
 
+      // Screenshot-state deep link `?shot=dark` / `?shot=light`: pins the
+      // mode for THIS LOAD only, nothing stored. The capture runner and the
+      // dapp.json checks reach the page by URL with a fresh profile and no
+      // way to press the drawer's theme segment, so without this every
+      // screenshot of a dark-mode change shows the light shell. Read here
+      // rather than in apply() so the drawer's segments agree with the page.
+      let shot = null;
+      try { shot = new URLSearchParams(window.location.search).get('shot'); } catch {}
+      const PINNED = (shot === 'dark' || shot === 'light') ? shot : null;
+
       function get() {
+        if (PINNED) return PINNED;
         try {
           const val = window.localStorage.getItem(KEY);
           if (val === 'light' || val === 'dark') return val;
@@ -90,12 +101,16 @@
         }
       }
 
-      // The two page grounds, spelled here as well as in
-      // frontend/scripts/build-shell.mjs's `bg-zinc-100 dark:bg-zinc-950` on
-      // <body>. They are tailwind.config.js's zinc-100 / zinc-950, and the
-      // critical <style> below plus the theme-color meta both need them
+      // The two page grounds: THE WALLPAPER'S CREAM, and that cream
+      // inverted — the homescreen design's page and its dark derivation,
+      // which app.css paints (with its washes and star, re-tuned for dark)
+      // on the launcher, the app view and their peer screens; messages and
+      // the admin console keep the body's zinc-100 / zinc-950 on top of it.
+      // The critical <style> above and the theme-color meta both need these
       // BEFORE any stylesheet has loaded, which is the whole point.
-      const GROUND = { light: '#eaeaea', dark: '#0b0b0c' };
+      // public/manifest.webmanifest carries the light one too, for the
+      // standalone install's splash.
+      const GROUND = { light: '#f4f2e4', dark: '#0b0d1b' };
 
       function apply() {
         const mode = get();

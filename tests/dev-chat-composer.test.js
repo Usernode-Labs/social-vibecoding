@@ -85,8 +85,13 @@ function makeDevChat(over = {}) {
 // ── 1. The six writers are one publish ─────────────────────────────────
 
 test('every writer that reached into the bar publishes instead', () => {
+  // `_syncShortcutHint` is not in this list any more: the hint line it wrote
+  // is gone (Streamlined Concept), its two spellings surviving as the one
+  // circle's `title`. `_syncSaveDraftBtn` stayed — it is the republish every
+  // KEYSTROKE goes through, and the circle's shape now depends on whether the
+  // field has text.
   for (const fn of [
-    '_setStreamingUI', '_syncSaveDraftBtn', '_syncShortcutHint',
+    '_setStreamingUI', '_syncSaveDraftBtn',
     '_renderSavedDrafts', '_setAttachError', '_refreshModelSelect',
   ]) {
     const at = DEV_CHAT_SRC.indexOf(`  ${fn}(`);
@@ -277,4 +282,42 @@ test('the attach error is a field, so a repaint cannot swallow it', () => {
   DevChat._setAttachError(null);
   assert.equal(view().attachError, null);
   assert.match(composerHtml(view()), /id="dc-attach-error" class="dc-attach-error hidden"/);
+});
+
+// ── 8. Where the focus cue lives ───────────────────────────────────────
+//
+// The composer is one card and the field inside it draws no box, so the two
+// halves of this have to agree or the focus state is wrong in one of two
+// opposite ways: a blue box around the FIELD (which is what the browser draws
+// unless told not to), or no cue at all.
+
+test('the field suppresses the browser ring and the CARD carries the cue', () => {
+  const composer = read('frontend/src/features/dev-chat/composer.tsx');
+  const css = read('public/css/app.css');
+
+  // Half one: `ring="bare"`, not `ring={false}`. `false` is the empty string
+  // — no rule at all — so the UA outline still draws, which shipped a blue
+  // box around the field the first time this was built.
+  assert.match(composer, /id="dc-input"[\s\S]{0,220}ring="bare"/,
+    'the field must suppress the UA outline explicitly');
+  assert.doesNotMatch(composer, /id="dc-input"[\s\S]{0,220}ring=\{false\}/);
+  const ringGroup = /ring: \{[\s\S]*?\n    \}/.exec(read('frontend/@/components/ui/input.tsx'));
+  assert.ok(ringGroup, 'the ring group is still a cva variant group');
+  assert.match(ringGroup[0], /bare: 'focus:outline-none'/,
+    'and `bare` must stay outline-none WITHOUT a ring — a ring inside the '
+    + 'card would be a second edge');
+
+  // Half two: the card, on `:focus-within` rather than `:focus`, because the
+  // element that takes focus is a child.
+  const rule = /\.dc-card:focus-within \{[^}]*\}/.exec(css);
+  assert.ok(rule, 'the card carries the focus cue');
+  assert.match(rule[0], /var\(--dc-card-elevation\)/,
+    'the ring is ADDED to the elevation, not swapped for it — a focused card '
+    + 'that stops floating reads as a different card');
+  assert.match(rule[0], /0 0 0 2px var\(--accent\)/);
+  // The variable exists in both themes, and dark's is a valid shadow rather
+  // than `none`: `none, <shadow>` is not a legal box-shadow list, so a `none`
+  // there would silently drop the ring in dark mode only.
+  assert.match(css, /--dc-card-elevation: 0 1px 2px/, 'light elevation');
+  assert.match(css, /--dc-card-elevation: 0 0 #0000/, 'dark placeholder, not `none`');
 });

@@ -19,6 +19,7 @@ const SRC = fs.readFileSync(
 function makeHarness() {
   const requests = [];
   const toasts = [];
+  const improveCreates = [];
   let responder = async () => ({ ok: false, status: 500, json: async () => ({}) });
   const document = {
     getElementById: () => null,
@@ -50,6 +51,9 @@ function makeHarness() {
     },
     escapeHtml: (value) => String(value ?? ''),
     PlatformUI: { toast: (message) => toasts.push(message) },
+    Improve: {
+      onSessionCreated: (session, appSlug) => improveCreates.push({ session, appSlug }),
+    },
     App: { currentTab: 'dev', currentSubTab: 'sessions' },
     addEventListener() {},
     removeEventListener() {},
@@ -62,6 +66,7 @@ function makeHarness() {
     DevChat: sandbox.__DevChat,
     requests,
     toasts,
+    improveCreates,
     respondWith(fn) { responder = fn; },
   };
 }
@@ -156,6 +161,28 @@ test('creation asks nothing and sends no backend key', async () => {
   assert.equal(session.id, 43);
   assert.equal(h.requests.length, 1);
   assert.deepEqual(JSON.parse(h.requests[0].options.body), {});
+});
+
+test('successful creation publishes the new row to Improve immediately', async () => {
+  const h = makeHarness();
+  const created = {
+    id: 44,
+    status: 'active',
+    created_at: '2026-09-04T10:00:00.000Z',
+  };
+  h.respondWith(async () => ({
+    ok: true,
+    status: 201,
+    json: async () => ({ session: created }),
+  }));
+
+  await h.DevChat.createSession('demo');
+
+  assert.equal(h.improveCreates.length, 1);
+  assert.equal(h.improveCreates[0].session, created,
+    'the successful server row, not a guessed client copy, is published');
+  assert.equal(h.improveCreates[0].appSlug, 'demo',
+    'the app slug fills the field RETURNING * does not carry');
 });
 
 test('switching an idle session uses reset-agent-context and updates its pinned backend', async () => {

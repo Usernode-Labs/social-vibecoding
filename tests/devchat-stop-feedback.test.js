@@ -668,48 +668,73 @@ test('a later server timestamp re-arms the ladder on the already-showing row', (
   assert.deepEqual(armedDelays(timers), [], 'the stale timers were replaced, not stacked');
 });
 
-// ── The four states, as markup ──────────────────────────────────────────
+// ── The five states, as markup ──────────────────────────────────────────
 //
 // Everything above reads the DESCRIPTOR, which is the branch `_setStreamingUI`
-// used to paint by hand. This is the other half: that each descriptor still
-// draws what the imperative writes drew, down to the class attribute — which
-// is the thing `.dc-btn-stop { background: #dc2626 !important }` and its
-// siblings key off.
-test('each send state renders the class, the label and the glyph it always did', () => {
+// used to paint by hand. This is the other half: that each descriptor draws
+// the class attribute its CSS keys off — `.dc-btn-stop { background: #dc2626
+// !important }` and its siblings.
+//
+// The button is a 44px CIRCLE now (Streamlined Concept) rather than a
+// rectangle carrying the word "Send", and `save` is a fifth state: while a
+// turn runs and the box has text, parking it is the only useful action, so it
+// takes the button rather than sitting beside it as a separate icon.
+test('each send state renders the class, the label and the glyph it should', () => {
   const base = {
     venueNoteHtml: '', hidden: false, models: null, openRouter: null,
     drafts: { rows: [], busy: false }, attachError: null, placeholder: '',
-    saveDraft: { hidden: true, disabled: true, title: '' }, shortcutHintHtml: '',
   };
+  // The button now sits inside the card's control row, so the slice ends at
+  // its own closing tag rather than at the form's.
   const btn = (send) => {
     const html = composerHtml({ ...base, send });
-    return html.slice(html.indexOf('<button type="submit"'), html.indexOf('</form>'));
+    const at = html.indexOf('<button type="submit"');
+    return html.slice(at, html.indexOf('</button>', at) + '</button>'.length);
   };
 
-  // The hand-written string, then the class `classList.add` appended. cva
-  // emits `lead` first and className last, which is where both belong.
-  const SHELL = 'class="dc-send-btn rounded-lg bg-violet-600 hover:bg-violet-500'
-    + ' px-4 py-2 text-sm font-medium text-white transition-colors shrink-0';
+  // cva emits `lead` first and className last, which is where both belong.
+  //
+  // The shell is now `lead` + a RADIUS and nothing else: the button renders
+  // `variant="roundedFull" size="icon" ink="none"`, so it carries no fill, no
+  // padding and no text colour, and each state class supplies all three. The
+  // radius has to come from here rather than from `.dc-send-btn` in app.css —
+  // the compiled utilities load LAST by design, so a `rounded-lg` in this
+  // table beats an app.css `border-radius` at equal specificity, which is
+  // exactly how this shipped as a rounded square once.
+  const SHELL = 'class="dc-send-btn rounded-full';
 
   const idle = btn({ kind: 'send' });
-  assert.ok(idle.includes(`${SHELL}"`), 'idle carries no state class');
-  assert.match(idle, /aria-label="Send" title="Send"/);
-  assert.match(idle, />Send<\/button>$/);
+  assert.ok(idle.includes(`${SHELL} shrink-0 dc-circle-send"`),
+    'idle wears the wash, not the filled accent the rectangle had');
+  assert.doesNotMatch(idle, /rounded-lg|bg-violet-600|px-4/,
+    'no rectangle utilities survive, or the circle is not a circle');
+  assert.match(idle, /aria-label="Send" title="Send \(Ctrl\+Enter\)"/,
+    'the retired hint line\'s send spelling lives here now');
+  assert.doesNotMatch(idle, />Send</, 'the arrow IS the label; there is no word');
+  assert.match(idle, /<svg[^>]*><path[^>]*d="M12 19V5M5 12l7-7 7 7"/, 'the up arrow');
+
+  const save = btn({ kind: 'save' });
+  assert.ok(save.includes(`${SHELL} shrink-0 dc-circle-save"`));
+  assert.match(save, /aria-label="Save as draft" title="Save this text as a draft \(Ctrl\+Enter\)/,
+    'and the save spelling here');
+  assert.doesNotMatch(save, /disabled/, 'it is the live primary action, not a greyed-out icon');
 
   const stop = btn({ kind: 'stop' });
-  assert.ok(stop.includes(`${SHELL} dc-btn-stop"`));
+  assert.ok(stop.includes(`${SHELL} shrink-0 dc-btn-stop"`));
   assert.match(stop, /aria-label="Stop" title="Stop"/);
   assert.match(stop, /<span class="dc-stop-icon" aria-hidden="true"><\/span>/);
   assert.doesNotMatch(stop, /disabled/, 'the red square is the one busy state you may press');
 
   const stopping = btn({ kind: 'stopping' });
-  assert.ok(stopping.includes(`${SHELL} dc-btn-stopping"`));
+  assert.ok(stopping.includes(`${SHELL} shrink-0 dc-btn-stopping"`));
   assert.match(stopping, /disabled=""/);
   assert.match(stopping, /aria-label="Stopping" title="Stopping…"/);
+  // The word still renders; app.css hides it, because a 44px circle has no
+  // room beside the spinner and the label survives in aria-label/title.
   assert.match(stopping, /<span class="dc-send-spinner"><\/span><span class="dc-btn-stopping-label">Stopping…<\/span>/);
 
   const busy = btn({ kind: 'busy', label: 'Working', title: 'nope' });
-  assert.ok(busy.includes(`${SHELL} dc-btn-streaming"`));
+  assert.ok(busy.includes(`${SHELL} shrink-0 dc-btn-streaming"`));
   assert.match(busy, /disabled=""/);
   assert.match(busy, /aria-label="Working" title="nope"/);
   assert.match(busy, /<span class="dc-send-spinner"><\/span><\/button>$/, 'a spinner and nothing else');
