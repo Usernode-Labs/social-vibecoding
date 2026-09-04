@@ -1061,6 +1061,17 @@
       "expectText": "Propose it to the group"
     },
     {
+      "name": "Coding-agent work items render collapsed by default (#1591)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900820",
+      "expectSelector": "#dc-messages details.dc-cc-attached[data-default-open=\"0\"]:not([open]) .dc-cc-attached-chevron",
+      "expectText": "Claude Code finished"
+    },
+    {
+      "name": "A LIVE run collapses too, with its progress on the summary (#1591)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900810",
+      "expectSelector": "#dc-messages details.dc-cc-attached[data-default-open=\"0\"]:not([open]) .dc-cc-attached-summary .dc-cc-steps"
+    },
+    {
       "name": "Estimator-off run under 10 min shows NO side text (#906)",
       "path": "/#app/usernode-2d5619/dev/sessions/900810",
       "expectSelector": ".dc-cc-attached-summary .dc-cc-cohort",

@@ -4000,7 +4000,12 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
 /* ── Claude Code "is running" — status line + inline log ─
    The status line itself is the disclosure summary; the live log
    streams inline below as plain monospaced text (no border, no
-   background). Open by default; click the summary to collapse. */
+   background). COLLAPSED BY DEFAULT (#1591), running rows included:
+   the summary carries the whole live readout (status, current
+   activity, step count, phase, elapsed, estimate) and keeps ticking
+   while closed, so a multi-turn session reads as a list of work
+   items instead of a wall of logs. Tap the summary to expand; the
+   choice is remembered per row (dc-details-v1 in localStorage). */
 
 .dc-cc-attached {
   margin: 0;
@@ -4013,6 +4018,13 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
      dedicated chevron span on the right). */
   cursor: pointer;
   list-style: none;
+  /* Now that every row starts closed (#1591), this summary is the
+     primary tap target rather than an occasional one, so it gets a
+     little more vertical room than the 2px dc-status-line default.
+     Scoped to this selector alone: dc-status-line is shared with
+     non-interactive status rows, which must keep their tight
+     spacing. */
+  padding: 6px 0;
 }
 .dc-cc-attached-summary::-webkit-details-marker { display: none; }
 .dc-cc-attached-summary::marker { display: none; }

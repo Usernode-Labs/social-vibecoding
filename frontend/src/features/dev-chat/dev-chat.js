@@ -6507,10 +6507,36 @@ const DevChat = {
   },
 
   // Should a Claude Code disclosure (dc-cc-attached) start expanded?
-  // Everything defaults open — the live-run log is meant to be watched —
-  // except rows inherited from a cloned auto session.
-  _ccDefaultOpen(msg) {
-    return !(msg && msg.inherited);
+  //
+  // #1591: NO — never, for any of the three families (ccrun, ccrunorphan,
+  // ccout). Everything used to default open except rows inherited from a
+  // cloned auto session (#647), which meant a session with four turns put
+  // four full progress logs and four summaries on screen at once and the
+  // Changes-ready card sat below all of them.
+  //
+  // The live running row collapses too, deliberately. The <summary> is not a
+  // bare label: it carries the spinner, the status text, the current activity
+  // line, the step count, the phase, the elapsed ticker, the AI estimate and
+  // its countdown, and the long-run cohort note — all of which keep ticking
+  // while the body is closed. That readout was authored FOR this state (see
+  // summarizeCcProgress in public/js/cc-progress-summary.js, whose
+  // `currentLabel` is documented as "the most recent line worth showing in
+  // the collapsed summary", and whose terminal-phase handling exists so the
+  // collapsed card ends on "Finished" rather than freezing on "Pushing").
+  //
+  // The alternative — keep the streaming row open and collapse it when the
+  // turn ends — was rejected: it yanks content out from under a reader
+  // mid-sentence, and it interacts badly with the delta-based persistence
+  // below (opening a running row MATCHES the default, so the delta is
+  // deleted, and the row would then close itself when the run finished).
+  // Because this is a constant rather than a function of `msg._active`, a
+  // row's open state only ever changes when the user taps it.
+  //
+  // Kept as a named helper rather than inlined at the three call sites: this
+  // is the one place the rule is stated, and a future per-kind exception
+  // needs somewhere to live.
+  _ccDefaultOpen() {
+    return false;
   },
 
   // ── <details> open/closed persistence ─────────────────────
