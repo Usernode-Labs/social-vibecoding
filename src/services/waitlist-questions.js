@@ -7,7 +7,15 @@
 // One module is the source of truth for both rendering (served to the
 // SPA via GET /api/public/waitlist/options) and server-side validation
 // (validateStage1 / validateStage2 below), so the two can never drift.
+//
+// The country list is the one option set that does NOT live here: it is the
+// complete ISO 3166-1 table in src/services/countries.js, flat and sorted by
+// English name. It used to be ~50 codes nested under six region headings
+// with an "Elsewhere in <region>" pseudo-code closing five of them; see that
+// module's header for why the buckets and the pseudo-codes went.
 'use strict';
+
+const { ISO_COUNTRIES } = require('./countries');
 
 const ANSWERS_VERSION = 3;
 
@@ -82,89 +90,32 @@ const LOSS_KINDS = {
 };
 
 // ── Stage 1: "where are you?" ───────────────────────────────────────────
-// ISO-3166 alpha-2 codes grouped by the region buckets used for cohort
-// geo balancing. The "*-OTHER"-style pseudo-codes (EU, LA, AF, ME, AP)
-// let someone place themselves in a region without us maintaining all
-// 249 codes.
-const COUNTRIES = {
-  'North America': {
-    US: 'United States',
-    CA: 'Canada',
-    MX: 'Mexico',
-  },
-  Europe: {
-    GB: 'United Kingdom',
-    IE: 'Ireland',
-    FR: 'France',
-    DE: 'Germany',
-    NL: 'Netherlands',
-    BE: 'Belgium',
-    ES: 'Spain',
-    PT: 'Portugal',
-    IT: 'Italy',
-    CH: 'Switzerland',
-    AT: 'Austria',
-    SE: 'Sweden',
-    NO: 'Norway',
-    DK: 'Denmark',
-    FI: 'Finland',
-    PL: 'Poland',
-    CZ: 'Czechia',
-    RO: 'Romania',
-    UA: 'Ukraine',
-    GR: 'Greece',
-    TR: 'Türkiye',
-    EU: 'Elsewhere in Europe',
-  },
-  'Latin America': {
-    BR: 'Brazil',
-    AR: 'Argentina',
-    CO: 'Colombia',
-    CL: 'Chile',
-    PE: 'Peru',
-    VE: 'Venezuela',
-    LA: 'Elsewhere in Latin America',
-  },
-  Africa: {
-    NG: 'Nigeria',
-    GH: 'Ghana',
-    KE: 'Kenya',
-    ZA: 'South Africa',
-    EG: 'Egypt',
-    MA: 'Morocco',
-    DZ: 'Algeria',
-    TN: 'Tunisia',
-    AF: 'Elsewhere in Africa',
-  },
-  'Middle East': {
-    AE: 'United Arab Emirates',
-    SA: 'Saudi Arabia',
-    IL: 'Israel',
-    PK: 'Pakistan',
-    ME: 'Elsewhere in the Middle East',
-  },
-  'Asia Pacific': {
-    IN: 'India',
-    ID: 'Indonesia',
-    PH: 'Philippines',
-    VN: 'Vietnam',
-    TH: 'Thailand',
-    MY: 'Malaysia',
-    SG: 'Singapore',
-    JP: 'Japan',
-    KR: 'South Korea',
-    TW: 'Taiwan',
-    HK: 'Hong Kong',
-    CN: 'China',
-    AU: 'Australia',
-    NZ: 'New Zealand',
-    AP: 'Elsewhere in Asia-Pacific',
-  },
-};
+// The complete ISO 3166-1 list, flat and sorted by English name, from
+// src/services/countries.js. It used to be ~50 codes in six region buckets
+// with an "Elsewhere in <region>" pseudo-code closing five of them, which
+// two reports faulted for the same shape (GitHub issue #1527 and feedback
+// triage item #18): the buckets left ~200 countries unselectable, Uruguay
+// among them, and put the ones that were there where an alphabetical scan
+// does not look.
+//
+// The five pseudo-codes (EU, LA, AF, ME, AP) are RETIRED, not remapped, in
+// the same spirit as the retired discovery sources above: rows that stored
+// one keep it, migrated to a namespaced `X-*` form so it can never be read
+// as the real ISO code that shares those letters (LA is Laos, AF is
+// Afghanistan, ME is Montenegro). They are display-only from here on:
+// countries.js labels them for the admin screen, this module never offers
+// or accepts them, and the 2-character cap in validateStage1 makes the
+// namespaced values structurally unsubmittable.
+//
+// Nothing computed a region from a country: countryCodes() was the only
+// consumer of the nesting, and the geo balancing the form's help text
+// mentions is people reading the admin screen. So dropping the grouping
+// loses no behaviour.
+const COUNTRIES = ISO_COUNTRIES;
 
-// Every country code offered by the form, flattened out of the regions.
+// Every country code offered by the form.
 function countryCodes() {
-  return Object.values(COUNTRIES).flatMap((region) => Object.keys(region));
+  return Object.keys(ISO_COUNTRIES);
 }
 
 // ── Validation ──────────────────────────────────────────────────────────

@@ -64,8 +64,22 @@ test('stage 1 cleans optional fields and rejects unknown countries', () => {
   assert.equal('evil_extra' in full.value, false);
 
   assert.equal(q.validateStage1({ ...base, country: 'ZZ' }).ok, false);
-  // Region pseudo-codes are valid countries.
-  assert.equal(q.validateStage1({ ...base, country: 'EU' }).ok, true);
+  // The five region pseudo-codes are RETIRED — the picker is the complete
+  // ISO 3166-1 list now, so there is a real entry for every place they stood
+  // in for. Two of them (EU, AP) are not ISO codes at all and are simply
+  // rejected; the other three ARE — LA is Laos, AF is Afghanistan, ME is
+  // Montenegro — and are accepted as those countries, which is exactly why
+  // the stored legacy answers were namespaced to `X-LA` and friends.
+  assert.equal(q.validateStage1({ ...base, country: 'EU' }).ok, false);
+  assert.equal(q.validateStage1({ ...base, country: 'AP' }).ok, false);
+  for (const code of ['LA', 'AF', 'ME']) {
+    const r = q.validateStage1({ ...base, country: code });
+    assert.equal(r.ok, true, `${code} is a real ISO country now`);
+    assert.equal(r.value.country, code);
+  }
+  // And the namespaced legacy form can never be submitted: the field is
+  // capped at two characters, so `X-LA` is structurally unreachable.
+  assert.equal(q.validateStage1({ ...base, country: 'X-LA' }).value.country, undefined);
 });
 
 // Andrea's 27 Aug 2026 review cut three stage-1 fields. A stale client

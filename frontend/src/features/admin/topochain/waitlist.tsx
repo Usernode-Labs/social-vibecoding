@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { fetchJson, send } from './api.ts';
+import { countryLabel } from './countries.ts';
 import { BTN } from './tokens.ts';
 import {
   EmptyState, ErrorState, List, Pager, ScreenHeader, Select, Skeleton, fmt,
@@ -150,7 +151,15 @@ function SurveyAnswers({ answers }: { answers: Answers }) {
       </>
     ));
   }
-  if (a.country || a.city) line('Where', [a.city, a.country].filter(Boolean).join(', '));
+  // The country half is a stored CODE — rendered through countryLabel so an
+  // admin reads "Germany" rather than "DE", and "Elsewhere in Latin America
+  // (region)" rather than "X-LA", which is a retired region answer and not
+  // Laos. `city` is free text and passes through untouched. Still a plain
+  // text child either way, so React escapes it and the module's rule that no
+  // answer is ever an anchor is untouched.
+  if (a.country || a.city) {
+    line('Where', [a.city, a.country ? countryLabel(a.country) : ''].filter(Boolean).join(', '));
+  }
   if (a.discovery && a.discovery.source) {
     line('Found us', a.discovery.source + (a.discovery.detail ? ` (${a.discovery.detail})` : ''));
   }
