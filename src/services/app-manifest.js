@@ -92,11 +92,13 @@ const MANIFEST_FILENAME = 'dapp.json';
 // check, so any proposal declaring one at all was blocked. That is the
 // state this bump clears, not one feature's three checks.
 //
-// Raised 480 → 530 after the manifest reached 461 and crossed that same
-// 20-slot floor. The matching capture budget moves 470s → 520s and the
-// container timeout 600s → 650s in services/visuals.js: a full 530-check
-// suite is ~258s of ideal work, so 520s retains the required 2x margin and
-// the container still leaves 130s for the media pass.
+// Raised 480 → 530 when the manifest reached 461 and crossed the 20-slot
+// floor again (19 left), which made the unit suite red on main itself and so
+// on every proposal after it. Same arithmetic, same coupled move: 530 checks
+// at ~3.9s over a pool of 8 is ~258s of ideal work, so TESTS_DEADLINE_MS
+// goes 470s → 520s to keep the 2x margin (clears it by ~3s), and because the
+// deadline has passed 480s this time RUN_TIMEOUT_MS moves too, 600s → 640s,
+// to stay the required 120s above it.
 const MAX_DECLARED_TESTS = 530;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js

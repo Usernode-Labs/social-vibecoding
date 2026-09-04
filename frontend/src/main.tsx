@@ -96,6 +96,12 @@ import './features/app-frame/mount';
 // must exist before DOMContentLoaded (the earliest App.init() can navigate) —
 // module scope here, not first render of the header island.
 import './features/header/mount';
+
+// The wallpaper's star follows the visible screen's scroll offset (the
+// washes stay put). A side effect on a custom property, not an island:
+// every wallpaper root is a scroller the legacy router and the React
+// screens share, so it hangs off the document and the visibility store.
+import './lib/wallpaper-scroll';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at
