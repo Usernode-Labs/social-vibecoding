@@ -562,9 +562,9 @@
       "expectText": "[Mock] Your in-progress session"
     },
     {
-      "name": "The Improve panel: a busy change row pulses from live state (#1038)",
+      "name": "The Improve panel: a busy change row spins the standard arc from live state (#1038, #1597)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-panel a[href$=\"/sessions/990102\"] .animate-pulse"
+      "expectSelector": "#improve-panel a[href$=\"/sessions/990102\"] .dc-status-spinner-arc"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
