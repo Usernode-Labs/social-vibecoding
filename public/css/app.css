@@ -2913,28 +2913,49 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    fast enough for the cover to be gone by the time the push lands, which
    is the "some apps" in the report.
 
-   WHAT ACTUALLY CAUSES IT IS STILL OPEN, and nothing below fixes it. A
-   view transition over the document root renders the app's top corners
-   SQUARE for its first frame or two before they snap round: an <iframe>
-   is always its own compositing layer, and that layer does not pick up
-   an ancestor's rounded clip in the transition's snapshot in time. Every
-   clip stated here is on an ancestor, which is exactly what it ignores.
-   Measured by freezing a real startViewTransition() and stepping
-   currentTime, so it is a property of the transition rather than of
-   timing. Substituting a plain <div> for the frame renders round at
-   t=0, which is what identifies the layer as the cause.
+   A CORNER FLICKER ON THE LAUNCHER -> APP PUSH IS STILL OPEN, and
+   nothing here fixes it. Reported twice on the web preview; chromeless
+   is clean, which points at this radius rather than at something else.
 
-   Do not spend time on these — all still square at t=0:
-   `will-change: transform` on the host, `clip-path` on the host,
-   `clip-path` on the frame, `isolation: isolate` + `contain: paint`,
-   `opacity: 0.999`, `translate3d(0,0,0)` and `backface-visibility:
-   hidden` on the frame. The only thing that fixed it was a
-   `view-transition-name` on #app-frame-host, which is not a free win:
-   naming hoists the sheet out of the root snapshot into a group of its
-   own, so it stops travelling with the page — and on an app-to-app
-   switch from the header chip the app window is the ONLY thing that
-   moves, so that trade has to be made deliberately rather than
-   stumbled into.
+   Read the rest of this note as a record of what has been RULED OUT,
+   not as a diagnosis. It was all measured in a local harness that
+   cannot load the centrally hosted native.css or the kit, so the
+   animation it exercises is NOT the one the web preview runs — and a
+   fix that worked there did not fix the reported bug. Whatever is
+   reproduced below is a real Chromium behaviour; it is not established
+   to be the reported one.
+
+   With a synthetic view transition over the document root, the app's
+   top corners render SQUARE for its first frame or two: an <iframe> is
+   always its own compositing layer, and that layer does not pick up an
+   ancestor's rounded clip in the snapshot in time. Every clip stated
+   here is on an ancestor, which is exactly what it ignores. A
+   `view-transition-name` on #app-frame-host fixes THAT, at the cost of
+   the sheet no longer travelling with the page; it did not fix the
+   reported flicker and is deliberately not in the tree.
+
+   The launch cross-fade on its own (#app-iframe going opacity 0 -> 1)
+   does NOT reproduce anything: corners stay round across the whole
+   140ms.
+
+   Method, for whoever picks this up: freeze the animation rather than
+   screenshot it live — `await vt.ready`, pause everything from
+   document.getAnimations(), then step currentTime. A 260ms animation
+   outruns a screenshot loop and returns false positives; that is how
+   `translateZ(0)` was briefly believed to fix the synthetic case.
+   Substituting a plain <div> for the frame renders round where the
+   frame renders square, which is what points at the layer rather than
+   at the CSS.
+
+   Against the synthetic case these all still rendered square, so they
+   are not worth re-running: `will-change: transform` on the host,
+   `clip-path` on the host, `clip-path` on the frame, `isolation:
+   isolate` + `contain: paint`, `opacity: 0.999`, `translate3d(0,0,0)`
+   and `backface-visibility: hidden` on the frame.
+
+   What is still needed is a repro of the REAL push — which needs the
+   kit and native.css, so it has to be captured on the preview itself
+   rather than locally.
 
    So the radius is restated on each of them, and .app-launch-host takes
    an `overflow: hidden` of its own so the clip also exists one level
