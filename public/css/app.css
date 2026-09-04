@@ -2441,17 +2441,23 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 .home-challenge-meter {
   --home-meter-radius: 0.5rem;   /* half of h-4, the capsule's own corner */
   --home-meter-floor: calc(var(--home-meter-radius) + 0.375rem);
-  min-width: 2.875rem;           /* fits "12/20" without the capsule jumping */
+  min-width: 3.5rem;             /* fits "12/20" with room for the fill to read */
 }
-/* The fill is a TINT of the accent, not the accent: the count sits on top of
-   it, and a solid fill would swallow the digits the moment progress passed
-   them. Opacity rather than a mixed colour, so it follows --brand-ink into
-   dark mode without a second value to keep in step. */
+/* The fill is a TINT, not the solid accent: the count sits on top of it, and
+   a solid fill would swallow the digits the moment progress passed them.
+
+   THE TINT IS OF THE ACCENT BLUE (violet-500 — read the hex, that scale is
+   the shell's blue), not of --brand-ink. Brand ink is a deep periwinkle
+   navy, and a navy at a third of its strength composites to a blue-GREY: it
+   read as "the track, slightly darker" rather than as progress. The accent
+   at this strength composites to an unmistakable light blue, and the count
+   in brand ink still clears 4.5:1 on it — which is the constraint that keeps
+   the fill a tint at all. */
 .home-challenge-meter-fill {
-  opacity: 0.3;
+  opacity: 0.45;
 }
 .dark .home-challenge-meter-fill {
-  opacity: 0.4;
+  opacity: 0.5;
 }
 
 /* The art well on a challenge card. Lighter than the card so the

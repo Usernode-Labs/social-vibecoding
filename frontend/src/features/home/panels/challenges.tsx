@@ -173,11 +173,13 @@ function ChallengeCard({ row, deadline }: { row: ChallengeRowView; deadline: str
                 element in the pill, not one in the pill and a rule under it.
                 Same height as the circle, so the two line up down the list.
 
-                THE FILL IS A TINT, not the solid accent. The count sits ON the
-                capsule, so a solid fill would hide it the moment progress
-                passed the text; at this opacity the same dark ink reads over
-                the filled part and the empty part alike, and the boundary is
-                still perfectly visible.
+                THE FILL IS A TINT of the accent blue, not the solid colour
+                and not brand ink. The count sits ON the capsule, so a solid
+                fill would hide it the moment progress passed the text; and
+                brand ink — a deep navy — at a tint strength composites to a
+                blue-grey that read as "track, slightly darker" rather than as
+                progress. app.css states the opacity and the contrast it has
+                to keep.
             */
             <span
               className="home-panel-bar-track home-challenge-meter relative shrink-0 inline-flex h-4 items-center justify-center overflow-hidden rounded-full bg-black/10 dark:bg-white/15"
@@ -190,7 +192,7 @@ function ChallengeCard({ row, deadline }: { row: ChallengeRowView; deadline: str
               <span
                 className={row.done
                   ? 'home-panel-bar-fill home-challenge-meter-fill absolute inset-y-0 left-0 bg-emerald-500'
-                  : 'home-panel-bar-fill home-challenge-meter-fill absolute inset-y-0 left-0 bg-[color:var(--brand-ink)]'}
+                  : 'home-panel-bar-fill home-challenge-meter-fill absolute inset-y-0 left-0 bg-violet-500'}
                 // A FLOOR, not a bare percentage. The fill starts at the
                 // capsule's rounded left end, so anything narrower than that
                 // radius is drawn inside the corner and painted over — a
@@ -203,7 +205,15 @@ function ChallengeCard({ row, deadline }: { row: ChallengeRowView; deadline: str
               <span
                 className={row.done
                   ? 'relative px-1.5 text-[10.5px] font-semibold leading-none text-emerald-800 dark:text-emerald-200'
-                  : 'relative px-1.5 text-[10.5px] font-semibold leading-none text-[color:var(--brand-ink)]'}
+                  // violet-900 / -100 (read the hex — that scale is the
+                  // shell's blue), not brand ink. The count has to clear 4.5:1
+                  // on the FILLED half as well as the empty one, and brand ink
+                  // on the tint measured 4.47 — close enough to be arguable,
+                  // which is not a place to leave small bold type. These clear
+                  // 5.5:1 filled and 8.8:1 unfilled, and they let the fill keep
+                  // its full strength rather than dimming the blue to make the
+                  // numeral fit.
+                  : 'relative px-1.5 text-[10.5px] font-semibold leading-none text-violet-900 dark:text-violet-100'}
               >
                 {`${meter.current}/${meter.target}`}
               </span>
