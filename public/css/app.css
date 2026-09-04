@@ -6858,10 +6858,10 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
      same reason. Anything new added to a header gets the same 28px
      budget — declare `h-7` and centre inside it.
 
-   Absolutely-positioned badges (#notifications-badge,
-   #notifications-badge-ai, #dev-console-badge,
-   #header-menu-deploy-dot) are outside flow, contribute no height, and
-   are MEANT to overflow the row — never add overflow:hidden here.
+   Absolutely-positioned badges and dots (#notifications-badge,
+   #improve-working-dot, #dev-console-badge, #header-menu-deploy-dot)
+   are outside flow, contribute no height, and are MEANT to overflow
+   the row — never add overflow:hidden here.
 
    tests/header-height-parity.test.js pins all of the above. */
 

@@ -89,8 +89,6 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {boolean} loadingSessions
  * @property {boolean} sessionsLoaded
  * @property {boolean} working
- * @property {number} sessionUnread
- * @property {number} sessionDone
  * @property {'idle'|'deploying'|'stale'} versionState
  * @property {'forum'|'chat'|'sessions'|'topic'|null} subTab
  * @property {number|null} previewSessionId
@@ -173,37 +171,30 @@ const INITIAL = {
 
   // ── The indicators the store carries with the panel shut ─────────────
   //
-  // All of these used to be painted onto other controls by classic modules
-  // that resolved a span by id and wrote `classList` / `textContent` into it.
-  // Their nodes are React-owned now (<MenuIndicators/> on the hamburger —
-  // see ../header/platform-header.tsx), so they are state here and the
-  // component renders them — the same reason #feedback-queue-dot goes
-  // through the visibility store rather than being toggled by id.
+  // These used to be painted onto other controls by classic modules that
+  // resolved a span by id and wrote `classList` / `textContent` into it.
+  // Their nodes are React-owned now, so they are state here and the component
+  // renders them — the same reason #feedback-queue-dot goes through the
+  // visibility store rather than being toggled by id.
   //
-  // None of them is derived from `sessions` below, deliberately: that array is
-  // only loaded while the panel is OPEN, and every one of these has to be true
+  // Neither is derived from `sessions` below, deliberately: that array is
+  // only loaded while the panel is OPEN, and both of these have to be true
   // when it is shut. They come from sources that run at boot instead —
-  // SessionState's live entries and the notification stream.
+  // SessionState's live entries and the platform version pill.
+  //
+  // There used to be a third and a fourth, `sessionUnread` / `sessionDone`:
+  // the unread session count Notifications._renderBadge published so this
+  // button could render it. #1610 retired both. The count is on the bell now,
+  // because the bell's list is the only surface that can mark a session
+  // notification read, and a number on a control that cannot clear it is what
+  // sent the reporter back to press Improve a second time.
 
   /**
-   * A dev session the viewer can see is mid-turn. Drives the emerald badge's
-   * pulse, so "something is running" is legible without opening anything.
+   * A dev session the viewer can see is mid-turn. Drives #improve-working-dot,
+   * so "something is running" is legible without opening anything.
    * From `SessionState.anyActive()`.
    */
   working: false,
-  /**
-   * Unread session-related notifications — the green count on the hamburger.
-   * Split out of the bell's red count by Notifications._renderBadge so the
-   * two never double-count; this is that same split, published rather than
-   * written into a span.
-   */
-  sessionUnread: 0,
-  /**
-   * How many of those are specifically "your session finished". Rendered as
-   * `data-session-done`, which a declared check selects on to prove the badge
-   * is showing for a real reason rather than merely present.
-   */
-  sessionDone: 0,
   /**
    * The platform version row's state, mirrored onto the hamburger's dot:
    * amber while a deploy is in flight, violet once the platform has rolled

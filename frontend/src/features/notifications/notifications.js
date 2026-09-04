@@ -472,22 +472,26 @@ const Notifications = {
   // --- mark read -------------------------------------------------------
 
   async markAllRead() {
-    // Only the bell's own (non-session) kinds count here — the cog
-    // drawer's session-related notifications have their own mark-all
-    // and must not be cleared by the bell's button.
-    if (Notifications._bellUnread() === 0) return;
+    // Mark-all clears EVERYTHING the bell counts, session kinds included.
+    //
+    // It used to exclude them (`exclude_kinds: [...SESSION_NOTIF_KINDS]`) on
+    // the grounds that the session badge was a second surface with a mark-all
+    // of its own. That surface is gone: the completed-session count is part of
+    // the bell's number now, and an exclusion here would leave a count nothing
+    // in the drawer can dismiss — which is the bug this change exists to fix.
+    if (Notifications.unread === 0) return;
     try {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true, exclude_kinds: [...SESSION_NOTIF_KINDS] }),
+        body: JSON.stringify({ all: true }),
       });
       if (!res.ok) return;
       const data = await res.json();
       Notifications.unread = data.unread || 0;
       const now = new Date().toISOString();
       Notifications.items = Notifications.items.map((n) => (
-        isSessionNotif(n) ? n : { ...n, readAt: n.readAt || now }
+        { ...n, readAt: n.readAt || now }
       ));
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
@@ -749,78 +753,41 @@ const Notifications = {
     return Notifications.unread + Notifications.invites.length;
   },
 
-  // Count of unread session-related items (session_done / auto_solve_done /
-  // stale_pr / check_failed) currently loaded — the GREEN badge, which the
-  // hamburger carries now that the cog is retired. Counted from the loaded
-  // items page; the
-  // unread-dedup keeps completions to one-per-session and they're recent,
-  // so they sit within the first page in practice.
-  _sessionUnread() {
-    return Notifications.items.filter((n) => isSessionNotif(n) && !n.readAt).length;
-  },
-
-  // Of those, the ones that are a finished dev session specifically. Only
-  // used to publish the count on the badge as `data-session-done`, so a
-  // route check can assert the green badge is showing BECAUSE a session
-  // finished rather than because some other session kind is unread.
+  // Of the loaded items, the ones that are a finished dev session
+  // specifically. Published on the bell badge as `data-session-done`, so a
+  // route check can assert the badge is showing BECAUSE a session finished
+  // rather than because something else is unread. Counted from the loaded
+  // items page; the unread-dedup keeps completions to one-per-session and
+  // they're recent, so they sit within the first page in practice.
   _sessionDoneUnread() {
     return Notifications.items.filter((n) => n && n.kind === 'session_done' && !n.readAt).length;
   },
 
-  // The bell's own unread count.
-  //
-  // ONE EVENT, ONE BADGE, ON THE SURFACE THAT OWNS IT. Still the rule; what
-  // changed is which surface owns a message.
-  //
-  // #1443 subtracted `conversation_message` here on the grounds that the
-  // Messages row's own count was the better one — per-conversation, and what
-  // you tap to act on. The count it deferred to was a TAG ON A ROW INSIDE A
-  // MENU, two taps down behind the app chip, on a surface you open to choose
-  // where to go rather than to find out that something happened. A message is
-  // a thing that happened to you, which is what the bell is for and what the
-  // notifications list already renders (`conversation_*` rows have had their
-  // own copy since #488). So the tag is gone and the split with it: a DM
-  // raises exactly one badge, the bell's, and the row it used to sit on is a
-  // destination again like every other row in that menu.
-  //
-  // The session split SURVIVES, and the asymmetry is deliberate rather than
-  // an oversight: #improve-btn is where the sessions themselves are, so its
-  // green count sends you somewhere the bell cannot. Nothing carries a
-  // messages count any more, so subtracting one would only lose it.
-  //
-  // Math.max(0, …) because the session split reads the loaded items page
-  // while `unread` is the server's total: on an account with more unread than
-  // one page holds the subtraction can overshoot, and a negative badge is
-  // worse than an undercount.
-  _bellUnread() {
-    return Math.max(0, Notifications.unread - Notifications._sessionUnread());
-  },
-
   _renderBadge() {
-    // TWO COUNTS, ONE SPLIT, TWO CONTROLS NOW.
+    // ONE EVENT, ONE BADGE, ON THE SURFACE THAT OWNS IT — and one count.
     //
-    // Green = the viewer's unread session-related notifications; red =
-    // everything else (mentions/replies/reactions/kudos/votes) + pending
-    // invites. The green count is split OUT of the red one so the two never
-    // double-count, and each hides at zero — unchanged.
+    // The bell's number is now every unread notification plus pending
+    // invites, session kinds included. There is no second badge and no
+    // split.
     //
-    // What changed is where each lands. Both used to be spans on the
-    // hamburger, which is what let one icon say "there are two different
-    // reasons to open me". Sessions are not notifications and the drawer is
-    // not where you go to look at one, so the green half moved onto
-    // #improve-btn — where the sessions themselves are. The red half stays
-    // here on the bell — and message notifications are back inside it, which
-    // is what retired the third badge. #1443 subtracted `conversation_message`
-    // in favour of a count on the Messages ROW of the chip's menu; that row
-    // carries no count now, so the bell's number is the only one an incoming
-    // message raises. See _bellUnread.
+    // The split it replaces put unread session kinds on #improve-btn, on the
+    // grounds that the sessions themselves are behind that button so its
+    // count sent you somewhere the bell could not. What it actually did was
+    // put a count on a control that CANNOT CLEAR IT: the only things that
+    // mark a session notification read are a click on its row in this list,
+    // a group-chat mark-read, and mark-all — all of them behind the bell.
+    // Opening the Improve panel marks nothing, so a finished session left a
+    // number pointing at the one surface with no way to dismiss it, and the
+    // viewer never found the notification that was waiting for them. Folding
+    // it back in also re-aligns the bell with the two counts that never
+    // learned about the split: the tab title (_updateTitle, which reads
+    // _badgeTotal) and the home-screen icon badge (_publishAppBadge, which
+    // reads `unread`).
     //
-    // It PUBLISHES rather than paints: that button is React-owned end to end,
-    // and this module cannot import the store (two test files load it as a
-    // classic script in a vm, where a top-level `import` is a syntax error —
-    // the same constraint dev-chat.js documents). window.Improve is the seam.
-    const aiUnread = Notifications._sessionUnread();
-    const notifCount = Notifications._bellUnread() + Notifications.invites.length;
+    // #improve-btn keeps a LIVE indicator — the working pulse dot — because
+    // "a session is running right now" is a fact about that button, not an
+    // event waiting to be read.
+    const notifCount = Notifications._badgeTotal();
 
     const paint = (id, count) => {
       const el = document.getElementById(id);
@@ -832,23 +799,24 @@ const Notifications = {
         el.classList.add('hidden');
       }
     };
-    // The bell's badge, in the header's right group. The only one this
-    // function paints by id now.
+    // The bell's badge, in the header's right group. The only badge this
+    // function paints, and the only one there is.
+    //
+    // Painting it by id is the sanctioned arrangement rather than an
+    // exception: the span is rendered once by <PlatformHeader/> with a
+    // CONSTANT className and a constant `data-session-done="0"`, so React
+    // never reconciles over what is written here. This module cannot import
+    // the store in any case — nine test harnesses evaluate its real source as
+    // a classic script in a vm, where a top-level `import` is a syntax error.
     paint('notifications-badge', notifCount);
 
-    // The green session badge (#notifications-badge-ai on the hamburger) is
-    // React-owned (<MenuIndicators/> in platform-header.tsx): it PUBLISHES
-    // rather than paints — a classList write by id would be a hydration
-    // mismatch React patches straight back out. window.Improve is the seam,
-    // because this module loads as a classic script and cannot import the
-    // store.
-    if (typeof window !== 'undefined' && window.Improve
-      && typeof window.Improve.setSessionBadge === 'function') {
-      window.Improve.setSessionBadge(aiUnread, Notifications._sessionDoneUnread());
+    // How many of those are specifically "your session finished", published
+    // as an attribute so a declared check can assert the badge is showing for
+    // that reason rather than merely being present.
+    const badgeEl = document.getElementById('notifications-badge');
+    if (badgeEl) {
+      badgeEl.setAttribute('data-session-done', String(Notifications._sessionDoneUnread()));
     }
-
-    const markAll = document.getElementById('notifications-mark-all');
-    if (markAll) markAll.disabled = Notifications._bellUnread() === 0;
     // The app-context sheet's per-change unread dots (Streamlined Concept):
     // which sessions have an unread session-kind notification right now.
     // Published into the notifications store — the sheet's rows subscribe.
@@ -1106,10 +1074,10 @@ const Notifications = {
   // retired the cog, so keeping the filter would make four notification kinds
   // invisible everywhere — the one thing a drawer merge must not do.
   //
-  // The BADGE split survives, and is why isSessionNotif is still here: the
-  // hamburger carries two counts (green = your work in flight, red =
-  // everything else + invites) and they must not double-count. What changed is
-  // only which of them decides what is RENDERED.
+  // The badge split is gone too — one bell, one number, session kinds
+  // included (see _renderBadge). isSessionNotif is still here for the
+  // app-context sheet's per-change unread dots, which need to know which
+  // sessions have an unread notification against them.
   // ── New vs older (#1367 follow-up) ───────────────────────────────
   //
   // The drawer shows what is NEW. A notification you have already read has
@@ -1288,9 +1256,11 @@ function isPriorityNotif(n) {
 //
 // These used to render in the header cog's drawer INSTEAD of the bell, and
 // this set was the filter that kept the two apart. THE UI OVERHAUL merged
-// both into the hamburger, so all of it renders in one list now and the set
-// survives for the BADGES alone: green counts these, red counts everything
-// else, and the split is what stops one icon double-counting.
+// both into the hamburger, so all of it renders in one list now. The badge
+// split that outlived the drawer is gone as well — the bell counts these
+// along with everything else — so what the set is left doing is naming the
+// kinds the app-context sheet draws a per-change unread dot for
+// (`sessionUnreadIds`, published by _renderBadge).
 const SESSION_NOTIF_KINDS = new Set([
   'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
 ]);
