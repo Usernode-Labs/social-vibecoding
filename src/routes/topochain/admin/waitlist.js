@@ -38,6 +38,26 @@ function formatSignup(row) {
     linked_user_id: row.linked_user_id != null ? Number(row.linked_user_id) : null,
     linked_username: row.linked_username ?? null,
     has_platform_access: row.has_platform_access ?? null,
+    // The other half of the invite graph. `invited_count` (below, via
+    // signals) says how many this row brought in; these two say who
+    // brought THIS row in, which is the question an admin looking at a
+    // referral chain actually has. The address is carried because the id
+    // alone is unreadable on a screen that is keyed by email.
+    invited_by: row.invited_by != null ? Number(row.invited_by) : null,
+    invited_by_email: row.invited_by_email ?? null,
+    // What happened to the "you're in" mail for an admitted row. Admitting
+    // sends exactly one, and whether it actually left is otherwise
+    // invisible here — an admin seeing "Admitted" with no mail behind it
+    // was reading a half-finished action as a finished one. Null when
+    // nothing was ever recorded, which is also every row in a staging
+    // clone (mail_deliveries is staging:private).
+    invite_email: row.invite_mail_status
+      ? {
+        status: row.invite_mail_status,
+        created_at: iso(row.invite_mail_at),
+        error: row.invite_mail_error ?? null,
+      }
+      : null,
     // Two-stage survey payload (versioned JSON — stage 1 at join, stage 2
     // merged in via the "Want in sooner?" form). Null for plain-email rows.
     answers: row.answers && typeof row.answers === 'object' ? row.answers : null,
@@ -112,12 +132,23 @@ function waitlistAdminRoutes(config) {
 
       const { rows } = await pool.query(
         `SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at,
-                w.linked_user_id, w.answers,
+                w.linked_user_id, w.answers, w.invited_by,
                 (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited_by = w.id)
                   AS invited_count,
-                u.username AS linked_username, u.has_platform_access
+                p.email AS invited_by_email,
+                u.username AS linked_username, u.has_platform_access,
+                m.status AS invite_mail_status, m.created_at AS invite_mail_at,
+                m.error AS invite_mail_error
            FROM waitlist_signups w
            LEFT JOIN users u ON u.id = w.linked_user_id
+           LEFT JOIN waitlist_signups p ON p.id = w.invited_by
+           LEFT JOIN LATERAL (
+             SELECT d.status, d.created_at, d.error
+               FROM mail_deliveries d
+              WHERE d.recipient = w.email AND d.kind = 'waitlist_released'
+              ORDER BY d.created_at DESC, d.id DESC
+              LIMIT 1
+           ) m ON TRUE
           ${where}
           ${order}
           LIMIT $1 OFFSET $2`,
