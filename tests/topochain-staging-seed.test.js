@@ -400,18 +400,57 @@ test('the block-producer queue has one pending and one released row', () => {
     'the other six users are not in the queue');
 });
 
-test('4 waitlist_signups covering pending/unconfirmed/released/legacy-region', () => {
+test('7 waitlist_signups, one per thing the admin screen renders differently', () => {
   const start = body.indexOf('INSERT INTO waitlist_signups');
   assert.ok(start > 0, 'the admin Waitlist screen reads waitlist_signups, which a staging clone empties');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   const ids = block.match(/^\s*\(9005\d\d, '/gm) || [];
-  assert.equal(ids.length, 4);
-  assert.equal((block.match(/@example\.invalid/g) || []).length, 4,
+  assert.equal(ids.length, 7);
+  assert.equal((block.match(/@example\.invalid/g) || []).length, 7,
     'every fixture address is .invalid — nothing here is ever mailed');
   // One row per state that renders differently on the screen.
-  assert.match(block, /NULL, NULL, NULL, NULL\)/, 'one unconfirmed, answer-less, pending row');
+  assert.match(block, /NULL, NULL, NULL, NULL, NULL\)/, 'one unconfirmed, answer-less, pending row');
   assert.match(block, /NOW\(\) - INTERVAL '20 days', \$1,/, 'one released row linked to a fixture user');
-  assert.equal((block.match(/'::jsonb/g) || []).length, 3, 'three rows carry survey answers');
+  assert.equal((block.match(/'::jsonb/g) || []).length, 6, 'six rows carry survey answers');
+});
+
+// #1544 added the other half of the invite graph to the screen — who a row
+// came in THROUGH, not just how many it brought. Both directions have to be
+// seeded or the Referrals column is an empty cell on every row in a preview.
+test('the waitlist fixtures seed both directions of the invite graph', () => {
+  const start = body.indexOf('INSERT INTO waitlist_signups');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  assert.match(block, /confirmed_at, invited_by\)/,
+    'invited_by is set in the INSERT, not by a later UPDATE');
+  const referrals = (block.match(/, 900500\)/g) || []).length;
+  assert.equal(referrals, 2, 'two rows came in through 900500, so it reads "Brought in 2"');
+  assert.match(block, /"admit_together": true/,
+    'and one of them asked to be admitted together, which is its own line');
+});
+
+// The Answers column counts against the live section total, so the row that
+// exists to show a filled-in survey has to actually fill every section in.
+// It used to carry the retired {role, chain, why} shape, which answers none
+// of them, and would have read "0 of 7 answered" (#1544).
+test('the rich waitlist fixture answers every survey section', () => {
+  const start = body.indexOf('INSERT INTO waitlist_signups');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  const row = block.slice(block.indexOf('(900500,'), block.indexOf('(900501,'));
+  for (const key of ['made_url', 'country', 'discovery', 'group', 'loss', 'handles',
+    'followed_claim']) {
+    assert.ok(row.includes(`"${key}"`), `900500 answers the ${key} section`);
+  }
+  // The values are real option codes, not invented strings: the screen
+  // labels them through /api/public/waitlist/options, so a made-up code
+  // renders as the code and looks like the lookup is broken.
+  const { DISCOVERY_SOURCES, GROUP_SIZES, GROUP_ROLES, LOSS_ANSWERS, LOSS_KINDS } =
+    require('../src/services/waitlist-questions');
+  const answers = JSON.parse(row.slice(row.indexOf("'{") + 1, row.indexOf("}'") + 1));
+  assert.ok(DISCOVERY_SOURCES[answers.discovery.source]);
+  assert.ok(GROUP_SIZES[answers.group.size]);
+  assert.ok(GROUP_ROLES[answers.group.role]);
+  assert.ok(LOSS_ANSWERS[answers.loss.had]);
+  for (const k of answers.loss.kind) assert.ok(LOSS_KINDS[k]);
 });
 
 // The two country fixtures are the whole point of the ISO-list change being
@@ -432,8 +471,14 @@ test('the waitlist fixtures seed both a real country and a retired region', () =
       `row ${id}'s country is re-asserted by a follow-up UPDATE`
     );
   }
-  assert.equal((block.match(/UPDATE waitlist_signups/g) || []).length, 2,
+  assert.equal((block.match(/UPDATE waitlist_signups/g) || []).length, 3,
     'one UPDATE per re-asserted fixture, and no broader rewrite');
+  // The third is 900500's answers, rewritten wholesale because the row used
+  // to carry the retired {role, chain, why} shape and ON CONFLICT DO NOTHING
+  // would leave a re-cloned database showing "0 of 7 answered" forever. It is
+  // gated on that shape being present so it is a no-op on a correct row.
+  assert.match(block, /AND answers->>'role' IS NOT NULL/,
+    "the wholesale rewrite only fires on the retired shape it is replacing");
 });
 
 test('user_enrollments: a mix of season-wide (NULL event) and event-scoped rows, every row carrying the same season_id', () => {

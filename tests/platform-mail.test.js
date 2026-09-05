@@ -718,8 +718,9 @@ test('the staging mail fixture only writes when USERNODE_ENV=staging', async () 
     process.env.USERNODE_ENV = 'staging';
     await seedStagingPlatformMail(pool);
     const inserts = seen.filter((s) => /INSERT INTO mail_deliveries/.test(s));
-    assert.equal(inserts.length, 8,
-      'one row per status the card renders, plus three admin_test rows');
+    assert.equal(inserts.length, 9,
+      'one row per status the card renders, plus three admin_test rows, plus '
+      + 'the admission mail behind the admitted waitlist fixture');
     for (const sql of inserts) {
       assert.match(sql, /WHERE NOT EXISTS/, 'a re-boot must not grow the table');
     }
@@ -737,10 +738,12 @@ test('the staging fixture uses only unroutable, obviously fake addresses', () =>
   const emails = [...body.matchAll(/'([^']*@[^']*)'/g)].map((m) => m[1]);
   assert.ok(emails.length >= 5, 'sanity: the scrape found the seeded addresses');
   for (const email of emails) {
-    // The suffix may be hyphenated: the waitlist fixtures are one per queue
-    // state (…-waitlist-confirmed, …-waitlist-admitted), and each still has
-    // to read as fake at a glance.
-    assert.match(email, /^staging-demo-[a-z-]+@example\.invalid$/,
+    // The suffix may be hyphenated AND numbered: the waitlist fixtures are
+    // one per queue state (…-waitlist-confirmed, …-waitlist-admitted) and
+    // one per thing the admin screen renders differently
+    // (…-topochain-waitlist-3), and each still has to read as fake at a
+    // glance.
+    assert.match(email, /^staging-demo-[a-z0-9-]+@example\.invalid$/,
       `${email} must be visibly fake and unroutable (RFC 2606)`);
   }
 });

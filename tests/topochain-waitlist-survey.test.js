@@ -24,6 +24,7 @@ const render = (answers) => renderComponent(ENTRY, 'SurveyAnswers', { answers })
 
 // Every known key at once, with the dangerous ones carrying payloads.
 const HOSTILE = {
+  _version: 3,
   made_url: 'javascript:alert(document.cookie)',
   made_note: '<img src=x onerror=alert(1)>',
   city: 'Nowhere"><script>alert(1)</script>',
@@ -34,6 +35,7 @@ const HOSTILE = {
   loss: { had: 'a tool', product: 'Widgets', kind: ['sunset'], story: 'It went away.' },
   verified: { github: 'octocat' },
   handles: { x: 'someone' },
+  followed_claim: true,
   invites: ['a@b.invalid', 'c@d.invalid'],
   admit_together: true,
 };
@@ -59,7 +61,7 @@ test('every submitted string is escaped, in text and in the note beside the URL'
   assert.match(html, /&lt;\/span&gt;&lt;script&gt;/, 'so is a breakout attempt in discovery.detail');
 });
 
-test('the known keys are surfaced, and nothing else is', () => {
+test('every known key is surfaced under its own label', () => {
   const html = render(HOSTILE);
   for (const label of [
     'Made', 'Where', 'Found us', 'Referred by', 'Group', 'Group need',
@@ -67,15 +69,75 @@ test('the known keys are surfaced, and nothing else is', () => {
     // share link now, and a row carrying typed addresses predates that. The
     // label says which it is, and legacy rows keep being shown — an admin
     // reading one should still see what that person actually typed.
-    'Lost a tool', 'Loss story', 'Verified', 'Handles', 'Invites \\(typed\\)',
+    'Lost a tool', 'Loss story', 'Verified', 'Handles', 'Follow',
+    'Invites \\(typed\\)',
   ]) {
     assert.match(html, new RegExp(`${label}:`), `${label} is surfaced`);
   }
-  // An unknown key is data the form stopped collecting or never did — it must
-  // not appear, because nothing here knows how to label or trust it.
-  const withStray = render({ ...HOSTILE, internal_admin_note: 'do not show me' });
-  assert.ok(!withStray.includes('do not show me'),
-    'an unrecognised answers key is not rendered');
+});
+
+// A follow is a SELF-REPORT. No network confirms one for us (see the note on
+// `followed_claim` in services/waitlist-questions.js), so the line has to say
+// so — beside a "Verified" line that means OAuth actually proved it, an
+// unqualified "Follows us" would read as something we checked.
+test('a claimed follow is labelled as a claim, not as a verification', () => {
+  const html = render({ followed_claim: true });
+  assert.match(html, /Follow:/);
+  assert.match(html, /not verified/,
+    'the claim is marked as one rather than sitting beside the OAuth-proved list');
+});
+
+// #1544. An unknown key used to be DROPPED, on the reasoning that nothing
+// here knows how to label it. But `answers` spans several schema versions of
+// a public form, and the keys that fall through are exactly the ones an admin
+// looking at an odd row needs to see: what got dropped was the evidence. They
+// are shown verbatim under one "Other answers" line, as escaped TEXT — the
+// module's rules about untrusted content are unchanged, only the decision to
+// hide it is.
+test('an unrecognised key is shown rather than dropped, and shown as text', () => {
+  const html = render({ ...HOSTILE, internal_admin_note: 'a retired question' });
+  assert.match(html, /Other answers:/);
+  assert.match(html, /internal_admin_note: a retired question/,
+    'the key is named alongside its value, so an admin can see what is stored');
+
+  // Still untrusted, still escaped, still never markup.
+  const nasty = render({ stray_key: '<script>alert(1)</script>' });
+  assert.ok(!/<script>/.test(nasty), 'an unknown value is escaped like every other string');
+  assert.match(nasty, /&lt;script&gt;/);
+
+  // A nested blob is JSON rather than "[object Object]", which tells an
+  // admin nothing about what is in the row.
+  const nested = render({ stray_key: { a: 1 } });
+  assert.ok(!/\[object Object\]/.test(nested));
+  assert.match(nested, /&quot;a&quot;:1|"a":1/);
+});
+
+test('the schema version is bookkeeping and is never shown as an answer', () => {
+  const html = render(HOSTILE);
+  assert.ok(!/_version/.test(html),
+    '_version says nothing about the person and would head every Other answers line');
+  // ...and it alone must not conjure the line into existence.
+  assert.ok(!/Other answers:/.test(render({ _version: 3, country: 'DE' })));
+});
+
+// The option CODES stored in `answers` are labelled from
+// /api/public/waitlist/options, which this render never fetches (effects do
+// not run under renderToStaticMarkup, which is also the state of the screen
+// for the first moment after it mounts). The fallback has to be the code
+// itself: a row that reads `lt10` is still a row an admin can work with, and
+// blanking the field would be worse than showing it raw.
+test('an answer code still renders when the options lookup has not landed', () => {
+  const html = render({
+    discovery: { source: 'friend' },
+    group: { size: 'lt10', role: 'organizer', tools: ['groupchat'] },
+    loss: { had: 'yes', kind: ['shutdown'] },
+  });
+  assert.match(html, /Found us:/);
+  assert.match(html, /friend/, 'the stored code is shown rather than nothing');
+  assert.match(html, /lt10/);
+  assert.match(html, /organizer/);
+  assert.match(html, /groupchat/);
+  assert.match(html, /shutdown/);
 });
 
 // #1527 replaced the region-bucketed picker with the complete ISO 3166-1
