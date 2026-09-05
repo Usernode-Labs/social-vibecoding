@@ -2,7 +2,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { createApp } = require('../services/app-creator');
-const { forkApp } = require('../services/app-forker');
+const { forkApp, findForkSource } = require('../services/app-forker');
 const caddy = require('../services/caddy');
 const docker = require('../services/docker');
 const github = require('../services/github');
@@ -38,6 +38,29 @@ function validateVisibilityCombo(collabVisibility, viewVisibility) {
   }
   if (collabVisibility === 'public' && viewVisibility === 'private') {
     return 'An app that everyone can build cannot be private to view';
+  }
+  return null;
+}
+
+// A source must have finished the durable parts of provisioning before a
+// fork can take a database/repository snapshot. `awaiting_secrets` is safe:
+// its DB and repo are complete and only private deploy input is missing.
+// Keeping this as a shared message builder lets both initial fork and Retry
+// reject the known race before creating another async failure row.
+function forkSourceReadinessError(sourceApp) {
+  if (!sourceApp) return 'The source app for this fork no longer exists.';
+  if (sourceApp.self_hosted) return 'The platform app cannot be forked.';
+  if (sourceApp.status === 'creating') {
+    return 'This app is still being set up. Try forking it again once it is ready.';
+  }
+  if (sourceApp.status === 'error') {
+    return 'This app cannot be forked until its setup error is fixed.';
+  }
+  if (!['running', 'awaiting_secrets'].includes(sourceApp.status)) {
+    return 'This app is not ready to fork yet.';
+  }
+  if (!sourceApp.repo_url) {
+    return 'This app is not ready to fork yet because its repository is still being prepared.';
   }
   return null;
 }
@@ -997,13 +1020,12 @@ function appRoutes(config) {
       if (!(await appAccess.checkAppAccess(pool, sourceApp, req.user, 'view'))) {
         return res.status(404).json({ error: 'App not found' });
       }
-      // The platform self-app has no per-app DB/container/repo to clone.
-      if (sourceApp.self_hosted) {
-        return res.status(400).json({ error: 'The platform app can’t be forked.' });
-      }
-      // Can't fork a half-built source (no repo / DB yet).
-      if (!sourceApp.repo_url) {
-        return res.status(409).json({ error: 'This app isn’t ready to fork yet: it has no repository.' });
+      // Reject a half-built source synchronously. Previously a source could
+      // be far enough along to have a repo but still lose the DB snapshot
+      // race; the async worker then left a bare "Error" tile behind.
+      const readinessError = forkSourceReadinessError(sourceApp);
+      if (readinessError) {
+        return res.status(sourceApp.self_hosted ? 400 : 409).json({ error: readinessError });
       }
 
       // Per-user quota + global cap — identical gate to POST /api/apps.
@@ -2649,13 +2671,44 @@ function appRoutes(config) {
         });
       }
 
+      // A failed fork with no repo must re-enter app-forker so it copies the
+      // source. Sending it through createApp used to seed the starter
+      // template, which made Retry "succeed" as the wrong app. If the fork
+      // repo was already copied, forkApp resumes from that independent repo.
+      let sourceApp = null;
+      if (appRow.forked_from) {
+        sourceApp = await findForkSource(pool, appRow);
+        if (!sourceApp && !appRow.repo_url) {
+          return res.status(409).json({
+            error: 'The source app for this fork no longer exists, so the fork cannot be retried.',
+          });
+        }
+        if (sourceApp && !appRow.repo_url) {
+          if (!(await appAccess.checkAppAccess(pool, sourceApp, req.user, 'view'))) {
+            return res.status(403).json({
+              error: 'You no longer have access to the source app for this fork.',
+            });
+          }
+          const readinessError = forkSourceReadinessError(sourceApp);
+          if (readinessError) return res.status(409).json({ error: readinessError });
+        }
+      }
+
       await pool.query(
-        "UPDATE apps SET status = 'creating', retry_count = retry_count + 1 WHERE id = $1",
+        `UPDATE apps
+            SET status = 'creating', retry_count = retry_count + 1,
+                last_failure = NULL
+          WHERE id = $1`,
         [appRow.id]
       );
 
-      createApp(config, appRow).catch(async (err) => {
-        log.error('apps', 'Retry app creation failed', { appId: appRow.id, err: err.message });
+      const provision = appRow.forked_from
+        ? forkApp(config, appRow, sourceApp)
+        : createApp(config, appRow);
+      provision.catch(async (err) => {
+        log.error('apps', appRow.forked_from ? 'Retry fork failed' : 'Retry app creation failed', {
+          appId: appRow.id, err: err.message,
+        });
         await pool.query(
           `UPDATE apps SET status = 'error',
                            last_failure = COALESCE(last_failure, $2::jsonb)

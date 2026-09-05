@@ -11,16 +11,18 @@ Use `production` unless the user explicitly requests `local`. Read `../usernode-
 
 1. Resolve the app, repository, and exact proposal base commit through Usernode.
 2. Reuse a local checkout only when its `HEAD` is that exact base commit. If downloading the repository, use `git clone --depth 1` only when the remote default `HEAD` is the base commit. Otherwise initialize an empty repository, add the remote, run `git fetch --depth=1 origin <base-sha>`, and detach-checkout `FETCH_HEAD`. Verify `git rev-parse HEAD` equals the proposal base SHA. Deepen only when the work genuinely requires older history.
-3. Inspect the checkout, write the complete Markdown spec, and call `proposal_start` with the base commit, spec, and durable history.
+3. Inspect the checkout, write the complete Markdown spec, choose a stable request ID, and call `proposal_start` with the base commit, spec, and durable history.
 4. Implement and test in the same checkout, then commit locally. Do not use personal GitHub credentials for the bot-owned platform branch and do not dispatch a web coding agent merely to obtain push access.
 5. Call `proposal_push_commit` with the local commit and repository path. Execute its exact returned host `argv`, then use the returned bot-owned `headSha`. Upload multiple local commits oldest-first. Local and bot commit SHAs may differ, but their Git trees must match; do not rebase merely because the SHAs differ.
 6. Call `proposal_submit_build` with the returned head SHA, new durable history, and structured local test results.
-7. Poll `proposal_status` until `revisionState` (when present) or `state` reports `ready` or `failed`. A promoted proposal keeps `state: promoted` while `revisionState` reports the managed revision's build/check progress. When failed, fix the problem and submit a later fast-forwarding commit.
+7. Poll `proposal_status` until `revisionState` (when present) or `state` reports `ready`, `failed`, or `stalled`. A promoted proposal keeps `state: promoted` while `revisionState` reports the managed revision's build/check progress. When stalled, call `proposal_recheck` for that session. When failed, fix the problem and submit a later fast-forwarding commit.
 8. When ready, call only `proposal_promote` if the user wants the proposal opened for voting. Never substitute `api_write` or a hand-written `/promote` request.
 
 If a protected proposal tool returns `host_execution_required`, never retry that MCP tool. Run only its exact returned `argv` in its returned `cwd`. For promotion, that exact vector is the only authorized fallback after the dedicated tool's manual approval.
 
 The returned `webPath` is an optional continuation surface, not a required step. Local and web turns may alternate on the shared branch; always continue from its current head.
+
+Treat the request ID and returned session ID as the permanent identity of this work. Retrying, rebasing, pushing, or recovering stalled checks never authorizes another `proposal_start` with a new request ID. If start reports `proposal_already_started`, continue the returned session. Supply `supersedes_session_id` only after the user explicitly asks to replace that named pre-vote proposal; replacement archives it.
 
 ## Preserve durable context
 
