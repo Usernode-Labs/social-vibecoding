@@ -1626,6 +1626,98 @@ test('the demo deep link is a declared test path', () => {
     'the screenshot state added this turn is exercised by dapp.json');
 });
 
+// ── Wallet recovery: a Settings button, not a pop-up ──────────────────
+//
+// The "Connect your existing wallet" dialog (features/dialogs/
+// wallet-recovery.tsx) used to open ITSELF: native-chrome.js dispatched
+// `usernode:wallet-recovery-required` whenever admission failed with
+// `native_session_wallet_pool_exhausted`, and the dialog also re-opened on
+// mount off lastSessionFailure(). Admission is retried on every online /
+// pageshow / visibilitychange, so the modal kept coming back over what is a
+// minor feature. It is offered from the connection panel now, and only there.
+
+const walletRecoveryTsx = read('frontend/src/features/dialogs/wallet-recovery.tsx');
+const nativeChromeJs = read('public/js/native-chrome.js');
+
+test('the connection panel offers wallet recovery off the recorded failure', () => {
+  const view = sliceMethod(settingsJs, '_usernodeConnectionView');
+  assert.match(view, /walletRecovery: this\._walletRecoveryAvailable\(\) \?/,
+    'the button is a slice of the connection model');
+  assert.match(view, /id: 'settings-usernode-connect-wallet'/);
+  assert.match(view, /label: 'Connect existing wallet'/);
+  assert.match(view, /action: '_openWalletRecovery'/);
+
+  const available = sliceMethod(settingsJs, '_walletRecoveryAvailable');
+  assert.match(available, /nc\.isSessionAdmitted\(\)/,
+    'an admitted session has nothing to recover');
+  assert.match(available, /nc\.lastSessionFailure\(\)/,
+    'the recorded failure is the source of truth');
+  assert.match(available, /failure\.code !== this\.WALLET_POOL_EXHAUSTED/);
+  assert.ok(settingsJs.includes(
+    "WALLET_POOL_EXHAUSTED: 'native_session_wallet_pool_exhausted'"));
+  assert.match(available, /dialogs\.walletRecovery/,
+    'no button without a dialog to open');
+
+  const open = sliceMethod(settingsJs, '_openWalletRecovery');
+  assert.match(open, /dialog\.open\(\{ userId \}\)/,
+    'the press opens the React dialog by its published controller');
+  assert.match(open, /_walletRecoveryDemo\(\)/,
+    'the demo snapshot must never open a real recovery');
+
+  // Admission flipping (the dialog succeeding, a sign-out) repaints the
+  // panel without a navigation.
+  assert.match(sliceMethod(settingsJs, 'init'),
+    /addEventListener\('usernode:native-session-admission',\s*\(\) => this\._publishUsernode\(\)\)/);
+
+  assert.match(usernodeStoreTs, /walletRecovery: UnAction \| null/);
+  assert.match(usernodeTsx, /id="settings-usernode-wallet-recovery"/);
+  assert.match(usernodeTsx, /<UnBtn btn=\{c\.walletRecovery\} \/>/);
+  // JS-built, so it must not appear in the static shell.
+  for (const id of ['settings-usernode-wallet-recovery', 'settings-usernode-connect-wallet']) {
+    assert.doesNotMatch(html, new RegExp(`id="${id}"`),
+      `#${id} is built from the model, never shipped in the markup`);
+  }
+});
+
+test('nothing opens the wallet recovery dialog on its own', () => {
+  assert.ok(!nativeChromeJs.includes('offerWalletRecovery'),
+    'native-chrome.js no longer announces pool exhaustion');
+  assert.ok(!nativeChromeJs.includes("'usernode:wallet-recovery-required'"),
+    'the auto-open event is gone from the dispatcher');
+  assert.ok(!walletRecoveryTsx.includes("addEventListener('usernode:wallet-recovery-required'"),
+    'the dialog no longer listens for it');
+  assert.ok(!walletRecoveryTsx.includes('lastSessionFailure?.()'),
+    'the dialog no longer re-opens itself on mount off the recorded failure');
+  assert.doesNotMatch(walletRecoveryTsx, /dialog\.open\(/,
+    'the dialog never calls its own open(); only the Settings button does');
+  // The one listener left is the CLOSE: a realm close mid-form.
+  assert.ok(walletRecoveryTsx.includes("addEventListener('sv:native-realm-close'"));
+});
+
+test('the wallet-recovery demo deep link is read-only and declared', () => {
+  const flag = sliceMethod(settingsJs, '_walletRecoveryDemo');
+  assert.match(flag, /'bridgediag'\) === 'wallet'/);
+  assert.match(sliceMethod(settingsJs, '_bridgeDiagnostics'),
+    /_walletRecoveryDemo\(\)\) return this\.DEMO_BRIDGE_DIAGNOSTICS_WALLET/);
+  const section = sliceMethod(settingsJs, '_renderUsernodeSection');
+  assert.match(section, /this\._walletRecoveryDemo\(\)/,
+    'the demo link gates the section open in a browser, like bridgediag=demo');
+  const view = sliceMethod(settingsJs, '_usernodeConnectionView');
+  assert.match(view, /retryDisabled: !!this\._bridgeDiagDemo\(\) \|\| !!this\._walletRecoveryDemo\(\)/,
+    'the demo may not drive the real bridge');
+  assert.match(view, /disabled: demo,/,
+    'nor open a real recovery');
+  const snapshot = settingsJs.slice(
+    settingsJs.indexOf('    DEMO_BRIDGE_DIAGNOSTICS_WALLET: {'),
+    settingsJs.indexOf('    _bridgeDiagnostics() {'),
+  );
+  assert.match(snapshot, /Staging demo/, 'the synthetic values say so in the data itself');
+  assert.match(snapshot, /invalid/, 'the demo origin is a reserved non-resolvable name');
+  const paths = JSON.stringify(manifest.tests || []);
+  assert.ok(paths.includes('bridgediag=wallet'),
+    'the screenshot state is exercised by dapp.json');
+});
+
 // ── Protocol-2 sign-out boundary ────────────────────────────────────────
 
 test('sign-out closes once, then uses terminal protocol 2 or web navigation',

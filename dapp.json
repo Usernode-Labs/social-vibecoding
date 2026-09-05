@@ -2173,6 +2173,12 @@
       "expectText": "Force-close the app and reopen it"
     },
     {
+      "name": "Wallet recovery is a Settings button, not a pop-up: the connection panel offers it when no seeded wallet is left",
+      "path": "/#settings/usernode?bridgediag=wallet",
+      "expectSelector": "#settings-usernode-connection #settings-usernode-wallet-recovery p + button#settings-usernode-connect-wallet[disabled]",
+      "expectText": "Connect existing wallet"
+    },
+    {
       "name": "The in-app notifications row is itself a control, so tapping it can't do nothing (#1193)",
       "path": "/#settings/usernode?usernodedemo=ios",
       "expectSelector": "#settings-usernode-section:not(.hidden) button#settings-notif-row[type=\"button\"] + button",

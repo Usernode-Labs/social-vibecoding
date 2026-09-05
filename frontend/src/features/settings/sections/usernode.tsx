@@ -51,6 +51,16 @@ function Connection({ s }: { s: UsernodeSectionState }): ReactNode {
       {c.message ? (
         <p className="text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words">{c.message}</p>
       ) : null}
+      {c.walletRecovery ? (
+        <div id="settings-usernode-wallet-recovery" className={NOTICE_TONE.warn}>
+          <p>
+            No new mobile wallet is available for this account, so secure app
+            sign-in did not finish. If you previously joined with email, you
+            can connect that account’s wallet instead.
+          </p>
+          <UnBtn btn={c.walletRecovery} />
+        </div>
+      ) : null}
       <div>
         <UnBtn btn={{
           id: 'settings-usernode-connection-retry', label: 'Try again',
