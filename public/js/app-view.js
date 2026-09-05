@@ -713,6 +713,55 @@ const AppView = {
           (scope || document.getElementById('gc-thread-head'))?.querySelector(want)?.click();
         }, 300);
       }
+      // #1585's check asserts that a feed issue row previews its recent
+      // comments, and it had no route that could show one.
+      //
+      // The rows are real and so are the comments. What is not reachable
+      // from a plain URL is the STATE: the comment slots fill from an
+      // IntersectionObserver (see _wireFeedComments — thirty issues must not
+      // fire thirty requests on paint), and the feed is a chronological merge
+      // of issues, proposals, governance rows, shared sessions, the
+      // discussion and merged work. On a busy app the first ISSUE row sits
+      // well below the fold, so nothing scrolls to it, so nothing fills it,
+      // and the check read a screen on which its own claim was simply not
+      // being made. It passed or failed on how busy the app had been that
+      // hour, which is not a test.
+      //
+      // So this link goes to the first slot and fills it. Directly, not by
+      // scrolling and hoping the observer fires: the observer is an
+      // OPTIMISATION and racing it is what made the check flaky in the first
+      // place. `_fillFeedComments` is the same function the observer calls,
+      // through the same cache and the same endpoint, so this exercises the
+      // product's path rather than a second one written for a test.
+      //
+      // It scrolls too, because a before/after capture has to SHOW the row.
+      // Pure UI state: one GET the observer would have made anyway, no
+      // writes, not env-gated — so the "before" side of a capture works.
+      if (shot === 'feed-comments') {
+        let tries = 0;
+        const done = () => {
+          clearInterval(tick);
+          document.removeEventListener('pointerdown', onUserInput, true);
+          document.removeEventListener('keydown', onUserInput, true);
+        };
+        // A human who opens this link must not be scrolled around after
+        // their first real gesture. Same guard the ⋯ menu link uses.
+        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
+        document.addEventListener('pointerdown', onUserInput, true);
+        document.addEventListener('keydown', onUserInput, true);
+        const tick = setInterval(() => {
+          // Give up on a route change, and cap the window so a link left
+          // open in a real tab cannot keep polling.
+          if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
+          const slot = document.querySelector('#dev-feed .dev-feed-comments[data-comments-for]');
+          if (!slot) return; // the feed's fetches have not landed yet
+          // Arrived: the slot has rendered a comment. Stop, but leave the
+          // page where it is.
+          if (slot.querySelector('.dev-feed-comment-time')) { done(); return; }
+          slot.scrollIntoView({ block: 'center' });
+          AppView._fillFeedComments(slot);
+        }, 300);
+      }
       if (shot === 'preview-loading' || shot === 'preview-rebuilding') {
         setTimeout(() => {
           // Gate on the ROUTE, not on appData: the dev tab clears appData
