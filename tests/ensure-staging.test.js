@@ -73,6 +73,19 @@ function inspecting(status, labels = {}) {
 
 const LIVE_SESSION = { id: 1, staging_url: 'https://x.example', staging_container_id: 'c1' };
 
+// Two 40-hex shas standing in for "the head under review" and "the commit
+// that was actually built".
+const HEAD_SHA = '5fed82af834c82fa17f58fff56f1221d9c0fe751';
+const OLDER_SHA = '033278e1e0a4e4a1c2f6d0b7e2b9a1c3d4e5f607';
+
+// A running preview built by THIS platform, holding `commit`.
+function inspectingCommit(commit) {
+  return inspecting('running', {
+    [stagingEnvModule.LABEL_ENV_FP]: currentFingerprint(),
+    ...(commit ? { [stagingEnvModule.LABEL_BUILD_COMMIT]: commit } : {}),
+  });
+}
+
 test('stagingNeedsRebuild: NULL staging_url → true (no docker call)', async () => {
   let called = false;
   const { subject, restore } = loadRecovery(async () => { called = true; return { status: 'running', labels: {} }; });
@@ -149,6 +162,163 @@ test('stagingNeedsRebuild: no config → liveness-only verdict (unchanged behavi
     assert.equal(await dead.subject.stagingNeedsRebuild(LIVE_SESSION), true,
       'liveness still decides');
   } finally { dead.restore(); }
+});
+
+// ── 1b. The FOURTH shape: the branch moved under the preview ─────────────
+//
+// A clean platform sync merges main into a promoted proposal's branch,
+// pushes, advances the reviewed revision and carries the green verdict
+// forward WITHOUT rebuilding, because nothing the author wrote changed. The
+// tree did: it now holds every commit main added, including whatever
+// dapp.json checks main added. visuals.captureForSession reads the declared
+// suite from the branch tip, so the next re-run judged main's newest checks
+// against pre-sync code — and every open proposal on this platform's own
+// board went red at once. Re-running could not clear it: recheckSessionChecks
+// asked stagingNeedsRebuild(), which only knew about liveness and env, so the
+// re-check reused the same stale container.
+//
+// The verdict drives a rebuild, so "unknown" must stay conservative in both
+// directions: a row with no nameable head, and a container whose commit we
+// cannot read, are handled below.
+
+test('stagingNeedsRebuild: running preview built from an OLDER commit → true', async () => {
+  const { subject, restore } = loadRecovery(inspectingCommit(OLDER_SHA));
+  try {
+    assert.equal(
+      await subject.stagingNeedsRebuild(
+        { ...LIVE_SESSION, checks_commit_sha: HEAD_SHA }, { config: TEST_CONFIG }
+      ),
+      true,
+      'the checks would be judged against code the preview does not hold'
+    );
+  } finally { restore(); }
+});
+
+test('stagingNeedsRebuild: running preview built from the head under review → false', async () => {
+  const { subject, restore } = loadRecovery(inspectingCommit(HEAD_SHA));
+  try {
+    assert.equal(
+      await subject.stagingNeedsRebuild(
+        { ...LIVE_SESSION, checks_commit_sha: HEAD_SHA }, { config: TEST_CONFIG }
+      ),
+      false,
+      'matching commit + matching env is a preview worth reusing'
+    );
+  } finally { restore(); }
+});
+
+test('stagingNeedsRebuild: sha comparison is case-insensitive', async () => {
+  const { subject, restore } = loadRecovery(inspectingCommit(HEAD_SHA.toUpperCase()));
+  try {
+    assert.equal(
+      await subject.stagingNeedsRebuild(
+        { ...LIVE_SESSION, checks_commit_sha: HEAD_SHA }, { config: TEST_CONFIG }
+      ),
+      false,
+      'a git sha is one commit however it is cased — never churn on that'
+    );
+  } finally { restore(); }
+});
+
+test('stagingNeedsRebuild: a commit-stale preview is caught without config too', async () => {
+  // The env digest needs the platform's config; this comparison is between
+  // the session row and the container, so it must not be gated on one.
+  const { subject, restore } = loadRecovery(inspectingCommit(OLDER_SHA));
+  try {
+    assert.equal(
+      await subject.stagingNeedsRebuild({ ...LIVE_SESSION, checks_commit_sha: HEAD_SHA }),
+      true
+    );
+  } finally { restore(); }
+});
+
+test('stagingNeedsRebuild: running preview with NO commit label → true (built pre-label)', async () => {
+  // Same convention the env fingerprint already uses for an unlabelled
+  // container, and the reason the previews that were red when this landed
+  // heal themselves: their next re-check rebuilds instead of re-judging.
+  const { subject, restore } = loadRecovery(inspectingCommit(null));
+  try {
+    assert.equal(
+      await subject.stagingNeedsRebuild(
+        { ...LIVE_SESSION, checks_commit_sha: HEAD_SHA }, { config: TEST_CONFIG }
+      ),
+      true
+    );
+  } finally { restore(); }
+});
+
+test('stagingNeedsRebuild: no nameable head → the commit is not consulted', async () => {
+  // A fresh draft, or a row stamped 'latest' by a branch build. Rebuilding on
+  // a guess would churn the fleet, so an unknown expectation leaves the
+  // preview alone and the liveness/env verdict stands.
+  const { subject, restore } = loadRecovery(inspectingCommit(OLDER_SHA));
+  try {
+    assert.equal(
+      await subject.stagingNeedsRebuild(
+        { ...LIVE_SESSION, checks_commit_sha: 'latest' }, { config: TEST_CONFIG }
+      ),
+      false
+    );
+    assert.equal(
+      await subject.stagingNeedsRebuild(LIVE_SESSION, { config: TEST_CONFIG }),
+      false
+    );
+  } finally { restore(); }
+});
+
+test('stagingNeedsRebuild: a docker hiccup still never reads as commit staleness', async () => {
+  const { subject, restore } = loadRecovery(async () => null);
+  try {
+    assert.equal(
+      await subject.stagingNeedsRebuild(
+        { ...LIVE_SESSION, checks_commit_sha: HEAD_SHA }, { config: TEST_CONFIG }
+      ),
+      false
+    );
+  } finally { restore(); }
+});
+
+// expectedPreviewCommit — which head the preview is measured against.
+
+test('expectedPreviewCommit: each shape names the commit its own rebuild produces', () => {
+  // The comparison and its remedy must agree, or a mismatch rebuilding cannot
+  // resolve becomes a rebuild loop instead of a heal.
+  const { expectedPreviewCommit } = require('../src/services/staging-recovery');
+  assert.equal(expectedPreviewCommit({ checks_commit_sha: HEAD_SHA }), HEAD_SHA,
+    'a native row is measured against the commit under test');
+  assert.equal(
+    expectedPreviewCommit({ source: 'imported', imported_pr_head_sha: HEAD_SHA, checks_commit_sha: OLDER_SHA }),
+    HEAD_SHA,
+    'an imported row is pinned to the head its votes describe (#866), which is '
+    + 'exactly what rebuildSessionStaging builds for it'
+  );
+});
+
+test('expectedPreviewCommit: falls back when no run has stamped a head yet', () => {
+  const { expectedPreviewCommit } = require('../src/services/staging-recovery');
+  assert.equal(
+    expectedPreviewCommit({ source: 'imported', checks_commit_sha: OLDER_SHA }),
+    OLDER_SHA
+  );
+  assert.equal(
+    expectedPreviewCommit({ reviewed_head_sha: OLDER_SHA }),
+    OLDER_SHA
+  );
+  assert.equal(
+    expectedPreviewCommit({ source: 'cli_handoff', handoff_head_sha: OLDER_SHA }),
+    OLDER_SHA
+  );
+});
+
+test('expectedPreviewCommit: anything that is not a full sha is unknown, not stale', () => {
+  const { expectedPreviewCommit } = require('../src/services/staging-recovery');
+  assert.equal(expectedPreviewCommit(null), null);
+  assert.equal(expectedPreviewCommit({}), null);
+  assert.equal(expectedPreviewCommit({ checks_commit_sha: 'latest' }), null);
+  assert.equal(expectedPreviewCommit({ checks_commit_sha: HEAD_SHA.slice(0, 7) }), null,
+    'a short sha cannot be compared to a full one without guessing');
+  assert.equal(expectedPreviewCommit({ checks_commit_sha: HEAD_SHA.toUpperCase() }), HEAD_SHA,
+    'and a full sha normalises to lower case');
 });
 
 // ── 2. Route: POST /api/sessions/:id/ensure-staging ──────────────────────
