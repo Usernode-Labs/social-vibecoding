@@ -316,7 +316,7 @@ for (const code of ['native_session_ticket_expired', 'native_session_wallet_requ
     });
 }
 
-test('pool exhaustion offers legacy recovery and preserves the exact attempt for replay',
+test('pool exhaustion records the failure WITHOUT prompting, and preserves the exact attempt for replay',
   async () => {
     let exhaustedAttemptId = null;
     const loaded = loadNativeChrome({
@@ -341,12 +341,18 @@ test('pool exhaustion offers legacy recovery and preserves the exact attempt for
       loaded.NativeChrome._ATTEMPT_STORAGE_KEY)).attemptId, exhaustedAttemptId,
     'pool exhaustion is recoverable, so the exact attempt must survive');
 
+    // The recovery dialog used to open itself off a
+    // `usernode:wallet-recovery-required` event dispatched here — on every
+    // admission attempt, and admission retries on every online / pageshow /
+    // visibilitychange, so it kept popping up. It is offered from Settings →
+    // Usernode app → connection now, off lastSessionFailure(); nothing here
+    // may announce it.
     const offers = loaded.calls.eventDetails.filter(
       (event) => event.type === 'usernode:wallet-recovery-required');
-    assert.deepEqual(JSON.parse(JSON.stringify(offers)), [{
-      type: 'usernode:wallet-recovery-required',
-      detail: { userId: '41' },
-    }]);
+    assert.deepEqual(offers, [],
+      'pool exhaustion is recorded, never announced as a pop-up');
+    assert.ok(!nativeChromeSource.includes("'usernode:wallet-recovery-required'"),
+      'native-chrome.js no longer dispatches the auto-open event');
 
     const recovered = await loaded.NativeChrome.recoverSessionAdmission();
     assert.equal(recovered.identity.participantId, '41');
