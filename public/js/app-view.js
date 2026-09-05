@@ -11602,6 +11602,14 @@ const AppView = {
     // onto the matching pair. ids are 32-hex-validated, so they're safe
     // inside the data-* attributes; path goes through esc(). `mobile`
     // flags a phone-frame capture group (#768) so the overlay can label it.
+    // A side with NO capture. It used to return '' — one lone tile plus a
+    // caption, which reads as a capture that failed rather than as a pair
+    // with one honest half. The placeholder keeps the row two-up so the
+    // caption below it explains a shape the reader can already see.
+    const emptyTile = (label, mobile) => `<figure ${mobile ? 'data-viewport="mobile"' : ''} class="usn-visual-figure" style="flex:1 1 0;min-width:0;display:block;margin:0">
+        <div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
+        <div class="usn-visual-empty${mobile ? ' usn-visual-phone' : ''}" aria-hidden="true"></div>
+      </figure>`;
     const tile = (label, side, b, a, path, mobile) => {
       const v = side === 'before' ? b : a;
       if (!v) return '';
@@ -11620,12 +11628,16 @@ const AppView = {
         ? ' <span class="text-zinc-500 dark:text-zinc-500" style="text-transform:none;letter-spacing:0">· no recording</span>'
         : '';
       const labelHtml = `<div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}${marker}</div>`;
+      // #768's `mobile` was a text suffix on the row label — "(mobile)" —
+      // which a reader takes in AFTER deciding the tile looks oddly cropped.
+      // The outline says it before they read anything.
+      const framed = (m) => `<div class="usn-visual-media${mobile ? ' usn-visual-phone' : ''}">${m}</div>`;
       // Without the overlay there's nothing to click — render an inert
       // figure so the tile isn't a button that does nothing.
       if (!overlay) {
         return `<figure ${mobile ? 'data-viewport="mobile"' : ''} data-visual-tile="${side}" data-path="${esc(path)}" style="flex:1 1 0;min-width:0;display:block;margin:0">
           ${labelHtml}
-          ${media}
+          ${framed(media)}
         </figure>`;
       }
       const dataAttrs = [
@@ -11641,7 +11653,7 @@ const AppView = {
       ].filter(Boolean).join(' ');
       return `<button type="button" ${dataAttrs} title="${label}: open before/after comparison" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
         <div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
-        ${media}
+        ${framed(media)}
       </button>`;
     };
 
@@ -11652,9 +11664,11 @@ const AppView = {
       const a = sideIds(g.after);
       const path = g.path || '/';
       const mobile = g.viewport === 'mobile';
-      const before = tile('Before', 'before', b, a, path, mobile);
-      const after = tile('After', 'after', b, a, path, mobile);
-      if (!after && !before) continue;
+      const before = tile('Before', 'before', b, a, path, mobile)
+        || (a ? emptyTile('Before', mobile) : '');
+      const after = tile('After', 'after', b, a, path, mobile)
+        || (b ? emptyTile('After', mobile) : '');
+      if (!a && !b) continue;
       // Label the row with its captured path unless it's the single
       // root-only DESKTOP group (unchanged from the pre-#270 single-tile
       // output). A mobile group (#768) is always labelled — the phone
@@ -11675,7 +11689,19 @@ const AppView = {
       const noteHtml = note
         ? `<div class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" style="margin:2px 0 0">${esc(note)}</div>`
         : '';
-      rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>${noteHtml}`);
+      rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:stretch;margin:4px 0 2px">${before}${after}</div>${noteHtml}`);
+    }
+    // ONE STRIP, and the rest behind a disclosure. Every group used to stack
+    // inline, so a three-route capture was three full-width before/after
+    // strips in the middle of a transcript — the proposal's own title ended
+    // up a screen above its actions. The first route is the one the
+    // submission named first, which is the one worth seeing without asking.
+    //
+    // NOT in gallery mode (`preload: 'none'`): that view exists to show every
+    // recording at once, and hiding four fifths of it would defeat it.
+    if (rows.length > 1 && !clickToPlay) {
+      const [first, ...rest] = rows;
+      return `${first}<details class="usn-visual-more"><summary class="usn-visual-more-summary">All ${rows.length} screens</summary>${rest.join('')}</details>`;
     }
     return rows.join('');
   },
