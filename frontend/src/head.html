@@ -234,19 +234,70 @@
       // well past any load that is merely slow. The panel is for a boot that
       // is not coming.
       var DEADLINE_MS = 8000;
+      // One extra window, and only when the parser is demonstrably still
+      // working. Keeps a slow load from being accused without letting a
+      // document that never finishes parsing escape judgement forever.
+      var GRACE_MS = 6000;
 
-      // Conservative by construction: ANY screen root that is unhidden, has a
-      // box and has text counts as a working boot. An unreadable document
-      // (no querySelectorAll, a throw) counts as working too — a watchdog
-      // that cannot tell must not accuse.
+      // ASK THE PIXELS, NOT THE TREE.
+      //
+      // This used to ask "does any unhidden screen root have a box and text",
+      // which is not the same question as "can the reader see anything" — and
+      // the difference is exactly the failure this watchdog exists for.
+      // `#auth-landing-screen` is `fixed inset-0 z-40 bg-white` with no
+      // children, and a boot that dies reveals it OVER a `#home-screen` that
+      // is still unhidden and still carries the text the prerender shipped.
+      // The old predicate found that text, concluded the boot had worked, and
+      // stayed silent while the reader looked at a white rectangle. Both roots
+      // unhidden at once is a state observed in this repo's own harness, not
+      // a hypothetical.
+      //
+      // document.elementFromPoint answers the right question, because it
+      // returns what is actually ON TOP at a coordinate. Sample a handful of
+      // points; the screen is blank only when EVERY one of them lands on
+      // something with no text and no picture.
+      //
+      // Still conservative in the direction that matters. One sample with
+      // content is enough to call the boot working, an unreadable document
+      // counts as working, and a throw counts as working — a watchdog that
+      // cannot tell must never accuse a page that is fine.
+      function hasVisibleContent(el) {
+        if (!el || el === document.documentElement || el === document.body) return false;
+        // Its own text, not a descendant's: elementFromPoint already gave us
+        // the topmost node, and innerText on an ancestor would count content
+        // that something opaque is covering.
+        var own = '';
+        for (var n = el.firstChild; n; n = n.nextSibling) {
+          if (n.nodeType === 3) own += n.nodeValue;
+        }
+        if (own.trim()) return true;
+        var tag = (el.tagName || '').toLowerCase();
+        return tag === 'img' || tag === 'svg' || tag === 'canvas' || tag === 'video';
+        // DELIBERATELY NOT background-image. It looks like a reasonable
+        // "an icon drawn as a background counts" signal and it is exactly
+        // wrong here: the platform's wallpaper IS a background image, painted
+        // on the very screen roots this samples, so every empty overlay came
+        // back as content and the panel stayed silent. Measured — all six
+        // sample points landed on `#auth-landing-screen` with no text and a
+        // `url(data:image/png…)` wallpaper behind them. Text and real media
+        // are the signals; a ground is not content.
+      }
+
       function bootProducedSomething() {
         try {
-          var roots = document.querySelectorAll('[id$="-screen"], #app-view');
-          for (var i = 0; i < roots.length; i++) {
-            var el = roots[i];
-            if (el.classList.contains('hidden')) continue;
-            var r = el.getBoundingClientRect();
-            if (r.width > 0 && r.height > 0 && (el.innerText || '').trim()) return true;
+          if (typeof document.elementFromPoint !== 'function') return true;
+          var w = window.innerWidth || 0;
+          var h = window.innerHeight || 0;
+          if (!(w > 0 && h > 0)) return true;
+          // Spread across the viewport rather than clustered: a working shell
+          // has its header near the top and content through the middle.
+          var pts = [
+            [w * 0.5, h * 0.1], [w * 0.5, h * 0.3], [w * 0.5, h * 0.5],
+            [w * 0.5, h * 0.7], [w * 0.25, h * 0.4], [w * 0.75, h * 0.4],
+          ];
+          for (var i = 0; i < pts.length; i++) {
+            var el = document.elementFromPoint(pts[i][0], pts[i][1]);
+            if (hasVisibleContent(el)) return true;
           }
           return false;
         } catch (e) { return true; }
@@ -318,16 +369,43 @@
         } catch (e) { /* a watchdog that throws would be the joke of the file */ }
       }
 
-      document.addEventListener('DOMContentLoaded', function () {
-        if (forced) {
-          push('probe', 'panel forced by ?shot=boot-failed');
-          setTimeout(paint, 0);
+      // ARMED HERE, NOT ON DOMContentLoaded.
+      //
+      // The timer used to start inside a DOMContentLoaded listener, which
+      // made a watchdog for a boot that dies depend on the boot reaching a
+      // milestone. A synchronous hang in any of the ~47 classic scripts, and
+      // the event never fires, and the panel can never paint — silence in
+      // precisely the case it was built to break.
+      //
+      // Starting at script-evaluation time removes that dependency. The one
+      // thing it must not do is accuse a document that is merely still
+      // arriving, so a deadline reached while the parser is still going buys
+      // ONE grace period; after that it judges regardless, because an event
+      // that has not come by then may never come.
+      var extended = false;
+      function judge() {
+        if (document.readyState === 'loading' && !extended) {
+          extended = true;
+          setTimeout(judge, GRACE_MS);
           return;
         }
-        setTimeout(function () {
-          if (!bootProducedSomething()) paint();
-        }, DEADLINE_MS);
-      });
+        if (!bootProducedSomething()) paint();
+      }
+
+      if (forced) {
+        // The probe still waits for a body to paint into.
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', function () {
+            push('probe', 'panel forced by ?shot=boot-failed');
+            setTimeout(paint, 0);
+          });
+        } else {
+          push('probe', 'panel forced by ?shot=boot-failed');
+          setTimeout(paint, 0);
+        }
+      } else {
+        setTimeout(judge, DEADLINE_MS);
+      }
     }());
   </script>
   <script src="/usernode-bridge.js"></script>
