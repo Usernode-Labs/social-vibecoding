@@ -567,7 +567,10 @@ test('GET /api/public/waitlist/confirm/:token stamps once and redirects', async 
 
   const pool = {
     async query(sql, params) {
-      if (/SELECT id, email, answers FROM waitlist_signups/.test(sql)) {
+      // getSignupByMoreToken also selects the status timestamps now; match
+      // the head of the column list so this mock is not re-broken by the
+      // next additive widening.
+      if (/SELECT id, email, answers[\s\S]*FROM waitlist_signups/.test(sql)) {
         return params[0] === TOKEN
           ? { rows: [{ id: 7, email: 'a@b.invalid', answers: null }] }
           : { rows: [] };
@@ -734,7 +737,10 @@ test('the staging fixture uses only unroutable, obviously fake addresses', () =>
   const emails = [...body.matchAll(/'([^']*@[^']*)'/g)].map((m) => m[1]);
   assert.ok(emails.length >= 5, 'sanity: the scrape found the seeded addresses');
   for (const email of emails) {
-    assert.match(email, /^staging-demo-[a-z]+@example\.invalid$/,
+    // The suffix may be hyphenated: the waitlist fixtures are one per queue
+    // state (…-waitlist-confirmed, …-waitlist-admitted), and each still has
+    // to read as fake at a glance.
+    assert.match(email, /^staging-demo-[a-z-]+@example\.invalid$/,
       `${email} must be visibly fake and unroutable (RFC 2606)`);
   }
 });

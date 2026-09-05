@@ -31,7 +31,13 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { clientIp } = require('../services/client-ip');
-const { waitlistJoinLimiter, waitlistTokenLimiter } = require('../middleware/rate-limits');
+const {
+  waitlistJoinLimiter,
+  waitlistTokenLimiter,
+  waitlistTokenScanLimiter,
+  waitlistCodeConfirmLimiter,
+} = require('../middleware/rate-limits');
+const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail } = require('../services/topochain/mailer');
@@ -49,6 +55,36 @@ const HIDDEN_APP_STATUSES = ['error', 'creating', 'awaiting_secrets'];
 // anything else (unset, '1', …) keeps them — addresses-on is the default.
 function wantsWallets(req) {
   return req.query.include_wallets !== '0';
+}
+
+// ISO-8601 or null. Postgres timestamps arrive as Date objects; a row that
+// was never stamped arrives as null and must stay null rather than becoming
+// the epoch.
+function isoOrNull(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+// The stage-2 screen's one-line answer to "where am I in this queue?".
+// Derived, never stored: released_at is what admission means, confirmed_at
+// is what a verified address means, and everything else is still pending.
+// Ordered most-advanced first so a released row reads as admitted even
+// though it also carries a confirmed_at.
+function signupStatus(row) {
+  const admitted = !!row.released_at;
+  const confirmed = !!row.confirmed_at;
+  return {
+    state: admitted ? 'admitted' : (confirmed ? 'confirmed' : 'pending'),
+    admitted,
+    confirmed,
+    // Whether the invite has actually been redeemed into an account, which
+    // is a different question from having been admitted.
+    has_account: row.linked_user_id !== null && row.linked_user_id !== undefined,
+    joined_at: isoOrNull(row.submitted_at),
+    confirmed_at: isoOrNull(row.confirmed_at),
+    admitted_at: isoOrNull(row.released_at),
+  };
 }
 
 function publicApiRoutes(config) {
@@ -177,7 +213,7 @@ function publicApiRoutes(config) {
   // must not hand a stranger the capability to edit someone's answers).
   // Confirmation mail is best-effort (the mailer degrades silently when
   // no transport is configured).
-  router.post('/api/public/waitlist', waitlistJoinLimiter, async (req, res) => {
+  router.post('/api/public/waitlist', waitlistIntegratorAuth(config), waitlistJoinLimiter, async (req, res) => {
     const email = waitlist.normalizeEmail(req.body?.email);
     if (!email) {
       return res.status(422).json({ error: 'A valid email address is required.' });
@@ -189,7 +225,11 @@ function publicApiRoutes(config) {
     try {
       const { created, moreToken } = await waitlist.joinWaitlist(pool, {
         email,
-        ip: clientIp(req),
+        // A trusted integrator proxies real people, so its own server
+        // address is not the signup's address. Recording the proxy for
+        // every agency-sourced row is what this prefers away from; an
+        // unkeyed request has no forwarded address and is unchanged.
+        ip: req.waitlistEndUserIp || clientIp(req),
         answers: stage1.value,
         // From /#waitlist?ref=<code>. An unresolvable code is ignored
         // rather than refused — a stale link must never block a join.
@@ -225,7 +265,7 @@ function publicApiRoutes(config) {
   // delivered to the address being confirmed — following it is the proof.
   // Registered BEFORE the /more/:token routes for clarity; Express matches
   // on the literal segment either way.
-  router.get('/api/public/waitlist/confirm/:token', waitlistTokenLimiter, async (req, res) => {
+  router.get('/api/public/waitlist/confirm/:token', waitlistTokenScanLimiter, waitlistTokenLimiter, async (req, res) => {
     const token = req.params.token;
     try {
       const row = await waitlist.confirmSignupByMoreToken(pool, token);
@@ -257,7 +297,7 @@ function publicApiRoutes(config) {
   // A wrong code and an address that was never on the list get the SAME
   // 422, so this cannot be used to test whether an email is on the
   // waitlist — the same non-enumeration contract the join endpoint keeps.
-  router.post('/api/public/waitlist/confirm', waitlistTokenLimiter, async (req, res) => {
+  router.post('/api/public/waitlist/confirm', waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistTokenLimiter, async (req, res) => {
     const email = waitlist.normalizeEmail(req.body?.email);
     const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
     if (!email || !/^[0-9]{6}$/.test(code)) {
@@ -281,11 +321,20 @@ function publicApiRoutes(config) {
   // re-openable and prefills) plus which OAuth connects are available /
   // already verified. The token is an unguessable capability from the
   // join response / email; an invalid token 404s.
-  router.get('/api/public/waitlist/more/:token', waitlistTokenLimiter, async (req, res) => {
+  router.get('/api/public/waitlist/more/:token', waitlistTokenScanLimiter, waitlistTokenLimiter, async (req, res) => {
     try {
       const row = await waitlist.getSignupByMoreToken(pool, req.params.token);
       if (!row) return res.status(404).json({ error: 'Unknown or expired link.' });
       const answers = row.answers && typeof row.answers === 'object' ? row.answers : {};
+      const status = signupStatus(row);
+      // ?view=status answers the poll alone: the screen re-reads this route
+      // while it waits for a confirmation to land, and the full payload
+      // costs two extra queries plus a conditional invite-code INSERT every
+      // time. Any other value of `view` is ignored rather than refused —
+      // an unknown one must never turn a working screen into an error.
+      if (req.query.view === 'status') {
+        return res.json({ ok: true, admitted: status.admitted, status });
+      }
       // The invite link is minted on this read, not at join: most signups
       // never open the stage-2 form, and a code nobody will share is a
       // row nobody needs.
@@ -293,16 +342,22 @@ function publicApiRoutes(config) {
       const invited = await waitlist.invitedBySignup(pool, row.id);
       res.json({
         ok: true,
+        // Also at the top level, not only inside `status`: "am I in yet" is
+        // the one question this route exists to answer, and a caller that
+        // reads nothing else should not have to know the block's shape.
+        admitted: status.admitted,
+        status,
         answers,
         oauth: {
           github: !!(config.waitlistGithubClientId && config.waitlistGithubClientSecret),
           x: !!(config.waitlistXClientId && config.waitlistXClientSecret),
           linkedin: !!(config.waitlistLinkedinClientId && config.waitlistLinkedinClientSecret),
         },
-        // Where "Follow along" points. A network with no URL configured is
-        // absent from this object and renders no link, the same degradation
-        // the `oauth` flags above get. Nothing here claims verification:
-        // none of the three will tell us whether a follow happened.
+        // Where "Follow along" points. Every network is always present;
+        // one with no URL configured is null and renders no link, the same
+        // degradation the `oauth` flags above get. Nothing here claims
+        // verification: none of the three will tell us whether a follow
+        // happened.
         follow: {
           x: config.waitlistFollowXUrl || null,
           linkedin: config.waitlistFollowLinkedinUrl || null,
@@ -323,7 +378,7 @@ function publicApiRoutes(config) {
   // POST /api/public/waitlist/more/:token — merge stage-2 answers.
   // Everything optional; sections merge (a later visit can fill in what
   // an earlier one skipped). Mirrors topochain's storeMore.
-  router.post('/api/public/waitlist/more/:token', waitlistTokenLimiter, async (req, res) => {
+  router.post('/api/public/waitlist/more/:token', waitlistTokenScanLimiter, waitlistTokenLimiter, async (req, res) => {
     const stage2 = questions.validateStage2(req.body || {});
     if (!stage2.ok) {
       return res.status(422).json({ error: stage2.error });

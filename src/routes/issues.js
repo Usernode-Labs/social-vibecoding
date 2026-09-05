@@ -381,11 +381,25 @@ function stagingMockGovernance() {
 
 // #396: staging-only mock comment threads for the topic view's GitHub
 // comment section, served by GET /api/apps/:slug/github-issues/:number/
-// comments when the live fetch is empty/unavailable. Keyed by the mock
-// issue numbers above; obviously-fake "[Mock]" bodies, oldest-first (the
-// same order fetchIssueComments returns), and at least one BOT-authored
-// comment (`usernode-bot`) so the bot-labelling renders. Returns [] for
-// numbers without a mock thread. Strictly a no-op in production.
+// comments when the live fetch is empty/unavailable. Obviously-fake
+// "[Mock]" bodies, oldest-first (the same order fetchIssueComments
+// returns), and at least one BOT-authored comment (`usernode-bot`) so the
+// bot-labelling renders. Strictly a no-op in production.
+//
+// EVERY issue number gets a thread, not just the three mock ones. It used
+// to be a lookup table keyed by stagingMockIssues' own 900001-900003, and
+// `[]` for anything else — which meant the fallback both callers describe
+// as "so the section is reviewable" did nothing for a REAL issue. That is
+// the common case on a prod-cloned staging preview: the board's freshly
+// triaged requests carry no replies yet, their live thread comes back
+// empty, and the substitution had no row to make. Every feed slot rendered
+// blank, and the declared check that asserts a rendered relative age
+// (#1585) had nothing to find — it failed on every proposal, against code
+// none of them had touched.
+//
+// The generic thread is deterministic in the issue number, so a preview and
+// a declared check see the same two rows on every run; only the ages are
+// clock-relative, which is the thing those rows exist to exercise.
 function stagingMockIssueComments(number) {
   const n = Number(number);
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
@@ -404,39 +418,22 @@ function stagingMockIssueComments(number) {
     ],
   };
   if (threads[n]) return threads[n];
-  if (!Number.isFinite(n)) return [];
-
-  // EVERY OTHER ISSUE GETS ONE TOO, and the three above stay curated.
-  //
-  // This function used to answer `[]` for anything but those three numbers,
-  // which quietly undid the fallback that calls it. The caller's contract is
-  // "an empty live thread in staging is replaced so the section is
-  // reviewable" — but the preview's feed is a PROD-CLONED list whose rows are
-  // real issue numbers, so for almost every row the replacement was another
-  // empty list. The declared check for the feed's inline comments
-  // (dapp.json, #1585) reads whichever issue happens to sit at the top of
-  // that list, so it passed or failed on which numbers the clone happened to
-  // carry and whether GitHub answered from inside the container.
-  //
-  // Deterministic in the issue number, so a row says the same thing on every
-  // repaint and across a rebuild, and ordered oldest-first like a real
-  // thread — the feed previews the TAIL, so the second line must be the
-  // newer one. Strictly staging-only: the production path above returns
-  // before reaching this, and tests/github-issues-route.js pins that.
-  const seed = Math.abs(Math.trunc(n));
+  // A number that is not an issue at all (an unparseable :number reaches
+  // the first caller before Number.isFinite is consulted) gets nothing.
+  if (!Number.isFinite(n) || n <= 0) return [];
   return [
     {
       author: 'staging-tester',
-      body: `[Mock] Reproduced on the staging preview for issue #${seed}.`
-        + ' This thread is generated so the inline comment preview has'
-        + ' something to render; it is not a real conversation.',
-      createdAt: hoursAgo(12 + (seed % 24)),
+      body: `[Mock] Staging stand-in for issue #${n}: the live thread came back `
+        + 'empty or unreachable from this preview container, so this is what the '
+        + 'comment section renders instead.',
+      createdAt: hoursAgo(26),
     },
     {
       author: 'usernode-bot',
-      body: '[Mock] Thanks — picking this up. Shout if the behaviour differs'
-        + ' on a phone.',
-      createdAt: hoursAgo(1 + (seed % 6)),
+      body: '[Mock] Replies you see here are fixtures, not the real thread. '
+        + 'Staging only, and never served in production.',
+      createdAt: hoursAgo(5),
     },
   ];
 }
