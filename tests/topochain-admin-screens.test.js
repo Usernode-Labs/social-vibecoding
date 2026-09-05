@@ -454,15 +454,26 @@ test('no admin- or API-supplied URL is ever rendered as a clickable anchor', () 
     'the submitted URL is selectable text so an admin can still copy it out');
   assert.ok(fs.existsSync(path.join(root, 'tests/topochain-waitlist-survey.test.js')),
     'and the executed test for it exists');
-  // The Signals column reports what a signup DID and carries no score:
+  // The Answers column reports what a signup DID and carries no score:
   // weighting those facts decides who gets in first, which is still an open
   // product decision. If a score ever appears it must be a deliberate change
   // to services/waitlist-signals.js, not something that leaks in through a
   // column that started computing its own total.
-  assert.match(waitlist, /label: 'Signals'/,
-    'the waitlist list surfaces the per-signup signals');
+  //
+  // The label was "Signals" until #1544, which is a word about our data
+  // model rather than about the person in the row. `s.signals` is still what
+  // the server sends; only what an admin reads changed.
+  assert.match(waitlist, /label: 'Answers'/,
+    'the waitlist list surfaces what the signup actually answered');
   assert.doesNotMatch(waitlist, /s\.score|signals\.score|\.total\b/,
-    'the Signals column must not compute or render a score');
+    'the Answers column must not compute or render a score');
+  // The denominator comes off the server payload, not out of a literal. It
+  // was typed in here once and went stale by a whole section, so the column
+  // claimed "6/6 answered" for a row that had answered six of seven (#1544).
+  assert.match(waitlist, /s\.sections_total/,
+    'the answered fraction counts against the live section total');
+  assert.doesNotMatch(stripAllComments(waitlist), /of 6 answered|\/6 answered|\/\{?6\b/,
+    'and never against a number written into the screen');
   // Comments stripped first: that module's comments explain at length WHY it
   // computes no score, so a naive search for the word matches the very
   // documentation of the rule.

@@ -62,6 +62,15 @@ function signalsFor(row) {
     confirmed: !!r.confirmed_at,
     verified,
     sections,
+    // How many sections there ARE to answer, alongside how many were.
+    // The admin screen used to hardcode the denominator and had drifted a
+    // section behind this list, so it reported "6/6 answered" for a row
+    // that had answered six of seven. The count travels with the facts now
+    // rather than being restated by whoever renders them.
+    //
+    // Named `sections_total` and not `total` on purpose: `total` reads like
+    // the tally this module refuses to compute.
+    sections_total: SECTIONS.length,
     invited: Number.isFinite(invited) ? invited : 0,
   };
 }
