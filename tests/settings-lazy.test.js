@@ -130,6 +130,58 @@ test('the façade reads /api/auth/me into state and publishes the dot, without l
   }
 });
 
+test('isOpen() answers for the SCREEN while the chunk loads, not for the module', async () => {
+  // app.js's navigateToSettings picks its path with
+  // `App._inSettings && Settings.isOpen()`: true is an in-screen navigation
+  // (route() inside the mounted screen), false is a screen ENTRY (the whole
+  // screen swap, then open()). Before the split, open() rendered
+  // synchronously so isOpen() was truthful for that guard on the very next
+  // navigation.
+  //
+  // A hard `false` here answered for the MODULE where the caller asks about
+  // the SCREEN, so every navigation during the chunk load took the entry
+  // path. `?shot=settings-back` drills into #settings/password and traverses
+  // back 200ms later: with the chunk still in flight that queued three
+  // open() calls instead of one open() and two route()s, and open(null)
+  // means "keep the current pane" -- so the viewer landed on #settings
+  // looking at Password, and route() never ran, so #1102's idempotence
+  // guard never got to skip the duplicate.
+  const win = {
+    location: { search: '?shot=settings-back' },
+    App: { _inSettings: true },
+    addEventListener() {},
+  };
+  const prevWindow = globalThis.window;
+  const prevDocument = globalThis.document;
+  globalThis.window = win;
+  globalThis.document = { addEventListener() {} };
+  try {
+    loadTsx(`${SETTINGS_DIR}/facade.js`);
+    const S = win.Settings;
+    assert.equal(S.isOpen(), false, 'nothing entered yet');
+    S.open('password', { chrome: false });
+    assert.equal(S.isOpen(), true,
+      'SYNCHRONOUSLY true: the next navigation may arrive before the chunk does');
+    S.close();
+    assert.equal(S.isOpen(), false, 'leaving the screen clears it');
+  } finally {
+    globalThis.window = prevWindow;
+    globalThis.document = prevDocument;
+  }
+});
+
+test('navigateToSettings still reads isOpen() to tell a route from an entry', () => {
+  // The other half of the contract above. If this guard stops consulting
+  // isOpen(), the façade flag is dead weight and the bug it fixes is free to
+  // come back in a different shape.
+  const appJs = read('public/js/app.js');
+  const guard = /App\._inSettings && window\.Settings\?\.isOpen\?\.\(\)[\s\S]{0,120}?Settings\.route\(section\)/;
+  assert.match(appJs, guard,
+    'navigateToSettings routes in-screen when the screen is already entered');
+  assert.match(appJs, /if \(window\.Settings\?\.open\) Settings\.open\(section, \{ chrome: false \}\)/,
+    'and enters the screen with open() otherwise');
+});
+
 // ── 2. The takeover ────────────────────────────────────────────────────
 
 test('settings.js takes over window.Settings sharing the façade\'s state object', () => {
@@ -155,7 +207,10 @@ test('the chunk commits the panes with flushSync before a forwarded open() runs'
   assert.match(load, /chunk = null;/, 'a failed load leaves the next open free to retry');
   // open()/route() forward through the loaded module, and never re-enter a
   // screen the viewer has already left.
-  assert.match(facadeJs, /open\(section, opts\) \{\s*whenLoaded\(\(real\) => \{\s*if \(window\.App && !window\.App\._inSettings\) return;\s*real\.open\(section, opts\);/);
+  // `opened = true` sits BEFORE the await on purpose: the next navigation can
+  // arrive while the chunk is still in flight and has to see the screen as
+  // entered, or navigateToSettings takes the entry path a second time.
+  assert.match(facadeJs, /open\(section, opts\) \{\s*(?:\/\/[^\n]*\n\s*)*opened = true;\s*whenLoaded\(\(real\) => \{\s*if \(window\.App && !window\.App\._inSettings\) return;\s*real\.open\(section, opts\);/);
   assert.match(facadeJs, /if \(opts && opts\.chrome === false\) real\.syncChrome\(\);/,
     'the header write navigateToSettings delegated to syncChrome() is made up once the module is in');
   assert.match(facadeJs, /route\(section\) \{\s*whenLoaded\(\(real\) => \{\s*if \(window\.App && !window\.App\._inSettings\) return;\s*real\.route\(section\);/);
