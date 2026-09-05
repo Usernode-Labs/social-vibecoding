@@ -601,6 +601,18 @@
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-submit:not(:disabled)"
     },
     {
+      "name": "The feedback description is marked required before you type anything (#1603)",
+      "path": "/?shot=feedback",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-text-label #feedback-text-required",
+      "expectText": "Description"
+    },
+    {
+      "name": "An empty submit says what is missing instead of doing nothing (#1603)",
+      "path": "/?shot=feedback-required",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-text-error:not(.hidden)",
+      "expectText": "Please add a description"
+    },
+    {
       "name": "Challenges: a counted challenge draws its meter inside the pill (#911, #980)",
       "path": "/?demo=1",
       "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card .home-challenge-pill .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
