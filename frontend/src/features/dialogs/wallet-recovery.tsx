@@ -2,10 +2,19 @@
  * Recovery for a pre-merge email account's current-season wallet.
  *
  * Native admission is still the only path that publishes wallet authority.
- * This dialog appears only after that path reports that the seeded pool is
- * empty. It proves the legacy email through the existing OTP service, asks
- * the database transaction to move the wallet, then replays the SAME native
- * admission attempt. No handoff ticket or wallet secret enters React.
+ * When that path reports that the seeded pool is empty, native-chrome.js
+ * RECORDS the failure (NativeChrome.lastSessionFailure()) and nothing more;
+ * Settings → Usernode app → connection reads that record and offers a
+ * "Connect existing wallet" button, whose press is the ONLY thing that opens
+ * this dialog (Settings._openWalletRecovery → UsernodeReact.dialogs
+ * .walletRecovery.open). It used to open itself — on a
+ * `usernode:wallet-recovery-required` event and again on mount — and, since
+ * admission is retried on every online / pageshow / visibilitychange, that
+ * meant a modal nobody asked for popping up several times a session over a
+ * minor feature. The dialog proves the legacy email through the existing OTP
+ * service, asks the database transaction to move the wallet, then replays the
+ * SAME native admission attempt. No handoff ticket or wallet secret enters
+ * React.
  */
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
@@ -16,10 +25,13 @@ import { Input } from '@/components/ui/input';
 
 import { useDialog } from './use-dialog';
 
-const POOL_EXHAUSTED = 'native_session_wallet_pool_exhausted';
-
+/**
+ * Settings passes the signed-in user's id so the dialog can notice a session
+ * change under it (see stillOwns); a bare open() falls back to the current
+ * user.
+ */
 interface RecoveryRequest {
-  userId: string;
+  userId?: string;
 }
 
 interface ApiBody {
@@ -31,7 +43,6 @@ interface ApiBody {
 }
 
 interface NativeChromeRecovery {
-  lastSessionFailure?(): { code?: string | null } | null;
   recoverSessionAdmission?(): Promise<unknown>;
 }
 
@@ -90,7 +101,7 @@ export function WalletRecoveryDialog() {
     canClose: () => !busyRef.current,
     onOpen: (request) => {
       recoveryGeneration.current++;
-      targetUserId.current = request?.userId || null;
+      targetUserId.current = request?.userId || currentUserId();
       resetFields();
     },
     onClose: () => {
@@ -113,34 +124,16 @@ export function WalletRecoveryDialog() {
     dialog.close();
   }
 
+  // Nothing here OPENS the dialog — see the header comment. The one listener
+  // left is the close: a sign-out (or any realm close) while the form is up
+  // must not leave it addressing a user who is no longer signed in.
   useEffect(() => {
-    const openFor = (userId: string | null) => {
-      if (userId && userId === currentUserId()) {
-        dialog.open({ userId });
-      }
-    };
-    const onRequired = (event: Event) => {
-      const detail = (event as CustomEvent<unknown>).detail;
-      if (!detail || typeof detail !== 'object') return;
-      const raw = (detail as { userId?: unknown }).userId;
-      openFor(typeof raw === 'string' ? raw : null);
-    };
     const onRealmClose = () => forceClose();
-
-    window.addEventListener('usernode:wallet-recovery-required', onRequired);
     window.addEventListener('sv:native-realm-close', onRealmClose);
-
-    // Close the hydration/DOMContentLoaded race: admission can fail between
-    // NativeChrome's initialization and this passive effect.
-    if (nativeChrome()?.lastSessionFailure?.()?.code === POOL_EXHAUSTED) {
-      openFor(currentUserId());
-    }
-
     return () => {
-      window.removeEventListener('usernode:wallet-recovery-required', onRequired);
       window.removeEventListener('sv:native-realm-close', onRealmClose);
     };
-  }, [dialog.open, dialog.close]);
+  }, [dialog.close]);
 
   async function sendCode() {
     if (busyRef.current) return;
