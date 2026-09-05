@@ -111,10 +111,20 @@ test('--platform-header-h is the height the header markup actually builds', () =
   // it fails HERE rather than as a panel that has quietly drifted off the bar
   // it hangs from. No hairline — the reskin took the border off both top bars,
   // and one coming back would add a pixel to the border box.
+  //
+  // THE TWO PADDINGS ARE READ SEPARATELY. The bar was `py-3`; it is
+  // `pt-3 pb-5` now, because `-mb-2` spends 8px of the bottom padding
+  // cutting the notch below it and the controls were left with four pixels
+  // of clearance above an app's raised sheet. A single `py-N` read would
+  // have gone on matching nothing and silently reported the old height.
   const bar = HEADER.slice(HEADER.indexOf('id="platform-header"'));
   const className = bar.slice(0, bar.indexOf('>'));
-  const py = className.match(/\bpy-(\d+)\b/);
-  assert.ok(py, '#platform-header states its vertical padding as py-N');
+  const pt = className.match(/\bpt-(\d+)\b/);
+  const pb = className.match(/\bpb-(\d+)\b/);
+  assert.ok(pt && pb, '#platform-header states its vertical padding as pt-N / pb-N');
+  assert.ok(!/\bpy-\d/.test(className),
+    'and states it in ONE vocabulary — a py-N beside them is a second source '
+    + 'of truth this arithmetic cannot see');
   assert.ok(!/\bborder-b\b/.test(className),
     'no hairline under the bar — if one comes back this arithmetic gains a pixel');
 
@@ -127,9 +137,9 @@ test('--platform-header-h is the height the header markup actually builds', () =
     + 'tests/header-height-parity.test.js for the floor and the ceiling');
 
   // Tailwind's scale is 0.25rem per step; h-7 is 1.75rem.
-  const expected = (Number(py[1]) * 0.25 * 2) + 1.75;
+  const expected = ((Number(pt[1]) + Number(pb[1])) * 0.25) + 1.75;
   assert.equal(Number(declared[1]), expected,
-    `--platform-header-h must equal py-${py[1]} * 2 + h-7 = ${expected}rem`);
+    `--platform-header-h must equal pt-${pt[1]} + pb-${pb[1]} + h-7 = ${expected}rem`);
 });
 
 // ── The dropdown ───────────────────────────────────────────────────────

@@ -3034,7 +3034,7 @@
     },
     {
       "name": "Feed issue rows show recent comments with relative ages (#1585)",
-      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "path": "/?demo=1&shot=feed-comments&view=feed#app/usernode-2d5619/dev",
       "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time"
     },
     {
