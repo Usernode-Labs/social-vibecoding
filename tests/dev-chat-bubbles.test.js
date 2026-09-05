@@ -40,15 +40,20 @@ function rule(sel) {
   return APP_CSS.slice(at, APP_CSS.indexOf('}', at));
 }
 
-test('your turn is the platform card surface, not a saturated fill', () => {
+test('your turn is a quiet tint, not a saturated fill and not the card surface', () => {
   const r = rule('.dc-msg-user');
-  // --dc-raised, the third step of the transcript's surface ladder, not
-  // --bg-secondary directly: that token ascends from --bg-primary in light
-  // and DESCENDS from it in dark, where it is the session sheet's own value,
-  // so a card painted with it would have vanished into the sheet.
-  assert.match(r, /background: var\(--dc-raised\)/,
-    'one step up from the sheet, in both themes');
-  assert.doesNotMatch(r, /var\(--accent\)/, 'never the accent fill again');
+  // This was --dc-raised, the ladder's third step — and that was the bug:
+  // --dc-raised is the token the coding-run card, the PR card and the stopped
+  // card also fill with, so your message and the agent's cards came out the
+  // identical grey. See tests/dev-chat-ground.test.js for the pair of cues
+  // that replaced it.
+  assert.doesNotMatch(r, /var\(--dc-raised\)/,
+    'that is the agent cards\' own surface');
+  assert.match(r, /background: var\(--accent-tint\)/);
+  // The retired fill stays retired: a TINT is 8% of the accent over the
+  // sheet, which the page's own ink reads against. The FILL was the accent
+  // itself, which needed --accent-ink and six more inversion rules.
+  assert.doesNotMatch(r, /var\(--accent\)[^-]/, 'never the accent fill again');
   assert.doesNotMatch(r, /var\(--accent-ink\)/, 'and so it needs no inverted ink');
 });
 

@@ -63,6 +63,27 @@
   --dc-sheet: #ffffff;
   --dc-raised: #f5f5f7;
 
+  /* ── …and the two PLANES, which are not the same thing ───
+     The three tokens above are SURFACE VALUES: what a card, an inset or a
+     chip paints. The two below are what the strip and the session sheet —
+     the ladder's two full-screen planes — actually fill with, and they are
+     translucent so the page wallpaper reads THROUGH the session rather than
+     being covered by it.
+
+     They are separate tokens on purpose. --dc-sheet is read by nineteen
+     rules as an opaque inset inside a card; making THAT translucent would
+     have let every chip and every code block see the card behind it, which
+     is a different change and a wrong one. Only the plane is glass.
+
+     The blur is what makes it glass rather than a wash: without it the star
+     and the washes come through as recognisable shapes behind body text.
+     `saturate` compensates for the fact that averaging a wash with white
+     drains it — the deck's own frosted surfaces are more saturated than
+     their backdrop, not less. */
+  --dc-strip-fill: rgba(244, 242, 228, 0.55);
+  --dc-sheet-fill: rgba(255, 255, 255, 0.72);
+  --dc-frost: blur(24px) saturate(1.6);
+
   /* ── Safe-area tokens ────────────────────────────────────
      THE single source of truth for the shell's own safe-area
      arithmetic. Every rule in this file that needs an inset reads one
@@ -870,6 +891,12 @@ html.un-kb .platform-safe-sheet {
   --dc-strip: #131316;
   --dc-sheet: #1c1c1e;
   --dc-raised: #2c2c2e;
+  /* The dark planes. The strip's tint is the dark wallpaper's own ground
+     rather than the strip's opaque value: at 0.55 over that ground it is
+     nearly a no-op on the flat areas and lets the washes through where
+     they are, which is the point. */
+  --dc-strip-fill: rgba(11, 13, 27, 0.55);
+  --dc-sheet-fill: rgba(28, 28, 30, 0.72);
   --bg-code: #141416;
   --bg-code-header: #1c1c1e;
   --bg-card: rgba(90, 169, 255, 0.10);
@@ -3087,12 +3114,27 @@ body:has(#platform-header.hidden) #app-frame-host {
 
    The tail notch (`… 4px 12px`) is still gone: uniformly rounded, relying on
    side and surface to say who is speaking. */
+/* YOUR TURN, TOLD APART FROM THE AGENT'S. Two cues, because each of them
+   alone had already failed once.
+
+   SURFACE. This was --dc-raised, which is the SAME token the coding-run
+   card, the PR card and the stopped card fill with. Your message and the
+   agent's cards were the identical grey, and the only thing separating them
+   was an alignment that (see below) was not visible either. It takes the
+   accent as a TINT now — 8% over the sheet, not the saturated fill that was
+   retired above for contrast: at this alpha the body text still reads
+   against the page's own ink and no inverted token is needed.
+
+   WIDTH. `.dc-msg` caps every row at 92%, which on a message of any real
+   length is indistinguishable from full width — so `margin-left: auto` had
+   nothing to push against and the right-alignment cue simply did not exist.
+   76% leaves a gutter down the left that no agent row ever crosses, because
+   the agent's cards are full-bleed with a 12px margin. The gutter is the
+   cue; the tint confirms it. */
 .dc-msg-user {
   margin-left: auto;
-  /* One step up from the sheet, in both themes — which is what --dc-raised
-     is for. --bg-secondary was right in light and wrong in dark, where it is
-     the sheet's own value and the card would have vanished into it. */
-  background: var(--dc-raised);
+  max-width: 76%;
+  background: var(--accent-tint);
   border-radius: 1.25rem;
   margin-bottom: 4px;
 }
@@ -6920,8 +6962,41 @@ span.gc-vote-btn-icon { cursor: default; }
    secondary ground and the sheet is the primary one, the same pairing a
    card gets on a page. Before this the whole screen sat on the bare
    wallpaper. */
-.dc-lift-strip { background-color: var(--dc-strip); }
-.dc-lift-session { background-color: var(--dc-sheet); }
+/* GLASS, NOT PAINT. Both planes were opaque neutrals — #f5f5f7 over #ffffff
+   in light, #131316 over #1c1c1e in dark — and between them they covered the
+   platform's wallpaper (the cream, the three washes, the star) with a flat
+   white or a flat black across the whole session. The lift solved the depth
+   problem by throwing the ground away; the comment two blocks up even says
+   so — "before this the whole screen sat on the bare wallpaper".
+
+   They are translucent now, over a blur. The ladder still reads, because the
+   two alphas differ and the sheet's hairline and shadow are untouched: the
+   sheet is denser than the strip, which is denser than the bare page.
+
+   `backdrop-filter` needs a transparent ancestor chain to have anything to
+   filter. It has one — #app-content carries `position: relative` and no
+   background, and the body's wallpaper rule is on for every #app-view route
+   — so the backdrop here is the wallpaper itself. */
+.dc-lift-strip {
+  background-color: var(--dc-strip-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+.dc-lift-session {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+/* NO BLUR, NO GLASS. Without backdrop-filter the same alphas leave the star
+   and the three washes sitting UNBLURRED behind body text, which is worse
+   than the flat surface this replaced — the effect depends on the blur, not
+   on the transparency. So where the filter is unsupported both planes fall
+   back to the opaque values they had, and the ladder reads exactly as it did
+   before this change. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dc-lift-strip { background-color: var(--dc-strip); }
+  .dc-lift-session { background-color: var(--dc-sheet); }
+}
 
 /* THE OVERLAP MUST BE A FULL RADIUS, and it has to come from whatever is
    directly above the sheet.
