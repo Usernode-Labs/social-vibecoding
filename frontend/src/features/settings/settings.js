@@ -4529,8 +4529,8 @@
       if (firstRun) {
         panel.appendChild(el('p',
           'text-sm text-zinc-600 dark:text-zinc-400 mb-2',
-          'Reviewing the terms is part of joining the platform. Your ' +
-          'token allocation stays paused until you accept.'));
+          'Reviewing the terms is part of joining the platform. Please ' +
+          'read the full terms, then choose whether to accept.'));
       }
       const meta = [];
       if (payload.version) meta.push(`Version ${payload.version}`);
@@ -4626,8 +4626,8 @@
           declineBtn.addEventListener('click', () => postConsent('refused',
             () => {
               if (window.PlatformUI) {
-                PlatformUI.toast('Your token allocation stays paused. ' +
-                  'You can accept later from your profile');
+                PlatformUI.toast(
+                  'You can accept the terms later from your profile');
               }
             }));
           consentButtons.push(declineBtn);
