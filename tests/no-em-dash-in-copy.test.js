@@ -168,11 +168,6 @@ const ALLOW = [
     reason: 'the dash is the bullet glyph on an unbulleted list, not punctuation',
   },
   {
-    file: 'frontend/src/features/admin/topochain/waitlist.tsx',
-    contains: 'text-zinc-500 dark:text-zinc-400">&mdash;',
-    reason: 'the empty-cell glyph in the waitlist signals column, not punctuation',
-  },
-  {
     file: 'frontend/src/features/settings/settings.js',
     contains: 'Something went wrong',
     reason: "quotes an OAuth provider's own error screen verbatim, so a user can match it",
