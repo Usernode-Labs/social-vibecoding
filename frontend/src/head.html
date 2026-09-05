@@ -175,6 +175,161 @@
       return { get, set, apply, onChange };
     }());
   </script>
+  <script>
+    // ── The boot watchdog: the floor under everything else here ──────────
+    //
+    // When the boot fails, it fails INVISIBLY. Every island is left as the
+    // empty markup the prerender shipped, the screen the router reveals has
+    // nothing in it, and what a reader gets is a blank page that reports
+    // nothing at all. Diagnosing #1670 took four rounds of inference for
+    // exactly that reason: the failure could not be observed on the device
+    // that had it, only reasoned about from a sandbox that did not.
+    //
+    // So: capture every error from as early in this document as a script can
+    // run, and if the boot has produced NOTHING by the deadline, paint what
+    // went wrong. Written as an inline classic script, with no imports, no
+    // framework and no stylesheet, because the things it reports on are
+    // precisely the bundle, the framework and the stylesheet. It has to work
+    // when they did not.
+    //
+    // `window.__unBoot.errors` is the shared record; frontend/src/lib/
+    // boot-guard.ts pushes into the same list from inside the bundle, so one
+    // list holds a failed classic script, a failed boot step and a rejected
+    // promise alike.
+    (function () {
+      'use strict';
+      var W = (window.__unBoot = window.__unBoot || { errors: [] });
+      if (!Array.isArray(W.errors)) W.errors = [];
+      function push(step, message, stack) {
+        try {
+          W.errors.push({ step: step, message: String(message || ''), stack: stack || '' });
+        } catch (e) { /* a full or frozen array is not worth a throw */ }
+      }
+      window.addEventListener('error', function (e) {
+        push('error', (e && e.message) || 'script error', e && e.error && e.error.stack);
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e && e.reason;
+        push('unhandledrejection', (r && r.message) || String(r), r && r.stack);
+      });
+
+      // `?shot=boot-failed` forces the panel so the dapp.json check and the
+      // before/after screenshots can reach a state that otherwise only exists
+      // when the shell is broken. Every OTHER ?shot= / ?demo= route opts out
+      // entirely: those render one state deterministically for a capture or a
+      // declared check, and a panel arriving mid-assertion is the
+      // nondeterminism they exist to be free of. Same guard, and the same
+      // reason, as prefetchSettings() and AdminConsole.prefetchSections().
+      var forced = false;
+      var optedOut = false;
+      try {
+        var q = new URLSearchParams(window.location.search);
+        forced = q.get('shot') === 'boot-failed';
+        optedOut = !forced && (!!q.get('shot') || !!q.get('demo'));
+      } catch (e) { /* no URL API: watch anyway, it is the failing case */ }
+      if (optedOut) return;
+
+      // Generous on purpose. The slowest boot this repo has measured (4x CPU,
+      // 150ms link, cold worker) put its first card up ~2.4s in, so this sits
+      // well past any load that is merely slow. The panel is for a boot that
+      // is not coming.
+      var DEADLINE_MS = 8000;
+
+      // Conservative by construction: ANY screen root that is unhidden, has a
+      // box and has text counts as a working boot. An unreadable document
+      // (no querySelectorAll, a throw) counts as working too — a watchdog
+      // that cannot tell must not accuse.
+      function bootProducedSomething() {
+        try {
+          var roots = document.querySelectorAll('[id$="-screen"], #app-view');
+          for (var i = 0; i < roots.length; i++) {
+            var el = roots[i];
+            if (el.classList.contains('hidden')) continue;
+            var r = el.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0 && (el.innerText || '').trim()) return true;
+          }
+          return false;
+        } catch (e) { return true; }
+      }
+
+      function paint() {
+        try {
+          if (document.getElementById('boot-watchdog')) return;
+          var dark = document.documentElement.classList.contains('dark');
+          var panel = document.createElement('div');
+          panel.id = 'boot-watchdog';
+          panel.setAttribute('role', 'alert');
+          panel.style.cssText = 'position:fixed;inset:0;z-index:2147483647;overflow:auto;'
+            + 'padding:24px;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
+            + '-webkit-text-size-adjust:100%;'
+            + (dark ? 'background:#0b0d1b;color:#e4e4e7' : 'background:#f4f2e4;color:#18181b');
+
+          var h = document.createElement('div');
+          h.textContent = 'This screen did not finish loading';
+          h.style.cssText = 'font-size:18px;font-weight:600;margin-bottom:8px';
+          panel.appendChild(h);
+
+          var p = document.createElement('div');
+          p.textContent = 'The app is still installed and your data is safe. '
+            + 'This panel exists so the failure can be read here instead of '
+            + 'looking like a blank screen.';
+          p.style.cssText = 'margin-bottom:16px;opacity:.8;max-width:52ch';
+          panel.appendChild(p);
+
+          var retry = document.createElement('button');
+          retry.id = 'boot-watchdog-retry';
+          retry.type = 'button';
+          retry.textContent = 'Try again';
+          retry.style.cssText = 'appearance:none;border:0;border-radius:10px;padding:10px 18px;'
+            + 'font:inherit;font-weight:500;cursor:pointer;background:#1f86ff;color:#fff;'
+            + 'min-height:44px;margin-bottom:20px';
+          retry.addEventListener('click', function () {
+            // Drop the one-shot reload marker so a retry is a genuinely fresh
+            // attempt rather than one that starts with its budget spent.
+            try {
+              var u = new URL(window.location.href);
+              u.searchParams.delete('un-boot-retry');
+              window.location.replace(u.toString());
+            } catch (e) { window.location.reload(); }
+          });
+          panel.appendChild(retry);
+
+          var errs = (W.errors || []).slice(0, 8);
+          var list = document.createElement('div');
+          list.id = 'boot-watchdog-errors';
+          list.style.cssText = 'font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;'
+            + 'white-space:pre-wrap;word-break:break-word;opacity:.85';
+          if (!errs.length) {
+            list.textContent = 'No error was recorded. The boot simply never '
+              + 'produced a screen, which usually means a script never ran.';
+          } else {
+            for (var j = 0; j < errs.length; j++) {
+              var row = document.createElement('div');
+              row.style.cssText = 'margin-bottom:10px';
+              // textContent throughout: these strings come from thrown values
+              // and are never markup.
+              row.textContent = (j + 1) + '. [' + errs[j].step + '] ' + errs[j].message
+                + (errs[j].stack ? '\n' + String(errs[j].stack).split('\n').slice(0, 3).join('\n') : '');
+              list.appendChild(row);
+            }
+          }
+          panel.appendChild(list);
+          (document.body || document.documentElement).appendChild(panel);
+        } catch (e) { /* a watchdog that throws would be the joke of the file */ }
+      }
+
+      document.addEventListener('DOMContentLoaded', function () {
+        if (forced) {
+          push('probe', 'panel forced by ?shot=boot-failed');
+          setTimeout(paint, 0);
+          return;
+        }
+        setTimeout(function () {
+          if (!bootProducedSomething()) paint();
+        }, DEADLINE_MS);
+      });
+    }());
+  </script>
   <script src="/usernode-bridge.js"></script>
   <script>
     // Mark the document when running as the top frame of the Usernode

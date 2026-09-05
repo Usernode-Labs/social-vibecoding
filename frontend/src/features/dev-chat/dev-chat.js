@@ -209,8 +209,8 @@ const DevChat = {
         long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
       },
     },
-    'claude-fable-5': {
-      label: 'Fable 5',
+    'claude-fable-5-1': {
+      label: 'Fable 5.1',
       changeSize: {
         short: 'design, taste, and difficult coding',
         long: 'Design and taste (how a screen looks, reads, and feels) plus the most difficult coding work.',
@@ -272,29 +272,82 @@ const DevChat = {
   /**
    * The chat-model picker, as data. Null on every venue that has none.
    *
-   * NAMES ONLY in the composer (#1589). A native select's closed control
-   * shows the selected option's own text, so `modelOptionText`'s guidance
-   * ("Fable 5: design, taste, and difficult coding") set the control's width:
-   * 276px of a 344px strip on a phone, which pushed the label above it and
-   * the credit meter below it — three lines for a row that holds two things.
-   * Names bring it to 89px and the row fits on one line, measured.
+   * TWO SURFACES, and the split is what #1589 found. A native select's
+   * closed control shows the selected option's own text, so
+   * `modelOptionText`'s guidance ("Fable 5.1: design, taste, and difficult
+   * coding") set the control's width: 276px of a 344px strip on a phone,
+   * which pushed the label above it and the credit meter below it — three
+   * lines for a row that holds two things. Names brought it to 89px.
    *
-   * The guidance is not dropped, it stays where there is room for it: the
-   * Generate-proposal picker — the one a first-timer meets, in a dialog, with
-   * a caption under each option — still renders `modelOptionText`, which is
-   * untouched. That is the same split #1353 drew when it took the caption out
-   * of this strip, and the reason nothing restates it here in a title either:
-   * a viewer reading this control has already chosen.
+   * That finding was about the CLOSED control, and `selectedLabel` still
+   * honours it. The picker is the kit's anchored menu now rather than a
+   * <select> (see `openModelSheet`), and a sheet row is a line of its own —
+   * so the blurb comes back on `options`, where it costs nothing and answers
+   * the only question this control is ever asked: which one for what.
+   *
+   * It is `changeSize.short`, not `modelOptionText`: the helper prefixes the
+   * name ("Opus 5: general coding work") and the row already opens with it,
+   * so the sheet joins the two itself. The Generate-proposal picker — the one
+   * a first-timer meets, in a dialog, with a caption under each option —
+   * still renders `modelOptionText`, which is untouched.
    */
   _modelPickerView() {
     if (DevChat._currentVenueId() !== 'usernode-claude') return null;
+    const selected = DevChat.selectedModel;
+    const label = (id) => {
+      const meta = DevChat.MODELS[id];
+      return (meta && meta.label) || id;
+    };
     return {
       options: Object.entries(DevChat.MODELS).map(([id, meta]) => ({
         id,
         label: (meta && meta.label) || id,
+        // Optional on the wire — loadModels() carries changeSize through
+        // only when the server sends it, and a server that omits it leaves
+        // the sheet rendering plain names.
+        blurb: (meta && meta.changeSize && meta.changeSize.short) || '',
       })),
-      selected: DevChat.selectedModel,
+      selected,
+      selectedLabel: label(selected),
     };
+  },
+
+  /**
+   * The model picker's sheet — `openVenueSheet`'s mirror, one screen down.
+   *
+   * The venue control at the top of the session opens the kit's adaptive
+   * menu (a bottom action sheet on touch, an anchored popover on desktop).
+   * This was the only native <select> left beside it, and the two are the
+   * same question asked at different scopes: where this is built, and by
+   * whom. They should not answer in two different idioms.
+   *
+   * The kit sets row labels with textContent, so the blurb and the tick ride
+   * IN the label — the same constraint build-venues.js states at its own
+   * call. The tick trails the row, as it does there, so the two sheets mark
+   * "you are here" the same way.
+   *
+   * No kit, no sheet — exactly what BuildVenues.open does. The kit ships
+   * with the shell (public/usernode-native/v1), so this is the "someone
+   * stripped native.js" case, not a route we serve.
+   */
+  openModelSheet(anchorEl) {
+    const view = DevChat._modelPickerView();
+    if (!view || !view.options.length) return Promise.resolve(null);
+    const kit = (typeof window !== 'undefined' && window.PlatformUI) || null;
+    if (!kit || !kit.hasKit()) return Promise.resolve(null);
+    DevChat._closeSessionOptions();
+    return kit.menu({
+      anchorEl: anchorEl || document.getElementById('dc-model-select') || undefined,
+      title: 'Which model should write this change?',
+      items: view.options.map((o) => ({
+        label: o.label
+          + (o.blurb ? ` \u2014 ${o.blurb}` : '')
+          + (o.id === view.selected ? ' \u2713' : ''),
+        handler: () => {
+          if (o.id !== view.selected) DevChat._onModelPicked(o.id);
+        },
+      })),
+    });
   },
 
   /** The picker's `change`, which used to be an addEventListener per render. */
@@ -3166,9 +3219,13 @@ const DevChat = {
         // repaints the body in place.
         DevChat._loadSpecViewer({ force: true });
       }
-      // Q/A chip selection is per-question-turn — never carry one across
-      // a session switch / reload.
+      // Q/A answer state is per-question-turn — never carry one across
+      // a session switch / reload. Three stores, one per way of answering:
+      // a tapped chip, a typed reply, a stepped number.
       DevChat._qaSelection = {};
+      DevChat._qaTyped = {};
+      DevChat._qaTypedOpen = {};
+      DevChat._qaNumber = {};
       // #891: the AI-guess state is per-run. Carrying it across a session
       // switch would let another session's stale guess drain onto this
       // timeline, and a stale `_lastEstimateAt` would suppress this
@@ -3193,6 +3250,13 @@ const DevChat = {
           // #664: the worker proxy's one-time "switched to your API key"
           // notice — rehydrate the marker so the row keeps its subtle
           // inline-notice styling on reload.
+          // #894's `turnError`, which nothing read until now: five paths in
+          // routes/sessions.js persist it and the row came back as an
+          // ordinary system status, wearing the pipeline's green ✓.
+          if (m.metadata.turnError) m.turnError = true;
+          // A stop that landed. The prose sentence is in `content`; this
+          // is the same landing as data, so the row can draw chips.
+          if (m.metadata.stopLanding) m.stopLanding = m.metadata.stopLanding;
           if (m.metadata.billingSwitch) m.billingSwitch = true;
           if (m.metadata.ccLog) m.ccLog = m.metadata.ccLog;
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
@@ -3277,7 +3341,6 @@ const DevChat = {
       DevChat.messages = DevChat._hydrateChangesReadyFromSession(session, DevChat.messages);
       // #647: flag the rows this session inherited from an auto session so
       // their Claude Code disclosures render collapsed by default.
-      DevChat._markInheritedMessages(DevChat.messages, session);
       // Spin a still-running background rebuild's row on load. Rebuilds take
       // minutes (the self-app's DB clone alone is ~4:45), so a reload lands
       // mid-build often enough to matter, and a static gear next to
@@ -3436,10 +3499,14 @@ const DevChat = {
     DevChat._clearStoppingState();
     DevChat._setStreamingUI(true);
     DevChat._seenSeqs = new Set();
-    // Any Q/A chip selection belonged to the question turn we're now
-    // answering — the chips vanish on re-render (the question row is no
-    // longer last), so the selection must not leak into a later turn.
+    // Any Q/A answer belonged to the question turn we're now answering — the
+    // chips vanish on re-render (the question row is no longer last), so
+    // nothing about it may leak into a later turn. All three stores, or the
+    // typed reply to one question would arrive as the answer to the next.
     DevChat._qaSelection = {};
+    DevChat._qaTyped = {};
+    DevChat._qaTypedOpen = {};
+    DevChat._qaNumber = {};
 
     // A previous turn's progress message may still be flagged as the live
     // append target. Clear it so this turn's cc_progress events create a
@@ -3708,7 +3775,7 @@ const DevChat = {
                 // #786: quickReplies ride the status event so a
                 // restart-recovery breadcrumb repaints the pill bar live
                 // (the server persists them on the same system row).
-                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 // #990: a step line means work is under way with nothing else
                 // painting yet — put the dots where the next message will
                 // land, and keep them there until it does. Set before the
@@ -4210,7 +4277,7 @@ const DevChat = {
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
         // #786: carry quickReplies (see the POST-SSE status handler).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, turnError: data.turnError, stopLanding: data.stopLanding, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         // #990: keep a live cue where the next message will land — see the
         // POST-SSE status handler. Set before the render so both channels
         // emit the indicator inside the same innerHTML write.
@@ -5718,19 +5785,103 @@ const DevChat = {
     return out.length ? out : undefined;
   },
 
+  // ── When the missing value is a NUMBER ─────────────────────
+  //
+  // A group whose answers are all bare numbers is a question about a
+  // quantity, and a row of chips is the wrong form for one: the model has to
+  // guess which five values you might want, and the one you actually want is
+  // the sixth. It becomes a stepper instead — the same question, asked as
+  // the thing it is.
+  //
+  // The test is deliberately strict: EVERY answer must be a bare number,
+  // optionally with a unit, and every unit present must be the same one.
+  // "0.2 m — ankle deep" is not a bare number, and it should not be — the
+  // prose is the point of that answer, and #1 in the design deck keeps those
+  // as chips. A group is numeric only when the model offered nothing but
+  // magnitudes.
+  //
+  // The STEP is the smallest gap between the values offered. That is the
+  // model's own sense of what a meaningful increment is here, which is a
+  // better answer than any constant this file could pick: 5-minute rounding
+  // steps by 5, a depth in tenths of a metre steps by a tenth.
+  _qaNumericGroup(answers) {
+    if (!Array.isArray(answers) || answers.length < 2) return null;
+    const parsed = [];
+    for (const a of answers) {
+      const m = /^\s*(-?\d+(?:\.\d+)?)\s*([^\s\d]{0,8})\s*$/.exec(String(a || ''));
+      if (!m) return null;
+      parsed.push({ value: parseFloat(m[1]), unit: (m[2] || '').trim() });
+    }
+    const units = [...new Set(parsed.map((p) => p.unit).filter(Boolean))];
+    if (units.length > 1) return null;
+    const values = parsed.map((p) => p.value);
+    const sorted = [...new Set(values)].sort((a, b) => a - b);
+    let step = 0;
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = sorted[i] - sorted[i - 1];
+      if (gap > 0 && (step === 0 || gap < step)) step = gap;
+    }
+    if (!(step > 0)) return null;
+    // Decimal places of the step, so stepping never produces 0.30000000000004.
+    const dp = (String(step).split('.')[1] || '').length;
+    return {
+      unit: units[0] || '',
+      step,
+      dp,
+      suggested: values[0],
+      min: Math.min(...values, 0),
+    };
+  },
+
+  /** Render one numeric group's value the way its own answers were written. */
+  _qaNumberText(num, value) {
+    const n = value.toFixed(num.dp);
+    return num.unit ? `${n} ${num.unit}` : n;
+  },
+
   _qaSpec(msg) {
     const groups = msg.suggestions;
     const multi = groups.length > 1;
-    return {
-      multi,
-      groups: groups.map((g, gi) => ({
+    const specs = groups.map((g, gi) => {
+      const answers = g.answers || [];
+      const num = DevChat._qaNumericGroup(answers);
+      // The escape hatch's own wording follows the question. When the answers
+      // look like magnitudes the thing you want to do is type a number, and
+      // saying so is the difference between an affordance and a mystery.
+      const numeric = !!num || answers.some((a) => /^\s*-?\d/.test(String(a || '')));
+      return {
         label: multi && g.question ? g.question : '',
-        answers: (g.answers || []).map((a, ai) => ({
+        kind: num ? 'number' : 'chips',
+        number: num
+          ? {
+            value: DevChat._qaNumberText(
+              num, DevChat._qaNumber[gi] != null ? DevChat._qaNumber[gi] : num.suggested
+            ),
+            suggested: DevChat._qaNumberText(num, num.suggested),
+          }
+          : null,
+        answers: num ? [] : answers.map((a, ai) => ({
           text: a,
           suggested: ai === 0,
           selected: multi && DevChat._qaSelection[gi] === ai,
         })),
-      })),
+        // The last chip in the row, and the only one that does not answer:
+        // it opens a one-line input scoped to THIS group rather than sending
+        // the reader off to the composer to do a form's job.
+        escape: num ? null : {
+          label: numeric ? 'Let me type a number' : 'Something else',
+          open: !!DevChat._qaTypedOpen[gi],
+          value: DevChat._qaTyped[gi] || '',
+        },
+      };
+    });
+    return {
+      // The shared send row appears past one question — and also whenever a
+      // group answers by typing or stepping rather than by tapping, because
+      // those have no send-on-tap moment of their own.
+      multi: multi
+        || specs.some((g) => g.kind === 'number' || (g.escape && g.escape.open)),
+      groups: specs,
     };
   },
 
@@ -6114,6 +6265,40 @@ const DevChat = {
           });
           return;
         }
+        // A FAILED TURN, which until now fell through to the generic row
+        // below and came back wearing that row's green ✓ (see the `failure`
+        // row in ./transcript-store.ts).
+        //
+        // `turnError` only — NOT `stagingFailed`. A staging-build failure
+        // carries `changesReady: true` and renders the Changes-ready card
+        // with its Preview disabled, which is the honest reading: the commit
+        // exists and is proposable, only the preview did not build. Routing
+        // it here would take that card away and lose the Propose action with
+        // it.
+        if (msg.turnError) {
+          rows.push({
+            t: 'failure', key, tone: 'blocked',
+            html: msg.content || '', text: msg.content || '', stamp,
+          });
+          return;
+        }
+        // A STOP THAT LANDED. Same card, deliberately not red: the user asked
+        // for this, and the green ✓ it used to wear was the mirror-image
+        // mistake — a pipeline tick over a pipeline that did not finish. The
+        // landing goes in chips rather than in the sentence's trailing
+        // clause, so "2 changes committed · a1b2c3d4 · pushed" is legible at
+        // a glance instead of buried mid-sentence. `headline` is the same
+        // sentence WITHOUT that clause; `content` is the fallback for rows
+        // persisted before the server sent the data.
+        if (msg.stopLanding) {
+          rows.push({
+            t: 'failure', key, tone: 'stopped',
+            text: msg.stopLanding.headline || msg.content || '',
+            chips: DevChat._stopLandingChips(msg.stopLanding),
+            stamp,
+          });
+          return;
+        }
         // #664: mid-turn payer switch onto the user's own API key. A key glyph
         // instead of the pipeline check, so it reads as an FYI.
         if (msg.billingSwitch) {
@@ -6121,10 +6306,14 @@ const DevChat = {
           return;
         }
         // #937: once a stop is clearly not landing, the row grows a Force stop
-        // button — the user's only way out of a permanent "Stopping…".
+        // button — the user's only way out of a permanent "Stopping…". It was
+        // a status row, which meant the escalation SETTLED TO A GREEN ✓ the
+        // moment the turn went inactive: the one state where the user is
+        // genuinely stuck, wearing the tick that means "done". It is the
+        // failure card now, and it keeps the button.
         if (msg._stopping && msg._forceOffered) {
           rows.push({
-            t: 'status', key, icon: msg._active ? 'spinner' : 'check',
+            t: 'failure', key, tone: 'stopping',
             text: msg.content || '', elapsed, stamp, forceStop: true,
           });
           return;
@@ -6280,6 +6469,10 @@ const DevChat = {
     const ai = parseInt(chip.dataset.qaAnswer, 10);
     const answer = groups[gi]?.answers?.[ai];
     if (answer == null) return;
+    // A typed answer and a tapped one fill the SAME slot, so tapping a chip
+    // after typing must not leave the typed text quietly winning at send.
+    delete DevChat._qaTyped[gi];
+    delete DevChat._qaTypedOpen[gi];
     if (groups.length === 1) {
       DevChat.sendMessage(answer);
       return;
@@ -6291,14 +6484,91 @@ const DevChat = {
     DevChat.renderMessages();
   },
 
+  /**
+   * The escape hatch: the last chip in a row, and the only one that does not
+   * answer. It opens a one-line input scoped to its own group.
+   *
+   * A question offering four answers and no way to give a fifth is a form
+   * that only accepts the answers it thought of; the way out used to be the
+   * composer, which is a text box for the conversation being asked to do a
+   * form's job. The input belongs beside the question it answers.
+   */
+  _onQaEscapeClick(chip) {
+    if (DevChat.isStreaming) return;
+    const gi = parseInt(chip.dataset.qaEscape, 10);
+    if (!Number.isFinite(gi)) return;
+    DevChat._qaTypedOpen[gi] = !DevChat._qaTypedOpen[gi];
+    if (!DevChat._qaTypedOpen[gi]) delete DevChat._qaTyped[gi];
+    // Typing IS this group's answer, so a chip choice cannot also stand.
+    else delete DevChat._qaSelection[gi];
+    DevChat.renderMessages();
+  },
+
+  /**
+   * The typed answer, committed on blur or Enter — never per keystroke.
+   *
+   * The same rule the admin console's paged search boxes follow: the field
+   * is uncontrolled with a `defaultValue`, because a controlled one would
+   * republish the whole transcript on every character and take the caret
+   * with it.
+   */
+  _onQaTypedCommit(input) {
+    const gi = parseInt(input.dataset.qaTyped, 10);
+    if (!Number.isFinite(gi)) return;
+    const value = String(input.value || '').trim();
+    if (value) DevChat._qaTyped[gi] = value;
+    else delete DevChat._qaTyped[gi];
+  },
+
+  /** − / + on a numeric group. */
+  _onQaStep(btn) {
+    if (DevChat.isStreaming) return;
+    const gi = parseInt(btn.dataset.qaGroup, 10);
+    const dir = parseInt(btn.dataset.qaStep, 10);
+    const groups = DevChat._qaCurrentGroups();
+    const num = groups && DevChat._qaNumericGroup(groups[gi] && groups[gi].answers);
+    if (!num || !Number.isFinite(dir)) return;
+    const at = DevChat._qaNumber[gi] != null ? DevChat._qaNumber[gi] : num.suggested;
+    const next = Math.max(num.min, parseFloat((at + dir * num.step).toFixed(num.dp)));
+    DevChat._qaNumber[gi] = next;
+    DevChat.renderMessages();
+  },
+
+  /** …and typing into that same field, on the same commit rule. */
+  _onQaNumberCommit(input) {
+    const gi = parseInt(input.dataset.qaNumber, 10);
+    const groups = DevChat._qaCurrentGroups();
+    const num = groups && DevChat._qaNumericGroup(groups[gi] && groups[gi].answers);
+    if (!num) return;
+    const parsed = parseFloat(String(input.value || '').replace(/[^\d.-]/g, ''));
+    if (Number.isFinite(parsed)) DevChat._qaNumber[gi] = Math.max(num.min, parsed);
+    DevChat.renderMessages();
+  },
+
+  /**
+   * One group's answer, whichever way it was given. Typing wins over a
+   * tapped chip because the two are mutually exclusive above, and a stepper
+   * group has no chips to compete with.
+   */
+  _qaAnswerFor(groups, gi) {
+    const typed = DevChat._qaTypedOpen[gi] ? DevChat._qaTyped[gi] : null;
+    if (typed) return typed;
+    const num = DevChat._qaNumericGroup(groups[gi] && groups[gi].answers);
+    if (num) {
+      const v = DevChat._qaNumber[gi] != null ? DevChat._qaNumber[gi] : num.suggested;
+      return DevChat._qaNumberText(num, v);
+    }
+    const ai = DevChat._qaSelection[gi];
+    return ai != null ? ((groups[gi] && groups[gi].answers[ai]) ?? null) : null;
+  },
+
   _qaSendSelected() {
     if (DevChat.isStreaming) return;
     const groups = DevChat._qaCurrentGroups();
     if (!groups) return;
     const parts = [];
     for (let gi = 0; gi < groups.length; gi++) {
-      const ai = DevChat._qaSelection[gi];
-      const answer = ai != null ? groups[gi]?.answers?.[ai] : null;
+      const answer = DevChat._qaAnswerFor(groups, gi);
       if (answer != null) parts.push(`${gi + 1}. ${answer}`);
     }
     if (!parts.length) return;
@@ -6539,57 +6809,64 @@ const DevChat = {
     DevChat._syncSaveDraftBtn();
   },
 
-  // ── Inherited (cloned auto-session) history (#647) ────────
-  //
-  // A session started from an issue's generated proposal
-  // (POST /api/sessions/:id/clone-headless) copies the auto session's whole
-  // conversation into itself. Those inherited Claude Code blocks used to
-  // open expanded — in practice two 60-215 line logs plus a ~2kB summary —
-  // burying the spec card, the "Changes ready" card and the follow-up
-  // message under a wall of log output on first entry. They now default to
-  // collapsed; anything the session produces for the human afterwards
-  // (live or finished) keeps the expanded default.
-  //
-  // The server marks each copied row with metadata.inheritedFrom (the
-  // source session id) — the only durable signal, since the copy doesn't
-  // carry created_at over and the ids are contiguous with the human's own
-  // later turns.
-
-  // The deterministic opening of the follow-up message the clone appends
-  // (buildHeadlessFollowUpMessage in src/routes/sessions.js). Used only by
-  // the legacy fallback below.
-  _CLONE_FOLLOWUP_PREFIX: 'This session was cloned from an auto session',
-
-  // Flag inherited rows in place. Marker-driven for sessions cloned after
-  // #647 shipped; for older clones (no marker on any row) fall back to the
-  // follow-up message as the boundary — everything BEFORE it was copied,
-  // the follow-up itself and everything after belong to the human session.
-  // When neither signal is present nothing is flagged and the session keeps
-  // today's all-expanded behaviour.
-  _markInheritedMessages(messages, session) {
-    if (!Array.isArray(messages) || !messages.length) return messages;
-    let sawMarker = false;
-    for (const m of messages) {
-      if (m && m.metadata && m.metadata.inheritedFrom) {
-        m.inherited = true;
-        sawMarker = true;
-      }
-    }
-    if (sawMarker) return messages;
-    if (!session || !session.cloned_from_session_id) return messages;
-    const boundary = messages.findIndex((m) => m
-      && m.role === 'assistant'
-      && String(m.content || '').startsWith(DevChat._CLONE_FOLLOWUP_PREFIX));
-    if (boundary < 0) return messages;
-    for (let i = 0; i < boundary; i++) messages[i].inherited = true;
-    return messages;
-  },
+  // #647's inherited-history pass lived here and is retired. It existed to
+  // give ONE class of Claude Code disclosure a collapsed default; every
+  // disclosure has that default now (see _ccDefaultOpen below), so the flag
+  // it computed had no reader left, and `metadata.inheritedFrom` — which the
+  // clone route still stamps, and clone-headless-suggestions.test.js still
+  // pins — had no reader on the client at all. A flag nothing consults is a
+  // trap for whoever next believes it means something.
 
   // Should a Claude Code disclosure (dc-cc-attached) start expanded?
-  // Everything defaults open — the live-run log is meant to be watched —
-  // except rows inherited from a cloned auto session.
-  _ccDefaultOpen(msg) {
-    return !(msg && msg.inherited);
+  //
+  // NO — none of them, which is now the whole rule. It used to be "everything
+  // open except rows inherited from a cloned auto session" (#647), on the
+  // argument that the live-run log is meant to be watched.
+  //
+  // That argument belonged to a summary that could not carry the run. It is a
+  // card now, and its header holds exactly what the log was watched FOR: the
+  // file being edited, the step count, the elapsed timer, the phase, and the
+  // AI guess with its countdown. The log underneath is the detail behind
+  // those facts, and at 60-215 lines it is the largest thing in the
+  // transcript by an order of magnitude.
+  //
+  // #647 had already found this and fixed it for one case. Its note is worth
+  // reading in full: two inherited logs plus a summary "burying the spec
+  // card, the Changes ready card and the follow-up message under a wall of
+  // log output on first entry". Nothing about that is specific to a clone —
+  // a twelve-turn session of the human's own is twelve open logs, and no
+  // reader wants eleven of them. This is #647's finding applied where it
+  // always applied.
+  //
+  // Anyone who opens one keeps it open: _applyDetailsPersistence round-trips
+  // the flag per message through localStorage, so being wrong here costs one
+  // click, once, on the run you actually care about.
+  //
+  // It takes the message and ignores it. This is the seam every disclosure
+  // asks, and a caller that keeps passing its row is what makes a future
+  // exception — a live run, say — a change to this function rather than to
+  // four call sites.
+  _ccDefaultOpen(_msg) {
+    return false;
+  },
+
+  // The landing of a stop, as chips. Reads only the server's data — the
+  // sentence beside it says the same thing in prose, and parsing that prose
+  // back out is the thing this field exists to avoid.
+  //
+  // `commits: null` is "a commit landed, quantity unknown" — the recovered
+  // path reaches this from durable tail milestones, which carry a sha and a
+  // push flag but no count. It draws a countless chip rather than a made-up
+  // number. `sha: null` is the ordinary case and gets one honest chip.
+  _stopLandingChips(landing) {
+    const s = landing || {};
+    if (!s.sha) return ['nothing committed'];
+    const chips = [s.commits == null
+      ? 'changes committed'
+      : `${s.commits} change${s.commits === 1 ? '' : 's'} committed`];
+    chips.push(s.sha);
+    chips.push(s.pushOk ? 'pushed' : 'not pushed');
+    return chips;
   },
 
   // ── <details> open/closed persistence ─────────────────────
@@ -6952,6 +7229,10 @@ const DevChat = {
       // rewrites inside renderMessages don't drop the handlers.
       const chip = e.target.closest('[data-qa-group]');
       if (chip) { DevChat._onQaChipClick(chip); return; }
+      const qaEsc = e.target.closest('[data-qa-escape]');
+      if (qaEsc) { DevChat._onQaEscapeClick(qaEsc); return; }
+      const qaStep = e.target.closest('[data-qa-step]');
+      if (qaStep) { DevChat._onQaStep(qaStep); return; }
       if (e.target.closest('[data-qa-send]')) { DevChat._qaSendSelected(); return; }
       if (e.target.closest('[data-qa-defaults]')) { DevChat._qaSendDefaults(); return; }
       const card = e.target.closest('.dc-spec-preview-card');

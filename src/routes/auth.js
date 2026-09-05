@@ -5,7 +5,20 @@ const http = require('http');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
-const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits');
+const {
+  loginBurstLimiter,
+  loginSustainedLimiter,
+  loginIdentityLimiter,
+  registerLimiter,
+  otpRequestLimiter,
+  otpRequestEmailLimiter,
+  otpVerifyLimiter,
+  passwordResetRequestLimiter,
+  passwordResetRequestEmailLimiter,
+  passwordResetConfirmLimiter,
+  walletAuthLimiter,
+  walletCheckLimiter,
+} = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
 const events = require('../services/events');
@@ -165,7 +178,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/login', authLimiter, async (req, res) => {
+  router.post('/api/auth/login', loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, async (req, res) => {
     const { username, password } = req.body;
 
     if (!username || !password) {
@@ -220,7 +233,7 @@ function authRoutes(config) {
       let matchedBy = null;
       for (const candidate of candidates) {
         // At most 2 compares (one email match + one username match), so
-        // the cost posture behind authLimiter is unchanged.
+        // the cost posture behind the login limiters is unchanged.
         if (await bcrypt.compare(password, candidate.row.password)) {
           user = candidate.row;
           matchedBy = candidate.matchedBy;
@@ -253,7 +266,7 @@ function authRoutes(config) {
   // narrow, ten-minute continuation in an HttpOnly cookie; password setup
   // consumes it and creates the ordinary web session in one transaction.
   // Browser JavaScript never receives a mobile bearer.
-  router.post('/api/auth/otp/request', authLimiter, async (req, res) => {
+  router.post('/api/auth/otp/request', otpRequestLimiter, otpRequestEmailLimiter, async (req, res) => {
     try {
       await emailSignup.requestCode(pool, config, req.body?.email);
       return res.json({ ok: true });
@@ -266,7 +279,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/otp/verify', authLimiter, async (req, res) => {
+  router.post('/api/auth/otp/verify', otpVerifyLimiter, async (req, res) => {
     try {
       const verified = await emailSignup.verifyCode(pool, req.body?.email, req.body?.code);
       createSignupCookie(res, verified.signupToken, verified.expiresAt);
@@ -280,7 +293,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/otp/set-password', authLimiter, async (req, res) => {
+  router.post('/api/auth/otp/set-password', otpVerifyLimiter, async (req, res) => {
     const password = req.body?.password;
     if (password !== req.body?.passwordConfirmation) {
       return res.status(422).json({ error: 'Passwords do not match.', code: 'password_mismatch' });
@@ -310,7 +323,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/register', authLimiter, async (req, res) => {
+  router.post('/api/auth/register', registerLimiter, async (req, res) => {
     const { code, username, password } = req.body;
 
     if (!code?.trim() || !username?.trim() || !password) {
@@ -1003,7 +1016,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/wallet-verify', authLimiter, async (req, res) => {
+  router.post('/api/auth/wallet-verify', walletAuthLimiter, async (req, res) => {
     const { pubkey, publicKey, challenge, signature } = req.body || {};
     if (!pubkey || !challenge || !signature) {
       return res.status(400).json({ error: 'pubkey, challenge, and signature required' });
@@ -1068,7 +1081,7 @@ function authRoutes(config) {
   //     username, so this pre-login endpoint is not a username oracle.
   //   - On success every existing session is deleted (a leaked/old session
   //     must not outlive a reset) and a fresh session is minted.
-  router.post('/api/auth/wallet-reset-verify', authLimiter, async (req, res) => {
+  router.post('/api/auth/wallet-reset-verify', walletAuthLimiter, async (req, res) => {
     const { pubkey, publicKey, challenge, signature, newPassword } = req.body || {};
     if (!pubkey || !challenge || !signature) {
       return res.status(400).json({ error: 'pubkey, challenge, and signature required' });
@@ -1163,7 +1176,7 @@ function authRoutes(config) {
   //   - A new request overwrites any previous outstanding token (single
   //     outstanding reset per account), and the mail door's per-recipient
   //     throttle bounds how often that can be made to happen.
-  router.post('/api/auth/password-reset/request', authLimiter, async (req, res) => {
+  router.post('/api/auth/password-reset/request', passwordResetRequestLimiter, passwordResetRequestEmailLimiter, async (req, res) => {
     const email = String((req.body || {}).email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
       return res.status(400).json({ error: 'Email required' });
@@ -1208,7 +1221,7 @@ function authRoutes(config) {
   //     leaked session must not outlive a reset. No fresh session is minted
   //     — the link may have been opened anywhere; the user signs in with
   //     the password they just chose.
-  router.post('/api/auth/password-reset/confirm', authLimiter, async (req, res) => {
+  router.post('/api/auth/password-reset/confirm', passwordResetConfirmLimiter, async (req, res) => {
     const { token, newPassword } = req.body || {};
     const refuse = () => res.status(401).json({ error: 'Invalid or expired reset link' });
     if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return refuse();
@@ -1333,7 +1346,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/wallet-register', authLimiter, async (req, res) => {
+  router.post('/api/auth/wallet-register', walletAuthLimiter, async (req, res) => {
     const { username, password, pubkey } = req.body || {};
     if (!username?.trim() || !password || !pubkey?.trim()) {
       return res.status(400).json({ error: 'username, password, and pubkey required' });
@@ -1389,7 +1402,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/wallet-link-login', authLimiter, async (req, res) => {
+  router.post('/api/auth/wallet-link-login', walletAuthLimiter, async (req, res) => {
     const { username, password, pubkey } = req.body || {};
     if (!username?.trim() || !password || !pubkey?.trim()) {
       return res.status(400).json({ error: 'username, password, and pubkey required' });

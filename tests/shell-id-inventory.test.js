@@ -331,6 +331,7 @@ const ADDED_IDS = {
   'more-saved': 'The stage-2 survey\'s ending. A successful save wrote one line into #more-msg and left the whole three-minute form on screen under a heading still asking "Want in sooner?"; this panel takes the screen instead. #more-msg survives for the error and ?connect= cases.',
   'more-saved-edit': 'Returns to that form with every value still in place \u2014 the form is hidden, never unmounted, and answers merge server-side, so adding to them later is the intended path rather than a recovery.',
   'more-saved-back': 'The way out of the ending, to #landing.',
+  'more-status-pill': "Where this signup stands in the queue, on the stage-2 form: waiting for confirmation, on the waitlist, or you're in. It is not a new fact \u2014 the row's submitted_at / confirmed_at / released_at have always said this \u2014 it is the first place the person it is about can read it, and it answers the question the survey otherwise leaves open ('I filled this in, then what?'). Present but empty and hidden here by design: the row ships in the markup, and its contents arrive with the stage-2 load effect, because a pill with data in it before the fetch would be a hydration mismatch.",
   // ── #1372: the mobile-browser install strip ──────────────────────
   // A visitor on a phone browser is offered the native app. The strip is
   // always in the document and starts `hidden` (the island rule: data loads

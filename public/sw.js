@@ -49,7 +49,31 @@
 // v7 worker filled it with — network-first and content-addressed, it costs
 // nothing to refill, which is exactly why the SHELL cache is versioned and
 // the API cache below is not.
-const SW_VERSION = 'v8';
+// v9: a deliberate cache retirement, not a code change (#1673 follow-up).
+//
+// BUMPING THIS IS THE REMOTE REMEDY FOR A FLEET STUCK ON AN OLD BUILD, and
+// nothing said so before, so the next person facing one had to re-derive it
+// from the lifecycle below. Write it down here, where the constant is.
+//
+// A deploy rebuilds index.html and /shell/assets/shell.js without touching
+// this file, so nothing refreshes the precache: the shell cache keeps the
+// build it was filled with until some later load happens to win a per-asset
+// race (see the note above prefetchShellAssets). The page-side recovery --
+// the /api/version poll into App._ensureShellPrefetch, then a reload the
+// USER presses -- needs a network, a running poll, and a page intact enough
+// to show a button. A device whose boot ends blank has none of those.
+//
+// Changing these bytes does not. The browser fetches a changed worker on its
+// next NAVIGATION, whether or not the page's own scripts ever run: install()
+// precaches the current build under the new cache name and calls
+// skipWaiting(), activate() deletes every `usernode-*` cache not in
+// ALL_CACHES -- which retires the stale shell outright -- and then calls
+// clients.claim(). No user action, no working page.
+//
+// It is cheap and bounded for the reason the API cache below is NOT
+// versioned: a bump drops only SHELL_CACHE and IMMUTABLE_CACHE, both
+// content-addressed and network-first, and leaves the offline session alone.
+const SW_VERSION = 'v9';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

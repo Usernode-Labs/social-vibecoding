@@ -53,6 +53,8 @@ import { createStore } from '../../lib/plain-store.js';
 export interface ModelOptionView {
   id: string;
   label: string;
+  /** `changeSize.short` — "general coding work". '' when the server omits it. */
+  blurb: string;
 }
 
 /**
@@ -104,11 +106,16 @@ export interface ComposerState {
   /**
    * Usernode · Claude's chat-model picker. Null on every other venue.
    *
-   * The options carry bare model NAMES (#1589) — the guidance they used to
-   * carry set the closed control's width and wrapped the credit meter onto a
-   * second line. It still reads in full in the Generate-proposal picker.
+   * `selectedLabel` is the CLOSED control — a bare model name, and #1589's
+   * finding stands on it: the guidance set the control's width and wrapped
+   * the credit meter onto a second line. `options` is the OPEN sheet, where
+   * each row has a whole line to itself, so the blurb rides along there.
    */
-  models: { options: ModelOptionView[]; selected: string } | null;
+  models: {
+    options: ModelOptionView[];
+    selected: string;
+    selectedLabel: string;
+  } | null;
   /** OpenRouter's session-pinned model row. Null on every other venue. */
   openRouter: {
     /** Already defaulted to "No model is pinned". */

@@ -35,12 +35,54 @@
      circle needs so its halo reads against it. */
   --accent-wash: #d6e9ff;
   --accent-wash-ink: #0062cc;
-  /* Text ON the accent — the outgoing message bubble is the only place the
-     shell puts type on a saturated fill, and it must not follow the page. */
+  /* Text ON the accent, wherever the shell puts type on a saturated fill.
+     It must not follow the page. The outgoing chat bubble used to be the
+     headline case and no longer is a fill at all; .messages-state button
+     still is. */
   --accent-ink: #ffffff;
-  /* The agent bubble's surface — see the .dark counterpart. */
-  --bubble-bg: #ffffff;
 
+  /* ── The dev chat's surface ladder ───────────────────────
+     Three steps, and the ONLY thing they guarantee is that each one is
+     nearer the reader than the last: the strip sits on the page wallpaper,
+     the session sheet sits on the strip, and a card (your message, a coding
+     run) sits on the sheet.
+
+     They exist because --bg-secondary / --bg-primary could not express that
+     in both themes. In light those two ascend (#f5f5f7 → #ffffff), which is
+     what the lift was built on. In DARK they descend — --bg-primary is
+     #0b0b0c and --bg-secondary is #1c1c1e — so the stack inverted: the sheet
+     came out as the darkest thing on the screen, a near-black hole punched
+     into the #0b0d1b wallpaper, with the strip ABOVE it lighter than both.
+     Measured: wallpaper (11,13,27) → strip (28,28,30) → sheet (11,11,12).
+
+     Nothing here changes light mode. --dc-strip and --dc-raised are
+     --bg-secondary's value, --dc-sheet is --bg-primary's, so the light stack
+     is byte-identical to what shipped. Dark is where the values are new, and
+     they climb: (11,13,27) → (19,19,22) → (28,28,30) → (44,44,46). */
+  --dc-strip: #f5f5f7;
+  --dc-sheet: #ffffff;
+  --dc-raised: #f5f5f7;
+
+  /* ── …and the two PLANES, which are not the same thing ───
+     The three tokens above are SURFACE VALUES: what a card, an inset or a
+     chip paints. The two below are what the strip and the session sheet —
+     the ladder's two full-screen planes — actually fill with, and they are
+     translucent so the page wallpaper reads THROUGH the session rather than
+     being covered by it.
+
+     They are separate tokens on purpose. --dc-sheet is read by nineteen
+     rules as an opaque inset inside a card; making THAT translucent would
+     have let every chip and every code block see the card behind it, which
+     is a different change and a wrong one. Only the plane is glass.
+
+     The blur is what makes it glass rather than a wash: without it the star
+     and the washes come through as recognisable shapes behind body text.
+     `saturate` compensates for the fact that averaging a wash with white
+     drains it — the deck's own frosted surfaces are more saturated than
+     their backdrop, not less. */
+  --dc-strip-fill: rgba(244, 242, 228, 0.38);
+  --dc-sheet-fill: rgba(255, 255, 255, 0.50);
+  --dc-frost: blur(24px) saturate(1.6);
 
   /* ── Safe-area tokens ────────────────────────────────────
      THE single source of truth for the shell's own safe-area
@@ -842,6 +884,28 @@ html.un-kb .platform-safe-sheet {
   --bg-primary: #0b0b0c;
   --bg-secondary: #1c1c1e;
   --bg-tertiary: #2c2c2e;
+  /* The ladder above, climbing away from the #0b0d1b wallpaper rather than
+     down into it. --dc-sheet takes --bg-secondary's value and --dc-raised
+     takes --bg-tertiary's: a card on the sheet has to be one step lighter
+     again, which is the step the old pairing had no room for. */
+  --dc-strip: #131316;
+  --dc-sheet: #1c1c1e;
+  --dc-raised: #2c2c2e;
+  /* The dark planes. The strip's tint is the dark wallpaper's own ground
+     rather than the strip's opaque value: at 0.55 over that ground it is
+     nearly a no-op on the flat areas and lets the washes through where
+     they are, which is the point.
+
+     DENSER THAN LIGHT'S, on purpose. The two themes are not the same
+     problem. Light's wallpaper is cream with pastel washes — averaging it
+     with white barely moves it, so 0.50 still reads as a sheet and shows
+     the washes plainly. Dark's is near-black with washes several times
+     more saturated than their ground; the same alpha there does not read
+     as glass over a page, it reads as the washes themselves with type on
+     top. So dark stays denser and light goes thinner, and the numbers
+     differ because the grounds do. */
+  --dc-strip-fill: rgba(11, 13, 27, 0.55);
+  --dc-sheet-fill: rgba(28, 28, 30, 0.72);
   --bg-code: #141416;
   --bg-code-header: #1c1c1e;
   --bg-card: rgba(90, 169, 255, 0.10);
@@ -870,10 +934,6 @@ html.un-kb .platform-safe-sheet {
   --accent-wash: #00264d;
   --accent-wash-ink: #85bcff;
   --accent-ink: #0b0b0c;
-  /* One step UP from the page here, not white: the page is near-black, so a
-     bubble has to be lighter than it or it stops being a bubble. */
-  --bubble-bg: #1c1c1e;
-
   /* Dark counterparts of the semantic state tokens. Every --state-*
      declared on :root has one here — tests/dev-color-tokens.test.js
      asserts the two lists match, so a token added above without a dark
@@ -3035,28 +3095,62 @@ body:has(#platform-header.hidden) #app-frame-host {
 
 .dc-msg { padding: 8px 12px; max-width: 92%; }
 
-/* The agent chat is the language's BUBBLE transcript (the deck's "Your new
-   idea" screen): your turns are a solid accent fill, the agent's are a neutral
-   surface, and both are uniformly rounded. They were two faint washes before
-   — an accent tint and an emerald one — which read as two highlight states
-   rather than as two speakers, and which the reskin turned into two blues.
+/* ONE bubble, not two.
+   Your turn is a card; the agent's is plain text on the ground. Both were
+   filled surfaces before — yours a solid --accent, the agent's --bubble-bg —
+   which made a two-party conversation two competing blocks of colour, and
+   put the transcript's loudest element on the half of it a reader already
+   wrote and does not need to re-read.
 
-   The tail notch (`… 4px 12px`) goes with them: the deck's bubbles are
-   uniformly rounded and rely on side and colour to say who is speaking. */
+   THE ACCENT FILL IS THE PART TO EXPLAIN, because it took real work to keep
+   legible and all of it is now retired. White on the accent is 3.93:1 at the
+   eyedropped #0a7cff, which is why --accent was darkened to #0a6ee0 in the
+   first place; the fill then needed --accent-ink for the body, a separate
+   inversion for the header, an opacity rule for the stamp that had to be
+   re-scoped off the role label after it took that label to 2.7:1, and two
+   more rules for links and for the header slots that declared colour inline.
+   Seven rules and three contrast incidents, to say "this one is yours" —
+   which side, shape and surface already say. (--accent-ink itself stays: it
+   is the token for near-black-on-light-accent and .messages-state button is
+   still a real fill.)
+
+   The agent's row loses its surface entirely. --bubble-bg existed only
+   because --bg-primary IS the page ground in dark, so a bubble drawn on it
+   vanished; with the session sheet as the ground and the agent's turn drawn
+   as plain text, there is nothing left to keep distinct, and the token has
+   no other reader. Plain text is also the honest shape: the agent's turn is
+   the body of the screen, not an aside in it.
+
+   The tail notch (`… 4px 12px`) is still gone: uniformly rounded, relying on
+   side and surface to say who is speaking. */
+/* YOUR TURN, TOLD APART FROM THE AGENT'S. Two cues, because each of them
+   alone had already failed once.
+
+   SURFACE. This was --dc-raised, which is the SAME token the coding-run
+   card, the PR card and the stopped card fill with. Your message and the
+   agent's cards were the identical grey, and the only thing separating them
+   was an alignment that (see below) was not visible either. It takes the
+   accent as a TINT now — 8% over the sheet, not the saturated fill that was
+   retired above for contrast: at this alpha the body text still reads
+   against the page's own ink and no inverted token is needed.
+
+   WIDTH. `.dc-msg` caps every row at 92%, which on a message of any real
+   length is indistinguishable from full width — so `margin-left: auto` had
+   nothing to push against and the right-alignment cue simply did not exist.
+   76% leaves a gutter down the left that no agent row ever crosses, because
+   the agent's cards are full-bleed with a 12px margin. The gutter is the
+   cue; the tint confirms it. */
 .dc-msg-user {
   margin-left: auto;
-  background: var(--accent);
-  color: var(--accent-ink);
+  max-width: 76%;
+  background: var(--accent-tint);
   border-radius: 1.25rem;
   margin-bottom: 4px;
 }
 
 .dc-msg-assistant {
   margin-right: auto;
-  /* A bubble has to be a distinct surface or it disappears into the
-     transcript — which is what --bg-primary did here in DARK mode, where it
-     IS the page ground. --bubble-bg states the surface per theme. */
-  background: var(--bubble-bg);
+  background: transparent;
   border-radius: 1.25rem;
   margin-bottom: 4px;
 }
@@ -3077,55 +3171,18 @@ body:has(#platform-header.hidden) #app-frame-host {
   word-break: break-word;
 }
 
-/* ── Ink on the outgoing bubble ────────────────────────────
-   Everything inside .dc-msg-user sits on the accent fill, so it takes the
-   fill's ink rather than the page's. Without this the role label and the
-   message id keep --text-muted and the body keeps --text-secondary — all
-   three tuned for a near-white page, and close to illegible on blue. Scoped
-   to the user bubble only: the agent's is still a neutral surface. */
-.dc-msg-user .dc-msg-content,
-.dc-msg-user .dc-msg-content strong,
-.dc-msg-user .dc-msg-header {
-  color: var(--accent-ink);
-}
-/* Everything in the header takes the fill's ink. */
-.dc-msg-user .dc-msg-header > * {
-  color: var(--accent-ink);
-}
-/* The id and timestamp stay quieter than the words, but by OPACITY — a second
-   colour token would need its own light and dark values for a surface that
-   deliberately does not follow the theme.
-
-   Scoped to the STAMP. It used to be `.dc-msg-header > *`, which also dimmed
-   the "You" role label beside it to 0.72 — white at 0.72 on #0a7cff is 2.7:1,
-   so the one word naming who is speaking was the least readable thing in the
-   bubble. The label is a label; only the stamp is an aside. */
-.dc-msg-user .dc-msg-meta,
-.dc-msg-user .dc-msg-model {
-  opacity: 0.72;
-}
-
-/* The two header slots that declared their colour INLINE until now — the
-   "#12 1787450684510" id/time stamp and the model name. An inline style beats
-   every class rule in the cascade, so the inversion above could not reach
-   them: on the accent fill the stamp stayed --text-muted at 50% opacity, about
-   1.5:1 against #0a7cff and unreadable. As classes they take the inversion
-   like everything else in the bubble, and the `> *` rule above (two classes,
-   so it outranks these) supplies the white and the 0.72 there. */
+/* The stamp and the model name, on both rows. They used to be declared
+   INLINE, which beat every class rule and is why the accent fill's inversion
+   could not reach them; they are classes now and there is no inversion left
+   to reach. --text-muted at 9px is what makes the stamp an aside — the 0.72
+   opacity the fill needed is gone with the fill, and with it the incident
+   where it dimmed the role label to 2.7:1. */
 .dc-msg-meta {
   color: var(--text-muted);
   font-size: 9px;
-  /* No opacity dimming on the neutral bubble. --text-muted is already the
-     quiet token, and halving it took the stamp to 2:1 against the bubble —
-     9px is what makes this an aside, not a second helping of transparency. */
 }
 .dc-msg-model {
   color: var(--text-muted);
-}
-.dc-msg-user .dc-msg-content a,
-.dc-msg-user .dc-msg-content a:hover {
-  color: var(--accent-ink);
-  text-decoration: underline;
 }
 
 .dc-msg-content p, .dc-p { margin-top: 0.5em; }
@@ -3297,8 +3354,161 @@ body:has(#platform-header.hidden) #app-frame-host {
   font-weight: 700;
 }
 
+/* ── Before / after captures ──────────────────────────────
+   AppView.visualsTilesHtml builds these as innerHTML into two hosts — the
+   dev chat's Changes-ready card and the board's proposal detail — so the
+   media keeps its inline style and only the parts added here are classed.
+
+   Three things the strip could not say before:
+
+   .usn-visual-phone — a `viewport: 'mobile'` capture. #768 said so in the
+     row label, "(mobile)", which a reader takes in only AFTER wondering why
+     the shot looks oddly cropped. The outline says it first. The label
+     stays: it is what a screen reader gets, and it survives with no CSS.
+
+   .usn-visual-empty — the side that has no capture. It used to render
+     NOTHING, so a new page came out as one lone tile beside a caption, and
+     a missing half is indistinguishable from a capture that failed. A
+     drawn, dashed placeholder is the difference between "there is nothing
+     to compare" and "something went wrong".
+
+   .usn-visual-more — every route after the first. They stacked inline, so
+     a three-route capture put three full-width strips between a proposal's
+     title and its actions. */
+.usn-visual-media { display: block; min-width: 0; }
+.usn-visual-phone {
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 4px 3px;
+  background: var(--bg-secondary);
+}
+.usn-visual-phone > * { border-radius: 7px !important; }
+.usn-visual-empty {
+  /* Takes its PARTNER's height — the row is `align-items: stretch`, so a
+     placeholder that is visibly a different size from the tile beside it
+     would read as a third thing rather than as the other half of a pair. */
+  height: 100%;
+  min-height: 96px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.usn-visual-figure { display: flex; flex-direction: column; }
+.usn-visual-figure > .usn-visual-empty { flex: 1; }
+.usn-visual-more { margin: 2px 0 0; }
+.usn-visual-more-summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 4px 0;
+}
+.usn-visual-more-summary::-webkit-details-marker { display: none; }
+.usn-visual-more-summary::marker { display: none; }
+.usn-visual-more-summary::after { content: ' \203A'; }
+.usn-visual-more[open] > .usn-visual-more-summary::after { content: ' \02C5'; }
+
+/* ── A failed turn ────────────────────────────────────────
+   A CARD, not a status row, because a failure is not a step in the ladder
+   above it — it is the end of that ladder. As a row it inherited both the
+   ladder's shape and the ladder's tick: `turnError` has been persisted by
+   routes/sessions.js since #894 and nothing read it, so every failed turn
+   came back green.
+
+   --state-blocked is the platform's "this blocks you" red — the same token
+   the board's checks-failing pill and the merge badges take, so a failure
+   reads the same here as it does anywhere else in the product. It is a
+   TINT plus a hairline rather than a fill: this sits inside a scrolling
+   transcript, and a saturated block at message width is a stop sign for
+   something the next message usually recovers from.
+
+   No action button. The producers that set `turnError` also send
+   `quickReplies: turnPills('failed')`, so the one-tap retry is already in
+   the pill bar over the composer, with every other suggested next message.
+   A second one here would be two controls for one act. */
+.dc-failure {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--state-blocked);
+  background: var(--state-blocked-bg);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.dc-failure-icon {
+  flex: none;
+  color: var(--state-blocked);
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.dc-failure-body { flex: 1; min-width: 0; }
+.dc-failure-text { display: block; min-width: 0; }
+.dc-failure-text a { color: var(--accent); }
+
+/* THE STOP PAIR. Both are "the run did not finish", so both are this card
+   rather than the pipeline's ✓ row — but only one of them is a problem.
+
+   `stopping` is #937's escalation: a stop that is not landing. Red, and it
+   keeps the Force stop button, because that is the one state where the user
+   is stuck and needs the action. It used to be a status row, which meant the
+   escalation settled to a green tick the moment the turn went inactive.
+
+   `stopped` landed. The user asked for it, so it is NOT red — painting
+   someone's own decision as an error is the green tick's mistake in reverse.
+   The neutral surface with a hairline, one step up from the sheet, and the
+   landing in chips beside the sentence. */
+.dc-failure-stopped {
+  border-color: var(--border-light);
+  background: var(--dc-raised);
+}
+.dc-failure-stopped .dc-failure-icon {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.75;
+}
+.dc-failure-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+  margin-top: 6px;
+}
+.dc-failure-chips > * {
+  flex: none;
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 2px 8px;
+  border-radius: 7px;
+  /* An inset: one step back DOWN from the card, exactly as the coding-run
+     card's chips do it. Same chip, so the two cards read as one language. */
+  background: var(--dc-sheet);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.dc-failure-chips > :empty { display: none; }
+
 /* ── PR card ────────────────────────────────────────────── */
 
+/* THE TRANSCRIPT'S CARDS READ THE LADDER, not --bg-secondary directly.
+   Same reason the message bubble does: that token is one step UP from
+   --bg-primary in light and, in dark, it is the session sheet's own value —
+   so a card painted with it sat flush on the sheet and disappeared. This
+   card is the one that matters most: it carries the before/after strip and
+   the Propose button. Its inner surfaces move with it, from --bg-primary
+   (which is now DARKER than the sheet in dark, a hole rather than an inset)
+   to --dc-sheet, one honest step back down. Light is unchanged: the ladder's
+   light values are the tokens these rules already used. */
 .dc-pr-card {
   margin: 8px 12px;
   padding: 12px;
@@ -3306,7 +3516,7 @@ body:has(#platform-header.hidden) #app-frame-host {
      language's corner. --bg-card is an accent TINT, which read as a
      highlighted state once the accent turned blue; the neutral surface is
      what the deck's embedded cards use. */
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   border: 1px solid transparent;
   border-radius: 1rem;
   transition: background 300ms;
@@ -3369,7 +3579,7 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-credits-card {
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   padding: 12px 14px;
   margin: 6px 0;
 }
@@ -3407,7 +3617,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
 }
 
 .dc-credits-option-text { flex: 1 1 220px; min-width: 0; }
@@ -3551,7 +3761,7 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-launchpad {
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   padding: 12px 14px;
   margin: 6px 0;
 }
@@ -3578,7 +3788,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
 }
 
 .dc-launchpad-resume[data-launchpad-resume="continue"] {
@@ -3626,7 +3836,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   height: 20px;
   border-radius: 50%;
   border: 1px solid var(--border);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 600;
@@ -3663,7 +3873,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-secondary);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
@@ -3677,7 +3887,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   margin-top: 6px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
@@ -3700,7 +3910,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   color: var(--text-primary);
   font: inherit;
   font-size: 13px;
@@ -3734,7 +3944,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   font-weight: 600;
   padding: 4px 14px;
   border: 0;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   color: var(--text-muted);
   cursor: pointer;
 }
@@ -3751,7 +3961,7 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-flow-card {
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   padding: 12px 14px;
   margin: 6px 0;
 }
@@ -3785,7 +3995,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
 }
 
 .dc-flow-option-text { flex: 1 1 220px; min-width: 0; }
@@ -3855,7 +4065,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   font-weight: 600;
   border: 1px solid var(--border);
   color: var(--text-muted);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
 }
 
 .dc-flow-step-body { flex: 1 1 auto; min-width: 0; }
@@ -3898,7 +4108,7 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-flow-actions-footer { margin-top: 10px; }
 
 .dc-flow-action {
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   color: var(--text-secondary);
   border: 1px solid var(--border);
 }
@@ -3952,7 +4162,7 @@ a.dc-flow-action {
   font-size: 11px;
   line-height: 1.45;
   color: var(--text-secondary);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
@@ -3968,7 +4178,7 @@ a.dc-flow-action {
 }
 
 .dc-pr-btn-preview {
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--accent);
   border: 1px solid var(--border);
 }
@@ -3980,7 +4190,7 @@ a.dc-flow-action {
   cursor: not-allowed;
   color: var(--text-muted);
 }
-.dc-pr-btn-preview:disabled:hover { background: var(--bg-secondary); }
+.dc-pr-btn-preview:disabled:hover { background: var(--dc-raised); }
 
 .dc-pr-btn-promote { background: var(--accent); color: white; }
 .dc-pr-btn-promote:hover { background: var(--accent-light); }
@@ -4008,7 +4218,7 @@ a.dc-flow-action {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--accent);
   border: 1px solid var(--border);
   transition: background 150ms, border-color 150ms;
@@ -4016,16 +4226,94 @@ a.dc-flow-action {
   text-align: left;
 }
 .dc-qa-chip:hover { background: var(--bg-tertiary); }
+/* THE TWO STATES SAY DIFFERENT THINGS AND MUST BOTH BE READABLE AT ONCE.
+   `-default` is what the model RECOMMENDS; `-selected` is what you CHOSE.
+   They are frequently different chips, and a reader comparing the two is
+   the whole reason the questionnaire shows both. So the recommendation is
+   an outline and the choice is a fill: one hollow, one solid, legible
+   side by side rather than two shades of the same idea. */
 .dc-qa-chip-default { border-color: var(--accent); }
-.dc-qa-chip-selected { background: var(--accent); border-color: var(--accent); color: #fff; }
-.dc-qa-chip-selected:hover { background: var(--accent-light); }
+.dc-qa-chip-selected {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-primary);
+}
+.dc-qa-chip-selected .dc-qa-chip-hint { opacity: 0.75; }
+.dc-qa-chip-selected:hover { opacity: 0.88; }
 
+/* The escape hatch — the last chip in the row, and the only one that does
+   not answer. Quieter than the answers on purpose: it is the way out, not
+   an option, and it must not look like a fifth thing the model suggested. */
+.dc-qa-escape { color: var(--text-muted); border-style: dashed; }
+.dc-qa-escape-open { border-style: solid; border-color: var(--accent); color: var(--accent); }
+
+/* …and the input it opens, scoped to its own group rather than sending the
+   reader to the composer. Uncontrolled, committing on blur/Enter — see
+   `_onQaTypedCommit`. */
+.dc-qa-typed {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  background: var(--dc-sheet);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+.dc-qa-typed:focus { outline: none; box-shadow: 0 0 0 3px var(--accent-tint); }
+
+/* A QUANTITY, asked as one. */
+.dc-qa-number { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dc-qa-step {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--dc-raised);
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dc-qa-step:hover { background: var(--bg-tertiary); }
+.dc-qa-number-field {
+  width: 6.5rem;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--dc-sheet);
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 13px;
+  text-align: center;
+}
+.dc-qa-number-field:focus { outline: none; border-color: var(--accent); }
+
+/* "suggested", in the model's own quiet voice.
+   NOT uppercased. It was, and the stepper's hint is the reason that had to
+   stop: `suggested 0.2 m` came out as "SUGGESTED 0.2 M", and a capital M is
+   not the symbol for a metre. A hint that renders the value it is hinting
+   at cannot own a transform that rewrites the value. Lowercase and muted is
+   also what the design asks for, so the correctness fix and the design agree. */
 .dc-qa-chip-hint {
-  font-size: 9px;
+  font-size: 10px;
   margin-left: 6px;
   opacity: 0.6;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-weight: 400;
+}
+
+/* The stepper's hint is the same span, but it is NOT sitting inside a chip:
+   it takes the group's inherited ink at 0.6, and in dark that lands at about
+   a third of the page's contrast — legible in the light render and very
+   nearly not in the dark one. On the stepper it is the only thing naming the
+   default, so it gets its own ink rather than an inherited fade. */
+.dc-qa-number .dc-qa-chip-hint {
+  margin-left: 2px;
+  opacity: 1;
+  color: var(--text-secondary);
 }
 
 .dc-qa-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
@@ -4049,7 +4337,7 @@ a.dc-flow-action {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--text-muted);
   border: 1px solid var(--border);
   transition: background 150ms;
@@ -4112,7 +4400,7 @@ a.dc-flow-action {
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--accent);
   border: 1px solid var(--border);
   transition: background 150ms, border-color 150ms;
@@ -4152,7 +4440,7 @@ a.dc-flow-action {
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   padding: 4px;
 }
 
@@ -4210,7 +4498,7 @@ a.dc-flow-action {
   height: 26px;
   border-radius: 6px;
   cursor: pointer;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--text-muted);
   border: 1px solid var(--border);
   transition: color 150ms, border-color 150ms, background 150ms;
@@ -4385,7 +4673,7 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
   font-size: 11px;
   line-height: 1.4;
   color: var(--text-faint);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   max-height: 300px;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -4399,8 +4687,24 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
    streams inline below as plain monospaced text (no border, no
    background). Open by default; click the summary to collapse. */
 
+/* THE RUN IS A CARD. It was a status line with a log hanging off it: the
+   summary ran on across three wrapped lines and the log bled to the pane's
+   edges with no boundary, so the thing a reader watches longest on this
+   screen was the one thing on it with no shape. The card gives the run an
+   edge, and the facts inside it become chips (see ProgressChips in
+   features/dev-chat/transcript.tsx).
+
+   The surface is --bg-secondary, not a hue. "A coding run is happening" is
+   not a state in the platform's vocabulary — --state-progress means
+   something is IN FLIGHT toward a merge, and a run is neither good news nor
+   bad. Tinting it would put a fifth colour on a screen whose colours already
+   mean one thing each; the card's own edge is what separates it. */
 .dc-cc-attached {
-  margin: 0;
+  margin: 8px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  background: var(--dc-raised);
+  overflow: hidden;
 }
 
 .dc-cc-attached-summary {
@@ -4410,10 +4714,66 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
      dedicated chevron span on the right). */
   cursor: pointer;
   list-style: none;
+  /* A COLUMN now: the head, the chip row and the note stack. It stays a
+     <summary> because a collapsed <details> renders nothing else. */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 10px 12px;
 }
 .dc-cc-attached-summary::-webkit-details-marker { display: none; }
 .dc-cc-attached-summary::marker { display: none; }
-.dc-cc-attached-summary:hover { background: var(--bg-code); }
+.dc-cc-attached-summary:hover { background: var(--dc-strip); }
+
+/* Row 1 — the glyph, the label, the chevron and the id/timestamp. */
+.dc-cc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Row 2 — the facts. They WRAP; the old inline run ellipsized instead, and
+   the 640px block used to hide the activity snippet outright. */
+.dc-cc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+.dc-cc-chips > * {
+  flex: none;
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 2px 8px;
+  border-radius: 7px;
+  /* An inset: one step back DOWN from the card it sits on, which is the
+     sheet's own value. */
+  background: var(--dc-sheet);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A chip with no value is still IN the DOM — the spans are addressed by
+   class from tests and declared checks, so they render empty rather than
+   disappearing. This is what keeps them from drawing an empty pill. */
+.dc-cc-chips > :empty { display: none; }
+
+/* Row 3 — the two sentences (the guess, the cohort hint), full width. */
+.dc-cc-note {
+  display: block;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.dc-cc-note:empty { display: none; }
 
 /* Click affordance — sits to the right of "Claude Code is
    running…" before the id/ts span. Two distinct glyphs (▸ when
@@ -4461,14 +4821,18 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   /* Indent under the status icon so log lines align with the
      status text, not the icon. 22px = icon width (14) + gap (6) +
      2px breathing room. */
-  padding: 2px 0 4px 22px;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 240px;
   overflow-y: auto;
-  margin: 0;
-  background: transparent;
-  border: none;
+  /* Inside the card now, as its own panel. The 22px indent that used to
+     align it under the status icon aligned it under nothing once the icon
+     moved into a header row. */
+  margin: 0 12px 12px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: var(--dc-sheet);
+  border: 1px solid var(--border-light);
 }
 
 /* ── #50: progress indicator — elapsed ticker + live activity ──
@@ -4486,86 +4850,44 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   flex-shrink: 0;
 }
 
+/* The four fact spans take their box from `.dc-cc-chips > *`; what is left
+   here is each one's own voice. The `max-width: 40%` these carried is gone
+   with the inline row — a chip that wraps needs no share of one line. */
 .dc-cc-current {
-  color: var(--text-muted);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 40%;
-  min-width: 0;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 10.5px;
 }
 
-.dc-cc-steps {
-  color: var(--text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
 
 /* #892: the DETERMINISTIC stage readout (Claude is working / Committing /
    Pushing …). Styled like the step count — upright, not italic — because
    unlike the AI guess beside it this is derived from markers the run
    genuinely emitted and cannot be wrong. */
-.dc-cc-phase {
-  color: var(--text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
 
 /* #892: population context ("most runs finish in 2–10 min"). Extra-muted:
    it is background information about how long runs take in general, not a
    claim about this run, so it must not compete with the countdown. */
 .dc-cc-cohort {
-  color: var(--text-muted);
-  opacity: 0.65;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
+  display: block;
+  opacity: 0.75;
 }
+.dc-cc-cohort:not(:empty)::before { content: '\00b7\00a0'; }
 
 /* Experimental AI progress estimate (opt-in): italic and extra-muted so
    the guess reads as tentative next to the honest timer/step count. */
 .dc-cc-estimate {
-  color: var(--text-muted);
-  opacity: 0.75;
   font-style: italic;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 40%;
-  min-width: 0;
 }
 
-/* Narrow viewports: drop the activity snippet (the log itself is one
-   tap away) but keep the elapsed timer at all widths. The AI progress
-   estimate (#286) is kept visible — it can't sit inline next to the
-   timer on a phone, so the summary row is allowed to wrap and the
-   estimate drops onto its own full-width line beneath the status line
-   (full text, no ellipsis). */
-@media (max-width: 640px) {
-  .dc-cc-current { display: none; }
-  /* #892: the cohort line is the first thing to go on a phone — the
-     countdown and the stage label carry the same information more
-     directly, and three muted suffixes on one narrow row is clutter. */
-  .dc-cc-cohort { display: none; }
-  .dc-cc-attached-summary { flex-wrap: wrap; }
-  .dc-cc-estimate {
-    /* order:1 sorts the estimate after the (order:0) timer + timestamp
-       so the status line stays intact on row 1 and the estimate wraps
-       onto its own full-width row beneath it. */
-    order: 1;
-    flex-basis: 100%;
-    max-width: 100%;
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-  }
-}
+/* THE 640px BLOCK IS GONE, and its absence is the point.
+   It hid `.dc-cc-current` and `.dc-cc-cohort` outright and re-ordered the
+   estimate onto its own row, because four muted spans could not share one
+   inline line on a phone. Every one of those was a workaround for the
+   inline row: chips wrap by construction and the two sentences already have
+   a row of their own, so the narrow case now costs a line of height instead
+   of a fact. `.dc-cc-current` in particular — the answer to "what is it
+   doing right now" — used to vanish at exactly the width where the log
+   behind it is hardest to open. */
 
 /* Sibling of .dc-cc-attached-log for the post-turn ccOutput
    markdown summary (rather than a monospaced live-log). Same
@@ -4574,12 +4896,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .dc-cc-attached-md {
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-faint);
-  padding: 4px 0 6px 22px;
+  color: var(--text-secondary);
   max-height: 360px;
   overflow-y: auto;
-  background: transparent;
-  border: none;
+  margin: 0 12px 12px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: var(--dc-sheet);
+  border: 1px solid var(--border-light);
 }
 /* Tighten markdown spacing inside the muted summary block — the
    default .dc-msg-content treatment is too generous for a summary
@@ -6152,7 +6476,7 @@ span.gc-vote-btn-icon { cursor: default; }
      without restating it — two copies of a shadow list drift the first time
      one of them is tuned. */
   --dc-card-elevation: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -8px rgba(0, 0, 0, 0.14);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   border-radius: 1.5rem;
   padding: 0.875rem 1rem 0.625rem;
   box-shadow: var(--dc-card-elevation);
@@ -6165,7 +6489,7 @@ span.gc-vote-btn-icon { cursor: default; }
 :root.dark .dc-card,
 .dark .dc-card {
   --dc-card-elevation: 0 0 #0000;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   border: 1px solid var(--border);
 }
 
@@ -6210,22 +6534,42 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 .dc-card-row > .dc-row-btn:first-of-type { margin-left: -4px; }
 
-/* The chat-model picker, stripped to text plus the caret its sibling draws.
-   `appearance: none` is what removes the native box AND the native caret, so
-   the ChevronDownIcon beside it is not a second one. */
+/* The chat-model picker, stripped to its name plus a caret.
+
+   It is a <button> that opens the kit's menu now, not a <select>
+   (composer.tsx). `appearance: none` stays because a button has a native box
+   of its own to remove, and the caret has moved INSIDE the control — with no
+   native dropdown arrow to avoid duplicating, there was no longer a reason
+   for half of it to be unclickable. Hence the flex row here, which the
+   select could not have had. */
 .dc-model-select {
   appearance: none;
   -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   background: none;
   border: 0;
   padding: 0;
   max-width: 100%;
+  min-width: 0;
   cursor: pointer;
-  text-overflow: ellipsis;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
-/* The caret is a sibling of the <select>, not inside it, so it inherits from
-   this row rather than from the field — which left it invisible in dark mode
-   until this said otherwise. */
+/* The name is what truncates — the caret must not, or the control loses the
+   only thing that says it opens. */
+.dc-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dc-model-select > svg { flex: none; }
+/* The caret sits inside the button now, but this rule still earns its place:
+   it is what gives the row its colour in dark mode, where the caret was
+   invisible until it stopped inheriting from the field. */
 .dc-venue-detail-inline {
   display: inline-flex;
   align-items: center;
@@ -6589,6 +6933,144 @@ span.gc-vote-btn-icon { cursor: default; }
 
 .dc-session-body { /* row layout for chat + viewer */
   flex-direction: row;
+}
+
+/* ── The dev chat's three-layer lift ──────────────────────
+   The move a running app already makes, repeated once per layer. A
+   running app's sheet (#app-frame-host) rounds its TOP two corners over
+   the platform header's ground, so the header shows through a notch at
+   each shoulder. Here the session strip does that over the page
+   wallpaper, and the session sheet does it again over the strip: three
+   surfaces, each one revealing a shoulder of the one above it.
+
+   The geometry is #app-frame-host's, to the token — a 28px top radius, a
+   1px hairline on the TOP EDGE ONLY, and the deck's two-layer blue-black
+   shadow. Read that block for why the hairline is `border-top` and not a
+   full border: these sheets are as wide as the screen and run off the
+   bottom, so the top is the only side that is an edge of anything.
+
+   Neither layer clips to its own radius. The shoulder of a sheet is the
+   area INSIDE its border box but OUTSIDE its arc, so `overflow: hidden`
+   would remove precisely the thing this is for. */
+.dc-lift {
+  border-radius: 1.75rem 1.75rem 0 0;
+  border-top: 1px solid var(--app-sheet-line);
+  box-shadow:
+    0 6px 12px -6px var(--app-sheet-shadow-near),
+    0 8px 24px -4px var(--app-sheet-shadow-far);
+  /* BOTH LAYERS ARE POSITIONED, and that is what puts the session sheet
+     ON the strip rather than under it. Positioned siblings paint after
+     unpositioned ones and among themselves in tree order, so with only
+     one of the two positioned the strip would paint over the sheet —
+     drawing its own bottom edge as a hard line across it and hiding the
+     very corners this is for. No z-index: tree order already says it. */
+  position: relative;
+}
+
+/* The two surfaces, in the platform's own tokens: the strip is the
+   secondary ground and the sheet is the primary one, the same pairing a
+   card gets on a page. Before this the whole screen sat on the bare
+   wallpaper. */
+/* GLASS, NOT PAINT. Both planes were opaque neutrals — #f5f5f7 over #ffffff
+   in light, #131316 over #1c1c1e in dark — and between them they covered the
+   platform's wallpaper (the cream, the three washes, the star) with a flat
+   white or a flat black across the whole session. The lift solved the depth
+   problem by throwing the ground away; the comment two blocks up even says
+   so — "before this the whole screen sat on the bare wallpaper".
+
+   They are translucent now, over a blur. The ladder still reads, because the
+   two alphas differ and the sheet's hairline and shadow are untouched: the
+   sheet is denser than the strip, which is denser than the bare page.
+
+   `backdrop-filter` needs a transparent ancestor chain to have anything to
+   filter. It has one — #app-content carries `position: relative` and no
+   background, and the body's wallpaper rule is on for every #app-view route
+   — so the backdrop here is the wallpaper itself. */
+.dc-lift-strip {
+  background-color: var(--dc-strip-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+.dc-lift-session {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+/* NO BLUR, NO GLASS. Without backdrop-filter the same alphas leave the star
+   and the three washes sitting UNBLURRED behind body text, which is worse
+   than the flat surface this replaced — the effect depends on the blur, not
+   on the transparency. So where the filter is unsupported both planes fall
+   back to the opaque values they had, and the ladder reads exactly as it did
+   before this change. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dc-lift-strip { background-color: var(--dc-strip); }
+  .dc-lift-session { background-color: var(--dc-sheet); }
+}
+
+/* THE OVERLAP MUST BE A FULL RADIUS, and it has to come from whatever is
+   directly above the sheet.
+
+   The sheet's arc reaches 28px down before it meets the sheet's own left
+   and right edges. If the layer above stops at the sheet's top edge, the
+   page wallpaper reappears through those 28px of shoulder and the effect
+   inverts — the sheet reads as a hole in the page rather than as a card
+   on the strip. So the layer above extends one full radius DOWN BEHIND
+   the sheet, as surface that exists only to be covered and to show
+   through the shoulders.
+
+   IT IS A PSEUDO-ELEMENT, not padding plus a negative margin. Padding
+   would have to be re-derived for every element that can occupy this slot
+   (the strip and five banner shells, each with its own vertical padding),
+   and a negative margin would drag the next sibling up with it. This
+   takes no layout at all, and `background-color: inherit` means the
+   shoulders show whichever surface is actually being sat on — the strip's
+   grey normally, a banner's tint when a banner is up.
+
+   TWO SELECTORS, BECAUSE THE HOST IS NOT ALWAYS THE STRIP. #dc-banners is
+   `display: contents` (see view.tsx), so a sync / credits / new-change
+   banner paints as a flex child of #dc-view and stands between the strip
+   and the sheet whenever one is up.
+
+   `:has(+ .dc-session-body)` cannot express that, and silently: an element
+   with `display: contents` generates no box, but it is STILL A SIBLING —
+   the property changes box generation, not the DOM. So #dc-banners itself
+   matched that selector in both states, its ::after inherited the host's
+   transparent background, and the extension never painted at all. Hence
+   the two real hosts, named:
+
+     - the strip, when #dc-banners is empty (which is the ordinary case), and
+     - the LAST banner inside it, when it is not.
+
+   A banner needs `position: relative` for the same reason both lift layers
+   do: the sheet has to paint over the overhang, and positioned siblings
+   paint after unpositioned ones. */
+#dc-view > #dc-banners > * { position: relative; }
+/* …AND THE LAST ONE DROPS ITS OWN BOTTOM EDGE, for the same reason the
+   strip did when it became a lift layer. A banner shell carries `border-b`
+   (see features/dev-chat/banners.tsx) to divide itself from the transcript
+   below. The sheet draws its own `border-top` now, so that hairline became a
+   SECOND rule at the same y — and, unlike the sheet's, one that does not
+   follow the 28px arc, so it ran straight out across both shoulders and
+   read as an amber box drawn around the banner. Worst in dark, where
+   `dark:border-amber-900/50` on the near-black ground is the brightest
+   thing on that line. Borders BETWEEN stacked banners are untouched; only
+   the one that now abuts the sheet goes.
+
+   `border-bottom-width`, not a colour override, so the sheet meets the
+   banner with no seam at all. It beats Tailwind's `.border-b` on
+   specificity (two ids and a pseudo-class against one class), which is what
+   it takes here — /css/tailwind.css is linked AFTER this file, so an
+   equal-specificity rule would lose on source order. */
+#dc-view > #dc-banners > :last-child { border-bottom-width: 0; }
+#dc-view > #dc-session-header:has(+ #dc-banners:empty)::after,
+#dc-view > #dc-banners > :last-child::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 1.75rem;
+  background-color: inherit;
 }
 
 .dc-chat-pane {
@@ -9207,7 +9689,7 @@ body.is-offline [data-offline-disabled] {
    Keep the control's shape and contrast instead of fading it into an inert
    dropdown: the lock and status below explain why it cannot be opened. */
 .dc-venue-select:disabled {
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--text-muted);
   cursor: not-allowed;
 }

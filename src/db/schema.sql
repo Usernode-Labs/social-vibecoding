@@ -4759,9 +4759,9 @@ CREATE TABLE IF NOT EXISTS native_installation_key_generations (
   CHECK (jsonb_typeof(envelope_public_jwk) = 'object')
 );
 
--- A credential references the existing mobile bearer and provisioned wallet,
--- but neither secret is stored here. The encrypted compact JWE in the sibling
--- table is the only response carrying those values to the native key owner.
+-- A credential always references the existing mobile bearer and may reference
+-- a provisioned wallet. The encrypted compact JWE in the sibling table is the
+-- only response carrying either secret to the native key owner.
 CREATE TABLE IF NOT EXISTS native_session_credentials (
   credential_reference       VARCHAR(47) PRIMARY KEY
     CHECK (credential_reference ~ '^nsc_[A-Za-z0-9_-]{43}$'),
@@ -4772,7 +4772,7 @@ CREATE TABLE IF NOT EXISTS native_session_credentials (
   installation_id            VARCHAR(47) NOT NULL,
   installation_key_generation INTEGER NOT NULL,
   mobile_auth_token_id       BIGINT UNIQUE,
-  account_id                 BIGINT NOT NULL,
+  account_id                 BIGINT,
   network_id                 VARCHAR(16) NOT NULL CHECK (network_id = 'testnet'),
   chain_id                   VARCHAR(100) NOT NULL,
   exchange_request_digest    CHAR(64) NOT NULL
@@ -4811,6 +4811,10 @@ CREATE TABLE IF NOT EXISTS native_session_credentials (
 -- constraint above and skip this compatibility branch.
 ALTER TABLE native_session_credentials
   DROP CONSTRAINT IF EXISTS native_session_credentials_revocation_reason_check;
+-- Login, settings, and push do not require a provisioned on-chain account.
+-- Existing wallet-backed rows retain their exact account/user foreign key.
+ALTER TABLE native_session_credentials
+  ALTER COLUMN account_id DROP NOT NULL;
 -- Sliding mobile leases may move beyond their initial 90-day bound. Replace
 -- the old unnamed exact-expiry constraint while retaining the database-owned
 -- requirement that every lease ends after credential creation.

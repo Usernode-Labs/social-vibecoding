@@ -3416,20 +3416,20 @@ async function resumeDetachedTurnInner({
     // COUNT as well as the sha. A stop that surfaced as a throw does not,
     // and falls back to the durable milestones — enough to say a commit
     // landed, not enough to count them, hence `ahead: null`.
-    const { describeStoppedLanding } = require('./src/routes/sessions');
+    const { describeStoppedLanding, stopLandingMeta } = require('./src/routes/sessions');
     const stoppedTail = (record && typeof record.tail === 'object' && record.tail) || {};
-    const landed = execResult
-      ? describeStoppedLanding({
-        sha: execResult.sha || null,
-        ahead: execResult.ahead ?? 0,
-        pushOk: execResult.pushOk === true,
-      })
-      : describeStoppedLanding({
-        sha: stoppedTail.sha || null,
-        ahead: null,
-        pushOk: stoppedTail.pushOk === true,
-      });
+    const landing = execResult
+      ? { sha: execResult.sha || null, ahead: execResult.ahead ?? 0, pushOk: execResult.pushOk === true }
+      : { sha: stoppedTail.sha || null, ahead: null, pushOk: stoppedTail.pushOk === true };
+    const landed = describeStoppedLanding(landing);
     const text = `Stopped${by ? ` by @${by}` : ''}${landed}.`;
+    // Same facts as data, for the transcript's stopped card. The tail-milestone
+    // branch's `ahead: null` reaches the row as a countless "changes committed"
+    // chip rather than as a fabricated 1.
+    const stopLanding = stopLandingMeta({
+      headline: `Stopped${by ? ` by @${by}` : ''}`,
+      ...landing,
+    });
     const pills = recoveryPills.turnFallbackQuickReplies({ outcome: 'stopped' });
     log.info('server', 'Recovered turn was stopped by the user', {
       sessionId, by, turnId: turnLifecycle.turnIdentity(record),
@@ -3463,10 +3463,10 @@ async function resumeDetachedTurnInner({
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', $2, $3)`,
       [sessionId, text, JSON.stringify({
-        quickReplies: pills, recovered: true, stopped: true,
+        quickReplies: pills, recovered: true, stopped: true, stopLanding,
       })]
     ).catch(() => {});
-    emit('status', { text, quickReplies: pills });
+    emit('status', { text, quickReplies: pills, stopLanding });
     emit('stopped', { by });
     const stoppedCleanupArgs = turnCleanupArgs(record);
     recoveryRetry.requireDurableTurnCleanup(
