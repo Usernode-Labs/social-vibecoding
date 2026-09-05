@@ -4903,13 +4903,30 @@ const AppView = {
     const observer = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
-        // Once per slot: unobserve BEFORE the await, or a fast scroll can
+        // Once per row: unobserve BEFORE the await, or a fast scroll can
         // queue the same fetch several times over.
         observer.unobserve(entry.target);
-        AppView._fillFeedComments(entry.target);
+        AppView._fillFeedComments(
+          entry.target.querySelector('.dev-feed-comments[data-comments-for]')
+        );
       }
     }, { rootMargin: '200px 0px' });
-    for (const slot of slots) observer.observe(slot);
+    // WATCH THE ROW, NOT THE SLOT. The slot ships EMPTY -- that is the whole
+    // point of filling it lazily -- and `#dev-feed .dev-feed-comments:empty`
+    // in public/css/app.css is `display: none`, so that it leaves no gap
+    // under a row with nothing to show. A `display: none` element has no box,
+    // an IntersectionObserver never reports one as intersecting, and so the
+    // callback below never ran: the slot was never filled, so it stayed
+    // `:empty`, so it stayed `display: none`. A deadlock, and it took out
+    // every inline comment preview in the feed rather than merely delaying
+    // one.
+    //
+    // The row is the right target anyway, and is what the comment above
+    // already describes -- "each slot is filled when its ROW is actually
+    // scrolled to". It always has a box, so the presentation rule and the
+    // lazy fill stop being coupled at all. Falling back to the slot keeps
+    // the old behaviour for any markup that is not inside an entry.
+    for (const slot of slots) observer.observe(slot.closest('.dev-feed-entry') || slot);
     AppView._feedCommentObserver = observer;
   },
 

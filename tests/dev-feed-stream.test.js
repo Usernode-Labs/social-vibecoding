@@ -159,6 +159,45 @@ test('inline comments load lazily, per row, off the existing endpoint', () => {
   assert.match(CSS, /\.dev-feed-comments:empty \{ display: none; \}/);
 });
 
+test('the observer watches the ROW, because an empty slot has no box', () => {
+  // The two halves asserted above contradicted each other, and nothing was
+  // checking the link between them. The slot ships EMPTY -- that is the whole
+  // point of filling it lazily -- and `#dev-feed .dev-feed-comments:empty` is
+  // `display: none`, so it leaves no gap under a row with nothing to show. A
+  // display:none element has no box, an IntersectionObserver never reports one
+  // as intersecting, so the callback never ran, so the slot was never filled,
+  // so it stayed :empty. A deadlock: every inline comment preview in the feed
+  // was dead, and the declared check for the relative ages (#1585) with it.
+  //
+  // Driven rather than grepped, because the bug is a RELATIONSHIP between a
+  // stylesheet and an observer target and every source read of either half
+  // looks correct on its own.
+  const observed = [];
+  const prevIO = global.IntersectionObserver;
+  const prevObserver = AppView._feedCommentObserver;
+  const slot = {
+    closest: (sel) => (sel === '.dev-feed-entry' ? row : null),
+  };
+  const row = { querySelector: (sel) => (/dev-feed-comments/.test(sel) ? slot : null) };
+  const root = { querySelectorAll: () => [slot] };
+  global.IntersectionObserver = class {
+    constructor(cb) { this.cb = cb; }
+    observe(el) { observed.push(el); }
+    unobserve() {}
+    disconnect() {}
+  };
+  try {
+    AppView._feedCommentObserver = null;
+    AppView._wireFeedComments(root);
+  } finally {
+    global.IntersectionObserver = prevIO;
+    AppView._feedCommentObserver = prevObserver;
+  }
+  assert.equal(observed.length, 1, 'one target per slot');
+  assert.equal(observed[0], row,
+    'the ROW is observed -- the slot is display:none until it has content');
+});
+
 test('inline comments show a relative age at the right edge', () => {
   const realNow = Date.now;
   Date.now = () => Date.parse('2026-09-04T12:00:00Z');
