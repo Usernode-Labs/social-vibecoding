@@ -8568,6 +8568,25 @@ function describeStoppedLanding({ sha = null, ahead = null, pushOk = false } = {
     + ' no pull request was opened';
 }
 
+// The SAME facts describeStoppedLanding renders as a clause, kept as data.
+// The sentence stays the record â€” a notification, a plain-text export and a
+// shared transcript all show prose â€” but the dev chat should not have to
+// parse its own prose back out to draw a commit count, and a stop that
+// landed commits is the one turn outcome the transcript most needs to state
+// precisely. `ahead: null` means "a commit landed, quantity unknown" here
+// exactly as it does above; it surfaces as a countless chip rather than as
+// a wrong number. `headline` is the sentence WITHOUT the landed clause, so
+// the row can put the facts in chips beside it instead of saying them twice.
+function stopLandingMeta({ headline, sha = null, ahead = null, pushOk = false } = {}) {
+  const landed = !!sha && (ahead == null || ahead > 0);
+  return {
+    headline,
+    commits: landed ? (ahead == null ? null : ahead) : 0,
+    sha: landed ? String(sha).slice(0, 8) : null,
+    pushOk: landed ? pushOk === true : false,
+  };
+}
+
 function staticWrapUpText(outcome, { toolKind = null } = {}) {
   if (outcome === 'push_failed' || outcome === 'failed') {
     return toolKind === 'scout'
@@ -11032,6 +11051,10 @@ async function runScoutTool({
     await sendStatus(`Scout stopped${byStr}.`, {
       ...agentIdentity.metadata,
       durationMs: Date.now() - turnStartedMs,
+      // The scout writes the spec doc and commits nothing, so its landing is
+      // always empty â€” but it still carries the marker, because that is what
+      // moves the row off the pipeline's green âœ“ and onto the stopped card.
+      stopLanding: stopLandingMeta({ headline: `Scout stopped${byStr}` }),
       quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
     });
     activeWorkers.delete(session.id);
@@ -11619,7 +11642,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
     if (result.fatalError) {
       isError = true;
       const msg = `Scout error: ${result.fatalError.substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (apiFailure) {
       // #1204: the run "succeeded" â€” exit 0, result line written â€” but the
@@ -11629,7 +11652,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       // one-line error notice in the viewer's version history forever.
       isError = true;
       const msg = `${describeAgentApiFailure(apiFailure)}. The spec doc was not updated, so send your request again to retry.`;
-      await sendStatus(msg);
+      await sendStatus(msg, turnFailure());
       summaryParts.push(msg);
     } else if (result.ccIsError) {
       // The runtime flagged the run as errored. A scout's final message IS
@@ -11641,7 +11664,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       // "unknown".
       isError = true;
       const msg = `Scout error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (!ccText) {
       isError = true;
@@ -11650,7 +11673,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       const msg = (result.exitCode === -1 || result.exitCode == null)
         ? `${describeMarkerlessExit(result.markerlessCause)} No spec text was produced.`
         : 'Scout finished but produced no spec text.';
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else {
       const publication = await persistScoutPublication({
@@ -11771,6 +11794,22 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
 // cause tag is set by worker.js's journal consumer; the bare
 // "exited with code -1" wording is deliberately gone (it read like a
 // Claude Code failure when the agent was usually healthy).
+// A status that describes a turn ENDING BADLY, rather than a step finishing.
+//
+// `turnError: true` is the only thing that tells the transcript to draw a
+// failure â€” without it the row falls through to the generic system status,
+// whose settled icon is the pipeline's green âœ“ (see the `failure` row in
+// features/dev-chat/transcript-store.ts). The catch-all turn error has set
+// it since #894; the agent-run failures below did not, so "Scout finished but
+// produced no spec text" and "Worker error: â€¦" were reported in green.
+//
+// Spreads rather than mutates: `executionAgentMeta` is one object shared by
+// every status the run emits, and marking it here would mark the run's
+// successes too.
+function turnFailure(meta) {
+  return { ...(meta || {}), turnError: true };
+}
+
 function describeMarkerlessExit(cause) {
   switch (cause) {
     case 'oom_killed':
@@ -12594,9 +12633,19 @@ async function runClaudeCodeTool({
     });
     // #894: no phase-2 wrap-up follows a stop, so this status row is the
     // turn's only pill carrier.
+    // #1378's `landed` clause is the SENTENCE; `stopped` is the same facts
+    // as data, so the transcript can render them as chips instead of asking
+    // the client to parse its own prose back out. The sentence stays: it is
+    // what a shared transcript, a notification and a plain-text export show.
     await sendStatus(`${executionAgentName} stopped${byStr}${landed}.`, {
       ...executionAgentMeta,
       durationMs: Date.now() - turnStartedMs,
+      stopLanding: stopLandingMeta({
+        headline: `${executionAgentName} stopped${byStr}`,
+        sha: result?.sha || null,
+        ahead: result?.ahead ?? 0,
+        pushOk: result?.pushOk === true,
+      }),
       quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
     });
     activeWorkers.delete(session.id);
@@ -13685,12 +13734,12 @@ ${buildGuidance.testingGuidance}`;
     if (result.fatalError) {
       isError = true;
       const msg = `Worker error: ${result.fatalError.substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (result.ccIsError && !hasChanges) {
       isError = true;
       const msg = `${executionAgentName} error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (!hasChanges) {
       const directReply = directSessionTurn && result.exitCode === 0 && !!ccText.trim();
@@ -13722,7 +13771,7 @@ ${buildGuidance.testingGuidance}`;
       const failure = pushFailure || worker.describePushFailure(null);
       const msg = failure.text;
       await sendStatus(msg, {
-        ...executionAgentMeta,
+        ...turnFailure(executionAgentMeta),
         error: msg,
         pushFailureCode: failure.code,
         pushFailurePermanent: failure.permanent,
@@ -14665,4 +14714,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { BUILD_VENUES, describeStoppedLanding, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

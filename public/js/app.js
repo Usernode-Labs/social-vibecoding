@@ -175,6 +175,91 @@ const App = {
     try { localStorage.removeItem(App.SESSION_SNAPSHOT_KEY); } catch (err) { /* ignore */ }
   },
 
+  // ── The boot reload gets a ceiling, and the ceiling is in the URL ─────
+  //
+  // The three reloads in _reconcileSession are the only AUTOMATIC ones in the
+  // app, and each is safe only because it first clears the thing that made it
+  // reload — the session snapshot. Every one of those clears is a
+  // `localStorage` call inside a `try/catch` (see clearSessionSnapshot just
+  // above). Where storage is ephemeral or blocked, which is the ordinary
+  // condition inside a WebView with a non-persistent data store, the clear
+  // fails SILENTLY, the snapshot survives, the next boot reads it back and
+  // reaches the same branch, and the document reloads forever. A reload loop
+  // is indistinguishable from a dead app: the screen never settles, and there
+  // is nothing on it to report itself.
+  //
+  // So the budget lives in the URL, not in storage. sessionStorage would be
+  // the obvious place and is the wrong one: if localStorage is unavailable
+  // then sessionStorage almost certainly is too, so the counter would fail in
+  // exactly the case it exists for. A query parameter survives a reload with
+  // no storage of any kind, which is the only thing that can be relied on
+  // here.
+  //
+  // At most one automatic reload per document chain. A second attempt keeps
+  // the shell up in whatever degraded state it is in — stale, signed-out,
+  // wrong — because a wrong screen a reader can see and act on beats a blank
+  // one that never stops trying.
+  BOOT_RETRY_PARAM: 'un-boot-retry',
+
+  /** Has this document chain already spent its one automatic reload? */
+  _bootRetrySpent() {
+    try {
+      return new URLSearchParams(location.search).get(App.BOOT_RETRY_PARAM) === '1';
+    } catch (err) {
+      // No URL API to read means no marker can be WRITTEN either, so the
+      // budget is already unusable: report it spent and never reload.
+      return true;
+    }
+  },
+
+  // Reload once, marking the document so the next boot knows not to.
+  // Returns false when the budget is spent or the marker cannot be written —
+  // the caller then degrades in place instead. Failing closed is deliberate:
+  // an unmarkable reload is precisely the unbounded one.
+  _bootReload(reason) {
+    if (App._bootRetrySpent()) {
+      App._recordBootRetryDeclined(reason);
+      return false;
+    }
+    let href = null;
+    try {
+      const url = new URL(location.href);
+      url.searchParams.set(App.BOOT_RETRY_PARAM, '1');
+      href = url.toString();
+    } catch (err) { href = null; }
+    if (!href) {
+      App._recordBootRetryDeclined(reason + ' (no URL API)');
+      return false;
+    }
+    // replace(), not assign(): a boot retry is not a place in the reader's
+    // history to go back to.
+    try { location.replace(href); } catch (err) { return false; }
+    return true;
+  },
+
+  _recordBootRetryDeclined(reason) {
+    try {
+      window.__unBoot = window.__unBoot || { errors: [] };
+      window.__unBoot.errors.push({
+        step: 'boot-reload',
+        message: 'declined a second automatic reload (' + reason + ')',
+      });
+    } catch (err) { /* the console.warn below is the other half */ }
+    console.warn('[boot] not reloading again:', reason);
+  },
+
+  // Once a boot has actually settled, take the marker back off the address
+  // bar — it has done its job, and it must not ride along into a link the
+  // reader copies or a route the checks shoot.
+  _clearBootRetryMark() {
+    if (!App._bootRetrySpent()) return;
+    try {
+      const url = new URL(location.href);
+      url.searchParams.delete(App.BOOT_RETRY_PARAM);
+      history.replaceState(null, '', url.toString());
+    } catch (err) { /* cosmetic only */ }
+  },
+
   // Ask the service worker to drop the cached API responses of a session
   // that is definitively over. Fire-and-forget: the snapshot has already
   // been cleared, so a worker that never answers changes nothing.
@@ -480,7 +565,10 @@ const App = {
       App._dropCachedSession();
       App._sessionFromSnapshot = false;
       App._publishBootSession({ signedOut: true });
-      location.reload();
+      // The reload lands on the sign-in screen. With the budget spent,
+      // enterAnonymous() reaches the same place without a navigation, which
+      // is the whole point of having a degraded path.
+      if (!App._bootReload('session ended')) await App.enterAnonymous();
       return;
     }
     let user = null;
@@ -488,7 +576,10 @@ const App = {
     if (!user) return;
     if (String(user.id) !== String(App.user?.id)) {
       App.clearSessionSnapshot();
-      location.reload();
+      // A shell painted for someone else cannot be repaired in place, so with
+      // the budget spent the honest fallback is the anonymous shell rather
+      // than another account's screen.
+      if (!App._bootReload('different account')) await App.enterAnonymous();
       return;
     }
     // Platform access is the one field whose value decides which SHELL is
@@ -498,10 +589,13 @@ const App = {
     // that in place.
     if (!!user.hasPlatformAccess !== !!App.user?.hasPlatformAccess) {
       App.saveSessionSnapshot(user);
-      location.reload();
+      // enterAuthed routes on hasPlatformAccess, so re-entering with the
+      // verified user puts the right shell up without a navigation.
+      if (!App._bootReload('platform access changed')) await App.enterAuthed(user);
       return;
     }
     App._sessionFromSnapshot = false;
+    App._clearBootRetryMark();
     if (window.NativeChrome &&
         typeof NativeChrome.prepareIdentityPublication === 'function') {
       NativeChrome.prepareIdentityPublication(user);
@@ -599,7 +693,14 @@ const App = {
     // confirming is what puts somebody on the list now, so the list place
     // and the stage-2 offer live there rather than on `waitlist-joined`,
     // which stops at the confirm step.
+    // `waitlist-more` opens the stage-2 survey for the token in the
+    // fragment (`/?shot=waitlist-more#more/<48 hex>`). The survey is an
+    // auth screen, and restoreFromHash drops an auth route outright for a
+    // signed-in user who has platform access — which every capture and
+    // proposal-check session is — so without this the screen is reachable
+    // by a real recipient and by nothing that photographs or checks it.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
+        shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'password-recovery' && shot !== 'password-recovery-sent') {
       return false;

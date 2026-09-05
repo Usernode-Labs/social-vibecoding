@@ -4845,6 +4845,23 @@ const AppView = {
   // indented lines, with a count when there is more behind them.
   FEED_COMMENT_PREVIEW: 2,
 
+  // How many issue slots fill on paint, before the observer takes over.
+  //
+  // The lazy fill below bounds its cost by REQUEST COUNT -- "a feed of thirty
+  // issues must not fire thirty requests on paint" -- but it was implemented
+  // as a bound on VIEWPORT POSITION, which is not the same thing in a stream
+  // that mixes issues with proposals, sessions and merged work. On an app with
+  // live proposal activity the first issue row can sit well below the fold, so
+  // every inline preview stayed empty until the reader scrolled to it one row
+  // at a time, and a preview nobody sees on the screen it belongs to is not
+  // doing its job.
+  //
+  // Counting from the SLOT list rather than from the stream makes this
+  // independent of where the issues land: the first few issue rows fill
+  // whether they are rows 1-3 or rows 12, 15 and 20. Three keeps the paint
+  // cost an order of magnitude under the thirty the comment above is about.
+  FEED_COMMENT_EAGER: 3,
+
   _feedCommentsHtml(comments) {
     const list = Array.isArray(comments) ? comments : [];
     if (!list.length) return '';
@@ -4897,19 +4914,44 @@ const AppView = {
       AppView._feedCommentObserver.disconnect();
       AppView._feedCommentObserver = null;
     }
-    if (!root || typeof IntersectionObserver !== 'function') return;
-    const slots = root.querySelectorAll('.dev-feed-comments[data-comments-for]');
+    if (!root) return;
+    const slots = [...root.querySelectorAll('.dev-feed-comments[data-comments-for]')];
     if (!slots.length) return;
+    // The first few outright, wherever they sit in the stream. Also the whole
+    // behaviour where IntersectionObserver is unavailable, which used to fill
+    // nothing at all.
+    const lazy = slots.slice(AppView.FEED_COMMENT_EAGER);
+    for (const slot of slots.slice(0, AppView.FEED_COMMENT_EAGER)) {
+      AppView._fillFeedComments(slot);
+    }
+    if (!lazy.length || typeof IntersectionObserver !== 'function') return;
     const observer = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
-        // Once per slot: unobserve BEFORE the await, or a fast scroll can
+        // Once per row: unobserve BEFORE the await, or a fast scroll can
         // queue the same fetch several times over.
         observer.unobserve(entry.target);
-        AppView._fillFeedComments(entry.target);
+        AppView._fillFeedComments(
+          entry.target.querySelector('.dev-feed-comments[data-comments-for]')
+        );
       }
     }, { rootMargin: '200px 0px' });
-    for (const slot of slots) observer.observe(slot);
+    // WATCH THE ROW, NOT THE SLOT. The slot ships EMPTY -- that is the whole
+    // point of filling it lazily -- and `#dev-feed .dev-feed-comments:empty`
+    // in public/css/app.css is `display: none`, so that it leaves no gap
+    // under a row with nothing to show. A `display: none` element has no box,
+    // an IntersectionObserver never reports one as intersecting, and so the
+    // callback below never ran: the slot was never filled, so it stayed
+    // `:empty`, so it stayed `display: none`. A deadlock, and it took out
+    // every inline comment preview in the feed rather than merely delaying
+    // one.
+    //
+    // The row is the right target anyway, and is what the comment above
+    // already describes -- "each slot is filled when its ROW is actually
+    // scrolled to". It always has a box, so the presentation rule and the
+    // lazy fill stop being coupled at all. Falling back to the slot keeps
+    // the old behaviour for any markup that is not inside an entry.
+    for (const slot of lazy) observer.observe(slot.closest('.dev-feed-entry') || slot);
     AppView._feedCommentObserver = observer;
   },
 
@@ -11560,6 +11602,14 @@ const AppView = {
     // onto the matching pair. ids are 32-hex-validated, so they're safe
     // inside the data-* attributes; path goes through esc(). `mobile`
     // flags a phone-frame capture group (#768) so the overlay can label it.
+    // A side with NO capture. It used to return '' — one lone tile plus a
+    // caption, which reads as a capture that failed rather than as a pair
+    // with one honest half. The placeholder keeps the row two-up so the
+    // caption below it explains a shape the reader can already see.
+    const emptyTile = (label, mobile) => `<figure ${mobile ? 'data-viewport="mobile"' : ''} class="usn-visual-figure" style="flex:1 1 0;min-width:0;display:block;margin:0">
+        <div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
+        <div class="usn-visual-empty${mobile ? ' usn-visual-phone' : ''}" aria-hidden="true"></div>
+      </figure>`;
     const tile = (label, side, b, a, path, mobile) => {
       const v = side === 'before' ? b : a;
       if (!v) return '';
@@ -11578,12 +11628,16 @@ const AppView = {
         ? ' <span class="text-zinc-500 dark:text-zinc-500" style="text-transform:none;letter-spacing:0">· no recording</span>'
         : '';
       const labelHtml = `<div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}${marker}</div>`;
+      // #768's `mobile` was a text suffix on the row label — "(mobile)" —
+      // which a reader takes in AFTER deciding the tile looks oddly cropped.
+      // The outline says it before they read anything.
+      const framed = (m) => `<div class="usn-visual-media${mobile ? ' usn-visual-phone' : ''}">${m}</div>`;
       // Without the overlay there's nothing to click — render an inert
       // figure so the tile isn't a button that does nothing.
       if (!overlay) {
         return `<figure ${mobile ? 'data-viewport="mobile"' : ''} data-visual-tile="${side}" data-path="${esc(path)}" style="flex:1 1 0;min-width:0;display:block;margin:0">
           ${labelHtml}
-          ${media}
+          ${framed(media)}
         </figure>`;
       }
       const dataAttrs = [
@@ -11599,7 +11653,7 @@ const AppView = {
       ].filter(Boolean).join(' ');
       return `<button type="button" ${dataAttrs} title="${label}: open before/after comparison" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
         <div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
-        ${media}
+        ${framed(media)}
       </button>`;
     };
 
@@ -11610,9 +11664,11 @@ const AppView = {
       const a = sideIds(g.after);
       const path = g.path || '/';
       const mobile = g.viewport === 'mobile';
-      const before = tile('Before', 'before', b, a, path, mobile);
-      const after = tile('After', 'after', b, a, path, mobile);
-      if (!after && !before) continue;
+      const before = tile('Before', 'before', b, a, path, mobile)
+        || (a ? emptyTile('Before', mobile) : '');
+      const after = tile('After', 'after', b, a, path, mobile)
+        || (b ? emptyTile('After', mobile) : '');
+      if (!a && !b) continue;
       // Label the row with its captured path unless it's the single
       // root-only DESKTOP group (unchanged from the pre-#270 single-tile
       // output). A mobile group (#768) is always labelled — the phone
@@ -11633,7 +11689,19 @@ const AppView = {
       const noteHtml = note
         ? `<div class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" style="margin:2px 0 0">${esc(note)}</div>`
         : '';
-      rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>${noteHtml}`);
+      rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:stretch;margin:4px 0 2px">${before}${after}</div>${noteHtml}`);
+    }
+    // ONE STRIP, and the rest behind a disclosure. Every group used to stack
+    // inline, so a three-route capture was three full-width before/after
+    // strips in the middle of a transcript — the proposal's own title ended
+    // up a screen above its actions. The first route is the one the
+    // submission named first, which is the one worth seeing without asking.
+    //
+    // NOT in gallery mode (`preload: 'none'`): that view exists to show every
+    // recording at once, and hiding four fifths of it would defeat it.
+    if (rows.length > 1 && !clickToPlay) {
+      const [first, ...rest] = rows;
+      return `${first}<details class="usn-visual-more"><summary class="usn-visual-more-summary">All ${rows.length} screens</summary>${rest.join('')}</details>`;
     }
     return rows.join('');
   },
