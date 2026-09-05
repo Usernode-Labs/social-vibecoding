@@ -201,6 +201,29 @@ test('the default section is an ungated key', () => {
   assert.equal(hit.gate, null, 'the default section is never behind a gate');
 });
 
+// ── #1556: Language is gated on an already-saved locale ────────────────
+
+test('the Language section is offered only to a user who already saved a locale', () => {
+  const hit = registrySections().find((s) => s.key === 'language');
+  assert.ok(hit, 'language is still a registered section');
+  assert.equal(hit.gate, 'settings-language-section',
+    'the shell is English-only, so the picker is behind a capability gate');
+  // It ships hidden (the generic gate test above covers the markup), and the
+  // render fn is what reveals it — for a saved value, and only then.
+  const fn = sliceMethod(settingsJs, '_renderLanguageSection');
+  assert.match(fn, /const value = this\.state\.locale \|\| ''/,
+    'the gate is decided by the stored locale, nothing else');
+  assert.match(fn, /if \(!value\) \{[^}]*section\.classList\.add\('hidden'\);[^}]*return;/,
+    'no saved locale -> the section stays hidden and nothing else renders');
+  assert.match(fn, /section\.classList\.remove\('hidden'\)/,
+    'a saved locale -> the section is revealed, so the preference stays changeable');
+  // state.locale lands with /api/auth/me, which can resolve AFTER a cold-boot
+  // deep link has already painted the menu — so the gate re-renders there too.
+  const refresh = sliceMethod(settingsJs, 'refresh');
+  assert.match(refresh, /this\._renderLanguageSection\(\)/,
+    'refresh() re-runs the gate once the account payload arrives');
+});
+
 // ── MOVE, DON'T REWRITE ────────────────────────────────────────────────
 
 test('every pre-existing settings control id survived the move', () => {
@@ -749,7 +772,9 @@ test('dapp.json covers the settings screen and its deep links', () => {
   const paths = tests.map((t) => t.path);
   assert.ok(paths.includes('/#settings'),
     'the screen itself is checked at its bare route');
-  for (const key of ['password', 'app-ai', 'agent-files', 'language', 'cli', 'admin-preview']) {
+  // #1556: 'language' is deliberately absent — it is no longer a routable
+  // section for a default user, and its check asserts the FALLBACK instead.
+  for (const key of ['password', 'app-ai', 'agent-files', 'cli', 'admin-preview']) {
     assert.ok(
       paths.some((p) => p.includes(`#settings/${key}`)),
       `a rendered check deep-links #settings/${key}`,
@@ -771,6 +796,14 @@ test('dapp.json covers the settings screen and its deep links', () => {
         `${t.path} needs an explicit CLI review fixture`);
     }
   }
+  // #1556: the Language deep link still has a check, but it asserts that the
+  // route falls back to the default section rather than rendering a pane.
+  const lang = tests.filter((t) => (t.path || '').includes('#settings/language'));
+  assert.equal(lang.length, 1, 'exactly one declared check drives #settings/language');
+  assert.match(lang[0].expectSelector || '',
+    /data-settings-section="theme"\]:not\(\.hidden\)/,
+    'the Language deep link lands on the default section, not on a Language pane');
+
   // #1102: and one check drives a real history traversal, which is the only
   // way to produce the duplicate popstate + hashchange pair that used to
   // repaint inside the transition's uncaptured snapshot window.
