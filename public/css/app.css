@@ -3401,6 +3401,15 @@ body:has(#platform-header.hidden) #app-frame-host {
 
 /* ── PR card ────────────────────────────────────────────── */
 
+/* THE TRANSCRIPT'S CARDS READ THE LADDER, not --bg-secondary directly.
+   Same reason the message bubble does: that token is one step UP from
+   --bg-primary in light and, in dark, it is the session sheet's own value —
+   so a card painted with it sat flush on the sheet and disappeared. This
+   card is the one that matters most: it carries the before/after strip and
+   the Propose button. Its inner surfaces move with it, from --bg-primary
+   (which is now DARKER than the sheet in dark, a hole rather than an inset)
+   to --dc-sheet, one honest step back down. Light is unchanged: the ladder's
+   light values are the tokens these rules already used. */
 .dc-pr-card {
   margin: 8px 12px;
   padding: 12px;
@@ -3408,7 +3417,7 @@ body:has(#platform-header.hidden) #app-frame-host {
      language's corner. --bg-card is an accent TINT, which read as a
      highlighted state once the accent turned blue; the neutral surface is
      what the deck's embedded cards use. */
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   border: 1px solid transparent;
   border-radius: 1rem;
   transition: background 300ms;
@@ -3471,7 +3480,7 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-credits-card {
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   padding: 12px 14px;
   margin: 6px 0;
 }
@@ -3509,7 +3518,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
 }
 
 .dc-credits-option-text { flex: 1 1 220px; min-width: 0; }
@@ -3653,7 +3662,7 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-launchpad {
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   padding: 12px 14px;
   margin: 6px 0;
 }
@@ -3680,7 +3689,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
 }
 
 .dc-launchpad-resume[data-launchpad-resume="continue"] {
@@ -3728,7 +3737,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   height: 20px;
   border-radius: 50%;
   border: 1px solid var(--border);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 600;
@@ -3765,7 +3774,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-secondary);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
@@ -3779,7 +3788,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   margin-top: 6px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
@@ -3802,7 +3811,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   color: var(--text-primary);
   font: inherit;
   font-size: 13px;
@@ -3836,7 +3845,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   font-weight: 600;
   padding: 4px 14px;
   border: 0;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   color: var(--text-muted);
   cursor: pointer;
 }
@@ -3853,7 +3862,7 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-flow-card {
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   padding: 12px 14px;
   margin: 6px 0;
 }
@@ -3887,7 +3896,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
 }
 
 .dc-flow-option-text { flex: 1 1 220px; min-width: 0; }
@@ -3957,7 +3966,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   font-weight: 600;
   border: 1px solid var(--border);
   color: var(--text-muted);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
 }
 
 .dc-flow-step-body { flex: 1 1 auto; min-width: 0; }
@@ -4000,7 +4009,7 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-flow-actions-footer { margin-top: 10px; }
 
 .dc-flow-action {
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   color: var(--text-secondary);
   border: 1px solid var(--border);
 }
@@ -4054,7 +4063,7 @@ a.dc-flow-action {
   font-size: 11px;
   line-height: 1.45;
   color: var(--text-secondary);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 10px;
@@ -4070,7 +4079,7 @@ a.dc-flow-action {
 }
 
 .dc-pr-btn-preview {
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--accent);
   border: 1px solid var(--border);
 }
@@ -4082,7 +4091,7 @@ a.dc-flow-action {
   cursor: not-allowed;
   color: var(--text-muted);
 }
-.dc-pr-btn-preview:disabled:hover { background: var(--bg-secondary); }
+.dc-pr-btn-preview:disabled:hover { background: var(--dc-raised); }
 
 .dc-pr-btn-promote { background: var(--accent); color: white; }
 .dc-pr-btn-promote:hover { background: var(--accent-light); }
@@ -4110,7 +4119,7 @@ a.dc-flow-action {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--accent);
   border: 1px solid var(--border);
   transition: background 150ms, border-color 150ms;
@@ -4151,7 +4160,7 @@ a.dc-flow-action {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--text-muted);
   border: 1px solid var(--border);
   transition: background 150ms;
@@ -4214,7 +4223,7 @@ a.dc-flow-action {
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--accent);
   border: 1px solid var(--border);
   transition: background 150ms, border-color 150ms;
@@ -4254,7 +4263,7 @@ a.dc-flow-action {
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   padding: 4px;
 }
 
@@ -4312,7 +4321,7 @@ a.dc-flow-action {
   height: 26px;
   border-radius: 6px;
   cursor: pointer;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--text-muted);
   border: 1px solid var(--border);
   transition: color 150ms, border-color 150ms, background 150ms;
@@ -4487,7 +4496,7 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
   font-size: 11px;
   line-height: 1.4;
   color: var(--text-faint);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   max-height: 300px;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -6290,7 +6299,7 @@ span.gc-vote-btn-icon { cursor: default; }
      without restating it — two copies of a shadow list drift the first time
      one of them is tuned. */
   --dc-card-elevation: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -8px rgba(0, 0, 0, 0.14);
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   border-radius: 1.5rem;
   padding: 0.875rem 1rem 0.625rem;
   box-shadow: var(--dc-card-elevation);
@@ -6303,7 +6312,7 @@ span.gc-vote-btn-icon { cursor: default; }
 :root.dark .dc-card,
 .dark .dc-card {
   --dc-card-elevation: 0 0 #0000;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   border: 1px solid var(--border);
 }
 
@@ -9470,7 +9479,7 @@ body.is-offline [data-offline-disabled] {
    Keep the control's shape and contrast instead of fading it into an inert
    dropdown: the lock and status below explain why it cannot be opened. */
 .dc-venue-select:disabled {
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   color: var(--text-muted);
   cursor: not-allowed;
 }

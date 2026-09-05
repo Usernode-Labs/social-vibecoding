@@ -169,3 +169,27 @@ test('light mode is byte-identical — only dark moved', () => {
   assert.match(light, /--dc-sheet: #ffffff;/, "--bg-primary's value");
   assert.match(light, /--dc-raised: #f5f5f7;/, "--bg-secondary's value again");
 });
+
+test('nothing in the transcript reads the raw surface tokens any more', () => {
+  // The sweep this pins. Moving the sheet in dark left every OTHER card in
+  // the transcript sitting on the wrong step: a rule on --bg-secondary was
+  // flush with the new sheet (both #1c1c1e) and one on --bg-primary was
+  // DARKER than it (#0b0b0c) — a hole rather than an inset. The worst of
+  // them was .dc-pr-card, which carries the before/after strip and the
+  // Propose button.
+  //
+  // The swap is light-identical BY CONSTRUCTION, which is the only reason it
+  // could be done mechanically: --dc-sheet is --bg-primary's light value and
+  // --dc-raised is --bg-secondary's, asserted above.
+  const rules = APP_CSS.split('}');
+  const offenders = [];
+  for (const r of rules) {
+    const head = r.slice(0, r.indexOf('{'));
+    if (!/\.dc-[a-z0-9-]/.test(head)) continue;
+    if (/background(-color)?\s*:\s*var\(--bg-(primary|secondary)\)/.test(r)) {
+      offenders.push(head.trim().split('\n').pop().trim());
+    }
+  }
+  assert.deepEqual(offenders, [],
+    'a .dc- surface must take the ladder, not the raw token');
+});
