@@ -230,6 +230,23 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
   );
   if (!rows.length) return { archived: false };
 
+  return finalizeArchivedSession({ pool, sessionId, userId, reason, purgeCc });
+}
+
+// Finish the reversible-archive side effects after the status transition.
+// proposal_start uses this after atomically archiving a predecessor and
+// inserting its successor in one transaction; ordinary archiveSession calls
+// it immediately after its own guarded UPDATE. These operations are
+// best-effort, so a process restart can leave only resources the existing
+// staging/worker reapers already know how to collect.
+async function finalizeArchivedSession({
+  pool,
+  sessionId,
+  userId = null,
+  reason = 'manual',
+  purgeCc = false,
+}) {
+
   // owner_username feeds the PR-withdrawn group-chat line (#200). The
   // manual archive endpoint is owner-scoped, so when userId is present
   // the session owner IS the actor. LEFT JOIN: a missing user row must
@@ -281,6 +298,8 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
     // correctly: the group voted it down rather than it just going quiet.
     const content = reason === 'auto-rejected'
       ? `${label} was closed by the group (more No than Yes, not enough support)`
+      : reason === 'proposal-replaced' && userId != null && session.owner_username
+        ? `${session.owner_username} replaced ${label} with a new proposal`
       : userId != null && session.owner_username
         ? `${session.owner_username} withdrew ${label}`
         : `${label} was withdrawn (no vote activity)`;
@@ -529,6 +548,7 @@ module.exports = {
   freeGlobalSlot,
   teardownStagingForSession,
   archiveSession,
+  finalizeArchivedSession,
   unarchiveSession,
   purgeArchivedCc,
 };
