@@ -210,7 +210,14 @@ test("the worker answers build-scoped URLs cache-first and precaches the documen
   assert.match(src, /await precacheShell\(shell\);/, 'install() precaches through it');
   assert.match(src, /await precacheShell\(cache, \{ reload: true \}\);/, 'the deploy prefetch does too, bypassing the HTTP cache');
   assert.equal(sw.SHELL_ASSETS[0], '/index.html', 'the document is the first entry: precacheShell reads the build id off it');
-  assert.equal(sw.SW_VERSION, 'v8', 'the shell cache is versioned past the plain-path precache');
+  // A FLOOR, not an exact match. What this line is about is that the shell
+  // cache is versioned past the plain-path precache a v7 worker filled — any
+  // later version satisfies that equally. Pinning the exact string instead
+  // made every future bump break this test, which is a tax on the one lever
+  // that retires a stale cache fleet-wide (see the note above SW_VERSION).
+  const swVersion = Number(String(sw.SW_VERSION).replace(/^v/, ''));
+  assert.ok(Number.isInteger(swVersion) && swVersion >= 8,
+    `the shell cache is versioned past the plain-path precache (got ${sw.SW_VERSION})`);
 });
 
 // ── src/services/static-cache.js + server.js: the route that serves it ──
