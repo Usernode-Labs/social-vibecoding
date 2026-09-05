@@ -27,6 +27,9 @@
     return code === 'native_session_ticket_expired' ||
       code === 'native_session_attempt_revoked' ||
       code === 'native_session_attempt_conflict' ||
+      // TODO(native-walletless-compat): Drop a pre-hotfix walletless replay so
+      // a later attempt can provision a compatible wallet when one is available.
+      code === 'native_session_wallet_required' ||
       code === 'native_session_credential_revoked' ||
       code === 'native_session_credential_expired';
   }
