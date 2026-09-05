@@ -159,6 +159,122 @@ test('inline comments load lazily, per row, off the existing endpoint', () => {
   assert.match(CSS, /\.dev-feed-comments:empty \{ display: none; \}/);
 });
 
+test('the observer watches the ROW, because an empty slot has no box', () => {
+  // The two halves asserted above contradicted each other, and nothing was
+  // checking the link between them. The slot ships EMPTY -- that is the whole
+  // point of filling it lazily -- and `#dev-feed .dev-feed-comments:empty` is
+  // `display: none`, so it leaves no gap under a row with nothing to show. A
+  // display:none element has no box, an IntersectionObserver never reports one
+  // as intersecting, so the callback never ran, so the slot was never filled,
+  // so it stayed :empty. A deadlock: every inline comment preview in the feed
+  // was dead, and the declared check for the relative ages (#1585) with it.
+  //
+  // Driven rather than grepped, because the bug is a RELATIONSHIP between a
+  // stylesheet and an observer target and every source read of either half
+  // looks correct on its own.
+  const observed = [];
+  const prevIO = global.IntersectionObserver;
+  const prevObserver = AppView._feedCommentObserver;
+  const prevFill = AppView._fillFeedComments;
+  // Four slots, so one is past FEED_COMMENT_EAGER and reaches the observer.
+  const mk = (n) => {
+    const slot = { n, closest: (sel) => (sel === '.dev-feed-entry' ? row : null) };
+    const row = { n, querySelector: (sel) => (/dev-feed-comments/.test(sel) ? slot : null) };
+    return { slot, row };
+  };
+  const pairs = [1, 2, 3, 4].map(mk);
+  const root = { querySelectorAll: () => pairs.map((p) => p.slot) };
+  global.IntersectionObserver = class {
+    constructor(cb) { this.cb = cb; }
+    observe(el) { observed.push(el); }
+    unobserve() {}
+    disconnect() {}
+  };
+  AppView._fillFeedComments = () => {};
+  try {
+    AppView._feedCommentObserver = null;
+    AppView._wireFeedComments(root);
+  } finally {
+    global.IntersectionObserver = prevIO;
+    AppView._feedCommentObserver = prevObserver;
+    AppView._fillFeedComments = prevFill;
+  }
+  assert.equal(observed.length, 1, 'one target for the one lazy slot');
+  assert.equal(observed[0], pairs[3].row,
+    'the ROW is observed -- the slot is display:none until it has content');
+});
+
+test('the first few issue slots fill on paint, wherever they sit in the stream', () => {
+  // The lazy fill bounds its cost by REQUEST COUNT -- "a feed of thirty issues
+  // must not fire thirty requests on paint" -- but it was written as a bound on
+  // VIEWPORT POSITION, which is not the same thing once the stream mixes issues
+  // with proposals, sessions and merged work. Measured at 1280x800 against a
+  // feed of forty issues: twenty rows rendered, twenty slots, and only SEVEN
+  // fetches -- the cutoff is the viewport plus the observer's 200px margin. On
+  // an app with live proposal activity the first issue row sits below that, so
+  // every inline preview stayed empty.
+  //
+  // Counting from the SLOT list makes it independent of where the issues land.
+  // The observer below is deliberately never fired: these rows stand for ones
+  // far enough down that it never would.
+  const filled = [];
+  const observed = [];
+  const prevIO = global.IntersectionObserver;
+  const prevObserver = AppView._feedCommentObserver;
+  const prevFill = AppView._fillFeedComments;
+  const mk = (n) => {
+    const slot = { n, closest: (sel) => (sel === '.dev-feed-entry' ? row : null) };
+    const row = { querySelector: () => slot };
+    return slot;
+  };
+  const slots = [1, 2, 3, 4, 5, 6].map(mk);
+  const root = { querySelectorAll: () => slots };
+  global.IntersectionObserver = class {
+    constructor(cb) { this.cb = cb; }
+    observe(el) { observed.push(el); }
+    unobserve() {}
+    disconnect() {}
+  };
+  AppView._fillFeedComments = (slot) => { filled.push(slot && slot.n); };
+  try {
+    AppView._feedCommentObserver = null;
+    AppView._wireFeedComments(root);
+  } finally {
+    global.IntersectionObserver = prevIO;
+    AppView._feedCommentObserver = prevObserver;
+    AppView._fillFeedComments = prevFill;
+  }
+  assert.equal(AppView.FEED_COMMENT_EAGER, 3, 'three is the paint budget');
+  assert.deepEqual(filled, [1, 2, 3],
+    'the first three fill without the observer ever reporting them');
+  assert.equal(observed.length, 3, 'and the rest stay lazy');
+});
+
+test('a context with no IntersectionObserver still fills the first few', () => {
+  // It used to return before filling anything at all.
+  const filled = [];
+  const prevIO = global.IntersectionObserver;
+  const prevObserver = AppView._feedCommentObserver;
+  const prevFill = AppView._fillFeedComments;
+  const mk = (n) => {
+    const slot = { n, closest: (sel) => (sel === '.dev-feed-entry' ? row : null) };
+    const row = { querySelector: () => slot };
+    return slot;
+  };
+  const slots = [1, 2, 3, 4].map(mk);
+  global.IntersectionObserver = undefined;
+  AppView._fillFeedComments = (slot) => { filled.push(slot && slot.n); };
+  try {
+    AppView._feedCommentObserver = null;
+    AppView._wireFeedComments({ querySelectorAll: () => slots });
+  } finally {
+    global.IntersectionObserver = prevIO;
+    AppView._feedCommentObserver = prevObserver;
+    AppView._fillFeedComments = prevFill;
+  }
+  assert.deepEqual(filled, [1, 2, 3]);
+});
+
 test('inline comments show a relative age at the right edge', () => {
   const realNow = Date.now;
   Date.now = () => Date.parse('2026-09-04T12:00:00Z');

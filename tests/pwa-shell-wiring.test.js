@@ -371,3 +371,102 @@ test('the offline state is styled from the committed stylesheet, not inline', ()
     assert.ok(css.includes(sel), `app.css has no ${sel} rule`);
   }
 });
+
+// ── registerServiceWorker() may never throw ─────────────────────────────
+//
+// main.tsx calls it at MODULE SCOPE, above
+// `flushSync(() => hydrateRoot(document.body, <Shell />))`. So a throw here
+// aborts the entry module before hydration starts: React never adopts the
+// document, every island stays the empty markup the prerender shipped,
+// window.Offline is never installed, and the legacy public/js/** scripts run
+// against a shell with no reconciler behind it. The viewer gets a static page
+// that paints once and then goes blank when the router reveals an empty
+// screen.
+//
+// The guard that used to stand there was `'serviceWorker' in navigator`,
+// which tests for the ATTRIBUTE. WebKit installs the attribute and hands back
+// `undefined` — or throws SecurityError off the getter — wherever the worker
+// is unavailable to the page: a WKWebView whose host app has not opted its
+// domains into WKAppBoundDomains, a WKWebsiteDataStore.nonPersistent() store,
+// Safari with site data blocked. Every one of those passed the `in` test and
+// then dereferenced undefined on the next line, which is how an iOS-app-only
+// blank screen came out of a precache nicety.
+//
+// Driven rather than grepped: the whole point is that the shapes below are
+// the ones a source read looks fine against.
+const { loadTsx } = require('./lib/render-tsx');
+
+function withNavigator(value, fn) {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { ...value, configurable: true });
+  try { return fn(); } finally {
+    Object.defineProperty(globalThis, 'navigator', original);
+  }
+}
+
+/** A container whose register() resolves, recording what it was asked. */
+function workingContainer(calls) {
+  return {
+    register: (scope) => { calls.push(['register', scope]); return Promise.resolve({}); },
+    addEventListener: (type) => { calls.push(['addEventListener', type]); },
+  };
+}
+
+test('registerServiceWorker survives every shape a WebView presents', () => {
+  const mod = loadTsx('frontend/src/lib/service-worker.ts');
+
+  // The shape that produced the bug: attribute present, object missing.
+  withNavigator({ value: { serviceWorker: undefined } }, () => {
+    assert.doesNotThrow(() => mod.registerServiceWorker(),
+      'a present-but-undefined navigator.serviceWorker must not take out hydration');
+  });
+
+  // WebKit throws SecurityError off the GETTER when site data is blocked.
+  withNavigator({ get() { throw new Error('SecurityError'); } }, () => {
+    assert.doesNotThrow(() => mod.registerServiceWorker(),
+      'a throwing navigator.serviceWorker getter must not take out hydration');
+  });
+
+  // Present, but not a container (no register()).
+  withNavigator({ value: { serviceWorker: {} } }, () => {
+    assert.doesNotThrow(() => mod.registerServiceWorker(),
+      'an object without register() must not take out hydration');
+  });
+
+  // register() throws SYNCHRONOUSLY — the blocked-storage SecurityError, which
+  // the old `.catch()` alone could never see.
+  withNavigator({
+    value: {
+      serviceWorker: {
+        register() { throw new Error('SecurityError'); },
+        addEventListener() {},
+      },
+    },
+  }, () => {
+    assert.doesNotThrow(() => mod.registerServiceWorker(),
+      'a synchronous throw from register() must not take out hydration');
+  });
+
+  // And the ordinary rejection stays handled, so it raises no unhandled
+  // rejection (which Playwright reports as a pageerror, failing every route).
+  withNavigator({
+    value: {
+      serviceWorker: {
+        register: () => Promise.reject(new Error('nope')),
+        addEventListener() {},
+      },
+    },
+  }, () => {
+    assert.doesNotThrow(() => mod.registerServiceWorker());
+  });
+});
+
+test('registerServiceWorker still registers at root scope when it can', () => {
+  const mod = loadTsx('frontend/src/lib/service-worker.ts');
+  const calls = [];
+  withNavigator({ value: { serviceWorker: workingContainer(calls) } }, () => {
+    mod.registerServiceWorker();
+  });
+  assert.deepStrictEqual(calls, [['addEventListener', 'message'], ['register', '/sw.js']],
+    'the api-updated listener is attached, then the worker registers at root scope');
+});
