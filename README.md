@@ -20,6 +20,10 @@ Mayor / Claude Code pipeline that produces real PRs.
   — authoritative platform conventions injected into Mayor and
   Claude Code prompts. Also served live at `/claude.md` on every
   running instance (see `server.js`).
+- **[docs/waitlist-public-api.md](./docs/waitlist-public-api.md)**
+  — integrator reference for the public waitlist API: every
+  endpoint, request and response shape, the status block, the
+  rate-limit budgets and the trusted-integrator headers.
 
 ## Deployment paths
 

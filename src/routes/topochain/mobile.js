@@ -46,7 +46,7 @@ const { clientIp } = require('../../services/client-ip');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { mobileTokenAuth, optionalSessionAuth } = require('../../middleware/topochain-auth');
-const { authLimiter } = require('../../middleware/rate-limits');
+const { mobileWalletClaimLimiter } = require('../../middleware/rate-limits');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
@@ -1833,8 +1833,11 @@ function topochainMobileRoutes(config) {
   // in its encrypted envelope. There is no second secret-bearing wallet API.
   router.post(
     '/api/v4/mobile/wallet/claim',
-    authLimiter,
+    // After optionalSessionAuth, not before: the limiter keys per user and
+    // the route already requires a live web session, so req.user has to be
+    // populated before its key is computed.
     optionalSessionAuth(config),
+    mobileWalletClaimLimiter,
     async (req, res) => {
       const sessionToken = req.cookies?.session;
       if (!req.user || !sessionToken) return fail(res, 401, 'Unauthenticated.');

@@ -115,7 +115,11 @@ async function invitedBySignup(pool, signupId) {
 async function getSignupByMoreToken(pool, token) {
   if (typeof token !== 'string' || !/^[a-f0-9]{48}$/.test(token)) return null;
   const { rows } = await pool.query(
-    `SELECT id, email, answers FROM waitlist_signups WHERE more_token = $1`,
+    // submitted_at / confirmed_at / released_at / linked_user_id back the
+    // status block the stage-2 screen renders; the other callers of this
+    // function read only id and answers, so widening it is additive.
+    `SELECT id, email, answers, submitted_at, confirmed_at, released_at, linked_user_id
+       FROM waitlist_signups WHERE more_token = $1`,
     [token]
   );
   return rows[0] || null;

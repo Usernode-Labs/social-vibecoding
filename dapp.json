@@ -485,6 +485,13 @@
       "description": "Public profile URL the stage-2 \"Follow along\" link points at for Instagram, e.g. https://www.instagram.com/<handle>. Unset it renders no Instagram link. Instagram's Graph API exposes a follower COUNT and no relationship lookup at any tier, so a follow through this link is a self-report and is labelled as one."
     },
     {
+      "key": "WAITLIST_INTEGRATION_KEYS",
+      "group": "Waitlist",
+      "required": false,
+      "private": true,
+      "description": "Comma-separated label:secret pairs naming trusted integrators that submit waitlist joins for other people, such as an agency running the signup form on its own site. A caller presenting X-Waitlist-Client-Key gets a 200/15min ceiling for the whole client rather than the anonymous 5/15min per-address one, and may forward the visitor's address as X-Waitlist-Client-IP. An unknown key is anonymous."
+    },
+    {
       "key": "WAITLIST_OAUTH_ORIGIN",
       "group": "Waitlist",
       "required": false,
@@ -1188,6 +1195,12 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Waitlist country picker carries the whole ISO list (#1527)",
+      "path": "/?shot=anon#waitlist",
+      "expectSelector": "#waitlist-country option[value=\"UY\"]",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Landing CTA area is a compact link, not the survey",
       "path": "/?shot=anon#landing",
       "expectSelector": "#landing-waitlist a[href=\"#waitlist\"]",
@@ -1221,6 +1234,20 @@
       "name": "Waitlist confirmed state gives the list place",
       "path": "/?shot=waitlist-confirmed",
       "expectSelector": "#waitlist-confirmed:not(.hidden)",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Stage-2 survey says where a pending signup stands",
+      "path": "/?shot=waitlist-more#more/deaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddead",
+      "expectSelector": "#more-form #more-status-pill",
+      "expectText": "Waiting for confirmation",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Stage-2 survey says so when the signup has been admitted",
+      "path": "/?shot=waitlist-more#more/cafecafecafecafecafecafecafecafecafecafecafecafe",
+      "expectSelector": "#more-form #more-status-pill",
+      "expectText": "You're in",
       "allowConsoleErrors": true
     },
     {

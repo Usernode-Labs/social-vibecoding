@@ -438,10 +438,14 @@ export function LoginScreen() {
       if (!res.ok || !data.ok) {
         // The server's one generic message covers wrong/expired codes — and
         // also accounts that already have a password (they must use the
-        // password form instead). Say both.
+        // password form instead). Say both. NOT on a 429: the limiter's
+        // message already says exactly how long to wait, and appending a
+        // guess about the account's state to a throttle is misleading.
         setOtpError(
-          (data.error || 'Invalid or expired code.') +
-            ' If your account already has a password, sign in with it instead.',
+          res.status === 429
+            ? data.error || 'Too many code attempts. Try again shortly.'
+            : (data.error || 'Invalid or expired code.') +
+              ' If your account already has a password, sign in with it instead.',
         );
         return;
       }

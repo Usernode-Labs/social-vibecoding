@@ -145,6 +145,7 @@ async function migrate(config) {
   await backfillFenceWrappedSpecs(pool);
   await backfillOrphanedSpecDrafts(pool);
   await backfillLinkedIssuesFromPrBodies(pool);
+  await migrateWaitlistCountryCodes(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
@@ -437,6 +438,59 @@ async function revokeLegacyGithubGrants(pool, config) {
 // Best-effort throughout: every fetch/update is individually guarded and a
 // failure never aborts boot. Sessions that already have linked_issues are
 // excluded by the query (cheap, no network) and need no flag.
+// ── One-time: namespace the retired waitlist region pseudo-codes ───────
+//
+// The waitlist country picker was ~50 curated codes in six region buckets,
+// five of which ended in an "Elsewhere in <region>" catch-all that stored a
+// pseudo-code: EU, LA, AF, ME, AP. It is the complete ISO 3166-1 list now
+// (src/services/countries.js), and three of those five letters pairs are
+// REAL countries in it — LA is Laos, AF is Afghanistan, ME is Montenegro.
+// Left alone, a past "somewhere in Latin America" answer and a future Laos
+// signup would be the same two characters in the same column.
+//
+// So the stored values are namespaced to `X-EU` … `X-AP`. Nobody's answer is
+// discarded or reinterpreted: it still means the region they picked, and the
+// admin screen still shows it (countryLabel renders "Elsewhere in Latin
+// America (region)"). The new picker cannot produce these values — the field
+// is capped at two characters — so `X-*` can only ever mean "chose a region
+// on the old form".
+//
+// Guarded by a platform_settings marker, in the same style as
+// `onboarding_gate_grandfathered` in schema.sql, because this runs on every
+// boot. The guard is what makes it correct rather than merely idempotent: at
+// the moment it first runs, every `EU`/`LA`/… in the column is by definition
+// a pre-ISO-list answer, because the new picker ships in this same deploy.
+// After that a genuine `LA` means Laos and must never be rewritten.
+async function migrateWaitlistCountryCodes(pool) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM platform_settings WHERE key = 'waitlist_country_iso_migrated'`
+    );
+    if (rows.length) return;
+
+    const res = await pool.query(
+      `UPDATE waitlist_signups
+          SET answers = jsonb_set(answers, '{country}',
+                                  to_jsonb('X-' || (answers->>'country')))
+        WHERE answers ? 'country'
+          AND answers->>'country' IN ('EU', 'LA', 'AF', 'ME', 'AP')`
+    );
+
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, description) VALUES
+         ('waitlist_country_iso_migrated', 'true',
+          'Marker: the one-time rewrite of the retired waitlist region pseudo-codes (EU/LA/AF/ME/AP) to their namespaced X- form has run. Do not delete — deleting re-runs the rewrite, and after the ISO 3166-1 picker shipped those same letters mean Laos, Afghanistan and Montenegro.')
+       ON CONFLICT (key) DO NOTHING`
+    );
+
+    if (res.rowCount) {
+      log.info('db', 'Namespaced retired waitlist region codes', { rows: res.rowCount });
+    }
+  } catch (err) {
+    log.warn('db', 'waitlist country-code migration skipped', { err: err.message });
+  }
+}
+
 async function backfillLinkedIssuesFromPrBodies(pool) {
   const github = require('../services/github');
   const prMetadata = require('../services/pr-metadata');
@@ -11272,12 +11326,12 @@ async function seedStagingTopochain(pool, config) {
         WHERE os = 'android' AND is_active = TRUE`
     );
 
-    // ─── Waitlist signups (3) ──────────────────────────────────────────
+    // ─── Waitlist signups (4) ──────────────────────────────────────────
     // The admin console's Waitlist screen reads `waitlist_signups`
     // directly, and in a staging clone that table is emptied along with
     // every other signup surface — so the screen, its pending/released
     // filter and its per-row Release button were all reviewable only as an
-    // empty state. Three rows, one per state that renders differently:
+    // empty state. Four rows, one per state that renders differently:
     //
     //   900500  pending, CONFIRMED, with survey answers   → the row whose
     //           "Survey answers" disclosure has something to disclose.
@@ -11285,6 +11339,16 @@ async function seedStagingTopochain(pool, config) {
     //           and the only one that proves confirmed_at can be null.
     //   900502  RELEASED and linked to a fixture account  → the released
     //           half of the filter, plus the linked-username cell.
+    //   900503  pending, CONFIRMED, RETIRED REGION answer → the row whose
+    //           country is `X-LA`, one of the five namespaced pseudo-codes
+    //           the old region-bucket picker produced.
+    //
+    // The country on 900500 is `UY` on purpose: Uruguay is the exact place
+    // the old curated list could not express (#1527), and its "Where" line
+    // is what proves the disclosure renders a NAME now rather than a code.
+    // 900503 sits beside it so a reviewer can see the two are told apart —
+    // "Uruguay" against "Elsewhere in Latin America (region)" — rather than
+    // both collapsing into a raw two-letter string.
     //
     // Emails are `.invalid` and nothing here is ever mailed: the release
     // action is the only thing that sends, and a tester triggering it in
@@ -11296,16 +11360,39 @@ async function seedStagingTopochain(pool, config) {
        VALUES
          (900500, 'staging-demo-topochain-waitlist-1@example.invalid',
           NOW() - INTERVAL '30 days', NULL,
-          '{"role": "Validator", "chain": "Testnet", "why": "Staging demo survey answer."}'::jsonb,
+          '{"role": "Validator", "chain": "Testnet", "country": "UY", "why": "Staging demo survey answer."}'::jsonb,
           NULL, NULL, NOW() - INTERVAL '29 days'),
          (900501, 'staging-demo-topochain-waitlist-2@example.invalid',
           NOW() - INTERVAL '18 days', NULL, NULL, NULL, NULL, NULL),
          (900502, 'staging-demo-topochain-waitlist-3@example.invalid',
           NOW() - INTERVAL '40 days', NULL,
           '{"role": "Builder", "chain": "Testnet", "why": "Staging demo survey answer (released)."}'::jsonb,
-          NOW() - INTERVAL '20 days', $1, NOW() - INTERVAL '39 days')
+          NOW() - INTERVAL '20 days', $1, NOW() - INTERVAL '39 days'),
+         (900503, 'staging-demo-topochain-waitlist-4@example.invalid',
+          NOW() - INTERVAL '25 days', NULL,
+          '{"country": "X-LA", "why": "Staging demo legacy region answer."}'::jsonb,
+          NULL, NULL, NOW() - INTERVAL '24 days')
        ON CONFLICT (id) DO NOTHING`,
       [USERS.bpReleased]
+    );
+
+    // ON CONFLICT DO NOTHING above means an edit to the seeded `answers`
+    // literal only lands on a database that has never seen row 900500. Both
+    // country fixtures are re-asserted here so a re-cloned staging DB picks
+    // them up too, the same way the platform-mail fixture re-asserts its row.
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET answers = jsonb_set(answers, '{country}', to_jsonb($2::text))
+        WHERE id = $1 AND answers IS NOT NULL
+          AND answers->>'country' IS DISTINCT FROM $2`,
+      [900500, 'UY']
+    );
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET answers = jsonb_set(answers, '{country}', to_jsonb($2::text))
+        WHERE id = $1 AND answers IS NOT NULL
+          AND answers->>'country' IS DISTINCT FROM $2`,
+      [900503, 'X-LA']
     );
 
     // The epoch-policy cutover cannot carry these two historical staging
@@ -11820,9 +11907,15 @@ async function migrateAppDbsToPerRole(pool, config) {
 async function seedStagingPlatformMail(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
-  // Obvious, fixed token so the testing steps can name the exact URL.
-  // 48 hex chars, matching the real more_token shape.
-  const DEMO_MORE_TOKEN = 'dead'.repeat(12);
+  // Obvious, fixed tokens so the testing steps can name the exact URL.
+  // 48 hex chars each, matching the real more_token shape. Three rows,
+  // one per state the stage-2 screen's status pill can be in — the pill
+  // is derived from timestamps a tester cannot set by clicking, so
+  // without fixtures two of its three states are unreachable in a
+  // preview.
+  const DEMO_MORE_TOKEN = 'dead'.repeat(12);          // pending
+  const DEMO_CONFIRMED_TOKEN = 'beef'.repeat(12);     // confirmed, not admitted
+  const DEMO_ADMITTED_TOKEN = 'cafe'.repeat(12);      // admitted, account linked
 
   const ROWS = [
     // A staging preview never delivers, so this is the status a tester's
@@ -11882,6 +11975,51 @@ async function seedStagingPlatformMail(pool) {
       ['staging-demo-waitlist@example.invalid', DEMO_MORE_TOKEN]
     );
 
+    // A signup that has confirmed its address and is still waiting. The
+    // middle state, and the one a tester cannot produce here: confirming
+    // the row above takes a click, but the pill it then shows is the
+    // point, so it needs a row that is already there.
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, answers, more_token)
+       VALUES ($1, NULL, $2)
+       ON CONFLICT (email) DO NOTHING`,
+      ['staging-demo-waitlist-confirmed@example.invalid', DEMO_CONFIRMED_TOKEN]
+    );
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET confirmed_at = COALESCE(confirmed_at, NOW() - INTERVAL '2 days'),
+              released_at = NULL,
+              linked_user_id = NULL,
+              more_token = $2
+        WHERE email = $1`,
+      ['staging-demo-waitlist-confirmed@example.invalid', DEMO_CONFIRMED_TOKEN]
+    );
+
+    // A signup that has been let in AND has redeemed the invite into an
+    // account. linked_user_id points at 900001, the canonical fake
+    // `staging-demo-user` seeded before any fixture runs — never a real
+    // account, and never whoever opened the preview. Nothing keys off
+    // this row: linkUserByEmail matches on EMAIL, and no address ending
+    // in .invalid can be registered.
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, answers, more_token)
+       VALUES ($1, NULL, $2)
+       ON CONFLICT (email) DO NOTHING`,
+      ['staging-demo-waitlist-admitted@example.invalid', DEMO_ADMITTED_TOKEN]
+    );
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET confirmed_at = COALESCE(confirmed_at, NOW() - INTERVAL '9 days'),
+              released_at = COALESCE(released_at, NOW() - INTERVAL '1 day'),
+              linked_user_id = COALESCE(
+                linked_user_id,
+                (SELECT id FROM users WHERE username = 'staging-demo-user')
+              ),
+              more_token = $2
+        WHERE email = $1`,
+      ['staging-demo-waitlist-admitted@example.invalid', DEMO_ADMITTED_TOKEN]
+    );
+
     log.info('migrate', 'Staging platform-mail fixture seeded', {
       deliveries: ROWS.length,
     });
@@ -11900,4 +12038,5 @@ async function seedStagingPlatformMail(pool) {
 module.exports = {
   migrate, seedStagingTopochain, seedStagingProfileCustomization,
   seedStagingPlatformMail, auditDuplicatePrSessions,
+  migrateWaitlistCountryCodes,
 };
