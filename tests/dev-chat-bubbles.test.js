@@ -42,8 +42,12 @@ function rule(sel) {
 
 test('your turn is the platform card surface, not a saturated fill', () => {
   const r = rule('.dc-msg-user');
-  assert.match(r, /background: var\(--bg-secondary\)/,
-    'the same card-on-page pairing the composer and the run card take');
+  // --dc-raised, the third step of the transcript's surface ladder, not
+  // --bg-secondary directly: that token ascends from --bg-primary in light
+  // and DESCENDS from it in dark, where it is the session sheet's own value,
+  // so a card painted with it would have vanished into the sheet.
+  assert.match(r, /background: var\(--dc-raised\)/,
+    'one step up from the sheet, in both themes');
   assert.doesNotMatch(r, /var\(--accent\)/, 'never the accent fill again');
   assert.doesNotMatch(r, /var\(--accent-ink\)/, 'and so it needs no inverted ink');
 });
@@ -112,4 +116,56 @@ test('the two rows are still told apart by side and surface', () => {
   // a tail notch. (The notch went in the reskin; this keeps it gone.)
   assert.match(rule('.dc-msg-user'), /border-radius: 1\.25rem/);
   assert.match(rule('.dc-msg-assistant'), /border-radius: 1\.25rem/);
+});
+
+test('the three GROUNDS ascend in both themes; the card only has to differ', () => {
+  // The bug: --bg-secondary / --bg-primary ascend in light (#f5f5f7 →
+  // #ffffff) and DESCEND in dark (#1c1c1e → #0b0b0c). The lift was built on
+  // that pairing, so in dark the session sheet came out as the darkest thing
+  // on the screen — a near-black hole in the #0b0d1b wallpaper, with the
+  // strip above it lighter than both. Measured before the fix: wallpaper
+  // (11,13,27) → strip (28,28,30) → sheet (11,11,12). Nothing about it was
+  // visible until the agent's turn stopped being a --bubble-bg card and
+  // became plain text on that ground.
+  //
+  // The GROUNDS are what must climb: each layer nearer the reader is lighter
+  // than the one behind it, in both themes. A CARD is the other kind of
+  // step — on white it is a grey inset, on near-black it is a lighter raise —
+  // so its direction flips by theme and only its DISTANCE from the sheet is
+  // the invariant. Asserting "lighter" on it is what a first draft of this
+  // test did, and light mode caught it.
+  const lum = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const val = (block, name) => {
+    const m = block.match(new RegExp(`${name}: (#[0-9a-f]{6});`));
+    assert.ok(m, `${name} must be declared`);
+    return m[1];
+  };
+  const light = APP_CSS.slice(0, APP_CSS.indexOf('\n.dark {'));
+  const dark = APP_CSS.slice(APP_CSS.indexOf('\n.dark {'));
+  for (const [theme, block, ground] of [
+    ['light', light, '#f4f2e4'],
+    ['dark', dark, '#0b0d1b'],
+  ]) {
+    const grounds = [ground, val(block, '--dc-strip'), val(block, '--dc-sheet')];
+    for (let i = 1; i < grounds.length; i++) {
+      assert.ok(lum(grounds[i]) > lum(grounds[i - 1]),
+        `${theme}: ${grounds[i]} must be nearer the reader than ${grounds[i - 1]}`);
+    }
+    const sheet = val(block, '--dc-sheet');
+    const raised = val(block, '--dc-raised');
+    assert.ok(Math.abs(lum(raised) - lum(sheet)) >= 8,
+      `${theme}: a card (${raised}) must be visibly off the sheet (${sheet})`);
+  }
+});
+
+test('light mode is byte-identical — only dark moved', () => {
+  // The ladder's light values ARE the tokens the lift shipped with, so a
+  // reader who liked light mode sees exactly what they saw.
+  const light = APP_CSS.slice(0, APP_CSS.indexOf('\n.dark {'));
+  assert.match(light, /--dc-strip: #f5f5f7;/, "--bg-secondary's value");
+  assert.match(light, /--dc-sheet: #ffffff;/, "--bg-primary's value");
+  assert.match(light, /--dc-raised: #f5f5f7;/, "--bg-secondary's value again");
 });

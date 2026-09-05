@@ -41,6 +41,28 @@
      still is. */
   --accent-ink: #ffffff;
 
+  /* ── The dev chat's surface ladder ───────────────────────
+     Three steps, and the ONLY thing they guarantee is that each one is
+     nearer the reader than the last: the strip sits on the page wallpaper,
+     the session sheet sits on the strip, and a card (your message, a coding
+     run) sits on the sheet.
+
+     They exist because --bg-secondary / --bg-primary could not express that
+     in both themes. In light those two ascend (#f5f5f7 → #ffffff), which is
+     what the lift was built on. In DARK they descend — --bg-primary is
+     #0b0b0c and --bg-secondary is #1c1c1e — so the stack inverted: the sheet
+     came out as the darkest thing on the screen, a near-black hole punched
+     into the #0b0d1b wallpaper, with the strip ABOVE it lighter than both.
+     Measured: wallpaper (11,13,27) → strip (28,28,30) → sheet (11,11,12).
+
+     Nothing here changes light mode. --dc-strip and --dc-raised are
+     --bg-secondary's value, --dc-sheet is --bg-primary's, so the light stack
+     is byte-identical to what shipped. Dark is where the values are new, and
+     they climb: (11,13,27) → (19,19,22) → (28,28,30) → (44,44,46). */
+  --dc-strip: #f5f5f7;
+  --dc-sheet: #ffffff;
+  --dc-raised: #f5f5f7;
+
   /* ── Safe-area tokens ────────────────────────────────────
      THE single source of truth for the shell's own safe-area
      arithmetic. Every rule in this file that needs an inset reads one
@@ -841,6 +863,13 @@ html.un-kb .platform-safe-sheet {
   --bg-primary: #0b0b0c;
   --bg-secondary: #1c1c1e;
   --bg-tertiary: #2c2c2e;
+  /* The ladder above, climbing away from the #0b0d1b wallpaper rather than
+     down into it. --dc-sheet takes --bg-secondary's value and --dc-raised
+     takes --bg-tertiary's: a card on the sheet has to be one step lighter
+     again, which is the step the old pairing had no room for. */
+  --dc-strip: #131316;
+  --dc-sheet: #1c1c1e;
+  --dc-raised: #2c2c2e;
   --bg-code: #141416;
   --bg-code-header: #1c1c1e;
   --bg-card: rgba(90, 169, 255, 0.10);
@@ -3060,11 +3089,10 @@ body:has(#platform-header.hidden) #app-frame-host {
    side and surface to say who is speaking. */
 .dc-msg-user {
   margin-left: auto;
-  /* The platform's card-on-page pairing, the same one the composer and the
-     run card take. On the sheet (--bg-primary) this reads as a raised card
-     in both themes, which is the one thing the fill was doing that was
-     worth keeping. */
-  background: var(--bg-secondary);
+  /* One step up from the sheet, in both themes — which is what --dc-raised
+     is for. --bg-secondary was right in light and wrong in dark, where it is
+     the sheet's own value and the card would have vanished into it. */
+  background: var(--dc-raised);
   border-radius: 1.25rem;
   margin-bottom: 4px;
 }
@@ -4489,7 +4517,7 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
   margin: 8px 12px;
   border: 1px solid var(--border-light);
   border-radius: 12px;
-  background: var(--bg-secondary);
+  background: var(--dc-raised);
   overflow: hidden;
 }
 
@@ -4510,7 +4538,7 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
 }
 .dc-cc-attached-summary::-webkit-details-marker { display: none; }
 .dc-cc-attached-summary::marker { display: none; }
-.dc-cc-attached-summary:hover { background: var(--bg-tertiary); }
+.dc-cc-attached-summary:hover { background: var(--dc-strip); }
 
 /* Row 1 — the glyph, the label, the chevron and the id/timestamp. */
 .dc-cc-head {
@@ -4537,7 +4565,9 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
   line-height: 1.5;
   padding: 2px 8px;
   border-radius: 7px;
-  background: var(--bg-primary);
+  /* An inset: one step back DOWN from the card it sits on, which is the
+     sheet's own value. */
+  background: var(--dc-sheet);
   border: 1px solid var(--border-light);
   color: var(--text-secondary);
   overflow: hidden;
@@ -4615,7 +4645,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   margin: 0 12px 12px;
   padding: 9px 10px;
   border-radius: 9px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   border: 1px solid var(--border-light);
 }
 
@@ -4686,7 +4716,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   margin: 0 12px 12px;
   padding: 9px 10px;
   border-radius: 9px;
-  background: var(--bg-primary);
+  background: var(--dc-sheet);
   border: 1px solid var(--border-light);
 }
 /* Tighten markdown spacing inside the muted summary block — the
@@ -6755,8 +6785,8 @@ span.gc-vote-btn-icon { cursor: default; }
    secondary ground and the sheet is the primary one, the same pairing a
    card gets on a page. Before this the whole screen sat on the bare
    wallpaper. */
-.dc-lift-strip { background-color: var(--bg-secondary); }
-.dc-lift-session { background-color: var(--bg-primary); }
+.dc-lift-strip { background-color: var(--dc-strip); }
+.dc-lift-session { background-color: var(--dc-sheet); }
 
 /* THE OVERLAP MUST BE A FULL RADIUS, and it has to come from whatever is
    directly above the sheet.
