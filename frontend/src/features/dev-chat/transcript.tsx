@@ -71,14 +71,38 @@ function StatusIcon({ kind }: { kind: 'spinner' | 'check' | 'key' | 'flag' }): R
  * `✓` rows above it is a pipeline reading itself out, and a failure is not a
  * step in that pipeline — it is the end of it. Given a row it inherited the
  * ladder's shape and, until now, the ladder's green tick.
+ *
+ * Three tones share it, because all three are "the pipeline did not finish"
+ * and only one of them is a problem the user did not choose. `blocked` and
+ * `stopping` are red; `stopped` is the neutral surface with the landing in
+ * chips beside it. See the `failure` row's `tone` for why a stop that the
+ * user asked for must not be painted as an error — that is the green tick's
+ * mistake run in reverse.
  */
 function Failure({ r }: { r: Extract<TranscriptRow, { t: 'failure' }> }): ReactNode {
+  const tone = r.tone || 'blocked';
   return (
-    <div className="dc-failure" role="status">
-      <span className="dc-failure-icon" aria-hidden="true">{'\u2297'}</span>
-      {r.html !== undefined
-        ? <span className="dc-failure-text" dangerouslySetInnerHTML={{ __html: r.html }} />
-        : <span className="dc-failure-text">{r.text}</span>}
+    <div className={`dc-failure dc-failure-${tone}`} role="status">
+      <span className="dc-failure-icon" aria-hidden="true">
+        {tone === 'stopped' ? '\u25A0' : '\u2297'}
+      </span>
+      <span className="dc-failure-body">
+        {r.html !== undefined
+          ? <span className="dc-failure-text" dangerouslySetInnerHTML={{ __html: r.html }} />
+          : <span className="dc-failure-text">{r.text}</span>}
+        {r.chips && r.chips.length ? (
+          <span className="dc-failure-chips">
+            {r.chips.map((c, i) => <span key={`${i}-${c}`}>{c}</span>)}
+          </span>
+        ) : null}
+      </span>
+      <Elapsed e={r.elapsed ?? null} />
+      {r.forceStop ? (
+        <button
+          className="dc-force-stop-btn"
+          onClick={(e) => controller()?._forceStopTurn?.(e.currentTarget)}
+        >Force stop</button>
+      ) : null}
       <Stamp text={r.stamp} />
     </div>
   );
@@ -509,18 +533,71 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           {r.qa.groups.map((g, gi) => (
             <div className="dc-qa-group" key={gi}>
               {g.label ? <div className="dc-qa-group-label">{g.label}</div> : null}
-              <div className="dc-qa-chip-row">
-                {g.answers.map((a, ai) => (
+              {g.kind === 'number' && g.number ? (
+                /* A QUANTITY, asked as one. The model offered bare magnitudes,
+                   so a row of chips would be five guesses at the value you
+                   want and no way to give the sixth. `defaultValue` and a
+                   commit on blur/Enter, not a controlled field: a controlled
+                   one republishes the whole transcript per keystroke and
+                   takes the caret with it. */
+                <div className="dc-qa-number">
                   <button
-                    key={ai} type="button"
-                    className={`dc-qa-chip${a.suggested ? ' dc-qa-chip-default' : ''}${a.selected ? ' dc-qa-chip-selected' : ''}`}
-                    data-qa-group={gi} data-qa-answer={ai}
-                  >
-                    {a.text}
-                    {a.suggested ? <span className="dc-qa-chip-hint">suggested</span> : null}
-                  </button>
-                ))}
-              </div>
+                    type="button" className="dc-qa-step" aria-label="Less"
+                    data-qa-group={gi} data-qa-step="-1"
+                  >{'\u2212'}</button>
+                  <input
+                    className="dc-qa-number-field" type="text" inputMode="decimal"
+                    aria-label={g.label || 'Value'}
+                    data-qa-number={gi} defaultValue={g.number.value} key={g.number.value}
+                    onBlur={(e) => controller()?._onQaNumberCommit?.(e.currentTarget)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                    }}
+                  />
+                  <button
+                    type="button" className="dc-qa-step" aria-label="More"
+                    data-qa-group={gi} data-qa-step="1"
+                  >{'+'}</button>
+                  {/* The default is still NAMED, in the same muted voice the
+                      suggested chip uses — a stepper that opens on a value
+                      says nothing about whether that value was recommended. */}
+                  <span className="dc-qa-chip-hint">suggested {g.number.suggested}</span>
+                </div>
+              ) : (
+                <div className="dc-qa-chip-row">
+                  {g.answers.map((a, ai) => (
+                    <button
+                      key={ai} type="button"
+                      className={`dc-qa-chip${a.suggested ? ' dc-qa-chip-default' : ''}${a.selected ? ' dc-qa-chip-selected' : ''}`}
+                      data-qa-group={gi} data-qa-answer={ai}
+                    >
+                      {a.text}
+                      {a.suggested ? <span className="dc-qa-chip-hint">suggested</span> : null}
+                    </button>
+                  ))}
+                  {g.escape ? (
+                    <button
+                      type="button"
+                      className={`dc-qa-chip dc-qa-escape${g.escape.open ? ' dc-qa-escape-open' : ''}`}
+                      data-qa-escape={gi}
+                    >
+                      <span aria-hidden="true">{'\u270e'}</span> {g.escape.label}
+                    </button>
+                  ) : null}
+                </div>
+              )}
+              {g.escape && g.escape.open ? (
+                <input
+                  className="dc-qa-typed" type="text"
+                  aria-label={g.label || g.escape.label}
+                  placeholder={g.escape.label}
+                  data-qa-typed={gi} defaultValue={g.escape.value} autoFocus
+                  onBlur={(e) => controller()?._onQaTypedCommit?.(e.currentTarget)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                  }}
+                />
+              ) : null}
             </div>
           ))}
           {r.qa.multi ? (

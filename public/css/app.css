@@ -3396,8 +3396,56 @@ body:has(#platform-header.hidden) #app-frame-host {
   font-size: 14px;
   line-height: 1.45;
 }
-.dc-failure-text { flex: 1; min-width: 0; }
+.dc-failure-body { flex: 1; min-width: 0; }
+.dc-failure-text { display: block; min-width: 0; }
 .dc-failure-text a { color: var(--accent); }
+
+/* THE STOP PAIR. Both are "the run did not finish", so both are this card
+   rather than the pipeline's ✓ row — but only one of them is a problem.
+
+   `stopping` is #937's escalation: a stop that is not landing. Red, and it
+   keeps the Force stop button, because that is the one state where the user
+   is stuck and needs the action. It used to be a status row, which meant the
+   escalation settled to a green tick the moment the turn went inactive.
+
+   `stopped` landed. The user asked for it, so it is NOT red — painting
+   someone's own decision as an error is the green tick's mistake in reverse.
+   The neutral surface with a hairline, one step up from the sheet, and the
+   landing in chips beside the sentence. */
+.dc-failure-stopped {
+  border-color: var(--border-light);
+  background: var(--dc-raised);
+}
+.dc-failure-stopped .dc-failure-icon {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.75;
+}
+.dc-failure-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+  margin-top: 6px;
+}
+.dc-failure-chips > * {
+  flex: none;
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 2px 8px;
+  border-radius: 7px;
+  /* An inset: one step back DOWN from the card, exactly as the coding-run
+     card's chips do it. Same chip, so the two cards read as one language. */
+  background: var(--dc-sheet);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.dc-failure-chips > :empty { display: none; }
 
 /* ── PR card ────────────────────────────────────────────── */
 
@@ -4127,16 +4175,94 @@ a.dc-flow-action {
   text-align: left;
 }
 .dc-qa-chip:hover { background: var(--bg-tertiary); }
+/* THE TWO STATES SAY DIFFERENT THINGS AND MUST BOTH BE READABLE AT ONCE.
+   `-default` is what the model RECOMMENDS; `-selected` is what you CHOSE.
+   They are frequently different chips, and a reader comparing the two is
+   the whole reason the questionnaire shows both. So the recommendation is
+   an outline and the choice is a fill: one hollow, one solid, legible
+   side by side rather than two shades of the same idea. */
 .dc-qa-chip-default { border-color: var(--accent); }
-.dc-qa-chip-selected { background: var(--accent); border-color: var(--accent); color: #fff; }
-.dc-qa-chip-selected:hover { background: var(--accent-light); }
+.dc-qa-chip-selected {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-primary);
+}
+.dc-qa-chip-selected .dc-qa-chip-hint { opacity: 0.75; }
+.dc-qa-chip-selected:hover { opacity: 0.88; }
 
+/* The escape hatch — the last chip in the row, and the only one that does
+   not answer. Quieter than the answers on purpose: it is the way out, not
+   an option, and it must not look like a fifth thing the model suggested. */
+.dc-qa-escape { color: var(--text-muted); border-style: dashed; }
+.dc-qa-escape-open { border-style: solid; border-color: var(--accent); color: var(--accent); }
+
+/* …and the input it opens, scoped to its own group rather than sending the
+   reader to the composer. Uncontrolled, committing on blur/Enter — see
+   `_onQaTypedCommit`. */
+.dc-qa-typed {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  background: var(--dc-sheet);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+.dc-qa-typed:focus { outline: none; box-shadow: 0 0 0 3px var(--accent-tint); }
+
+/* A QUANTITY, asked as one. */
+.dc-qa-number { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dc-qa-step {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--dc-raised);
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dc-qa-step:hover { background: var(--bg-tertiary); }
+.dc-qa-number-field {
+  width: 6.5rem;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--dc-sheet);
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 13px;
+  text-align: center;
+}
+.dc-qa-number-field:focus { outline: none; border-color: var(--accent); }
+
+/* "suggested", in the model's own quiet voice.
+   NOT uppercased. It was, and the stepper's hint is the reason that had to
+   stop: `suggested 0.2 m` came out as "SUGGESTED 0.2 M", and a capital M is
+   not the symbol for a metre. A hint that renders the value it is hinting
+   at cannot own a transform that rewrites the value. Lowercase and muted is
+   also what the design asks for, so the correctness fix and the design agree. */
 .dc-qa-chip-hint {
-  font-size: 9px;
+  font-size: 10px;
   margin-left: 6px;
   opacity: 0.6;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-weight: 400;
+}
+
+/* The stepper's hint is the same span, but it is NOT sitting inside a chip:
+   it takes the group's inherited ink at 0.6, and in dark that lands at about
+   a third of the page's contrast — legible in the light render and very
+   nearly not in the dark one. On the stepper it is the only thing naming the
+   default, so it gets its own ink rather than an inherited fade. */
+.dc-qa-number .dc-qa-chip-hint {
+  margin-left: 2px;
+  opacity: 1;
+  color: var(--text-secondary);
 }
 
 .dc-qa-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 2px; }

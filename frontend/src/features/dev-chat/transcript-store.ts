@@ -113,7 +113,31 @@ export type TranscriptRow =
    * in the pill bar over the composer, which is where every other
    * suggested next message lives.
    */
-  | { t: 'failure'; key: string; text: string; html?: string; stamp: string }
+  | {
+    t: 'failure';
+    key: string;
+    text: string;
+    html?: string;
+    stamp: string;
+    /**
+     * Which kind of not-succeeding this is.
+     *
+     *   blocked  — the turn failed. Red.
+     *   stopping — a stop that is not landing. Also red, because it is the
+     *              one state where the user is stuck and needs the action;
+     *              #937's escalation used to settle to the pipeline's ✓.
+     *   stopped  — a stop that landed. NOT red: the user asked for it, and
+     *              painting their own decision as a problem is what the
+     *              green tick was doing in reverse.
+     */
+    tone: 'blocked' | 'stopping' | 'stopped';
+    /** What the run left behind, as facts rather than as a clause. */
+    chips?: string[];
+    /** #937: the escalation's only way out of a permanent "Stopping…". */
+    forceStop?: boolean;
+    /** The live elapsed suffix, on the `stopping` tone only. */
+    elapsed?: ElapsedSpec;
+  }
   /** The scout's spec-draft card, under its status line. */
   | {
     t: 'spec';
@@ -214,10 +238,30 @@ export type TranscriptRow =
     reasoning?: { details: DetailsSpec; raw: string };
     /** A Claude-Code row's "Full output" disclosure. */
     more?: { details: DetailsSpec; html: string };
-    /** #32's suggested-answer chips, on the last conversational row. */
+    /**
+     * #32's suggested-answer chips, on the last conversational row.
+     *
+     * `multi` is "does this need a shared Send row" rather than literally
+     * "more than one question": a single group answered by TYPING or by
+     * STEPPING has no send-on-tap moment of its own and needs one too.
+     *
+     * A `number` group replaces its chips with a stepper. The rule is in
+     * `_qaNumericGroup` (dev-chat.js): every answer a bare magnitude, one
+     * unit between them. "0.2 m — ankle deep" stays a chip, because the
+     * prose is the point of that answer.
+     *
+     * `escape` is the last chip in a chips row and the only one that does
+     * not answer — it opens a one-line input scoped to its own group.
+     */
     qa?: {
       multi: boolean;
-      groups: { label: string; answers: { text: string; suggested: boolean; selected: boolean }[] }[];
+      groups: {
+        label: string;
+        kind: 'chips' | 'number';
+        number: { value: string; suggested: string } | null;
+        answers: { text: string; suggested: boolean; selected: boolean }[];
+        escape: { label: string; open: boolean; value: string } | null;
+      }[];
     };
   };
 

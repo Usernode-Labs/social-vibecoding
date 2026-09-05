@@ -138,7 +138,7 @@ test('the row renders as a failure, in the platform\'s blocked token', () => {
   const html = renderToHtml(createElement(Row, {
     r: { t: 'failure', key: 'x', text: 'This turn failed: the agent exited.', stamp: '#1' },
   }));
-  assert.match(html, /class="dc-failure"/);
+  assert.match(html, /class="dc-failure dc-failure-blocked"/);
   assert.match(html, /class="dc-failure-text">This turn failed: the agent exited\./);
   // NOT the ladder's tick — the whole point.
   assert.doesNotMatch(html, /dc-status-check/);
@@ -159,13 +159,22 @@ test('no retry button — the retry pill already exists', () => {
   // the pill bar over the composer, with every other suggested next message.
   // A second control here would be two ways to do one thing.
   assert.match(SESSIONS, /turnError: true, quickReplies: turnPills\('failed'\)/);
-  const at = TRANSCRIPT.indexOf('function Failure(');
-  const body = TRANSCRIPT.slice(at, TRANSCRIPT.indexOf('\n}', at));
-  assert.doesNotMatch(body, /<button/);
+  const { Row } = loadTsx('frontend/src/features/dev-chat/transcript.tsx');
+  const html = renderToHtml(createElement(Row, {
+    r: { t: 'failure', key: 'x', tone: 'blocked', text: 'This turn failed.', stamp: '#1' },
+  }));
+  // The card carries ONE button and only on the `stopping` tone — #937's
+  // Force stop, which is an escape from a stuck state rather than a retry.
+  assert.doesNotMatch(html, /<button/);
 });
 
 test('the failure row is a documented member of the row union', () => {
-  assert.match(STORE, /\| \{ t: 'failure'; key: string; text: string; html\?: string; stamp: string \}/);
+  assert.match(STORE, /\| \{\n    t: 'failure';/);
+  for (const field of [
+    "tone: 'blocked' \\| 'stopping' \\| 'stopped';",
+    'chips\\?: string\\[\\];',
+    'forceStop\\?: boolean;',
+  ]) assert.match(STORE, new RegExp(field));
 });
 
 test('a declared check guards it in a browser', () => {
