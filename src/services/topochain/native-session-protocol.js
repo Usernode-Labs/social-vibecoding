@@ -132,7 +132,7 @@ async function loadExchange(client, ticketHash, { lock = false } = {}) {
 async function replayExchange(client, { row, request, keys, exchangeDigest, config }) {
   const { rows } = await client.query(
     `SELECT c.credential_reference, c.credential_generation,
-            c.exchange_request_digest, c.state,
+            c.exchange_request_digest, c.state, c.account_id,
             c.installation_id, c.installation_key_generation, c.expires_at,
             e.encrypted_response, e.response_digest
        FROM native_session_credentials c
@@ -167,6 +167,14 @@ async function replayExchange(client, { row, request, keys, exchangeDigest, conf
     protocolError(409, 'native_session_installation_conflict', 'The installation key generation is already bound to different keys.');
   }
 
+  // TODO(native-walletless-compat): Negotiate walletless credential support
+  // before restoring issuance AND replay. Build 1250 rejects account:null
+  // during native installation and retires its WebView to a blank screen.
+  // Previously issued envelopes must fail at exchange too, before installation.
+  if (credential.account_id == null) {
+    protocolError(409, 'native_session_wallet_required', 'This native session needs a wallet. Web access is still available.');
+  }
+
   return openReplay({
     kind: 'exchange',
     key: credential.credential_reference,
@@ -183,7 +191,12 @@ async function provisionWallet(client, userId) {
         AND starts_at <= NOW() AND ends_at >= NOW()
       ORDER BY starts_at DESC, id DESC LIMIT 1`
   );
-  if (!seasonRows.length) return null;
+  // TODO(native-walletless-compat): Keep the pre-walletless error contract
+  // until supported clients explicitly opt in. An HTTP exchange failure is
+  // recoverable on build 1250; an account:null credential is not.
+  if (!seasonRows.length) {
+    protocolError(422, 'native_session_no_active_season', 'No active season is available.');
+  }
   const seasonId = Number(seasonRows[0].id);
 
   const { rows: existingRows } = await client.query(
@@ -207,7 +220,9 @@ async function provisionWallet(client, userId) {
         FOR UPDATE SKIP LOCKED`,
       [seasonId]
     );
-    if (!availableRows.length) return null;
+    if (!availableRows.length) {
+      protocolError(409, 'native_session_wallet_pool_exhausted', 'No on-chain accounts are available for the current season.');
+    }
     account = availableRows[0];
     await client.query(
       `UPDATE onchain_accounts

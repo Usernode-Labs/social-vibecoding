@@ -14,13 +14,17 @@
 //      one of those clears is a localStorage call in a try/catch. Where
 //      storage silently fails -- a WebView with a non-persistent store -- the
 //      snapshot survived and the document reloaded forever.
-//   3. A DEAD BOOT REPORTS ITSELF. Diagnosing (1) took four rounds of
+//   3. A DEAD BOOT LEAVES A RECORD. Diagnosing (1) took four rounds of
 //      inference because the failure was unobservable on the device that had
-//      it. The head's watchdog paints what went wrong instead.
+//      it. The head records every error from the first script on, and
+//      `window.__unBoot.snapshot()` describes the document for a console.
+//      It PAINTS NOTHING: the panel an earlier version put over a page it
+//      took for blank accused pages that were fine, and is gone.
 //
-// Layers 2 and 3 live in a classic script and an inline <head> block, neither
-// of which can be required in Node (app.js touches the DOM at module scope),
-// so those are pinned against the shipped source. Layer 1 is driven for real.
+// Layer 2 lives in a classic script that cannot be required in Node (app.js
+// touches the DOM at module scope), so it is pinned against the shipped
+// source. Layer 1 is driven for real; so is layer 3, through
+// tests/lib/boot-record-harness.js.
 //
 // Run with: node --test tests/boot-floor.test.js
 
@@ -156,58 +160,163 @@ test('a settled boot takes the marker back off the address bar', () => {
 
 // ── 3. A dead boot reports itself ──────────────────────────────────────
 
-test('the head watchdog is inline, classic, and captures from the start', () => {
+test('the boot record is inline, classic, and captures from the start', () => {
   // It reports on the bundle, the framework and the stylesheet, so it cannot
   // depend on any of them.
-  const at = HEAD.indexOf('The boot watchdog');
-  assert.ok(at > 0, 'the watchdog is in the head');
+  const at = HEAD.indexOf('The boot record');
+  assert.ok(at > 0, 'the record is in the head');
   const block = HEAD.slice(at, HEAD.indexOf('</script>', at));
   assert.match(block, /addEventListener\('error'/);
+  assert.match(block, /addEventListener\('error', function \(e\) \{[\s\S]*?\}, true\);/,
+    'a capture-phase listener: a resource that failed to load does not bubble');
   assert.match(block, /addEventListener\('unhandledrejection'/);
   assert.match(block, /window\.__unBoot/, 'shares one record with boot-guard.ts');
   assert.doesNotMatch(block, /import |require\(/, 'no dependencies of any kind');
-  // Thrown values are never markup.
-  assert.doesNotMatch(block, /innerHTML/);
-  assert.match(block, /textContent/);
-  // It must run BEFORE the bundle it watches. Asserted against the BUILT
+  // It must run BEFORE the bundle it records. Asserted against the BUILT
   // document, because build-shell.mjs is what appends the module tag — the
   // head source has no bundle reference to be ahead of.
   const doc = read('public/index.html');
-  const watchdogAt = doc.indexOf('__unBoot');
+  const recordAt = doc.indexOf('__unBoot');
   const bundleAt = doc.indexOf('/shell/assets/shell.js');
-  assert.ok(watchdogAt > 0 && bundleAt > 0, 'both are in the generated document');
-  assert.ok(watchdogAt < bundleAt, 'the watchdog is installed ahead of the bundle');
+  assert.ok(recordAt > 0 && bundleAt > 0, 'both are in the generated document');
+  assert.ok(recordAt < bundleAt, 'the record is installed ahead of the bundle');
 });
 
-test('the watchdog opts out of capture and check routes, except its own probe', () => {
-  // Those routes render one state deterministically; a panel arriving
-  // mid-assertion is the nondeterminism they exist to be free of. Same guard,
-  // same reason, as prefetchSettings() and AdminConsole.prefetchSections().
-  const at = HEAD.indexOf('The boot watchdog');
-  const block = HEAD.slice(at, HEAD.indexOf('</script>', at));
-  assert.match(block, /q\.get\('shot'\) === 'boot-failed'/, 'the probe route forces it');
-  assert.match(block, /optedOut = !forced && \(!!q\.get\('shot'\) \|\| !!q\.get\('demo'\)\)/);
-  assert.match(block, /if \(optedOut\) return;/);
+test('the boot record PAINTS NOTHING, by construction', () => {
+  // An earlier version judged the page by its pixels and painted a "did not
+  // finish loading" panel over anything it took for blank. On real devices
+  // it accused pages that were fine. The record is passive now, and the
+  // source says so: nothing in it creates an element, schedules anything,
+  // or writes markup.
+  const at = HEAD.indexOf('The boot record');
+  // Comments stripped first: the header EXPLAINS what the old panel did, and
+  // a naive scan would trip over its own reasoning.
+  const block = HEAD.slice(at, HEAD.indexOf('</script>', at))
+    .replace(/^\s*\/\/.*$/gm, '');
+  assert.doesNotMatch(block, /createElement|appendChild|innerHTML|textContent =/);
+  assert.doesNotMatch(block, /setTimeout|setInterval|requestAnimationFrame/);
+  assert.doesNotMatch(block, /boot-watchdog|did not finish loading/);
+  assert.doesNotMatch(block, /console\.error/);
 });
 
-test('the watchdog only accuses when nothing at all is on screen', () => {
-  // A false positive would put "did not finish loading" over a working app,
-  // which is worse than the blank screen it exists for.
-  const at = HEAD.indexOf('function bootProducedSomething');
-  assert.ok(at > 0);
-  const fn = HEAD.slice(at, HEAD.indexOf('\n      }', at));
-  assert.match(fn, /getBoundingClientRect/, 'a hidden or zero-size root does not count');
-  assert.match(fn, /innerText/, 'nor does an empty one — #1670 revealed an EMPTY overlay');
-  assert.match(fn, /catch \(e\) \{ return true; \}/,
-    'a watchdog that cannot tell must not accuse');
-  assert.match(HEAD, /var DEADLINE_MS = 8000;/,
-    'well past the slowest boot this repo has measured (~2.4s)');
+// ── 3b. The record, driven for real ────────────────────────────────────
+//
+// The script is evaluated against a fake document and a hand-advanced clock
+// (tests/lib/boot-record-harness.js) and judged on what it DOES.
+
+const { bootRecord } = require('./lib/boot-record-harness');
+
+test('bootStep records completion as well as failure, in the same record', () => {
+  const prevWindow = globalThis.window;
+  globalThis.window = {};
+  try {
+    const { bootStep, bootSteps, bootErrors } = loadTsx('frontend/src/lib/boot-guard.ts');
+    bootStep('registerServiceWorker', () => {});
+    bootStep('initOffline', () => { throw new Error('no storage'); });
+    bootStep('hydrate', () => {});
+    assert.deepEqual(bootSteps().map((s) => s.step), ['registerServiceWorker', 'hydrate']);
+    assert.ok(bootSteps().every((s) => typeof s.at === 'number' && s.at >= 0),
+      'each completion is stamped with when');
+    assert.deepEqual(bootErrors().map((e) => e.step), ['initOffline']);
+    // One record, the one the head's snapshot() prints.
+    assert.equal(globalThis.window.__unBoot.steps, bootSteps());
+    assert.equal(globalThis.window.__unBoot.errors, bootErrors());
+  } finally {
+    globalThis.window = prevWindow;
+  }
 });
 
-test('the probe route is a declared check, so the panel cannot rot', () => {
+test('nothing is painted and nothing is scheduled, on any route, however blank', () => {
+  for (const search of ['', '?shot=boot-failed', '?shot=home', '?un-boot-retry=1']) {
+    const h = bootRecord({ topAt: null, location: { search } });
+    assert.equal(h.clock.pending(), 0, `nothing armed on "${search}"`);
+    h.clock.advance(120_000);
+    assert.equal(h.painted(), 0, `nothing in the document on "${search}"`);
+    assert.equal(h.doc.getElementById('boot-watchdog'), null);
+  }
+});
+
+test('a script that failed to LOAD is recorded once, with the query cut off', () => {
+  // A resource error fires on the element and does not bubble; the bubble
+  // listener never hears it. That is the one failure that leaves the record
+  // empty while nothing ran.
+  const h = bootRecord({ topAt: null });
+  const script = h.make('script', { src: 'http://x/b/abc123/shell/assets/shell.js?v=9#frag' });
+  h.win.dispatch('error', { target: script }, { bubbles: false });
+  assert.deepEqual(h.record().errors, [{
+    step: 'resource',
+    message: 'script failed to load: http://x/b/abc123/shell/assets/shell.js',
+    stack: '',
+  }]);
+  assert.equal(h.painted(), 0);
+});
+
+test('a thrown error and a rejected promise are recorded once each', () => {
+  const h = bootRecord({ topAt: null });
+  h.win.dispatch('error', { target: h.win, message: 'Home is not defined', error: { stack: 'ReferenceError: Home is not defined\n  at app.js:1' } });
+  h.win.dispatch('unhandledrejection', { reason: new Error('chunk failed') });
+  assert.deepEqual(h.record().errors.map((e) => [e.step, e.message]),
+    [['error', 'Home is not defined'], ['unhandledrejection', 'chunk failed']]);
+  assert.match(h.record().errors[0].stack, /ReferenceError/);
+  assert.equal(h.painted(), 0);
+});
+
+test('snapshot() describes the document, and never its secrets', () => {
+  const h = bootRecord({
+    topAt: null,
+    location: { pathname: '/', search: '?token=abc123&return_to=/cli/authorize', hash: '#more/deadbeef0123' },
+    globals: {
+      App: { user: { id: 1, hasPlatformAccess: false }, _sessionFromSnapshot: true, _authedBooted: true },
+      AuthScreens: { _current: 'landing' },
+      UsernodeReact: { mount: { ensure() {} } },
+      __unBoot: { errors: [{ step: 'resource', message: 'script failed to load: /x.js', stack: '' }], steps: [{ step: 'hydrate', at: 1200 }] },
+      __usernodeMounted: { mounted: { 'auth-landing-screen': true } },
+      __usernodeVisibility: { visible: { 'home-screen': true, 'auth-login-screen': false } },
+    },
+  });
+  const landing = h.make('main', { id: 'auth-landing-screen', rect: { width: 390, height: 780 }, bg: 'rgb(255, 255, 255)' });
+  h.setTop(landing);
+  h.doc.querySelectorAll = () => [
+    landing,
+    h.make('main', { id: 'home-screen', innerText: 'Welcome to the feed' }),
+    h.make('main', { id: 'settings-screen', classes: ['hidden'], innerText: 'Settings' }),
+  ];
+  h.doc.body.__reactContainer$test = {};
+  h.clock.advance(4200);
+
+  const state = h.snapshot();
+  assert.match(state, /^at: 4200ms$/m);
+  assert.match(state, /^document: complete, visible, online, 390x780$/m);
+  assert.match(state, /^route: \/\?token,return_to#more\/\.\.\.$/m,
+    'query KEYS and the first fragment segment; never a value, never a token');
+  assert.doesNotMatch(state, /abc123|deadbeef/);
+  assert.match(state, /^on top: main#auth-landing-screen( main#auth-landing-screen){5}$/m);
+  assert.match(state, /^screens shown: auth-landing-screen\(text=0\) home-screen\(text=19\)$/m);
+  assert.match(state, /^globals: present App,AuthScreens,UsernodeReact,UsernodeReact\.mount; missing Home,Offline,NativeChrome$/m);
+  assert.match(state, /^react: adopted the document$/m);
+  assert.match(state, /^boot steps: hydrate@1200ms$/m);
+  assert.match(state, /^errors: \[resource\] script failed to load: \/x\.js$/m);
+  assert.match(state, /^session: user held \(no platform access\), fromSnapshot=true, authedBooted=true, authScreen=landing$/m);
+  assert.match(state, /^interiors asked for: auth-landing-screen$/m);
+  assert.match(state, /^visibility published: home-screen$/m);
+  assert.match(state, /^storage: throws$/m, 'no localStorage on this window, and it says so');
+  assert.match(state, /^worker: not controlling this page$/m);
+  assert.match(state, /^retry mark: unspent$/m);
+  // Reading the state paints nothing either.
+  assert.equal(h.painted(), 0);
+});
+
+test('snapshot() survives a document it cannot read', () => {
+  const h = bootRecord({ topAt: null });
+  h.doc.querySelectorAll = () => { throw new Error('no DOM for you'); };
+  h.doc.elementFromPoint = () => { throw new Error('nor that'); };
+  const state = h.snapshot();
+  assert.match(state, /^on top: \?$/m);
+  assert.match(state, /^screens shown: \?$/m);
+  assert.match(state, /^errors: none recorded$/m, 'a failed read is not an error of the boot');
+});
+
+test('no declared check depends on the panel any more', () => {
   const dapp = JSON.parse(read('dapp.json'));
-  const t = dapp.tests.find((x) => x.path === '/?shot=boot-failed');
-  assert.ok(t, 'the panel has a route a check can reach');
-  assert.match(t.expectSelector, /#boot-watchdog/);
-  assert.equal(t.expectText, 'This screen did not finish loading');
+  assert.equal(dapp.tests.find((x) => /boot-failed|boot-watchdog/.test(JSON.stringify(x))), undefined);
 });
