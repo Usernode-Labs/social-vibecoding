@@ -3081,6 +3081,12 @@
       "name": "A route with no production version renders an empty tile, not one lone tile",
       "path": "/#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "#dc-pr-card .usn-visual-empty"
+    },
+    {
+      "name": "The boot watchdog names the failure instead of showing a blank screen",
+      "path": "/?shot=boot-failed",
+      "expectSelector": "#boot-watchdog #boot-watchdog-retry",
+      "expectText": "This screen did not finish loading"
     }
   ],
   "governance": {
