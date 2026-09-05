@@ -337,6 +337,11 @@ test('the light and dark palettes declare the same variables', () => {
     // 28px content row in both themes — nothing about the dark palette moves
     // it — so a `.dark` counterpart could only ever restate this one.
     '--platform-header-h',
+    // The dev chat's frost — a `blur()` + `saturate()` filter list, not a
+    // colour. Both themes want the same blur radius over their own
+    // --dc-*-fill tints (which DO have .dark counterparts and are checked
+    // like every other colour); a `.dark` copy could only restate this one.
+    '--dc-frost',
   ]);
   const missing = [...light].filter((n) => !dark.has(n) && !THEME_INVARIANT.has(n)).sort();
   assert.deepEqual(missing, [],
