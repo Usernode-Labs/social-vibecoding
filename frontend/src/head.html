@@ -176,26 +176,33 @@
     }());
   </script>
   <script>
-    // ── The boot watchdog: the floor under everything else here ──────────
+    // ── The boot record: what went wrong, for an inspector to read ───────
     //
-    // When the boot fails, it fails INVISIBLY. Every island is left as the
-    // empty markup the prerender shipped, the screen the router reveals has
-    // nothing in it, and what a reader gets is a blank page that reports
-    // nothing at all. Diagnosing #1670 took four rounds of inference for
-    // exactly that reason: the failure could not be observed on the device
-    // that had it, only reasoned about from a sandbox that did not.
+    // When the boot fails, it fails INVISIBLY: every island is left as the
+    // empty markup the prerender shipped, and the screen the router reveals
+    // has nothing in it. This block captures every error from as early in
+    // the document as a script can run, so a reader with an inspector
+    // attached, or a tester with a console, can ask what happened. It is
+    // inline and classic, with no imports, no framework and no stylesheet,
+    // because the things it records are precisely the bundle, the framework
+    // and the stylesheet failing.
     //
-    // So: capture every error from as early in this document as a script can
-    // run, and if the boot has produced NOTHING by the deadline, paint what
-    // went wrong. Written as an inline classic script, with no imports, no
-    // framework and no stylesheet, because the things it reports on are
-    // precisely the bundle, the framework and the stylesheet. It has to work
-    // when they did not.
+    // It PAINTS NOTHING. An earlier version judged the page by its pixels
+    // and painted a "did not finish loading" panel over anything it took for
+    // blank. On real devices it accused pages that were fine, and a
+    // diagnostic that lies is worse than none, so the judgement and the
+    // panel are gone. Everything here is passive:
     //
-    // `window.__unBoot.errors` is the shared record; frontend/src/lib/
-    // boot-guard.ts pushes into the same list from inside the bundle, so one
-    // list holds a failed classic script, a failed boot step and a rejected
-    // promise alike.
+    //   window.__unBoot.errors    thrown errors, rejected promises, scripts
+    //                             and stylesheets that failed to load, and
+    //                             boot steps that threw (frontend/src/lib/
+    //                             boot-guard.ts pushes into the same list)
+    //   window.__unBoot.steps     boot steps that completed, with when
+    //   window.__unBoot.snapshot()  the document's state as one string, for
+    //                             pasting out of a console
+    //
+    // Nothing in it prints a token: query values are never read, only their
+    // keys, and the fragment is cut at its first segment.
     (function () {
       'use strict';
       var W = (window.__unBoot = window.__unBoot || { errors: [], steps: [] });
@@ -211,11 +218,8 @@
       });
       // A script or stylesheet that FAILED TO LOAD fires `error` on its own
       // element and it does not bubble, so the listener above never hears
-      // it. That is the one failure that leaves the boot record empty while
-      // the boot produced nothing: the module the whole shell hangs off was
-      // never fetched, and nothing threw because nothing ran. Capture phase
-      // sees it. A thrown error has `window` as its target and is already
-      // recorded above.
+      // it. Capture phase does. A thrown error has `window` as its target
+      // and is already recorded above.
       window.addEventListener('error', function (e) {
         var t = e && e.target;
         if (!t || t === window || !t.tagName) return;
@@ -228,154 +232,6 @@
         push('unhandledrejection', (r && r.message) || String(r), r && r.stack);
       });
 
-      // `?shot=boot-failed` forces the panel so the dapp.json check and the
-      // before/after screenshots can reach a state that otherwise only exists
-      // when the shell is broken. Every OTHER ?shot= / ?demo= route opts out
-      // entirely: those render one state deterministically for a capture or a
-      // declared check, and a panel arriving mid-assertion is the
-      // nondeterminism they exist to be free of. Same guard, and the same
-      // reason, as prefetchSettings() and AdminConsole.prefetchSections().
-      var forced = false;
-      var optedOut = false;
-      try {
-        var q = new URLSearchParams(window.location.search);
-        forced = q.get('shot') === 'boot-failed';
-        optedOut = !forced && (!!q.get('shot') || !!q.get('demo'));
-      } catch (e) { /* no URL API: watch anyway, it is the failing case */ }
-      if (optedOut) return;
-
-      // Generous on purpose. The slowest boot this repo has measured (4x CPU,
-      // 150ms link, cold worker) put its first card up ~2.4s in, so this sits
-      // well past any load that is merely slow. The panel is for a boot that
-      // is not coming.
-      var DEADLINE_MS = 8000;
-      // One extra window, and only when the parser is demonstrably still
-      // working. Keeps a slow load from being accused without letting a
-      // document that never finishes parsing escape judgement forever.
-      var GRACE_MS = 6000;
-      // A SCREEN TRANSITION IS A BOOT TOO. Login is in place (auth-screens.js
-      // finishLogin hands over to App.enterAuthed in the same document), so
-      // the blank that follows a login arrives whenever the login does: 3s
-      // in with a password manager, 30s in typed by hand. One judgement at
-      // 8s sees the first and misses the second. So after each transition
-      // signal the page publishes (sv:session and sv:authed from app.js, the
-      // fragment changing, the document coming back into view) judge once
-      // more, this long after the last of them, and never more than
-      // MAX_REJUDGES times in one document. The first blank paints; a page
-      // that keeps producing content is never accused.
-      var REJUDGE_MS = 5000;
-      var MAX_REJUDGES = 3;
-      // A timer that fires long after it was due did not tick: the document
-      // was suspended (an app switch, a password-manager sheet, a frozen
-      // tab). What it would sample is the page before it has laid out again,
-      // which is how a working login got accused on a real device. Re-arm a
-      // fresh window instead, once.
-      var SUSPEND_SLACK_MS = 4000;
-
-      // ASK THE PIXELS, NOT THE TREE.
-      //
-      // This used to ask "does any unhidden screen root have a box and text",
-      // which is not the same question as "can the reader see anything" — and
-      // the difference is exactly the failure this watchdog exists for.
-      // `#auth-landing-screen` is `fixed inset-0 z-40 bg-white` with no
-      // children, and a boot that dies reveals it OVER a `#home-screen` that
-      // is still unhidden and still carries the text the prerender shipped.
-      // The old predicate found that text, concluded the boot had worked, and
-      // stayed silent while the reader looked at a white rectangle. Both roots
-      // unhidden at once is a state observed in this repo's own harness, not
-      // a hypothetical.
-      //
-      // document.elementFromPoint answers the right question, because it
-      // returns what is actually ON TOP at a coordinate. Sample a handful of
-      // points; the screen is blank only when EVERY one of them lands on
-      // something with no text and no picture.
-      //
-      // Still conservative in the direction that matters. One sample with
-      // content is enough to call the boot working, an unreadable document
-      // counts as working, and a throw counts as working — a watchdog that
-      // cannot tell must never accuse a page that is fine.
-      function hasVisibleContent(el, strict) {
-        if (!el || el === document.documentElement || el === document.body) return false;
-        // Its own text first: the cheapest yes there is.
-        var own = '';
-        for (var n = el.firstChild; n; n = n.nextSibling) {
-          if (n.nodeType === 3) own += n.nodeValue;
-        }
-        if (own.trim()) return true;
-        var tag = (el.tagName || '').toLowerCase();
-        // Real media counts, and so does an iframe: the landing directory's
-        // app viewer and #app-view are iframes, and what the reader sees
-        // there is the framed document, which this script cannot read and
-        // must not accuse.
-        if (tag === 'img' || tag === 'svg' || tag === 'canvas' || tag === 'video' || tag === 'iframe') return true;
-        // The two rules below are leniency for a LIVE page: a skeleton block,
-        // a card whose text sits in a child. A document whose parser is still
-        // stuck at the deadline has no live page; all it can show is the
-        // static prerender, and a header from that is not a boot. Strict
-        // mode stops here.
-        if (strict) return false;
-        // Text anywhere inside the element that is on top. This is safe HERE
-        // and was not in the old predicate, because elementFromPoint has
-        // already put this element on top at the sampled point: the failure
-        // this file exists for was reading text off a root that something
-        // opaque COVERED, and the covering element is what is in hand now.
-        var inner = '';
-        try { inner = el.innerText || ''; } catch (e) { inner = ''; }
-        if (inner.trim()) return true;
-        // A painted box smaller than the screen: a skeleton block, a card, a
-        // button that has not got its label yet. SIZE is the line, and it is
-        // the same line the wallpaper sits on: every screen root, every
-        // backdrop and the empty landing overlay fill the viewport, and so
-        // does the ground they are painted on. A ground is not content; a
-        // thing on the ground is. (DELIBERATELY NOT the background image:
-        // the platform's wallpaper is one, painted on the very roots this
-        // samples, and measured, it turned every empty overlay into
-        // "content". Colour on a sub-viewport box is a different signal.)
-        var r = el.getBoundingClientRect();
-        if (r.width < 8 || r.height < 8) return false;
-        if (r.width >= window.innerWidth * 0.95 && r.height >= window.innerHeight * 0.95) return false;
-        var bg = '';
-        try { bg = window.getComputedStyle(el).backgroundColor || ''; } catch (e) { bg = ''; }
-        return !!bg && bg !== 'transparent' && !/^rgba\([^)]*,\s*0\)$/.test(bg);
-      }
-
-      // Spread across the viewport rather than clustered: a working shell
-      // has its header near the top and content through the middle.
-      function samplePoints() {
-        var w = window.innerWidth || 0;
-        var h = window.innerHeight || 0;
-        if (!(w > 0 && h > 0)) return [];
-        return [
-          [w * 0.5, h * 0.1], [w * 0.5, h * 0.3], [w * 0.5, h * 0.5],
-          [w * 0.5, h * 0.7], [w * 0.25, h * 0.4], [w * 0.75, h * 0.4],
-        ];
-      }
-
-      function bootProducedSomething(strict) {
-        try {
-          if (typeof document.elementFromPoint !== 'function') return true;
-          var pts = samplePoints();
-          if (!pts.length) return true;
-          for (var i = 0; i < pts.length; i++) {
-            var el = document.elementFromPoint(pts[i][0], pts[i][1]);
-            if (hasVisibleContent(el, strict)) return true;
-          }
-          return false;
-        } catch (e) { return true; }
-      }
-
-      // WHAT THE PAGE LOOKED LIKE, for the panel.
-      //
-      // "No error was recorded" is where the previous panel stopped, and on a
-      // real device that is exactly what it said: JavaScript alive, nothing
-      // thrown, six blank points. A blank with no error is a STATE, and the
-      // state is readable from here: which roots are shown, what is on top
-      // at each sampled point, whether React adopted the document, which
-      // boot steps completed, whether a session is held, which interiors
-      // were asked for. Every line is its own try/catch and answers "?" on
-      // failure, because a watchdog that throws would be the joke of the
-      // file. Nothing here prints a token: the fragment is cut at its first
-      // segment and query values are never read, only their keys.
       function nameOf(el) {
         if (!el) return 'null';
         var t = (el.tagName || '?').toLowerCase();
@@ -393,16 +249,25 @@
         if (m) hash = m[1] + (m[2] ? '/...' : '');
         return window.location.pathname + (keys.length ? '?' + keys.join(',') : '') + hash;
       }
-      function describeState(trigger) {
+      function samplePoints() {
+        var w = window.innerWidth || 0;
+        var h = window.innerHeight || 0;
+        if (!(w > 0 && h > 0)) return [];
+        return [
+          [w * 0.5, h * 0.1], [w * 0.5, h * 0.3], [w * 0.5, h * 0.5],
+          [w * 0.5, h * 0.7], [w * 0.25, h * 0.4], [w * 0.75, h * 0.4],
+        ];
+      }
+      // Every line is its own try/catch and answers "?" on failure: a
+      // diagnostic that throws is the joke of the file.
+      W.snapshot = function () {
         var lines = [];
         function add(label, fn) {
           var value = '?';
           try { value = fn(); } catch (e) { value = '?'; }
           lines.push(label + ': ' + value);
         }
-        add('judged', function () {
-          return trigger + ' at ' + Math.round(window.performance.now()) + 'ms';
-        });
+        add('at', function () { return Math.round(window.performance.now()) + 'ms'; });
         add('document', function () {
           return document.readyState + ', ' + document.visibilityState + ', '
             + (window.navigator.onLine ? 'online' : 'offline') + ', '
@@ -452,6 +317,13 @@
           for (var i = 0; i < s.length; i++) out.push(s[i].step + '@' + s[i].at + 'ms');
           return out.join(' ');
         });
+        add('errors', function () {
+          var errs = W.errors || [];
+          if (!errs.length) return 'none recorded';
+          var out = [];
+          for (var i = 0; i < errs.length && i < 8; i++) out.push('[' + errs[i].step + '] ' + errs[i].message);
+          return out.join(' | ');
+        });
         add('session', function () {
           var A = window.App;
           if (!A) return 'no App';
@@ -486,184 +358,7 @@
           return (document.documentElement.className || '').slice(0, 100) || '-';
         });
         return lines.join('\n');
-      }
-
-      function paint(trigger) {
-        try {
-          if (document.getElementById('boot-watchdog')) return;
-          var dark = document.documentElement.classList.contains('dark');
-          var panel = document.createElement('div');
-          panel.id = 'boot-watchdog';
-          panel.setAttribute('role', 'alert');
-          panel.style.cssText = 'position:fixed;inset:0;z-index:2147483647;overflow:auto;'
-            + 'padding:24px;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            + '-webkit-text-size-adjust:100%;'
-            + (dark ? 'background:#0b0d1b;color:#e4e4e7' : 'background:#f4f2e4;color:#18181b');
-
-          var h = document.createElement('div');
-          h.textContent = 'This screen did not finish loading';
-          h.style.cssText = 'font-size:18px;font-weight:600;margin-bottom:8px';
-          panel.appendChild(h);
-
-          var p = document.createElement('div');
-          p.textContent = 'The app is still installed and your data is safe. '
-            + 'This panel exists so the failure can be read here instead of '
-            + 'looking like a blank screen.';
-          p.style.cssText = 'margin-bottom:16px;opacity:.8;max-width:52ch';
-          panel.appendChild(p);
-
-          var retry = document.createElement('button');
-          retry.id = 'boot-watchdog-retry';
-          retry.type = 'button';
-          retry.textContent = 'Try again';
-          retry.style.cssText = 'appearance:none;border:0;border-radius:10px;padding:10px 18px;'
-            + 'font:inherit;font-weight:500;cursor:pointer;background:#1f86ff;color:#fff;'
-            + 'min-height:44px;margin-bottom:20px';
-          retry.addEventListener('click', function () {
-            // Drop the one-shot reload marker so a retry is a genuinely fresh
-            // attempt rather than one that starts with its budget spent.
-            try {
-              var u = new URL(window.location.href);
-              u.searchParams.delete('un-boot-retry');
-              window.location.replace(u.toString());
-            } catch (e) { window.location.reload(); }
-          });
-          panel.appendChild(retry);
-
-          var mono = 'font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;'
-            + 'white-space:pre-wrap;word-break:break-word;opacity:.85;'
-            // Selectable on purpose: on a phone this text is copied out by
-            // long-press, and that is the whole report.
-            + '-webkit-user-select:text;user-select:text';
-
-          var errs = (W.errors || []).slice(0, 8);
-          var list = document.createElement('div');
-          list.id = 'boot-watchdog-errors';
-          list.style.cssText = mono;
-          if (!errs.length) {
-            list.textContent = 'No error was recorded. The boot simply never '
-              + 'produced a screen. What the page looked like is below.';
-          } else {
-            for (var j = 0; j < errs.length; j++) {
-              var row = document.createElement('div');
-              row.style.cssText = 'margin-bottom:10px';
-              // textContent throughout: these strings come from thrown values
-              // and are never markup.
-              row.textContent = (j + 1) + '. [' + errs[j].step + '] ' + errs[j].message
-                + (errs[j].stack ? '\n' + String(errs[j].stack).split('\n').slice(0, 3).join('\n') : '');
-              list.appendChild(row);
-            }
-          }
-          panel.appendChild(list);
-
-          var stateLabel = document.createElement('div');
-          stateLabel.textContent = 'State when judged';
-          stateLabel.style.cssText = 'margin:18px 0 6px;font-weight:600;font-size:13px';
-          panel.appendChild(stateLabel);
-          var state = document.createElement('div');
-          state.id = 'boot-watchdog-state';
-          state.style.cssText = mono;
-          state.textContent = describeState(trigger || 'deadline');
-          panel.appendChild(state);
-
-          (document.body || document.documentElement).appendChild(panel);
-        } catch (e) { /* a watchdog that throws would be the joke of the file */ }
-      }
-
-      // ARMED HERE, NOT ON DOMContentLoaded.
-      //
-      // The timer used to start inside a DOMContentLoaded listener, which
-      // made a watchdog for a boot that dies depend on the boot reaching a
-      // milestone. A synchronous hang in any of the ~47 classic scripts, and
-      // the event never fires, and the panel can never paint — silence in
-      // precisely the case it was built to break.
-      //
-      // Starting at script-evaluation time removes that dependency. The one
-      // thing it must not do is accuse a document that is merely still
-      // arriving, so a deadline reached while the parser is still going buys
-      // ONE grace period; after that it judges regardless, because an event
-      // that has not come by then may never come.
-      var extended = false;
-      var done = false;
-      var rejudged = 0;
-      var suspendRearms = 0;
-      var armedAt = 0;
-      var armedFor = 0;
-      var pendingRejudge = null;
-
-      function armed(ms) {
-        armedAt = Date.now();
-        armedFor = ms;
-      }
-      function judgeNow(trigger, strict) {
-        if (done) return;
-        if (Date.now() - armedAt > armedFor + SUSPEND_SLACK_MS && suspendRearms < 1) {
-          // Late by more than any main-thread stall: the document was
-          // suspended. Do not sample a page that has not laid out since.
-          suspendRearms++;
-          armed(REJUDGE_MS);
-          setTimeout(function () { judgeNow(trigger, strict); }, REJUDGE_MS);
-          return;
-        }
-        // A hidden document may not lay out at all. The visibilitychange
-        // listener below re-arms when it is back.
-        if (document.visibilityState === 'hidden') return;
-        if (trigger !== 'deadline') {
-          if (rejudged >= MAX_REJUDGES) return;
-          rejudged++;
-        }
-        if (!bootProducedSomething(strict)) {
-          done = true;
-          W.trigger = trigger;
-          paint(trigger);
-        }
-      }
-      function judge() {
-        if (document.readyState === 'loading' && !extended) {
-          extended = true;
-          armed(GRACE_MS);
-          setTimeout(judge, GRACE_MS);
-          return;
-        }
-        // Past the grace window and STILL parsing: no module has run, no
-        // island has rendered, and whatever is on screen is the prerender.
-        // Judge it strictly (see hasVisibleContent).
-        judgeNow('deadline', document.readyState === 'loading');
-      }
-      // Debounced: a burst (sv:session, then sv:authed, then the fragment)
-      // is one transition and gets one judgement, REJUDGE_MS after the last
-      // signal. The initial deadline timer is never cancelled by this.
-      function rejudge(trigger) {
-        if (done || rejudged >= MAX_REJUDGES) return;
-        if (pendingRejudge) clearTimeout(pendingRejudge);
-        armed(REJUDGE_MS);
-        pendingRejudge = setTimeout(function () {
-          pendingRejudge = null;
-          judgeNow(trigger);
-        }, REJUDGE_MS);
-      }
-
-      if (forced) {
-        // The probe still waits for a body to paint into.
-        if (document.readyState === 'loading') {
-          document.addEventListener('DOMContentLoaded', function () {
-            push('probe', 'panel forced by ?shot=boot-failed');
-            setTimeout(function () { paint('probe'); }, 0);
-          });
-        } else {
-          push('probe', 'panel forced by ?shot=boot-failed');
-          setTimeout(function () { paint('probe'); }, 0);
-        }
-      } else {
-        armed(DEADLINE_MS);
-        setTimeout(judge, DEADLINE_MS);
-        document.addEventListener('sv:session', function () { rejudge('sv:session'); });
-        document.addEventListener('sv:authed', function () { rejudge('sv:authed'); });
-        window.addEventListener('hashchange', function () { rejudge('hashchange'); });
-        document.addEventListener('visibilitychange', function () {
-          if (document.visibilityState === 'visible') rejudge('visible');
-        });
-      }
+      };
     }());
   </script>
   <script src="/usernode-bridge.js"></script>

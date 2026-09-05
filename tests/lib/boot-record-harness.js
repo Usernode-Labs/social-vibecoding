@@ -1,13 +1,10 @@
-// Drive the head's boot watchdog for real, in Node.
+// Drive the head's boot record for real, in Node.
 //
-// The watchdog is an inline classic script in frontend/src/head.html, so
-// nothing can require it. The tests used to pin its SOURCE with regexes,
-// which proves a line is present and nothing about what it does; the two
-// flaws found on a real device (#1675) were both in lines the pins already
-// covered. This evaluates the script in a `vm` context against a fake
-// document, a fake window and a clock the test advances by hand, so a test
-// can put an empty overlay on top, let eight seconds pass, and read the
-// panel that painted.
+// The record is an inline classic script in frontend/src/head.html, so
+// nothing can require it. This evaluates the script in a `vm` context
+// against a fake document, a fake window and a clock the test advances by
+// hand, so a test can fire a resource error, let time pass, and read back
+// what was recorded -- and prove that nothing was painted.
 //
 // The fakes are the minimum the script touches. Anything it reaches for that
 // is not here throws, which the script is written to survive -- so a test
@@ -21,11 +18,11 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..', '..');
 
-/** The watchdog IIFE, cut out of the head source. */
-function watchdogSource() {
+/** The boot-record IIFE, cut out of the head source. */
+function recordSource() {
   const head = fs.readFileSync(path.join(ROOT, 'frontend/src/head.html'), 'utf8');
-  const at = head.indexOf('The boot watchdog');
-  if (at < 0) throw new Error('the boot watchdog is not in the head');
+  const at = head.indexOf('The boot record');
+  if (at < 0) throw new Error('the boot record is not in the head');
   const block = head.slice(at, head.indexOf('</script>', at));
   return block.slice(block.indexOf('(function () {'));
 }
@@ -113,7 +110,7 @@ function makeElement(tag, opts = {}, registry) {
 }
 
 /**
- * Boot the watchdog against a document.
+ * Boot the record against a document.
  *
  *   topAt            what elementFromPoint returns: an element, or (x, y) => element
  *   screens          what querySelectorAll('[id$="-screen"], #app-view') returns
@@ -122,7 +119,7 @@ function makeElement(tag, opts = {}, registry) {
  *   location         { pathname, search, hash }
  *   globals          extra properties to put on window (App, UsernodeReact, ...)
  */
-function bootWatchdog(opts = {}) {
+function bootRecord(opts = {}) {
   const clock = makeClock();
   const registry = new Map();
   const make = (tag, o) => makeElement(tag, o, registry);
@@ -179,7 +176,7 @@ function bootWatchdog(opts = {}) {
     URLSearchParams,
     URL,
   });
-  vm.runInContext(watchdogSource(), context, { filename: 'head.html#boot-watchdog' });
+  vm.runInContext(recordSource(), context, { filename: 'head.html#boot-record' });
 
   return {
     win,
@@ -187,16 +184,13 @@ function bootWatchdog(opts = {}) {
     clock,
     /** Change what is on top from here on. */
     setTop(topAt) { win._topAt = topAt; },
-    panel() { return doc.getElementById('boot-watchdog'); },
-    errorsShown() { return doc.getElementById('boot-watchdog-errors'); },
-    state() {
-      const el = doc.getElementById('boot-watchdog-state');
-      return el ? el.textContent : null;
-    },
-    /** The boot record, as plain data: the vm context has its own Array. */
-    record() { return JSON.parse(JSON.stringify(win.__unBoot)); },
+    /** Anything the script put in the document. It must always be empty. */
+    painted() { return doc.body.children.length + doc.documentElement.children.length; },
+    /** The record, as plain data: the vm context has its own Array. */
+    record() { return JSON.parse(JSON.stringify({ errors: win.__unBoot.errors, steps: win.__unBoot.steps })); },
+    snapshot() { return win.__unBoot.snapshot(); },
     make,
   };
 }
 
-module.exports = { bootWatchdog, makeClock, makeElement, watchdogSource };
+module.exports = { bootRecord, makeClock, makeElement, recordSource };
