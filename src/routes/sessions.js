@@ -11612,7 +11612,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
     if (result.fatalError) {
       isError = true;
       const msg = `Scout error: ${result.fatalError.substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (apiFailure) {
       // #1204: the run "succeeded" â€” exit 0, result line written â€” but the
@@ -11622,7 +11622,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       // one-line error notice in the viewer's version history forever.
       isError = true;
       const msg = `${describeAgentApiFailure(apiFailure)}. The spec doc was not updated, so send your request again to retry.`;
-      await sendStatus(msg);
+      await sendStatus(msg, turnFailure());
       summaryParts.push(msg);
     } else if (result.ccIsError) {
       // The runtime flagged the run as errored. A scout's final message IS
@@ -11634,7 +11634,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       // "unknown".
       isError = true;
       const msg = `Scout error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (!ccText) {
       isError = true;
@@ -11643,7 +11643,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       const msg = (result.exitCode === -1 || result.exitCode == null)
         ? `${describeMarkerlessExit(result.markerlessCause)} No spec text was produced.`
         : 'Scout finished but produced no spec text.';
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else {
       const publication = await persistScoutPublication({
@@ -11764,6 +11764,22 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
 // cause tag is set by worker.js's journal consumer; the bare
 // "exited with code -1" wording is deliberately gone (it read like a
 // Claude Code failure when the agent was usually healthy).
+// A status that describes a turn ENDING BADLY, rather than a step finishing.
+//
+// `turnError: true` is the only thing that tells the transcript to draw a
+// failure â€” without it the row falls through to the generic system status,
+// whose settled icon is the pipeline's green âœ“ (see the `failure` row in
+// features/dev-chat/transcript-store.ts). The catch-all turn error has set
+// it since #894; the agent-run failures below did not, so "Scout finished but
+// produced no spec text" and "Worker error: â€¦" were reported in green.
+//
+// Spreads rather than mutates: `executionAgentMeta` is one object shared by
+// every status the run emits, and marking it here would mark the run's
+// successes too.
+function turnFailure(meta) {
+  return { ...(meta || {}), turnError: true };
+}
+
 function describeMarkerlessExit(cause) {
   switch (cause) {
     case 'oom_killed':
@@ -13678,12 +13694,12 @@ ${buildGuidance.testingGuidance}`;
     if (result.fatalError) {
       isError = true;
       const msg = `Worker error: ${result.fatalError.substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (result.ccIsError && !hasChanges) {
       isError = true;
       const msg = `${executionAgentName} error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (!hasChanges) {
       const directReply = directSessionTurn && result.exitCode === 0 && !!ccText.trim();
@@ -13715,7 +13731,7 @@ ${buildGuidance.testingGuidance}`;
       const failure = pushFailure || worker.describePushFailure(null);
       const msg = failure.text;
       await sendStatus(msg, {
-        ...executionAgentMeta,
+        ...turnFailure(executionAgentMeta),
         error: msg,
         pushFailureCode: failure.code,
         pushFailurePermanent: failure.permanent,

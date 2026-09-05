@@ -43,6 +43,53 @@ test('the server still writes turnError — this change reads it, it does not ad
     `expected the five turnError producers; found ${producers.length}`);
 });
 
+test('an agent RUN that fails is a failure too, not a green tick', () => {
+  // #894 marked the five turn-level errors and stopped there, so the six
+  // AGENT-run failures — the ones a reader actually meets, because they are
+  // what a scout or a build does when it goes wrong — still fell through to
+  // the generic system row. "Scout finished but produced no spec text" was
+  // reported in #10b981.
+  //
+  // Each is now routed through turnFailure(), which SPREADS rather than
+  // mutates: executionAgentMeta is one object shared by every status a run
+  // emits, so marking it in place would have marked that run's successes.
+  assert.match(SESSIONS, /function turnFailure\(meta\) \{\n  return \{ \.\.\.\(meta \|\| \{\}\), turnError: true \};/,
+    'the helper must spread, never mutate the shared meta object');
+
+  for (const failing of [
+    'Scout error: ${result.fatalError',
+    'Scout error: ${(ccText',
+    "'Scout finished but produced no spec text.'",
+    'Worker error: ${result.fatalError',
+    '${executionAgentName} error: ${(ccText',
+  ]) {
+    const at = SESSIONS.indexOf(failing);
+    assert.ok(at > 0, `${failing} must still be produced`);
+    const after = SESSIONS.slice(at, at + 400);
+    assert.match(after, /sendStatus\(msg, turnFailure\(/,
+      `${failing} must be sent as a failure`);
+  }
+});
+
+test('…but an OUTCOME that is merely not a success is left alone', () => {
+  // Three neighbours of those six set the same `isError` flag and must NOT
+  // become failure cards:
+  //   * "No changes were made by X" is an outcome, and the no_changes card
+  //     already says so without claiming the turn broke;
+  //   * a stop is not a failure — the user asked for it;
+  //   * a staging-build failure carries changesReady and keeps its
+  //     Changes-ready card, because the commit exists and is proposable.
+  for (const notAFailure of [
+    'No changes were made by ${executionAgentName}',
+    'Staging build failed.',
+  ]) {
+    const at = SESSIONS.indexOf(notAFailure);
+    assert.ok(at > 0, `${notAFailure} must still be produced`);
+    assert.doesNotMatch(SESSIONS.slice(at, at + 300), /turnFailure\(/,
+      `${notAFailure} is an outcome, not a broken turn`);
+  }
+});
+
 test('both live channels carry the flag onto the pushed message', () => {
   // The two status handlers (POST-SSE and the replay channel) build their
   // message from a literal, so an unlisted field is silently dropped. That
