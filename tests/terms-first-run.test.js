@@ -42,6 +42,18 @@ const appJs = read('public', 'js', 'app.js');
 const nativeChromeJs = read('public', 'js', 'native-chrome.js');
 const dapp = JSON.parse(read('dapp.json'));
 
+// The `showTermsSheet` body, sliced at anchors that BOTH exist and that
+// stop at the method's own last line. The end anchor used to be
+// `_renderUsernodeBody(readError, loading)`, a method #1079 replaced with
+// the publish/view split — `indexOf` returned -1, so `slice` silently ran
+// to the end of the file. That is harmless for an `includes('app_version:')`
+// check and fatal for the /token/i guard below, since settings.js mentions
+// CLI and iframe auth tokens ~96 times elsewhere.
+const SHEET_LAST_LINE = 'this._termsSheetOpen = !!sheet;';
+const sheetBody = settingsJs.slice(
+  settingsJs.indexOf('async showTermsSheet('),
+  settingsJs.indexOf(SHEET_LAST_LINE) + SHEET_LAST_LINE.length);
+
 // ─── The trigger module ──────────────────────────────────────────────────
 
 test('the trigger rides the settings bundle, not a new public/js script', () => {
@@ -182,11 +194,30 @@ test('accept keeps its behaviour, and both answers share one in-flight lock', ()
   assert.match(settingsJs,
     /sheet\.dismiss\(\);\s*\n\s*if \(typeof opts\.onAnswered === 'function'\) opts\.onAnswered\(status\);/);
   // No app_version rides along — that field belongs to the mobile client.
-  const sheetBody = settingsJs.slice(
-    settingsJs.indexOf('async showTermsSheet('),
-    settingsJs.indexOf('_renderUsernodeBody(readError, loading)'));
   assert.ok(!sheetBody.includes('app_version:'),
     'the web sheet must not send app_version');
+});
+
+test('the first-run copy carries no token language (issue #1550)', () => {
+  // Feedback triage item #41: the consent ask narrated a reward mechanism.
+  // The intro's second sentence ("Your token allocation stays paused until
+  // you accept.") and the Decline toast ("Your token allocation stays
+  // paused. ...") are gone; the first sentence stays verbatim, and the
+  // consent intent — read the published terms, then accept or decline, and
+  // a decline is reversible — is carried by the replacements.
+  assert.match(settingsJs,
+    /'Reviewing the terms is part of joining the platform\. Please ' \+\s*\n\s*'read the full terms, then choose whether to accept\.'/);
+  assert.match(settingsJs,
+    /PlatformUI\.toast\(\s*\n\s*'You can accept the terms later from your profile'\)/);
+  // The whole dialog, not just the two strings: nothing it renders may
+  // mention tokens again. Scoped to the sheet — settings.js elsewhere is
+  // full of CLI and iframe auth tokens, which this must not trip on.
+  assert.ok(sheetBody.length > 1000 && sheetBody.length < 12000,
+    'the sheet-body slice must be bounded by anchors that both exist');
+  assert.ok(!/token/i.test(sheetBody),
+    'the terms dialog must not mention tokens');
+  // The backend gate is unchanged — only the copy stopped narrating it.
+  assert.match(settingsJs, /postConsent\('refused',/);
 });
 
 test('a pre-fetched payload skips the fetch (what makes the shots write-free)', () => {
@@ -212,9 +243,6 @@ test('exactly one boot trigger auto-presents the terms sheet (#1361)', () => {
 });
 
 test('showTermsSheet never stacks a second terms overlay (#1361)', () => {
-  const sheetBody = settingsJs.slice(
-    settingsJs.indexOf('async showTermsSheet('),
-    settingsJs.indexOf('_renderUsernodeBody(readError, loading)'));
   // Return-early, not dismiss-and-replace — a blocking native modal must
   // never be displaced by a later plain open. Checked at entry AND again
   // after the fetch awaits, so a concurrent call can't slip through.

@@ -378,6 +378,18 @@ const ADDED_IDS = {
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
   'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
   'feedback-screenshot-input': 'PNG/JPEG picker backing the mobile feedback fallback (#824).',
+  // ── #1603: the description's requirement, said out loud ─────────
+  // The field was always mandatory — submitFeedback returned early on an
+  // empty one — but nothing on screen said so and the refusal was a bare
+  // `return`, so Submit read as broken. Four additive ids: two that state
+  // the rule before you type, one that states it back on the field when it
+  // is broken, and one naming the field that is NOT required, because
+  // marking one of two fields required only reads as a rule if the other's
+  // silence is deliberate rather than an omission.
+  'feedback-text-label': 'The Description label on #feedback-text, which had a placeholder and no label at all. Also the anchor the declared check selects the asterisk through, so the marker is asserted where a reader would look for it rather than anywhere on the card.',
+  'feedback-text-required': 'The red asterisk inside that label. `aria-hidden` because the accessible requirement is carried by aria-required on the field itself, and a screen reader announcing "star" adds nothing to that.',
+  'feedback-text-error': "The inline refusal under the description: \"Please add a description.\" Deliberately its OWN node rather than a fifth writer of #feedback-status, which has an explicit newer-and-more-specific-wins rule (paintQueueState) that would either swallow this message or let it erase the offline hint. Ships empty and hidden, like #feedback-status: the controller owns the text, and a message rendered before the submit that earns it would both lie on open and mismatch on hydration.",
+  'feedback-title-label': 'The Title label, marked optional. The title generates itself from the description and the server names the issue when it is blank, so its emptiness is a working state - which is worth saying next to a field that is now visibly required.',
   // ── THE UI OVERHAUL: the Improve panel ───────────────────────────
   // One surface for everything you do *to* the app on screen rather than
   // *with* it. It absorbed four header controls (see RETIRED_IDS above)

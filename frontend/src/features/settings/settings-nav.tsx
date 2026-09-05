@@ -38,6 +38,7 @@
  */
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { ChevronDownIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { settingsNavStore } from './settings-nav-store.js';
@@ -49,13 +50,25 @@ interface NavItem {
   className: string;
 }
 
-interface NavGroup {
+/**
+ * The three disclosure fields ../settings.js attaches to BOTH descriptors
+ * (`_groupDisclosure`). `collapsible` is false for every group but Advanced,
+ * and a non-collapsible group renders exactly the markup it did before #1554
+ * — a plain heading, no button, no wrapper element.
+ */
+interface Disclosure {
+  collapsible: boolean;
+  expanded: boolean;
+  domId: string | null;
+}
+
+interface NavGroup extends Disclosure {
   name: string;
   first: boolean;
   items: NavItem[];
 }
 
-interface MenuGroup {
+interface MenuGroup extends Disclosure {
   name: string;
   items: { key: string; label: string }[];
 }
@@ -70,6 +83,15 @@ const navClick = (key: string) => {
   (window as { Settings?: { _navClick(key: string): void } }).Settings?._navClick(key);
 };
 
+/**
+ * `Settings._toggleGroup` — the disclosure handler both hosts route through.
+ * A press mutates the persisted set and repaints the nav; it never changes
+ * the section, the hash or the content pane.
+ */
+const toggleGroup = (name: string) => {
+  (window as { Settings?: { _toggleGroup?(name: string): void } }).Settings?._toggleGroup?.(name);
+};
+
 /** Carried over verbatim from the retired _navItemsHtml / _mobileMenuHtml. */
 const GROUP_SPACED = 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800';
 // The widget language labels a group in SENTENCE CASE at reading size, not as
@@ -79,6 +101,66 @@ const GROUP_SPACED = 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800';
 // thing that made it read as the old vocabulary.
 const NAV_HEADING = 'px-3 pb-1';
 const MENU_ROW = 'settings-menu-row min-h-[44px] py-2 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors';
+
+// The collapsible heading is a real <button>, so Tab plus Enter/Space come
+// for free and no keydown handler is needed, with the aria-expanded /
+// aria-controls pair and the platform's chevron idiom (down when open, right
+// when closed) — the admin console's _groupToggleHtml, as JSX.
+const TOGGLE_BASE = 'flex w-full items-center gap-1.5 text-left';
+const CHEVRON = 'w-3 h-3 shrink-0 transition-transform';
+const CHEVRON_CLOSED = 'w-3 h-3 shrink-0 transition-transform -rotate-90';
+
+/**
+ * The heading of one group, on either surface. `collapsible` groups get the
+ * button; everything else keeps the bare SectionHeader it always had, so the
+ * only heading whose shape changes is Advanced's.
+ */
+function GroupHeading({ group, className }: { group: Disclosure & { name: string }; className: string }) {
+  if (!group.collapsible) {
+    return <SectionHeader className={className}>{group.name}</SectionHeader>;
+  }
+  // No em dash and no punctuation: this string is read out by screen readers
+  // and shown as the hover title.
+  const label = `${group.expanded ? 'Collapse' : 'Expand'} ${group.name}`;
+  return (
+    <SectionHeader className={className}>
+      <button
+        type="button"
+        data-settings-group-toggle={group.name}
+        aria-expanded={group.expanded ? 'true' : 'false'}
+        aria-controls={group.domId || undefined}
+        title={label}
+        aria-label={label}
+        className={TOGGLE_BASE}
+        onClick={() => toggleGroup(group.name)}
+      >
+        <ChevronDownIcon className={group.expanded ? CHEVRON : CHEVRON_CLOSED} />
+        <span className="flex-1 min-w-0 truncate">{group.name}</span>
+      </button>
+    </SectionHeader>
+  );
+}
+
+/**
+ * One sidebar row. Extracted so both branches of the group body below render
+ * the SAME element — a collapsible group wraps its rows for aria-controls,
+ * every other group keeps them as direct children, and neither is allowed to
+ * grow its own copy of the row.
+ */
+function NavRow({ item }: { item: NavItem }) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={item.active ? 'true' : 'false'}
+      data-settings-nav={item.key}
+      className={item.className}
+      onClick={() => navClick(item.key)}
+    >
+      {item.label}
+    </button>
+  );
+}
 
 /**
  * The desktop sidebar. `className` is NOT rendered on the <nav> — it is a
@@ -92,20 +174,21 @@ export function SettingsNavDesktop() {
     <nav id="settings-nav-desktop" aria-label="Settings sections" className="space-y-1">
       {(desktop || []).map((group) => (
         <div key={group.name} className={group.first ? '' : GROUP_SPACED}>
-          <SectionHeader className={NAV_HEADING}>{group.name}</SectionHeader>
-          {group.items.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              role="tab"
-              aria-selected={item.active ? 'true' : 'false'}
-              data-settings-nav={item.key}
-              className={item.className}
-              onClick={() => navClick(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
+          <GroupHeading group={group} className={NAV_HEADING} />
+          {/*
+              The rows of a COLLAPSIBLE group get their own element, so
+              aria-controls has something to point at and `hidden` takes them
+              out of tab order rather than just out of sight. Every other
+              group keeps the rows as direct children of this div, exactly as
+              before #1554 — the wrapper carries no classes of its own, so it
+              adds no spacing either way (`space-y-1` is the host <nav>'s and
+              applies to the group divs, never to the rows).
+          */}
+          {group.collapsible ? (
+            <div id={group.domId || undefined} className={group.expanded ? undefined : 'hidden'}>
+              {group.items.map((item) => <NavRow key={item.key} item={item} />)}
+            </div>
+          ) : group.items.map((item) => <NavRow key={item.key} item={item} />)}
         </div>
       ))}
     </nav>
@@ -123,8 +206,11 @@ export function SettingsMobileMenu() {
     <div id="settings-mobile-menu-host" className="md:hidden">
       {(mobile || []).map((group) => (
         <div key={group.name} className="mb-5">
-          <SectionHeader className="px-4 pb-1.5">{group.name}</SectionHeader>
-          <GroupedList className="mx-0">
+          <GroupHeading group={group} className="px-4 pb-1.5" />
+          <GroupedList
+            id={group.domId || undefined}
+            className={group.collapsible && !group.expanded ? 'mx-0 hidden' : 'mx-0'}
+          >
             {group.items.map((item) => (
               <ListRow
                 key={item.key}
