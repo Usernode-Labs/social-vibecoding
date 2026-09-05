@@ -300,8 +300,9 @@ test('the React bundle registers the service worker at root scope', () => {
   const entry = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'main.tsx'), 'utf8',
   );
-  assert.match(entry, /registerServiceWorker\(\)/,
-    'main.tsx must call registerServiceWorker() — nothing else does');
+  assert.match(entry, /bootStep\('registerServiceWorker', registerServiceWorker\)/,
+    'main.tsx must call registerServiceWorker() — nothing else does — and it '
+    + 'goes through bootStep so a throw there cannot abort hydration (#1670)');
 
   // tests/shell-build.test.js pins the image builder that compiles this entry
   // and copies the resulting bundle into the runtime. There is deliberately
