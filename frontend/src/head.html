@@ -198,8 +198,9 @@
     // promise alike.
     (function () {
       'use strict';
-      var W = (window.__unBoot = window.__unBoot || { errors: [] });
+      var W = (window.__unBoot = window.__unBoot || { errors: [], steps: [] });
       if (!Array.isArray(W.errors)) W.errors = [];
+      if (!Array.isArray(W.steps)) W.steps = [];
       function push(step, message, stack) {
         try {
           W.errors.push({ step: step, message: String(message || ''), stack: stack || '' });
@@ -208,6 +209,20 @@
       window.addEventListener('error', function (e) {
         push('error', (e && e.message) || 'script error', e && e.error && e.error.stack);
       });
+      // A script or stylesheet that FAILED TO LOAD fires `error` on its own
+      // element and it does not bubble, so the listener above never hears
+      // it. That is the one failure that leaves the boot record empty while
+      // the boot produced nothing: the module the whole shell hangs off was
+      // never fetched, and nothing threw because nothing ran. Capture phase
+      // sees it. A thrown error has `window` as its target and is already
+      // recorded above.
+      window.addEventListener('error', function (e) {
+        var t = e && e.target;
+        if (!t || t === window || !t.tagName) return;
+        var url = '';
+        try { url = String(t.src || t.href || '').split('?')[0].split('#')[0]; } catch (x) { url = ''; }
+        push('resource', String(t.tagName).toLowerCase() + ' failed to load: ' + (url || '(no url)'));
+      }, true);
       window.addEventListener('unhandledrejection', function (e) {
         var r = e && e.reason;
         push('unhandledrejection', (r && r.message) || String(r), r && r.stack);
@@ -238,6 +253,24 @@
       // working. Keeps a slow load from being accused without letting a
       // document that never finishes parsing escape judgement forever.
       var GRACE_MS = 6000;
+      // A SCREEN TRANSITION IS A BOOT TOO. Login is in place (auth-screens.js
+      // finishLogin hands over to App.enterAuthed in the same document), so
+      // the blank that follows a login arrives whenever the login does: 3s
+      // in with a password manager, 30s in typed by hand. One judgement at
+      // 8s sees the first and misses the second. So after each transition
+      // signal the page publishes (sv:session and sv:authed from app.js, the
+      // fragment changing, the document coming back into view) judge once
+      // more, this long after the last of them, and never more than
+      // MAX_REJUDGES times in one document. The first blank paints; a page
+      // that keeps producing content is never accused.
+      var REJUDGE_MS = 5000;
+      var MAX_REJUDGES = 3;
+      // A timer that fires long after it was due did not tick: the document
+      // was suspended (an app switch, a password-manager sheet, a frozen
+      // tab). What it would sample is the page before it has laid out again,
+      // which is how a working login got accused on a real device. Re-arm a
+      // fresh window instead, once.
+      var SUSPEND_SLACK_MS = 4000;
 
       // ASK THE PIXELS, NOT THE TREE.
       //
@@ -261,49 +294,201 @@
       // content is enough to call the boot working, an unreadable document
       // counts as working, and a throw counts as working — a watchdog that
       // cannot tell must never accuse a page that is fine.
-      function hasVisibleContent(el) {
+      function hasVisibleContent(el, strict) {
         if (!el || el === document.documentElement || el === document.body) return false;
-        // Its own text, not a descendant's: elementFromPoint already gave us
-        // the topmost node, and innerText on an ancestor would count content
-        // that something opaque is covering.
+        // Its own text first: the cheapest yes there is.
         var own = '';
         for (var n = el.firstChild; n; n = n.nextSibling) {
           if (n.nodeType === 3) own += n.nodeValue;
         }
         if (own.trim()) return true;
         var tag = (el.tagName || '').toLowerCase();
-        return tag === 'img' || tag === 'svg' || tag === 'canvas' || tag === 'video';
-        // DELIBERATELY NOT background-image. It looks like a reasonable
-        // "an icon drawn as a background counts" signal and it is exactly
-        // wrong here: the platform's wallpaper IS a background image, painted
-        // on the very screen roots this samples, so every empty overlay came
-        // back as content and the panel stayed silent. Measured — all six
-        // sample points landed on `#auth-landing-screen` with no text and a
-        // `url(data:image/png…)` wallpaper behind them. Text and real media
-        // are the signals; a ground is not content.
+        // Real media counts, and so does an iframe: the landing directory's
+        // app viewer and #app-view are iframes, and what the reader sees
+        // there is the framed document, which this script cannot read and
+        // must not accuse.
+        if (tag === 'img' || tag === 'svg' || tag === 'canvas' || tag === 'video' || tag === 'iframe') return true;
+        // The two rules below are leniency for a LIVE page: a skeleton block,
+        // a card whose text sits in a child. A document whose parser is still
+        // stuck at the deadline has no live page; all it can show is the
+        // static prerender, and a header from that is not a boot. Strict
+        // mode stops here.
+        if (strict) return false;
+        // Text anywhere inside the element that is on top. This is safe HERE
+        // and was not in the old predicate, because elementFromPoint has
+        // already put this element on top at the sampled point: the failure
+        // this file exists for was reading text off a root that something
+        // opaque COVERED, and the covering element is what is in hand now.
+        var inner = '';
+        try { inner = el.innerText || ''; } catch (e) { inner = ''; }
+        if (inner.trim()) return true;
+        // A painted box smaller than the screen: a skeleton block, a card, a
+        // button that has not got its label yet. SIZE is the line, and it is
+        // the same line the wallpaper sits on: every screen root, every
+        // backdrop and the empty landing overlay fill the viewport, and so
+        // does the ground they are painted on. A ground is not content; a
+        // thing on the ground is. (DELIBERATELY NOT the background image:
+        // the platform's wallpaper is one, painted on the very roots this
+        // samples, and measured, it turned every empty overlay into
+        // "content". Colour on a sub-viewport box is a different signal.)
+        var r = el.getBoundingClientRect();
+        if (r.width < 8 || r.height < 8) return false;
+        if (r.width >= window.innerWidth * 0.95 && r.height >= window.innerHeight * 0.95) return false;
+        var bg = '';
+        try { bg = window.getComputedStyle(el).backgroundColor || ''; } catch (e) { bg = ''; }
+        return !!bg && bg !== 'transparent' && !/^rgba\([^)]*,\s*0\)$/.test(bg);
       }
 
-      function bootProducedSomething() {
+      // Spread across the viewport rather than clustered: a working shell
+      // has its header near the top and content through the middle.
+      function samplePoints() {
+        var w = window.innerWidth || 0;
+        var h = window.innerHeight || 0;
+        if (!(w > 0 && h > 0)) return [];
+        return [
+          [w * 0.5, h * 0.1], [w * 0.5, h * 0.3], [w * 0.5, h * 0.5],
+          [w * 0.5, h * 0.7], [w * 0.25, h * 0.4], [w * 0.75, h * 0.4],
+        ];
+      }
+
+      function bootProducedSomething(strict) {
         try {
           if (typeof document.elementFromPoint !== 'function') return true;
-          var w = window.innerWidth || 0;
-          var h = window.innerHeight || 0;
-          if (!(w > 0 && h > 0)) return true;
-          // Spread across the viewport rather than clustered: a working shell
-          // has its header near the top and content through the middle.
-          var pts = [
-            [w * 0.5, h * 0.1], [w * 0.5, h * 0.3], [w * 0.5, h * 0.5],
-            [w * 0.5, h * 0.7], [w * 0.25, h * 0.4], [w * 0.75, h * 0.4],
-          ];
+          var pts = samplePoints();
+          if (!pts.length) return true;
           for (var i = 0; i < pts.length; i++) {
             var el = document.elementFromPoint(pts[i][0], pts[i][1]);
-            if (hasVisibleContent(el)) return true;
+            if (hasVisibleContent(el, strict)) return true;
           }
           return false;
         } catch (e) { return true; }
       }
 
-      function paint() {
+      // WHAT THE PAGE LOOKED LIKE, for the panel.
+      //
+      // "No error was recorded" is where the previous panel stopped, and on a
+      // real device that is exactly what it said: JavaScript alive, nothing
+      // thrown, six blank points. A blank with no error is a STATE, and the
+      // state is readable from here: which roots are shown, what is on top
+      // at each sampled point, whether React adopted the document, which
+      // boot steps completed, whether a session is held, which interiors
+      // were asked for. Every line is its own try/catch and answers "?" on
+      // failure, because a watchdog that throws would be the joke of the
+      // file. Nothing here prints a token: the fragment is cut at its first
+      // segment and query values are never read, only their keys.
+      function nameOf(el) {
+        if (!el) return 'null';
+        var t = (el.tagName || '?').toLowerCase();
+        if (el.id) return t + '#' + el.id;
+        var c = el.classList && el.classList.length ? el.classList[0] : '';
+        return c ? t + '.' + c : t;
+      }
+      function safeRoute() {
+        var keys = [];
+        try {
+          new URLSearchParams(window.location.search).forEach(function (v, k) { keys.push(k); });
+        } catch (e) { /* no URL API */ }
+        var hash = window.location.hash || '';
+        var m = /^(#[^/]*)(\/.*)?$/.exec(hash);
+        if (m) hash = m[1] + (m[2] ? '/...' : '');
+        return window.location.pathname + (keys.length ? '?' + keys.join(',') : '') + hash;
+      }
+      function describeState(trigger) {
+        var lines = [];
+        function add(label, fn) {
+          var value = '?';
+          try { value = fn(); } catch (e) { value = '?'; }
+          lines.push(label + ': ' + value);
+        }
+        add('judged', function () {
+          return trigger + ' at ' + Math.round(window.performance.now()) + 'ms';
+        });
+        add('document', function () {
+          return document.readyState + ', ' + document.visibilityState + ', '
+            + (window.navigator.onLine ? 'online' : 'offline') + ', '
+            + window.innerWidth + 'x' + window.innerHeight;
+        });
+        add('route', safeRoute);
+        add('on top', function () {
+          var pts = samplePoints();
+          var out = [];
+          for (var i = 0; i < pts.length; i++) {
+            out.push(nameOf(document.elementFromPoint(pts[i][0], pts[i][1])));
+          }
+          return out.join(' ') || 'no viewport';
+        });
+        add('screens shown', function () {
+          var els = document.querySelectorAll('[id$="-screen"], #app-view');
+          var out = [];
+          for (var i = 0; i < els.length; i++) {
+            var el = els[i];
+            if (el.hidden || (el.classList && el.classList.contains('hidden'))) continue;
+            var text = '';
+            try { text = (el.innerText || '').trim(); } catch (e) { text = ''; }
+            out.push(el.id + '(text=' + text.length + ')');
+          }
+          return out.length ? out.join(' ') : 'none';
+        });
+        add('globals', function () {
+          var names = ['App', 'AuthScreens', 'Home', 'Offline', 'NativeChrome', 'UsernodeReact'];
+          var have = [];
+          var miss = [];
+          for (var i = 0; i < names.length; i++) (window[names[i]] ? have : miss).push(names[i]);
+          var mount = window.UsernodeReact && window.UsernodeReact.mount;
+          (mount && mount.ensure ? have : miss).push('UsernodeReact.mount');
+          return 'present ' + (have.join(',') || '-') + '; missing ' + (miss.join(',') || '-');
+        });
+        add('react', function () {
+          var keys = Object.keys(document.body || {});
+          for (var i = 0; i < keys.length; i++) {
+            if (keys[i].indexOf('__reactContainer') === 0) return 'adopted the document';
+          }
+          return 'has NOT adopted the document';
+        });
+        add('boot steps', function () {
+          var s = W.steps || [];
+          if (!s.length) return 'none completed';
+          var out = [];
+          for (var i = 0; i < s.length; i++) out.push(s[i].step + '@' + s[i].at + 'ms');
+          return out.join(' ');
+        });
+        add('session', function () {
+          var A = window.App;
+          if (!A) return 'no App';
+          return (A.user ? 'user held' : 'no user')
+            + (A.user && A.user.hasPlatformAccess === false ? ' (no platform access)' : '')
+            + ', fromSnapshot=' + !!A._sessionFromSnapshot
+            + ', authedBooted=' + !!A._authedBooted
+            + ', authScreen=' + ((window.AuthScreens && window.AuthScreens._current) || 'none');
+        });
+        add('interiors asked for', function () {
+          var m = window.__usernodeMounted && window.__usernodeMounted.mounted;
+          var ks = m ? Object.keys(m) : [];
+          return ks.length ? ks.join(',') : 'none';
+        });
+        add('visibility published', function () {
+          var v = window.__usernodeVisibility && window.__usernodeVisibility.visible;
+          var out = [];
+          if (v) for (var k in v) if (v[k]) out.push(k);
+          return out.length ? out.join(',') : 'none';
+        });
+        add('storage', function () {
+          try { void window.localStorage.length; return 'readable'; } catch (e) { return 'throws'; }
+        });
+        add('worker', function () {
+          var sw = window.navigator.serviceWorker;
+          return sw && sw.controller ? 'controlling this page' : 'not controlling this page';
+        });
+        add('retry mark', function () {
+          return new URLSearchParams(window.location.search).get('un-boot-retry') === '1' ? 'spent' : 'unspent';
+        });
+        add('html class', function () {
+          return (document.documentElement.className || '').slice(0, 100) || '-';
+        });
+        return lines.join('\n');
+      }
+
+      function paint(trigger) {
         try {
           if (document.getElementById('boot-watchdog')) return;
           var dark = document.documentElement.classList.contains('dark');
@@ -345,14 +530,19 @@
           });
           panel.appendChild(retry);
 
+          var mono = 'font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;'
+            + 'white-space:pre-wrap;word-break:break-word;opacity:.85;'
+            // Selectable on purpose: on a phone this text is copied out by
+            // long-press, and that is the whole report.
+            + '-webkit-user-select:text;user-select:text';
+
           var errs = (W.errors || []).slice(0, 8);
           var list = document.createElement('div');
           list.id = 'boot-watchdog-errors';
-          list.style.cssText = 'font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;'
-            + 'white-space:pre-wrap;word-break:break-word;opacity:.85';
+          list.style.cssText = mono;
           if (!errs.length) {
             list.textContent = 'No error was recorded. The boot simply never '
-              + 'produced a screen, which usually means a script never ran.';
+              + 'produced a screen. What the page looked like is below.';
           } else {
             for (var j = 0; j < errs.length; j++) {
               var row = document.createElement('div');
@@ -365,6 +555,17 @@
             }
           }
           panel.appendChild(list);
+
+          var stateLabel = document.createElement('div');
+          stateLabel.textContent = 'State when judged';
+          stateLabel.style.cssText = 'margin:18px 0 6px;font-weight:600;font-size:13px';
+          panel.appendChild(stateLabel);
+          var state = document.createElement('div');
+          state.id = 'boot-watchdog-state';
+          state.style.cssText = mono;
+          state.textContent = describeState(trigger || 'deadline');
+          panel.appendChild(state);
+
           (document.body || document.documentElement).appendChild(panel);
         } catch (e) { /* a watchdog that throws would be the joke of the file */ }
       }
@@ -383,13 +584,63 @@
       // ONE grace period; after that it judges regardless, because an event
       // that has not come by then may never come.
       var extended = false;
+      var done = false;
+      var rejudged = 0;
+      var suspendRearms = 0;
+      var armedAt = 0;
+      var armedFor = 0;
+      var pendingRejudge = null;
+
+      function armed(ms) {
+        armedAt = Date.now();
+        armedFor = ms;
+      }
+      function judgeNow(trigger, strict) {
+        if (done) return;
+        if (Date.now() - armedAt > armedFor + SUSPEND_SLACK_MS && suspendRearms < 1) {
+          // Late by more than any main-thread stall: the document was
+          // suspended. Do not sample a page that has not laid out since.
+          suspendRearms++;
+          armed(REJUDGE_MS);
+          setTimeout(function () { judgeNow(trigger, strict); }, REJUDGE_MS);
+          return;
+        }
+        // A hidden document may not lay out at all. The visibilitychange
+        // listener below re-arms when it is back.
+        if (document.visibilityState === 'hidden') return;
+        if (trigger !== 'deadline') {
+          if (rejudged >= MAX_REJUDGES) return;
+          rejudged++;
+        }
+        if (!bootProducedSomething(strict)) {
+          done = true;
+          W.trigger = trigger;
+          paint(trigger);
+        }
+      }
       function judge() {
         if (document.readyState === 'loading' && !extended) {
           extended = true;
+          armed(GRACE_MS);
           setTimeout(judge, GRACE_MS);
           return;
         }
-        if (!bootProducedSomething()) paint();
+        // Past the grace window and STILL parsing: no module has run, no
+        // island has rendered, and whatever is on screen is the prerender.
+        // Judge it strictly (see hasVisibleContent).
+        judgeNow('deadline', document.readyState === 'loading');
+      }
+      // Debounced: a burst (sv:session, then sv:authed, then the fragment)
+      // is one transition and gets one judgement, REJUDGE_MS after the last
+      // signal. The initial deadline timer is never cancelled by this.
+      function rejudge(trigger) {
+        if (done || rejudged >= MAX_REJUDGES) return;
+        if (pendingRejudge) clearTimeout(pendingRejudge);
+        armed(REJUDGE_MS);
+        pendingRejudge = setTimeout(function () {
+          pendingRejudge = null;
+          judgeNow(trigger);
+        }, REJUDGE_MS);
       }
 
       if (forced) {
@@ -397,14 +648,21 @@
         if (document.readyState === 'loading') {
           document.addEventListener('DOMContentLoaded', function () {
             push('probe', 'panel forced by ?shot=boot-failed');
-            setTimeout(paint, 0);
+            setTimeout(function () { paint('probe'); }, 0);
           });
         } else {
           push('probe', 'panel forced by ?shot=boot-failed');
-          setTimeout(paint, 0);
+          setTimeout(function () { paint('probe'); }, 0);
         }
       } else {
+        armed(DEADLINE_MS);
         setTimeout(judge, DEADLINE_MS);
+        document.addEventListener('sv:session', function () { rejudge('sv:session'); });
+        document.addEventListener('sv:authed', function () { rejudge('sv:authed'); });
+        window.addEventListener('hashchange', function () { rejudge('hashchange'); });
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible') rejudge('visible');
+        });
       }
     }());
   </script>
