@@ -46,6 +46,7 @@ function makeHarness() {
     activeWorkers: require.resolve('../src/services/active-workers'),
     appAccess: require.resolve('../src/services/app-access'),
     events: require.resolve('../src/services/events'),
+    sessionLifecycle: require.resolve('../src/services/session-lifecycle'),
     proposalUpdate: require.resolve('../src/services/proposal-update'),
     prImportSync: require.resolve('../src/services/pr-import-sync'),
     // #907: the staging/checks half of a handoff build now lives in a shared
@@ -86,6 +87,7 @@ function makeHarness() {
     promotedChecks: [],
     votes: 0,
     reconcileFailure: null,
+    finalizedArchives: [],
   };
   let transactionState = null;
   const pool = {
@@ -116,9 +118,25 @@ function makeHarness() {
         transactionState = null;
         return { rows: [], rowCount: 0 };
       }
-      if (/SELECT cs\.\*, a\.slug AS app_slug\s+FROM chat_sessions/.test(text)) {
+      if (/SELECT cs\.\*, a\.slug AS app_slug\s+FROM chat_sessions/.test(text)
+          && /handoff_request_id = \$2/.test(text)) {
         const row = state.sessions.find((s) => s.user_id === params[0]
           && s.handoff_request_id === params[1]);
+        return { rows: row ? [{ ...row, app_slug: app.slug }] : [] };
+      }
+      if (/cs\.linked_issues && \$4::INTEGER\[\]/.test(text)) {
+        const wanted = new Set(params[3].map(Number));
+        const rows = state.sessions.filter((s) => s.user_id === params[0]
+          && s.app_id === params[1] && s.source === params[2]
+          && ['active', 'paused'].includes(s.status)
+          && (s.linked_issues || []).some((issue) => wanted.has(Number(issue))));
+        return { rows: rows.map((row) => ({ ...row, app_slug: app.slug })) };
+      }
+      if (/WHERE cs\.id = \$1 AND cs\.user_id = \$2 AND cs\.app_id = \$3/.test(text)
+          && /cs\.status IN \('active', 'paused'\)/.test(text)) {
+        const row = state.sessions.find((s) => s.id === Number(params[0])
+          && s.user_id === Number(params[1]) && s.app_id === Number(params[2])
+          && s.source === params[3] && ['active', 'paused'].includes(s.status));
         return { rows: row ? [{ ...row, app_slug: app.slug }] : [] };
       }
       if (/SELECT COUNT\(\*\) AS cnt FROM chat_sessions/.test(text)) {
@@ -136,6 +154,7 @@ function makeHarness() {
           checks_commit_sha: null, session_title: params[7],
           spec_md: params[8], linked_issues: params[9], staging_url: null,
           check_state: null, check_error_detail: null, pr_number: null, pr_url: null,
+          handoff_supersedes_session_id: params[10] || null,
         };
         state.sessions.push(row);
         return { rows: [{ ...row }], rowCount: 1 };
@@ -157,6 +176,14 @@ function makeHarness() {
           && s.version === Number(params[2]));
         if (row) row.commit_sha = params[0];
         return { rows: [], rowCount: row ? 1 : 0 };
+      }
+      if (/SET status = 'archived', archived_at = NOW\(\)/.test(text)
+          && /source = \$4/.test(text)) {
+        const row = state.sessions.find((s) => s.id === Number(params[0])
+          && s.user_id === Number(params[1]) && s.app_id === Number(params[2])
+          && s.source === params[3] && ['active', 'paused'].includes(s.status));
+        if (row) row.status = 'archived';
+        return { rows: row ? [{ id: row.id }] : [], rowCount: row ? 1 : 0 };
       }
       if (/INSERT INTO chat_session_messages/.test(text)) {
         const metadata = JSON.parse(params[3]);
@@ -324,7 +351,17 @@ function makeHarness() {
         : { removed: true, leaked: false };
     },
   });
-  stubModule(ids.recovery, { recordStagingBootFailure: async () => {} });
+  stubModule(ids.recovery, {
+    recordStagingBootFailure: async () => {},
+    checkRunOverdue(session, { now = Date.now(), staleMs = 10 * 60 * 1000 } = {}) {
+      if (session?.check_state != null && session.check_state !== 'pending') return false;
+      if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
+      const checkedAt = session?.checks_checked_at == null
+        ? NaN
+        : new Date(session.checks_checked_at).getTime();
+      return !Number.isFinite(checkedAt) || (now - checkedAt) > staleMs;
+    },
+  });
   stubModule(ids.activeWorkers, {
     isSessionBusy: () => state.busy,
     beginSessionOperation: () => () => {},
@@ -356,6 +393,10 @@ function makeHarness() {
   stubModule(ids.events, {
     EVENT_TYPES: { DEV_SESSION_STARTED: 'dev_session_started' },
     record: () => {},
+  });
+  stubModule(ids.sessionLifecycle, {
+    freeGlobalSlot: async () => ({ freed: false }),
+    finalizeArchivedSession: async (args) => { state.finalizedArchives.push(args); },
   });
   stubModule(ids.proposalUpdate, {
     isContinuableStatus(status) {
@@ -451,6 +492,8 @@ test('handoff persistence has owner/request and per-event idempotency constraint
   assert.match(schema, /handoff_uploaded_sha VARCHAR\(40\)/);
   assert.match(schema, /handoff_local_commit_sha VARCHAR\(40\)/);
   assert.match(schema, /handoff_upload_checked_sha VARCHAR\(40\)/);
+  assert.match(schema, /handoff_supersedes_session_id INTEGER REFERENCES chat_sessions\(id\)/);
+  assert.match(schema, /chat_sessions_handoff_supersedes_idx/);
   assert.match(schema, /chat_session_messages_handoff_event_idx[\s\S]*handoffEventId/);
   const server = fs.readFileSync(require.resolve('../server'), 'utf8');
   assert.match(server, /app\.use\(proposalHandoffRoutes\(config\)\)/);
@@ -473,6 +516,13 @@ test('handoff validators require a spec-first, bounded, user-visible history con
     const parsed = subject.parseStartBody(START_BODY);
     assert.equal(parsed.baseSha, BASE);
     assert.equal(parsed.history.length, 2);
+    assert.equal(parsed.supersedesSessionId, null);
+    assert.equal(subject.parseStartBody({
+      ...START_BODY, supersedesSessionId: 41,
+    }).supersedesSessionId, 41);
+    assert.throws(() => subject.parseStartBody({
+      ...START_BODY, supersedesSessionId: '41',
+    }), /supersedesSessionId/);
     assert.throws(() => subject.parseStartBody({ ...START_BODY, history: [] }), /history/);
     assert.throws(() => subject.parseStartBody({
       ...START_BODY, history: [{ id: 's1', kind: 'summary', content: 'Only a summary' }],
@@ -517,6 +567,69 @@ test('handoff validators require a spec-first, bounded, user-visible history con
       check_state: 'error',
       staging_url: null,
     }).state, 'failed', 'a staging boot failure must not remain stuck as deploying');
+  } finally { restore(); }
+});
+
+test('handoff status distinguishes a live check run from an overdue orphan', () => {
+  const { subject, restore } = makeHarness();
+  try {
+    const now = Date.now();
+    const session = {
+      id: 5,
+      app_slug: 'demo',
+      status: 'active',
+      source: 'cli_handoff',
+      branch_name: 'dev/cli-u7-feature-0001',
+      handoff_base_sha: BASE,
+      handoff_head_sha: HEAD,
+      handoff_uploaded_sha: HEAD,
+      checks_commit_sha: HEAD,
+      check_state: 'pending',
+      check_phase: 'building',
+      check_trigger: 'commit-push',
+      checks_checked_at: new Date(now - (20 * 60 * 1000)),
+      staging_url: null,
+    };
+    const idleRuntime = {
+      session: false, pipeline: false, build: false, capture: false, inFlight: false,
+    };
+    const stalled = subject.publicSessionStatus(session, {
+      now, staleMs: 10 * 60 * 1000, runtime: idleRuntime,
+    });
+    assert.equal(stalled.state, 'stalled');
+    assert.deepEqual(stalled.checks, {
+      state: 'pending',
+      phase: 'building',
+      trigger: 'commit-push',
+      checkedAt: session.checks_checked_at.toISOString(),
+      ranOnCommit: HEAD,
+      stale: false,
+      inFlight: false,
+      stalled: true,
+      activity: {
+        session: false, pipeline: false, build: false, capture: false,
+      },
+    });
+    assert.match(stalled.nextStep, /proposal_recheck/);
+    assert.match(stalled.nextStep, /Do not call proposal_start/);
+
+    const live = subject.publicSessionStatus({ ...session, staging_url: 'https://preview.example' }, {
+      now,
+      staleMs: 10 * 60 * 1000,
+      runtime: {
+        session: true, pipeline: true, build: false, capture: false, inFlight: true,
+      },
+    });
+    assert.equal(live.state, 'checking');
+    assert.equal(live.checks.inFlight, true);
+    assert.equal(live.checks.stalled, false);
+
+    const archived = subject.publicSessionStatus({ ...session, status: 'archived' }, {
+      now, staleMs: 10 * 60 * 1000, runtime: idleRuntime,
+    });
+    assert.equal(archived.state, 'archived');
+    assert.equal(archived.checks.stalled, false,
+      'a terminal lifecycle state never advertises a recoverable spinner');
   } finally { restore(); }
 });
 
@@ -1149,6 +1262,90 @@ test('managed upload and build keep every generally frozen proposal state closed
         `${frozenStatus} is rejected before any GitHub mutation`);
     } finally { restore(); }
   }
+});
+
+test('same linked work reuses its pre-vote handoff unless replacement is explicit', async () => {
+  const { router, state, restore } = makeHarness();
+  try {
+    const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
+    await start({
+      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, mockRes());
+    assert.equal(state.sessions.length, 1);
+    assert.equal(state.github.length, 1);
+
+    const secondBody = {
+      ...START_BODY,
+      requestId: 'feature-0002',
+      history: [
+        { id: 'u2', kind: 'user', content: 'Please retry the useful feature.', phase: 'request' },
+      ],
+    };
+    const duplicate = mockRes();
+    await start({
+      params: { slug: 'demo' }, body: secondBody, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, duplicate);
+    assert.equal(duplicate.statusCode, 409);
+    assert.equal(duplicate.body.error, 'proposal_already_started');
+    assert.equal(duplicate.body.existingSession.sessionId, 101);
+    assert.equal(state.sessions.length, 1);
+    assert.equal(state.github.length, 1,
+      'a duplicate is refused before another managed branch is created');
+
+    state.busy = true;
+    const busy = mockRes();
+    await start({
+      params: { slug: 'demo' },
+      body: { ...secondBody, supersedesSessionId: 101 },
+      cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, busy);
+    assert.equal(busy.statusCode, 409);
+    assert.equal(busy.body.error, 'replacement_target_busy');
+    assert.equal(state.github.length, 1, 'live work is not archived underneath its runner');
+    state.busy = false;
+
+    const mismatch = mockRes();
+    await start({
+      params: { slug: 'demo' },
+      body: { ...secondBody, linkedIssues: [13], supersedesSessionId: 101 },
+      cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, mismatch);
+    assert.equal(mismatch.statusCode, 409);
+    assert.equal(mismatch.body.error, 'replacement_target_mismatch');
+
+    const replacementBody = { ...secondBody, supersedesSessionId: 101 };
+    const replacement = mockRes();
+    await start({
+      params: { slug: 'demo' }, body: replacementBody, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, replacement);
+    assert.equal(replacement.statusCode, 201);
+    assert.equal(replacement.body.sessionId, 102);
+    assert.equal(replacement.body.supersedesSessionId, 101);
+    assert.equal(state.sessions.length, 2);
+    assert.equal(state.sessions[0].status, 'archived');
+    assert.equal(state.sessions[1].status, 'active');
+    assert.equal(state.sessions[1].handoff_supersedes_session_id, 101);
+    assert.equal(state.github.length, 2);
+    assert.equal(state.finalizedArchives.length, 1);
+    assert.equal(state.finalizedArchives[0].sessionId, 101);
+    assert.equal(state.finalizedArchives[0].reason, 'proposal-replaced');
+
+    const retry = mockRes();
+    await start({
+      params: { slug: 'demo' }, body: replacementBody, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, retry);
+    assert.equal(retry.statusCode, 200);
+    assert.equal(retry.body.sessionId, 102);
+    assert.equal(state.sessions.length, 2);
+    assert.equal(state.finalizedArchives.length, 1,
+      'a lost-response retry neither creates nor archives twice');
+  } finally { restore(); }
 });
 
 test('native CLI handoff persists context, adopts an exact commit, and reaches ready staging', async () => {

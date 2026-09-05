@@ -40,8 +40,8 @@ import {
 export interface CreateProgressProps {
   /** The name the user typed. Rendered as a text child — never markup. */
   appName: string;
-  /** Which verb to use: an import is not a creation. */
-  mode: 'new' | 'import';
+  /** Which verb to use while the asynchronous provisioning is pending. */
+  mode: 'new' | 'import' | 'fork';
   progress: CreationProgressState;
   onOpenApp: () => void;
   onRetry: () => void;
@@ -77,10 +77,15 @@ const STEP_LABEL_CLASS: Record<StepState, string> = {
   idle: 'text-zinc-400 dark:text-zinc-600',
 };
 
-function headline(outcome: CreationOutcome, mode: 'new' | 'import', appName: string): string {
+function headline(
+  outcome: CreationOutcome,
+  mode: 'new' | 'import' | 'fork',
+  appName: string,
+): string {
   if (outcome === 'live') return `${appName} is live`;
   if (outcome === 'needs-secrets') return 'Almost there';
   if (outcome === 'failed') return `Couldn’t finish ${appName}`;
+  if (mode === 'fork') return `Forking ${appName}`;
   return mode === 'import' ? `Importing ${appName}` : `Creating ${appName}`;
 }
 
