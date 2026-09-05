@@ -9,7 +9,8 @@
  *
  *   { stage, reason, log, at, sha }
  *
- *   stage  : 'repo' | 'clone' | 'build' | 'start' | 'healthcheck' | 'timeout' | 'other'
+ *   stage  : 'database' | 'repo' | 'clone' | 'build' | 'start' |
+ *            'healthcheck' | 'timeout' | 'other'
  *   reason : concise human-readable line, <= 280 chars (same budget as
  *            chat_sessions.check_error_detail)
  *   log    : raw tail of the docker build output / container boot logs,

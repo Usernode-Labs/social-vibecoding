@@ -573,7 +573,7 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 -- #416: detail of the last build/deploy failure so the UI can show a
 -- build log instead of a bare "Error" status. Shape:
 --   { stage, reason, log, at, sha }
---   stage  : 'repo'|'clone'|'build'|'start'|'healthcheck'|'timeout'|'other'
+--   stage  : 'database'|'repo'|'clone'|'build'|'start'|'healthcheck'|'timeout'|'other'
 --   reason : concise human line (<= 280 chars)
 --   log    : ANSI-stripped tail of the docker build / boot output (<= 16 kB)
 -- Written by the deploy catch paths (services/app-creator.js,
@@ -824,9 +824,10 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- parallel for one release so a rolling deploy's old readers still work.
 -- #447: 'pending' is only ever advanced out by the same captureForSession
 -- run that set it, so a restart mid-capture (or a staging rebuild that
--- predated the capture wiring) could leave a promoted PR 'pending'/NULL and
--- permanently merge-blocked. A 'pending' row whose checks_checked_at is
--- older than CHECKS_STALE_MS (default 10m) is now treated as STUCK and
+-- predated the capture wiring) could leave a submitted CLI handoff or promoted
+-- PR 'pending'/NULL and permanently merge-blocked. A 'pending' row whose
+-- checks_checked_at is older than CHECKS_STALE_MS (default 10m) is now treated
+-- as STUCK and
 -- re-run: by server.js reconcileStuckChecks (boot + session-sweeper Pass 4),
 -- by a vote that reaches threshold (checkAndMerge stale-pending kick), by any
 -- staging rebuild (staging-recovery.rebuildSessionStaging now re-runs checks),
@@ -1118,6 +1119,16 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_local_commit_sha VARC
 -- web turn naturally changes checks_commit_sha and supersedes that upload
 -- without needing to know about CLI-specific state.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_upload_checked_sha VARCHAR(40);
+-- Explicit replacement lineage for local proposal handoffs. A new request ID
+-- may replace a same-owner, same-app pre-vote handoff only when the caller
+-- names it. proposal_start archives the predecessor and inserts the successor
+-- in one transaction; the nullable self-reference preserves that decision
+-- without imposing uniqueness on an issue (other authors and promoted
+-- alternatives remain valid proposals).
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_supersedes_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS chat_sessions_handoff_supersedes_idx
+  ON chat_sessions(handoff_supersedes_session_id)
+  WHERE handoff_supersedes_session_id IS NOT NULL;
 -- Deliberately scoped independently of source: a delayed proposal_start retry
 -- must always resolve to the same cross-surface session.
 CREATE UNIQUE INDEX IF NOT EXISTS chat_sessions_handoff_request_idx

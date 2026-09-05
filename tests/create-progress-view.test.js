@@ -77,6 +77,10 @@ test('an import says importing, not creating', () => {
   assert.match(text({ phase: 'repository' }, { mode: 'import' }), /Importing .?My App/);
 });
 
+test('a fork says it is forking the named app', () => {
+  assert.match(text({ phase: 'repository' }, { mode: 'fork' }), /Forking .?My App/);
+});
+
 test('live shows the app is up and offers to open it', () => {
   const out = html({ status: 'running', url: 'https://my-app.example.test' });
   assert.match(out.replace(/<[^>]*>/g, ' '), /live/i);

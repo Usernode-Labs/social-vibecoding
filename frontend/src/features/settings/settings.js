@@ -184,7 +184,16 @@
       { key: 'password', label: 'Password', group: 'Account' },
       { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
 
-      { key: 'language', label: 'Language', group: 'Preferences' },
+      // #1556: GATED, and the gate is "this user already picked a language".
+      // The value is app-facing only (the iframe JWT `locale` claim and
+      // usernode.getUserLocale) and the platform shell is English-only, so a
+      // "Language" row in Preferences reads as a UI language switch that does
+      // nothing — which is exactly what the feedback reported. Hiding it from
+      // everyone who never set one, while keeping it for anyone who did, is
+      // what stops a stored preference becoming unreachable. The read paths
+      // are untouched; to re-launch the picker, drop this `gate` and the two
+      // gate lines in _renderLanguageSection.
+      { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
       { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
       // "Home screen widgets" sat here. THE UI OVERHAUL made Discover,
       // Challenges and Create app FIXED SECTIONS of the home screen rather
@@ -515,6 +524,10 @@
         // painted (a cold-boot deep link to #settings/connectors renders
         // before this resolves). Same reasoning as the wallet row above.
         this._renderDevFlowSection();
+        // #1556: `locale` decides whether the Language row is in the menu at
+        // all, and it lands here too — a cold-boot deep link paints before
+        // this resolves. Same reasoning as the two rows above.
+        this._renderLanguageSection();
         this._renderNavIfOpen();
       } catch {}
     },
@@ -1237,7 +1250,14 @@
     _renderLanguageSection() {
       const select = document.getElementById('settings-locale');
       if (!select) return;
+      // #1556 capability gate, read back by _visibleSections(). Offered only
+      // to a user who already has a preference saved — see the SECTIONS note.
+      const section = document.getElementById('settings-language-section');
       const value = this.state.locale || '';
+      if (section) {
+        if (!value) { section.classList.add('hidden'); return; }
+        section.classList.remove('hidden');
+      }
       // A saved value outside the curated list (set via the API, or a
       // future wider picker) still needs to render truthfully — inject
       // an option for it so the select doesn't silently show "Auto".
@@ -4529,8 +4549,8 @@
       if (firstRun) {
         panel.appendChild(el('p',
           'text-sm text-zinc-600 dark:text-zinc-400 mb-2',
-          'Reviewing the terms is part of joining the platform. Your ' +
-          'token allocation stays paused until you accept.'));
+          'Reviewing the terms is part of joining the platform. Please ' +
+          'read the full terms, then choose whether to accept.'));
       }
       const meta = [];
       if (payload.version) meta.push(`Version ${payload.version}`);
@@ -4626,8 +4646,8 @@
           declineBtn.addEventListener('click', () => postConsent('refused',
             () => {
               if (window.PlatformUI) {
-                PlatformUI.toast('Your token allocation stays paused. ' +
-                  'You can accept later from your profile');
+                PlatformUI.toast(
+                  'You can accept the terms later from your profile');
               }
             }));
           consentButtons.push(declineBtn);

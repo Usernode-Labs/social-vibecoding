@@ -6,6 +6,7 @@ const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const github = require('../services/github');
 const staging = require('../services/staging');
+const stagingRecovery = require('../services/staging-recovery');
 const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
@@ -61,6 +62,12 @@ const {
 
 class ValidationError extends Error {}
 class HandoffConflictError extends Error {}
+class ReplacementConflictError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+}
 
 function plainObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
@@ -100,6 +107,14 @@ function parseSessionId(value) {
   if (typeof value !== 'string' || !/^[1-9]\d{0,9}$/.test(value)) return null;
   const id = Number(value);
   return Number.isSafeInteger(id) && id <= 2147483647 ? id : null;
+}
+
+function parseBodySessionId(value, label) {
+  if (value === undefined) return null;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > 2147483647) {
+    throw new ValidationError(`${label} must be a positive session integer`);
+  }
+  return value;
 }
 
 function parseIssueNumbers(value) {
@@ -174,7 +189,10 @@ function parseTests(value) {
 }
 
 function parseStartBody(body) {
-  exactKeys(body, ['schemaVersion', 'requestId', 'baseSha', 'title', 'spec', 'history', 'linkedIssues'], 'body');
+  exactKeys(body, [
+    'schemaVersion', 'requestId', 'baseSha', 'title', 'spec', 'history',
+    'linkedIssues', 'supersedesSessionId',
+  ], 'body');
   if (body.schemaVersion !== 1) throw new ValidationError('schemaVersion must be 1');
   return {
     requestId: parseRequestId(body.requestId),
@@ -183,6 +201,10 @@ function parseStartBody(body) {
     spec: boundedText(body.spec, { label: 'spec', min: 1, max: MAX_SPEC_BYTES }),
     history: parseHistory(body.history, { required: true, requireUser: true }),
     linkedIssues: parseIssueNumbers(body.linkedIssues),
+    supersedesSessionId: parseBodySessionId(
+      body.supersedesSessionId,
+      'supersedesSessionId'
+    ),
   };
 }
 
@@ -437,6 +459,7 @@ function startRequestFingerprint(app, input) {
     spec: input.spec,
     history: input.history,
     linkedIssues: [...input.linkedIssues].sort((a, b) => a - b),
+    supersedesSessionId: input.supersedesSessionId || null,
   };
   return crypto.createHash('sha256')
     .update(`proposal-start-v1\u0000${JSON.stringify(normalized)}`)
@@ -503,23 +526,97 @@ function managedRevisionKind(session) {
   return null;
 }
 
-function revisionBuildState(session) {
+function checkRuntime(session) {
+  const sessionId = Number(session.id);
+  const runtime = {
+    session: isSessionBusy(sessionId),
+    pipeline: hasInFlightHandoffPipeline(session.id),
+    build: staging.hasInFlightBuild(sessionId),
+    capture: visuals.hasInFlightCapture(session.id),
+  };
+  runtime.inFlight = Object.values(runtime).some(Boolean);
+  return runtime;
+}
+
+function isoDateOrNull(value) {
+  if (value == null) return null;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+}
+
+function checksSnapshot(session, runtime, options = {}) {
+  const ranOnCommit = session.checks_commit_sha || null;
+  const currentHead = currentProposalBranchHead(session);
+  const managed = session.status === 'active' || session.status === 'promoted';
+  const stalled = managed
+    && !hasUnsubmittedUpload(session)
+    && !runtime.inFlight
+    && stagingRecovery.checkRunOverdue(session, options);
+  return {
+    state: session.check_state || null,
+    phase: session.check_phase || null,
+    trigger: session.check_trigger || null,
+    checkedAt: isoDateOrNull(session.checks_checked_at),
+    ranOnCommit,
+    stale: !!(ranOnCommit && currentHead
+      && ranOnCommit.toLowerCase() !== currentHead.toLowerCase()),
+    inFlight: runtime.inFlight,
+    stalled,
+    activity: {
+      session: runtime.session,
+      pipeline: runtime.pipeline,
+      build: runtime.build,
+      capture: runtime.capture,
+    },
+  };
+}
+
+function revisionBuildState(session, checks, runtime) {
   const headSha = currentCheckedHead(session);
   if (hasUnsubmittedUpload(session)) return 'uploaded';
   if (!headSha) return 'draft';
   if (['failing', 'error'].includes(session.check_state)) return 'failed';
-  if (staging.hasInFlightBuild(Number(session.id)) || !session.staging_url) return 'deploying';
-  if (isSessionBusy(Number(session.id))
-      || hasInFlightHandoffPipeline(session.id)
-      || visuals.hasInFlightCapture(session.id)
+  if (checks.stalled) return 'stalled';
+  if (runtime.build || !session.staging_url) return 'deploying';
+  if (runtime.inFlight
       || !session.check_state || session.check_state === 'pending') return 'checking';
   if (session.check_state === 'passing' || session.check_state === 'skipped') return 'ready';
   return 'failed';
 }
 
-function publicSessionStatus(session) {
+function statusNextStep(state, revisionState, checks) {
+  const progress = revisionState || state;
+  if (progress === 'stalled') {
+    return 'This check run is overdue and no live worker owns it. Re-run checks on this same session with proposal_recheck, then keep polling proposal_status. Do not call proposal_start.';
+  }
+  if (progress === 'deploying' || progress === 'checking') {
+    return 'A build or check run is still in progress. Keep this session and request ID and poll proposal_status; do not push or call proposal_start.';
+  }
+  if (progress === 'uploaded') {
+    return 'Submit the uploaded head on this same session with proposal_submit_build.';
+  }
+  if (progress === 'draft') {
+    return 'Continue this session, then upload its tested commit with proposal_push_commit.';
+  }
+  if (progress === 'failed') {
+    return checks.state === 'error'
+      ? 'The build or checks infrastructure failed. Re-run this same session with proposal_recheck; create a new proposal only if the user explicitly asks to replace it.'
+      : 'Fix the reported failure and submit a later fast-forwarding commit to this same proposal.';
+  }
+  if (progress === 'ready' && state === 'active') {
+    return 'The proposal is ready. Promote this same session only if the user wants it opened for voting.';
+  }
+  if (state === 'promoted') return 'This proposal is already open for voting; keep any revision on this same session.';
+  if (state === 'archived') return 'This proposal is archived. Do not restart or keep polling it.';
+  if (state === 'merging' || state === 'merged') return `This proposal is ${state}; no replacement is needed.`;
+  return 'Continue with this same proposal session.';
+}
+
+function publicSessionStatus(session, options = {}) {
   const headSha = currentCheckedHead(session);
-  const revisionState = revisionBuildState(session);
+  const runtime = options.runtime || checkRuntime(session);
+  const checks = checksSnapshot(session, runtime, options);
+  const revisionState = revisionBuildState(session, checks, runtime);
   const state = session.status === 'active' ? revisionState : session.status;
   return {
     sessionId: Number(session.id),
@@ -536,9 +633,15 @@ function publicSessionStatus(session) {
     stagingUrl: session.staging_url || null,
     checkState: session.check_state || null,
     checkError: session.check_error_detail || null,
+    checks,
     prNumber: session.pr_number || null,
     prUrl: session.pr_url || null,
+    supersedesSessionId: session.handoff_supersedes_session_id == null
+      ? null
+      : Number(session.handoff_supersedes_session_id),
     webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+    nextStep: statusNextStep(state,
+      session.status === 'promoted' ? revisionState : null, checks),
   };
 }
 
@@ -934,6 +1037,74 @@ function proposalHandoffRoutes(config) {
         return res.json(publicSessionStatus(existing));
       }
 
+      // A request ID is the exact-call idempotency key. The linked issue is
+      // the broader work identity: a caller that invents another request ID
+      // for the same pre-vote handoff must be sent back to that session rather
+      // than silently creating a parallel branch. Promoted alternatives and
+      // other users' work remain valid and are deliberately outside this
+      // owner/app/pre-vote scope.
+      let overlapping = [];
+      if (input.linkedIssues.length) {
+        ({ rows: overlapping } = await pool.query(
+          `SELECT cs.*, a.slug AS app_slug
+             FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+            WHERE cs.user_id = $1 AND cs.app_id = $2 AND cs.source = $3
+              AND cs.status IN ('active', 'paused')
+              AND cs.linked_issues && $4::INTEGER[]
+            ORDER BY cs.created_at ASC, cs.id ASC`,
+          [req.user.id, app.id, SOURCE, input.linkedIssues]
+        ));
+      }
+
+      let replacementSession = null;
+      if (input.supersedesSessionId != null) {
+        const { rows: replacementRows } = await pool.query(
+          `SELECT cs.*, a.slug AS app_slug
+             FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+            WHERE cs.id = $1 AND cs.user_id = $2 AND cs.app_id = $3
+              AND cs.source = $4 AND cs.status IN ('active', 'paused')`,
+          [input.supersedesSessionId, req.user.id, app.id, SOURCE]
+        );
+        replacementSession = replacementRows[0] || null;
+        if (!replacementSession) {
+          return res.status(409).json({
+            error: 'replacement_target_unavailable',
+            message: 'The named proposal is not an active pre-vote handoff owned by this user and app.',
+          });
+        }
+        if (input.linkedIssues.length
+            && !input.linkedIssues.some((issue) =>
+              (replacementSession.linked_issues || []).map(Number).includes(issue))) {
+          return res.status(409).json({
+            error: 'replacement_target_mismatch',
+            message: 'The named proposal does not implement the same linked work item.',
+            existingSession: publicSessionStatus(replacementSession),
+          });
+        }
+        const another = overlapping.find((session) =>
+          Number(session.id) !== Number(replacementSession.id));
+        if (another) {
+          return res.status(409).json({
+            error: 'proposal_already_started',
+            message: 'Another pre-vote proposal already implements this linked work. Continue that session or explicitly replace it.',
+            existingSession: publicSessionStatus(another),
+          });
+        }
+        if (checkRuntime(replacementSession).inFlight) {
+          return res.status(409).json({
+            error: 'replacement_target_busy',
+            message: 'The proposal being replaced still has live work. Wait for it to stop before replacing it.',
+            existingSession: publicSessionStatus(replacementSession),
+          });
+        }
+      } else if (overlapping.length) {
+        return res.status(409).json({
+          error: 'proposal_already_started',
+          message: 'A pre-vote proposal already implements this linked work. Continue the returned session; do not create another request ID to recover it.',
+          existingSession: publicSessionStatus(overlapping[0]),
+        });
+      }
+
       const caps = effectiveSessionCaps(config, req.user);
       const { rows: ownCounts } = await pool.query(
         `SELECT COUNT(*) AS cnt FROM chat_sessions
@@ -941,7 +1112,8 @@ function proposalHandoffRoutes(config) {
             AND source IS DISTINCT FROM 'imported'`,
         [req.user.id]
       );
-      if (Number(ownCounts[0].cnt) >= caps.activeSessions) {
+      const replacedActiveSlot = replacementSession?.status === 'active' ? 1 : 0;
+      if (Number(ownCounts[0].cnt) - replacedActiveSlot >= caps.activeSessions) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalCounts } = await pool.query(
@@ -949,7 +1121,8 @@ function proposalHandoffRoutes(config) {
           WHERE status IN ('active', 'promoted')
             AND source IS DISTINCT FROM 'imported'`
       );
-      if (Number(globalCounts[0].cnt) >= Number(config.maxGlobalSessions || 100)) {
+      if (Number(globalCounts[0].cnt) - replacedActiveSlot
+          >= Number(config.maxGlobalSessions || 100)) {
         const { freed } = await sessionLifecycle.freeGlobalSlot({
           pool, graceMs: config.sessionPressureGraceMs,
         });
@@ -983,6 +1156,22 @@ function proposalHandoffRoutes(config) {
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
+          if (replacementSession) {
+            const replaced = await client.query(
+              `UPDATE chat_sessions
+                  SET status = 'archived', archived_at = NOW()
+                WHERE id = $1 AND user_id = $2 AND app_id = $3 AND source = $4
+                  AND status IN ('active', 'paused')
+                RETURNING id`,
+              [replacementSession.id, req.user.id, app.id, SOURCE]
+            );
+            if (!replaced.rowCount) {
+              throw new ReplacementConflictError(
+                'replacement_target_changed',
+                'The proposal being replaced changed state. Read its status before trying again.'
+              );
+            }
+          }
           const { rows } = await client.query(
             // external_agent = 'external': this session's turns run on the
             // caller's own machine, in whatever tool they chose — Usernode
@@ -996,12 +1185,14 @@ function proposalHandoffRoutes(config) {
             `INSERT INTO chat_sessions
                (app_id, user_id, branch_name, status, source, handoff_request_id,
                 handoff_base_sha, handoff_request_fingerprint,
-                session_title, spec_md, linked_issues, external_agent)
-             VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, 'external')
+                session_title, spec_md, linked_issues, external_agent,
+                handoff_supersedes_session_id)
+             VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, 'external', $11)
              RETURNING *`,
             [app.id, req.user.id, branchName, SOURCE, input.requestId,
               input.baseSha, startRequestFingerprint(app, input),
-              input.title, input.spec, input.linkedIssues]
+              input.title, input.spec, input.linkedIssues,
+              replacementSession ? replacementSession.id : null]
           );
           created = rows[0];
           await snapshotSpec(client, created.id, input.spec);
@@ -1033,12 +1224,32 @@ function proposalHandoffRoutes(config) {
           userId: req.user.id,
           appId: app.id,
           sessionId: created.id,
-          metadata: { source: SOURCE },
+          metadata: {
+            source: SOURCE,
+            ...(replacementSession
+              ? { supersedesSessionId: Number(replacementSession.id) }
+              : {}),
+          },
         });
+        if (replacementSession) {
+          await sessionLifecycle.finalizeArchivedSession({
+            pool,
+            sessionId: replacementSession.id,
+            userId: req.user.id,
+            reason: 'proposal-replaced',
+          }).catch((err) => log.warn('proposal-handoff', 'Replacement cleanup failed', {
+            sessionId: replacementSession.id,
+            replacementSessionId: created.id,
+            err: err.message,
+          }));
+        }
       }
       res.status(insertedSession ? 201 : 200)
         .json(publicSessionStatus({ ...created, app_slug: app.slug }));
     } catch (err) {
+      if (err instanceof ReplacementConflictError) {
+        return res.status(409).json({ error: err.code, message: err.message });
+      }
       if (err instanceof HandoffConflictError) {
         return res.status(409).json({ error: 'history_event_conflict', message: err.message });
       }

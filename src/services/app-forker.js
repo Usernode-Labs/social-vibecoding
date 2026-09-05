@@ -9,9 +9,10 @@ const docker = require('./docker');
 const dbManager = require('./db-manager');
 const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
+const deployFailure = require('./deploy-failure');
 const { getPool } = require('../db/pool');
 const { pushAppStatusUpdate } = require('./ws');
-const { finalizeDeploy } = require('./app-creator');
+const { createApp, finalizeDeploy, reportPhase, endPhases } = require('./app-creator');
 const { getConnectorScaffoldFiles } = require('./template');
 
 // Rewrite (or create) the top-level `name` in the forked working tree's
@@ -61,6 +62,31 @@ function writeConnectorScaffold(dir) {
   }
 }
 
+// Resolve the source row recorded in a fork's reference-only lineage. New
+// rows carry appId + slug; the slug fallback keeps retries/recovery working
+// for older rows that predate the appId form. This deliberately returns the
+// live row rather than trusting display-enriched lineage from an API payload.
+async function findForkSource(pool, forkApp) {
+  let ref = forkApp && forkApp.forked_from;
+  if (typeof ref === 'string') {
+    try { ref = JSON.parse(ref); } catch (_) { ref = null; }
+  }
+  if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return null;
+
+  if (Number.isInteger(ref.appId) && ref.appId > 0) {
+    const { rows } = await pool.query('SELECT * FROM apps WHERE id = $1', [ref.appId]);
+    // An appId is immutable and authoritative. If that row was deleted, do
+    // not fall through to a slug that may since have been reused by a wholly
+    // different app.
+    return rows.length ? rows[0] : null;
+  }
+  if (typeof ref.slug === 'string' && ref.slug.trim()) {
+    const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [ref.slug.trim()]);
+    if (rows.length) return rows[0];
+  }
+  return null;
+}
+
 // Copy the SOURCE app's current `main` tree into a brand-new bot-owned
 // repo as a single, history-free commit — preserving binary assets
 // (icon images, etc.) that github.pushFiles would corrupt. NOT a
@@ -81,11 +107,18 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   const cloneUrl = await github.getCloneUrl(srcOwner, srcRepo);
 
   await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
-  await docker.execFileAsync('git', [
-    'clone', '--depth', '1',
-    '--recurse-submodules', '--shallow-submodules',
-    cloneUrl, tempDir,
-  ], { timeout: 120000 });
+  try {
+    await docker.execFileAsync('git', [
+      'clone', '--depth', '1',
+      '--recurse-submodules', '--shallow-submodules',
+      cloneUrl, tempDir,
+    ], { timeout: 120000 });
+  } catch (err) {
+    // Let deploy-failure classify this as a source-clone problem instead of
+    // the undifferentiated `other` stage the old fork path exposed.
+    err.cloneFailed = true;
+    throw err;
+  }
 
   // Flatten to a history-free tree: strip every .git (top-level dir and
   // any submodule .git files) plus .gitmodules, so `git add -A` commits
@@ -136,7 +169,9 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
     mainSha = (stdout || '').trim().split('\n').pop() || null;
   } catch (err) {
     const clean = String(err.message || '').replace(botToken, '***');
-    throw new Error(`fork repo push failed: ${clean}`);
+    const pushError = new Error(`fork repo push failed: ${clean}`);
+    pushError.repoFailed = true;
+    throw pushError;
   }
 
   return { repoUrl, mainSha };
@@ -183,31 +218,51 @@ async function forkApp(config, appRow, sourceApp) {
   const pool = getPool(config);
   const { id: appId, name, slug } = appRow;
 
-  // Never reachable in practice (the route rejects self_hosted sources),
-  // but guard anyway — the platform self-app has no per-app DB/container.
-  if (appRow.self_hosted || (sourceApp && sourceApp.self_hosted)) {
-    log.warn('app-forker', 'Refusing to fork self-hosted app', { appId, slug });
-    await pool.query('UPDATE apps SET status = $1 WHERE id = $2', ['error', appId]);
-    return;
-  }
-
-  if (!github.isEnabled()) {
-    log.warn('app-forker', 'GitHub disabled; cannot fork', { appId, slug });
-    await pool.query('UPDATE apps SET status = $1 WHERE id = $2', ['error', appId]);
-    pushAppStatusUpdate({ id: appId, slug, status: 'error' });
-    return;
+  // Once repo_url is present, copyRepoTree completed and the fork's own
+  // immutable source snapshot is already in its independent repository.
+  // Resume from that repository instead of re-copying a source app that may
+  // since have changed or been deleted. createApp's import branch never
+  // writes template files, and its template-boundary guard below protects
+  // this contract if repo_url is ever absent.
+  if (appRow.repo_url) {
+    log.info('app-forker', 'Resuming fork from copied repository', { appId, slug });
+    return createApp(config, appRow);
   }
 
   const tempDir = `/tmp/usernode-fork-${slug}`;
+  let failureStage = 'other';
+  let mainSha = null;
 
   try {
+    // These are also route guards, but the worker is callable from Retry and
+    // background repair. Keep the invariant at the operation boundary too.
+    if (appRow.self_hosted || (sourceApp && sourceApp.self_hosted)) {
+      throw new Error('The platform app cannot be forked.');
+    }
+    if (!sourceApp) {
+      throw new Error('The source app for this fork no longer exists.');
+    }
+    if (!sourceApp.repo_url) {
+      const err = new Error('The source app repository is not ready to copy yet.');
+      err.cloneFailed = true;
+      throw err;
+    }
+    if (!github.isEnabled()) {
+      const err = new Error('Forking is unavailable because GitHub integration is not configured.');
+      err.repoFailed = true;
+      throw err;
+    }
+
     log.info('app-forker', 'Starting fork', { appId, slug, sourceSlug: sourceApp.slug });
+    await pool.query('UPDATE apps SET status = $1 WHERE id = $2', ['creating', appId]);
 
     // 1. Clone the source's per-app Postgres DB into the fork's DB. This
     // reuses the exact staging-clone path: public tables copy with rows,
     // staging:private tables copy schema-only (empty), staging:private
     // columns are scrubbed — the right trust boundary for a new,
     // independently-owned app. Returns a fresh per-fork role password.
+    failureStage = 'database';
+    reportPhase(appId, slug, 'database');
     const forkDbName = dbManager.appDbName(slug);
     const sourceDbName = dbManager.appDbName(sourceApp.slug);
     const { password: dbPassword } = await dbManager.cloneDatabase(sourceDbName, forkDbName);
@@ -216,10 +271,14 @@ async function forkApp(config, appRow, sourceApp) {
 
     // 2. Copy the source repo's current main tree into a fresh bot-owned
     // repo (history-free, binary-safe), rewriting dapp.json's name.
+    failureStage = 'repo';
+    reportPhase(appId, slug, 'repository');
     const botUsername = await github.getBotUsername();
-    const { repoUrl, mainSha } = await copyRepoTree({
+    const copied = await copyRepoTree({
       sourceApp, botUsername, forkSlug: slug, forkName: name, tempDir,
     });
+    const { repoUrl } = copied;
+    mainSha = copied.mainSha;
     await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, appId]);
 
     // 3. Copy non-private secrets (must land BEFORE finalizeDeploy's
@@ -233,10 +292,21 @@ async function forkApp(config, appRow, sourceApp) {
     await finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha });
   } catch (err) {
     log.error('app-forker', 'Fork failed', { appId, slug, err: err.message });
+    const failure = deployFailure.record(err, {
+      ...(failureStage === 'database' && !err.cloneFailed && !err.repoFailed
+        ? { stage: 'database' } : {}),
+      ...(failureStage === 'repo' && !err.cloneFailed && !err.repoFailed
+        ? { stage: 'repo' } : {}),
+      sha: mainSha || null,
+    });
     await docker.execFileAsync('rm', ['-rf', tempDir]).catch(() => {});
-    await pool.query('UPDATE apps SET status = $1 WHERE id = $2', ['error', appId]).catch(() => {});
-    pushAppStatusUpdate({ id: appId, slug, status: 'error' });
+    await pool.query(
+      'UPDATE apps SET status = $1, last_failure = $2 WHERE id = $3',
+      ['error', JSON.stringify(failure), appId]
+    ).catch(() => {});
+    endPhases(slug);
+    pushAppStatusUpdate({ id: appId, slug, status: 'error', errorReason: failure.reason });
   }
 }
 
-module.exports = { forkApp };
+module.exports = { forkApp, copyRepoTree, findForkSource };
