@@ -1194,7 +1194,8 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'feedback' && shot !== 'feedback-spent'
         && shot !== 'feedback-offline' && shot !== 'feedback-queued'
-        && shot !== 'feedback-capture-failed') return;
+        && shot !== 'feedback-capture-failed'
+        && shot !== 'feedback-required') return;
     const spent = shot === 'feedback-spent';
     // #1054: the two offline variants. `feedback-offline` is the dialog as a
     // disconnected user meets it (the hint, and Submit reading "Save for
@@ -1213,6 +1214,11 @@ const App = {
     // the draft is typed into the field, never stashed (the stash skips any
     // ?shot= route on purpose) and never filed.
     const captureFailed = shot === 'feedback-capture-failed';
+    // #1603: the dialog after a submit with nothing in the description — the
+    // state that used to be indistinguishable from a dead button. Clicks the
+    // real Submit and photographs the real refusal; the controller returns
+    // before any fetch, so this posts nothing either.
+    const requiredError = shot === 'feedback-required';
     // ONCE PER DOCUMENT. _applyRouteShots dedupes on the hash, not on the
     // applier, so a fragment that changes after boot re-runs this one — and
     // this shot is not idempotent the way the others are. Its
@@ -1303,6 +1309,24 @@ const App = {
             if (--capTries > 0) setTimeout(runFailure, App.IMPROVE_SHOT_INTERVAL_MS);
           };
           setTimeout(runFailure, 50);
+        }
+        if (requiredError) {
+          // Same retry shape, and for the same reason, as captureFailed
+          // above: a submit fired into a shell that is still settling can
+          // land before the dialog's own open-time reset, which then clears
+          // the error this is trying to photograph. What the check asserts
+          // is the message being VISIBLE, so that is what this waits for.
+          // The hook is the controller's, like the capture one beside it —
+          // it calls the shipped submitFeedback, which keeps the dialog's
+          // own ids and internals out of this file.
+          let reqTries = App.IMPROVE_SHOT_TRIES;
+          const runEmptySubmit = () => {
+            const err = document.getElementById('feedback-text-error');
+            if (err && !err.classList.contains('hidden')) return;
+            try { App._simulateEmptyFeedbackSubmit?.(); } catch (e) { /* ignore */ }
+            if (--reqTries > 0) setTimeout(runEmptySubmit, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(runEmptySubmit, 50);
         }
       } catch (err) { /* ignore */ }
     };

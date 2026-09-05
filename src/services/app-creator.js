@@ -60,6 +60,18 @@ async function createApp(config, appRow) {
   }
 
   try {
+    // A fork with no repository has not finished copying its source yet.
+    // Treating it as an ordinary create here would enter the fresh-app branch
+    // below and seed the starter template, permanently changing what the
+    // user asked to copy. Fork retries are dispatched through app-forker, but
+    // keep this guard at the template boundary so a future caller cannot
+    // silently reintroduce that data-loss bug.
+    if (appRow.forked_from && !appRow.repo_url) {
+      throw new Error(
+        'This fork has not copied its source repository yet. Retry the fork from its source app.'
+      );
+    }
+
     log.info('app-creator', 'Starting app creation', { appId, slug });
 
     await updateStatus(pool, appId, 'creating');
@@ -242,12 +254,10 @@ async function createApp(config, appRow) {
 }
 
 // Shared deploy tail used by BOTH createApp and app-forker.forkApp.
-// Note that means a FORK also reports the 'build' and 'deploy' phases
-// (never 'database'/'repository' — the forker stages those itself). That
-// is inert today: the fork dialog still closes on its 201, and the
-// progress store only records broadcasts for the slug it was explicitly
-// pointed at. It is deliberately left that way rather than gated, so
-// giving fork-app.tsx the same progress view is a frontend-only change.
+// A fork reports its own 'database' and 'repository' phases before it gets
+// here; this helper reports the shared 'build' and 'deploy' phases. Both the
+// create and fork dialogs follow the same progress store, so the full
+// operation remains visible even though provisioning is asynchronous.
 // Preconditions: the app's working tree is on disk at `tempDir`, its
 // per-app Postgres DB exists and `dbUrl` connects to it, and (for a
 // fork) any copied non-private secrets are already in app_secrets. This
@@ -415,4 +425,4 @@ async function recordFailure(pool, appId, failure) {
   }
 }
 
-module.exports = { createApp, finalizeDeploy };
+module.exports = { createApp, finalizeDeploy, reportPhase, endPhases };
