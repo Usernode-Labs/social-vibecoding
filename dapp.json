@@ -2551,6 +2551,18 @@
       "expectSelector": "#admin-topo-content"
     },
     {
+      "name": "Admin Waitlist says where a signup is in words, not the route's name (#1544)",
+      "path": "/#admin/waitlist",
+      "expectSelector": "#admin-topo-wl-table",
+      "expectText": "Waiting"
+    },
+    {
+      "name": "Admin Waitlist counts answered sections against the live total (#1544)",
+      "path": "/#admin/waitlist",
+      "expectSelector": "#admin-topo-wl-table",
+      "expectText": "of 7 answered"
+    },
+    {
       "name": "Legacy #admin/seasons/<screen> addresses still deep-link their promoted section (#1179)",
       "path": "/#admin/seasons/sql-console",
       "expectSelector": "#admin-topo-sql-schema-filter"
