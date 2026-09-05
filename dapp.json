@@ -3038,6 +3038,12 @@
       "name": "Dark mode pins by deep link and paints the launcher on the inverted ground",
       "path": "/?shot=dark",
       "expectSelector": "html.dark #home-screen:not(.hidden)"
+    },
+    {
+      "name": "The boot watchdog names the failure instead of showing a blank screen",
+      "path": "/?shot=boot-failed",
+      "expectSelector": "#boot-watchdog #boot-watchdog-retry",
+      "expectText": "This screen did not finish loading"
     }
   ],
   "governance": {
