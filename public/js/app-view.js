@@ -4845,6 +4845,23 @@ const AppView = {
   // indented lines, with a count when there is more behind them.
   FEED_COMMENT_PREVIEW: 2,
 
+  // How many issue slots fill on paint, before the observer takes over.
+  //
+  // The lazy fill below bounds its cost by REQUEST COUNT -- "a feed of thirty
+  // issues must not fire thirty requests on paint" -- but it was implemented
+  // as a bound on VIEWPORT POSITION, which is not the same thing in a stream
+  // that mixes issues with proposals, sessions and merged work. On an app with
+  // live proposal activity the first issue row can sit well below the fold, so
+  // every inline preview stayed empty until the reader scrolled to it one row
+  // at a time, and a preview nobody sees on the screen it belongs to is not
+  // doing its job.
+  //
+  // Counting from the SLOT list rather than from the stream makes this
+  // independent of where the issues land: the first few issue rows fill
+  // whether they are rows 1-3 or rows 12, 15 and 20. Three keeps the paint
+  // cost an order of magnitude under the thirty the comment above is about.
+  FEED_COMMENT_EAGER: 3,
+
   _feedCommentsHtml(comments) {
     const list = Array.isArray(comments) ? comments : [];
     if (!list.length) return '';
@@ -4897,9 +4914,17 @@ const AppView = {
       AppView._feedCommentObserver.disconnect();
       AppView._feedCommentObserver = null;
     }
-    if (!root || typeof IntersectionObserver !== 'function') return;
-    const slots = root.querySelectorAll('.dev-feed-comments[data-comments-for]');
+    if (!root) return;
+    const slots = [...root.querySelectorAll('.dev-feed-comments[data-comments-for]')];
     if (!slots.length) return;
+    // The first few outright, wherever they sit in the stream. Also the whole
+    // behaviour where IntersectionObserver is unavailable, which used to fill
+    // nothing at all.
+    const lazy = slots.slice(AppView.FEED_COMMENT_EAGER);
+    for (const slot of slots.slice(0, AppView.FEED_COMMENT_EAGER)) {
+      AppView._fillFeedComments(slot);
+    }
+    if (!lazy.length || typeof IntersectionObserver !== 'function') return;
     const observer = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
@@ -4926,7 +4951,7 @@ const AppView = {
     // scrolled to". It always has a box, so the presentation rule and the
     // lazy fill stop being coupled at all. Falling back to the slot keeps
     // the old behaviour for any markup that is not inside an entry.
-    for (const slot of slots) observer.observe(slot.closest('.dev-feed-entry') || slot);
+    for (const slot of lazy) observer.observe(slot.closest('.dev-feed-entry') || slot);
     AppView._feedCommentObserver = observer;
   },
 
