@@ -80,7 +80,10 @@ function sliceMethod(src, signature, indent = '  ') {
 }
 
 const METHODS = `({
+${sliceMethod(appJs, '_hasUnsavedShellInput() {')},
+${sliceMethod(appJs, '_reloadPrefetchedShellIfSafe(sha, { force = false } = {}) {')},
 ${sliceMethod(appJs, '_ensureShellPrefetch(sha) {')},
+${sliceMethod(appJs, 'async loadVersion() {')},
 ${sliceMethod(appJs, 'async platformMovedOn() {')},
 ${sliceMethod(appJs, '_refreshOrReload(refresh) {')},
 ${sliceMethod(appJs, 'renderPlatformVersionPill(info) {')}
@@ -88,11 +91,14 @@ ${sliceMethod(appJs, 'renderPlatformVersionPill(info) {')}
 
 // A minimal world: the pill's slot, a controller that hands us its port, and
 // a setTimeout we fire by hand so the 30s bail-out is testable in no time.
-function harness({ controller = true, postThrows = false, serverSha = null } = {}) {
+function harness({
+  controller = true, postThrows = false, serverSha = null, controls = [],
+} = {}) {
   const slot = { innerHTML: '' };
   const timers = [];
   const posted = [];
   const reloads = [];
+  const session = new Map();
   let port = null;
 
   const ctx = {
@@ -107,9 +113,14 @@ function harness({ controller = true, postThrows = false, serverSha = null } = {
       return { ok: true, json: async () => ({ sha: serverSha }) };
     },
     location: { reload: () => { reloads.push(Date.now()); } },
+    sessionStorage: {
+      getItem: (key) => session.get(key) || null,
+      setItem: (key, value) => { session.set(key, String(value)); },
+    },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
     document: {
       getElementById: (id) => (id === 'platform-version-pill-slot' ? slot : null),
+      querySelectorAll: () => controls,
     },
     navigator: {
       serviceWorker: controller ? {
@@ -135,9 +146,12 @@ function harness({ controller = true, postThrows = false, serverSha = null } = {
   const App = Object.assign({
     loadedPlatformSha: null,
     shellUpdate: null,
+    _shellAutoReloadSha: null,
+    _shellReloadStarted: null,
     _shellPrefetchSettled: null,
     _lastVersionInfo: null,
     SHELL_PREFETCH_TIMEOUT_MS: 30_000,
+    SHELL_AUTO_RELOAD_KEY: 'usernode-shell-auto-reload',
     ImproveStatus: { refreshDeployDot() { App.dotRefreshes = (App.dotRefreshes || 0) + 1; } },
   }, vm.runInContext(METHODS, ctx));
   ctx.App = App;
@@ -148,6 +162,7 @@ function harness({ controller = true, postThrows = false, serverSha = null } = {
     posted,
     timers,
     reloads,
+    session,
     /** The worker's answer, delivered down the port the page transferred. */
     reply: (data) => port.postMessage(data),
     /** Fire the longest pending timer — the bail-out. */
@@ -173,6 +188,8 @@ test('a tab that has fallen behind asks the worker for the new build', () => {
   // nothing to do with the behaviour under test.
   assert.equal(h.posted.length, 1, 'the stale row is what triggers the download');
   assert.equal(h.posted[0].type, 'prefetch-shell');
+  assert.equal(h.posted[0].sha, STALE.sha,
+    'the worker must know which build counts as success');
   assert.equal(h.App.shellUpdate.sha, STALE.sha);
   assert.equal(h.App.shellUpdate.state, 'fetching');
 });
@@ -187,6 +204,7 @@ test('and asks ONCE, though the stale branch runs on every 10s poll', () => {
   // build, and must be fetched.
   h.App.renderPlatformVersionPill({ ...STALE, sha: '2222222ccccccccccccccccccccccccccccccccc' });
   assert.equal(h.posted.length, 2);
+  assert.equal(h.posted[1].sha, '2222222ccccccccccccccccccccccccccccccccc');
   assert.equal(h.App.shellUpdate.sha, '2222222ccccccccccccccccccccccccccccccccc');
 });
 
@@ -274,7 +292,7 @@ test('the worker reporting success turns the row into the reload button', () => 
   h.App.loadedPlatformSha = BOOTED;
   h.App._lastVersionInfo = STALE;
   h.App.renderPlatformVersionPill(STALE);
-  h.reply({ ok: true });
+  h.reply({ ok: true, sha: STALE.sha });
 
   assert.equal(h.App.shellUpdate.state, 'ready');
   // Repainted from the reply itself — nothing waits for the next poll.
@@ -282,6 +300,64 @@ test('the worker reporting success turns the row into the reload button', () => 
   assert.match(h.slot.innerHTML, /onclick="location\.reload\(\)"/);
   assert.match(h.slot.innerHTML, /the new build is ready/);
   assert.ok(!h.slot.innerHTML.includes('drawer-ver--fetching'));
+});
+
+test('a stale cached boot switches to the complete prefetched build exactly once', async () => {
+  const h = harness({ serverSha: STALE.sha });
+  h.App.loadedPlatformSha = BOOTED;
+
+  await h.App.loadVersion();
+  assert.equal(h.posted.length, 1);
+  assert.equal(h.posted[0].sha, STALE.sha);
+  assert.equal(h.reloads.length, 0, 'the old document stays up while its replacement downloads');
+
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.reloads.length, 1, 'a cold stale boot repairs itself without a hidden Settings action');
+  assert.equal(h.session.get(h.App.SHELL_AUTO_RELOAD_KEY), STALE.sha,
+    'the target is latched across the reload');
+
+  // A duplicated reply cannot schedule another navigation in this document.
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.reloads.length, 1);
+});
+
+test('automatic switching never discards a draft', async () => {
+  const draft = {
+    tagName: 'TEXTAREA', type: 'textarea', value: 'half-written reply',
+    defaultValue: '', disabled: false, isContentEditable: false,
+  };
+  const h = harness({ serverSha: STALE.sha, controls: [draft] });
+  h.App.loadedPlatformSha = BOOTED;
+
+  await h.App.loadVersion();
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.reloads.length, 0);
+  assert.equal(h.App.shellUpdate.state, 'ready');
+  assert.match(h.slot.innerHTML, /<button/,
+    'the explicit reload offer remains available after the draft is safe');
+});
+
+test('a tab that becomes stale later offers the update without reloading itself', async () => {
+  const h = harness({ serverSha: STALE.sha });
+  h.App.loadedPlatformSha = BOOTED;
+  h.App._lastVersionInfo = { sha: BOOTED };
+
+  await h.App.loadVersion();
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.reloads.length, 0,
+    'automatic recovery is only for a document that was already stale at boot');
+  assert.match(h.slot.innerHTML, /<button/);
+});
+
+test('the cross-reload latch turns a repeated stale boot into a visible offer, not a loop', async () => {
+  const h = harness({ serverSha: STALE.sha });
+  h.App.loadedPlatformSha = BOOTED;
+  h.session.set(h.App.SHELL_AUTO_RELOAD_KEY, STALE.sha);
+
+  await h.App.loadVersion();
+  h.reply({ ok: true, sha: STALE.sha });
+  assert.equal(h.reloads.length, 0);
+  assert.match(h.slot.innerHTML, /<button/);
 });
 
 // ─── 4. Every failure still ends at a way forward ───────────────────────
@@ -297,6 +373,18 @@ test('a worker that answers no still offers the reload, with an honest tip', () 
   assert.match(h.slot.innerHTML, /onclick="location\.reload\(\)"/,
     'this is the pre-change behaviour, which is strictly better than no button');
   assert.match(h.slot.innerHTML, /two tries/, 'and the tip says so');
+});
+
+test('a success reply for another build is refused', () => {
+  const h = harness();
+  h.App.loadedPlatformSha = BOOTED;
+  h.App._lastVersionInfo = STALE;
+  h.App.renderPlatformVersionPill(STALE);
+  h.reply({ ok: true, sha: '3333333ddddddddddddddddddddddddddddddddd' });
+
+  assert.equal(h.App.shellUpdate.state, 'failed');
+  assert.match(h.slot.innerHTML, /onclick="location\.reload\(\)"/,
+    'an old or rollout-crossed worker cannot claim the requested build is ready');
 });
 
 test('a worker that never answers is bailed out of, not waited on forever', () => {
@@ -317,7 +405,7 @@ test('a reply that arrives after the bail-out does not un-settle the row', () =>
   h.App._lastVersionInfo = STALE;
   h.App.renderPlatformVersionPill(STALE);
   h.fireTimeouts();
-  h.reply({ ok: true });
+  h.reply({ ok: true, sha: STALE.sha });
   assert.equal(h.App.shellUpdate.state, 'failed',
     'settle() is one-way; a late success must not reshape a row already acted on');
 });
@@ -346,7 +434,7 @@ test('a controller that refuses the port fails closed to the same button', () =>
 // ─── 5. The worker's half of the message ────────────────────────────────
 
 test('sw.js answers prefetch-shell by refetching the whole shell', () => {
-  const handler = swJs.slice(swJs.indexOf('async function prefetchShellAssets()'));
+  const handler = swJs.slice(swJs.indexOf('async function prefetchShellAssets('));
   assert.ok(handler, 'the worker defines the prefetch');
 
   const body = handler.slice(0, handler.indexOf("self.addEventListener('fetch'"));
@@ -356,7 +444,7 @@ test('sw.js answers prefetch-shell by refetching the whole shell', () => {
   // deployed document loads its assets from build-scoped URLs (/b/<sha>/…)
   // that only the freshly fetched document can name. The prefetch hands it
   // the cache and asks for the HTTP cache to be bypassed.
-  assert.match(body, /await precacheShell\(cache, \{ reload: true \}\)/,
+  assert.match(body, /await precacheShell\(cache, \{[\s\S]*?reload: true,[\s\S]*?expectedBuild,[\s\S]*?documentLast: true/,
     'every precached asset, at the URLs the NEW document loads them from');
   const precache = swJs.slice(swJs.indexOf('async function precacheShell('),
     swJs.indexOf("self.addEventListener('install'"));
@@ -365,14 +453,21 @@ test('sw.js answers prefetch-shell by refetching the whole shell', () => {
   assert.match(precache, /assets\.map\(async \(path\)/, 'then every other precached asset');
   assert.match(precache, /reload \? \{ cache: 'reload' \} : undefined/,
     "bypasses the HTTP cache — a 'no-cache' revalidation could 304 the old build back");
-  assert.match(precache, /cache\.put\(documentPath, doc\.clone\(\)\)/);
+  assert.match(precache, /if \(expectedBuild && build !== expectedBuild\)/,
+    'a response from the wrong rollout pod cannot satisfy the request');
+  assert.match(precache, /queueShellDocumentWrite\(cache, document\)/,
+    'the fixed document key is promoted through the ordered write queue');
   assert.match(precache, /cache\.put\(url, res\.clone\(\)\)/);
+  assert.ok(precache.indexOf('cache.put(url, res.clone())')
+    < precache.indexOf('queueShellDocumentWrite(cache, document)'),
+    'the document becomes active only after every asset it names was stored');
   assert.match(body, /results\.every\(\(r\) => r\.status === 'fulfilled'\)/,
     'a PARTIAL refresh is the split-build state shellFromCacheThisLoad exists to prevent');
   assert.match(body, /type === 'prefetch-shell'/, 'reachable by message');
-  assert.match(body, /port\.postMessage\(\{ ok \}\)/, 'and answers the page');
-  assert.match(body, /if \(!shellPrefetch\)/,
-    'concurrent asks from several tabs share one run');
+  assert.match(body, /shellPrefetches\.has\(expectedBuild\)/,
+    'concurrent asks from several tabs share one run per requested build');
+  assert.match(body, /port\.postMessage\(\{ ok, sha: expectedBuild \|\| null \}\)/,
+    'the reply identifies the build whose download settled');
 });
 
 test('the document is refreshed under the key the navigation actually reads', () => {
@@ -415,7 +510,7 @@ test('a pull on a moved-on platform downloads the build BEFORE reloading', async
   assert.equal(h.reloads.length, 0,
     'reloading here is the exact mistake: sw.js would race it and serve the old document back');
 
-  h.reply({ ok: true });
+  h.reply({ ok: true, sha: STALE.sha });
   await Promise.race([settled, new Promise((r) => setImmediate(r))]);
   assert.equal(h.reloads.length, 1, 'and only once the cache holds the new build');
 });
@@ -462,7 +557,7 @@ test('the pull joins a download the drawer already started, rather than restarti
   assert.equal(h.posted.length, 1, 'one download, two waiters');
   assert.equal(h.reloads.length, 0, 'and the pull waits on it like anyone else');
 
-  h.reply({ ok: true });
+  h.reply({ ok: true, sha: STALE.sha });
   await Promise.race([settled, new Promise((r) => setImmediate(r))]);
   assert.equal(h.reloads.length, 1);
 });
@@ -472,7 +567,7 @@ test('a pull after the download already settled reloads without asking again', a
   h.App.loadedPlatformSha = BOOTED;
   h.App._lastVersionInfo = STALE;
   h.App.renderPlatformVersionPill(STALE);
-  h.reply({ ok: true });
+  h.reply({ ok: true, sha: STALE.sha });
   assert.equal(h.App.shellUpdate.state, 'ready');
 
   const settled = pull(h);

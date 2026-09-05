@@ -49,7 +49,13 @@
 // v7 worker filled it with — network-first and content-addressed, it costs
 // nothing to refill, which is exactly why the SHELL cache is versioned and
 // the API cache below is not.
-const SW_VERSION = 'v8';
+//
+// v9: document replacement is ordered and its write is held inside the fetch
+// event's lifetime. A v8 cache can contain a document that was briefly shown
+// from the network but never durably stored, so this one-time shell-cache bump
+// starts every existing install from a known current document. The stable API
+// cache below is deliberately preserved.
+const SW_VERSION = 'v9';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
@@ -621,6 +627,62 @@ function shellAssetUrl(path, build) {
   return `/b/${build}${path}`;
 }
 
+// A SHA identifies a build, but it cannot order two builds. The server stamps
+// index.html with both: X-Platform-Build is its identity, and
+// X-Platform-Build-Time is the generated document's mtime. The latter moves
+// forward for a normal deploy AND for an intentional rollback, whose image is
+// rebuilt now. Together they prevent an older rollout answer from replacing a
+// newer cached document at the one fixed key every navigation reads.
+const SHELL_BUILD_HEADER = 'x-platform-build';
+const SHELL_BUILD_TIME_HEADER = 'x-platform-build-time';
+
+function responseHeader(response, name) {
+  try {
+    return response && response.headers && response.headers.get(name);
+  } catch { return null; }
+}
+
+function buildIdOf(response) {
+  return responseHeader(response, SHELL_BUILD_HEADER) || null;
+}
+
+function buildTimeOf(response) {
+  const raw = responseHeader(response, SHELL_BUILD_TIME_HEADER);
+  if (!/^\d+$/.test(String(raw || ''))) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/**
+ * Whether `candidate` may replace `current` at the fixed /index.html key.
+ *
+ * Same-build refreshes and the first deployed document over a legacy
+ * unstamped entry are safe. Cross-build replacement is allowed only with two
+ * ordered stamps and a strictly newer candidate. Missing metadata fails
+ * closed in production; a dev checkout (neither response has a build id)
+ * keeps its normal network-first behaviour.
+ */
+function shouldReplaceShellDocument(current, candidate) {
+  if (!candidate) return false;
+  if (!current) return true;
+  const currentBuild = buildIdOf(current);
+  const candidateBuild = buildIdOf(candidate);
+  if (!currentBuild && !candidateBuild) return true;
+  if (!currentBuild && candidateBuild) return true;
+  if (currentBuild === candidateBuild) return true;
+  if (!candidateBuild) return false;
+  const currentTime = buildTimeOf(current);
+  const candidateTime = buildTimeOf(candidate);
+  return currentTime != null && candidateTime != null && candidateTime > currentTime;
+}
+
+async function putShellDocumentIfNewer(cache, candidate, key = '/index.html') {
+  const current = await cache.match(key);
+  if (!shouldReplaceShellDocument(current, candidate)) return false;
+  await cache.put(key, candidate);
+  return true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Service-worker runtime (skipped when loaded in Node for tests).     */
 /* ------------------------------------------------------------------ */
@@ -642,6 +704,12 @@ if (typeof module !== 'undefined' && module.exports) {
     parseBuildScopedPath,
     isBuildScopedAssetPath,
     shellAssetUrl,
+    buildIdOf,
+    buildTimeOf,
+    shouldReplaceShellDocument,
+    putShellDocumentIfNewer,
+    SHELL_BUILD_HEADER,
+    SHELL_BUILD_TIME_HEADER,
     NO_FALLBACK_PAGES,
     NO_FALLBACK_PREFIXES,
     SW_VERSION,
@@ -701,15 +769,6 @@ if (typeof module !== 'undefined' && module.exports) {
   // edit to public/js/app.js must still show up), a worker restarted
   // mid-load, and a document served before this shipped.
   let documentBuildThisLoad = null;
-
-  const SHELL_BUILD_HEADER = 'x-platform-build';
-
-  function buildIdOf(response) {
-    try {
-      const id = response && response.headers && response.headers.get(SHELL_BUILD_HEADER);
-      return id || null;
-    } catch { return null; }
-  }
 
   // Stamp a response copy with the cached-at time so activate() can prune
   // stale entries. Only used for the API cache. Takes an already-cloned
@@ -811,6 +870,22 @@ if (typeof module !== 'undefined' && module.exports) {
   function swSchedule(fn, ms) {
     const id = setTimeout(fn, ms);
     return () => clearTimeout(id);
+  }
+
+  // Cache Storage has no compare-and-swap. Without one queue, two navigation
+  // responses can both inspect the same old entry and then commit in reverse
+  // order, defeating shouldReplaceShellDocument's ordering check. A rejected
+  // write is swallowed only by the stored tail so one quota failure cannot
+  // poison every later navigation; each caller still receives its real result.
+  let shellDocumentWrite = Promise.resolve();
+
+  function queueShellDocumentWrite(cache, response) {
+    const result = shellDocumentWrite.then(
+      () => putShellDocumentIfNewer(cache, response),
+      () => putShellDocumentIfNewer(cache, response)
+    );
+    shellDocumentWrite = result.catch(() => false);
+    return result;
   }
 
   async function networkFirstShell(event) {
@@ -918,12 +993,11 @@ if (typeof module !== 'undefined' && module.exports) {
   async function networkFirstNavigate(event) {
     const cache = await caches.open(SHELL_CACHE);
 
-    // The cached document MUST be refreshed from here, and this is the only
-    // place that can do it. install() precaches /index.html once per worker
-    // and nothing else ever writes that key, so without this the cached
-    // shell is frozen at whatever shipped the last time sw.js itself changed
-    // bytes — and every load that misses the 200ms deadline (i.e. most of
-    // them: the deadline is deliberately BELOW a round trip) serves it.
+    // The cached document MUST be refreshed from here. install() precaches
+    // /index.html once per worker, so without this the cached shell is frozen
+    // at whatever shipped the last time sw.js itself changed bytes — and every
+    // load that misses the 200ms deadline (i.e. most of them: the deadline is
+    // deliberately BELOW a round trip) serves it.
     //
     // That is not a hypothetical. #1400 moved the page ground from
     // `bg-white` to `bg-zinc-100` in the <body> class and, correctly, did
@@ -936,14 +1010,23 @@ if (typeof module !== 'undefined' && module.exports) {
     // Written under the FIXED '/index.html' key, not event.request: that is
     // the key matchCache reads for every route, and storing per-URL would
     // leave the one key that is actually read still stale. Guarded by
-    // isShellDocumentUrl for the reason given there — 'navigate' also
-    // covers the redirect stubs, and caching one of those AS the shell
-    // would be far worse than the staleness this fixes.
+    // isShellDocumentUrl for the reason given there — 'navigate' also covers
+    // redirect stubs, and caching one of those AS the shell would be far worse
+    // than the staleness this fixes.
+    //
+    // Two details here are load-bearing:
+    //   1. queueShellDocumentWrite compares the build-time stamps and refuses
+    //      an older rollout answer after a newer document has been cached.
+    //   2. cacheWrite is joined to event.waitUntil below. The old fire-and-
+    //      forget cache.put let a fast network document render correctly but
+    //      allowed the worker to die before the write finished; a later slow
+    //      load then appeared to "revert" to the old cached UI.
+    let cacheWrite = Promise.resolve(false);
     const fetchAndCache = () => fetch(event.request).then((res) => {
       // Clone synchronously, before the page can start reading the body.
       if (res && res.ok && !res.redirected
           && isShellDocumentUrl(event.request.url, ORIGIN)) {
-        cache.put('/index.html', res.clone()).catch(() => {});
+        cacheWrite = queueShellDocumentWrite(cache, res.clone());
       }
       return res;
     });
@@ -967,7 +1050,12 @@ if (typeof module !== 'undefined' && module.exports) {
     // those assets have to match the document being parsed, not the one
     // that will be parsed next time. See documentBuildThisLoad.
     documentBuildThisLoad = buildIdOf(response);
-    if (pending) event.waitUntil(pending.catch(() => {}));
+    // If cache won the deadline, `pending` reaches cacheWrite only after the
+    // network response creates it. If network won, cacheWrite already names
+    // the queued put. Either way the document write is part of this event's
+    // lifetime without delaying the response being rendered.
+    const durableWrite = pending ? pending.then(() => cacheWrite) : cacheWrite;
+    event.waitUntil(durableWrite.catch(() => {}));
     return response;
   }
 
@@ -1063,7 +1151,7 @@ if (typeof module !== 'undefined' && module.exports) {
     return res;
   }
 
-  // Fill the shell cache with ONE build: the document first, then every
+  // Fill the shell cache with ONE build: fetch the document first, then every
   // other SHELL_ASSETS entry at the URL that document loads it from — scoped
   // under the document's build id when it has one (X-Platform-Build on the
   // response; the document's own <meta> is written from the same GIT_SHA),
@@ -1075,24 +1163,45 @@ if (typeof module !== 'undefined' && module.exports) {
   // needs that for the plain paths, where a revalidated 304 would report
   // success having stored nothing new; a scoped URL is new to the browser
   // whenever the build is, so there it costs nothing.
-  async function precacheShell(cache, { reload = false } = {}) {
+  //
+  // A targeted deploy prefetch also supplies `expectedBuild` and asks for
+  // `documentLast`. That validates the document before touching the cache and
+  // promotes /index.html only AFTER every asset it names was stored. A failed
+  // or rollout-crossed prefetch therefore leaves the previous complete shell
+  // active instead of advertising a partially downloaded new one.
+  async function precacheShell(cache, {
+    reload = false, expectedBuild = null, documentLast = false,
+  } = {}) {
     const init = reload ? { cache: 'reload' } : undefined;
     const [documentPath, ...assets] = SHELL_ASSETS;
     let build = null;
-    const results = [];
+    let document = null;
+    let documentResult = null;
     try {
       const doc = await fetch(documentPath, init);
       if (!doc || !doc.ok) throw new Error(`HTTP ${doc && doc.status}`);
       build = buildIdOf(doc);
+      if (expectedBuild && build !== expectedBuild) {
+        throw new Error(`expected build ${expectedBuild}, served ${build || 'unstamped'}`);
+      }
+      document = doc.clone();
       // '/index.html' is stored under exactly the key networkFirstNavigate
       // reads, so the document itself is refreshed here and not only the
-      // assets around it.
-      await cache.put(documentPath, doc.clone());
-      results.push({ status: 'fulfilled', value: documentPath });
+      // assets around it. Install stays best-effort and writes it now;
+      // targeted prefetches promote it only after all asset writes below.
+      if (!documentLast) {
+        await cache.put(documentPath, document);
+        documentResult = { status: 'fulfilled', value: documentPath };
+      }
     } catch (err) {
-      results.push({ status: 'rejected', reason: err });
+      documentResult = { status: 'rejected', reason: err };
     }
-    results.push(...await Promise.allSettled(assets.map(async (path) => {
+    // A targeted request whose document was served by the wrong rollout pod
+    // must not fall back to fetching and caching the unscoped asset set.
+    if (expectedBuild && documentResult && documentResult.status === 'rejected') {
+      return SHELL_ASSETS.map(() => documentResult);
+    }
+    const assetResults = await Promise.allSettled(assets.map(async (path) => {
       const url = shellAssetUrl(path, build);
       const res = await fetch(url, init);
       if (!res || !res.ok) throw new Error(`HTTP ${res && res.status}`);
@@ -1101,8 +1210,27 @@ if (typeof module !== 'undefined' && module.exports) {
       if (url !== path && buildIdOf(res) !== build) throw new Error('served by a different build');
       await cache.put(url, res.clone());
       return url;
-    })));
-    if (build) await pruneOtherBuilds(cache, build);
+    }));
+    if (documentLast && document) {
+      if (assetResults.every((result) => result.status === 'fulfilled')) {
+        try {
+          const stored = await queueShellDocumentWrite(cache, document);
+          if (!stored) throw new Error('a newer shell document is already cached');
+          documentResult = { status: 'fulfilled', value: documentPath };
+        } catch (err) {
+          documentResult = { status: 'rejected', reason: err };
+        }
+      } else {
+        documentResult = {
+          status: 'rejected',
+          reason: new Error('shell assets incomplete; document not promoted'),
+        };
+      }
+    }
+    const results = [documentResult, ...assetResults];
+    if (build && documentResult && documentResult.status === 'fulfilled') {
+      await pruneOtherBuilds(cache, build);
+    }
     return results;
   }
 
@@ -1200,15 +1328,20 @@ if (typeof module !== 'undefined' && module.exports) {
   // `cache: 'reload'` on every request, because the HTTP cache is the other
   // copy of the old build and a prefetch that revalidated its way to a 304
   // would report success having stored nothing new.
-  let shellPrefetch = null;
+  const shellPrefetches = new Map();
 
-  async function prefetchShellAssets() {
+  async function prefetchShellAssets(expectedBuild) {
+    if (!/^[0-9a-f]{7,40}$/.test(String(expectedBuild || ''))) return false;
     const cache = await caches.open(SHELL_CACHE);
     // The new document first, then its assets at the URLs IT loads them
     // from: a new build's scripts live under a new /b/<sha>/ prefix, so
     // fetching the plain paths here would refresh nothing the next load asks
     // for. See precacheShell.
-    const results = await precacheShell(cache, { reload: true });
+    const results = await precacheShell(cache, {
+      reload: true,
+      expectedBuild,
+      documentLast: true,
+    });
     // ALL of them, deliberately. A partial refresh is the split-build state
     // shellFromCacheThisLoad exists to prevent, and reporting success for one
     // would put the page's reload button on top of it.
@@ -1226,18 +1359,23 @@ if (typeof module !== 'undefined' && module.exports) {
     }
     if (type === 'prefetch-shell') {
       event.waitUntil((async () => {
-        // One run at a time: every open tab polls /api/version on its own
-        // 10s timer, so a deploy asks for this once per tab within seconds.
-        // Late callers await the run already in flight rather than starting
-        // a second full refetch of the shell.
-        if (!shellPrefetch) {
-          shellPrefetch = prefetchShellAssets()
-            .finally(() => { shellPrefetch = null; });
+        const expectedBuild = String(event.data && event.data.sha || '').trim().toLowerCase();
+        // Every open tab polls /api/version on its own 10s timer. Calls for
+        // the SAME build share one download; a second deploy is a different
+        // key and can never receive the first build's success reply.
+        if (!shellPrefetches.has(expectedBuild)) {
+          const run = prefetchShellAssets(expectedBuild)
+            .finally(() => {
+              if (shellPrefetches.get(expectedBuild) === run) {
+                shellPrefetches.delete(expectedBuild);
+              }
+            });
+          shellPrefetches.set(expectedBuild, run);
         }
         let ok = false;
-        try { ok = await shellPrefetch; } catch { ok = false; }
+        try { ok = await shellPrefetches.get(expectedBuild); } catch { ok = false; }
         const port = event.ports && event.ports[0];
-        if (port) port.postMessage({ ok });
+        if (port) port.postMessage({ ok, sha: expectedBuild || null });
       })());
     }
   });
