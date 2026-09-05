@@ -2126,6 +2126,16 @@
       "expectText": "AI & agents"
     },
     {
+      "name": "Settings ships Advanced collapsed (#1554)",
+      "path": "/#settings",
+      "expectSelector": "#settings-nav-desktop h2:has([data-settings-group-toggle=\"Advanced\"][aria-expanded=\"false\"]) + #settings-nav-group-advanced.hidden"
+    },
+    {
+      "name": "A deep link into Advanced opens the group it lives in (#1554)",
+      "path": "/?demo=cli-empty#settings/cli",
+      "expectSelector": "#settings-nav-desktop #settings-nav-group-advanced:not(.hidden) [data-settings-nav=\"cli\"][aria-selected=\"true\"]"
+    },
+    {
       "name": "The Anthropic API key section renders at its deep link",
       "path": "/#settings/api-key",
       "expectSelector": "#settings-section-content [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
@@ -2561,6 +2571,18 @@
       "name": "Admin Waitlist is a first-class menu section (#1179)",
       "path": "/#admin/waitlist",
       "expectSelector": "#admin-topo-content"
+    },
+    {
+      "name": "Admin Waitlist says where a signup is in words, not the route's name (#1544)",
+      "path": "/#admin/waitlist",
+      "expectSelector": "#admin-topo-wl-table",
+      "expectText": "Waiting"
+    },
+    {
+      "name": "Admin Waitlist counts answered sections against the live total (#1544)",
+      "path": "/#admin/waitlist",
+      "expectSelector": "#admin-topo-wl-table",
+      "expectText": "of 7 answered"
     },
     {
       "name": "Legacy #admin/seasons/<screen> addresses still deep-link their promoted section (#1179)",

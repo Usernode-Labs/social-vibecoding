@@ -75,6 +75,18 @@
     el.classList.add(...(STATUS_PALETTE[kind] || STATUS_PALETTE.info));
   }
 
+  // #1554 — which nav groups the viewer has EXPANDED, persisted per device.
+  //
+  // The set stores the EXPANDED names, which is the opposite of the admin
+  // console's NAV_COLLAPSED_KEY, and the inversion is deliberate on both
+  // sides. There, every group ships open and "absent means expanded" is what
+  // keeps a newly added section visible to someone whose store predates it.
+  // Here, exactly one group exists to ship SHUT — the whole point of moving
+  // the rarely used panes into it — so "absent means collapsed" is what makes
+  // an empty store, a cleared store and a first visit all agree with the
+  // declared check that says Advanced starts closed.
+  const NAV_EXPANDED_KEY = 'settings_nav_expanded_groups_v1';
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -170,20 +182,6 @@
       // DEFAULT_SECTION below — because it is the setting most people arrive
       // looking for and the only one that needs no explanation.
       { key: 'theme', label: 'Theme', group: 'Preferences' },
-
-      { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
-      { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
-      // Own section (not folded into 'cli') so the out-of-credits card can
-      // deep-link #settings/connectors as one of its three routes; see
-      // public/js/credit-options.js.
-      { key: 'connectors', label: 'Social accounts & connectors', group: 'AI & agents' },
-      { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
-      { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
-
-      { key: 'username', label: 'Username', group: 'Account' },
-      { key: 'password', label: 'Password', group: 'Account' },
-      { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
-
       // #1556: GATED, and the gate is "this user already picked a language".
       // The value is app-facing only (the iframe JWT `locale` claim and
       // usernode.getUserLocale) and the platform shell is English-only, so a
@@ -200,25 +198,49 @@
       // than draggable, hideable widgets, so there is nothing left for the
       // section to configure.
 
-      { key: 'cli', label: 'CLI & coding-agent access', group: 'Developer' },
-      { key: 'dev-console', label: 'Developer console', group: 'Developer' },
-      { key: 'experimental', label: 'Experimental', group: 'Developer' },
+      { key: 'username', label: 'Username', group: 'Account' },
+      { key: 'password', label: 'Password', group: 'Account' },
+      { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
 
-      { key: 'usernode', label: 'Usernode app', group: 'Usernode app', gate: 'settings-usernode-section' },
+      { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
+      { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
+      // Own section (not folded into 'cli') so the out-of-credits card can
+      // deep-link #settings/connectors as one of its three routes; see
+      // public/js/credit-options.js.
+      { key: 'connectors', label: 'Social accounts & connectors', group: 'AI & agents' },
 
-      // Reference, not configuration: which build of the app, the platform
-      // and the mobile shell you are on. Ungated and last — it is the pane you
-      // come to Settings to READ, and the Improve panel is where the same
-      // facts turn into something to act on (a build in flight, a reload
-      // waiting). See sections/about.tsx.
-      { key: 'about', label: 'About', group: 'About' },
-
-      { key: 'admin-preview', label: 'Admin preview', group: 'Admin', gate: 'settings-admin-section' },
+      // ── Advanced ──────────────────────────────────────────────────────
+      //
+      // #1554: the four groups above were seven, and the tail of them were
+      // panes most people never open — per-app AI grants, agent instruction
+      // files, the CLI, the developer console, experimental toggles, the
+      // native-app diagnostics, the admin preview and the build readout.
+      // They are all still here and still deep-linkable; the group they sit
+      // in just ships COLLAPSED (see ADVANCED_GROUP below), so the menu opens
+      // at three short sections instead of seventeen rows.
+      //
+      // The order inside it runs configuration first, then reference: the
+      // two AI-adjacent panes that are rarely touched, the three developer
+      // ones, the two gated ones, and About last — it is the pane you come to
+      // Settings to READ, and the Improve panel is where the same facts turn
+      // into something to act on (a build in flight, a reload waiting). See
+      // sections/about.tsx.
+      { key: 'app-ai', label: 'App AI permissions', group: 'Advanced' },
+      { key: 'agent-files', label: 'Agent instructions & skills', group: 'Advanced' },
+      { key: 'cli', label: 'CLI & coding-agent access', group: 'Advanced' },
+      { key: 'dev-console', label: 'Developer console', group: 'Advanced' },
+      { key: 'experimental', label: 'Experimental', group: 'Advanced' },
+      { key: 'usernode', label: 'Usernode app', group: 'Advanced', gate: 'settings-usernode-section' },
+      { key: 'admin-preview', label: 'Admin preview', group: 'Advanced', gate: 'settings-admin-section' },
+      { key: 'about', label: 'About', group: 'Advanced' },
     ],
 
-    // The section a bare #settings resolves to on desktop (and the one
-    // _writeHash collapses back onto bare #settings). Must be an ungated
-    // key, so it is always reachable.
+    // The one group that collapses (#1554). Every other group is short and
+    // always open, so this is a NAME rather than a per-entry flag: adding a
+    // rarely-used section means giving it `group: 'Advanced'` and nothing
+    // else. _isCollapsibleGroup is the single reader.
+    ADVANCED_GROUP: 'Advanced',
+
     DEFAULT_SECTION: 'theme',
 
     init() {
@@ -655,13 +677,16 @@
       if (Settings._isMobile() && !valid) {
         Settings._level = 1;
         Settings._section = fallback;
+        Settings._ensureActiveGroupExpanded();
         Settings._renderNav();
         Settings._renderContent();
         Settings._syncChrome();
         return;
       }
       Settings._level = 2;
-      Settings.setSection(valid ? section : fallback, { writeHash: false });
+      Settings._section = valid ? section : fallback;
+      Settings._ensureActiveGroupExpanded();
+      Settings.setSection(Settings._section, { writeHash: false });
       // Runs after app.js's own setHeaderTitle, so on a mobile deep link the
       // header ends up showing the section's name rather than "Settings".
       Settings._syncChrome();
@@ -704,6 +729,8 @@
       }
       Settings._markRoute('applied');
       if (!mobile) {
+        Settings._section = targetSection;
+        Settings._ensureActiveGroupExpanded();
         Settings.setSection(targetSection, { writeHash: false });
         Settings._level = 2;
         Settings._syncChrome();
@@ -723,6 +750,7 @@
         Settings._pushedFromMenu = false;
       }
       Settings._level = targetLevel;
+      Settings._ensureActiveGroupExpanded();
       Settings._transition(() => {
         Settings._renderNav();
         Settings._renderContent();
@@ -851,8 +879,143 @@
       return groups;
     },
 
+    // ── Collapsible groups (#1554) ────────────────────────────────────────
+    //
+    // One group collapses, and it ships collapsed. The set below holds the
+    // groups the viewer has OPENED (see NAV_EXPANDED_KEY), never derives
+    // anything from the DOM, and is read by both surfaces through
+    // _navView/_menuView — so a toggle survives a section switch, a viewport
+    // crossing and a reload identically.
+    _expandedGroups: null,
+
+    // The group the ACTIVE section lives in, revealed for exactly as long as
+    // that section is active and never written to storage — see
+    // _ensureActiveGroupExpanded for why the arrival reveal is transient.
+    _revealedGroup: null,
+
+    _isCollapsibleGroup(name) {
+      return String(name) === Settings.ADVANCED_GROUP;
+    },
+
+    _expanded() {
+      if (!Settings._expandedGroups) Settings._loadExpandedGroups();
+      return Settings._expandedGroups;
+    },
+
+    // Corrupt, foreign or unavailable storage all resolve to "nothing
+    // expanded": this runs inside a render path, so it must never throw.
+    _loadExpandedGroups() {
+      Settings._expandedGroups = new Set();
+      // Only render/toggle paths reach here, but the guard sits next to the
+      // storage read regardless — the prerender pass and the vm harnesses
+      // evaluate this module in Node, where there is no localStorage.
+      if (typeof window === 'undefined') return;
+      try {
+        const raw = localStorage.getItem(NAV_EXPANDED_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(arr)) return;
+        // Prune names that are no longer a collapsible group, so a renamed or
+        // un-collapsed group can't leave a stale entry behind. Pruning is the
+        // safe direction here: the worst a dropped name does is close a group
+        // the viewer had opened.
+        let changed = false;
+        for (const name of arr) {
+          const key = String(name);
+          if (Settings._isCollapsibleGroup(key)) Settings._expandedGroups.add(key);
+          else changed = true;
+        }
+        if (changed) Settings._saveExpandedGroups();
+      } catch {
+        Settings._expandedGroups = new Set();
+      }
+    },
+
+    _saveExpandedGroups() {
+      try {
+        localStorage.setItem(
+          NAV_EXPANDED_KEY,
+          JSON.stringify([...Settings._expanded()])
+        );
+      } catch { /* storage may be unavailable; non-fatal, in-memory for the session */ }
+    },
+
+    _isGroupExpanded(name) {
+      if (!Settings._isCollapsibleGroup(name)) return true;
+      const key = String(name);
+      return Settings._expanded().has(key) || Settings._revealedGroup === key;
+    },
+
+    _setGroupExpanded(name, expanded) {
+      const set = Settings._expanded();
+      const key = String(name);
+      if (expanded) set.add(key);
+      else set.delete(key);
+      Settings._saveExpandedGroups();
+    },
+
+    // A press is a MENU-ONLY action: it mutates the persisted set and
+    // repaints the nav, and never setSection, _renderContent, _writeHash or
+    // location.hash. The section on screen keeps rendering untouched, and a
+    // phone repaint of the CONTENT would tear the menu down mid-gesture.
+    _toggleGroup(name) {
+      if (!Settings._isCollapsibleGroup(name)) return;
+      const open = !Settings._isGroupExpanded(name);
+      // Closing has to drop the arrival reveal as well, or pressing the
+      // heading of the group you are standing in is a button that visibly
+      // does nothing.
+      if (!open) Settings._revealedGroup = null;
+      Settings._setGroupExpanded(name, open);
+      Settings._renderNav();
+    },
+
+    // "Never hide where I am": arriving at a section reveals its group, so a
+    // deep link into Advanced (#settings/cli from the out-of-credits card,
+    // #settings/api-key from the consent modal, a bookmark) can't leave the
+    // highlighted row invisible.
+    //
+    // The reveal is TRANSIENT — it sets _revealedGroup, and does not touch
+    // the persisted set. Persisting it would make one deep link into About
+    // or CLI the last time that viewer ever sees Advanced shut, which is the
+    // whole feature; it would also make "Advanced ships collapsed" depend on
+    // where the browser had been before, and the capture container walks the
+    // declared #settings routes as hash cohorts of ONE document, in
+    // declaration order (#settings/about lands before #settings). Deriving
+    // the reveal from the active section instead makes both surfaces answer
+    // the same way whatever route came first.
+    //
+    // Called on ARRIVAL only, and it CLEARS as readily as it sets: leaving
+    // Advanced for a Preferences pane closes it again, and the viewer's own
+    // toggle is the only thing that outlives the visit.
+    _ensureActiveGroupExpanded() {
+      const s = Settings._visibleSections().find((x) => x.key === Settings._section);
+      const name = s ? String(s.group || 'Other') : '';
+      Settings._revealedGroup =
+        name && Settings._isCollapsibleGroup(name) ? name : null;
+    },
+
     str(s) {
       return String(s == null ? '' : s);
+    },
+
+    // aria-controls targets have to be unique, and at phone width the hidden
+    // desktop sidebar and the level-1 menu are BOTH in the document — hence
+    // one id prefix per surface ('settings-nav-group', 'settings-menu-group'),
+    // exactly like AdminConsole._groupDomId.
+    _groupDomId(prefix, name) {
+      return `${prefix}-${String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+    },
+
+    // The three disclosure fields both descriptors carry. A group that does
+    // not collapse gets `collapsible: false` and renders exactly the markup
+    // it always did — plain heading, no button, no wrapper id — so the only
+    // group that changes shape is Advanced.
+    _groupDisclosure(prefix, name) {
+      const collapsible = Settings._isCollapsibleGroup(name);
+      return {
+        collapsible,
+        expanded: collapsible ? Settings._isGroupExpanded(name) : true,
+        domId: collapsible ? Settings._groupDomId(prefix, name) : null,
+      };
     },
 
     // Desktop sidebar rows, grouped under headings.
@@ -882,6 +1045,7 @@
       return Settings._groupedSections().map((g, i) => ({
         name: Settings.str(g.name),
         first: i === 0,
+        ...Settings._groupDisclosure('settings-nav-group', g.name),
         items: g.items.map(item),
       }));
     },
@@ -896,6 +1060,7 @@
     _menuView() {
       return Settings._groupedSections().map((g) => ({
         name: Settings.str(g.name),
+        ...Settings._groupDisclosure('settings-menu-group', g.name),
         items: g.items.map((s) => ({ key: s.key, label: Settings.str(s.label) })),
       }));
     },
@@ -1116,6 +1281,7 @@
     // menu would be missing those rows until the next navigation.
     _renderNavIfOpen() {
       if (!Settings._open) return;
+      Settings._ensureActiveGroupExpanded();
       Settings._renderNav();
       // A section that just became unavailable must not stay on screen.
       if (!Settings._visibleSections().some((s) => s.key === Settings._section)) {
