@@ -80,8 +80,8 @@
      `saturate` compensates for the fact that averaging a wash with white
      drains it — the deck's own frosted surfaces are more saturated than
      their backdrop, not less. */
-  --dc-strip-fill: rgba(244, 242, 228, 0.55);
-  --dc-sheet-fill: rgba(255, 255, 255, 0.72);
+  --dc-strip-fill: rgba(244, 242, 228, 0.38);
+  --dc-sheet-fill: rgba(255, 255, 255, 0.50);
   --dc-frost: blur(24px) saturate(1.6);
 
   /* ── Safe-area tokens ────────────────────────────────────
@@ -894,7 +894,16 @@ html.un-kb .platform-safe-sheet {
   /* The dark planes. The strip's tint is the dark wallpaper's own ground
      rather than the strip's opaque value: at 0.55 over that ground it is
      nearly a no-op on the flat areas and lets the washes through where
-     they are, which is the point. */
+     they are, which is the point.
+
+     DENSER THAN LIGHT'S, on purpose. The two themes are not the same
+     problem. Light's wallpaper is cream with pastel washes — averaging it
+     with white barely moves it, so 0.50 still reads as a sheet and shows
+     the washes plainly. Dark's is near-black with washes several times
+     more saturated than their ground; the same alpha there does not read
+     as glass over a page, it reads as the washes themselves with type on
+     top. So dark stays denser and light goes thinner, and the numbers
+     differ because the grounds do. */
   --dc-strip-fill: rgba(11, 13, 27, 0.55);
   --dc-sheet-fill: rgba(28, 28, 30, 0.72);
   --bg-code: #141416;
