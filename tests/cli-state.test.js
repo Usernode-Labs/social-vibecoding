@@ -325,6 +325,7 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
   assert.match(document, /"social_vibecoding\.proposal_push_commit"/);
   assert.match(document, /"social_vibecoding\.proposal_submit_build"/);
   assert.match(document, /"social_vibecoding\.proposal_status"/);
+  assert.match(document, /"social_vibecoding\.proposal_recheck"/);
   assert.match(document, /"social_vibecoding\.proposal_promote"/);
   assert.match(document, /^approvals_reviewer = "user"$/m);
   assert.match(
