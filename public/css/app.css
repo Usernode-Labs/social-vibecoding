@@ -112,14 +112,25 @@
 
   /* The authored top bar's height, WITHOUT the status-bar inset it extends
      into (that is --platform-safe-top, added by whoever needs the total).
-     Not a new fact: it is the 52px the "Header height invariant" block near
-     #header-title.is-centered derives from the markup — py-3 around a 48px
-     content row, and no hairline since the reskin — restated once so a
-     surface that hangs off the bottom of the bar can say so rather than
-     hard-code a number that quietly stops matching. #apps-switcher-sheet's
-     desktop dropdown is the reader; tests/app-switcher-dropdown.test.js pins
-     this against the header's own classes so the two cannot drift. */
-  --platform-header-h: 3.25rem;
+     Not a new fact: it is what the "Header height invariant" block near
+     #header-title.is-centered derives from the markup — pt-3/pb-5 around a
+     28px content row — restated once so a surface that hangs off the bottom
+     of the bar can say so rather than hard-code a number that quietly stops
+     matching. #apps-switcher-sheet's desktop dropdown is the reader;
+     tests/app-switcher-dropdown.test.js pins this against the header's own
+     classes so the two cannot drift.
+
+     52px UNTIL THE BOTTOM PADDING GREW. The bar was py-3 — 12px above and
+     below a 28px row — and it also carries `-mb-2`, which pulls whatever
+     follows 8px UP into it to cut the notch every platform surface reads as
+     its rounded top. Those two facts together left FOUR pixels between the
+     controls and the next thing on the screen. On most routes that next
+     thing is transparent and nobody could tell. On an app route and in a
+     proposal session it is a raised sheet — a 28px radius, a hairline and a
+     shadow reaching up into the bar — and the chip, the bell and Improve sat
+     on its lip. `pb-5` spends 8px buying that clearance back, so the notch
+     costs the controls nothing. */
+  --platform-header-h: 3.75rem;
 
   /* ── Semantic state tokens (dev board) ───────────────────
      ONE meaning per hue, so the same lifecycle stage never reads two
@@ -7984,13 +7995,28 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
    console, …) and #landing-header (the anonymous shell) — and they must
    be the SAME height on every screen. Both are built the same way:
 
-     py-3 (12px top + bottom) around a 48px CONTENT ROW  =  72px,
+     pt-3 / pb-5 (12px above, 20px below) around a 28px CONTENT ROW = 60px,
      plus env(safe-area-inset-top) via .un-safe-top-extend (native.css)
      on the padding-top.
 
-   The row was 28px (a 52px bar) until the homescreen design, whose app
-   chip and bell are 48px discs with the same 12px of padding around
-   them; the row grew to hold them and every pin below moved with it.
+   THE TWO PADDINGS DIFFER ON PURPOSE, and this block used to say `py-3
+   around a 48px row = 72px` while the bar measured 52. Both halves of
+   that were wrong: the row is 28px, and the padding is no longer
+   symmetric.
+
+   It is not symmetric because the bar carries `-mb-2`. That negative
+   margin pulls whatever follows 8px UP into the bar, which is how the
+   `rounded-b-2xl` notch gives every platform surface below it a rounded
+   top for free (see the app-sheet block near #app-frame-host). The cost
+   comes out of the bottom padding and nothing else: 12px of padding minus
+   an 8px overlap left FOUR pixels between the controls and the next thing
+   on the screen. A transparent screen root hid that. A raised sheet does
+   not — inside an app and in a proposal session the chip, the bell and
+   Improve sat on the lip of a 28px radius with a shadow coming up to meet
+   them. `pb-5` restores the 12px the notch was spending.
+
+   Symmetry is not the invariant; PARITY is. Both bars carry the same two
+   paddings, so both are 60px, and neither jumps as you sign in.
 
    It was 53px until the reskin: both bars carried a 1px `border-b`
    hairline, and the border box counted it. The widget language draws no
@@ -8009,20 +8035,20 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
    So the row is pinned from BOTH directions, in the markup:
 
    - FLOOR: the lead back-button wrapper (the one child present in every
-     state of both headers) carries `h-12` = 48px, which survives the
+     state of both headers) carries `h-7` = 28px, which survives the
      title being display:none. On the landing bar it is also fixed-width
-     (`w-12`): frontend/src/features/header/use-header-layout.ts measures
+     (`w-7`): frontend/src/features/header/use-header-layout.ts measures
      it as the title's left side group.
-   - CEILING: no direct child of either header may exceed 48px, and the
+   - CEILING: no direct child of either header may exceed 28px, and the
      children that could grow past it state their height OUTRIGHT rather
-     than adding up to it — the Improve pill is `h-12`, the landing CTAs
-     are `h-12 inline-flex items-center`. Padding arithmetic is what
+     than adding up to it — the Improve pill is `h-7`, the landing CTAs
+     are `h-7 inline-flex items-center`. Padding arithmetic is what
      broke this twice back when the row was 28px: the old App/Dev
      switch's `py-1` segments + `p-0.5` track came to 28px only if you
      forgot its 1px border (it was 30px), and the bordered "Join
      waitlist" CTA was 30px next to its borderless 28px siblings for the
-     same reason. Anything new added to a header gets the same 48px
-     budget — declare `h-12` and centre inside it.
+     same reason. Anything new added to a header gets the same 28px
+     budget — declare `h-7` and centre inside it.
 
    Absolutely-positioned badges and dots (#notifications-badge,
    #improve-working-dot, #dev-console-badge, #header-menu-deploy-dot)
@@ -8333,18 +8359,25 @@ a.drawer-ver--fork:hover {
    The overlay never uses `hidden`: opacity carries the fade and
    pointer-events is what stops a transparent backdrop from eating clicks
    while the panel is closed. */
-/* IT HANGS FROM THE HEADER, IT DOES NOT COVER IT. This was `top: 0`, so the
-   rail slid up over the bar and the chip, bell and Improve button went under
-   it — the control you had just pressed disappeared beneath the thing it
-   opened. The app chip's menu already starts at the bar's underside; this is
-   the same offset, so the two panels in that bar begin on the same line.
-   `--platform-header-h` is the bar's own height (see :root) and
-   --platform-safe-top the status-bar inset it extends into; `bottom: 0`
-   still takes it to the floor, so all that changes is where it starts.
+/* IT COVERS THE HEADER. A full-height rail over the whole right edge,
+   the bar included — which is what it was before it was made to hang from
+   the bar's underside, and what it is again.
+
+   The intervening arrangement was argued from one interaction: with the
+   backdrop stopping at the bar you could press the bell while Improve was
+   open and move straight between the two panels. That is real, and it is
+   what this gives up. What it bought was worse — a rail and a dim that
+   stopped short of the top of the screen, so an open panel left a lit strip
+   of chrome above it that belonged to neither the panel nor the page. A
+   modal surface that covers everything is the ordinary reading of a modal
+   surface, and moving between panels is two clicks, which is what it is
+   everywhere else in the product.
+
+   `bottom: 0` still takes it to the floor; only where it STARTS moved back.
    Below `sm` the block further down resets `top` for the bottom sheet, and
    `.platform-sheet-adopted` neutralises inset entirely on the kit path. */
 #improve-panel {
-  top: calc(var(--platform-header-h) + var(--platform-safe-top));
+  top: 0;
   right: 0;
   bottom: 0;
   width: 20rem;
@@ -8368,46 +8401,31 @@ a.drawer-ver--fork:hover {
   pointer-events: auto;
 }
 
-/* ── THE HEADER STAYS LIT, AND STAYS LIVE ──────────────────────────────
-   Both backdrops ship `inset-0`, so they dimmed the whole viewport — the
-   bar included — and, being `z-40` over its `z-10`, they also SWALLOWED
-   every click on it. That second part is the one that cost something: with
-   a panel open, pressing the bell hit the backdrop instead, which dismissed
-   the panel and did nothing else, so moving between the two panels in this
-   bar took two clicks and the first one appeared to do nothing.
+/* ── THE HEADER IS INSIDE THE DIM ──────────────────────────────────────
+   Every backdrop ships `inset-0`, so the bar is dimmed along with the page
+   and a click on it dismisses the panel like a click anywhere else. There
+   is no rule here any more, and that is the point: `inset-0` is what the
+   markup already says, and a desktop override that lifted the dim off the
+   bar was the whole of the previous arrangement.
 
-   Starting the dim at the bar's underside fixes both at once, and it is
-   geometry rather than z-order: the backdrop no longer reaches the header,
-   so a click there lands on the control it looks like it landed on. The
-   panels themselves already begin on that line (the app menu since #1483,
-   the Improve rail in this change), so nothing above it is covered by
-   anything.
+   WHAT THIS COSTS, because it is not nothing. The backdrop is `z-40` over
+   the header's `z-10`, so with a panel open a press on the bell lands on
+   the backdrop: the panel closes and nothing else happens. Moving from
+   Improve to notifications is two clicks, and the first one looks like it
+   did nothing. That was the reported problem the offset fixed, and it comes
+   back with it.
 
-   What the page loses is the dim over 52px of chrome that is not what the
-   panel is about. What it gains is that the bar reads as still-live — which
-   is now true, and is the point.
+   It is the right trade anyway. A dim that stops 60px short of the top of
+   the screen leaves a lit band of chrome above an open panel, and a bar
+   that is live while a modal surface is up is a claim the rest of the
+   product does not make. One click to dismiss, one to open the next, is
+   what a scrim means.
 
-   EVERY PANEL THE BAR OPENS, not a chosen two. This began as Improve and the
-   app menu, and stopping there would have left the bell dimming and covering
-   the header while its two neighbours did not — the same half-applied rule
-   that made the app menu's dim look wrong beside the Improve panel's one
-   round ago. The interaction argument settles it rather than the visual one:
-   "the header stays live" is only true if it is true whichever panel is open,
-   and with the notifications rail at `top: 0` a click on Improve landed on
-   #notifications-screen-tabs instead.
-
-   Desktop only. Below `sm` these are bottom sheets over the page, and on
-   touch the kit draws its own backdrop over everything; a phone header
-   half-lit above a sheet would be a different decision, and one nobody has
-   asked for. One rule for all of them so they cannot drift apart. */
-@media (min-width: 640px) {
-  #improve-overlay,
-  #apps-switcher-overlay,
-  #notifications-sheet-overlay,
-  #messages-sheet-overlay {
-    top: calc(var(--platform-header-h) + var(--platform-safe-top));
-  }
-}
+   The behaviour the offset made reachable — Improve.open() dismissing the
+   other registered sheets — STAYS. It is unreachable from the header again,
+   but it is still the correct thing for a panel to do when something else
+   opens it, and removing it would be undoing a fix rather than a geometry
+   change. tests/header-stays-live.test.js pins both halves. */
 
 /* Below `sm` (640px — the same boundary HomeLayout.BREAKPOINT_PX and the
    kanban media queries use, so the shell has ONE phone/desktop line) the
@@ -8465,12 +8483,19 @@ a.drawer-ver--fork:hover {
    (`#switcher-nav`, the one `flex-1 min-h-0` child) take the rest. */
 @media (min-width: 640px) {
   #apps-switcher-sheet {
-    /* THE HEADER'S HEIGHT, RESTATED ONCE. --platform-header-h is the 52px the
-       "Header height invariant" block above derives (py-3 around a 28px
+    /* THE HEADER'S HEIGHT, RESTATED ONCE. --platform-header-h is the 60px the
+       "Header height invariant" block above derives (pt-3/pb-5 around a 28px
        content row, no hairline since the reskin); --platform-safe-top is the
        status-bar inset the bar extends into via .un-safe-top-extend, and 0 in
        a desktop browser. If the header's height ever moves, this moves with
        it — tests/app-switcher-dropdown.test.js pins the pair.
+
+       AND THIS MENU IS THE ONE SURFACE THAT STILL HANGS FROM THE BAR. The
+       two rails cover it now; a dropdown cannot, because it is anchored to
+       the chip that opens it and a menu drawn over its own trigger has
+       nothing to point at. Its BACKDROP still dims the bar like every other
+       one — the chip is greyed with the rest of the page, and only the panel
+       itself starts below it.
 
        FLUSH, NOT FLOATING. There were 0.5rem of daylight here, on the
        argument that a gap makes the panel read as its own surface. It reads
@@ -8478,12 +8503,12 @@ a.drawer-ver--fork:hover {
        the two are one piece of chrome and a seam between them was a seam in
        the middle of one object. The panel's own border and shadow do the
        separating. That held when the wallpaper routes cleared the bar's
-       surface, and for a second reason: every panel the bar opens starts on
-       this same line and every backdrop stops at it (the "header stays
-       live" rule, tests/header-stays-live.test.js), so a gap here alone
-       would put the menu on a different line from the Improve rail. What
-       did change is the hairline: the brand one (below), so the menu ties
-       to the chip's own ring rather than to a zinc bar it no longer sits on. */
+       surface, and it still holds now that the Improve rail covers the bar
+       rather than starting beside this menu: flush is what makes a dropdown
+       part of the control it hangs off, and that argument never depended on
+       the rail. What did change is the hairline: the brand one (below), so
+       the menu ties to the chip's own ring rather than to a zinc bar it no
+       longer sits on. */
     top: calc(var(--platform-header-h) + var(--platform-safe-top));
     left: 50%;
     right: auto;
@@ -8623,8 +8648,9 @@ a.drawer-ver--fork:hover {
    opened from a control in the middle of the bar belongs under that control.
    These take the same near-full-height cap the Improve panel does and let
    their own scroller take over. */
-/* Under the bar, like the Improve rail and the app menu — the bar opens all
-   three and none of them may cover it. See the backdrop block above.
+/* Over the bar, like the Improve rail — the two full-height rails cover the
+   header and the app menu, being a dropdown anchored to the chip, does not.
+   See the backdrop block above for what that costs and why.
    `#messages-sheet` is DEAD in this selector and is left alone rather than
    quietly removed here: Messages went back to being a screen (#messages-screen,
    see tests/shell-id-inventory.test.js), so the id matches nothing in the
@@ -8632,7 +8658,7 @@ a.drawer-ver--fork:hover {
    a tidy-up of its own, not something to smuggle into a geometry change. */
 #notifications-sheet,
 #messages-sheet {
-  top: calc(var(--platform-header-h) + var(--platform-safe-top));
+  top: 0;
   right: 0;
   bottom: 0;
   width: 24rem;
