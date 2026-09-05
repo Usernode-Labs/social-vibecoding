@@ -403,7 +403,42 @@ function stagingMockIssueComments(number) {
       { author: 'staging-tester', body: '[Mock] Happens on my iPhone SE in portrait — the Vote and Preview buttons spill off the right edge.', createdAt: hoursAgo(28) },
     ],
   };
-  return threads[n] || [];
+  if (threads[n]) return threads[n];
+  if (!Number.isFinite(n)) return [];
+
+  // EVERY OTHER ISSUE GETS ONE TOO, and the three above stay curated.
+  //
+  // This function used to answer `[]` for anything but those three numbers,
+  // which quietly undid the fallback that calls it. The caller's contract is
+  // "an empty live thread in staging is replaced so the section is
+  // reviewable" — but the preview's feed is a PROD-CLONED list whose rows are
+  // real issue numbers, so for almost every row the replacement was another
+  // empty list. The declared check for the feed's inline comments
+  // (dapp.json, #1585) reads whichever issue happens to sit at the top of
+  // that list, so it passed or failed on which numbers the clone happened to
+  // carry and whether GitHub answered from inside the container.
+  //
+  // Deterministic in the issue number, so a row says the same thing on every
+  // repaint and across a rebuild, and ordered oldest-first like a real
+  // thread — the feed previews the TAIL, so the second line must be the
+  // newer one. Strictly staging-only: the production path above returns
+  // before reaching this, and tests/github-issues-route.js pins that.
+  const seed = Math.abs(Math.trunc(n));
+  return [
+    {
+      author: 'staging-tester',
+      body: `[Mock] Reproduced on the staging preview for issue #${seed}.`
+        + ' This thread is generated so the inline comment preview has'
+        + ' something to render; it is not a real conversation.',
+      createdAt: hoursAgo(12 + (seed % 24)),
+    },
+    {
+      author: 'usernode-bot',
+      body: '[Mock] Thanks — picking this up. Shout if the behaviour differs'
+        + ' on a phone.',
+      createdAt: hoursAgo(1 + (seed % 6)),
+    },
+  ];
 }
 
 // Pick the "In progress" chip's link destination from an issue's live

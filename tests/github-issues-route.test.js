@@ -506,6 +506,58 @@ test('staging comments endpoint serves mock thread (with a bot comment) on an em
   }
 });
 
+test('staging mocks cover EVERY issue number, not just the three curated ones', async () => {
+  // The fallback's contract is "an empty live thread in staging is replaced
+  // so the section is reviewable". It was only half-true: the mock table had
+  // three entries and answered [] for anything else, and the preview's feed
+  // is a PROD-CLONED list of real issue numbers — so for almost every row the
+  // replacement was another empty list, and the feed's declared inline-comment
+  // check (#1585) passed or failed on which numbers the clone carried.
+  global.fetch = async (url, opts) => {
+    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => [] };
+    }
+    return baselineFetch(url, opts);
+  };
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    const seen = [];
+    for (const n of [142, 7, 1585]) {
+      const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/${n}/comments?demo=1`);
+      assert.strictEqual(res.status, 200);
+      const body = await res.json();
+      assert.ok(body.comments.length > 0, `issue ${n} must get a thread`);
+      // The feed previews the TAIL of a thread, so the last line has to be
+      // the newest one or the relative age reads backwards.
+      const times = body.comments.map((c) => Date.parse(c.createdAt));
+      for (const t of times) assert.ok(Number.isFinite(t), 'every comment carries a parseable createdAt');
+      assert.deepStrictEqual(times, [...times].sort((a, b) => a - b), 'oldest first');
+      seen.push(JSON.stringify(body.comments));
+    }
+    assert.strictEqual(new Set(seen).size, 3, 'each issue gets its own thread, not one shared copy');
+
+    // Deterministic: the same number twice is the same thread, so a repaint
+    // does not shuffle what a row says.
+    const again = await (await realFetch(
+      `http://127.0.0.1:${port}/api/apps/demo/github-issues/142/comments?demo=1`
+    )).json();
+    assert.strictEqual(
+      JSON.stringify(again.comments.map((c) => [c.author, c.body])),
+      JSON.stringify(JSON.parse(seen[0]).map((c) => [c.author, c.body])),
+    );
+
+    // …and the curated threads are untouched.
+    const curated = await (await realFetch(
+      `http://127.0.0.1:${port}/api/apps/demo/github-issues/900001/comments?demo=1`
+    )).json();
+    assert.strictEqual(curated.comments.length, 3);
+  } finally {
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
 test('production comments endpoint never substitutes mocks (empty stays empty)', async () => {
   global.fetch = async (url, opts) => {
     if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
