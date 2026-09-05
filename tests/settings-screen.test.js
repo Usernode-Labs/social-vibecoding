@@ -201,6 +201,147 @@ test('the default section is an ungated key', () => {
   assert.equal(hit.gate, null, 'the default section is never behind a gate');
 });
 
+// ── Grouping and the Advanced disclosure (#1554) ────────────────────────
+
+test('the registry groups into four sections, Advanced last', () => {
+  const sections = registrySections();
+  // First-appearance order, exactly what _groupedSections() derives.
+  const order = [];
+  for (const s of sections) if (!order.includes(s.group)) order.push(s.group);
+  assert.deepEqual(order, ['Preferences', 'Account', 'AI & agents', 'Advanced'],
+    'four groups, in menu order');
+  // dapp.json asserts this heading by TEXT, so the spelling is a contract.
+  assert.ok(manifest.tests.some((t) => t.expectText === 'AI & agents'),
+    'the AI & agents heading is a declared check');
+
+  // Theme leads the registry: DEFAULT_SECTION, the visible[0] fallbacks in
+  // open()/route()/setSection and the "Theme is the first setting" check all
+  // resolve through position, so the regrouping must not have moved it.
+  assert.equal(sections[0].key, 'theme', 'Theme is still the first entry');
+  assert.equal(sections[0].group, 'Preferences');
+  assert.equal(sections[0].gate, null);
+
+  // Nothing was dropped on the way: every section is still registered, and
+  // the rarely-used ones are the ones that moved.
+  const byKey = Object.fromEntries(sections.map((s) => [s.key, s.group]));
+  for (const key of [
+    'theme', 'language', 'alerts', 'username', 'password', 'wallet',
+    'openrouter', 'api-key', 'connectors', 'app-ai', 'agent-files', 'cli',
+    'dev-console', 'experimental', 'usernode', 'admin-preview', 'about',
+  ]) assert.ok(byKey[key], `${key} is still reachable from the menu`);
+  for (const key of [
+    'app-ai', 'agent-files', 'cli', 'dev-console', 'experimental',
+    'usernode', 'admin-preview', 'about',
+  ]) assert.equal(byKey[key], 'Advanced', `${key} sits under Advanced`);
+});
+
+test('Advanced is the ONE collapsible group, and it starts closed', () => {
+  assert.match(settingsJs, /ADVANCED_GROUP: 'Advanced'/,
+    'the collapsible group is named once, not spelled at every reader');
+  const isCollapsible = sliceMethod(settingsJs, '_isCollapsibleGroup');
+  assert.match(isCollapsible, /=== Settings\.ADVANCED_GROUP/,
+    '_isCollapsibleGroup is the single reader of that name');
+
+  // The set stores the EXPANDED names, the inverse of the admin console's
+  // NAV_COLLAPSED_KEY: an empty, cleared or foreign store must resolve to
+  // "Advanced is shut", which is what the declared check asserts.
+  assert.match(settingsJs, /const NAV_EXPANDED_KEY = 'settings_nav_expanded_groups_v1';/);
+  const isExpanded = sliceMethod(settingsJs, '_isGroupExpanded');
+  assert.match(isExpanded, /_isCollapsibleGroup\(name\)/,
+    'a group that does not collapse is always expanded');
+  assert.match(isExpanded, /_expanded\(\)\.has\(/,
+    'presence in the set is what opens it');
+  assert.match(isExpanded, /_revealedGroup === key/,
+    'or the group the active section lives in, for this visit only');
+
+  // Closing the group you are standing in has to drop that reveal too, or
+  // the heading is a button that visibly does nothing.
+  assert.match(sliceMethod(settingsJs, '_toggleGroup'),
+    /if \(!open\) Settings\._revealedGroup = null;/);
+
+  // Runs inside a render path, and the prerender pass / vm harnesses have no
+  // localStorage, so the load must neither throw nor touch storage there.
+  const load = sliceMethod(settingsJs, '_loadExpandedGroups');
+  assert.match(load, /if \(typeof window === 'undefined'\) return;/,
+    'the storage read is guarded for Node');
+  assert.match(load, /catch \{/, 'corrupt or unavailable storage is non-fatal');
+  assert.match(load, /_isCollapsibleGroup\(key\)/,
+    'names that are no longer a collapsible group are pruned');
+  assert.match(sliceMethod(settingsJs, '_saveExpandedGroups'), /catch \{/);
+});
+
+test('a disclosure press repaints the menu and nothing else', () => {
+  const fn = sliceMethod(settingsJs, '_toggleGroup');
+  assert.match(fn, /_setGroupExpanded\(/, 'it flips the persisted state');
+  assert.match(fn, /Settings\._renderNav\(\);/, 'and repaints the nav');
+  // The admin console's rule, for the same three reasons: the section on
+  // screen keeps rendering, a phone repaint would tear the menu down
+  // mid-gesture, and focus stays on the heading you just pressed.
+  for (const forbidden of [
+    /setSection\(/, /location\.hash/, /_writeHash\(/, /_renderContent\(/,
+  ]) assert.doesNotMatch(fn, forbidden, `_toggleGroup must not call ${forbidden}`);
+});
+
+test('arriving at a section reveals the group it lives in, transiently', () => {
+  const fn = sliceMethod(settingsJs, '_ensureActiveGroupExpanded');
+  assert.match(fn, /Settings\._revealedGroup =/,
+    'the reveal is derived from the active section');
+  // Persisting it would make one deep link into About or CLI the last time
+  // that viewer ever sees Advanced shut. It would also make "ships
+  // collapsed" depend on route order: the capture container walks the
+  // declared #settings routes as hash cohorts of ONE document, in
+  // declaration order, and #settings/about lands before #settings.
+  for (const forbidden of [/_setGroupExpanded\(/, /_saveExpandedGroups\(/]) {
+    assert.doesNotMatch(fn, forbidden, 'the arrival reveal never persists');
+  }
+  assert.match(fn, /: null/, 'and it clears when the section leaves the group');
+
+  // On ARRIVAL only — the three paths that resolve a section. A deep link
+  // into Advanced (the out-of-credits card's #settings/cli, the consent
+  // modal's #settings/api-key, a bookmark) must not leave the highlighted
+  // row inside a shut group.
+  const open = sliceMethod(settingsJs, 'open');
+  assert.equal((open.match(/_ensureActiveGroupExpanded\(\)/g) || []).length, 2,
+    'open() reveals on both the menu and the section branch');
+  const route = sliceMethod(settingsJs, 'route');
+  assert.equal((route.match(/_ensureActiveGroupExpanded\(\)/g) || []).length, 2,
+    'route() reveals on both the desktop and the mobile branch');
+  assert.match(sliceMethod(settingsJs, '_renderNavIfOpen'), /_ensureActiveGroupExpanded\(\)/,
+    'a late-arriving gate re-resolves through the same reveal');
+});
+
+test('both nav descriptors carry the disclosure, with per-surface ids', () => {
+  const disclosure = sliceMethod(settingsJs, '_groupDisclosure');
+  for (const field of ['collapsible', 'expanded', 'domId']) {
+    assert.match(disclosure, new RegExp(`${field}[,:]`), `_groupDisclosure emits ${field}`);
+  }
+  // aria-controls targets have to be unique, and at phone width BOTH hosts
+  // are in the document — hence one id prefix per surface.
+  const nav = settingsJs.slice(settingsJs.indexOf('    _navView() {'));
+  assert.match(nav.slice(0, 1600), /_groupDisclosure\('settings-nav-group'/);
+  const menu = settingsJs.slice(settingsJs.indexOf('    _menuView() {'));
+  assert.match(menu.slice(0, 1600), /_groupDisclosure\('settings-menu-group'/);
+
+  // The component renders the button, the pair and the wrapper the declared
+  // checks select on, and leaves every other group's markup alone.
+  assert.match(navTsx, /data-settings-group-toggle=\{group\.name\}/);
+  assert.match(navTsx, /aria-expanded=\{group\.expanded \? 'true' : 'false'\}/);
+  assert.match(navTsx, /aria-controls=\{group\.domId \|\| undefined\}/);
+  assert.match(navTsx, /if \(!group\.collapsible\) \{/,
+    'a non-collapsible group keeps the bare heading it always had');
+  // The only user-facing copy this adds. No em dash, no punctuation: it is
+  // read out by screen readers and shown as the hover title.
+  assert.match(navTsx, /`\$\{group\.expanded \? 'Collapse' : 'Expand'\} \$\{group\.name\}`/,
+    'the toggle labels itself Expand / Collapse <group>');
+
+  // The two checks that hold the behaviour in staging.
+  const paths = (t) => manifest.tests.filter((x) => x.path === t);
+  assert.ok(paths('/#settings').some((t) => /group-toggle="Advanced"\]\[aria-expanded="false"/.test(t.expectSelector || '')),
+    'a declared check pins Advanced shipping collapsed');
+  assert.ok(paths('/?demo=cli-empty#settings/cli').some((t) => /#settings-nav-group-advanced:not\(\.hidden\)/.test(t.expectSelector || '')),
+    'a declared check pins the deep-link reveal');
+});
+
 // ── MOVE, DON'T REWRITE ────────────────────────────────────────────────
 
 test('every pre-existing settings control id survived the move', () => {

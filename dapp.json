@@ -2114,6 +2114,16 @@
       "expectText": "AI & agents"
     },
     {
+      "name": "Settings ships Advanced collapsed (#1554)",
+      "path": "/#settings",
+      "expectSelector": "#settings-nav-desktop h2:has([data-settings-group-toggle=\"Advanced\"][aria-expanded=\"false\"]) + #settings-nav-group-advanced.hidden"
+    },
+    {
+      "name": "A deep link into Advanced opens the group it lives in (#1554)",
+      "path": "/?demo=cli-empty#settings/cli",
+      "expectSelector": "#settings-nav-desktop #settings-nav-group-advanced:not(.hidden) [data-settings-nav=\"cli\"][aria-selected=\"true\"]"
+    },
+    {
       "name": "The Anthropic API key section renders at its deep link",
       "path": "/#settings/api-key",
       "expectSelector": "#settings-section-content [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
