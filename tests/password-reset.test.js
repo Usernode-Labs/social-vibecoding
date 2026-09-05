@@ -63,14 +63,6 @@ for (const level of ['info', 'warn', 'error', 'debug']) {
   logger[level] = (...args) => { logCalls.push(args); if (typeof orig === 'function') { /* swallow */ } };
 }
 
-// ── Pass-through auth limiter ──────────────────────────────────────
-// authLimiter is one shared in-memory 10/15min/IP bucket for the whole
-// process; this file makes enough auth-surface POSTs that later tests
-// would 429 on limiter state left by earlier ones. Throttling isn't under
-// test here, so swap it out BEFORE the route modules destructure it.
-const rateLimits = require('../src/middleware/rate-limits');
-rateLimits.authLimiter = (_req, _res, next) => next();
-
 // ── Spy on the mail door so no real transport is ever consulted ────
 const mailMod = require('../src/services/mail');
 let sentResetMails = []; // { email, token }
