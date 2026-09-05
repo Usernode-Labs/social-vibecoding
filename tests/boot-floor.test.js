@@ -190,18 +190,56 @@ test('the watchdog opts out of capture and check routes, except its own probe', 
   assert.match(block, /if \(optedOut\) return;/);
 });
 
-test('the watchdog only accuses when nothing at all is on screen', () => {
-  // A false positive would put "did not finish loading" over a working app,
-  // which is worse than the blank screen it exists for.
+test('the watchdog asks the PIXELS, not the tree', () => {
+  // The original predicate asked "does any unhidden screen root have text",
+  // which is not "can the reader see anything". #auth-landing-screen is
+  // `fixed inset-0 z-40` with no children, and a failed boot reveals it OVER
+  // a #home-screen that is still unhidden and still carries its prerendered
+  // text. The predicate found that text and stayed silent while the reader
+  // looked at a white rectangle — silence in the one case it exists for.
   const at = HEAD.indexOf('function bootProducedSomething');
   assert.ok(at > 0);
   const fn = HEAD.slice(at, HEAD.indexOf('\n      }', at));
-  assert.match(fn, /getBoundingClientRect/, 'a hidden or zero-size root does not count');
-  assert.match(fn, /innerText/, 'nor does an empty one — #1670 revealed an EMPTY overlay');
+  assert.match(fn, /document\.elementFromPoint\(/,
+    'what is ON TOP at a coordinate, not what exists in the tree');
+  assert.doesNotMatch(fn, /innerText/,
+    'innerText on a root counts content something opaque is covering');
   assert.match(fn, /catch \(e\) \{ return true; \}/,
     'a watchdog that cannot tell must not accuse');
   assert.match(HEAD, /var DEADLINE_MS = 8000;/,
     'well past the slowest boot this repo has measured (~2.4s)');
+});
+
+test('a background image is NOT taken as content', () => {
+  // It reads like a reasonable "an icon drawn as a background counts" signal
+  // and it is exactly wrong here: the platform's wallpaper IS a background
+  // image, painted on the very screen roots this samples. Measured — with
+  // that branch in, all six sample points landed on #auth-landing-screen
+  // with no text and a `url(data:image/png…)` wallpaper, so every empty
+  // overlay came back as content and the panel never painted.
+  const at = HEAD.indexOf('function hasVisibleContent');
+  assert.ok(at > 0, 'the per-element judgement is its own function');
+  const fn = HEAD.slice(at, HEAD.indexOf('\n      }', at));
+  assert.doesNotMatch(fn, /backgroundImage/,
+    'a ground is not content — the wallpaper would mask every blank screen');
+  assert.match(fn, /nodeType === 3/, 'its OWN text, not a descendant\'s');
+  assert.match(fn, /'img'|'svg'|'canvas'|'video'/, 'real media still counts');
+});
+
+test('the watchdog arms at script time, not on a boot milestone', () => {
+  // It used to start its timer inside a DOMContentLoaded listener, so a boot
+  // that died before that event never armed it. A synchronous hang in any of
+  // the ~47 classic scripts is enough, and then the panel can never paint.
+  const at = HEAD.indexOf('ARMED HERE, NOT ON DOMContentLoaded');
+  assert.ok(at > 0, 'the arming is deliberate and explained');
+  const tail = HEAD.slice(at, HEAD.indexOf('}());', at));
+  assert.match(tail, /setTimeout\(judge, DEADLINE_MS\);/,
+    'armed unconditionally, not from an event');
+  // …but a document that is merely still arriving is not accused: one grace
+  // window while the parser is demonstrably still working, then judge anyway.
+  assert.match(tail, /document\.readyState === 'loading' && !extended/);
+  assert.match(tail, /setTimeout\(judge, GRACE_MS\)/);
+  assert.match(HEAD, /var GRACE_MS = \d+;/);
 });
 
 test('the probe route is a declared check, so the panel cannot rot', () => {
