@@ -176,30 +176,38 @@
     }());
   </script>
   <script>
-    // ── The boot watchdog: the floor under everything else here ──────────
+    // ── The boot record: what went wrong, for an inspector to read ───────
     //
-    // When the boot fails, it fails INVISIBLY. Every island is left as the
-    // empty markup the prerender shipped, the screen the router reveals has
-    // nothing in it, and what a reader gets is a blank page that reports
-    // nothing at all. Diagnosing #1670 took four rounds of inference for
-    // exactly that reason: the failure could not be observed on the device
-    // that had it, only reasoned about from a sandbox that did not.
+    // When the boot fails, it fails INVISIBLY: every island is left as the
+    // empty markup the prerender shipped, and the screen the router reveals
+    // has nothing in it. This block captures every error from as early in
+    // the document as a script can run, so a reader with an inspector
+    // attached, or a tester with a console, can ask what happened. It is
+    // inline and classic, with no imports, no framework and no stylesheet,
+    // because the things it records are precisely the bundle, the framework
+    // and the stylesheet failing.
     //
-    // So: capture every error from as early in this document as a script can
-    // run, and if the boot has produced NOTHING by the deadline, paint what
-    // went wrong. Written as an inline classic script, with no imports, no
-    // framework and no stylesheet, because the things it reports on are
-    // precisely the bundle, the framework and the stylesheet. It has to work
-    // when they did not.
+    // It PAINTS NOTHING. An earlier version judged the page by its pixels
+    // and painted a "did not finish loading" panel over anything it took for
+    // blank. On real devices it accused pages that were fine, and a
+    // diagnostic that lies is worse than none, so the judgement and the
+    // panel are gone. Everything here is passive:
     //
-    // `window.__unBoot.errors` is the shared record; frontend/src/lib/
-    // boot-guard.ts pushes into the same list from inside the bundle, so one
-    // list holds a failed classic script, a failed boot step and a rejected
-    // promise alike.
+    //   window.__unBoot.errors    thrown errors, rejected promises, scripts
+    //                             and stylesheets that failed to load, and
+    //                             boot steps that threw (frontend/src/lib/
+    //                             boot-guard.ts pushes into the same list)
+    //   window.__unBoot.steps     boot steps that completed, with when
+    //   window.__unBoot.snapshot()  the document's state as one string, for
+    //                             pasting out of a console
+    //
+    // Nothing in it prints a token: query values are never read, only their
+    // keys, and the fragment is cut at its first segment.
     (function () {
       'use strict';
-      var W = (window.__unBoot = window.__unBoot || { errors: [] });
+      var W = (window.__unBoot = window.__unBoot || { errors: [], steps: [] });
       if (!Array.isArray(W.errors)) W.errors = [];
+      if (!Array.isArray(W.steps)) W.steps = [];
       function push(step, message, stack) {
         try {
           W.errors.push({ step: step, message: String(message || ''), stack: stack || '' });
@@ -208,126 +216,146 @@
       window.addEventListener('error', function (e) {
         push('error', (e && e.message) || 'script error', e && e.error && e.error.stack);
       });
+      // A script or stylesheet that FAILED TO LOAD fires `error` on its own
+      // element and it does not bubble, so the listener above never hears
+      // it. Capture phase does. A thrown error has `window` as its target
+      // and is already recorded above.
+      window.addEventListener('error', function (e) {
+        var t = e && e.target;
+        if (!t || t === window || !t.tagName) return;
+        var url = '';
+        try { url = String(t.src || t.href || '').split('?')[0].split('#')[0]; } catch (x) { url = ''; }
+        push('resource', String(t.tagName).toLowerCase() + ' failed to load: ' + (url || '(no url)'));
+      }, true);
       window.addEventListener('unhandledrejection', function (e) {
         var r = e && e.reason;
         push('unhandledrejection', (r && r.message) || String(r), r && r.stack);
       });
 
-      // `?shot=boot-failed` forces the panel so the dapp.json check and the
-      // before/after screenshots can reach a state that otherwise only exists
-      // when the shell is broken. Every OTHER ?shot= / ?demo= route opts out
-      // entirely: those render one state deterministically for a capture or a
-      // declared check, and a panel arriving mid-assertion is the
-      // nondeterminism they exist to be free of. Same guard, and the same
-      // reason, as prefetchSettings() and AdminConsole.prefetchSections().
-      var forced = false;
-      var optedOut = false;
-      try {
-        var q = new URLSearchParams(window.location.search);
-        forced = q.get('shot') === 'boot-failed';
-        optedOut = !forced && (!!q.get('shot') || !!q.get('demo'));
-      } catch (e) { /* no URL API: watch anyway, it is the failing case */ }
-      if (optedOut) return;
-
-      // Generous on purpose. The slowest boot this repo has measured (4x CPU,
-      // 150ms link, cold worker) put its first card up ~2.4s in, so this sits
-      // well past any load that is merely slow. The panel is for a boot that
-      // is not coming.
-      var DEADLINE_MS = 8000;
-
-      // Conservative by construction: ANY screen root that is unhidden, has a
-      // box and has text counts as a working boot. An unreadable document
-      // (no querySelectorAll, a throw) counts as working too — a watchdog
-      // that cannot tell must not accuse.
-      function bootProducedSomething() {
-        try {
-          var roots = document.querySelectorAll('[id$="-screen"], #app-view');
-          for (var i = 0; i < roots.length; i++) {
-            var el = roots[i];
-            if (el.classList.contains('hidden')) continue;
-            var r = el.getBoundingClientRect();
-            if (r.width > 0 && r.height > 0 && (el.innerText || '').trim()) return true;
-          }
-          return false;
-        } catch (e) { return true; }
+      function nameOf(el) {
+        if (!el) return 'null';
+        var t = (el.tagName || '?').toLowerCase();
+        if (el.id) return t + '#' + el.id;
+        var c = el.classList && el.classList.length ? el.classList[0] : '';
+        return c ? t + '.' + c : t;
       }
-
-      function paint() {
+      function safeRoute() {
+        var keys = [];
         try {
-          if (document.getElementById('boot-watchdog')) return;
-          var dark = document.documentElement.classList.contains('dark');
-          var panel = document.createElement('div');
-          panel.id = 'boot-watchdog';
-          panel.setAttribute('role', 'alert');
-          panel.style.cssText = 'position:fixed;inset:0;z-index:2147483647;overflow:auto;'
-            + 'padding:24px;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'
-            + '-webkit-text-size-adjust:100%;'
-            + (dark ? 'background:#0b0d1b;color:#e4e4e7' : 'background:#f4f2e4;color:#18181b');
-
-          var h = document.createElement('div');
-          h.textContent = 'This screen did not finish loading';
-          h.style.cssText = 'font-size:18px;font-weight:600;margin-bottom:8px';
-          panel.appendChild(h);
-
-          var p = document.createElement('div');
-          p.textContent = 'The app is still installed and your data is safe. '
-            + 'This panel exists so the failure can be read here instead of '
-            + 'looking like a blank screen.';
-          p.style.cssText = 'margin-bottom:16px;opacity:.8;max-width:52ch';
-          panel.appendChild(p);
-
-          var retry = document.createElement('button');
-          retry.id = 'boot-watchdog-retry';
-          retry.type = 'button';
-          retry.textContent = 'Try again';
-          retry.style.cssText = 'appearance:none;border:0;border-radius:10px;padding:10px 18px;'
-            + 'font:inherit;font-weight:500;cursor:pointer;background:#1f86ff;color:#fff;'
-            + 'min-height:44px;margin-bottom:20px';
-          retry.addEventListener('click', function () {
-            // Drop the one-shot reload marker so a retry is a genuinely fresh
-            // attempt rather than one that starts with its budget spent.
-            try {
-              var u = new URL(window.location.href);
-              u.searchParams.delete('un-boot-retry');
-              window.location.replace(u.toString());
-            } catch (e) { window.location.reload(); }
-          });
-          panel.appendChild(retry);
-
-          var errs = (W.errors || []).slice(0, 8);
-          var list = document.createElement('div');
-          list.id = 'boot-watchdog-errors';
-          list.style.cssText = 'font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;'
-            + 'white-space:pre-wrap;word-break:break-word;opacity:.85';
-          if (!errs.length) {
-            list.textContent = 'No error was recorded. The boot simply never '
-              + 'produced a screen, which usually means a script never ran.';
-          } else {
-            for (var j = 0; j < errs.length; j++) {
-              var row = document.createElement('div');
-              row.style.cssText = 'margin-bottom:10px';
-              // textContent throughout: these strings come from thrown values
-              // and are never markup.
-              row.textContent = (j + 1) + '. [' + errs[j].step + '] ' + errs[j].message
-                + (errs[j].stack ? '\n' + String(errs[j].stack).split('\n').slice(0, 3).join('\n') : '');
-              list.appendChild(row);
-            }
-          }
-          panel.appendChild(list);
-          (document.body || document.documentElement).appendChild(panel);
-        } catch (e) { /* a watchdog that throws would be the joke of the file */ }
+          new URLSearchParams(window.location.search).forEach(function (v, k) { keys.push(k); });
+        } catch (e) { /* no URL API */ }
+        var hash = window.location.hash || '';
+        var m = /^(#[^/]*)(\/.*)?$/.exec(hash);
+        if (m) hash = m[1] + (m[2] ? '/...' : '');
+        return window.location.pathname + (keys.length ? '?' + keys.join(',') : '') + hash;
       }
-
-      document.addEventListener('DOMContentLoaded', function () {
-        if (forced) {
-          push('probe', 'panel forced by ?shot=boot-failed');
-          setTimeout(paint, 0);
-          return;
+      function samplePoints() {
+        var w = window.innerWidth || 0;
+        var h = window.innerHeight || 0;
+        if (!(w > 0 && h > 0)) return [];
+        return [
+          [w * 0.5, h * 0.1], [w * 0.5, h * 0.3], [w * 0.5, h * 0.5],
+          [w * 0.5, h * 0.7], [w * 0.25, h * 0.4], [w * 0.75, h * 0.4],
+        ];
+      }
+      // Every line is its own try/catch and answers "?" on failure: a
+      // diagnostic that throws is the joke of the file.
+      W.snapshot = function () {
+        var lines = [];
+        function add(label, fn) {
+          var value = '?';
+          try { value = fn(); } catch (e) { value = '?'; }
+          lines.push(label + ': ' + value);
         }
-        setTimeout(function () {
-          if (!bootProducedSomething()) paint();
-        }, DEADLINE_MS);
-      });
+        add('at', function () { return Math.round(window.performance.now()) + 'ms'; });
+        add('document', function () {
+          return document.readyState + ', ' + document.visibilityState + ', '
+            + (window.navigator.onLine ? 'online' : 'offline') + ', '
+            + window.innerWidth + 'x' + window.innerHeight;
+        });
+        add('route', safeRoute);
+        add('on top', function () {
+          var pts = samplePoints();
+          var out = [];
+          for (var i = 0; i < pts.length; i++) {
+            out.push(nameOf(document.elementFromPoint(pts[i][0], pts[i][1])));
+          }
+          return out.join(' ') || 'no viewport';
+        });
+        add('screens shown', function () {
+          var els = document.querySelectorAll('[id$="-screen"], #app-view');
+          var out = [];
+          for (var i = 0; i < els.length; i++) {
+            var el = els[i];
+            if (el.hidden || (el.classList && el.classList.contains('hidden'))) continue;
+            var text = '';
+            try { text = (el.innerText || '').trim(); } catch (e) { text = ''; }
+            out.push(el.id + '(text=' + text.length + ')');
+          }
+          return out.length ? out.join(' ') : 'none';
+        });
+        add('globals', function () {
+          var names = ['App', 'AuthScreens', 'Home', 'Offline', 'NativeChrome', 'UsernodeReact'];
+          var have = [];
+          var miss = [];
+          for (var i = 0; i < names.length; i++) (window[names[i]] ? have : miss).push(names[i]);
+          var mount = window.UsernodeReact && window.UsernodeReact.mount;
+          (mount && mount.ensure ? have : miss).push('UsernodeReact.mount');
+          return 'present ' + (have.join(',') || '-') + '; missing ' + (miss.join(',') || '-');
+        });
+        add('react', function () {
+          var keys = Object.keys(document.body || {});
+          for (var i = 0; i < keys.length; i++) {
+            if (keys[i].indexOf('__reactContainer') === 0) return 'adopted the document';
+          }
+          return 'has NOT adopted the document';
+        });
+        add('boot steps', function () {
+          var s = W.steps || [];
+          if (!s.length) return 'none completed';
+          var out = [];
+          for (var i = 0; i < s.length; i++) out.push(s[i].step + '@' + s[i].at + 'ms');
+          return out.join(' ');
+        });
+        add('errors', function () {
+          var errs = W.errors || [];
+          if (!errs.length) return 'none recorded';
+          var out = [];
+          for (var i = 0; i < errs.length && i < 8; i++) out.push('[' + errs[i].step + '] ' + errs[i].message);
+          return out.join(' | ');
+        });
+        add('session', function () {
+          var A = window.App;
+          if (!A) return 'no App';
+          return (A.user ? 'user held' : 'no user')
+            + (A.user && A.user.hasPlatformAccess === false ? ' (no platform access)' : '')
+            + ', fromSnapshot=' + !!A._sessionFromSnapshot
+            + ', authedBooted=' + !!A._authedBooted
+            + ', authScreen=' + ((window.AuthScreens && window.AuthScreens._current) || 'none');
+        });
+        add('interiors asked for', function () {
+          var m = window.__usernodeMounted && window.__usernodeMounted.mounted;
+          var ks = m ? Object.keys(m) : [];
+          return ks.length ? ks.join(',') : 'none';
+        });
+        add('visibility published', function () {
+          var v = window.__usernodeVisibility && window.__usernodeVisibility.visible;
+          var out = [];
+          if (v) for (var k in v) if (v[k]) out.push(k);
+          return out.length ? out.join(',') : 'none';
+        });
+        add('storage', function () {
+          try { void window.localStorage.length; return 'readable'; } catch (e) { return 'throws'; }
+        });
+        add('worker', function () {
+          var sw = window.navigator.serviceWorker;
+          return sw && sw.controller ? 'controlling this page' : 'not controlling this page';
+        });
+        add('html class', function () {
+          return (document.documentElement.className || '').slice(0, 100) || '-';
+        });
+        return lines.join('\n');
+      };
     }());
   </script>
   <script src="/usernode-bridge.js"></script>
