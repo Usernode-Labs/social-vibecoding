@@ -351,9 +351,6 @@
           var sw = window.navigator.serviceWorker;
           return sw && sw.controller ? 'controlling this page' : 'not controlling this page';
         });
-        add('retry mark', function () {
-          return new URLSearchParams(window.location.search).get('un-boot-retry') === '1' ? 'spent' : 'unspent';
-        });
         add('html class', function () {
           return (document.documentElement.className || '').slice(0, 100) || '-';
         });
