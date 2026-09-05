@@ -281,34 +281,40 @@ test('concurrent calls share one lease and a recreated WebView replays its attem
     assert.equal(replacement.NativeChrome.isSessionAdmitted(), true);
   });
 
-test('a terminal native redemption drops only attempt metadata for a later fresh recovery',
-  async () => {
-    let expiredAttemptId = null;
-    const loaded = loadNativeChrome({
-      establishImpl: (payload, count) => {
-        if (count === 1) {
-          expiredAttemptId = payload.attemptId;
-          const error = new Error('The native session ticket has expired.');
-          error.usernodeCode = 'native_session_ticket_expired';
-          return Promise.reject(error);
-        }
-        return establishResult(payload, '41');
-      },
+for (const code of ['native_session_ticket_expired', 'native_session_wallet_required']) {
+  test(`a ${code} failure drops only attempt metadata for a later fresh recovery`,
+    async () => {
+      let expiredAttemptId = null;
+      const loaded = loadNativeChrome({
+        establishImpl: (payload, count) => {
+          if (count === 1) {
+            expiredAttemptId = payload.attemptId;
+            const error = new Error('The native session attempt cannot be replayed.');
+            error.usernodeCode = code;
+            return Promise.reject(error);
+          }
+          return establishResult(payload, '41');
+        },
+      });
+      loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+      loaded.sandbox.App.user = { id: 41 };
+
+      assert.equal(await loaded.NativeChrome.establishCurrentSession(), null);
+      assert.equal(loaded.calls.fetch.length, 1,
+        'the terminal failure does not create an internal retry loop');
+      assert.equal(loaded.calls.establish.length, 1);
+      assert.equal(loaded.sandbox.App.user.id, 41,
+        'the authenticated web session remains usable');
+      assert.equal(loaded.calls.logout, 0);
+      assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+      assert.equal(loaded.storage.has(
+        loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
+
+      const recovered = await loaded.NativeChrome.recoverSessionAdmission();
+      assert.equal(recovered.identity.participantId, '41');
+      assert.notEqual(loaded.calls.establish[1].attemptId, expiredAttemptId);
     });
-    loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
-    loaded.sandbox.App.user = { id: 41 };
-
-    assert.equal(await loaded.NativeChrome.establishCurrentSession(), null);
-    assert.equal(loaded.calls.fetch.length, 1,
-      'the terminal failure does not create an internal retry loop');
-    assert.equal(loaded.calls.establish.length, 1);
-    assert.equal(loaded.storage.has(
-      loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
-
-    const recovered = await loaded.NativeChrome.recoverSessionAdmission();
-    assert.equal(recovered.identity.participantId, '41');
-    assert.notEqual(loaded.calls.establish[1].attemptId, expiredAttemptId);
-  });
+}
 
 test('pool exhaustion offers legacy recovery and preserves the exact attempt for replay',
   async () => {
