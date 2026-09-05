@@ -1809,11 +1809,18 @@ saying so is better than a queue that silently disappears.
 
 ## User language preference
 
-The platform owns a single per-user language/locale setting
-(Settings → Language on the platform shell). Apps that localize their
-UI should treat it as the **default** instead of building their own
-detection from `navigator.language` (which reflects the device, not
-the user's Usernode-level choice). It reaches apps two ways:
+The platform owns a single per-user language/locale setting. Apps that
+localize their UI should treat it as the **default** instead of building
+their own detection from `navigator.language` (which reflects the device,
+not the user's Usernode-level choice). It reaches apps two ways:
+
+**Expect `null` for nearly every user (SV #1556).** The setting is still
+stored and still delivered on both paths below, but the platform shell is
+English-only, so its Settings picker is hidden pending platform i18n and is
+offered only to the few users who had already chosen a language. So make
+device-language fallback the PRIMARY path and the platform tag an override
+when present. Do not build a feature that only works once the user sets a
+platform locale, and do not tell users to go and set one.
 
 - **JWT claim (server-side).** The iframe token carries a `locale`
   claim alongside `id` / `username` / `usernode_pubkey`, so after

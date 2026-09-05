@@ -601,6 +601,18 @@
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-submit:not(:disabled)"
     },
     {
+      "name": "The feedback description is marked required before you type anything (#1603)",
+      "path": "/?shot=feedback",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-text-label #feedback-text-required",
+      "expectText": "Description"
+    },
+    {
+      "name": "An empty submit says what is missing instead of doing nothing (#1603)",
+      "path": "/?shot=feedback-required",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-text-error:not(.hidden)",
+      "expectText": "Please add a description"
+    },
+    {
       "name": "Challenges: a counted challenge draws its meter inside the pill (#911, #980)",
       "path": "/?demo=1",
       "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card .home-challenge-pill .home-panel-bar-track[role=progressbar] .home-panel-bar-fill"
@@ -2125,6 +2137,16 @@
       "expectText": "AI & agents"
     },
     {
+      "name": "Settings ships Advanced collapsed (#1554)",
+      "path": "/#settings",
+      "expectSelector": "#settings-nav-desktop h2:has([data-settings-group-toggle=\"Advanced\"][aria-expanded=\"false\"]) + #settings-nav-group-advanced.hidden"
+    },
+    {
+      "name": "A deep link into Advanced opens the group it lives in (#1554)",
+      "path": "/?demo=cli-empty#settings/cli",
+      "expectSelector": "#settings-nav-desktop #settings-nav-group-advanced:not(.hidden) [data-settings-nav=\"cli\"][aria-selected=\"true\"]"
+    },
+    {
       "name": "The Anthropic API key section renders at its deep link",
       "path": "/#settings/api-key",
       "expectSelector": "#settings-section-content [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
@@ -2254,9 +2276,9 @@
       "expectSelector": "[data-settings-section=\"cli\"]:not(.hidden) #cli-setup-guide ol"
     },
     {
-      "name": "Settings deep-links the Language section",
+      "name": "A Language deep link falls back to the default section (#1556)",
       "path": "/#settings/language",
-      "expectSelector": "[data-settings-section=\"language\"]:not(.hidden) #settings-locale"
+      "expectSelector": "#settings-section-content [data-settings-section=\"theme\"]:not(.hidden)"
     },
     {
       "name": "Settings shows Admin preview to a real admin",

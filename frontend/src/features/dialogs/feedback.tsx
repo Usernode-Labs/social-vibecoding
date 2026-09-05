@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { CameraIcon, PhotoIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -112,21 +113,55 @@ export function FeedbackDialog() {
             (the controller debounces POST /api/feedback/title as you type).
             Left blank at submit, the server names the issue as before.
         */}
-        <Input
-          id="feedback-title"
-          type="text"
-          maxLength={200}
-          placeholder="Title, generated as you type; edit as you like"
-          className="mb-2"
-        />
-        <Textarea
-          id="feedback-text"
-          rows={4}
-          maxLength={2000}
-          placeholder="Describe the issue or suggestion..."
-          className="resize-none"
-        >
-        </Textarea>
+        <div className="mb-2">
+          <Label id="feedback-title-label" htmlFor="feedback-title" className="mb-1">
+            Title
+            <span className="font-normal text-zinc-500 dark:text-zinc-500">
+              {' optional'}
+            </span>
+          </Label>
+          <Input
+            id="feedback-title"
+            type="text"
+            maxLength={200}
+            placeholder="Title, generated as you type; edit as you like"
+          />
+        </div>
+        {/*
+            #1603: the description was always mandatory — the controller's
+            submit returned early on an empty one and said nothing, so the
+            button looked dead. The requirement is on screen now (this label
+            and its asterisk) and the refusal is too (#feedback-text-error,
+            filled and revealed by ./feedback-controller on an empty submit).
+
+            `aria-required`, not the HTML `required` attribute: these fields
+            are not inside a <form>, so `required` buys no native behaviour
+            here while switching :invalid on for a field nobody has touched.
+
+            The error node renders EMPTY and hidden, exactly like
+            #feedback-status above it — the controller owns its text, and an
+            initial render that already carried the message would both lie on
+            open and mismatch on hydration.
+        */}
+        <div>
+          <Label id="feedback-text-label" htmlFor="feedback-text" className="mb-1">
+            Description
+            <span id="feedback-text-required" aria-hidden="true" className="text-red-700 dark:text-red-400">
+              *
+            </span>
+          </Label>
+          <Textarea
+            id="feedback-text"
+            rows={4}
+            maxLength={2000}
+            aria-required="true"
+            placeholder="Describe the issue or suggestion..."
+            className="resize-none"
+          >
+          </Textarea>
+          <p id="feedback-text-error" role="alert" className="hidden mt-1 text-xs text-red-700 dark:text-red-400">
+          </p>
+        </div>
         {/*
             #683/#824: desktop drag-to-select, native mobile capture, and a
             Photos fallback all converge on one preview/upload row.
