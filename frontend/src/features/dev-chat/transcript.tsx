@@ -443,9 +443,18 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   const more = useDetails(r.more ? r.more.details : { persistId: '', defaultOpen: false });
   const reasoning = useDetails(r.reasoning ? r.reasoning.details : { persistId: '', defaultOpen: false });
   const who = r.who === 'user' ? 'You' : r.who === 'cc' ? 'Claude Code' : 'AI';
+  // "You" is READ, not shown. Side and surface already say whose turn it is —
+  // the row is right-aligned and it is the only one drawn as a card — so the
+  // word was labelling a thing that labels itself, at the top of every second
+  // row. It stays in the accessible tree because alignment is not available
+  // to a screen reader, which is the one audience it was actually telling.
+  //
+  // The agent's rows keep theirs visible: "AI" sits in a meta line that also
+  // carries the model and what the reply cost, so it is the first word of a
+  // sentence rather than a label on its own.
   const whoClass = r.who === 'user'
-    ? 'text-violet-700 dark:text-violet-400'
-    : r.who === 'cc' ? 'text-emerald-700 dark:text-emerald-400' : 'text-emerald-700 dark:text-emerald-400';
+    ? 'sr-only'
+    : 'text-emerald-700 dark:text-emerald-400';
   return (
     <div className={`dc-msg ${r.who === 'user' ? 'dc-msg-user' : 'dc-msg-assistant'}`}>
       <div className="dc-msg-header">

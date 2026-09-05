@@ -35,12 +35,11 @@
      circle needs so its halo reads against it. */
   --accent-wash: #d6e9ff;
   --accent-wash-ink: #0062cc;
-  /* Text ON the accent — the outgoing message bubble is the only place the
-     shell puts type on a saturated fill, and it must not follow the page. */
+  /* Text ON the accent, wherever the shell puts type on a saturated fill.
+     It must not follow the page. The outgoing chat bubble used to be the
+     headline case and no longer is a fill at all; .messages-state button
+     still is. */
   --accent-ink: #ffffff;
-  /* The agent bubble's surface — see the .dark counterpart. */
-  --bubble-bg: #ffffff;
-
 
   /* ── Safe-area tokens ────────────────────────────────────
      THE single source of truth for the shell's own safe-area
@@ -870,10 +869,6 @@ html.un-kb .platform-safe-sheet {
   --accent-wash: #00264d;
   --accent-wash-ink: #85bcff;
   --accent-ink: #0b0b0c;
-  /* One step UP from the page here, not white: the page is near-black, so a
-     bubble has to be lighter than it or it stops being a bubble. */
-  --bubble-bg: #1c1c1e;
-
   /* Dark counterparts of the semantic state tokens. Every --state-*
      declared on :root has one here — tests/dev-color-tokens.test.js
      asserts the two lists match, so a token added above without a dark
@@ -3035,28 +3030,48 @@ body:has(#platform-header.hidden) #app-frame-host {
 
 .dc-msg { padding: 8px 12px; max-width: 92%; }
 
-/* The agent chat is the language's BUBBLE transcript (the deck's "Your new
-   idea" screen): your turns are a solid accent fill, the agent's are a neutral
-   surface, and both are uniformly rounded. They were two faint washes before
-   — an accent tint and an emerald one — which read as two highlight states
-   rather than as two speakers, and which the reskin turned into two blues.
+/* ONE bubble, not two.
+   Your turn is a card; the agent's is plain text on the ground. Both were
+   filled surfaces before — yours a solid --accent, the agent's --bubble-bg —
+   which made a two-party conversation two competing blocks of colour, and
+   put the transcript's loudest element on the half of it a reader already
+   wrote and does not need to re-read.
 
-   The tail notch (`… 4px 12px`) goes with them: the deck's bubbles are
-   uniformly rounded and rely on side and colour to say who is speaking. */
+   THE ACCENT FILL IS THE PART TO EXPLAIN, because it took real work to keep
+   legible and all of it is now retired. White on the accent is 3.93:1 at the
+   eyedropped #0a7cff, which is why --accent was darkened to #0a6ee0 in the
+   first place; the fill then needed --accent-ink for the body, a separate
+   inversion for the header, an opacity rule for the stamp that had to be
+   re-scoped off the role label after it took that label to 2.7:1, and two
+   more rules for links and for the header slots that declared colour inline.
+   Seven rules and three contrast incidents, to say "this one is yours" —
+   which side, shape and surface already say. (--accent-ink itself stays: it
+   is the token for near-black-on-light-accent and .messages-state button is
+   still a real fill.)
+
+   The agent's row loses its surface entirely. --bubble-bg existed only
+   because --bg-primary IS the page ground in dark, so a bubble drawn on it
+   vanished; with the session sheet as the ground and the agent's turn drawn
+   as plain text, there is nothing left to keep distinct, and the token has
+   no other reader. Plain text is also the honest shape: the agent's turn is
+   the body of the screen, not an aside in it.
+
+   The tail notch (`… 4px 12px`) is still gone: uniformly rounded, relying on
+   side and surface to say who is speaking. */
 .dc-msg-user {
   margin-left: auto;
-  background: var(--accent);
-  color: var(--accent-ink);
+  /* The platform's card-on-page pairing, the same one the composer and the
+     run card take. On the sheet (--bg-primary) this reads as a raised card
+     in both themes, which is the one thing the fill was doing that was
+     worth keeping. */
+  background: var(--bg-secondary);
   border-radius: 1.25rem;
   margin-bottom: 4px;
 }
 
 .dc-msg-assistant {
   margin-right: auto;
-  /* A bubble has to be a distinct surface or it disappears into the
-     transcript — which is what --bg-primary did here in DARK mode, where it
-     IS the page ground. --bubble-bg states the surface per theme. */
-  background: var(--bubble-bg);
+  background: transparent;
   border-radius: 1.25rem;
   margin-bottom: 4px;
 }
@@ -3077,55 +3092,18 @@ body:has(#platform-header.hidden) #app-frame-host {
   word-break: break-word;
 }
 
-/* ── Ink on the outgoing bubble ────────────────────────────
-   Everything inside .dc-msg-user sits on the accent fill, so it takes the
-   fill's ink rather than the page's. Without this the role label and the
-   message id keep --text-muted and the body keeps --text-secondary — all
-   three tuned for a near-white page, and close to illegible on blue. Scoped
-   to the user bubble only: the agent's is still a neutral surface. */
-.dc-msg-user .dc-msg-content,
-.dc-msg-user .dc-msg-content strong,
-.dc-msg-user .dc-msg-header {
-  color: var(--accent-ink);
-}
-/* Everything in the header takes the fill's ink. */
-.dc-msg-user .dc-msg-header > * {
-  color: var(--accent-ink);
-}
-/* The id and timestamp stay quieter than the words, but by OPACITY — a second
-   colour token would need its own light and dark values for a surface that
-   deliberately does not follow the theme.
-
-   Scoped to the STAMP. It used to be `.dc-msg-header > *`, which also dimmed
-   the "You" role label beside it to 0.72 — white at 0.72 on #0a7cff is 2.7:1,
-   so the one word naming who is speaking was the least readable thing in the
-   bubble. The label is a label; only the stamp is an aside. */
-.dc-msg-user .dc-msg-meta,
-.dc-msg-user .dc-msg-model {
-  opacity: 0.72;
-}
-
-/* The two header slots that declared their colour INLINE until now — the
-   "#12 1787450684510" id/time stamp and the model name. An inline style beats
-   every class rule in the cascade, so the inversion above could not reach
-   them: on the accent fill the stamp stayed --text-muted at 50% opacity, about
-   1.5:1 against #0a7cff and unreadable. As classes they take the inversion
-   like everything else in the bubble, and the `> *` rule above (two classes,
-   so it outranks these) supplies the white and the 0.72 there. */
+/* The stamp and the model name, on both rows. They used to be declared
+   INLINE, which beat every class rule and is why the accent fill's inversion
+   could not reach them; they are classes now and there is no inversion left
+   to reach. --text-muted at 9px is what makes the stamp an aside — the 0.72
+   opacity the fill needed is gone with the fill, and with it the incident
+   where it dimmed the role label to 2.7:1. */
 .dc-msg-meta {
   color: var(--text-muted);
   font-size: 9px;
-  /* No opacity dimming on the neutral bubble. --text-muted is already the
-     quiet token, and halving it took the stamp to 2:1 against the bubble —
-     9px is what makes this an aside, not a second helping of transparency. */
 }
 .dc-msg-model {
   color: var(--text-muted);
-}
-.dc-msg-user .dc-msg-content a,
-.dc-msg-user .dc-msg-content a:hover {
-  color: var(--accent-ink);
-  text-decoration: underline;
 }
 
 .dc-msg-content p, .dc-p { margin-top: 0.5em; }
