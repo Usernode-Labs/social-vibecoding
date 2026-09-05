@@ -1,29 +1,26 @@
-// The boot has a floor: it cannot end in a blank screen, cannot loop, and
-// cannot fail silently.
+// The boot has a floor: it cannot end in a blank screen, and it cannot fail
+// silently.
 //
-// Three independent guarantees, and each one failed in production before it
-// existed:
+// Two guarantees, and each one failed in production before it existed:
 //
 //   1. NOTHING ABOVE hydrateRoot IS FATAL. A throw in main.tsx aborted the
 //      entry module before hydration, so React never adopted the document and
 //      every island stayed the empty markup the prerender shipped. That is
 //      how the iOS blank screen worked (#1670): one TypeError inside a
 //      precache nicety took the whole application down.
-//   2. THE AUTOMATIC RELOAD HAS A CEILING. _reconcileSession's reloads were
-//      safe only because they first cleared the session snapshot, and every
-//      one of those clears is a localStorage call in a try/catch. Where
-//      storage silently fails -- a WebView with a non-persistent store -- the
-//      snapshot survived and the document reloaded forever.
-//   3. A DEAD BOOT LEAVES A RECORD. Diagnosing (1) took four rounds of
+//   2. A DEAD BOOT LEAVES A RECORD. Diagnosing (1) took four rounds of
 //      inference because the failure was unobservable on the device that had
 //      it. The head records every error from the first script on, and
 //      `window.__unBoot.snapshot()` describes the document for a console.
 //      It PAINTS NOTHING: the panel an earlier version put over a page it
 //      took for blank accused pages that were fine, and is gone.
 //
-// Layer 2 lives in a classic script that cannot be required in Node (app.js
-// touches the DOM at module scope), so it is pinned against the shipped
-// source. Layer 1 is driven for real; so is layer 3, through
+// (A third layer, a one-shot budget on _reconcileSession's automatic reloads,
+// shipped between these two and was reverted: it guarded a loop that needs
+// storage to accept a write and then refuse a delete, left a query parameter
+// on the address bar, and got in the way of finishLogin's return_to check.)
+//
+// Both layers are driven for real; layer 2 through
 // tests/lib/boot-record-harness.js.
 //
 // Run with: node --test tests/boot-floor.test.js
@@ -38,7 +35,6 @@ const { loadTsx } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
-const APP_JS = read('public/js/app.js');
 const MAIN = read('frontend/src/main.tsx');
 const HEAD = read('frontend/src/head.html');
 
@@ -114,51 +110,7 @@ test('boot-guard records rather than console.error-ing', () => {
   assert.match(guard, /console\.warn\s*\(/, 'warn still says it happened');
 });
 
-// ── 2. The automatic reload has a ceiling ──────────────────────────────
-
-test('the boot reconcile has no unbounded reload left in it', () => {
-  const at = APP_JS.indexOf('  async _reconcileSession(');
-  assert.ok(at > 0, '_reconcileSession is still where the boot reconciles');
-  const fn = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
-  assert.doesNotMatch(fn, /location\.reload\(\)/,
-    'every automatic reload goes through the budget');
-  const guarded = fn.match(/App\._bootReload\(/g) || [];
-  assert.equal(guarded.length, 3, 'all three branches are budgeted');
-  // Each one degrades in place rather than simply giving up.
-  assert.match(fn, /if \(!App\._bootReload\('session ended'\)\) await App\.enterAnonymous\(\)/);
-  assert.match(fn, /if \(!App\._bootReload\('different account'\)\) await App\.enterAnonymous\(\)/);
-  assert.match(fn, /if \(!App\._bootReload\('platform access changed'\)\) await App\.enterAuthed\(user\)/);
-});
-
-test('the reload budget lives in the URL, not in storage', () => {
-  // sessionStorage is the obvious place and the wrong one: if localStorage is
-  // unavailable — the condition that makes the loop unbounded in the first
-  // place — sessionStorage is unavailable too, so the counter would fail in
-  // exactly the case it exists for.
-  const at = APP_JS.indexOf('  _bootReload(reason) {');
-  assert.ok(at > 0);
-  const fn = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
-  assert.doesNotMatch(fn, /sessionStorage|localStorage/);
-  assert.match(APP_JS, /BOOT_RETRY_PARAM: 'un-boot-retry'/);
-  assert.match(fn, /searchParams\.set\(App\.BOOT_RETRY_PARAM, '1'\)/);
-  assert.match(fn, /location\.replace\(/, 'a retry is not a place to go back to');
-
-  // Fails CLOSED: no marker writable means no reload, because an unmarkable
-  // reload is precisely the unbounded one.
-  const spent = APP_JS.slice(APP_JS.indexOf('  _bootRetrySpent() {'));
-  assert.match(spent.slice(0, spent.indexOf('\n  },')), /catch[\s\S]*return true;/,
-    'an unreadable URL counts the budget as spent');
-});
-
-test('a settled boot takes the marker back off the address bar', () => {
-  assert.match(APP_JS, /App\._clearBootRetryMark\(\);/, 'called once the session verifies');
-  const at = APP_JS.indexOf('  _clearBootRetryMark() {');
-  const fn = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
-  assert.match(fn, /searchParams\.delete\(App\.BOOT_RETRY_PARAM\)/);
-  assert.match(fn, /history\.replaceState/, 'without adding a history entry');
-});
-
-// ── 3. A dead boot reports itself ──────────────────────────────────────
+// ── 2. A dead boot leaves a record ──────────────────────────────────────
 
 test('the boot record is inline, classic, and captures from the start', () => {
   // It reports on the bundle, the framework and the stylesheet, so it cannot
@@ -199,7 +151,7 @@ test('the boot record PAINTS NOTHING, by construction', () => {
   assert.doesNotMatch(block, /console\.error/);
 });
 
-// ── 3b. The record, driven for real ────────────────────────────────────
+// ── 2b. The record, driven for real ────────────────────────────────────
 //
 // The script is evaluated against a fake document and a hand-advanced clock
 // (tests/lib/boot-record-harness.js) and judged on what it DOES.
@@ -227,7 +179,7 @@ test('bootStep records completion as well as failure, in the same record', () =>
 });
 
 test('nothing is painted and nothing is scheduled, on any route, however blank', () => {
-  for (const search of ['', '?shot=boot-failed', '?shot=home', '?un-boot-retry=1']) {
+  for (const search of ['', '?shot=boot-failed', '?shot=home']) {
     const h = bootRecord({ topAt: null, location: { search } });
     assert.equal(h.clock.pending(), 0, `nothing armed on "${search}"`);
     h.clock.advance(120_000);
@@ -301,7 +253,6 @@ test('snapshot() describes the document, and never its secrets', () => {
   assert.match(state, /^visibility published: home-screen$/m);
   assert.match(state, /^storage: throws$/m, 'no localStorage on this window, and it says so');
   assert.match(state, /^worker: not controlling this page$/m);
-  assert.match(state, /^retry mark: unspent$/m);
   // Reading the state paints nothing either.
   assert.equal(h.painted(), 0);
 });
