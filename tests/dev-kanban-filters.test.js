@@ -307,7 +307,7 @@ test('the bar renders search, the Filters chip, and dismissable active chips', (
       count: 2,
       chips: [
         { key: 'priority', label: 'High priority' },
-        { key: 'needsVote', label: 'Needs my vote' },
+        { key: 'needsVote', label: 'Waiting on you' },
       ],
     },
   );
@@ -786,7 +786,7 @@ test('a repaint republishes the whole strip: count and chips track the filters',
       { key: 'q', label: 'Search: ripple' },
       { key: 'priority', label: 'High priority' },
       { key: 'assignee', label: 'Unassigned' },
-      { key: 'needsVote', label: 'Needs my vote' },
+      { key: 'needsVote', label: 'Waiting on you' },
     ],
   );
 });

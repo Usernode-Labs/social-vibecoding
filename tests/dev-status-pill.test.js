@@ -213,7 +213,7 @@ test('tier 3 — contested turns the timed path off and says so', () => {
     check_state: 'passing', contested: true, yes_count: 4, no_count: 3, votes_required: 6,
   }));
   assert.equal(s.tier, 3);
-  assert.equal(s.label, 'Contested · 4/6');
+  assert.equal(s.label, 'Needs a conversation · 4/6');
   assert.equal(s.tone, 'attention');
   assert.ok(s.fill);
 });
@@ -224,7 +224,7 @@ test('tier 4 — merge countdown, with the tally riding along below threshold', 
     check_state: 'passing', yes_count: 3, votes_required: 3, merge_window_ends_at: hoursAhead(48),
   }));
   assert.equal(reached.tier, 4);
-  assert.match(reached.label, /^Merging in /);
+  assert.match(reached.label, /^Goes live in /);
   assert.equal(reached.suffix, '', 'at threshold the tally is redundant');
   assert.equal(reached.tone, 'ok');
 
@@ -234,7 +234,7 @@ test('tier 4 — merge countdown, with the tally riding along below threshold', 
     merge_window_ends_at: hoursAhead(60),
   }));
   assert.equal(lazy.tier, 4);
-  assert.match(lazy.label, /Merging in .* · 1\/2$/);
+  assert.match(lazy.label, /Goes live in .* · 1\/2$/);
 });
 
 test('tier 4 — a rejection countdown reads BLOCKED', () => {
@@ -244,7 +244,7 @@ test('tier 4 — a rejection countdown reads BLOCKED', () => {
     rejection_armed: true, reject_window_ends_at: hoursAhead(6),
   }));
   assert.equal(s.tier, 4);
-  assert.match(s.label, /^Rejecting in /);
+  assert.match(s.label, /^Set aside in /);
   assert.equal(s.tone, 'blocked');
   assert.ok(s.reject);
 });
@@ -258,7 +258,7 @@ test('an admins-changing proposal NEVER promises a merge countdown', () => {
     yes_count: 3, votes_required: 3, merge_window_ends_at: hoursAhead(4), my_vote: 'yes',
   }));
   assert.notEqual(s.tier, 4);
-  assert.doesNotMatch(s.label, /Merging in/);
+  assert.doesNotMatch(s.label, /Goes live in/);
   assert.ok(s.lock, 'the lock modifier explains why');
 });
 

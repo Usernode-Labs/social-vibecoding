@@ -14146,7 +14146,7 @@ ${buildGuidance.testingGuidance}`;
               appSlug: session.app_slug,
               merged: false,
             });
-            const resetMsg = `Votes reset on PR #${session.pr_number || session.id}: new commit ${commitHash.substring(0, 8)} pushed.`;
+            const resetMsg = `An update was pushed to PR #${session.pr_number || session.id} (commit ${commitHash.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
             await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
             // Dual-post into the proposal's thread (lifecycle in context).
             await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
