@@ -11,6 +11,7 @@ const OPENCODE_REVIEWED_TOOL_SUFFIXES = Object.freeze([
   'proposal_push_commit',
   'proposal_submit_build',
   'proposal_status',
+  'proposal_recheck',
   'proposal_promote',
 ]);
 
