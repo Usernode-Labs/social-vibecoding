@@ -301,13 +301,14 @@ function testTimeoutMs(env) {
 function testsDeadlineMs(env) {
   // 420000 → 470000 (#1417), moved with MAX_DECLARED_TESTS 430 → 480 and the
   // platform-side TESTS_DEADLINE_MS; then 470000 → 520000 with the 480 → 530
-  // ceiling bump. The two defaults are asserted equal by
+  // ceiling bump, and 520000 → 570000 with 530 → 580. The two defaults are
+  // asserted equal by
   // tests/checks-budget.test.js precisely so a container running without the
   // env var cannot silently apply a shorter budget than the platform planned
   // — which would cut a full manifest's tail while the platform reported the
   // suite as merely unfinished.
   const raw = parseInt((env || {}).TESTS_DEADLINE_MS, 10);
-  return (Number.isFinite(raw) && raw > 0) ? raw : 520000;
+  return (Number.isFinite(raw) && raw > 0) ? raw : 570000;
 }
 
 // Whether this run also produces the before/after media artifacts. The
@@ -1412,7 +1413,7 @@ async function runTests(browser, tests, opts) {
   const o = opts || {};
   const concurrency = Math.max(1, Number(o.concurrency) || 8);
   const perTestMs = Number(o.testTimeoutMs) > 0 ? Number(o.testTimeoutMs) : 25000;
-  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 520000;
+  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 570000;
   const now = typeof o.now === 'function' ? o.now : () => Date.now();
 
   if (!list.length) {

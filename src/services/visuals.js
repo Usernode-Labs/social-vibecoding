@@ -112,7 +112,10 @@ const CONTENT_TYPES = {
 // 600s → 640s with the 480 → 530 ceiling bump: the suite deadline below
 // crossed 480s, and this one has to stay 120s above it (pinned by
 // tests/checks-budget.test.js and tests/capture-pool.test.js).
-const RUN_TIMEOUT_MS = 640 * 1000;
+//
+// 640s → 690s with 530 → 580: the deadline moved to 570s, and 120s above it
+// is exactly 690s.
+const RUN_TIMEOUT_MS = 690 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 
 // The capture container drives up to TEST_CONCURRENCY headless pages at
@@ -139,7 +142,11 @@ const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
 // 470s → 520s with MAX_DECLARED_TESTS 480 → 530: ~258s of ideal work for a
 // full suite, so 520s keeps the 2x margin with ~3s to spare. This crossed the
 // 480s line the note above warned about, so RUN_TIMEOUT_MS moved with it.
-const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '520000';
+//
+// 520s → 570s with MAX_DECLARED_TESTS 530 → 580: ~283s of ideal work for a
+// full suite, so 570s keeps the 2x margin with ~4s to spare. RUN_TIMEOUT_MS
+// moved with it again.
+const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '570000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.

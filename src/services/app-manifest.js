@@ -110,7 +110,14 @@ const MANIFEST_FILENAME = 'dapp.json';
 // goes 470s → 520s to keep the 2x margin (clears it by ~3s), and because the
 // deadline has passed 480s this time RUN_TIMEOUT_MS moves too, 600s → 640s,
 // to stay the required 120s above it.
-const MAX_DECLARED_TESTS = 530;
+//
+// Raised 530 → 580 when the manifest reached 512 and crossed the 20-slot
+// floor a third time (18 left), red on main again and so on every proposal
+// after it — this one included, which declares two. Same coupled move:
+// 580 checks at ~3.9s over a pool of 8 is ~283s of ideal work, so
+// TESTS_DEADLINE_MS goes 520s → 570s to keep the 2x margin (clears it by
+// ~4s), and RUN_TIMEOUT_MS 640s → 690s to stay the required 120s above it.
+const MAX_DECLARED_TESTS = 580;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
