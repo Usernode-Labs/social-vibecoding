@@ -150,6 +150,28 @@ async function confirmSignupByMoreToken(pool, token) {
 const CODE_TTL_MINUTES = 15;
 const MAX_CODE_ATTEMPTS = 5;
 
+// The signup row for an address, or null. The by-token lookup above is a
+// capability check; this is the plain one, and it exists for the resend
+// endpoint, which has to know three things before it decides what to mail:
+// whether the address is on the list at all, whether it is already
+// confirmed, and which more_token to carry.
+//
+// It returns a row rather than a boolean, and that is exactly why it must
+// never reach a response body: the CALLER answers every branch with the
+// same words. Nothing here is non-enumerating on its own.
+async function getSignupByEmail(pool, email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return null;
+  const { rows } = await pool.query(
+    `SELECT id, email, confirmed_at, more_token
+       FROM waitlist_signups
+      WHERE email = $1
+      LIMIT 1`,
+    [normalized]
+  );
+  return rows[0] || null;
+}
+
 // Mint a six-digit verification code for an email on the waitlist.
 // Returns the PLAINTEXT code for the caller to mail; only its bcrypt hash
 // is stored. Any unconsumed code for the address is deleted first, so
@@ -342,6 +364,7 @@ module.exports = {
   normalizeEmail,
   joinWaitlist,
   getSignupByMoreToken,
+  getSignupByEmail,
   confirmSignupByMoreToken,
   issueVerificationCode,
   confirmSignupByCode,

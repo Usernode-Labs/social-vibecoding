@@ -391,6 +391,27 @@ async function sendWaitlistJoinMail(config, email, { moreToken = null, code = nu
   });
 }
 
+// A confirmation code the recipient asked for again: the resend endpoint,
+// and the re-join branch of the join endpoint. Its own kind, so the join
+// mail's one-per-day rule cannot swallow it and so the words are the ones
+// somebody chasing a code needs rather than a second welcome.
+//
+// `code: null` is the already-confirmed shape. The caller passes it when
+// the address has a confirmed_at, and the template answers "nothing left
+// to do" with a link to where they stand. The mail is the ONLY channel
+// that discloses that: the HTTP response is identical either way.
+async function sendWaitlistCodeMail(config, email, { code = null, moreToken = null } = {}) {
+  await send(config, {
+    kind: 'waitlist_code',
+    to: email,
+    code,
+    confirmUrl: code && moreToken
+      ? `${PRODUCTION_ORIGIN}/api/public/waitlist/confirm/${moreToken}`
+      : null,
+    statusUrl: !code && moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null,
+  });
+}
+
 // The plaintext reset token exists only here (in the link) and in the
 // requester's response path — the DB holds its sha256. The caller mints and
 // hashes; this just carries it.
@@ -419,6 +440,7 @@ module.exports = {
   sendOtpMail,
   sendPasswordResetMail,
   sendWaitlistJoinMail,
+  sendWaitlistCodeMail,
   sendWaitlistReleaseMail,
   pruneDeliveries,
   buildMessage,
