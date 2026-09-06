@@ -1213,6 +1213,18 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Waitlist countries are one flat list, so Switzerland is a top-level option (#1527)",
+      "path": "/?shot=anon#waitlist",
+      "expectSelector": "#waitlist-country > option[value=\"CH\"]",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist countries start at A, with Aland Islands sorted as an A (#1527)",
+      "path": "/?shot=anon#waitlist",
+      "expectSelector": "#waitlist-country > option:nth-child(3)[value=\"AX\"]",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Landing CTA area is a compact link, not the survey",
       "path": "/?shot=anon#landing",
       "expectSelector": "#landing-waitlist a[href=\"#waitlist\"]",
