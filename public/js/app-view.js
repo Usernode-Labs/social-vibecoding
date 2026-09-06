@@ -186,9 +186,6 @@ const AppView = {
   // The Dev mode is one card list plus full-screen sub-views (general
   // chat, topics, sessions, settings). _devTopic (declared with the
   // topic sub-view below) tracks the open topic for hash deep links.
-  // How many feed items are visible (the rest sit behind "Show more").
-  _feedShown: 20,
-
   // ── Dev view mode (list ↔ kanban) ─────────────────────────────────
   // A personal display preference, persisted to localStorage and shared
   // across every app's Dev view (same pattern as DevConsole's MODE_KEY
@@ -198,7 +195,7 @@ const AppView = {
   // from 1024px (lg) because the board is worth having on a narrow
   // window even though the four columns only fit at their readable
   // width by scrolling sideways there (see the 640-1023px block in
-  // app.css) — and 'feed' (the historical default) below it.
+  // app.css) — and the Workshop (the default) below it.
   // Read/written only through the two helpers below so the
   // localStorage access stays guarded in one place.
   VIEW_MODE_KEY: 'devViewMode',
@@ -206,24 +203,27 @@ const AppView = {
   // that resolves a mode — the ?view= override, the stored preference, the
   // setter and the tab strip's click handler — validates against THIS array
   // instead of repeating an inline chain, so changing the set is one edit
-  // rather than four. 'feed' is the terminal fallback for anything not here.
+  // rather than four. 'workshop' is the terminal fallback for anything not here.
   //
   // THE UI OVERHAUL cut this from four modes to two. 'list' became 'feed'
   // (the same surface, re-sorted into one recency-ordered activity stream
   // that folds the Completed block in rather than parking it below), and
   // 'pm' and 'report' were retired outright — a display preference toggle
   // was carrying four genuinely different products, three of which almost
-  // nobody switched to. What is left is the two answers people actually
-  // want from a board: what just happened, and what is in flight.
-  VIEW_MODES: ['feed', 'kanban'],
+  // nobody switched to. What was left was two answers — what just happened
+  // (the Activity feed) and what is in flight (the Board) — and the Workshop
+  // then replaced the feed: the same cards grouped by what they are ABOUT,
+  // with "what just happened" and "what needs your vote" as strips above the
+  // themes. It is the lander; the Board is the detailed read-it-all view.
+  VIEW_MODES: ['workshop', 'kanban'],
   _isViewMode(v) { return AppView.VIEW_MODES.indexOf(v) !== -1; },
   // Stored preferences from before the cut. A viewer who last left the board
   // in PM or Reporting has a localStorage value naming a mode that no longer
   // exists; without this they would silently land on the width default
   // instead of the nearest surviving surface, which reads as "my setting was
-  // forgotten". 'list' is exactly 'feed'; the two retired overviews were
-  // board-shaped, so they resolve to the board.
-  RETIRED_VIEW_MODES: { list: 'feed', pm: 'kanban', report: 'kanban' },
+  // forgotten". 'list' and 'feed' are what the Workshop replaced; the two
+  // retired overviews were board-shaped, so they resolve to the board.
+  RETIRED_VIEW_MODES: { list: 'workshop', feed: 'workshop', pm: 'kanban', report: 'kanban' },
   _migrateViewMode(v) {
     if (AppView._isViewMode(v)) return v;
     return AppView.RETIRED_VIEW_MODES[v] || null;
@@ -233,32 +233,21 @@ const AppView = {
   // app.css (`max-width: 639px` for the tab strip, `min-width: 640px`
   // for the multi-column band) and with `sm:hidden` on #dev-kanban-tabs.
   KANBAN_MULTICOL_MEDIA: '(min-width: 640px)',
-  // Width-based default, resolved lazily ONCE per page load and never
-  // written to localStorage — so an undecided user keeps getting the
-  // responsive default on future visits, and the mode can't flip
-  // mid-flight between the paired _getViewMode() reads inside async
-  // flows like loadMoreMerged if the window is resized across 640px.
+  // The unset default is the Workshop on EVERY width. It used to be the
+  // kanban above 640px and the feed below, which made the lander depend on
+  // the device; the Workshop is the lander because it answers the first
+  // question on any device, and the Board is one tap away on both.
   _viewModeAutoDefault: null,
-  // #814: `?view=list|kanban|pm` — a one-shot URL override that wins over
-  // BOTH the stored preference and the width default, resolved once per
-  // page load (undefined = not parsed yet, null = nothing usable in the
-  // URL). It exists so a fresh browser can be pointed straight at a given
-  // view: the capture container boots with empty localStorage at the
-  // 390x844 phone frame, where the width default below resolves to 'feed',
-  // so without this no mobile screenshot could ever show the board.
-  // Cleared by _setViewMode so an explicit toggle click always wins.
+  // `?view=` on the page URL wins for one paint — a deep link to a layout —
+  // and is retired the moment the viewer chooses (see _setViewMode).
   _viewModeUrlOverride: undefined,
   _readViewModeOverride() {
     if (AppView._viewModeUrlOverride !== undefined) return AppView._viewModeUrlOverride;
-    let v = null;
     try {
-      const raw = new URLSearchParams(window.location.search).get('view');
-      // Migrated, not just validated: `?view=list` is in the wild (capture
-      // routes, bookmarks, the dapp.json checks) and must keep resolving.
-      v = AppView._migrateViewMode(raw);
-    } catch { v = null; }
-    AppView._viewModeUrlOverride = v;
-    return v;
+      const v = new URLSearchParams(location.search).get('view');
+      AppView._viewModeUrlOverride = AppView._migrateViewMode(v) || null;
+    } catch { AppView._viewModeUrlOverride = null; }
+    return AppView._viewModeUrlOverride;
   },
   _getViewMode() {
     try {
@@ -267,17 +256,12 @@ const AppView = {
       const stored = AppView._migrateViewMode(
         window.localStorage.getItem(AppView.VIEW_MODE_KEY));
       if (stored) return stored;
-      if (AppView._viewModeAutoDefault === null) {
-        AppView._viewModeAutoDefault =
-          (typeof window.matchMedia === 'function'
-            && window.matchMedia(AppView.KANBAN_MULTICOL_MEDIA).matches)
-            ? 'kanban' : 'feed';
-      }
+      if (AppView._viewModeAutoDefault === null) AppView._viewModeAutoDefault = 'workshop';
       return AppView._viewModeAutoDefault;
-    } catch { return 'feed'; }
+    } catch { return 'workshop'; }
   },
   _setViewMode(mode) {
-    const next = AppView._migrateViewMode(mode) || 'feed';
+    const next = AppView._migrateViewMode(mode) || 'workshop';
     // An explicit choice retires the URL override (#814) — otherwise
     // ?view= would keep winning over every later toggle click.
     AppView._viewModeUrlOverride = null;
@@ -303,10 +287,12 @@ const AppView = {
   // stored assignee values are trimmed server-side (topic-attributes
   // normalizeValue), so no assignee.top can ever begin with whitespace.
   KANBAN_ASSIGNEE_UNASSIGNED: ' __unassigned__',
-  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false },
-  // Single source of truth for the empty/default filter set.
+  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null },
+  // Single source of truth for the empty/default filter set. `theme` is the
+  // Workshop's: "Open on Board" from a theme narrows the board to that
+  // theme's items, and the chip that says so is dismissable like the rest.
   _defaultKanbanFilters() {
-    return { q: '', priority: null, assignee: null, category: null, needsVote: false };
+    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null };
   },
   // Load the saved filters for an app slug, merged over the defaults so a
   // stored object missing a (future) field degrades gracefully. Returns
@@ -738,6 +724,10 @@ const AppView = {
       // Pure UI state: one GET the observer would have made anyway, no
       // writes, not env-gated — so the "before" side of a capture works.
       if (shot === 'feed-comments') {
+        // The Workshop keeps its rows folded; the slot only exists inside an
+        // unfolded one, so the view model unfolds the first issue row for
+        // this capture (see _workshopView's autoExpand).
+        AppView._workshopShot = 'feed-comments';
         let tries = 0;
         const done = () => {
           clearInterval(tick);
@@ -753,8 +743,8 @@ const AppView = {
           // Give up on a route change, and cap the window so a link left
           // open in a real tab cannot keep polling.
           if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
-          const slot = document.querySelector('#dev-feed .dev-feed-comments[data-comments-for]');
-          if (!slot) return; // the feed's fetches have not landed yet
+          const slot = document.querySelector('#dev-workshop .dev-feed-comments[data-comments-for]');
+          if (!slot) return; // the workshop's fetches have not landed yet
           // Arrived: the slot has rendered a comment. Stop, but leave the
           // page where it is.
           if (slot.querySelector('.dev-feed-comment-time')) { done(); return; }
@@ -2234,7 +2224,6 @@ const AppView = {
     }
 
     // The card list.
-    AppView._feedShown = 20;
     // #482: kanban filters are NOT reset here — they persist per app across
     // in-app navigation and are (re)loaded per slug from sessionStorage when
     // the board mounts in _repaintDevBody. Resetting on every card-list mount
@@ -2261,11 +2250,11 @@ const AppView = {
     });
 
     // The card area under whichever of its two names the active layout gives
-    // it — the kanban of work in flight is the Board, the recency stream is
-    // Activity — carried AS A SUBTITLE beside the app's own name, so the chip
-    // never stops saying which app you are in.
+    // it — the kanban of work in flight is the Board, the themed lander is
+    // the Workshop — carried AS A SUBTITLE beside the app's own name, so the
+    // chip never stops saying which app you are in.
     App.setHeaderTitle?.(AppView.appData?.name || 'App',
-      AppView._getViewMode() === 'feed' ? 'Activity' : 'Board');
+      AppView._getViewMode() === 'kanban' ? 'Board' : 'Workshop');
     // The discussion card's href follows the open app immediately; its preview
     // line arrives with the request below. Both are the same publish, so the
     // card never renders pointing at the previous app.
@@ -3720,7 +3709,7 @@ const AppView = {
   // strip. What is left here is the BEHAVIOUR the old click listener had,
   // unchanged.
   _selectViewMode(v) {
-    const mode = AppView._migrateViewMode(v) || 'feed';
+    const mode = AppView._migrateViewMode(v) || 'workshop';
     if (mode === AppView._getViewMode()) return;
     // _setViewMode publishes the new mode to the store, which is what
     // repaints the tab strip.
@@ -4507,6 +4496,10 @@ const AppView = {
     }
     AppView._renderLockedNotice();
     AppView._repaintDevBody();
+    // The themes ride in behind the board's own data: the Workshop paints
+    // first from what it has (every item under "Everything on the board")
+    // and regroups when they land.
+    AppView._loadWorkshopThemes(App.currentApp);
   },
 
   // Paint #dev-body for the current view mode from cached data only (no
@@ -4548,28 +4541,25 @@ const AppView = {
       AppView._repaintKanbanBoard();
       return;
     }
-    // Feed mode: ONE container. The retired List mode built a two-node shell
-    // — #dev-feed plus a #gc-merged "Completed" block underneath it — and
-    // filled them separately. The completed rows are ordinary activity in the
-    // stream now (see _feedItems), so there is one node and one renderer, and
-    // the Kudos / Explore wiring that used to be applied twice is applied
-    // once by _rerenderFeed.
-    if (!document.getElementById('dev-feed')) {
-      body.innerHTML = '<div id="dev-feed"></div>';
+    // Workshop mode: ONE container. The retired List mode built a two-node
+    // shell — #dev-feed plus a #gc-merged "Completed" block underneath it —
+    // and the Activity feed that replaced it had one; the Workshop that
+    // replaced the feed keeps the one node and one renderer, and the Kudos /
+    // Explore wiring is applied once by _rerenderWorkshop.
+    if (!document.getElementById('dev-workshop')) {
+      body.innerHTML = '<div id="dev-workshop"></div>';
     }
-    // Activity carries the SAME filter bar as the board, over the same
+    // The Workshop carries the SAME filter bar as the board, over the same
     // `_kanbanFilters` model — one set of controls and one set of chips, so
     // switching view modes keeps whatever you had narrowed the board down to
-    // rather than silently widening it back out. The bar used to be emptied
-    // here on the grounds that "the feed has no filters", which was true of
-    // the feed and not of the question people were asking it.
+    // rather than silently widening it back out.
     //
     // Restored per slug on entry for the same reason the kanban branch above
-    // does it: the controls and the stream have to come back as the viewer
+    // does it: the controls and the themes have to come back as the viewer
     // left them, and the two branches share the persisted model.
     AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
     AppView._renderKanbanFilterBar();
-    AppView._rerenderFeed();
+    AppView._rerenderWorkshop();
     AppView._reanchorCardMenu();
   },
 
@@ -4606,12 +4596,12 @@ const AppView = {
   // GET the newest general-chat message (thread_type IS NULL — the endpoint's
   // default), which is view-gated, so a read-only viewer gets the row too.
   //
-  // Re-renders the feed when it lands rather than blocking the paint: the
+  // Re-renders the Workshop when it lands rather than blocking the paint: the
   // board is useful without this line and the request is one row. It cannot
-  // loop — _rerenderFeed does not call back into here.
+  // loop — _rerenderWorkshop does not call back into here.
   //
   // Called from renderDevView's card-list branch — i.e. on entering the board
-  // and on each Board <-> Activity switch — and NOT from _repaintDevBody, so a
+  // and on each Workshop <-> Board switch — and NOT from _repaintDevBody, so a
   // WS-driven repaint does not spend a request. A warm cache for the same app
   // still paints instantly; this only refreshes what it says.
   async _loadDiscussionSummary() {
@@ -4633,7 +4623,7 @@ const AppView = {
         createdAt: (m && m.created_at) || null,
       };
       AppView._reactDevBoard()?.publishDiscussion(AppView._discussionView());
-      AppView._rerenderFeed();
+      AppView._rerenderWorkshop();
     } catch {
       // Offline is a state, not a failure: the row falls back to its
       // standing description and the card still opens the chat.
@@ -4831,121 +4821,382 @@ const AppView = {
     return null;
   },
 
-  _feedView() {
+  // ── The Workshop ───────────────────────────────────────────────────
+  //
+  // The Dev screen's lander (features/dev-board/workshop/workshop.tsx). The
+  // SAME cards the Board draws, bucketed by the SAME _bucketDevItems and
+  // narrowed by the SAME filter bar — grouped by THEME rather than by
+  // lifecycle column, with the two questions the Activity feed used to
+  // answer kept as strips above the themes: what needs this viewer's vote,
+  // and what changed since they were last here.
+  //
+  // Themes come from the server (GET /api/apps/:slug/workshop-themes —
+  // services/workshop-themes.js): a list of { id, name, saying, items }
+  // where `items` are keys in the vocabulary _workshopItemKey speaks. The
+  // grouping is DATA about the board, never the board itself: a card the
+  // themes do not name still renders, under "Not yet grouped", and a card
+  // the themes name but the board no longer has is simply not drawn.
+
+  WORKSHOP_SEEN_KEY: 'workshopSeen',
+  // Rows per lane per theme before "+N more · Open on Board".
+  WORKSHOP_LANE_MAX: 8,
+  // Cards in the "Needs your vote" strip; the rest are a count.
+  WORKSHOP_VOTES_MAX: 3,
+  // Rows in the "since your last visit" list.
+  WORKSHOP_SINCE_MAX: 30,
+  // Per page session: slug → the baseline (epoch ms, 0 on a first visit)
+  // the since-strip is computed against. See _workshopBaseline.
+  _workshopSince: {},
+  // The last themes answer: { slug, themes, source, generatedAt, stale,
+  // pending, at }. Slug-keyed so an app-to-app hop never draws the previous
+  // app's grouping over this one's cards.
+  _workshopThemes: null,
+  // 'feed-comments' while that capture deep link is active — see the ?shot=
+  // block in _applyShotDeepLink.
+  _workshopShot: null,
+
+  // "Since your last visit" needs a fixed point. It is read ONCE per app per
+  // page session from localStorage and then held in memory, and the stamp is
+  // advanced to now on that first read: every later repaint in this session
+  // compares against the same baseline, so a WS-driven refresh cannot make
+  // "new" things stop being new mid-visit. A first visit has no baseline and
+  // gets the welcome instead.
+  _workshopBaseline(slug) {
+    if (!slug) return 0;
+    if (Object.prototype.hasOwnProperty.call(AppView._workshopSince, slug)) {
+      return AppView._workshopSince[slug];
+    }
+    let prev = 0;
+    try {
+      prev = parseInt(window.localStorage.getItem(`${AppView.WORKSHOP_SEEN_KEY}:${slug}`), 10) || 0;
+    } catch { prev = 0; }
+    AppView._workshopSince[slug] = prev;
+    try {
+      window.localStorage.setItem(`${AppView.WORKSHOP_SEEN_KEY}:${slug}`, String(Date.now()));
+    } catch { /* private mode — the strip just never appears */ }
+    return prev;
+  },
+
+  // The key a card has in the themes' `items` lists. Mirrors the server's
+  // buildThemeInput: a GitHub issue by number, anything that is a
+  // chat_sessions row (a proposal, a shared or own session, a merged
+  // change) by that row's id, a governance proposal by its id. A settled
+  // close-issue row keys on the issue it closed.
+  _workshopItemKey(kind, item) {
+    const it = item || {};
+    if (kind === 'issue') return it.number != null ? `issue:${it.number}` : null;
+    if (kind === 'proposal' || kind === 'shared-session' || kind === 'my-session') {
+      return it.id != null ? `session:${it.id}` : null;
+    }
+    if (kind === 'gov') return it.id != null ? `gov:${it.id}` : null;
+    if (kind === 'merged') {
+      if (it.row_type === 'close_issue') {
+        const n = (it.payload && it.payload.issueNumber) || it.github_issue_number || null;
+        return n != null ? `issue:${n}` : null;
+      }
+      return it.id != null ? `session:${it.id}` : null;
+    }
+    return null;
+  },
+
+  // The current app's themes, or null while none have arrived.
+  _workshopThemeData() {
+    const t = AppView._workshopThemes;
+    const slug = (typeof App !== 'undefined' && App.currentApp) || '';
+    return t && t.slug === slug ? t : null;
+  },
+
+  // Whether a card is in a theme — the `theme` filter's predicate. With no
+  // themes loaded the filter cannot be applied, and an unappliable filter
+  // must widen rather than hide: it returns true.
+  _workshopThemeHas(themeId, itemKey) {
+    const t = AppView._workshopThemeData();
+    if (!t || !themeId) return true;
+    const theme = (t.themes || []).find((x) => x.id === themeId);
+    if (!theme) return true;
+    return !!itemKey && (theme.items || []).indexOf(itemKey) !== -1;
+  },
+
+  _workshopThemeName(themeId) {
+    const t = AppView._workshopThemeData();
+    const theme = t && (t.themes || []).find((x) => x.id === themeId);
+    return theme ? theme.name : 'Theme';
+  },
+
+  // Fetch the themes, and re-fetch a few times while a regeneration is
+  // pending server-side so a freshly grouped board arrives without a reload.
+  // Throttled per slug: the board's WS-driven reloads call _loadDevFeed
+  // freely, and the themes endpoint rebuilds the server's input each time.
+  async _loadWorkshopThemes(slug, attempt) {
+    if (!slug) return;
+    const n = attempt || 0;
+    const cur = AppView._workshopThemes;
+    if (!n && cur && cur.slug === slug && !cur.pending && (Date.now() - (cur.at || 0)) < 60000) return;
+    let next;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/workshop-themes${AppView._demoQS()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      next = {
+        slug,
+        themes: Array.isArray(data.themes) ? data.themes : [],
+        source: data.source || null,
+        generatedAt: data.generatedAt || null,
+        stale: !!data.stale,
+        pending: !!data.pending,
+        at: Date.now(),
+      };
+    } catch {
+      next = { slug, themes: [], source: null, generatedAt: null, stale: false, pending: false, at: Date.now() };
+    }
+    if (typeof App !== 'undefined' && App.currentApp !== slug) return;
+    AppView._workshopThemes = next;
+    if (AppView._getViewMode() === 'workshop') AppView._repaintBoardSurface();
+    if (next.pending && n < 4) {
+      setTimeout(() => { AppView._loadWorkshopThemes(slug, n + 1); }, 6000);
+    }
+  },
+
+  // "Open on Board" from a theme: narrow the board to that theme and go
+  // there. The hash is the navigation — the same route the strip's Board
+  // segment is an anchor to — so Back returns to the Workshop.
+  openBoardForTheme(themeId) {
+    const slug = App.currentApp;
+    if (!slug) return;
+    AppView._kanbanFilters = AppView._loadKanbanFilters(slug);
+    AppView._kanbanFilters.theme = themeId || null;
+    AppView._saveKanbanFilters(slug);
+    location.hash = `#app/${slug}/board`;
+  },
+
+  // "N more waiting on you": the board, narrowed to the proposals this
+  // viewer has not voted on.
+  openBoardNeedingVote() {
+    const slug = App.currentApp;
+    if (!slug) return;
+    AppView._kanbanFilters = AppView._loadKanbanFilters(slug);
+    AppView._kanbanFilters.needsVote = true;
+    AppView._saveKanbanFilters(slug);
+    location.hash = `#app/${slug}/board`;
+  },
+
+  _workshopView() {
     const meta = AppView._ghIssuesMeta || {};
     // Published on every branch, placeholders included: `set` merges a patch,
     // so a model that omitted these would inherit the last app's slug and
     // offer a reply box that posts somewhere else.
-    const ctx = {
-      slug: App.currentApp || '',
-      canPost: !!AppView.appData?.can_collaborate,
+    const slug = App.currentApp || '';
+    const ctx = { slug, canPost: !!AppView.appData?.can_collaborate };
+    const empty = {
+      votes: { count: 0, rows: [] }, since: null, welcome: null, discussion: null, themes: [],
+      meta: { source: null, generatedAt: null, stale: false, pending: false, filtered: false },
+      autoExpand: null,
     };
-    let items = AppView._feedItems();
-    // Applied AFTER the merge that orders the stream and BEFORE the "Show
-    // more" cap, so the cap counts matches rather than counting rows it is
-    // about to hide — the same order the kanban applies them in, where the
-    // filter runs per column after bucketing.
-    if (AppView._kanbanFiltersActive()) {
-      const f = AppView._kanbanFilters;
-      items = items.filter((it) => {
-        const kind = AppView._FEED_FILTER_KIND[it.kind];
-        if (!kind) return false;
-        return AppView._devCardMatches(kind, it.item, f);
+    if (!AppView._devDataReady) return { loading: true, emptyNote: null, ...empty, ...ctx };
+
+    const ts = (v) => {
+      const t = Date.parse(v || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    const buckets = AppView._bucketDevItems({
+      issues: AppView._visibleGhIssues(),
+      proposals: AppView._proposals || [],
+      gov: AppView._govProposals || [],
+      merged: AppView._merged || [],
+      mySessions: AppView._mySessions || [],
+      sharedSessions: AppView._sharedSessions || [],
+    });
+    const f = AppView._kanbanFilters || {};
+    const filtering = AppView._kanbanFiltersActive();
+    const matchKind = (kind) => (kind === 'my-session' || kind === 'shared-session' ? 'session' : kind);
+    const match = (kind, item) => !filtering || AppView._devCardMatches(matchKind(kind), item, f);
+
+    const tData = AppView._workshopThemeData();
+    const themeDefs = tData ? (tData.themes || []) : [];
+    const themeOf = new Map();
+    for (const t of themeDefs) {
+      for (const k of (t.items || [])) if (!themeOf.has(k)) themeOf.set(k, t.id);
+    }
+    const baseline = AppView._workshopBaseline(slug);
+    const weekAgo = Date.now() - 7 * 86400000;
+
+    // Every card, once, with what the grouping needs to know about it.
+    const activityOf = (kind, it) => {
+      if (kind === 'issue') return Math.max(ts(it.updatedAt), ts(it.lastMessageAt));
+      if (kind === 'proposal') return Math.max(ts(it.promoted_at || it.created_at), ts(it.last_message_at));
+      if (kind === 'gov') return Math.max(ts(it.created_at), ts(it.last_message_at));
+      if (kind === 'merged') return Math.max(ts(it.merged_at || it.closed_at || it.created_at), ts(it.last_message_at));
+      return Math.max(ts(it.last_activity_at), ts(it.shared_at), ts(it.created_at));
+    };
+    const createdOf = (kind, it) => {
+      if (kind === 'issue') return ts(it.createdAt || it.created_at);
+      if (kind === 'proposal') return ts(it.promoted_at || it.created_at);
+      if (kind === 'merged') return ts(it.merged_at || it.closed_at || it.created_at);
+      return ts(it.shared_at || it.created_at);
+    };
+    const entries = [];
+    const add = (kind, item, lane, build) => {
+      if (!match(kind, item)) return;
+      const card = build();
+      if (!card) return;
+      const row = { t: 'card', key: card.key, card };
+      const th = AppView._feedThreadRef({ kind: kind === 'my-session' ? 'shared-session' : kind, item });
+      if (th) row.thread = th;
+      if (kind === 'issue' && item.number != null) row.commentsFor = item.number;
+      const created = createdOf(kind, item);
+      if (baseline && created > baseline) row.fresh = true;
+      const people = [];
+      const who = AppView._devCardAuthor(kind === 'my-session' || kind === 'shared-session' ? 'session' : kind, item);
+      if (who) people.push(who);
+      if (item && item.assignee && item.assignee.top) people.push(item.assignee.top);
+      entries.push({
+        itemKey: AppView._workshopItemKey(kind, item),
+        kind, item, lane, row, people, created,
+        t: activityOf(kind, item),
+      });
+    };
+    for (const x of buckets.inReview) {
+      add(x.kind, x.item, 'review', () => (x.kind === 'proposal'
+        ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)));
+    }
+    for (const e of buckets.inProgress) {
+      add(e.kind, e.item, 'underway', () => {
+        if (e.kind === 'issue') return AppView._issueCardModel(e.item);
+        if (e.kind === 'my-session') return AppView._mySessionCardModel(e.item);
+        return AppView._sharedSessionCardModel(e.item);
       });
     }
-    // Before the first load, "no activity yet" is a claim about data nobody
-    // has seen. Placeholders instead; the flag is checked before the empty
-    // note so a slow load never flashes the wrong one.
-    if (!AppView._devDataReady) {
-      return { loading: true, emptyNote: null, entries: [], footer: null, ...ctx };
+    for (const i of buckets.issues) add('issue', i, 'open', () => AppView._issueCardModel(i));
+    // Shipped THIS WEEK sits in a theme; older completed work is the Board's
+    // Done column's — but the since-strip below reads every merged row, so
+    // a fortnight away still shows everything that landed meanwhile.
+    for (const m of buckets.done) {
+      add('merged', m, activityOf('merged', m) >= weekAgo ? 'shipped' : 'done', () => AppView._mergedRowModel(m));
     }
-    if (!items.length) {
-      // `filtered` distinguishes "there is nothing here" from "nothing here
-      // matches" — see the note in card/dev-feed.tsx. Read from the filter
-      // model rather than from whether anything was dropped above, so a
-      // filter that happens to match nothing on an empty board still says the
-      // useful thing.
-      return {
-        loading: false,
-        emptyNote: { loadFailed: !!meta.note, filtered: AppView._kanbanFiltersActive() },
-        entries: [],
-        footer: null,
-        ...ctx,
+
+    // ── Needs your vote ──
+    // Unfiltered on purpose: a vote owed is owed whatever the board is
+    // narrowed to. Same predicate as the filter bar's "Waiting on you".
+    const owed = [];
+    for (const x of buckets.inReview) {
+      if (AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
+    }
+    const voteRow = (card) => ({ t: 'card', key: `vote:${card.key}`, card });
+    const votes = {
+      count: owed.length,
+      rows: owed.slice(0, AppView.WORKSHOP_VOTES_MAX).map((x) => voteRow(
+        x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)
+      )),
+    };
+
+    // ── Themes ──
+    const laneOrder = [
+      { key: 'review', title: 'In review' },
+      { key: 'underway', title: 'Underway' },
+      { key: 'open', title: 'Open' },
+      { key: 'shipped', title: 'Shipped this week' },
+    ];
+    const mkTheme = (def, ungrouped) => ({
+      id: def.id, name: def.name, description: def.description || '',
+      saying: def.saying || null, people: [], lastActive: 0,
+      counts: { open: 0, underway: 0, review: 0, shipped: 0, fresh: 0 },
+      lanes: laneOrder.map((l) => ({ key: l.key, title: l.title, rows: [], more: 0 })),
+      ...(ungrouped ? { ungrouped: true } : {}),
+      _people: new Map(),
+    });
+    const themes = themeDefs.map((d) => mkTheme(d, false));
+    const byId = new Map(themes.map((t) => [t.id, t]));
+    // While no themes have arrived the one group is everything; once they
+    // have, the remainder is what they did not name.
+    const rest = mkTheme(tData
+      ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the themes do not name yet.' }
+      : { id: 'ungrouped', name: 'Everything on the board', description: '' }, true);
+    for (const e of entries) {
+      if (e.lane === 'done') continue;
+      const id = e.itemKey ? themeOf.get(e.itemKey) : null;
+      const theme = (id && byId.get(id)) || rest;
+      const lane = theme.lanes.find((l) => l.key === e.lane);
+      theme.counts[e.lane] += 1;
+      if (e.row.fresh) theme.counts.fresh += 1;
+      if (e.t > theme.lastActive) theme.lastActive = e.t;
+      for (const p of e.people) theme._people.set(p, (theme._people.get(p) || 0) + 1);
+      if (lane.rows.length < AppView.WORKSHOP_LANE_MAX) lane.rows.push(e.row);
+      else lane.more += 1;
+    }
+    const finish = (t) => {
+      t.people = [...t._people.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
+      delete t._people;
+      return t;
+    };
+    const drawn = themes.filter((t) => t.lanes.some((l) => l.rows.length)).map(finish);
+    if (rest.lanes.some((l) => l.rows.length)) drawn.push(finish(rest));
+
+    // ── Since your last visit / welcome ──
+    let since = null;
+    let welcome = null;
+    if (baseline) {
+      const moved = entries.filter((e) => e.t > baseline).sort((a, b) => b.t - a.t);
+      since = {
+        baseline,
+        shipped: entries.filter((e) => e.kind === 'merged' && e.created > baseline).length,
+        opened: entries.filter((e) => e.kind === 'issue' && e.created > baseline).length,
+        proposed: entries.filter((e) => e.kind === 'proposal' && e.created > baseline).length,
+        rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({ ...e.row, key: `since:${e.row.key}` })),
+      };
+    } else {
+      welcome = {
+        open: entries.filter((e) => e.lane !== 'done' && e.lane !== 'shipped').length,
+        themes: drawn.filter((t) => !t.ungrouped).length,
+        votesWaiting: buckets.inReview.length,
+        shippedWeek: entries.filter((e) => e.lane === 'shipped').length,
       };
     }
 
-    // ── The page, and the one row that does not compete for it ──────
-    //
-    // `_feedShown` caps how much of a long stream renders behind "Show more".
-    // The discussion is AT MOST ONE row — the app has exactly one general chat
-    // — rather than one of N cards arriving over time, so it does not compete
-    // for the page: it is lifted out before the cap and put back at its own
-    // sorted position inside it. On a busy board with a quiet
-    // chat that lands it last — which is not a lie about when it happened, it
-    // says the conversation is older than everything shown, and it is. Left in
-    // the cap it would simply vanish behind "Show more", and the Activity view
-    // would have no discussion at all on exactly the apps that have the most
-    // going on.
-    const disc = items.find((it) => it.kind === 'discussion') || null;
-    const rest = disc ? items.filter((it) => it !== disc) : items;
-    const shown = Math.min(AppView._feedShown || 20, rest.length);
-    const page = rest.slice(0, shown);
-    if (disc) {
-      const at = page.findIndex((it) => it.t < disc.t);
-      page.splice(at === -1 ? page.length : at, 0, disc);
-    }
-    const entries = [];
-    for (let i = 0; i < page.length; i++) {
-      const it = page[i];
-      if (it.kind === 'issue') {
-        const card = AppView._issueCardModel(it.item);
-        entries.push({
-          t: 'card',
-          key: card.key,
-          card,
-          commentsFor: it.item && it.item.number,
-          thread: AppView._feedThreadRef(it),
-        });
-      } else if (it.kind === 'proposal') {
-        const card = AppView._proposalCardModel(it.item);
-        entries.push({ t: 'card', key: card.key, card, thread: AppView._feedThreadRef(it) });
-      } else if (it.kind === 'shared-session') {
-        const card = AppView._sharedSessionCardModel(it.item);
-        entries.push({ t: 'card', key: card.key, card, thread: AppView._feedThreadRef(it) });
-      } else if (it.kind === 'discussion') {
-        const card = AppView._discussionCardModel();
-        entries.push({ t: 'card', key: card.key, card });
-      // Completed work, folded into the stream by _feedItems rather than
-      // parked in a block below it.
-      } else if (it.kind === 'merged') {
-        const card = AppView._mergedRowModel(it.item);
-        if (card) entries.push({ t: 'card', key: card.key, card });
-      } else {
-        const card = AppView._govCardModel(it.item);
-        entries.push({ t: 'card', key: card.key, card, thread: AppView._feedThreadRef(it) });
+    // ── The discussion row ──
+    // Drawn whether or not anything has been said: on a lander it is the
+    // door to the general chat, as the kanban's card is above its columns.
+    // Dropped while a filter is active, as the feed dropped it — it carries
+    // nothing to match on.
+    const discCard = filtering ? null : AppView._discussionCardModel();
+    const discussion = discCard ? { t: 'card', key: discCard.key, card: discCard } : null;
+
+    // ── The capture deep link ──
+    let autoExpand = null;
+    if (AppView._workshopShot === 'feed-comments') {
+      for (const t of drawn) {
+        for (const l of t.lanes) {
+          const r = l.rows.find((row) => row.commentsFor != null);
+          if (r) { autoExpand = { theme: t.id, key: r.key }; break; }
+        }
+        if (autoExpand) break;
       }
     }
 
-    // Paging footer: more local items first, then — once every cached row is
-    // on screen — the server's next keyset page of COMPLETED rows. Those used
-    // to be paged by the Completed block's own "Load more"; folding them into
-    // the stream means folding their pager in too, or the feed would silently
-    // stop at whatever the first page happened to contain.
-    // Counted against `rest`, not `items`: the discussion is never behind the
-    // pager, so it must not inflate what "Show more" promises.
-    let footer = null;
-    if (shown < rest.length) {
-      footer = { kind: 'showMore', n: Math.min(10, rest.length - shown) };
-    } else if (AppView._mergedHasMore) {
-      footer = { kind: 'loadMerged', loading: !!AppView._mergedLoadingMore, n: null };
-    } else if (meta.truncatedList && meta.repoUrl) {
-      footer = { kind: 'github', href: `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues` };
-    }
+    const emptyNote = entries.length
+      ? null
+      : { loadFailed: !!meta.note, filtered: filtering };
     // `loading` is on EVERY return path, never omitted. The store MERGES a
     // patch (lib/plain-store.js), so a view model that simply left the key out
-    // would inherit the previous publish's `true` and leave the feed on its
+    // would inherit the previous publish's `true` and leave the lander on its
     // placeholders for good.
-    return { loading: false, emptyNote: null, entries, footer, ...ctx };
+    return {
+      loading: false,
+      emptyNote,
+      votes,
+      since,
+      welcome,
+      discussion,
+      themes: drawn,
+      meta: {
+        source: tData ? tData.source : null,
+        generatedAt: tData ? tData.generatedAt : null,
+        stale: !!(tData && tData.stale),
+        pending: !!(tData && tData.pending),
+        filtered: filtering,
+      },
+      autoExpand,
+      ...ctx,
+    };
   },
 
   // The two completed row types share one dispatcher: the Feed folds
@@ -5031,7 +5282,7 @@ const AppView = {
   // opening a row you have scrolled past costs nothing, and a row whose thread
   // you have already read paints from cache with no request at all.
   //
-  // The observer is rebuilt on every feed render because _rerenderFeed replaces
+  // The observer is rebuilt on every render because _rerenderWorkshop replaces
   // the container's innerHTML, which detaches every node it was watching.
   _feedCommentObserver: null,
 
@@ -5063,7 +5314,7 @@ const AppView = {
       }
     }, { rootMargin: '200px 0px' });
     // WATCH THE ROW, NOT THE SLOT. The slot ships EMPTY -- that is the whole
-    // point of filling it lazily -- and `#dev-feed .dev-feed-comments:empty`
+    // point of filling it lazily -- and `#dev-workshop .dev-feed-comments:empty`
     // in public/css/app.css is `display: none`, so that it leaves no gap
     // under a row with nothing to show. A `display: none` element has no box,
     // an IntersectionObserver never reports one as intersecting, and so the
@@ -5090,7 +5341,7 @@ const AppView = {
     // the request and its answer detaches this one, and writing into an
     // orphan would silently drop the comments.
     const paint = (entry) => {
-      const feed = document.getElementById('dev-feed');
+      const feed = document.getElementById('dev-workshop');
       if (!feed) return;
       const live = feed.querySelector(`.dev-feed-comments[data-comments-for="${number}"]`);
       if (!live) return;
@@ -5120,13 +5371,13 @@ const AppView = {
   // Re-render the feed in place from the cached data, then re-mount the
   // expanded card's thread + roster (innerHTML replacement wipes any
   // previous mount).
-  _rerenderFeed() {
-    const el = document.getElementById('dev-feed');
+  _rerenderWorkshop() {
+    const el = document.getElementById('dev-workshop');
     if (!el) return;
     const react = AppView._reactDevBoard();
     if (react) {
-      react.mountFeed(el);
-      react.publishFeed(AppView._feedView());
+      react.mountWorkshop(el);
+      react.publishWorkshop(AppView._workshopView());
     }
     // Rebuilt every time: the publish above replaced every node the previous
     // observer was watching. The store flushes synchronously (see
@@ -5172,7 +5423,7 @@ const AppView = {
   // Still keyed off a DOM query for the pills, because that is also how it
   // knows when to stop: no countdown on screen, no timer.
   _startMergeCountdownTimer() {
-    const feed = document.getElementById('dev-feed');
+    const feed = document.getElementById('dev-body');
     if (!feed || !feed.querySelector(AppView._COUNTDOWN_SEL)) {
       if (AppView._mergeCountdownTimer) {
         clearInterval(AppView._mergeCountdownTimer);
@@ -5182,7 +5433,7 @@ const AppView = {
     }
     if (AppView._mergeCountdownTimer) return;
     AppView._mergeCountdownTimer = setInterval(() => {
-      const el = document.getElementById('dev-feed');
+      const el = document.getElementById('dev-body');
       const pills = el ? el.querySelectorAll(AppView._COUNTDOWN_SEL) : [];
       if (!pills.length) {
         clearInterval(AppView._mergeCountdownTimer);
@@ -5205,8 +5456,9 @@ const AppView = {
 
   // Sub-tab-aware repaint for card-action handlers that perform an optimistic
   // local mutation. The Dev area paints cards on two surfaces from the same
-  // cached data: the feed list (#dev-feed) and the opened-topic full-screen
-  // card (#gc-thread-head). _rerenderFeed alone no-ops in the topic view, so
+  // cached data: the card list (#dev-workshop or the kanban) and the
+  // opened-topic full-screen card (#gc-thread-head). _repaintDevBody alone
+  // no-ops in the topic view, so
   // an in-card action looked dead there (#368-class bug). This repaints
   // whichever surface is mounted, purely from cache — no _loadDevData — so the
   // just-set optimistic state isn't clobbered by a slower/racing refetch.
@@ -5218,11 +5470,6 @@ const AppView = {
         && document.getElementById('gc-thread-head')) {
       AppView._renderTopicHead();
     }
-  },
-
-  showMoreFeed() {
-    AppView._feedShown = (AppView._feedShown || 20) + 10;
-    AppView._rerenderFeed();
   },
 
   // ── Kanban view ──────────────────────────────────────────────────────
@@ -5528,12 +5775,21 @@ const AppView = {
         return false;
       }
     }
+    // The Workshop's theme, matched on the same key the themes name cards
+    // by. The one filter that reads module state (the loaded themes) —
+    // and, with none loaded, the one that must widen rather than hide.
+    if (f.theme) {
+      const themeKind = kind === 'session'
+        ? (it && it.row_type === undefined && it.pr_number != null && it.status === 'merged' ? 'merged' : 'shared-session')
+        : kind;
+      if (!AppView._workshopThemeHas(f.theme, AppView._workshopItemKey(themeKind, it))) return false;
+    }
     return true;
   },
 
   _kanbanFiltersActive() {
     const f = AppView._kanbanFilters || {};
-    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote);
+    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote || f.theme);
   },
 
   // Person dropdown options: the union of top-voted assignees and authors
@@ -5592,8 +5848,8 @@ const AppView = {
   // bar now (see the feed branch of _repaintDevBody), and a search typed there
   // has to repaint the feed or the box would take input and change nothing.
   _repaintBoardSurface() {
-    if (AppView._getViewMode() === 'feed') {
-      AppView._rerenderFeed();
+    if (AppView._getViewMode() === 'workshop') {
+      AppView._rerenderWorkshop();
       return;
     }
     AppView._repaintKanbanBoard();
@@ -5681,7 +5937,7 @@ const AppView = {
   _kanbanFilterCount() {
     const f = AppView._kanbanFilters || {};
     return (f.priority ? 1 : 0) + (f.category ? 1 : 0)
-      + (f.assignee ? 1 : 0) + (f.needsVote ? 1 : 0);
+      + (f.assignee ? 1 : 0) + (f.needsVote ? 1 : 0) + (f.theme ? 1 : 0);
   },
   // One entry per active filter, in a fixed order — the dismissable chip
   // row's data. The chips themselves (Material selected filter-chip with a
@@ -5705,6 +5961,7 @@ const AppView = {
       });
     }
     if (f.needsVote) chips.push({ key: 'needsVote', label: 'Waiting on you' });
+    if (f.theme) chips.push({ key: 'theme', label: `Theme: ${AppView._workshopThemeName(f.theme)}` });
     return chips;
   },
   // The category vocabulary as DATA — built-ins then this app's customs,
@@ -8971,7 +9228,7 @@ const AppView = {
       return;
     }
     await AppView._loadDevFeed();
-    // _loadDevFeed's repaint no-ops in the opened-topic view (#dev-feed is
+    // _loadDevFeed's repaint no-ops in the opened-topic view (#dev-body is
     // absent), so the withdrawn proposal card would stay stale there. Repaint
     // the topic head from the freshly-refetched data.
     if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
@@ -9008,7 +9265,7 @@ const AppView = {
     }
     await AppView._loadDevFeed();
     // Same as withdrawProposal: refresh the opened-topic card too, since
-    // _loadDevFeed's feed repaint no-ops when #dev-feed isn't mounted.
+    // _loadDevFeed's repaint no-ops when #dev-body isn't mounted.
     if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
         && document.getElementById('gc-thread-head')) {
       AppView._renderTopicHead();
@@ -10484,7 +10741,7 @@ const AppView = {
   // for uncalled members found all three together. The rows themselves live
   // on as _mergedCardModel / _completedCloseIssueCardModel, and the paging
   // that block used to own is the feed footer's `loadMerged` and the Done
-  // column's, both built in _feedView / _kanbanView.
+  // column's, both built in _workshopView / _kanbanView.
 
   // #429: fetch the next keyset page of merged PRs and append it in place.
   // Uses the (created_at, id) cursor of the last loaded row so paging is

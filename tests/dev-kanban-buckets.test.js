@@ -470,15 +470,15 @@ test('loadMoreMerged repaints the board (not #gc-merged) in kanban mode', async 
   assert.equal(writes.length, 0, '#gc-merged is never touched in kanban mode');
 });
 
-test('loadMoreMerged repaints the body in Feed mode too, and never #gc-merged', async () => {
+test('loadMoreMerged repaints the body in Workshop mode too, and never #gc-merged', async () => {
   // This used to assert the OPPOSITE: the retired List view kept its completed
   // rows in a separate #gc-merged block that this patched in place, without
   // repainting the board. THE UI OVERHAUL folded completed work into the
-  // Feed's own stream, so there is no such block in either mode and both go
-  // through _repaintDevBody.
+  // Feed's own stream, and the Workshop keeps that, so there is no such
+  // block in either mode and both go through _repaintDevBody.
   const writes = [];
   const ctx = makeCtx({
-    localStorage: { getItem: () => 'feed', setItem: () => {} },
+    localStorage: { getItem: () => 'workshop', setItem: () => {} },
     document: docWithGcMerged(captureEl(writes)),
     fetch: async () => ({ ok: true, json: async () => ({ merged: [], hasMore: false, total: 1 }) }),
   });
@@ -487,45 +487,37 @@ test('loadMoreMerged repaints the body in Feed mode too, and never #gc-merged', 
   AppView._repaintDevBody = () => { repaints += 1; };
   primePager(AppView);
   await AppView.loadMoreMerged();
-  assert.ok(repaints >= 1, 'Feed mode repaints the body');
+  assert.ok(repaints >= 1, 'Workshop mode repaints the body');
   assert.equal(writes.length, 0, '#gc-merged is never touched — it does not exist');
 });
 
-// ── _getViewMode default: explicit preference, else width-based (#462) ─────
+// ── _getViewMode default: explicit preference, else the Workshop ─────────
+//
+// The #462 width default (kanban when wide, the list when narrow) retired
+// with the Activity feed. The Workshop is the lander on every width; only an
+// explicit preference or a ?view= override moves the board off it.
 
-// A matchMedia stub that answers `wide` for the 640px multi-column query and
-// counts how
-// many times it is evaluated (for the once-per-page-load memoization test).
-const mediaStub = (wide, counter) => (query) => {
-  if (counter) counter.n += 1;
-  return { media: query, matches: wide };
-};
-
-test('no stored value + wide viewport → kanban by default', () => {
-  const ctx = makeCtx({
-    localStorage: { getItem: () => null, setItem: () => {} },
-    matchMedia: mediaStub(true),
-  });
-  assert.equal(ctx.__AppView._getViewMode(), 'kanban');
+test('no stored value → the Workshop, whatever the viewport', () => {
+  for (const wide of [true, false]) {
+    const ctx = makeCtx({
+      localStorage: { getItem: () => null, setItem: () => {} },
+      matchMedia: () => ({ matches: wide }),
+    });
+    assert.equal(ctx.__AppView._getViewMode(), 'workshop', `wide=${wide}`);
+  }
 });
 
-test('no stored value + narrow viewport → feed by default', () => {
-  const ctx = makeCtx({
-    localStorage: { getItem: () => null, setItem: () => {} },
-    matchMedia: mediaStub(false),
-  });
-  assert.equal(ctx.__AppView._getViewMode(), 'feed');
-});
-
-test("a stored 'list' migrates to feed, and still beats the kanban default", () => {
-  // 'list' is the retired name for exactly this surface, so a viewer who last
-  // left the board there must land on the Feed — not on the width default,
-  // which at this viewport would silently override their choice with kanban.
-  const ctx = makeCtx({
-    localStorage: { getItem: () => 'list', setItem: () => {} },
-    matchMedia: mediaStub(true),
-  });
-  assert.equal(ctx.__AppView._getViewMode(), 'feed');
+test("a stored 'list' or 'feed' migrates to the Workshop", () => {
+  // Both are retired names for the surface the Workshop replaced, so a
+  // viewer who last left the board there must land on the Workshop rather
+  // than read their setting as forgotten.
+  for (const stored of ['list', 'feed']) {
+    const ctx = makeCtx({
+      localStorage: { getItem: () => stored, setItem: () => {} },
+      matchMedia: () => ({ matches: true }),
+    });
+    assert.equal(ctx.__AppView._getViewMode(), 'workshop', `${stored} → workshop`);
+  }
 });
 
 test('a stored pm / report preference migrates to the board', () => {
@@ -534,54 +526,53 @@ test('a stored pm / report preference migrates to the board', () => {
   for (const stored of ['pm', 'report']) {
     const ctx = makeCtx({
       localStorage: { getItem: () => stored, setItem: () => {} },
-      matchMedia: mediaStub(false),
+      matchMedia: () => ({ matches: false }),
     });
     assert.equal(ctx.__AppView._getViewMode(), 'kanban', `${stored} → kanban`);
   }
 });
 
-test('stored kanban beats the narrow-viewport list default', () => {
+test('a stored kanban preference beats the Workshop default', () => {
   const ctx = makeCtx({
     localStorage: { getItem: () => 'kanban', setItem: () => {} },
-    matchMedia: mediaStub(false),
+    matchMedia: () => ({ matches: false }),
   });
   assert.equal(ctx.__AppView._getViewMode(), 'kanban');
 });
 
-test('no matchMedia in the environment → feed (guarded fallback)', () => {
+test('no matchMedia in the environment → the Workshop (nothing to consult)', () => {
   const ctx = makeCtx({
     localStorage: { getItem: () => null, setItem: () => {} },
   });
-  assert.equal(ctx.__AppView._getViewMode(), 'feed');
+  assert.equal(ctx.__AppView._getViewMode(), 'workshop');
 });
 
-test('unrecognized stored garbage falls through to the width-based default', () => {
+test('unrecognized stored garbage falls through to the Workshop', () => {
   const ctx = makeCtx({
     localStorage: { getItem: () => 'banana', setItem: () => {} },
-    matchMedia: mediaStub(true),
+    matchMedia: () => ({ matches: true }),
   });
-  assert.equal(ctx.__AppView._getViewMode(), 'kanban');
+  assert.equal(ctx.__AppView._getViewMode(), 'workshop');
 });
 
-test('width-based default is memoized: media query evaluated once per context', () => {
-  const counter = { n: 0 };
+test('the default never measures the viewport', () => {
+  let consulted = 0;
   const ctx = makeCtx({
     localStorage: { getItem: () => null, setItem: () => {} },
-    matchMedia: mediaStub(true, counter),
+    matchMedia: () => { consulted += 1; return { matches: true }; },
   });
   const AppView = ctx.__AppView;
-  assert.equal(AppView._getViewMode(), 'kanban');
-  assert.equal(AppView._getViewMode(), 'kanban');
-  assert.equal(AppView._getViewMode(), 'kanban');
-  assert.equal(counter.n, 1, 'matchMedia consulted exactly once');
+  assert.equal(AppView._getViewMode(), 'workshop');
+  assert.equal(AppView._getViewMode(), 'workshop');
+  assert.equal(consulted, 0, 'matchMedia is not consulted at all');
 });
 
 test('auto-default is never written back to localStorage', () => {
   const writes = [];
   const ctx = makeCtx({
     localStorage: { getItem: () => null, setItem: (k, v) => writes.push([k, v]) },
-    matchMedia: mediaStub(true),
+    matchMedia: () => ({ matches: true }),
   });
-  assert.equal(ctx.__AppView._getViewMode(), 'kanban');
+  assert.equal(ctx.__AppView._getViewMode(), 'workshop');
   assert.equal(writes.length, 0, 'reading the mode must not persist the default');
 });

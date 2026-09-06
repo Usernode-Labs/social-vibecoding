@@ -151,10 +151,12 @@ test('the inline reply preview preserves composer line breaks', () => {
   assert.match(html, /class="dev-feed-msg-avatar" aria-hidden="true" style="background-color:#[0-9a-f]{6}">B</);
 });
 
-test('the Activity staging route requires both the textarea and arrow', () => {
+test('the Workshop staging route requires both the textarea and arrow', () => {
   const check = dapp.tests.find((entry) => entry.name.includes('#1584'));
   assert.ok(check, 'a declared check names this change');
-  assert.equal(check.path, '/?demo=1#app/usernode-2d5619/activity');
+  // The row has to be unfolded for the composer to exist, which is what the
+  // ?shot=feed-comments deep link does to the first issue row.
+  assert.equal(check.path, '/?demo=1&shot=feed-comments#app/usernode-2d5619/workshop');
   assert.match(check.expectSelector, /textarea\[aria-label="Reply to this item"\]/);
   assert.match(check.expectSelector, /button\[aria-label="Send reply"\]:disabled/);
 });

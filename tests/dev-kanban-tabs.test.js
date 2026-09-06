@@ -304,7 +304,7 @@ test('no ?col= and no stored value → Issues', () => {
 
 // ── ?view= override on the view mode ───────────────────────────────────────
 
-test('?view=kanban wins over the narrow-viewport list default', () => {
+test('?view=kanban wins over the Workshop default', () => {
   const AppView = makeAppView({
     search: '?view=kanban',
     matchMedia: () => ({ matches: false }), // phone frame
@@ -312,26 +312,28 @@ test('?view=kanban wins over the narrow-viewport list default', () => {
   assert.equal(AppView._getViewMode(), 'kanban');
 });
 
-test('?view=feed wins over a stored kanban preference', () => {
+test('?view=workshop wins over a stored kanban preference', () => {
   const AppView = makeAppView({
-    search: '?view=feed',
+    search: '?view=workshop',
     matchMedia: () => ({ matches: true }),
     localStorage: { getItem: () => 'kanban', setItem: () => {} },
   });
-  assert.equal(AppView._getViewMode(), 'feed');
+  assert.equal(AppView._getViewMode(), 'workshop');
 });
 
-test('?view=list still resolves — the override is migrated, not just validated', () => {
-  // `?view=list` is in the wild: capture routes, bookmarks and the dapp.json
-  // checks all carry it, and #814's whole point was that a fresh browser can
-  // be pointed straight at a given view. Rejecting it would silently fall back
-  // to the width default, which at a desktop viewport is the OTHER tab.
-  const AppView = makeAppView({
-    search: '?view=list',
-    matchMedia: () => ({ matches: true }),
-    localStorage: { getItem: () => 'kanban', setItem: () => {} },
-  });
-  assert.equal(AppView._getViewMode(), 'feed');
+test('?view=list and ?view=feed still resolve — the override is migrated, not just validated', () => {
+  // `?view=list` and `?view=feed` are in the wild: capture routes, bookmarks
+  // and the dapp.json checks all carried them, and #814's whole point was
+  // that a fresh browser can be pointed straight at a given view. Both name
+  // the surface the Workshop replaced, so both land there.
+  for (const v of ['list', 'feed']) {
+    const AppView = makeAppView({
+      search: `?view=${v}`,
+      matchMedia: () => ({ matches: true }),
+      localStorage: { getItem: () => 'kanban', setItem: () => {} },
+    });
+    assert.equal(AppView._getViewMode(), 'workshop', `?view=${v}`);
+  }
 });
 
 test('an unrecognized ?view= leaves the existing resolution untouched', () => {
@@ -339,7 +341,7 @@ test('an unrecognized ?view= leaves the existing resolution untouched', () => {
     search: '?view=sideways',
     matchMedia: () => ({ matches: true }),
   });
-  assert.equal(AppView._getViewMode(), 'kanban'); // width default, unchanged
+  assert.equal(AppView._getViewMode(), 'workshop'); // the default, unchanged
 });
 
 test('toggling the view mode retires the ?view= override so the click sticks', () => {
@@ -353,15 +355,18 @@ test('toggling the view mode retires the ?view= override so the click sticks', (
     },
   });
   assert.equal(AppView._getViewMode(), 'kanban');
-  AppView._setViewMode('feed');
-  assert.equal(AppView._getViewMode(), 'feed', 'the explicit choice wins over the URL');
+  AppView._setViewMode('workshop');
+  assert.equal(AppView._getViewMode(), 'workshop', 'the explicit choice wins over the URL');
 });
 
-test('no ?view= at all keeps the #462 width default', () => {
+test('no ?view= at all lands on the Workshop on every width', () => {
+  // The #462 width default (kanban when wide, the list when narrow) retired
+  // with the feed: the Workshop is the lander because it answers the first
+  // question on any device, and the Board is one tap away on both.
   const wide = makeAppView({ search: '', matchMedia: () => ({ matches: true }) });
-  assert.equal(wide._getViewMode(), 'kanban');
+  assert.equal(wide._getViewMode(), 'workshop');
   const narrow = makeAppView({ search: '', matchMedia: () => ({ matches: false }) });
-  assert.equal(narrow._getViewMode(), 'feed');
+  assert.equal(narrow._getViewMode(), 'workshop');
 });
 
 // ── The single-column ↔ multi-column breakpoint ─────────────────────────────
