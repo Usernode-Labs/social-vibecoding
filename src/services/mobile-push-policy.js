@@ -203,7 +203,7 @@ function buildCopy(kind, context, now) {
     case 'pr_proposed':
       return actor && {
         title: withApp(quotedTitle ? `@${actor} proposed ${quotedTitle}` : `@${actor} proposed a change`),
-        body: 'Take a look. Your vote decides',
+        body: `@${actor} would love your eyes on this`,
       };
     case 'check_failed':
       return {
@@ -214,10 +214,10 @@ function buildCopy(kind, context, now) {
       const days = daysSince(context.promotedAt, now);
       return {
         title: withApp(quotedTitle
-          ? `${quotedTitle} is waiting for votes` : 'Your proposal needs attention'),
+          ? `${quotedTitle} is waiting for eyes` : 'Your proposal needs attention'),
         body: days >= 1
-          ? `No votes in ${days} ${days === 1 ? 'day' : 'days'}. Nudge collaborators or share the preview`
-          : 'Nudge collaborators or share the preview',
+          ? `Nobody has weighed in for ${days} ${days === 1 ? 'day' : 'days'}. Share the preview or ask a friend to try it`
+          : 'Share the preview or ask a friend to try it',
       };
     }
     // #1405 path A. The agent, not you, put this somewhere — so the copy leads

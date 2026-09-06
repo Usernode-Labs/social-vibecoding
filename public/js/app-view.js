@@ -5080,7 +5080,7 @@ const AppView = {
     return `~${m}m`;
   },
 
-  // Ticks the "Merging in ~X" / "Rejecting in ~X" countdown pills purely from
+  // Ticks the "Goes live in ~X" / "Set aside in ~X" countdown pills purely from
   // the passage of time (vote changes already refetch via the WS vote-update
   // path). Updates each pill's label in place; when a window crosses zero it
   // refetches the feed so the row reflects server truth — the actual merge /
@@ -5411,7 +5411,7 @@ const AppView = {
       if (!hit) return false;
     }
     if (kind === 'session' && it.source !== 'imported') {
-      // "Needs my vote" genuinely excludes a session — there is nothing to
+      // "Waiting on you" genuinely excludes a session — there is nothing to
       // vote on until it becomes a proposal.
       if (f.needsVote) return false;
       // Priority / category remain an explicit NO-OP because sessions carry
@@ -5627,7 +5627,7 @@ const AppView = {
         label: f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED ? 'Unassigned' : f.assignee,
       });
     }
-    if (f.needsVote) chips.push({ key: 'needsVote', label: 'Needs my vote' });
+    if (f.needsVote) chips.push({ key: 'needsVote', label: 'Waiting on you' });
     return chips;
   },
   // The category vocabulary as DATA — built-ins then this app's customs,
@@ -7475,19 +7475,19 @@ const AppView = {
     } else if (noTimer && pr.rejection_armed && inReject) {
       // Rejection is deliberately untouched by the no-timer modifier.
       const cd = AppView._fmtCountdown(rejectEnds - now);
-      sentence = `More No than Yes, without enough support. This closes in ${cd} unless it gains support. ${tally}`;
+      sentence = `More No than Yes, and not enough support yet. It will be set aside in ${cd} unless support arrives. ${tally}`;
     } else if (noTimer) {
       sentence = `It needs ${required} of ${active} active testers to vote Yes. ${tally}`;
     } else if (!contested && inMergeWindow && (reached || lazyLead)) {
       const cd = AppView._fmtCountdown(mergeEnds - now);
       sentence = reached
-        ? `There are enough Yes votes (${yes} of ${required}). This merges in ${cd} unless someone objects.`
-        : `It has support (${yes} of ${required} needed) and no objections. It merges in ${cd} unless the vote changes; silence counts as agreement.`;
+        ? `There are enough Yes votes (${yes} of ${required}). It goes live in ${cd} unless someone objects.`
+        : `It has support (${yes} of ${required} needed) and nobody has objected. It goes live in ${cd} unless the vote changes. Quiet is taken as a nod, so speak up if something bothers you.`;
     } else if (pr.rejection_armed && inReject) {
       const cd = AppView._fmtCountdown(rejectEnds - now);
-      sentence = `More No than Yes, without enough support. This closes in ${cd} unless it gains support. ${tally}`;
+      sentence = `More No than Yes, and not enough support yet. It will be set aside in ${cd} unless support arrives. ${tally}`;
     } else if (contested) {
-      sentence = `It’s contested. Enough people object that the timed path is off, so it now needs a clear majority of Yes votes to pass. ${tally}`;
+      sentence = `It needs a conversation. Enough people have objected that the timer is off, so it now needs a clear majority of Yes votes to pass. ${tally}`;
     } else if (reached) {
       sentence = blocker
         ? `It has enough Yes votes (${yes} of ${required}), but it can’t merge yet: ${blocker}.`
@@ -8630,7 +8630,7 @@ const AppView = {
     const oldText = btn ? btn.textContent : '';
     if (btn) {
       btn.disabled = true;
-      btn.textContent = 'Putting up for vote…';
+      btn.textContent = 'Sharing with the group…';
     }
     try {
       const resp = await fetch(`/api/sessions/${sessionId}/promote`, { method: 'POST' });
@@ -11017,8 +11017,8 @@ const AppView = {
   //   2 blocked        Checks failing · N / Checks couldn't run /
   //                    Preview won't boot / Merge conflict /
   //                    Conflict resolution failed / Behind main · N
-  //   3 contested      Contested · 4/6
-  //   4 counting down  Merging in ~2d / Merging in 5h · 1/2 / Rejecting in ~6h
+  //   3 contested      Needs a conversation · 4/6
+  //   4 counting down  Goes live in ~2d / Goes live in 5h · 1/2 / Set aside in ~6h
   //   5 needs my vote  Vote · 2/5                           (pulsing dot)
   //   6 plain tally    3 / 5 · 2 of 3 approvals
   //
@@ -11272,8 +11272,8 @@ const AppView = {
     }
     // 3 — contested: the timed path is off, it needs a straight majority.
     if (isOpenRow && p.contested) {
-      return { ...base, tier: 3, key: 'contested', label: `Contested · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
-        title: 'Enough No votes that the time-based merge path is off. This needs a straight majority of Yes votes.' };
+      return { ...base, tier: 3, key: 'contested', label: `Needs a conversation · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
+        title: 'Enough people have objected that the timer is off. This needs a straight majority of Yes votes, so talk it through.' };
     }
     // "At least N approvals" mode is clock-free, so it can't count down.
     if (p.approvals_required != null && isOpenRow) {
@@ -11295,17 +11295,17 @@ const AppView = {
     if (isOpenRow && !p.requires_explicit_approval && inWindow && (reachedMaj || lazyLead)) {
       const suffix = reachedMaj ? '' : ` · ${yes}/${maj}`;
       return { ...base, tier: 4, key: 'merge_countdown', tone: 'ok', fill: 'full-yes', countdown: windowEndsMs,
-        label: `Merging in ${AppView._fmtCountdown(windowEndsMs - Date.now())}${suffix}`,
+        label: `Goes live in ${AppView._fmtCountdown(windowEndsMs - Date.now())}${suffix}`,
         suffix, reasons,
         title: reachedMaj
-          ? `Enough yes votes (${yes} / ${maj}). Merges when the visibility window elapses unless opposed`
-          : `Has support (${yes} / ${maj} yes) and no opposition. Merges when the countdown ends unless more votes arrive` };
+          ? `Enough Yes votes (${yes} / ${maj}). Goes live when the visibility window ends unless someone objects`
+          : `Has support (${yes} / ${maj} yes) and nobody has objected. Goes live when the countdown ends unless more votes come in` };
     }
     const rejectEndsMs = p.reject_window_ends_at ? Date.parse(p.reject_window_ends_at) : NaN;
     if (isOpenRow && p.rejection_armed && Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now()) {
       return { ...base, tier: 4, key: 'reject_countdown', tone: 'blocked', fill: 'full-no', countdown: rejectEndsMs, reject: true,
-        label: `Rejecting in ${AppView._fmtCountdown(rejectEndsMs - Date.now())}`, reasons,
-        title: `More No than Yes and not enough support (${yes} / ${maj}). Closes when this elapses unless support arrives` };
+        label: `Set aside in ${AppView._fmtCountdown(rejectEndsMs - Date.now())}`, reasons,
+        title: `More No than Yes and not much support yet (${yes} / ${maj}). It will be set aside when this runs out unless someone speaks up` };
     }
     // 5 — needs your vote. Absorbs the standalone pulsing "Vote" badge.
     if (p.status === 'promoted' && !p.my_vote && !AppView.readOnly) {
@@ -11394,7 +11394,7 @@ const AppView = {
     //   - lazy consensus: below threshold but Yes strictly leads with no
     //     contest — the proposal auto-merges when the clock ends unless
     //     someone objects (silence is consent).
-    // Render "Merging in ~X" instead of the bare tally so voters see it's
+    // Render "Goes live in ~X" instead of the bare tally so voters see it's
     // on track and how long they have left to object. Only for live (not
     // merged/merging) rows — a settled row never counts down. The
     // `gc-merge-countdown` class + data-window-ends drive the client timer.
@@ -11410,8 +11410,8 @@ const AppView = {
       && !pr.contested && inWindow && (state === 'yes' || lazyLead)) {
       const label = AppView._fmtCountdown(windowEndsMs - Date.now());
       const title = state === 'yes'
-        ? `Enough yes votes (${yes} / ${maj}). Merges when the visibility window elapses unless opposed`
-        : `Has support (${yes} / ${maj} yes) and no opposition. Merges when the countdown ends unless more votes arrive`;
+        ? `Enough Yes votes (${yes} / ${maj}). Goes live when the visibility window ends unless someone objects`
+        : `Has support (${yes} / ${maj} yes) and nobody has objected. Goes live when the countdown ends unless more votes come in`;
       // Below threshold the tally rides along in the label so it's clear
       // the vote is still open and can be swung either way. The suffix is
       // mirrored into data-label-suffix so the 30s ticker preserves it when
@@ -11421,13 +11421,13 @@ const AppView = {
       return `<span class="gc-vote-count gc-vote-count-yes gc-merge-countdown" data-window-ends="${windowEndsMs}"${suffixAttr}`
         + ` title="${title}">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
-        + `<span class="gc-vote-count-label">Merging in ${label}${suffix}</span>`
+        + `<span class="gc-vote-count-label">Goes live in ${label}${suffix}</span>`
         + `</span>` + advisoryChip + explicitChip;
     }
 
     // Rejection (auto-takedown) countdown: the group is voting this down
     // (No > Yes, under the 1/3 support line) and the takedown clock is armed.
-    // Render a red "Rejecting in ~X" pill. Mutually exclusive with the merge
+    // Render a red "Set aside in ~X" pill. Mutually exclusive with the merge
     // countdown above (can't reach the Yes threshold while losing). The
     // `gc-reject-countdown` class + data-window-ends drive the same timer.
     const rejectEndsMs = pr.reject_window_ends_at ? Date.parse(pr.reject_window_ends_at) : NaN;
@@ -11435,9 +11435,9 @@ const AppView = {
     if (isOpenRow && pr.rejection_armed && inReject) {
       const label = AppView._fmtCountdown(rejectEndsMs - Date.now());
       return `<span class="gc-vote-count gc-vote-count-no gc-reject-countdown" data-window-ends="${rejectEndsMs}"`
-        + ` title="More No than Yes and not enough support (${yes} / ${maj}). Closes when this elapses unless support arrives">`
+        + ` title="More No than Yes and not much support yet (${yes} / ${maj}). It will be set aside when this runs out unless someone speaks up">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>`
-        + `<span class="gc-vote-count-label">Rejecting in ${label}</span>`
+        + `<span class="gc-vote-count-label">Set aside in ${label}</span>`
         + `</span>` + advisoryChip + explicitChip;
     }
     // #58: when both at-merge figures are present, surface the historical

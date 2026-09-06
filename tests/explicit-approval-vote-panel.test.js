@@ -97,10 +97,10 @@ test('voteCountPill: a flagged row never renders a merge countdown', () => {
   const AppView = makeAppView();
   // Same row twice — the only difference is the flag.
   const plain = AppView.voteCountPill(lazyRow(), 3);
-  assert.match(plain, /Merging in/, 'precondition: unflagged, this row counts down');
+  assert.match(plain, /Goes live in/, 'precondition: unflagged, this row counts down');
 
   const flagged = AppView.voteCountPill(lazyRow({ requires_explicit_approval: true }), 3);
-  assert.doesNotMatch(flagged, /Merging in/);
+  assert.doesNotMatch(flagged, /Goes live in/);
   assert.doesNotMatch(flagged, /gc-merge-countdown/);
   assert.match(flagged, /1 \/ 3/, 'it falls back to the ordinary tally');
 });
@@ -122,7 +122,7 @@ test('voteCountPill: a flagged row STILL renders the rejection countdown', () =>
     rejection_armed: true, reject_window_ends_at: hoursAhead(9),
     requires_explicit_approval: true,
   }, 3);
-  assert.match(pill, /Rejecting in/);
+  assert.match(pill, /Set aside in/);
   assert.match(pill, /gc-reject-countdown/);
   assert.match(pill, /gc-vote-explicit/, 'the chip rides along');
 });
@@ -132,8 +132,8 @@ test('voteCountPill: a flagged row STILL renders the rejection countdown', () =>
 test('_votingHelpText: default regime, below threshold — no countdown, explains the rule', () => {
   const AppView = makeAppView();
   const s = AppView._votingHelpText(lazyRow({ requires_explicit_approval: true }));
-  assert.doesNotMatch(s, /merges in/i);
-  assert.doesNotMatch(s, /silence counts as agreement/);
+  assert.doesNotMatch(s, /goes live in/i);
+  assert.doesNotMatch(s, /quiet is taken as a nod/i);
   assert.match(s, /needs 3 actual Yes votes/);
   assert.match(s, /won’t merge on a timer/);
 });
@@ -165,7 +165,7 @@ test('_votingHelpText: the rejection countdown sentence still renders when flagg
     rejection_armed: true, reject_window_ends_at: hoursAhead(9),
     check_state: 'passing', requires_explicit_approval: true,
   });
-  assert.match(s, /closes in/);
+  assert.match(s, /set aside in/);
 });
 
 test('_votingHelpText: at-least-N regime keeps its own wording plus the note', () => {
@@ -193,7 +193,7 @@ test('_votingHelpText: invited-approver regime keeps its footnote plus the note'
 test('_votingHelpText: an unflagged row is completely unchanged', () => {
   const AppView = makeAppView();
   const s = AppView._votingHelpText(lazyRow());
-  assert.match(s, /merges in/i, 'the ordinary lazy-consensus copy still appears');
+  assert.match(s, /goes live in/i, 'the ordinary lazy-consensus copy still appears');
   assert.doesNotMatch(s, /won’t merge on a timer/);
 });
 

@@ -53,10 +53,10 @@ export function VotingHelp({ live }: VotingHelpProps) {
             number of Yes votes needed scales with how many active testers there are.
           </li>
           <li>
-            {'A proposal with clear support and no objections merges on its own after a '
-              + 'short visibility window (a few days), so everyone has a chance to look: '}
-            <strong>silence counts as agreement</strong>
-            .
+            {'A proposal with clear support and no objections goes live on its own after a '
+              + 'short visibility window (a few days), so everyone has a chance to look. '}
+            <strong>Quiet is taken as a nod</strong>
+            , so speak up if something bothers you.
           </li>
           <li>
             The more support a proposal has, the shorter the wait. A clear majority
@@ -68,14 +68,15 @@ export function VotingHelp({ live }: VotingHelpProps) {
               + 'needed and lengthen the wait.'}
           </li>
           <li>
-            {'If enough people vote No, the proposal becomes '}
-            <strong>Contested</strong>
-            {'. The time-based path turns off and it needs a straight majority of Yes '
-              + 'votes to merge.'}
+            {'If enough people vote No, the proposal '}
+            <strong>needs a conversation</strong>
+            {'. The timer turns off and it needs a straight majority of Yes votes to go '
+              + 'live, so talk it through.'}
           </li>
           <li>
-            A proposal that’s being voted down with little support is closed
-            automatically after a countdown (“Rejecting in …”).
+            A proposal with more No than Yes and little support is set aside after a
+            countdown (“Set aside in …”). Nothing is lost: it can come back as a new
+            proposal.
           </li>
           <li>
             {'Even after winning the vote, a proposal only merges once its '}
