@@ -2761,6 +2761,12 @@ const AppView = {
       };
     }
 
+    // The topic page's card is the board card at full width: the GitHub link
+    // rides at the end of its meta line, its state is the bar (not the
+    // capsule), and the detail actions join its one action line.
+    AppView._topicCard(card, t.kind, item, body);
+    body.aboutTitle = { issue: 'About this issue', proposal: 'About this change', session: 'About this session', gov: 'About this proposal' }[t.kind] || 'About';
+
     const react = AppView._reactDevBoard();
     if (react) {
       // Mounted per paint, into the host the thread panel owns. The store
@@ -2813,6 +2819,34 @@ const AppView = {
   //
   // Read-only viewers are NOT filtered here: that gate lives in
   // _exploreChatBtnHtml (#621), so it stays in exactly one place.
+  // Shape a card model for the topic head (round three): the GitHub link as
+  // the meta line's last word, the state as a bar rather than the capsule,
+  // and the detail actions merged onto the card's own band — the labelled
+  // Preview, Explore, kudos, and the issue's claim toggle. Anything the ⋯
+  // already carries (Open session, Withdraw, Generate proposal, Pledge
+  // kudos, Propose to close) is not repeated as a pill.
+  _topicCard(card, kind, item, body) {
+    if (!card || !item) return card;
+    const gh = kind === 'issue' ? item.htmlUrl : item.pr_url;
+    if (gh) {
+      card.meta = [...(card.meta || []), {
+        t: 'link', href: gh, s: 'GitHub ↗', cls: 'dev-topic-gh',
+        title: kind === 'issue' ? 'Open this issue on GitHub' : 'Open this pull request on GitHub',
+      }];
+    }
+    if (card.pill) card.pill = { ...card.pill, inline: false };
+    const pills = (body && body.actions && Array.isArray(body.actions.pills)) ? body.actions.pills : [];
+    const keep = pills.filter((p) => p.preview || p.explore != null || p.kudos != null
+      || p.key === 'claim' || p.key === 'promote');
+    const have = new Set((card.actions || []).map((a) => (a.act && a.act.fn) || (a.kudos != null ? 'kudos' : null)));
+    card.actionPreview = null;
+    card.actions = [
+      ...(card.actions || []),
+      ...keep.filter((p) => !(p.act && have.has(p.act.fn)) && !(p.kudos != null && have.has('kudos'))),
+    ];
+    return card;
+  },
+
   _showExplorePill(pr) {
     if (!pr) return false;
     if (pr.kind || pr.row_type === 'close_issue') return false;
@@ -2962,8 +2996,10 @@ const AppView = {
     let visuals = null;
     if (kind === 'proposal' || (kind === 'session' && item.source === 'imported')) {
       const tilesHtml = AppView.visualsTilesHtml(item.visuals);
+      // Open: the tiles are the About sheet's before/after row now, not a
+      // toggle behind a button.
       if (tilesHtml) {
-        visuals = { sessionId: item.id, open: AppView._visualsOpen.has(item.id), tilesHtml };
+        visuals = { sessionId: item.id, open: true, tilesHtml };
       }
     }
 
@@ -6634,8 +6670,9 @@ const AppView = {
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
       ? (s) => DevChat.renderMarkdown(s, { images: true })
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    // No box of its own: the About sheet is the box (topic/topic-head.tsx).
     return issue && issue.body && issue.body.trim()
-      ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(issue.body)}</div>`
+      ? `<div class="dev-issue-body">${renderMd(issue.body)}</div>`
       : '';
   },
 
@@ -6924,7 +6961,7 @@ const AppView = {
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
       ? (s) => DevChat.renderMarkdown(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
-    return `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(md)}</div>`;
+    return `<div class="dev-issue-body">${renderMd(md)}</div>`;
   },
 
   // The complete GitHub PR description is deliberately quieter than the
@@ -7406,7 +7443,7 @@ const AppView = {
     // under the roster is the discoverable text entry point. Both carry
     // data-voting-help and open the same popover (see _attrInit →
     // _openVotingHelpPopover), reading the current topic item live.
-    return {
+    const details = {
       meta,
       help: showHelp,
       notes,
@@ -7421,6 +7458,108 @@ const AppView = {
         ? 'App is locked, so it also needs at least one admin yes before it merges.'
         : null,
     };
+    details.ledger = AppView._topicLedgerRows(pr, details);
+    return details;
+  },
+
+  // ── The "Where it stands" ledger ─────────────────────────────────────
+  // One row per fact, built from the SAME material the four boxes used to
+  // draw from — blockReasons, the checks verdict or its status note, the
+  // conflict / mergeability / platform-variable notes, the vote roster and
+  // the provenance notes — so nothing about what a state means moved; only
+  // where it is said. Each row's `key` is its data-note.
+  TOPIC_LEDGER_LABELS: {
+    conflict: 'Conflicts with main',
+    mergeability: 'Conflicts with main',
+    checks: 'Checks',
+    env: 'Platform variables',
+    console: 'Console errors',
+    imported: 'Imported',
+    agent: 'Built with',
+    preview: 'Preview',
+  },
+  _topicLedgerRows(pr, d) {
+    const rows = [];
+    const labels = AppView.TOPIC_LEDGER_LABELS;
+    const toneOf = (t) => (t === 'error' ? 'bad' : (t === 'warn' ? 'warn' : (t === 'ok' ? 'ok' : 'mute')));
+    const strip = (h) => String(h || '').replace(/^[⚠✓]\s*/, '');
+    const fromBox = (box) => {
+      const row = {
+        key: box.key, tone: toneOf(box.tone), spinner: !!box.spinner,
+        label: labels[box.key] || strip(box.heading),
+        text: labels[box.key] ? [strip(box.heading)] : [],
+        foot: [], list: null, actions: box.action ? [box.action] : [],
+      };
+      for (const r of box.rows || []) {
+        if (r.t === 'list') row.list = (row.list || []).concat(r.items || []);
+        else if (!row.text.length) row.text = r.parts;
+        else row.foot.push(r.parts);
+      }
+      return row;
+    };
+    const fromVerdict = (v) => {
+      const total = v.failures.length + v.passes.length;
+      const row = {
+        key: 'checks', tone: v.failing ? 'bad' : 'ok', label: 'Checks',
+        sub: v.failing
+          ? `${v.failures.length} of ${total} failing`
+          : `${total} passed`,
+        text: [strip(v.heading)],
+        foot: [v.advisoryNote, v.checkedNote, v.baseNote, v.fixNote].filter(Boolean).map((n) => [n]),
+        fails: v.failures, passes: v.passes,
+        actions: v.action ? [v.action] : [],
+      };
+      if (v.baseNote) row.attrs = { 'data-checks-base': 'superseded' };
+      return row;
+    };
+    for (const b of d.blocks || []) rows.push(b.t === 'checks' ? fromVerdict(b.v) : fromBox(b.box));
+
+    // Reasons the boxes above do not already say — "Behind main" is the
+    // common one; it never had a box, only the pill and the reasons list.
+    const covered = new Set(rows.map((r) => r.key));
+    const saidByBox = {
+      checks_failing: 'checks', preview_failed: 'checks', checks_base_superseded: 'checks',
+      mergeability_conflict: 'mergeability', merge_conflict: 'conflict', conflict_failed: 'conflict',
+      console_errors: 'console',
+    };
+    for (const r of AppView.blockReasons(pr)) {
+      const by = saidByBox[r.key];
+      if (by && covered.has(by)) continue;
+      const [label, count] = String(r.label || '').split(' · ');
+      const n = count ? parseInt(count, 10) : NaN;
+      rows.push({
+        key: r.key, tone: r.soft ? 'warn' : 'bad',
+        label: label || r.key,
+        sub: r.key === 'behind' && Number.isFinite(n)
+          ? `${n} commit${n === 1 ? '' : 's'}`
+          : (count || null),
+        text: [r.detail], foot: [],
+      });
+    }
+
+    if (d.roster) {
+      const ctx = AppView._proposalsCtx || {};
+      const yes = pr.qualified_yes_count != null
+        ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
+      const snap = parseInt(pr.votes_required);
+      const req = (Number.isFinite(snap) && snap > 0) ? snap : (parseInt(ctx.majority) || 1);
+      // No count under the label: the roster line says what it needs, in
+      // the wording the approval policy chooses, and a second count from a
+      // different field beside it would only ever be a contradiction.
+      rows.push({
+        key: 'votes', tone: yes >= req ? 'ok' : 'vote', label: 'Votes',
+        text: [], roster: d.roster, foot: [],
+        warnFoot: [d.explicitNote, d.lockedNote].filter(Boolean).map((n) => [n]),
+      });
+    }
+
+    for (const n of d.notes || []) {
+      rows.push({
+        key: n.key, tone: n.tone === 'warn' ? 'warn' : 'mute',
+        label: labels[n.key] || 'Note', text: n.parts, foot: [],
+      });
+    }
+    return rows;
   },
 
   // ── "How voting works" explainer ────────────────────────────────────
