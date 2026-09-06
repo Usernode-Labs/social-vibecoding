@@ -438,12 +438,12 @@ test('proposal card: the vote is ONE button beside the bar, with Explore in the 
   assertCardActionContract(AppView, html, { primary: 1, menu: true });
 });
 
-test('the detail head keeps its Yes/No pills — it has the width', () => {
+test('the detail head takes the same one vote button (topic page, round three)', () => {
   const AppView = makeAppView(ME);
   const html = cardHtml(AppView._proposalCardModel(baseProposal(), { noNav: true }));
-  assert.match(html, /gc-vote-btn-yes/);
-  assert.match(html, /gc-vote-btn-no/);
-  assert.doesNotMatch(html, /dev-vote-btn/);
+  assert.doesNotMatch(html, /gc-vote-btn-yes|gc-vote-btn-no/);
+  assert.match(html, /class="dev-vote-btn" data-vote-btn="open"/);
+  assert.match(html, /dev-card-topic/, 'and wears the topic card class the shared rules dress');
 });
 
 test('proposal card: read-only viewer keeps the icon Preview and loses Yes/No', () => {
