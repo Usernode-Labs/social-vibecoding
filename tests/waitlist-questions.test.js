@@ -168,7 +168,7 @@ test('stage 2 validates enum keys in every section', () => {
   assert.equal(ok.value.loss.had, 'yes');
 });
 
-test('stage 2 shapes handles and no longer accepts typed invites', () => {
+test('stage 2 shapes handles and drops the three retired keys', () => {
   const r = q.validateStage2({
     farcaster: '@fc',
     discord: 'disc',
@@ -186,7 +186,10 @@ test('stage 2 shapes handles and no longer accepts typed invites', () => {
   // sending `invites` gets a NORMAL save with the key dropped — not a
   // validation error somebody would have to debug.
   assert.equal(r.value.invites, undefined);
-  assert.equal(r.value.admit_together, true);
+  // `admit_together` (#1534) is retired the same way. No admission path
+  // ever read it, so it went out with the checkbox, and a stale client
+  // still sending it gets the same normal save with the key dropped.
+  assert.equal(r.value.admit_together, undefined);
   // `referrer_handle` went the same way on 27 Aug 2026, and for the same
   // reason the stage-1 copy did: the invite link records the relationship
   // as a row reference, so a typed handle was a claim nobody could resolve.
