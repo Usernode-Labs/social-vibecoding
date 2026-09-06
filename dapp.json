@@ -656,7 +656,7 @@
     },
     {
       "name": "Proposal page, round three: the topic card (bar + one vote button), the ledger (checks, votes) and About are sheets on the strip",
-      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000044",
       "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic[data-edge] .dev-card-badges > .dev-status-pill-block + .dev-vote-btn[aria-haspopup=\"menu\"]) + .dev-topic-ledger:has(.dev-ledger-row[data-note=\"checks\"] ~ .dev-ledger-row[data-note=\"votes\"] .dev-ledger-roster) + .dev-topic-about"
     },
     {
