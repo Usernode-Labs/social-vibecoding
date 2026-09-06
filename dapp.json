@@ -1023,9 +1023,9 @@
     },
     {
       "name": "Issue cards keep ONE primary action; the claim moves into the ⋯ menu",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "Create proposal",
-      "expectSelector": "#dev-kanban-col-issues .gc-vote-item [data-card-menu], #dev-workshop .gc-vote-item [data-card-menu]"
+      "expectSelector": "#dev-kanban-col-issues .gc-vote-item [data-card-menu]"
     },
     {
       "name": "Session/proposal cards render reverse #N issue chips",
