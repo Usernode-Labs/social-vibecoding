@@ -51,7 +51,7 @@ export interface GeneralChatProps {
 
 export function GeneralChat({ introAppName, readOnly, maxLength }: GeneralChatProps) {
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-session">
       <div className="gc-tab-body flex-1 flex min-h-0">
         <div className="gc-chat-pane flex-1 flex flex-col min-h-0">
           {/*
@@ -60,7 +60,7 @@ export function GeneralChat({ introAppName, readOnly, maxLength }: GeneralChatPr
               be clutter.
           */}
           {introAppName ? (
-            <div className="mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs text-zinc-600 dark:text-zinc-300">
+            <div className="mx-3 mt-3 px-4 py-3 rounded-2xl bg-violet-500/10 text-[15px] leading-snug text-zinc-700 dark:text-zinc-200">
               {'This is where everyone using '}
               <span className="font-medium">{introAppName}</span>
               {' talks and votes on proposed changes to it.'}
@@ -78,7 +78,7 @@ export function GeneralChat({ introAppName, readOnly, maxLength }: GeneralChatPr
               sits inside the bar here rather than replacing it the way the
               thread panel's does.
           */}
-          <div className={`shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 ${SAFE_BAR}`}>
+          <div className={`shrink-0 px-3 pt-1 pb-2 ${SAFE_BAR}`}>
             {readOnly ? (
               <div className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center">
                 You&#39;re viewing this app&#39;s dev space read-only. Only collaborators can post.

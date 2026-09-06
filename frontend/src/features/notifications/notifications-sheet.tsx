@@ -69,7 +69,10 @@
 
 import { useState, type ReactNode } from 'react';
 
+import { IconTile } from '@/components/ui/icon-tile';
 import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
+
+import { swatchFor } from '../messages/format';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
@@ -114,22 +117,36 @@ function startOfToday(): number {
   return d.getTime();
 }
 
+/**
+ * The row's leading mark, in the language's two shapes: a conversation is
+ * a PERSON speaking, so it gets the square swatch avatar Messages uses
+ * (the same colour for the same handle); everything else is an EVENT, so
+ * it gets the neutral glyph tile with the kind's icon.
+ */
 function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
-  const initial = (view.who || '?').replace(/^@/, '').charAt(0).toUpperCase() || '?';
+  const who = (view.who || '?').replace(/^@/, '');
+  const initial = who.charAt(0).toUpperCase() || '?';
+  if (view.conversation) {
+    return (
+      <span
+        aria-hidden="true"
+        className="w-11 h-11 shrink-0 rounded-xl text-white flex items-center justify-center text-[17px] font-bold"
+        style={{ backgroundColor: swatchFor(who) }}
+      >
+        {initial}
+      </span>
+    );
+  }
   return (
-    <span
-      aria-hidden="true"
-      className={'w-8 h-8 shrink-0 rounded-full bg-violet-500/10 text-violet-500 '
-        + 'flex items-center justify-center text-sm font-semibold'}
-    >
+    <IconTile size="sm" aria-hidden="true" className="text-[20px]">
       {view.icon || initial}
-    </span>
+    </IconTile>
   );
 }
 
 function SectionHead({ children }: { children: ReactNode }): ReactNode {
   return (
-    <div className="px-4 pt-4 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+    <div className="px-4 pt-4 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
       {children}
     </div>
   );
@@ -139,8 +156,8 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
   return (
     <button
       data-notif-id={view.id}
-      className={'w-full text-left px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 '
-        + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors flex items-center gap-3'}
+      className={'notifications-row w-full text-left px-4 py-3.5 '
+        + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
       onClick={(event) => {
         event.stopPropagation();
         controller()?._onItemClick(view.id);
@@ -158,23 +175,23 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
             entirely its own label) renders on the SUBJECT's line instead: a
             heading over nothing is worse than either line alone. */}
         {view.segments.length ? (
-          <span className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 truncate">
+          <span className="block text-[15px] text-zinc-500 dark:text-zinc-400 truncate">
             {view.label}
           </span>
         ) : null}
         {/* WHICH ONE — the PR's title, the conversation, the message. The
             row's own content, and the only line whose text differs between
             two notifications of the same kind, so it carries the strong ink. */}
-        <span className="block text-sm text-zinc-900 dark:text-zinc-100 truncate">
+        <span className="block text-[17px] font-bold text-zinc-900 dark:text-zinc-100 truncate">
           {view.segments.length ? view.segments.map((segment, index) => (
             // eslint-disable-next-line react/no-array-index-key
             <span
               key={index}
               className={segment.t === 'who'
-                ? 'font-semibold'
+                ? 'font-bold'
                 : segment.t === 'strong'
-                  ? 'font-medium'
-                  : 'text-zinc-700 dark:text-zinc-300'}
+                  ? 'font-semibold'
+                  : 'font-normal text-zinc-700 dark:text-zinc-300'}
             >
               {(index > 0 ? ' ' : '') + (segment.t === 'who' ? `@${segment.v}` : segment.v)}
             </span>
@@ -186,7 +203,7 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
             rowView in ./notifications.js. `by` is absent on a system row
             (nobody did it) and on the two key rows (the name there is the
             subject). */}
-        <span className="block text-xs text-zinc-500 truncate">
+        <span className="block text-[15px] text-zinc-500 truncate">
           {[view.appLine, view.by ? `by @${view.by}` : null, view.time]
             .filter(Boolean).join(' · ')}
         </span>
@@ -199,10 +216,10 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
       */}
       {view.count && view.count > 1 ? (
         <span
-          className={'shrink-0 min-w-[1.25rem] px-1.5 h-5 rounded-full text-[0.65rem] font-semibold '
+          className={'shrink-0 min-w-[1.5rem] px-2 h-6 rounded-full text-[13px] font-bold '
             + 'flex items-center justify-center '
             + (view.unread
-              ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400'
+              ? 'bg-violet-600 text-white'
               : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400')}
           aria-label={`${view.count} notifications`}
         >
@@ -210,10 +227,10 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
         </span>
       ) : null}
       {view.unread ? (
-        <span className="w-2 h-2 shrink-0 rounded-full bg-violet-500" aria-label="Unread">
+        <span className="w-2 h-2 shrink-0 rounded-full bg-zinc-900 dark:bg-zinc-100" aria-label="Unread">
         </span>
       ) : null}
-      <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
+      <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-300 dark:text-zinc-600" />
     </button>
   );
 }
@@ -267,11 +284,13 @@ export function NotificationsSheetView() {
   // row inside a phone-width sheet, so the count wrapped onto a second line
   // and the tab grew a line taller than its neighbours. The label is a label —
   // it does not wrap, it just takes the width it needs.
+  // The chip rail (see @/components/ui/chip.tsx for the idiom): selection
+  // is the language's solid inversion, not an underline or the accent.
   const tabCls = (active: boolean) =>
-    'shrink-0 whitespace-nowrap px-1 pb-2 text-sm font-medium border-b-2 transition-colors '
+    'shrink-0 whitespace-nowrap h-9 px-4 rounded-full text-[15px] font-semibold transition-colors '
     + (active
-      ? 'border-violet-500 text-zinc-900 dark:text-zinc-100'
-      : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300');
+      ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+      : 'bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800');
 
   return (
     <>
@@ -291,13 +310,47 @@ export function NotificationsSheetView() {
         aria-label="Notifications"
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
-        className={'fixed z-50 flex flex-col bg-white dark:bg-zinc-900 '
-          + 'border-zinc-200 dark:border-zinc-700 shadow-2xl nav-sheet-transition'}
+        className={'fixed z-50 flex flex-col dc-lift dc-lift-session nav-sheet-transition'}
       >
+      {/*
+          THE SHEET IS THE FROSTED PLANE — the same `.dc-lift-session` a dev
+          session and a Messages thread rise on — with a title row of its own:
+          the name, Mark all read as a small pill (only on Unread, the tab
+          whose list it empties), and the close disc. The tabs under it are
+          the chip rail.
+      */}
+      <div className="flex items-center gap-2 px-4 pt-4 pb-1 shrink-0">
+        <h2 className="flex-1 min-w-0 truncate text-[22px] font-bold text-zinc-900 dark:text-zinc-100">
+          Notifications
+        </h2>
+        {tab === 'unread' ? (
+          <button
+            id="notifications-screen-mark-all"
+            type="button"
+            className={'inline-flex items-center h-8 px-3 rounded-full text-[14px] font-semibold '
+              + 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 '
+              + 'disabled:opacity-40 disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800 un-touch-target'}
+            disabled={!unread.length}
+            onClick={() => controller()?.markAllRead()}
+          >
+            Mark all read
+          </button>
+        ) : null}
+        <button
+          id="notifications-sheet-close"
+          type="button"
+          className={'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm '
+            + 'hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 un-touch-target'}
+          aria-label="Close"
+          onClick={() => NotificationsSheet.close()}
+        >
+          <XIcon className="w-5 h-5" />
+        </button>
+      </div>
       <div
         id="notifications-screen-tabs"
-        className={'sticky top-0 z-10 bg-white dark:bg-zinc-900 flex items-end gap-4 px-5 pt-4 '
-          + 'border-b border-zinc-200 dark:border-zinc-800 shrink-0'}
+        className={'flex gap-2 px-4 pt-1 pb-2 shrink-0 overflow-x-auto '
+          + '[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
         role="tablist"
         aria-label="Notification filters"
       >
@@ -336,18 +389,6 @@ export function NotificationsSheetView() {
         >
           All
         </button>
-        <span className="flex-1">
-        </span>
-        <button
-          id="notifications-sheet-close"
-          type="button"
-          className={'pb-2 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 '
-            + 'dark:hover:text-zinc-200 un-touch-target'}
-          aria-label="Close"
-          onClick={() => NotificationsSheet.close()}
-        >
-          <XIcon className="w-5 h-5" />
-        </button>
       </div>
       {/* The sheet's own scroller. The screen root used to be the scroller;
           a sheet's head has to stay put while its rows move, so the rows get
@@ -362,7 +403,7 @@ export function NotificationsSheetView() {
       {/*
           The Messages tab is a messages-only view, so Saved and Invites step
           aside on it — they are neither, and between them they can hold the
-          top ~384px of the sheet (each is `max-h-48`), which is most of a
+          top ~450px of the sheet (`max-h-64` and `max-h-48`), which is most of a
           phone's first screen.
           
           In their place, the way OUT: this tab lists the conversations that
@@ -374,40 +415,28 @@ export function NotificationsSheetView() {
           follows for every row that routes).
       */}
       {/*
-          "Mark all read", under the tab whose list it empties.
+          "Mark all read" lives in the title row above (see the comment on
+          the sheet root), as a small pill between the name and the close
+          disc.
 
-          It used to sit at the far right of the tab row, in tab-sized ink on
+          It once sat at the far right of the tab row, in tab-sized ink on
           the same baseline as All / Unread / Messages, which made a control
-          that CHANGES data look like a fourth place to go. Here it is
-          unmistakably an action on the list below it — and it exists only on
-          Unread, because "mark all read" while looking at All or at Messages
-          is an offer to act on rows you are not being shown.
-
-          Rendered even with nothing unread (disabled), so the strip does not
-          reflow the first time you clear the list.
+          that CHANGES data look like a fourth place to go; then under the
+          rail as a text button. The title-row pill keeps the point of both
+          moves — it shares no baseline and no shape with the chips, so it
+          cannot be read as a tab — and it still exists only on Unread,
+          because "mark all read" while looking at All or at Messages is an
+          offer to act on rows you are not being shown. It is rendered even
+          with nothing unread (disabled), so the row does not reflow the
+          first time you clear the list.
       */}
-      {tab === 'unread' ? (
-        <div className="flex justify-end px-4 pt-2">
-          <button
-            id="notifications-screen-mark-all"
-            type="button"
-            className={'inline-flex items-center h-7 px-3 rounded-full text-xs font-medium '
-              + 'text-violet-600 hover:bg-violet-500/10 dark:text-violet-400 '
-              + 'disabled:opacity-40 disabled:hover:bg-transparent un-touch-target'}
-            disabled={!unread.length}
-            onClick={() => controller()?.markAllRead()}
-          >
-            Mark all read
-          </button>
-        </div>
-      ) : null}
       {tab === 'messages' ? (
         <button
           id="notifications-all-messages"
           type="button"
-          className={'w-full text-left px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 '
-            + 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors flex items-center gap-3 '
-            + 'text-sm font-medium text-violet-600 dark:text-violet-400'}
+          className={'notifications-row w-full text-left px-4 py-3.5 '
+            + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4 '
+            + 'text-[17px] font-bold text-violet-700 dark:text-violet-400'}
           onClick={(event) => {
             event.stopPropagation();
             NotificationsSheet.close();
@@ -442,7 +471,7 @@ export function NotificationsSheetView() {
         </>
       ) : null}
       {!rows.length ? (
-        <p className="px-4 py-8 text-sm text-zinc-500 text-center">
+        <p className="px-4 py-8 text-[15px] text-zinc-500 text-center">
           {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
         </p>
       ) : null}
@@ -475,7 +504,7 @@ export function NotificationsSheetView() {
           <button
             id="notifications-see-older-messages"
             type="button"
-            className="w-full text-center text-xs text-violet-500 hover:underline disabled:opacity-40"
+            className="w-full text-center text-[15px] font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
             disabled={snap.loadingOlderMessages}
             onClick={() => controller()?.loadOlderMessages()}
           >
@@ -487,7 +516,7 @@ export function NotificationsSheetView() {
           <button
             id="notifications-see-older"
             type="button"
-            className="w-full text-center text-xs text-violet-500 hover:underline"
+            className="w-full text-center text-[15px] font-semibold text-violet-700 dark:text-violet-400 hover:underline"
             onClick={() => setTab('all')}
           >
             See older notifications
@@ -498,7 +527,7 @@ export function NotificationsSheetView() {
           <button
             id="notifications-load-older"
             type="button"
-            className="w-full text-center text-xs text-violet-500 hover:underline disabled:opacity-40"
+            className="w-full text-center text-[15px] font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
             disabled={snap.loadingMore}
             onClick={() => controller()?.loadOlder()}
           >

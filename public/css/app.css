@@ -1715,7 +1715,7 @@ html, body {
    rule below sets those four values; everything else — the zoom surface,
    the cleared bar, the launch cover, the landing root — follows through
    the same custom properties in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #f4f2e4;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -1742,7 +1742,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
     radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
   background: var(--home-wallpaper);
 }
-.dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) {
+.dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
@@ -1780,7 +1780,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    at every width on its own — the second rule here gives dark the same
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-wallpaper:
       var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
@@ -1792,7 +1792,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(252, 219, 212, 0.7), rgba(252, 219, 212, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(229, 216, 239, 0.55), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
   }
-  .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) {
+  .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-wallpaper:
       var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
@@ -1818,7 +1818,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
 /* THE CANVAS UNDER THE PUSH is the ground too — <html>'s own background,
@@ -1831,7 +1831,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    value, so the browser chrome and a cold launch frame the page in it.
    The launch cover reads the same ground, so the app opens on the page's
    colour in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) .app-launch-cover {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
   background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
@@ -1840,7 +1840,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    wallpaper never showed through it. It takes the same shorthand the body
    paints — inherited from the body's rule, which is on because this root
    is showing — in both modes. */
-#auth-landing-screen {
+#auth-landing-screen,
+#auth-login-screen,
+#auth-register-screen,
+#auth-waiting-screen,
+#auth-waitlist-screen,
+#auth-more-screen {
   background: var(--home-wallpaper);
 }
 
@@ -7169,6 +7174,154 @@ span.gc-vote-btn-icon { cursor: default; }
 .dc-session-body { /* row layout for chat + viewer */
   flex-direction: row;
 }
+
+/* ── Settings on the ladder ─────────────────────────────────────────────
+   #settings-screen is the strip and #settings-section-content the sheet
+   (features/settings/index.tsx). The sheet carries its own inset and the
+   12px of strip shoulder above it; the sections inside keep the reading
+   width they had (`max-w-xl`) so a form does not stretch across a wide
+   sheet. The headings step up to the language's sizes here rather than in
+   eighteen section files. */
+.settings-sheet {
+  margin-top: 12px;
+  padding: 10px 20px 32px;
+  min-height: 60vh;
+}
+.settings-sheet > [data-settings-section] { max-width: 40rem; }
+.settings-sheet h3 {
+  font-size: 22px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  margin-bottom: 4px;
+}
+.settings-sheet h3 + p { font-size: 15px; line-height: 1.35; margin-bottom: 14px; }
+/* The AI-credit row (features/header/ai-budget.tsx) is one row of the
+   API-key card here, not the boxed pill it is in the header pane: its own
+   fill, hairline and padding come off inside the sheet, and its type steps
+   up to the card's 17/15px. */
+.settings-sheet #drawer-row-ai-budget {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.5;
+}
+.settings-sheet #drawer-row-ai-budget > span:first-child { font-weight: 400; }
+.settings-sheet #drawer-row-ai-budget .drawer-meter { font-size: 15px; font-family: inherit; letter-spacing: 0; }
+@media (max-width: 767px) {
+  #settings-mobile-menu-host { padding: 4px 0 0; }
+}
+
+/* ── The bell's sheet on the ladder ─────────────────────────────────────
+   #notifications-sheet wears `.dc-lift-session` (features/notifications/
+   notifications-sheet.tsx). The geometry rules further down keep their
+   dock and slide; this only restates the corners and the hairline the
+   lift gives it, since those rules set a smaller radius and a bare
+   border-width after the lift's own. The rows separate with the grouped
+   list's inset hairline. */
+#notifications-sheet { border-color: var(--app-sheet-line); }
+@media (min-width: 640px) {
+  #notifications-sheet {
+    border-radius: 1.75rem 0 0 0 !important;
+    border-left: 1px solid var(--app-sheet-line);
+  }
+}
+@media (max-width: 639px) {
+  #notifications-sheet {
+    border-top-left-radius: 1.75rem !important;
+    border-top-right-radius: 1.75rem !important;
+  }
+}
+.notifications-row { position: relative; }
+.notifications-row:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 4.75rem;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--border-light);
+  pointer-events: none;
+}
+.dark .notifications-row:not(:last-child)::after { background: rgba(255, 255, 255, 0.08); }
+
+/* ── The dev area on the ladder, and the shared composer card ───────────
+   The board column is the STRIP and a topic or the Discussion is the SHEET
+   (features/dev-board/board-frame.tsx, topic-frame.tsx, chat-frame.tsx,
+   group-chat/thread-shell.tsx, general-chat.tsx), through the same three
+   lift classes the session view below wears. What this block adds is the
+   composer card those two sheets end in — the card Messages draws
+   (.messages-composer-card above), restated here for the group-chat
+   composer's own class names because features/group-chat/composer.tsx is
+   the one component serving both. */
+/* The two sheet hosts: a column with the strip's 12px shoulder above the
+   sheet that is mounted into them. Padding on the HOST rather than a margin
+   on the sheet, so the sheet's `h-full` still fits. */
+#dev-topic-thread,
+#dev-chat-body {
+  display: flex;
+  flex-direction: column;
+  padding-top: 12px;
+}
+#dev-topic-thread > .dev-thread,
+#dev-chat-body > .dc-lift { min-height: 0; }
+
+.gc-composer-card {
+  border-radius: 22px;
+  padding: 8px 8px 8px 12px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.dark .gc-composer-card { background: var(--dc-raised); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
+.gc-composer-card .gc-composer-input {
+  min-height: 40px;
+  max-height: 140px;
+}
+.gc-composer-card .gc-composer-input::placeholder { color: var(--text-faint); }
+.gc-composer-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  color: var(--text-secondary);
+  transition: background 150ms;
+}
+.gc-composer-glyph svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.gc-composer-glyph:hover { background: var(--bg-secondary); }
+.gc-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  transition: background 150ms;
+}
+.gc-send svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.gc-send:hover { background: var(--accent-light); }
+.gc-send:disabled { opacity: .35; }
 
 /* ── The dev chat's three-layer lift ──────────────────────
    The move a running app already makes, repeated once per layer. A

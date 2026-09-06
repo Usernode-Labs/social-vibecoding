@@ -251,7 +251,14 @@ export function DevBoardFrame({
   const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
   const bodyInitial = useBodyInitial();
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
+      {/*
+          THE BOARD IS THE STRIP. The dev area is drawn on the lift ladder the
+          session view already uses (`.dc-lift` in app.css): this column is
+          the frosted strip on the wallpaper, and a topic or the Discussion
+          opens as the sheet rising on it (./topic-frame.tsx, ./chat-frame.tsx).
+          Nothing inside the column changes.
+      */}
       {/*
           THE "DEV" SUB-HEADER ROW IS GONE (#1367 follow-up).
 
