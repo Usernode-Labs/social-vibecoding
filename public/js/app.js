@@ -605,13 +605,22 @@ const App = {
     // signed-in user who has platform access — which every capture and
     // proposal-check session is — so without this the screen is reachable
     // by a real recipient and by nothing that photographs or checks it.
+    // `waitlist-step1` and `waitlist-code-entry` are the two halves of the
+    // returning-user path: the join form carrying the "Already joined?"
+    // link, and the confirm step reached through it, which is the only
+    // state that asks which address the code belongs to. Both need the
+    // anonymous boot for the same reason waitlist-more does: restoreFromHash
+    // drops an auth route outright for the signed-in session every capture
+    // and proposal check runs as.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
+        shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'password-recovery' && shot !== 'password-recovery-sent') {
       return false;
     }
-    if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed') &&
+    if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
+         || shot === 'waitlist-step1' || shot === 'waitlist-code-entry') &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }

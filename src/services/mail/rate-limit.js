@@ -29,6 +29,16 @@ const RULES = {
   // Joining is idempotent by email: a second confirmation the same day
   // carries no new information, and the mail is the same words.
   waitlist_joined: { minGapMs: DAY_MS, perWindow: 1, windowMs: DAY_MS },
+  // A code the recipient ASKED for again, from the resend endpoint or an
+  // idempotent re-join. It cannot share waitlist_joined's rule — one per
+  // address per day is exactly the thing being worked around, and the
+  // second send of the day would be recorded suppressed_rate_limit and
+  // silently dropped. The minute gap collapses a double-tap and is what
+  // the endpoint's advertised cooldown corresponds to; five a day is the
+  // per-address ceiling, generous for somebody genuinely chasing a code
+  // through a spam folder and small enough that the platform can never be
+  // the amplifier in a mail bomb.
+  waitlist_code: { minGapMs: 60 * 1000, perWindow: 5, windowMs: DAY_MS },
   // Released once per signup by construction (newly_released), so this is
   // a backstop against a stuck admin button, not a normal path.
   waitlist_released: { minGapMs: 60 * 1000, perWindow: 3, windowMs: DAY_MS },
