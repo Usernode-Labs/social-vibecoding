@@ -660,10 +660,15 @@
       "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic[data-edge] .dev-card-badges > .dev-status-pill-block + .dev-vote-btn[aria-haspopup=\"menu\"]) + .dev-topic-ledger:has(.dev-ledger-row[data-note=\"checks\"] ~ .dev-ledger-row[data-note=\"votes\"] .dev-ledger-roster) + .dev-topic-about"
     },
     {
-      "name": "Issue page, round three: GitHub ends the meta line, the actions are one line on the card, and GitHub comments are tagged bubbles in the Discussion sheet",
+      "name": "Issue page, round three: GitHub ends the meta line and the actions are one line on the card",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "#gc-thread-head .dev-topic:has(.dev-card-topic .dev-card-meta:has(a.dev-topic-gh) + .dev-card-badges ~ .gc-card-actions > .gc-vote-btn[data-act=\"createPrForIssue\"]) > #dev-issue-comments.dev-topic-comments .dev-issue-comment.dev-feed-msg .dev-feed-msg-bubble .dev-topic-gh-tag",
+      "expectSelector": "#gc-thread-head .dev-topic .dev-card-topic .dev-card-meta:has(a.dev-topic-gh) + .dev-card-badges ~ .gc-card-actions > .gc-vote-btn[data-act=\"createPrForIssue\"]",
       "expectText": "Claim this issue"
+    },
+    {
+      "name": "Issue page, round three: GitHub comments are tagged bubbles in the Discussion sheet",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#gc-thread-head .dev-topic > #dev-issue-comments.dev-topic-comments .dev-issue-comment.dev-feed-msg .dev-feed-msg-bubble .dev-topic-gh-tag"
     },
     {
       "name": "Dev board, round three: the vote is one button beside the state bar, with a picker",
