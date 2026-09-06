@@ -172,11 +172,11 @@ test('shared card: single-row shell; noNav drops nav, chevron and the actions ro
   const nav = sharedSessionCardHtml(AppView, s);
   assert.match(nav, /data-shared-session-row="71"/);
   assert.ok(nav.includes(SHELL), 'uses the standard single-row card shell');
-  // The preview eye is no longer a pill in the action band: it is the bottom
-  // of the card's right-edge rail, so it comes AFTER the chevron it is stacked
-  // under (the chevron's auto margins centre it in the space above the eye).
-  assertOrder(nav, ['dev-card-title', SPINNER, 'dev-chat-badge', CHEVRON, 'gc-vote-btn-preview']);
-  assert.match(nav, /dev-card-rail/, 'and the pair share the rail column');
+  // The preview is a labelled pill at the end of the action band (round
+  // three), so it comes BEFORE the chevron on the card's right edge — and
+  // with nothing to demote there is no rail column at all.
+  assertOrder(nav, ['dev-card-title', SPINNER, 'dev-chat-badge', 'gc-vote-btn-preview', CHEVRON]);
+  assert.doesNotMatch(nav, /dev-card-rail/, 'no column for a lone chevron');
 
   const noNav = sharedSessionCardHtml(AppView, s, { noNav: true });
   assert.doesNotMatch(noNav, /data-shared-session-row/, 'noNav variant has no row hook');

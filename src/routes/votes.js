@@ -4562,9 +4562,22 @@ async function checkAndMerge(config, pool, session, options = {}) {
             : "couldn't run its tests")
           : 'is still running its tests';
       const blockMsg = `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
-      await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
-      await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
-        null, { type: 'session', ref: session.id }).catch(() => {});
+      // Said once. This gate runs on every vote and every check re-run, and
+      // it used to post the same sentence each time — eight copies on one
+      // topic thread. If the latest system line in this proposal's thread
+      // already says exactly this, there is nothing new to say.
+      const alreadySaid = await pool.query(
+        `SELECT content FROM chat_messages
+          WHERE app_id = $1 AND msg_type = 'system'
+            AND thread_type = 'session' AND thread_ref = $2
+          ORDER BY id DESC LIMIT 1`,
+        [session.app_id, session.id]
+      ).then((r) => !!(r.rows[0] && r.rows[0].content === blockMsg)).catch(() => false);
+      if (!alreadySaid) {
+        await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
+        await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
+          null, { type: 'session', ref: session.id }).catch(() => {});
+      }
       log.info('votes', 'Merge blocked: checks not passing', {
         sessionId: session.id, checkState, failingCount,
         checksRevisionMismatch,

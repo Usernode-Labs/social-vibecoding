@@ -59,6 +59,8 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { BookmarkSolidIcon } from '@/components/ui/icons';
 
+import { swatchFor } from '../messages/format';
+
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
 
@@ -147,10 +149,17 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
     <div
       ref={ref}
       data-saved-message={view.messageId}
-      className="flex items-stretch border-b border-zinc-200 dark:border-zinc-800 bg-violet-500/5 border-l-2 border-l-violet-500"
+      className="notifications-row flex items-center gap-3 px-4 py-3"
     >
+      <span
+        aria-hidden="true"
+        className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-[14px] font-bold"
+        style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
+      >
+        {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
+      </span>
       <button
-        className="flex-1 min-w-0 text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
+        className="flex-1 min-w-0 text-left"
         onClick={(e) => {
           e.stopPropagation();
           controller()?._onSavedClick(view.messageId);
@@ -160,22 +169,22 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
             The spaces ride inside the neighbouring strings rather than as
             whitespace-only children — see the note on <Meta> for why.
         */}
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">
+        <div className="text-[15px] text-zinc-500 dark:text-zinc-400 truncate">
           {/* The same mark the message's own save button carries — solid
               here, because everything in this section is saved by
               definition — so the two ends of the gesture read as one
               feature. */}
-          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3 h-3 align-middle text-violet-700 dark:text-violet-400" />
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
+          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
+          <span className="font-bold text-zinc-900 dark:text-zinc-100">{view.who}</span>
           {' in '}
-          <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
-          <span className="text-zinc-500 dark:text-zinc-400">{` · ${view.time}`}</span>
+          <span>{view.appName}</span>
+          <span>{` · ${view.time}`}</span>
         </div>
-        <div className="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2">{view.text}</div>
+        <div className="text-[17px] leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{view.text}</div>
       </button>
       <button
         data-saved-unsave={view.messageId}
-        className="shrink-0 text-[0.7rem] text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 px-1.5 py-1"
+        className="shrink-0 h-8 px-3 rounded-full bg-zinc-100 text-[14px] font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
         onClick={(e) => {
           e.stopPropagation();
           controller()?._unsave(view.messageId);
@@ -216,27 +225,37 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
   return (
     <div
       ref={ref}
-      className="px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-violet-500/5 border-l-2 border-l-violet-500"
+      className="notifications-row flex items-start gap-3 px-4 py-3"
       data-invite-app={view.appId}
     >
+      <span
+        aria-hidden="true"
+        className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-[14px] font-bold"
+        style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
+      >
+        {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
+      </span>
+      <div className="min-w-0 flex-1">
       {/*
           The spaces ride inside the neighbouring strings rather than as
           whitespace-only children — see the note on <Meta> for why.
       */}
-      <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-1.5">
-        <span aria-hidden="true">{view.icon}</span>
-        <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
+      <div className="text-[17px] leading-snug text-zinc-900 dark:text-zinc-100">
+        <span className="font-bold">{view.who}</span>
         {` ${view.verb} `}
-        <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
-        <span className="text-zinc-500 dark:text-zinc-400">{` · ${view.time}`}</span>
+        <span className="font-bold">{view.appName}</span>
       </div>
-      <div className="flex gap-2">
+      <div className="text-[15px] text-zinc-500 dark:text-zinc-400">
+        <span aria-hidden="true">{view.icon}</span>
+        {` ${view.time}`}
+      </div>
+      <div className="flex gap-2 mt-2">
         <Button
           data-invite-accept={view.appId}
           data-invite-slug={view.slug}
           data-invite-kind={view.kind}
-          variant="pill"
-          size="xsText"
+          variant="pillAccent"
+          size="pill"
           onClick={(e) => {
             e.stopPropagation();
             controller()?._acceptInvite(view.appId, view.slug, view.kind);
@@ -247,7 +266,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
         <button
           data-invite-decline={view.appId}
           data-invite-kind={view.kind}
-          className="rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          className="rounded-full bg-zinc-100 px-5 py-2.5 text-[15px] font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
           onClick={(e) => {
             e.stopPropagation();
             controller()?._declineInvite(view.appId, view.kind);
@@ -255,6 +274,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
         >
           Decline
         </button>
+      </div>
       </div>
     </div>
   );
@@ -291,9 +311,9 @@ export function NotificationsPinnedSections(): ReactNode {
           the same reason the invites section below has one: a long list of
           saves must not push the notifications themselves off the screen.
       */}
-      <div id="notifications-saved" className="shrink-0 overflow-y-auto max-h-48">
+      <div id="notifications-saved" className="shrink-0 overflow-y-auto max-h-64">
         {saved.length ? (
-          <div className="px-3 py-1.5 text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="px-4 pt-4 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
             Saved
           </div>
         ) : null}
@@ -308,7 +328,7 @@ export function NotificationsPinnedSections(): ReactNode {
       */}
       <div id="notifications-invites" className="shrink-0 overflow-y-auto max-h-48">
         {invites.length ? (
-          <div className="px-3 py-1.5 text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="px-4 pt-4 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
             Invites
           </div>
         ) : null}

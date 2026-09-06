@@ -51,7 +51,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { KeyIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, KeyIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 
@@ -86,7 +86,11 @@ type RecoveryPath = 'wallet' | 'email';
 // already covers every one of them.
 const P = 'text-sm text-zinc-500 dark:text-zinc-400';
 const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
-const QUIET_BUTTON = 'w-full text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300 dark:text-zinc-400';
+const QUIET_BUTTON = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
+// The secondary routes under the primary button — forgot password, the
+// email code, register — as the language's neutral pills rather than text
+// links: on the wallpaper a link is a line of grey in a screen of pills.
+const PILL_LINK = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
 
 /**
  * What the retired `BUTTON` class constant is now: the same string, spelled as
@@ -98,7 +102,8 @@ const QUIET_BUTTON = 'w-full text-sm text-zinc-500 hover:text-zinc-900 dark:hove
  * Spread rather than repeated so the nine call sites stay a single decision,
  * exactly as the class constant made them.
  */
-const SOLID = { layout: 'full', size: 'plain', ink: 'solidLate' } as const;
+// The screen's primary button: the filled accent pill at 48px.
+const SOLID = { layout: 'full', variant: 'pillAccent', size: 'pillLg', ink: 'solidLate' } as const;
 
 /**
  * And the retired `INPUT` class constant, likewise: `w-full rounded-lg
@@ -114,7 +119,11 @@ const FIELD = { box: 'auth', hint: 'dim' } as const;
  * spellings of one field, hand-authored apart; kept apart here for the same
  * reason input.tsx keeps `default` and `auth` apart.
  */
-const AUTHFIELD = { box: 'auth', hint: 'muted', ring: 'seamless' } as const;
+// A field is a ROW of the white card the form is; the card is the box.
+const AUTHFIELD = { box: 'card', hint: 'dim', ring: 'bare' } as const;
+const AUTH_CARD = 'rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden';
+const AUTH_ROW = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
+const AUTH_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const ERROR = 'text-red-400 text-sm';
 const STATUS = 'text-sm text-zinc-500 dark:text-zinc-400';
 
@@ -733,12 +742,12 @@ export function LoginScreen() {
     <main
       ref={rootRef}
       id="auth-login-screen"
-      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll"
     >
       {mounted ? (
         <>
       {/*
-          The corner Back link. `location.hash` rather than the anchor's own
+          The corner Back disc. `location.hash` rather than the anchor's own
           href: the href is '#' so the link is inert without JS, exactly as
           shipped. auth-screens.js delegates the same click for the screens it
           still owns; both do the same thing, and this one outlives it.
@@ -746,21 +755,22 @@ export function LoginScreen() {
       <a
         href="#"
         data-auth-back=""
-        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
-        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
+        className="fixed left-4 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+        aria-label="Back"
         onClick={(e) => {
           e.preventDefault();
           location.hash = '#landing';
         }}
       >
-        &larr; Back
+        <ChevronLeftIcon className="w-6 h-6" aria-hidden="true" />
       </a>
       <div className="min-h-full flex items-center justify-center">
         <div className="w-full max-w-sm px-6 py-16">
-          <h1 className="text-2xl font-bold text-center mb-1">
+          <h1 className="text-[28px] font-extrabold leading-tight tracking-tight text-center mb-1 text-zinc-900 dark:text-zinc-100">
             Usernode Social Vibecoding
           </h1>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">
+          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">
             A place where users own and build apps together
           </p>
           {/*
@@ -826,10 +836,11 @@ export function LoginScreen() {
               wallet)
           */}
           <form id="login-form" className={hiddenLast(!base, 'space-y-4')} onSubmit={onLoginSubmit}>
-            <div>
+            <div className={AUTH_CARD}>
+            <div className={AUTH_ROW}>
               <label
                 htmlFor="login-username"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+                className={AUTH_LABEL}
               >
                 Username or email
               </label>
@@ -844,10 +855,10 @@ export function LoginScreen() {
                 placeholder="username or email"
               />
             </div>
-            <div>
+            <div className={AUTH_ROW}>
               <label
                 htmlFor="login-password"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+                className={AUTH_LABEL}
               >
                 Password
               </label>
@@ -861,6 +872,7 @@ export function LoginScreen() {
                 placeholder="password"
               />
             </div>
+            </div>
             <div id="login-error" className={hiddenLast(!loginError, ERROR)}>
               {loginError}
             </div>
@@ -868,11 +880,11 @@ export function LoginScreen() {
               Log in
             </Button>
           </form>
-          <p id="forgot-link-wrap" className={hiddenLast(!base, 'text-center text-sm mt-3')}>
+          <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-3')}>
             <a
               id="forgot-password-link"
               href="#"
-              className="text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
+              className={PILL_LINK}
               onClick={(e) => {
                 e.preventDefault();
                 showRecovery();
@@ -881,18 +893,18 @@ export function LoginScreen() {
               Forgot password?
             </a>
           </p>
-          <p id="otp-link-wrap" className={hiddenLast(!base, 'text-center text-sm mt-1')}>
-            <a id="otp-link" href="#signup" className="text-zinc-500 dark:text-zinc-400 hover:text-violet-400">
+          <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2')}>
+            <a id="otp-link" href="#signup" className={PILL_LINK}>
               Sign in with an email code
             </a>
           </p>
           <p
             id="register-link"
-            className={hiddenLast(!base, 'text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6')}
+            className={hiddenLast(!base, 'mt-2')}
           >
-            {'Have an activation code? '}
-            <a href="#register" className="text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">
-              Register
+            <a href="#register" className={PILL_LINK}>
+              {'Have an activation code? '}
+              <span className="ml-1 text-violet-700 dark:text-violet-400">Register</span>
             </a>
           </p>
           {/*
@@ -910,7 +922,7 @@ export function LoginScreen() {
                 We'll email you a 6-digit code. New here? This also creates your account.
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Email
                 </label>
                 <Input
@@ -941,7 +953,7 @@ export function LoginScreen() {
                 .
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Code
                 </label>
                 <Input
@@ -980,7 +992,7 @@ export function LoginScreen() {
                 Code verified. Now choose a password for your account.
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   New password
                 </label>
                 <PasswordInput
@@ -992,7 +1004,7 @@ export function LoginScreen() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Confirm password
                 </label>
                 <PasswordInput
@@ -1050,7 +1062,7 @@ export function LoginScreen() {
                 Your wallet is linked to this account. Approve a signature request, then choose a new password.
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   New password
                 </label>
                 <PasswordInput
@@ -1062,7 +1074,7 @@ export function LoginScreen() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Confirm new password
                 </label>
                 <PasswordInput

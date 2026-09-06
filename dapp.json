@@ -655,6 +655,50 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
     },
     {
+      "name": "Proposal page, round three: the topic card (bar + one vote button), the ledger (checks, votes) and About are sheets on the strip",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
+      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic[data-edge] .dev-card-badges > .dev-status-pill-block) + .dev-topic-ledger:has(.dev-ledger-row[data-note=\"checks\"] ~ .dev-ledger-row[data-note=\"votes\"]) + .dev-topic-about"
+    },
+    {
+      "name": "Issue page, round three: GitHub ends the meta line, the actions are one line on the card, and GitHub comments are tagged bubbles in the Discussion sheet",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#gc-thread-head .dev-topic:has(.dev-card-topic .dev-card-meta:has(a.dev-topic-gh) + .dev-card-badges ~ .gc-card-actions > .gc-vote-btn[data-act=\"createPrForIssue\"]) > #dev-issue-comments.dev-topic-comments .dev-issue-comment.dev-feed-msg .dev-feed-msg-bubble .dev-topic-gh-tag",
+      "expectText": "Claim this issue"
+    },
+    {
+      "name": "Dev board, round three: the vote is one button beside the state bar, with a picker",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-inreview .gc-vote-item .dev-card-status > .dev-status-pill-block + .dev-vote-btn[data-vote-btn][aria-haspopup=\"menu\"]",
+      "expectText": "Vote"
+    },
+    {
+      "name": "Dev board, round three: Preview is a labelled pill at the end of the action band",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item .gc-card-actions > .gc-vote-btn-preview:last-child:not(.gc-vote-btn-icon)",
+      "expectText": "Preview"
+    },
+    {
+      "name": "Dev board, round three: every card wears a tone-keyed left edge, and a glyph where the tile was",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item.dev-card-dense[data-edge] > .flex-1 > .dev-card-head > .dev-card-icon.rounded-lg + .dev-card-head-main"
+    },
+    {
+      "name": "Dev board, round three: the card's facts read as one line under the bar",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item .dev-card-status > .dev-card-band-break + .dev-badge"
+    },
+    {
+      "name": "Dev board, round three: a second action pill can fold into ⋯ (one-line band)",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-issues [data-issue-row] .gc-card-actions > .gc-vote-btn[data-act=\"markIssueInProgress\"][data-fold]",
+      "expectText": "Claim this issue"
+    },
+    {
+      "name": "Activity, round three: each entry is a sheet, its reply box ends in the send disc",
+      "path": "/?demo=1#app/usernode-2d5619/activity",
+      "expectSelector": "#dev-feed .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
+    },
+    {
       "name": "Dev board: an issue card with no pills drops its status band instead of reserving an empty row (#1139)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body [data-issue-row=\"900013\"] .dev-card-meta + .dev-card-badges.dev-card-status[data-empty=\"1\"] + .gc-card-actions"
@@ -1848,9 +1892,9 @@
       "expectSelector": "#home-search-input"
     },
     {
-      "name": "Mark-all-read sits under the Unread tab, not beside it",
+      "name": "Mark all read is a pill in the sheet's title row, between the name and the close disc — not a fourth tab in the rail",
       "path": "/",
-      "expectSelector": "#notifications-screen-tabs ~ * #notifications-screen-mark-all"
+      "expectSelector": "#notifications-sheet h2 + #notifications-screen-mark-all + #notifications-sheet-close"
     },
     {
       "name": "Saved messages pin to the top of the notifications sheet (#1280)",
@@ -3179,6 +3223,78 @@
       "name": "A route with no production version renders an empty tile, not one lone tile",
       "path": "/#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "#dc-pr-card .usn-visual-empty"
+    },
+    {
+      "name": "The Dev board sits on the frosted strip, the same lift the dev session and Messages use",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#app-content > .dc-lift.dc-lift-strip #dev-forum-scroll"
+    },
+    {
+      "name": "An issue page opens as a sheet over the board strip, with its thread inside",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#dev-topic-thread > .dev-thread.dc-lift.dc-lift-session #gc-thread-messages"
+    },
+    {
+      "name": "The issue thread's composer is a card with a paper-clip glyph and a round Send",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#gc-thread-form.gc-composer-card > .gc-composer-glyph ~ textarea ~ .gc-send[aria-label=\"Send\"]"
+    },
+    {
+      "name": "App Discussion is a sheet over the board strip, and its composer is the same card",
+      "path": "/?demo=1#app/usernode-2d5619/dev/chat",
+      "expectSelector": "#dev-chat-body > .dc-lift.dc-lift-session #gc-form.gc-composer-card .gc-send"
+    },
+    {
+      "name": "Settings is a frosted strip with each section as a sheet inside it",
+      "path": "/#settings/api-key",
+      "expectSelector": "#settings-screen.dc-lift.dc-lift-strip #settings-section-content.settings-sheet.dc-lift.dc-lift-session [data-settings-section=\"api-key\"]"
+    },
+    {
+      "name": "Settings' Log out is a danger-tinted pill under the sections",
+      "path": "/#settings/about",
+      "expectSelector": "#settings-footer #settings-logout.rounded-full",
+      "expectText": "Log out"
+    },
+    {
+      "name": "The notifications sheet is a lifted sheet whose title row carries a close disc, over a chip rail",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet.dc-lift.dc-lift-panel[data-open] #notifications-sheet-close"
+    },
+    {
+      "name": "The Improve rail is the same lifted pane as the bell's, not the old white panel",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-panel.dc-lift.dc-lift-panel[data-open] #improve-quick-actions"
+    },
+    {
+      "name": "The app chip's menu is that pane too, keeping its own menu shape",
+      "path": "/?shot=app-context&demo=1",
+      "expectSelector": "#apps-switcher-sheet.dc-lift.dc-lift-panel[data-open] #switcher-nav #switcher-row-home"
+    },
+    {
+      "name": "Unread notification rows read source, bold subject, muted preview",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] .notifications-row .text-\\[15px\\] + .text-\\[17px\\].font-bold"
+    },
+    {
+      "name": "The sign-in screen stands on the wallpaper as a card form with a filled Log in pill",
+      "path": "/?shot=anon#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) #login-form .rounded-2xl #login-username",
+      "expectText": "Log in",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Forgot password and the email-code sign-in are pill buttons under the card, not links",
+      "path": "/?shot=anon#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) #forgot-link-wrap #forgot-password-link.rounded-full",
+      "expectText": "Forgot password",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "The Log in button is the filled accent pill, and the email-code sign-in is a pill too",
+      "path": "/?shot=anon#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) #otp-link-wrap #otp-link.rounded-full",
+      "expectText": "Sign in with an email code",
+      "allowConsoleErrors": true
     }
   ],
   "governance": {

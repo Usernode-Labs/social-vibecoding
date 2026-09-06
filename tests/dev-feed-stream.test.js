@@ -93,30 +93,31 @@ test('the feed draws CARDS, and nothing strips the shared tile treatment', () =>
   // grey page ground, with the corner carrying the shape the border used to.
   assert.match(APP_VIEW, /DEV_CARD_CLS: '[^']*rounded-2xl[^']*bg-white[^']*'/,
     'DEV_CARD_CLS draws the tile both surfaces use');
-  // Cards need a gap where the stream had a separator.
-  assert.match(CSS, /#dev-feed \.dev-feed-entry \+ \.dev-feed-entry \{[^}]*margin-top:\s*0\.5rem/,
-    'entries are spaced like the block above them (space-y-2)');
+  // Each entry is a SHEET now — the card, its replies and its reply box on
+  // one frosted plane — so the sheets carry the separation and the gap
+  // between them only has to admit there are two.
+  assert.match(CSS, /#dev-feed \.dev-feed-entry \{[^}]*background-color:\s*var\(--dc-sheet-fill\)/,
+    'the entry lifts on the session sheet\'s plane');
+  assert.match(CSS, /#dev-feed \.dev-feed-entry \{[^}]*border-radius:\s*26px/);
+  assert.match(CSS, /#dev-feed \.dev-feed-entry \+ \.dev-feed-entry \{[^}]*margin-top:\s*4px/,
+    '4px between sheets');
+  assert.match(CSS, /#dev-feed \{[^}]*max-width:\s*760px/, 'one reading column');
   assert.doesNotMatch(rules, /#dev-feed \.dev-feed-entry \{[^}]*margin-left:\s*-0\.75rem/,
     'entries no longer pull out through the body gutter');
 });
 
-test('a landed change still reads as a marker, as a tinted card', () => {
-  // Completed work is marked by the CARD BUILDER (both kinds), so the feed
-  // can draw it differently without knowing which builder produced the row.
+test('a landed change is a plain card: its bar and its edge say Merged', () => {
+  // Completed work is still marked by the CARD BUILDER (both kinds) — the
+  // hook stays for the kanban's Done column and for the checks that walk it.
   const marked = APP_VIEW.match(/'data-completed': '1'/g) || [];
   assert.equal(marked.length, 2,
     'both completed builders — merged PR and applied issue-close — are marked');
-
-  // The emerald edge and the tint survive the change from band to card; the
-  // edge follows the corner now instead of running flush to the column edge.
-  assert.match(CSS, /\[data-completed\]\s*\{[^}]*border-left:\s*3px solid/,
-    'the completed row carries an emerald edge');
-  assert.match(CSS, /\[data-completed\]\s*\{[^}]*background:/,
-    'and a tint that separates it from the in-flight entries');
-  // The edge eats 3px, so the padding gives it back — otherwise a merged
-  // row's text sits 3px right of every row above it.
-  assert.match(CSS, /\[data-completed\]\s*\{[^}]*padding-left:\s*calc\(0\.875rem - 3px\)/,
-    'content stays aligned with the un-edged rows');
+  // But the feed no longer paints it: the emerald wash and the 3px band said
+  // "merged" a second and third time next to a bar that reads "✓ Merged"
+  // and a card edge keyed green by that same bar (card/dev-card.tsx edgeFor).
+  assert.doesNotMatch(CSS, /\[data-completed\]\s*\{/, 'no completed-row paint in the feed');
+  assert.match(CSS, /div:is\(\.dev-card-dense, \.dev-card-topic\)\[data-edge="ok"\]\s*\{[^}]*--dev-edge:\s*var\(--state-ok\)/,
+    'the green edge is the card\'s own — on the board card and the topic card alike');
 });
 
 test('inline comments load lazily, per row, off the existing endpoint', () => {

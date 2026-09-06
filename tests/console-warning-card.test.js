@@ -116,10 +116,17 @@ test('two reasons at once: the pill names the worst and counts the rest', () => 
   assert.equal(reasons.length, 2);
   assert.equal(reasons.map((r) => r.key).join(','), 'behind,console_errors');
 
-  const detail = detailActionsHtml(AppView, 'proposal', pr);
-  assert.match(detail, /Worth knowing before you vote/, 'neither reason blocks, so the heading says so');
-  assert.match(detail, /Behind main · 3/);
-  assert.match(detail, /Console errors · 1/);
+  // The reasons list is the ledger's material now (round three): the head
+  // draws them as "Where it stands" rows, so the assertion is on the model.
+  const reasonsView = AppView._detailActionsView('proposal', pr).reasons;
+  assert.equal(reasonsView.heading, 'Worth knowing before you vote', 'neither reason blocks, so the heading says so');
+  assert.equal(reasonsView.items.map((r) => r.label).join('|'), 'Behind main · 3|Console errors · 1');
+  const ledger = AppView._proposalDetailsView(pr).ledger;
+  const behind = ledger.find((r) => r.key === 'behind');
+  assert.ok(behind, '"Behind main" — which never had a box — is a ledger row');
+  assert.equal(behind.tone, 'warn');
+  assert.equal(behind.sub, '3 commits');
+  assert.ok(ledger.some((r) => r.key === 'console' || r.key === 'console_errors'), 'and so are the console errors');
 });
 
 test('a HARD reason beside a soft one: the heading names the block', () => {
@@ -135,10 +142,20 @@ test('a HARD reason beside a soft one: the heading names the block', () => {
   assert.match(html, /Checks failing · 1/, 'the hard reason wins the label');
   assert.match(html, /gc-vote-count-blocked/);
   assert.match(html, /and 2 more reasons/);
-  const detail = detailActionsHtml(AppView, 'proposal', pr);
-  assert.match(detail, /Why this can’t merge yet/);
-  assert.match(detail, /Checks failing · 1[\s\S]*Behind main · 2[\s\S]*Console errors · 1/,
+  const reasonsView = AppView._detailActionsView('proposal', pr).reasons;
+  assert.equal(reasonsView.heading, 'Why this can’t merge yet');
+  assert.equal(reasonsView.items.map((r) => r.label).join('|'), 'Checks failing · 1|Behind main · 2|Console errors · 1',
     'enumerated severity-first');
+  // On the page: the checks verdict row (with the failing test), then the
+  // rows the verdict does not already say.
+  const ledger = AppView._proposalDetailsView(pr).ledger;
+  assert.equal(ledger[0].key, 'checks');
+  assert.equal(ledger[0].tone, 'bad');
+  assert.equal(ledger[0].sub, '1 of 1 failing');
+  assert.equal(ledger[0].fails[0].name, 'Feed');
+  assert.ok(ledger.some((r) => r.key === 'behind' && r.sub === '2 commits'));
+  assert.ok(ledger.some((r) => r.key === 'console_errors' || r.key === 'console'),
+    'console errors are said once, as a row');
 });
 
 test('the console-error detail block lists the captured messages', () => {

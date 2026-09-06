@@ -60,7 +60,10 @@ test('the send arrow is always present and reflects whether it can submit', () =
     /<button(?=[^>]*type="submit")(?=[^>]*disabled="")(?=[^>]*aria-label="Send reply")[^>]*>/);
   assert.match(empty, /<button[^>]*\bun-touch-target\b/,
     'the compact arrow keeps a 44px touch target');
-  assert.match(empty, /<svg[^>]*class="h-3\.5 w-3\.5"/, 'the action is an icon, not a hidden text button');
+  // The dev session's send disc (round three): app.css `.dev-feed-send`
+  // draws the 36px accent circle, and the up-arrow inside is the icon.
+  assert.match(empty, /<button[^>]*\bdev-feed-send\b[^>]*>\s*<svg/, 'the action is an icon, not a hidden text button');
+  assert.match(empty, /d="M12 19V5M5 12l7-7 7 7"/, 'the same up-arrow the dev session sends with');
 
   const ready = composerHtml('First line\nSecond line');
   assert.match(ready, /<button[^>]*type="submit"[^>]*aria-label="Send reply"/);
@@ -112,12 +115,14 @@ test('a successfully posted reply survives the inline-thread reload', () => {
       {
         id: 41,
         author: 'alice',
+        userId: null,
         content: 'Existing reply',
         createdAt: '2026-09-04T10:00:00Z',
       },
       {
         id: 42,
         author: 'bob',
+        userId: null,
         content: 'Newly posted reply',
         createdAt: '2026-09-04T11:00:00Z',
       },
@@ -138,8 +143,12 @@ test('the inline reply preview preserves composer line breaks', () => {
 
   assert.match(html, /class="[^"]*whitespace-pre-wrap[^"]*"/,
     'the browser must preserve newlines instead of collapsing them to spaces');
-  assert.match(html, />First line\nSecond line<\/span>/,
+  assert.match(html, /dev-feed-msg-text[^>]*>First line\nSecond line<\/div>/,
     'the reply remains plain escaped text with its original newline');
+  // The bubble (round three): the author and the age on the first line,
+  // the text under them, a swatch avatar outside.
+  assert.match(html, /<span class="dev-feed-msg-author">bob<\/span><span class="dev-feed-msg-time">/);
+  assert.match(html, /class="dev-feed-msg-avatar" aria-hidden="true" style="background-color:#[0-9a-f]{6}">B</);
 });
 
 test('the Activity staging route requires both the textarea and arrow', () => {

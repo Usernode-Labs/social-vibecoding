@@ -29,11 +29,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { SendIcon } from '@/components/ui/icons';
+import { ArrowUpIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
 import { useAutoGrow } from '../../../lib/use-auto-grow';
 import { useStoreState } from '../../../lib/use-store-state';
+import { swatchFor } from '../../messages/format';
 import {
   feedThreadStore,
   patchThread,
@@ -84,6 +85,7 @@ export function feedThreadPreview(rows: any[]): {
     messages: human.slice(-PREVIEW).map((r: any) => ({
       id: r.id,
       author: r.username || 'someone',
+      userId: r.user_id != null ? Number(r.user_id) : null,
       content: String(r.content || ''),
       createdAt: r.created_at,
     })),
@@ -91,17 +93,40 @@ export function feedThreadPreview(rows: any[]): {
   };
 }
 
+/** Whether the signed-in viewer wrote this reply (App.user is app.js's). */
+function isMine(m: FeedThreadMessage): boolean {
+  const u = typeof window !== 'undefined' ? (window as any).App?.user : null;
+  if (!u) return false;
+  if (m.userId != null && u.id != null) return Number(u.id) === Number(m.userId);
+  return !!u.username && u.username === m.author;
+}
+
+/**
+ * One reply, as a BUBBLE — the Messages screen's row, at the feed's scale: a
+ * 22px swatch avatar outside, a white r16 bubble with the name and the age
+ * on its first line and the text under them, and the viewer's own replies in
+ * the accent tint. They used to be three runs of 12px text lying directly on
+ * the entry, which is where a reply and the card above it blurred together.
+ */
 export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
+  const mine = isMine(m);
   return (
-    <div className="flex gap-1.5 text-xs leading-snug">
-      <span className="shrink-0 font-medium text-zinc-700 dark:text-zinc-300">{m.author}</span>
-      {/* Plain text, never markdown and never innerHTML. This is the one
-          surface in the feed that renders something a person typed, and it
-          renders it as a text child so React escapes it — the topic page is
-          where the full, formatted thread lives. `whitespace-pre-wrap` keeps
-          the line breaks the multiline composer deliberately accepts. */}
-      <span className="min-w-0 flex-1 whitespace-pre-wrap text-zinc-600 dark:text-zinc-400 break-words">{m.content}</span>
-      <span className="shrink-0 text-zinc-400 dark:text-zinc-500">{relTime(m.createdAt)}</span>
+    <div className={mine ? 'dev-feed-msg dev-feed-msg-mine' : 'dev-feed-msg'}>
+      <span className="dev-feed-msg-avatar" aria-hidden="true" style={{ backgroundColor: swatchFor(m.author) }}>
+        {(m.author || '?').slice(0, 1).toUpperCase()}
+      </span>
+      <div className="dev-feed-msg-bubble">
+        <div className="dev-feed-msg-head">
+          <span className="dev-feed-msg-author">{m.author}</span>
+          <span className="dev-feed-msg-time">{relTime(m.createdAt)}</span>
+        </div>
+        {/* Plain text, never markdown and never innerHTML. This is the one
+            surface in the feed that renders something a person typed, and it
+            renders it as a text child so React escapes it — the topic page is
+            where the full, formatted thread lives. `whitespace-pre-wrap` keeps
+            the line breaks the multiline composer deliberately accepts. */}
+        <div className="dev-feed-msg-text whitespace-pre-wrap break-words">{m.content}</div>
+      </div>
     </div>
   );
 }
@@ -148,19 +173,21 @@ export function FeedReplyComposer({
         disabled={posting}
         onChange={(e) => onDraftChange(e.target.value)}
       />
+      {/* The dev session's send disc: a 36px filled accent circle with the
+          up-arrow (app.css `.dev-feed-send`), so every "send" on the platform
+          is the same object. */}
       <Button
         type="submit"
         variant="unstyled"
         disabledStyle="block"
         size="icon"
         ink="none"
-        className={'h-7 w-7 shrink-0 un-touch-target rounded-full bg-violet-600 hover:bg-violet-500 '
-          + 'text-white transition-colors inline-flex items-center justify-center'}
+        className="dev-feed-send shrink-0 un-touch-target inline-flex items-center justify-center"
         disabled={posting || !draft.trim()}
         title="Send reply"
         aria-label="Send reply"
       >
-        {posting ? '…' : <SendIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+        {posting ? '…' : <ArrowUpIcon aria-hidden="true" />}
       </Button>
     </form>
   );
@@ -255,12 +282,15 @@ export function FeedThread({
 
   return (
     <div ref={hostRef} className="dev-feed-thread">
-      {state.messages.map((m) => <MessageLine key={m.id} m={m} />)}
+      {/* "N earlier replies" leads the thread — directly under the card,
+          where the replies it stands for would be — then the bubbles, then
+          the box. It used to sit under the bubbles, reading as a footer. */}
       {hidden > 0 ? (
-        <div className="text-xs text-zinc-400 dark:text-zinc-500">
+        <div className="dev-feed-earlier text-xs text-zinc-400 dark:text-zinc-500">
           {`${hidden} earlier ${hidden === 1 ? 'reply' : 'replies'}`}
         </div>
       ) : null}
+      {state.messages.map((m) => <MessageLine key={m.id} m={m} />)}
       {state.error === 'post' ? (
         <div className="text-xs text-rose-600 dark:text-rose-400">
           That didn’t send. Try again, or open the item to reply there.

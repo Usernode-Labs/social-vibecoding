@@ -211,11 +211,11 @@ test('ScreenRow renders kind, subject, meta — in that order', () => {
 test('the three lines are visually ranked, not three of the same thing', () => {
   const row = SHEET.slice(SHEET.indexOf('function ScreenRow('));
   const body = row.slice(0, row.indexOf('\n}'));
-  assert.match(body, /text-xs font-semibold text-zinc-500 dark:text-zinc-400 truncate/,
+  assert.match(body, /text-\[15px\] text-zinc-500 dark:text-zinc-400 truncate/,
     'the kind is small and semibold — subordinate, but not the meta line');
-  assert.match(body, /block text-sm text-zinc-900 dark:text-zinc-100 truncate/,
+  assert.match(body, /block text-\[17px\] font-bold text-zinc-900 dark:text-zinc-100 truncate/,
     'the subject carries the strong ink and the larger size');
-  assert.match(body, /block text-xs text-zinc-500 truncate/,
+  assert.match(body, /block text-\[15px\] text-zinc-500 truncate/,
     'the meta line stays small and regular');
   // Each line truncates on its own, so a long subject cannot push the app
   // name or the time off the row.
