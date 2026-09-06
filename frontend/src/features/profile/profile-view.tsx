@@ -89,7 +89,16 @@ function IdentityCard({ identity }: { identity: any }): ReactNode {
           built for it, here or anywhere.
       */}
       {identity.bio ? (
-        <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-3 whitespace-pre-line">
+        /*
+            `break-words` is load-bearing (#1612): a bio is free text, so it can
+            be one 280-character word or a pasted URL with no space in it, and
+            `whitespace-pre-line` alone leaves that on a single line — it spills
+            past the card and gives the whole screen a horizontal scrollbar.
+            `overflow-wrap: break-word` breaks such a run only when it would not
+            otherwise fit, so ordinary prose still wraps at spaces and nothing
+            else about the card changes.
+        */
+        <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-3 whitespace-pre-line break-words">
           {identity.bio}
         </p>
       ) : null}
