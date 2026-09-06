@@ -135,6 +135,43 @@ test('a per-check timeout is longer than a check that is merely slow', () => {
     'leave several times the deliberate idle before calling a check hung');
 });
 
+test('a check\'s wall clock contains the phases that run inside it', () => {
+  // The coupling that made raising the assert window a two-part change. A
+  // check is a navigation, then a settle of up to SETTLE_MAX_MS, then an
+  // assert poll that rolls forward to ASSERT_ACTIVE_MAX_MS while the page is
+  // still emitting. If TEST_TIMEOUT_MS does not clear the last two with room
+  // for the first, a screen that spends its full (legitimate) assert window
+  // is reported as "did not finish" instead of being judged — which is the
+  // less useful of the two answers, and the exact failure the rolling window
+  // was added to remove.
+  const captureSrc = fs.readFileSync(
+    path.join(__dirname, '..', 'capture', 'capture.js'), 'utf8');
+  const settleMax = Number(/const SETTLE_MAX_MS = (\d+);/.exec(captureSrc)[1]);
+  const assertActive = capture.assertActiveMaxMs({});
+  assert.ok(capture.testTimeoutMs({}) > settleMax + assertActive,
+    'the per-check bound must clear settle + assert, or the phases inside it time out');
+  assert.ok(capture.testTimeoutMs({}) - (settleMax + assertActive) >= 20000,
+    'and leave a cold navigation room inside what is left');
+  // The hard cap only ever extends the quiet ceiling; it never shortens it.
+  assert.ok(assertActive >= capture.assertMaxMs({}),
+    'a page showing signs of life must not get less time than a silent one');
+});
+
+test('the per-cohort allowance covers the two passes a failing cohort makes', () => {
+  // A cohort whose assertions do not hold pays settle + assert twice: once on
+  // the hash switch, once again on the cold-load fallback (#1146). The group
+  // budget grows by GROUP_EXTRA_COHORT_MS per cohort past the first, so that
+  // allowance has to cover both passes or a group of genuinely-failing
+  // cohorts is reported as unfinished rather than as the failures it found.
+  const captureSrc = fs.readFileSync(
+    path.join(__dirname, '..', 'capture', 'capture.js'), 'utf8');
+  const settleMax = Number(/const SETTLE_MAX_MS = (\d+);/.exec(captureSrc)[1]);
+  const cohortMs = Number(/const GROUP_EXTRA_COHORT_MS = (\d+);/.exec(captureSrc)[1]);
+  const twoPasses = 2 * (settleMax + capture.assertActiveMaxMs({}));
+  assert.ok(cohortMs >= twoPasses,
+    `each cohort past the first needs ${twoPasses}ms for its two passes, has ${cohortMs}ms`);
+});
+
 test('the declared-test ceiling clears this repo\'s own manifest', () => {
   // The regression that started #1019: the reader kept 12 of the 241 checks
   // declared here and dropped the rest without saying so.
