@@ -320,7 +320,7 @@ test('finalizeMerge: runs the identical deploy tail for native and imported merg
     assert.deepEqual(teardownCalls.sort(), [11, 12], 'both tore down their staging');
     const merged = voteUpdates; // finalizer itself emits none; announcements are system messages
     void merged;
-    const mergeAnnouncements = systemMessages.filter((m) => /merged and deployed/i.test(m.content));
+    const mergeAnnouncements = systemMessages.filter((m) => /is live \(PR #\d+\)\. Thanks to everyone who voted/i.test(m.content));
     assert.ok(mergeAnnouncements.length >= 2, 'both announced a successful merge identically');
   } finally {
     restore();

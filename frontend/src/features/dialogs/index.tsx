@@ -47,7 +47,7 @@ export function Dialogs() {
       <ShareDialog />
       <AppSecretsDialog />
       {/*
-          Streamlined Concept: the Board's filter selects + "Needs my vote"
+          Streamlined Concept: the Board's filter selects + "Waiting on you"
           toggle, moved off the filter bar into a dialog. New markup (no
           legacy baseline) appended LAST so the nine originals keep their
           byte positions in the prerendered document.

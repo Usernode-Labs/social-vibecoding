@@ -160,13 +160,13 @@ function stagingMockProposals(viewer) {
   });
   const rows = [
     // Unopposed, thin support: threshold met but a multi-day visibility
-    // window still running → "Merging in ~2d" countdown pill.
+    // window still running → "Goes live in ~2d" countdown pill.
     mk(9000001, 900101,
       '[Mock] Long-title test: rework the proposal card header so the '
       + 'discussion badge and vote tally wrap gracefully on narrow phones',
       3, 2, 0, 4, { required: 2, windowEndsAt: hoursAhead(46) }),
     // Near-majority, no opposition: window almost elapsed → short
-    // "Merging in Xh" countdown.
+    // "Goes live in Xh" countdown.
     // #1251: the only mock proposal that declares a linked issue. 900017 is
     // a mock issue nothing else touches, so this pair is what makes the
     // board's "an issue with an open proposal is still on the board"
@@ -177,7 +177,7 @@ function stagingMockProposals(viewer) {
       20, 5, 0, 3, { required: 3, windowEndsAt: hoursAhead(5) }),
     linked_issues: [900017] },
     // Majority reached: no window, would merge immediately in prod.
-    // my_vote is set on this one mock (#482) so the kanban "Needs my vote"
+    // my_vote is set on this one mock (#482) so the kanban "Waiting on you"
     // filter visibly removes a card in the ?demo=1 preview instead of
     // matching every mock proposal.
     { ...mk(9000014, 900114,
@@ -185,7 +185,7 @@ function stagingMockProposals(viewer) {
       6, 6, 0, 2, { required: 5, windowEndsAt: null }), my_vote: 'up' },
     // Lazy consensus: BELOW the eased threshold (1 of 2 yes) but unopposed —
     // the count-based lazy clock is running, so the pill shows the countdown
-    // with the tally riding along ("Merging in ~2d · 1/2").
+    // with the tally riding along ("Goes live in ~2d · 1/2").
     mk(9000019, 900119,
       '[Mock] Lazy-consensus test: one supporter, nobody objecting — merges when the clock elapses',
       5, 1, 0, 1, { required: 2, windowEndsAt: hoursAhead(67) }),
@@ -265,12 +265,12 @@ function stagingMockProposals(viewer) {
       qualified_no_count: 0,
     },
     // Auto-takedown — slim No majority (No just edges ahead of Yes, under the
-    // 1/3 keep-alive line): long rejection window → "Rejecting in ~6d".
+    // 1/3 keep-alive line): long rejection window → "Set aside in ~6d".
     mk(9000016, 900116,
       '[Mock] Rejection test: replace the home feed with an infinite-scroll redesign',
       30, 2, 3, 6, { required: 6, rejectEndsAt: hoursAhead(140), rejectionArmed: true }),
     // Auto-takedown — lopsided opposition (No heavily outweighs Yes): short
-    // rejection window → "Rejecting in ~Xh".
+    // rejection window → "Set aside in ~Xh".
     mk(9000017, 900117,
       '[Mock] Rejection test: drop dark mode entirely to simplify the theme code',
       18, 1, 6, 4, { required: 6, rejectEndsAt: hoursAhead(7), rejectionArmed: true }),
@@ -307,7 +307,7 @@ function stagingMockProposals(viewer) {
     },
     // (c) Rejection still applies. The auto-takedown countdown is
     // untouched by the modifier, so a flagged proposal the group is
-    // voting down still shows "Rejecting in ~Xh" and still auto-closes.
+    // voting down still shows "Set aside in ~Xh" and still auto-closes.
     {
       ...mk(9000032, 900132,
         '[Mock] Explicit-approval test: admins change nobody wants (rejecting)',
@@ -4202,18 +4202,20 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
 
     // Announce in group chat, and dual-post into the proposal's own
     // thread so its discussion carries the outcome in context.
-    const mergedLabel = session.pr_title
-      ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
-      : `PR #${session.pr_number || session.id}`;
-    const mergedSuffix = force && forceBy
-      ? `force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
-      : `merged and deployed! (${yesCount}/${activeCount} votes)`;
-    await sendSystemMessage(pool, session.app_id,
-      `${mergedLabel} ${mergedSuffix}`,
-      'system'
-    );
-    await sendSystemMessage(pool, session.app_id,
-      `${mergedLabel} ${mergedSuffix}`,
+    // The ordinary line leads with the change and thanks the voters; the
+    // "(yes/active votes)" figure stays at the end in the same shape, since
+    // migrate.js's votes_required backfill parses it out of historical
+    // announcements (rows merged since the snapshot columns exist never need
+    // that backfill, so the changed lead-in costs nothing there).
+    const prRef = `PR #${session.pr_number || session.id}`;
+    const mergedLabel = session.pr_title ? `${prRef}: ${session.pr_title}` : prRef;
+    const mergedLine = force && forceBy
+      ? `${mergedLabel} force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
+      : session.pr_title
+        ? `${session.pr_title} is live (${prRef}). Thanks to everyone who voted (${yesCount}/${activeCount} votes)`
+        : `${prRef} is live. Thanks to everyone who voted (${yesCount}/${activeCount} votes)`;
+    await sendSystemMessage(pool, session.app_id, mergedLine, 'system');
+    await sendSystemMessage(pool, session.app_id, mergedLine,
       'system', null, { type: 'session', ref: session.id }
     ).catch(() => {});
 
