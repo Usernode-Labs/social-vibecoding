@@ -176,10 +176,16 @@ function makeBrowse(opts = {}) {
     subscribe: () => () => {},
     setFlush: () => {},
   };
+  // Home.render() is the LAUNCHER's paint, and this harness has neither
+  // HomeLayout nor the grid store loaded — so count the calls instead of
+  // running them. Worth counting rather than merely silencing: #1567 made
+  // Home.toggleAdded repaint, and that call is the whole fix.
+  const renders = { count: 0 };
+  sandbox.__Home.render = () => { renders.count += 1; };
   return {
     Browse: sandbox.Browse, Home: sandbox.__Home, AppCard: sandbox.AppCard,
     state, nodes, fetchCalls, chrome, history, location: sandbox.location,
-    storage,
+    storage, renders,
   };
 }
 
@@ -1075,6 +1081,55 @@ test('toggleAdded posts { favorited } and flips the cached flags', async () => {
   assert.deepEqual(fetchCalls[0], {
     url: '/api/apps/fresh/favorite', method: 'POST', body: { favorited: true },
   });
+});
+
+// ── #1567: the write REPAINTS, it does not wait for a reload ─────────
+
+test('toggleAdded repaints Your apps before the write lands, and tells the caller too', async () => {
+  const { Home, renders, fetchCalls } = makeBrowse();
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  let notified = 0;
+  const p = Home.toggleAdded('fresh', true, () => { notified += 1; });
+  // Both before the POST has resolved: the section is the optimistic flip's
+  // to show, and this is what made an add from the home screen look like it
+  // had done nothing until a reload.
+  assert.equal(renders.count, 1, 'the launcher grid and the panels repaint');
+  assert.equal(notified, 1, "and the caller's own list is told as well");
+  assert.equal(fetchCalls.length, 1, 'one write');
+  await p;
+  assert.equal(renders.count, 1, 'a successful write adds no second paint');
+});
+
+test('toggleAdded repaints again on the failure path, through the reload', async () => {
+  const { Home, renders } = makeBrowse({ fetchOk: false });
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  let notified = 0;
+  // load() is the launcher's own re-sync; the paint it would do is counted
+  // here so the revert is as visible as the optimistic flip was.
+  Home.load = async () => { Home.render(); };
+  await Home.toggleAdded('fresh', true, () => { notified += 1; });
+  assert.equal(fresh.is_favorited, false, 'reverted');
+  assert.equal(renders.count, 2, 'painted the add, then painted it back out');
+  assert.equal(notified, 2);
+});
+
+test('a failed add clears the reveal, so nothing expands for an app that never arrived', async () => {
+  const { Home } = makeBrowse({ fetchOk: false });
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  Home.load = async () => {};
+  await Home.toggleAdded('fresh', true, () => {});
+  assert.equal(Home._revealSlug, null);
+});
+
+test('a removal never sets the reveal — an expanded grid showing an absence is nonsense', async () => {
+  const { Home } = makeBrowse();
+  const mine = app({ slug: 'mine', is_favorited: true });
+  Home._apps = [mine];
+  await Home.toggleAdded('mine', false, () => {});
+  assert.equal(Home._revealSlug, null);
 });
 
 test('toggleAdded on a member app writes the hidden opt-out, not a delete (#618)', async () => {

@@ -621,9 +621,9 @@
     {
       "source": "src/routes/topochain/admin/waitlist.js",
       "kind": "structural-template",
-      "fingerprint": "a5ba989b29c286008dbf",
+      "fingerprint": "74fc8edae7a6433dc149",
       "count": 1,
-      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited"
+      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, w.invited_by, (SELECT COUNT(*)::int FROM waitlist_signups c W"
     },
     {
       "source": "src/routes/topochain/ingest.js",

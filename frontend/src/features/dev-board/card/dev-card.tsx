@@ -30,7 +30,7 @@
  *
  * ── The countdown pill ticks from a store ─────────────────────────────
  *
- * `statusPillHtml` baked "Merging in ~2h" into the string and a 30s module
+ * `statusPillHtml` baked "Goes live in ~2h" into the string and a 30s module
  * interval rewrote the label in place. The model still carries the baked
  * label (so the first paint needs no store), plus the window's epoch; the
  * module interval now publishes `Date.now()` through `cardNowStore` and
@@ -160,7 +160,7 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
   // The 30s tick: re-derive the countdown label from the store's `now`;
   // before the first tick the baked label carries the paint.
   const label = s.countdown && now > 0
-    ? `${s.reject ? 'Rejecting' : 'Merging'} in ${fmtCountdown(s.countdown - now)}${s.suffix || ''}`
+    ? `${s.reject ? 'Set aside' : 'Goes live'} in ${fmtCountdown(s.countdown - now)}${s.suffix || ''}`
     : s.label;
   const extra = Array.isArray(s.reasons) ? Math.max(0, s.reasons.length - 1) : 0;
   const titleParts: string[] = [];

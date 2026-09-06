@@ -11326,22 +11326,36 @@ async function seedStagingTopochain(pool, config) {
         WHERE os = 'android' AND is_active = TRUE`
     );
 
-    // ─── Waitlist signups (4) ──────────────────────────────────────────
+    // ─── Waitlist signups (7) ──────────────────────────────────────────
     // The admin console's Waitlist screen reads `waitlist_signups`
     // directly, and in a staging clone that table is emptied along with
-    // every other signup surface — so the screen, its pending/released
-    // filter and its per-row Release button were all reviewable only as an
-    // empty state. Four rows, one per state that renders differently:
+    // every other signup surface — so the screen, its filters, its columns
+    // and its per-row Admit button were all reviewable only as an empty
+    // state. Seven rows, one per thing the screen renders differently:
     //
-    //   900500  pending, CONFIRMED, with survey answers   → the row whose
-    //           "Survey answers" disclosure has something to disclose.
-    //   900501  pending, UNCONFIRMED, no answers          → the plain row,
-    //           and the only one that proves confirmed_at can be null.
-    //   900502  RELEASED and linked to a fixture account  → the released
-    //           half of the filter, plus the linked-username cell.
-    //   900503  pending, CONFIRMED, RETIRED REGION answer → the row whose
+    //   900500  waiting, CONFIRMED, every survey section answered, and the
+    //           row two others came in through → the "7 of 7 answered"
+    //           Answers cell, the "Brought in 2" Referrals cell, and the
+    //           Details block with something in every line.
+    //   900501  waiting, UNCONFIRMED, no answers      → the plain row, the
+    //           "Nothing answered yet" cell, and the only one that proves
+    //           confirmed_at can be null.
+    //   900502  ADMITTED and linked to a fixture account → the admitted
+    //           half of the filter, the linked-username cell, and the row
+    //           whose invite mail has a delivery record behind it (seeded
+    //           by seedStagingPlatformMail, since mail_deliveries is
+    //           staging:private and arrives empty).
+    //   900503  waiting, CONFIRMED, RETIRED REGION answer → the row whose
     //           country is `X-LA`, one of the five namespaced pseudo-codes
     //           the old region-bucket picker produced.
+    //   900504  waiting, came in through 900500       → the other half of
+    //           the invite graph, which the screen used to never show.
+    //   900505  waiting, came in through 900500, and asked to be admitted
+    //           together with them → the Referrals cell's third line.
+    //   900506  waiting, answers in the RETIRED pre-survey shape → the
+    //           "Other answers" line, which exists because an answers blob
+    //           spans several schema versions and an admin reading a row is
+    //           entitled to see what is actually stored in it.
     //
     // The country on 900500 is `UY` on purpose: Uruguay is the exact place
     // the old curated list could not express (#1527), and its "Where" line
@@ -11350,36 +11364,94 @@ async function seedStagingTopochain(pool, config) {
     // "Uruguay" against "Elsewhere in Latin America (region)" — rather than
     // both collapsing into a raw two-letter string.
     //
-    // Emails are `.invalid` and nothing here is ever mailed: the release
-    // action is the only thing that sends, and a tester triggering it in
-    // staging hits the same skipped_staging path as every other fixture.
+    // The answer VALUES are real option codes from waitlist-questions.js
+    // (`friend`, `lt10`, `organizer`, `shutdown`), not invented strings:
+    // the screen labels them through /api/public/waitlist/options, so a
+    // fixture carrying a made-up code would render as the code and quietly
+    // look like the lookup was broken.
+    //
+    // 900504 and 900505 point at 900500, which is inserted earlier in the
+    // same VALUES list — the foreign key is checked per row, so the order
+    // is load-bearing.
+    //
+    // Emails are `.invalid` and nothing here is ever mailed: admitting is
+    // the only thing that sends, and a tester triggering it in staging hits
+    // the same skipped_staging path as every other fixture.
     await pool.query(
       `INSERT INTO waitlist_signups
          (id, email, submitted_at, ip, answers, released_at, linked_user_id,
-          confirmed_at)
+          confirmed_at, invited_by)
        VALUES
          (900500, 'staging-demo-topochain-waitlist-1@example.invalid',
           NOW() - INTERVAL '30 days', NULL,
-          '{"role": "Validator", "chain": "Testnet", "country": "UY", "why": "Staging demo survey answer."}'::jsonb,
-          NULL, NULL, NOW() - INTERVAL '29 days'),
+          '{"made_url": "https://staging-demo.example.invalid/what-i-made", "made_note": "Staging demo build note.", "country": "UY", "discovery": {"source": "friend", "detail": "Staging demo: heard about it at lunch."}, "group": {"name": "Staging demo crew", "size": "lt10", "role": "organizer", "tools": ["groupchat", "spreadsheet"], "need": "Staging demo group need."}, "loss": {"had": "yes", "product": "Staging demo defunct tool", "kind": ["shutdown"], "story": "Staging demo loss story."}, "handles": {"farcaster": "staging-demo"}, "followed_claim": true}'::jsonb,
+          NULL, NULL, NOW() - INTERVAL '29 days', NULL),
          (900501, 'staging-demo-topochain-waitlist-2@example.invalid',
-          NOW() - INTERVAL '18 days', NULL, NULL, NULL, NULL, NULL),
+          NOW() - INTERVAL '18 days', NULL, NULL, NULL, NULL, NULL, NULL),
          (900502, 'staging-demo-topochain-waitlist-3@example.invalid',
           NOW() - INTERVAL '40 days', NULL,
-          '{"role": "Builder", "chain": "Testnet", "why": "Staging demo survey answer (released)."}'::jsonb,
-          NOW() - INTERVAL '20 days', $1, NOW() - INTERVAL '39 days'),
+          '{"made_url": "https://staging-demo.example.invalid/admitted", "country": "PT", "discovery": {"source": "podcast"}, "handles": {"telegram": "staging-demo-admitted"}}'::jsonb,
+          NOW() - INTERVAL '20 days', $1, NOW() - INTERVAL '39 days', NULL),
          (900503, 'staging-demo-topochain-waitlist-4@example.invalid',
           NOW() - INTERVAL '25 days', NULL,
-          '{"country": "X-LA", "why": "Staging demo legacy region answer."}'::jsonb,
-          NULL, NULL, NOW() - INTERVAL '24 days')
+          '{"country": "X-LA", "made_note": "Staging demo legacy region answer."}'::jsonb,
+          NULL, NULL, NOW() - INTERVAL '24 days', NULL),
+         (900504, 'staging-demo-topochain-waitlist-5@example.invalid',
+          NOW() - INTERVAL '12 days', NULL,
+          '{"country": "UY", "discovery": {"source": "friend"}, "made_note": "Staging demo: came in through someone else."}'::jsonb,
+          NULL, NULL, NOW() - INTERVAL '12 days', 900500),
+         (900505, 'staging-demo-topochain-waitlist-6@example.invalid',
+          NOW() - INTERVAL '11 days', NULL,
+          '{"country": "UY", "discovery": {"source": "friend"}, "admit_together": true, "made_note": "Staging demo: wants to come in with the others."}'::jsonb,
+          NULL, NULL, NULL, 900500),
+         (900506, 'staging-demo-topochain-waitlist-7@example.invalid',
+          NOW() - INTERVAL '9 days', NULL,
+          '{"role": "Validator", "chain": "Testnet", "why": "Staging demo answer in the retired shape."}'::jsonb,
+          NULL, NULL, NOW() - INTERVAL '9 days', NULL)
        ON CONFLICT (id) DO NOTHING`,
       [USERS.bpReleased]
     );
 
-    // ON CONFLICT DO NOTHING above means an edit to the seeded `answers`
-    // literal only lands on a database that has never seen row 900500. Both
-    // country fixtures are re-asserted here so a re-cloned staging DB picks
-    // them up too, the same way the platform-mail fixture re-asserts its row.
+    // ON CONFLICT DO NOTHING above means an edit to a seeded `answers`
+    // literal only lands on a database that has never seen the row. Three
+    // fixtures are re-asserted here so a staging DB seeded before this
+    // change picks them up too, the same way the platform-mail fixture
+    // re-asserts its row.
+    //
+    // 900500 is rewritten WHOLESALE rather than patched: it used to carry
+    // the retired `{role, chain, why}` shape, which answers none of the
+    // seven survey sections, so a re-cloned database would have shown "0 of
+    // 7 answered" on the one row that exists to show the opposite. Gated on
+    // that shape being present (`role`, which the survey never writes) so
+    // the statement is a no-op on an already-correct row and can never
+    // clobber a fixture somebody edited by hand.
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET answers = $2::jsonb
+        WHERE id = $1 AND answers IS NOT NULL
+          AND answers->>'role' IS NOT NULL`,
+      [900500, JSON.stringify({
+        made_url: 'https://staging-demo.example.invalid/what-i-made',
+        made_note: 'Staging demo build note.',
+        country: 'UY',
+        discovery: { source: 'friend', detail: 'Staging demo: heard about it at lunch.' },
+        group: {
+          name: 'Staging demo crew',
+          size: 'lt10',
+          role: 'organizer',
+          tools: ['groupchat', 'spreadsheet'],
+          need: 'Staging demo group need.',
+        },
+        loss: {
+          had: 'yes',
+          product: 'Staging demo defunct tool',
+          kind: ['shutdown'],
+          story: 'Staging demo loss story.',
+        },
+        handles: { farcaster: 'staging-demo' },
+        followed_claim: true,
+      })]
+    );
     await pool.query(
       `UPDATE waitlist_signups
           SET answers = jsonb_set(answers, '{country}', to_jsonb($2::text))
@@ -11924,6 +11996,13 @@ async function seedStagingPlatformMail(pool) {
     { kind: 'waitlist_joined', to: 'staging-demo-waitlist@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
     // What production looks like when it works.
     { kind: 'waitlist_released', to: 'staging-demo-released@example.invalid', provider: 'gmail', status: 'sent', error: null },
+    // The same kind, addressed to the ADMITTED waitlist fixture (900502).
+    // The waitlist screen's Details block reads this row back to answer
+    // "did the 'you're in' mail actually leave?", which is otherwise
+    // invisible: mail_deliveries is staging:private, so without a fixture
+    // every admitted row in a preview reads "No delivery recorded" and the
+    // line looks broken rather than empty.
+    { kind: 'waitlist_released', to: 'staging-demo-topochain-waitlist-3@example.invalid', provider: 'gmail', status: 'sent', error: null },
     // The throttle firing, which is the system working, not an error.
     { kind: 'otp', to: 'staging-demo-throttled@example.invalid', provider: 'log', status: 'suppressed_rate_limit', error: 'another otp mail went to this address 12s ago' },
     // A provider refusal, so the card's error column is exercised.

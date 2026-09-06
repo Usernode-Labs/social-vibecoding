@@ -112,14 +112,25 @@
 
   /* The authored top bar's height, WITHOUT the status-bar inset it extends
      into (that is --platform-safe-top, added by whoever needs the total).
-     Not a new fact: it is the 52px the "Header height invariant" block near
-     #header-title.is-centered derives from the markup — py-3 around a 48px
-     content row, and no hairline since the reskin — restated once so a
-     surface that hangs off the bottom of the bar can say so rather than
-     hard-code a number that quietly stops matching. #apps-switcher-sheet's
-     desktop dropdown is the reader; tests/app-switcher-dropdown.test.js pins
-     this against the header's own classes so the two cannot drift. */
-  --platform-header-h: 3.25rem;
+     Not a new fact: it is what the "Header height invariant" block near
+     #header-title.is-centered derives from the markup — pt-3/pb-5 around a
+     28px content row — restated once so a surface that hangs off the bottom
+     of the bar can say so rather than hard-code a number that quietly stops
+     matching. #apps-switcher-sheet's desktop dropdown is the reader;
+     tests/app-switcher-dropdown.test.js pins this against the header's own
+     classes so the two cannot drift.
+
+     52px UNTIL THE BOTTOM PADDING GREW. The bar was py-3 — 12px above and
+     below a 28px row — and it also carries `-mb-2`, which pulls whatever
+     follows 8px UP into it to cut the notch every platform surface reads as
+     its rounded top. Those two facts together left FOUR pixels between the
+     controls and the next thing on the screen. On most routes that next
+     thing is transparent and nobody could tell. On an app route and in a
+     proposal session it is a raised sheet — a 28px radius, a hairline and a
+     shadow reaching up into the bar — and the chip, the bell and Improve sat
+     on its lip. `pb-5` spends 8px buying that clearance back, so the notch
+     costs the controls nothing. */
+  --platform-header-h: 3.75rem;
 
   /* ── Semantic state tokens (dev board) ───────────────────
      ONE meaning per hue, so the same lifecycle stage never reads two
@@ -248,15 +259,48 @@ html.un-kb .platform-safe-sheet {
 }
 
 /* ── Platform Messages screen ─────────────────────────────
-   Fully React-owned. These rules are scoped to messages-* so the existing
-   app group chat keeps its exact layout and interaction contract. */
+   Fully React-owned (frontend/src/features/messages). Every rule is scoped
+   to messages-* so the app group chat keeps its own contract.
+
+   DRAWN ON THE DEV SESSION'S LIFT LADDER — see `.dc-lift` and its two plane
+   classes further down. The wallpaper is the ground (this route is in the
+   body:has(…) wallpaper list). `.messages-layout` is the frosted STRIP,
+   carrying the screen's title, the New disc and the conversation rows drawn
+   straight on it. The open conversation is the frosted SHEET rising on the
+   strip — `.messages-thread-pane` — with its title row, transcript, typing
+   line and composer inside. Both planes wear `.dc-lift` plus
+   `.dc-lift-strip` / `.dc-lift-session` from index.tsx, so the fills, the
+   frost, the no-backdrop-filter fallback and both themes come from one
+   place rather than being restated here.
+
+   The same construction at both widths: on a phone the list screen IS the
+   strip and a thread is the strip's shoulder showing above the sheet; from
+   768px up both panes sit on one strip with the sheet beside the list. */
 .messages-layout {
+  /* The OPAQUE surfaces drawn on the two planes: a bubble from the other
+     side, a shared-item card, a floating disc, the composer. White on the
+     light sheet. In dark it is the ladder's own raised step (--dc-raised),
+     so a card is one step lighter than the sheet rather than a hole in it —
+     --bg-primary is near-black there and would be exactly that hole. */
+  --messages-surface: #ffffff;
+  /* The step off a surface: a glyph tile on a card, a disc's hover. */
+  --messages-surface-2: var(--bg-secondary);
+  --messages-hair: var(--border-light);
+  /* The open conversation's row on the strip, and a row under the pointer.
+     A translucent white so it reads as the row the sheet came out of. */
+  --messages-selected: rgba(255, 255, 255, 0.55);
+  --messages-disc-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   display: flex;
   width: 100%;
   height: 100%;
   min-height: 0;
-  max-width: 1280px;
-  margin: 0 auto;
+}
+.dark .messages-layout {
+  --messages-surface: var(--dc-raised);
+  --messages-surface-2: #3a3a3c;
+  --messages-hair: rgba(255, 255, 255, 0.08);
+  --messages-selected: rgba(255, 255, 255, 0.06);
+  --messages-disc-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .messages-list-pane {
@@ -264,50 +308,71 @@ html.un-kb .platform-safe-sheet {
   width: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--bg-primary);
+}
+/* The sheet. Its top margin is what shows the strip's shoulder above it on
+   a phone — the same reading the dev session gives, where the session sheet
+   sits ON the strip rather than abutting it. */
+.messages-thread-pane {
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin-top: 12px;
 }
 
-.messages-thread-header {
+/* The list's head: the screen's name at Home's heading size, and New as a
+   floating disc. The header bar's chip already names the screen, so there is
+   no subtitle under it. */
+.messages-list-toolbar {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  min-height: 58px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-light);
-  background: var(--bg-primary);
+  gap: 12px;
+  padding: 18px 16px 8px;
+}
+.messages-list-title { min-width: 0; flex: 1 1 auto; }
+/* Preflight resets headings to inherit, so the size is this rule's to give. */
+.messages-list-title h2 {
+  color: var(--text-primary);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
 }
 
-
+/* THE DISCS: New, the thread's actions, and the per-message tray's buttons.
+   The language's floating circular control — a white disc on the plane,
+   with the same hairline of shadow the header's discs carry. */
 .messages-new-button,
-.messages-thread-action,
-.messages-thread-back,
-.messages-composer-action,
-.messages-send {
+.messages-thread-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 9999px;
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  background: var(--messages-surface);
+  box-shadow: var(--messages-disc-shadow);
+  transition: background 150ms;
 }
-
-.messages-new-button { color: white; background: var(--accent); }
-.messages-new-button:hover { background: var(--accent-light); }
+.messages-new-button { width: 44px; height: 44px; color: var(--accent); }
+.messages-new-button:hover,
+.messages-thread-action:hover { background: var(--messages-surface-2); }
 .messages-new-button svg,
 .messages-thread-action svg,
-.messages-thread-back svg,
 .messages-composer-action svg,
 .messages-send svg {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+.messages-new-button svg { stroke-width: 2.5; }
 
 .messages-list-scroll,
 .messages-thread-scroll {
@@ -317,98 +382,155 @@ html.un-kb .platform-safe-sheet {
   overscroll-behavior: contain;
 }
 
+/* A conversation row, drawn straight on the strip: the square swatch
+   avatar, then two lines — the name with the time on its trailing edge, the
+   preview with the unread count on its. 17/15px, the grouped list's scale. */
 .messages-conversation-row {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   min-height: 66px;
-  padding: 9px 12px;
+  padding: 13px 16px;
   color: inherit;
   text-decoration: none;
+  transition: background 150ms;
 }
-/* The row separator, INSET past the avatar to where the name starts: 12px of
-   padding + the 44px `lg` UserAvatar + the 10px gap. A pseudo-element rather
+/* The row separator, INSET past the avatar to where the name starts: 16px of
+   padding + the 44px `lg` UserAvatar + the 14px gap. A pseudo-element rather
    than `border-bottom` because a border cannot be inset, and because the row
    is a fixed-height box whose 66px the border would eat into.
 
    Same treatment, same reason, as the drawer's nav rows, the home panels and
    @/components/ui/grouped-list.tsx: the widget language starts a row
-   separator at the content. */
+   separator at the content, and the last row has none. */
 .messages-conversation-row::after {
   content: '';
   position: absolute;
   bottom: 0;
-  left: 66px;
+  left: 74px;
   right: 0;
   height: 1px;
-  background: var(--border-light);
+  background: var(--messages-hair);
   pointer-events: none;
 }
-.messages-conversation-row:hover { background: var(--bg-secondary); }
-.messages-conversation-active { background: var(--accent-tint); }
-.messages-group-tag {
+.messages-conversation-row:last-child::after { display: none; }
+.messages-conversation-row:hover,
+.messages-conversation-active { background: var(--messages-selected); }
+.messages-row-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.messages-row-name,
+.messages-row-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.messages-row-name { color: var(--text-primary); font-size: 17px; font-weight: 700; }
+.messages-row-preview { margin-top: 1px; color: var(--text-muted); font-size: 15px; }
+/* An invitation's preview is the ACTION the row offers, so it takes the
+   accent — the language's "actionable / yours". */
+.messages-row-preview-invited { color: var(--accent); font-weight: 500; }
+.messages-row-time {
   flex: 0 0 auto;
-  padding: 1px 5px;
+  color: var(--text-muted);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.messages-row-time-unread { color: var(--accent); font-weight: 600; }
+.messages-group-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  margin-left: 6px;
+  padding: 0 8px;
   border-radius: 9999px;
   color: var(--text-muted);
-  background: var(--bg-secondary);
-  font-size: 10px;
+  background: var(--bg-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+  vertical-align: 2px;
 }
 .messages-unread {
   flex: 0 0 auto;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
   border-radius: 9999px;
   background: var(--accent);
-  color: white;
-  font-size: 10px;
+  /* --accent-ink, not `white`: the dark accent is a lighter blue and white
+     on it is 2.5:1. Same pair the send disc and the empty-state button use. */
+  color: var(--accent-ink);
+  font-size: 13px;
   font-weight: 700;
-  line-height: 18px;
+  line-height: 22px;
   text-align: center;
 }
 
 .messages-network-banner {
   flex: 0 0 auto;
-  padding: 5px 12px;
+  margin: 0 16px 8px;
+  padding: 8px 12px;
+  border-radius: 12px;
   color: #92400e;
   background: #fef3c7;
-  font-size: 11px;
+  font-size: 13px;
   text-align: center;
 }
 .dark .messages-network-banner { color: #fde68a; background: #451a03; }
 
+/* The empty and loading states, at the language's type scale. The list's
+   empty state is a white card on the strip with a filled pill; "Choose a
+   conversation" (desktop only — below 768px the list IS the screen until you
+   pick a row) is the same words standing on the strip where the sheet would
+   be, because a card there would read as a conversation with nothing in it. */
 .messages-state,
 .messages-empty,
-.messages-thread-empty {
+.messages-thread-empty,
+.messages-no-selection {
+  display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 7px;
-  min-height: 180px;
+  gap: 8px;
   padding: 24px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 15px;
   text-align: center;
 }
-.messages-state { display: flex; }
-.messages-empty { display: flex; min-height: 260px; }
-.messages-empty > span { color: var(--accent); font-size: 32px; }
-.messages-empty h3 { color: var(--text-primary); font-size: 15px; font-weight: 700; }
+.messages-state,
+.messages-thread-empty { min-height: 180px; }
+.messages-empty {
+  margin: 8px 16px 0;
+  padding: 36px 24px;
+  border-radius: 20px;
+  background: var(--messages-surface);
+}
+.messages-empty h3,
+.messages-no-selection h2 { color: var(--text-primary); font-size: 20px; font-weight: 700; }
+.messages-empty p,
+.messages-no-selection p { max-width: 22rem; }
+.messages-thread-empty > span { font-size: 32px; }
 .messages-empty button,
 .messages-state button {
-  margin-top: 5px;
-  border-radius: 8px;
-  padding: 7px 12px;
+  display: inline-flex;
+  align-items: center;
+  height: 44px;
+  margin-top: 8px;
+  padding: 0 20px;
+  border-radius: 9999px;
   background: var(--accent);
-  /* --accent-ink, not `white`. The dark accent is a LIGHTER blue (#5aa9ff) —
-     it has to be, against a near-black page — so white on it is 2.5:1. The
-     token is exactly this pair: white on the light accent, near-black on the
-     dark one. Same rule the outgoing chat bubble runs under. */
   color: var(--accent-ink);
+  font-size: 17px;
   font-weight: 600;
 }
+.messages-empty button:hover,
+.messages-state button:hover { background: var(--accent-light); }
 .messages-state-error { color: #dc2626; }
 .messages-spinner {
   width: 20px;
@@ -420,127 +542,211 @@ html.un-kb .platform-safe-sheet {
 }
 @keyframes messages-spin { to { transform: rotate(360deg); } }
 
-.messages-thread-pane {
-  flex-direction: column;
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  background: var(--bg-primary);
+/* The sheet's title row: who the conversation is with, its context line,
+   and the actions as discs. No hairline under it — the transcript's first
+   day label is what separates it, the way the dev session's header sits
+   over its transcript. */
+.messages-thread-header {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 12px;
+  padding: 14px 16px 8px;
 }
-.messages-thread-header { gap: 8px; }
-.messages-thread-back { margin-left: -7px; }
-.messages-thread-action:hover,
-.messages-thread-back:hover,
-.messages-composer-action:hover { background: var(--bg-secondary); }
+.messages-thread-name,
+.messages-thread-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.messages-thread-name { color: var(--text-primary); font-size: 17px; font-weight: 700; }
+.messages-thread-sub { color: var(--text-muted); font-size: 15px; }
 .messages-thread-menu {
   position: absolute;
   z-index: 30;
-  top: calc(100% + 4px);
+  top: calc(100% + 6px);
   right: 0;
-  width: 200px;
-  padding: 5px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--bg-primary);
+  width: 220px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--messages-surface);
   box-shadow: 0 12px 30px rgba(0, 0, 0, .18);
 }
 .messages-thread-menu button {
   display: block;
   width: 100%;
-  padding: 8px 9px;
-  border-radius: 6px;
-  font-size: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 15px;
   text-align: left;
 }
-.messages-thread-menu button:hover { background: var(--bg-secondary); }
+.messages-thread-menu button:hover { background: var(--messages-surface-2); }
 
+/* A pending invitation, inside the sheet above the (empty) transcript: a
+   tinted card with the language's filled pills — Accept in the accent,
+   Decline neutral, the block action in the danger tint. */
 .messages-invitation {
   display: flex;
   align-items: center;
   gap: 12px;
   flex: 0 0 auto;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(10, 124, 255, .25);
+  margin: 0 16px 8px;
+  padding: 12px 16px;
+  border-radius: 16px;
   background: var(--accent-tint);
-  font-size: 12px;
+  font-size: 15px;
 }
-.messages-invitation strong { color: var(--accent); }
-.messages-invitation p { margin-top: 1px; color: var(--text-muted); }
-.messages-invitation [role="alert"] { display: block; margin-top: 3px; color: #dc2626; }
-.messages-invite-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.messages-invitation strong { display: block; color: var(--accent); font-size: 17px; }
+.messages-invitation p { margin-top: 2px; color: var(--text-muted); }
+.messages-invitation [role="alert"] { display: block; margin-top: 4px; color: #dc2626; }
+.messages-invite-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .messages-invite-decline,
 .messages-invite-block,
 .messages-invite-accept {
-  border-radius: 7px;
-  padding: 6px 9px;
-  font-size: 11px;
-  font-weight: 600;
-}
-.messages-invite-decline { border: 1px solid var(--border); color: var(--text-secondary); }
-.messages-invite-block { border: 1px solid rgba(220, 38, 38, .35); color: #dc2626; }
-.messages-invite-accept { background: var(--accent); color: white; }
-
-.messages-thread-scroll { padding: 7px 0 4px; }
-.messages-load-older {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 16px;
   border-radius: 9999px;
-  padding: 4px 10px;
+  font-size: 15px;
+  font-weight: 600;
+  transition: background 150ms;
+}
+.messages-invite-decline { color: var(--text-primary); background: var(--bg-tertiary); }
+.messages-invite-block { color: #dc2626; background: rgba(220, 38, 38, .1); }
+.messages-invite-accept { color: var(--accent-ink); background: var(--accent); }
+.messages-invite-accept:hover { background: var(--accent-light); }
+.messages-invite-decline:disabled,
+.messages-invite-block:disabled,
+.messages-invite-accept:disabled { opacity: .55; }
+
+.messages-thread-scroll { padding: 4px 0 6px; }
+.messages-day {
+  padding: 10px 0 6px;
   color: var(--text-muted);
-  background: var(--bg-secondary);
-  font-size: 11px;
+  font-size: 15px;
+  text-align: center;
+}
+.messages-load-older {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 9999px;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  font-size: 13px;
+  font-weight: 500;
 }
 
+/* ── The named-row transcript (a group) ──────────────────────────────────
+   The app chat's shape: square avatar, bold name, muted time, flat text. */
 .messages-message {
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: 12px;
+  padding: 8px 16px;
 }
-.messages-message:hover { background: var(--bg-card-alt); }
-.messages-message-self { background: var(--bg-card); }
 .messages-message-pending { opacity: .7; }
 .messages-message-failed { background: rgba(239, 68, 68, .06); }
 .messages-message-head {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  min-height: 17px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
+  gap: 8px;
+  min-height: 22px;
+  color: var(--text-primary);
+  font-size: 17px;
+  font-weight: 700;
 }
 .messages-message-head time,
-.messages-message-head time ~ span { color: var(--text-faint); font-size: 10px; font-weight: 400; }
-.messages-markdown { color: var(--text-primary); overflow-wrap: anywhere; }
+.messages-message-head time ~ span { color: var(--text-muted); font-size: 15px; font-weight: 400; }
+/* The body at the language's reading size. Doubled up with .gc-msg-content
+   because format.tsx puts both classes on the node — that one is the
+   markdown vocabulary (its list, code and table rules), and it sets 13px
+   later in this file, which a bare .messages-markdown would lose to. */
+.messages-markdown.gc-msg-content {
+  color: var(--text-primary);
+  font-size: 17px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
 .messages-markdown a { color: var(--accent); text-decoration: underline; }
+
+/* ── The bubble transcript (a direct conversation) ───────────────────────
+   Two participants, one of them you, so side and surface say who is
+   speaking and no name is drawn. Theirs is an opaque white bubble on the
+   left; yours is on the right in the accent as a TINT — the same 8% the dev
+   chat gives your turns, with the page's own ink, so a quoted reply or a
+   link inside it keeps its normal colours and no inverted token is needed.
+   The gutter is the cue; the tint confirms it. */
+.messages-message-bubble {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 16px;
+}
+.messages-message-bubble.messages-message-self { align-items: flex-end; }
+.messages-bubble-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: inherit;
+  max-width: 78%;
+  min-width: 0;
+}
+.messages-bubble {
+  min-width: 0;
+  border-radius: 20px;
+  padding: 10px 16px;
+  color: var(--text-primary);
+  background: var(--messages-surface);
+  font-size: 17px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.messages-message-self .messages-bubble { background: var(--accent-tint); }
+.messages-message-bubble .messages-attachments,
+.messages-message-bubble .messages-object-list { width: 100%; max-width: 78%; }
+.messages-message-meta {
+  padding: 0 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ── The per-message tray ────────────────────────────────────────────────
+   Hover-revealed on a pointer, as a row of small discs. On a named row it
+   sits on the row's trailing edge; beside a bubble it stands on the side
+   away from the bubble's alignment, at its top, so it never covers the
+   text. */
 .messages-message-actions {
   position: absolute;
   top: 2px;
   right: 8px;
   display: none;
   align-items: center;
-  gap: 1px;
-  padding: 2px;
-  border: 1px solid var(--border-light);
-  border-radius: 7px;
-  background: var(--bg-primary);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, .1);
+  gap: 4px;
 }
 .messages-message:hover .messages-message-actions,
 .messages-message:focus-within .messages-message-actions { display: flex; }
 .messages-message-actions button {
-  width: 26px;
-  height: 25px;
-  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
   color: var(--text-muted);
-  font-size: 13px;
+  background: var(--messages-surface);
+  box-shadow: var(--messages-disc-shadow);
+  font-size: 15px;
 }
-.messages-message-actions button:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.messages-message-actions button:hover { background: var(--messages-surface-2); color: var(--text-primary); }
 /* The tray's glyphs are text (↩ ☺ ✎ !) except the bookmark, which is the
    shared SVG the app chat draws. Size only — each icon carries its own
    fill/stroke as presentation attributes, and a blanket `fill: none` here
    would erase BookmarkSolidIcon, which is the whole saved state. */
-.messages-message-actions button svg { display: block; width: 15px; height: 15px; }
+.messages-message-actions button svg { display: block; width: 16px; height: 16px; }
+.messages-bubble-wrap > .messages-message-actions { top: 0; right: auto; left: calc(100% + 6px); }
+.messages-message-self .messages-bubble-wrap > .messages-message-actions { left: auto; right: calc(100% + 6px); }
 
 /* A saved message's bookmark, solid and in the accent — the state lives in
    the glyph's SHAPE, the same way the app-chat bookmark's does, so the two
@@ -559,11 +765,12 @@ html.un-kb .platform-safe-sheet {
    not one.
 
    Two cues, and they are the same two the app chat's bookmark uses
-   (.gc-msg-save below): the mark STAYS, and it is solid and accented. The
-   accent rule sits on the row itself as an inset bar rather than a
-   background, so it composes with `.messages-message-self`, the hover tint
-   and the failed-send wash instead of racing them. */
-.messages-message-saved { box-shadow: inset 3px 0 0 var(--accent); }
+   (.gc-msg-save below): the mark STAYS, and it is solid and accented. On a
+   named row the accent also sits on the row as an inset bar, composing with
+   the failed-send wash instead of racing it; a bubble carries the mark as
+   the small solid bookmark disc standing at its corner and nothing else,
+   since a bar down a bubble's side would read as part of the bubble. */
+.messages-message-saved:not(.messages-message-bubble) { box-shadow: inset 3px 0 0 var(--accent); }
 
 /* Only where the tray is hover-revealed in the first place. On touch it is
    always laid out (see the `hover: none` block below), and collapsing it to
@@ -571,69 +778,71 @@ html.un-kb .platform-safe-sheet {
    `:hover` never matches, so the collapsed state would be the only state. */
 @media (hover: hover) {
   .messages-message-saved .messages-message-actions { display: flex; }
-  /* At rest it is a MARK, not a toolbar: the card chrome goes and the other
-     actions stand down, so the row carries one small solid bookmark. The
-     full tray is one hover away, exactly as on any other message. */
-  .messages-message-saved:not(:hover):not(:focus-within) .messages-message-actions {
-    border-color: transparent;
-    background: transparent;
-    box-shadow: none;
-  }
+  /* At rest it is a MARK, not a toolbar: the other actions stand down, so
+     the message carries one small solid bookmark. The full tray is one
+     hover away, exactly as on any other message. */
   .messages-message-saved:not(:hover):not(:focus-within)
     .messages-message-actions > button:not(.messages-action-saved) {
     display: none;
   }
 }
 
+/* The quoted reply above a message, and the composer's staged-reply chip:
+   one border, one author line, one snippet line, drawn twice on purpose so
+   staging a reply looks like what it is about to produce. */
 .messages-quote,
 .messages-reply-draft {
   width: 100%;
   min-width: 0;
-  border-left: 3px solid var(--accent-light);
-  padding: 4px 7px;
+  border-left: 3px solid var(--accent);
+  padding: 2px 10px;
   color: var(--text-muted);
-  background: var(--accent-tint);
-  font-size: 11px;
+  font-size: 15px;
   text-align: left;
 }
-.messages-quote { margin: 2px 0 4px; border-radius: 0 6px 6px 0; }
+.messages-quote { margin: 0 0 6px; }
 .messages-quote span,
-.messages-reply-draft span { color: var(--accent); font-weight: 600; }
+.messages-reply-draft span { display: block; color: var(--accent); font-weight: 700; }
 .messages-quote p,
 .messages-reply-draft p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.messages-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+/* Reaction pills, the language's own: a filled neutral chip, and the one
+   that is YOURS on a tinted accent ground with accent ink — a fill, not an
+   outline, because a bordered pill among filled ones reads as a different
+   component rather than a different state. */
+.messages-reactions { display: flex; flex-wrap: wrap; gap: 6px; }
+.messages-message:not(.messages-message-bubble) .messages-reactions { margin-top: 8px; }
 .messages-reactions button {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  min-height: 24px;
-  padding: 1px 7px;
-  /* Same move as .gc-vote-btn, including its fill token: the language's
-     reaction pill is a filled neutral chip, not an outlined white one, and
-     --bg-tertiary is the one that stays a step off the card in both themes. */
-  border: 1px solid transparent;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
   border-radius: 9999px;
   color: var(--text-primary);
   background: var(--bg-tertiary);
-  font-size: 11px;
+  font-size: 15px;
+  font-weight: 500;
+  transition: background 150ms;
 }
-.messages-reactions .messages-reaction-mine { border-color: var(--accent-light); color: var(--accent); background: var(--accent-tint); }
+.messages-reactions button:hover { background: var(--border); }
+.messages-reactions .messages-reaction-mine { color: var(--accent-wash-ink); background: var(--accent-wash); }
 .messages-reaction-picker {
   position: absolute;
   z-index: 25;
-  top: 30px;
+  top: 36px;
   right: 10px;
   display: flex;
   gap: 2px;
-  padding: 5px;
-  border: 1px solid var(--border);
+  padding: 6px;
   border-radius: 9999px;
-  background: var(--bg-primary);
+  background: var(--messages-surface);
   box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
 }
-.messages-reaction-picker button { width: 30px; height: 30px; border-radius: 9999px; font-size: 18px; }
-.messages-reaction-picker button:hover { background: var(--bg-secondary); transform: scale(1.1); }
+.messages-bubble-wrap > .messages-reaction-picker { top: calc(100% + 4px); right: auto; left: 0; }
+.messages-message-self .messages-bubble-wrap > .messages-reaction-picker { left: auto; right: 0; }
+.messages-reaction-picker button { width: 36px; height: 36px; border-radius: 9999px; font-size: 20px; }
+.messages-reaction-picker button:hover { background: var(--messages-surface-2); transform: scale(1.1); }
 
 .messages-edit textarea {
   width: 100%;
@@ -645,111 +854,127 @@ html.un-kb .platform-safe-sheet {
   max-height: 260px;
   margin-top: 3px;
   border: 1px solid var(--accent-light);
-  border-radius: 7px;
-  padding: 7px;
+  border-radius: 14px;
+  padding: 9px 12px;
   color: var(--text-primary);
-  background: var(--bg-input);
-  font-size: 13px;
+  background: var(--messages-surface);
+  font-size: 17px;
+  line-height: 1.3;
   /* `resize: vertical` stays: the grow is a floor on convenience, not a
      ceiling on choice, and a hand-dragged height is a deliberate act the next
      keystroke should not undo. */
   resize: vertical;
   overflow-y: auto;
 }
-.messages-edit > div { display: flex; gap: 9px; margin-top: 3px; }
-.messages-edit button { color: var(--accent); font-size: 11px; font-weight: 600; }
+.messages-edit > div { display: flex; gap: 12px; margin-top: 6px; }
+.messages-edit button { color: var(--accent); font-size: 15px; font-weight: 600; }
 
 .messages-report {
   display: grid;
-  gap: 7px;
+  gap: 8px;
+  width: 100%;
   max-width: 26rem;
-  margin-top: 7px;
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  padding: 8px;
-  background: var(--bg-secondary);
+  border-radius: 16px;
+  padding: 12px;
+  background: var(--messages-surface);
 }
-.messages-report label { display: grid; gap: 3px; color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.messages-message:not(.messages-message-bubble) .messages-report { margin-top: 8px; }
+.messages-report label { display: grid; gap: 4px; color: var(--text-secondary); font-size: 13px; font-weight: 600; }
 .messages-report select,
 .messages-report textarea {
   width: 100%;
   border: 1px solid var(--border-light);
-  border-radius: 6px;
-  padding: 6px 7px;
+  border-radius: 10px;
+  padding: 8px 10px;
   color: var(--text-primary);
   background: var(--bg-input);
-  font-size: 12px;
+  font-size: 15px;
 }
 .messages-report textarea { resize: vertical; }
-.messages-report > div { display: flex; gap: 10px; }
-.messages-report button { color: var(--accent); font-size: 11px; font-weight: 600; }
+.messages-report > div { display: flex; gap: 12px; }
+.messages-report button { color: var(--accent); font-size: 15px; font-weight: 600; }
 .messages-report button:disabled { opacity: .55; }
 
+/* Files and shared items: the language's cards — white, rounded, no border,
+   a neutral glyph tile leading. */
 .messages-attachments,
-.messages-object-list { display: grid; gap: 5px; max-width: 480px; margin-top: 6px; }
+.messages-object-list { display: grid; gap: 6px; max-width: 480px; }
+.messages-message:not(.messages-message-bubble) .messages-attachments,
+.messages-message:not(.messages-message-bubble) .messages-object-list { margin-top: 8px; }
 .messages-attachment,
 .messages-object-card,
 .messages-pending-object {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  padding: 7px 9px;
+  border-radius: 16px;
+  padding: 10px 12px;
   color: var(--text-primary);
-  background: var(--bg-secondary);
-  font-size: 11px;
+  background: var(--messages-surface);
+  font-size: 15px;
   text-decoration: none;
+  transition: background 150ms;
 }
-.messages-attachment img { width: 120px; max-height: 100px; border-radius: 6px; object-fit: cover; }
-.messages-attachment span { color: var(--text-muted); font-size: 10px; }
+.messages-attachment img { width: 160px; max-height: 120px; border-radius: 10px; object-fit: cover; }
+.messages-attachment span { color: var(--text-muted); font-size: 13px; }
 .messages-file-icon,
 .messages-object-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 31px;
-  height: 31px;
-  border-radius: 7px;
-  color: var(--accent);
-  background: var(--accent-tint);
-  font-size: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  color: var(--text-primary);
+  background: var(--messages-surface-2);
+  font-size: 17px;
   font-weight: 700;
 }
-.messages-attachment-view { color: var(--accent); font-size: 10px; font-weight: 600; }
-.messages-object-card:hover { border-color: var(--accent-light); }
-.messages-object-unavailable { opacity: .75; filter: grayscale(1); }
+.messages-attachment-view { color: var(--accent); font-size: 13px; font-weight: 600; }
+.messages-object-card:hover { background: var(--messages-surface-2); }
+.messages-object-unavailable { opacity: .6; }
 
 .messages-typing {
   flex: 0 0 auto;
   min-height: 18px;
-  padding: 2px 13px;
+  padding: 2px 20px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 13px;
 }
+
+/* ── The composer ────────────────────────────────────────────────────────
+   One white card at the foot of the sheet: bare glyphs, a borderless field
+   at reading size, and the round accent send disc the dev chat draws. The
+   BAR around the card is what carries the home-indicator inset
+   (`platform-safe-bar`), so on a notched phone the gap under the card
+   grows and the card itself does not. */
 .messages-composer,
 .messages-composer-disabled {
   position: relative;
   flex: 0 0 auto;
-  border-top: 1px solid var(--border-light);
-  padding: 8px;
-  background: var(--bg-primary);
+  padding: 6px 12px 8px;
 }
-.messages-composer-disabled { color: var(--text-muted); font-size: 12px; text-align: center; }
+.messages-composer-card {
+  border-radius: 22px;
+  padding: 8px 8px 8px 12px;
+  background: var(--messages-surface);
+  box-shadow: var(--messages-disc-shadow);
+}
+.messages-composer-disabled { padding: 14px 16px; color: var(--text-muted); font-size: 15px; text-align: center; }
 .messages-composer-input {
   flex: 1 1 auto;
   min-width: 0;
   max-height: 140px;
-  min-height: 38px;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  padding: 8px 12px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 0;
+  padding: 9px 4px;
   color: var(--text-primary);
-  background: var(--bg-input);
-  font-size: 13px;
-  line-height: 20px;
+  background: transparent;
+  font-size: 17px;
+  line-height: 22px;
   outline: none;
   resize: none;
   /* #1408: lib/use-auto-grow.ts sets `height` to the content height, and
@@ -757,128 +982,128 @@ html.un-kb .platform-safe-sheet {
      have to be reachable, so the box scrolls rather than clipping them. */
   overflow-y: auto;
 }
-.messages-composer-input:focus { border-color: var(--accent-light); }
-.messages-composer-action { color: var(--text-muted); }
+.messages-composer-input::placeholder { color: var(--text-faint); }
+.messages-composer-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  color: var(--text-secondary);
+  transition: background 150ms;
+}
+.messages-composer-action svg { stroke-width: 1.8; }
+.messages-composer-action:hover { background: var(--messages-surface-2); }
 .messages-composer-action:disabled { opacity: .35; }
-.messages-send { color: white; background: var(--accent); }
+.messages-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  transition: background 150ms;
+}
+.messages-send svg { width: 20px; height: 20px; stroke-width: 2.4; }
+.messages-send:hover { background: var(--accent-light); }
 .messages-send:disabled { opacity: .35; }
 .messages-reply-draft,
 .messages-pending-object { margin-bottom: 6px; }
-.messages-reply-draft { display: flex; align-items: center; border-radius: 0 7px 7px 0; }
+.messages-reply-draft {
+  display: flex;
+  align-items: center;
+  border-radius: 0 12px 12px 0;
+  padding: 6px 10px;
+  background: var(--accent-tint);
+}
+.messages-pending-object { padding: 8px 12px; background: var(--messages-surface-2); }
 .messages-reply-draft button,
-.messages-pending-object button { margin-left: auto; width: 24px; height: 24px; color: var(--text-muted); }
+.messages-pending-object button {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  color: var(--text-muted);
+  font-size: 17px;
+}
 .messages-mention-menu {
   position: absolute;
   z-index: 25;
-  right: 8px;
+  right: 12px;
   bottom: calc(100% - 3px);
-  left: 8px;
+  left: 12px;
   max-height: 180px;
   overflow-y: auto;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-primary);
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--messages-surface);
   box-shadow: 0 -7px 20px rgba(0, 0, 0, .12);
 }
-.messages-mention-menu button { display: block; width: 100%; padding: 7px 8px; border-radius: 5px; color: var(--text-primary); font-size: 12px; text-align: left; }
-.messages-mention-menu button:hover { background: var(--bg-secondary); }
-.messages-composer-dragging { outline: 2px solid var(--accent); outline-offset: -2px; }
+.messages-mention-menu button { display: block; width: 100%; padding: 9px 12px; border-radius: 10px; color: var(--text-primary); font-size: 15px; text-align: left; }
+.messages-mention-menu button:hover { background: var(--messages-surface-2); }
+.messages-composer-dragging .messages-composer-card { outline: 2px solid var(--accent); outline-offset: -2px; }
 .messages-drop-overlay {
   position: absolute;
   z-index: 30;
-  inset: 4px;
+  inset: 4px 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: 2px dashed var(--accent-light);
-  border-radius: 9px;
+  border-radius: 22px;
   color: var(--accent);
-  background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
-  font-size: 12px;
+  background: color-mix(in srgb, var(--messages-surface) 94%, transparent);
+  font-size: 15px;
   font-weight: 700;
   pointer-events: none;
 }
 
+/* On touch the tray is always laid out: under the bubble, or on the row's
+   trailing edge, in flow rather than floating. */
 @media (hover: none) {
-  .messages-message-actions { display: flex; position: static; float: right; margin: 2px 0 0 6px; box-shadow: none; }
+  .messages-message-actions { display: flex; position: static; margin: 6px 0 0; }
+  /* On a named row the tray takes its own line under the message, on the
+     trailing edge, rather than a column beside the text: four 32px discs
+     beside a phone-width row left the words wrapping at half the width. */
+  .messages-message:not(.messages-message-bubble) { flex-wrap: wrap; }
+  .messages-message:not(.messages-message-bubble) > .messages-message-actions { flex: 0 0 100%; justify-content: flex-end; margin: 4px 0 0; }
 }
 
 /* ── The two panes, and the width they are actually drawn at ────────────
-
-   These rules were dropped when Messages became a slide-over sheet, on the
-   sound reasoning that a 24rem surface has no business sizing panes against
-   the VIEWPORT. Messages is a full screen again (App.SCREEN_IDS carries
-   `messages-screen`, and App.navigateToMessages calls _showOnlyScreen on it)
-   and index.tsx still renders both panes with Tailwind's `md:` breakpoint —
-   so from 768px up the browser was being handed two `width: 100%` flex items
-   with nothing to arbitrate between them, and settled on an even split with
-   no divider. A 470px-wide conversation LIST beside a 470px thread is what
-   "the messages page looks unformatted" was.
-
-   So the split is back, at the 768px the markup's own `md:` classes assume.
-   Below it exactly one pane is rendered at a time (the list until a row is
-   picked, the thread after, the thread's own back button between them) and
-   both stay full width. */
+   From 768px up both panes sit on the one strip: the list column fixed at
+   22rem, the sheet rising beside it with its own margin so the strip shows
+   around its shoulders. Below that exactly one pane is rendered at a time
+   (the list until a row is picked, the thread after, the header bar's back
+   arrow between them) and both stay full width. */
 @media (min-width: 768px) {
   .messages-list-pane {
-    flex: 0 0 21rem;
-    width: 21rem;
-    border-right: 1px solid var(--border-light);
+    flex: 0 0 22rem;
+    width: 22rem;
+    padding-right: 8px;
   }
-  .messages-thread-pane { flex: 1 1 auto; }
+  .messages-thread-pane {
+    flex: 1 1 auto;
+    margin: 14px 12px 0 8px;
+  }
+  .messages-thread-pane.messages-no-selection { margin: 0; }
 }
 
-/* The list's own head: the screen's name, what it holds, and New. Sized to
-   MATCH .messages-thread-header opposite it — same 58px floor, same padding,
-   same hairline — because the two sit side by side from 768px up and a
-   half-pixel of disagreement between them reads as a broken rule. */
-.messages-list-toolbar {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: 8px;
-  min-height: 58px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-light);
-  background: var(--bg-primary);
-}
-.messages-list-title { min-width: 0; flex: 1 1 auto; }
-/* Preflight resets headings to inherit, so the size is this rule's to give. */
-.messages-list-title h2 { font-size: 15px; line-height: 1.25; }
-
-/* "Choose a conversation" — the thread pane with nothing in it, which only
-   exists from 768px up (below that the list IS the screen until you pick a
-   row). It is the same centred empty state .messages-empty draws in the list,
-   because they are the same kind of thing said about the two panes. */
-.messages-no-selection {
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 24px;
-  color: var(--text-muted);
-  font-size: 13px;
-  text-align: center;
-}
-.messages-no-selection > span { color: var(--accent); font-size: 32px; }
-.messages-no-selection h2 {
-  color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 700;
-}
-.messages-no-selection p { max-width: 22rem; }
-
-/* Phone-width only, where the sheet made them unconditional. Each of these
-   exists because a narrow column cannot lay the row out sideways; the thread
-   pane on a desktop is up to ~59rem and can. */
+/* Phone-width only. Each of these exists because a narrow column cannot lay
+   the row out sideways; the thread pane on a desktop is up to ~59rem and can. */
 @media (max-width: 767px) {
   .messages-invitation { align-items: flex-start; flex-direction: column; }
   .messages-invitation > div:last-child { align-self: stretch; }
   .messages-invite-actions { justify-content: stretch; }
   .messages-invite-decline, .messages-invite-block, .messages-invite-accept { flex: 1 1 auto; }
-  .messages-message { padding-right: 8px; padding-left: 8px; }
-  .messages-attachment img { width: 88px; }
+  .messages-message { padding-right: 12px; padding-left: 12px; }
+  .messages-attachment img { width: 112px; }
 }
+
 
 .dark {
   --bg-primary: #0b0b0c;
@@ -1490,7 +1715,7 @@ html, body {
    rule below sets those four values; everything else — the zoom surface,
    the cleared bar, the launch cover, the landing root — follows through
    the same custom properties in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) {
   --home-ground: #f4f2e4;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -1517,7 +1742,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
     radial-gradient(circle at 70px calc(100% - 69px), rgba(252, 219, 212, 0.75) 90px, rgba(252, 219, 212, 0.375) 170px, rgba(252, 219, 212, 0) 250px) 0 0 / 100% 100% no-repeat var(--home-ground);
   background: var(--home-wallpaper);
 }
-.dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+.dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
@@ -1555,7 +1780,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    at every width on its own — the second rule here gives dark the same
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) {
     --home-wallpaper:
       var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
@@ -1567,7 +1792,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(252, 219, 212, 0.7), rgba(252, 219, 212, 0) 70%) 0 0 / 100% 100% no-repeat,
       radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(229, 216, 239, 0.55), rgba(229, 216, 239, 0) 70%) 0 0 / 100% 100% no-repeat var(--home-ground);
   }
-  .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) {
+  .dark body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) {
     --home-wallpaper:
       var(--home-star) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat,
       var(--home-grain) 0 0 / 240px 240px repeat,
@@ -1593,7 +1818,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
 /* THE CANVAS UNDER THE PUSH is the ground too — <html>'s own background,
@@ -1606,7 +1831,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    value, so the browser chrome and a cold launch frame the page in it.
    The launch cover reads the same ground, so the app opens on the page's
    colour in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #auth-landing-screen):not(.hidden)) .app-launch-cover {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #auth-landing-screen):not(.hidden)) .app-launch-cover {
   background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
@@ -7974,13 +8199,28 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
    console, …) and #landing-header (the anonymous shell) — and they must
    be the SAME height on every screen. Both are built the same way:
 
-     py-3 (12px top + bottom) around a 48px CONTENT ROW  =  72px,
+     pt-3 / pb-5 (12px above, 20px below) around a 28px CONTENT ROW = 60px,
      plus env(safe-area-inset-top) via .un-safe-top-extend (native.css)
      on the padding-top.
 
-   The row was 28px (a 52px bar) until the homescreen design, whose app
-   chip and bell are 48px discs with the same 12px of padding around
-   them; the row grew to hold them and every pin below moved with it.
+   THE TWO PADDINGS DIFFER ON PURPOSE, and this block used to say `py-3
+   around a 48px row = 72px` while the bar measured 52. Both halves of
+   that were wrong: the row is 28px, and the padding is no longer
+   symmetric.
+
+   It is not symmetric because the bar carries `-mb-2`. That negative
+   margin pulls whatever follows 8px UP into the bar, which is how the
+   `rounded-b-2xl` notch gives every platform surface below it a rounded
+   top for free (see the app-sheet block near #app-frame-host). The cost
+   comes out of the bottom padding and nothing else: 12px of padding minus
+   an 8px overlap left FOUR pixels between the controls and the next thing
+   on the screen. A transparent screen root hid that. A raised sheet does
+   not — inside an app and in a proposal session the chip, the bell and
+   Improve sat on the lip of a 28px radius with a shadow coming up to meet
+   them. `pb-5` restores the 12px the notch was spending.
+
+   Symmetry is not the invariant; PARITY is. Both bars carry the same two
+   paddings, so both are 60px, and neither jumps as you sign in.
 
    It was 53px until the reskin: both bars carried a 1px `border-b`
    hairline, and the border box counted it. The widget language draws no
@@ -7999,20 +8239,20 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
    So the row is pinned from BOTH directions, in the markup:
 
    - FLOOR: the lead back-button wrapper (the one child present in every
-     state of both headers) carries `h-12` = 48px, which survives the
+     state of both headers) carries `h-7` = 28px, which survives the
      title being display:none. On the landing bar it is also fixed-width
-     (`w-12`): frontend/src/features/header/use-header-layout.ts measures
+     (`w-7`): frontend/src/features/header/use-header-layout.ts measures
      it as the title's left side group.
-   - CEILING: no direct child of either header may exceed 48px, and the
+   - CEILING: no direct child of either header may exceed 28px, and the
      children that could grow past it state their height OUTRIGHT rather
-     than adding up to it — the Improve pill is `h-12`, the landing CTAs
-     are `h-12 inline-flex items-center`. Padding arithmetic is what
+     than adding up to it — the Improve pill is `h-7`, the landing CTAs
+     are `h-7 inline-flex items-center`. Padding arithmetic is what
      broke this twice back when the row was 28px: the old App/Dev
      switch's `py-1` segments + `p-0.5` track came to 28px only if you
      forgot its 1px border (it was 30px), and the bordered "Join
      waitlist" CTA was 30px next to its borderless 28px siblings for the
-     same reason. Anything new added to a header gets the same 48px
-     budget — declare `h-12` and centre inside it.
+     same reason. Anything new added to a header gets the same 28px
+     budget — declare `h-7` and centre inside it.
 
    Absolutely-positioned badges and dots (#notifications-badge,
    #improve-working-dot, #dev-console-badge, #header-menu-deploy-dot)
@@ -8323,18 +8563,25 @@ a.drawer-ver--fork:hover {
    The overlay never uses `hidden`: opacity carries the fade and
    pointer-events is what stops a transparent backdrop from eating clicks
    while the panel is closed. */
-/* IT HANGS FROM THE HEADER, IT DOES NOT COVER IT. This was `top: 0`, so the
-   rail slid up over the bar and the chip, bell and Improve button went under
-   it — the control you had just pressed disappeared beneath the thing it
-   opened. The app chip's menu already starts at the bar's underside; this is
-   the same offset, so the two panels in that bar begin on the same line.
-   `--platform-header-h` is the bar's own height (see :root) and
-   --platform-safe-top the status-bar inset it extends into; `bottom: 0`
-   still takes it to the floor, so all that changes is where it starts.
+/* IT COVERS THE HEADER. A full-height rail over the whole right edge,
+   the bar included — which is what it was before it was made to hang from
+   the bar's underside, and what it is again.
+
+   The intervening arrangement was argued from one interaction: with the
+   backdrop stopping at the bar you could press the bell while Improve was
+   open and move straight between the two panels. That is real, and it is
+   what this gives up. What it bought was worse — a rail and a dim that
+   stopped short of the top of the screen, so an open panel left a lit strip
+   of chrome above it that belonged to neither the panel nor the page. A
+   modal surface that covers everything is the ordinary reading of a modal
+   surface, and moving between panels is two clicks, which is what it is
+   everywhere else in the product.
+
+   `bottom: 0` still takes it to the floor; only where it STARTS moved back.
    Below `sm` the block further down resets `top` for the bottom sheet, and
    `.platform-sheet-adopted` neutralises inset entirely on the kit path. */
 #improve-panel {
-  top: calc(var(--platform-header-h) + var(--platform-safe-top));
+  top: 0;
   right: 0;
   bottom: 0;
   width: 20rem;
@@ -8358,46 +8605,31 @@ a.drawer-ver--fork:hover {
   pointer-events: auto;
 }
 
-/* ── THE HEADER STAYS LIT, AND STAYS LIVE ──────────────────────────────
-   Both backdrops ship `inset-0`, so they dimmed the whole viewport — the
-   bar included — and, being `z-40` over its `z-10`, they also SWALLOWED
-   every click on it. That second part is the one that cost something: with
-   a panel open, pressing the bell hit the backdrop instead, which dismissed
-   the panel and did nothing else, so moving between the two panels in this
-   bar took two clicks and the first one appeared to do nothing.
+/* ── THE HEADER IS INSIDE THE DIM ──────────────────────────────────────
+   Every backdrop ships `inset-0`, so the bar is dimmed along with the page
+   and a click on it dismisses the panel like a click anywhere else. There
+   is no rule here any more, and that is the point: `inset-0` is what the
+   markup already says, and a desktop override that lifted the dim off the
+   bar was the whole of the previous arrangement.
 
-   Starting the dim at the bar's underside fixes both at once, and it is
-   geometry rather than z-order: the backdrop no longer reaches the header,
-   so a click there lands on the control it looks like it landed on. The
-   panels themselves already begin on that line (the app menu since #1483,
-   the Improve rail in this change), so nothing above it is covered by
-   anything.
+   WHAT THIS COSTS, because it is not nothing. The backdrop is `z-40` over
+   the header's `z-10`, so with a panel open a press on the bell lands on
+   the backdrop: the panel closes and nothing else happens. Moving from
+   Improve to notifications is two clicks, and the first one looks like it
+   did nothing. That was the reported problem the offset fixed, and it comes
+   back with it.
 
-   What the page loses is the dim over 52px of chrome that is not what the
-   panel is about. What it gains is that the bar reads as still-live — which
-   is now true, and is the point.
+   It is the right trade anyway. A dim that stops 60px short of the top of
+   the screen leaves a lit band of chrome above an open panel, and a bar
+   that is live while a modal surface is up is a claim the rest of the
+   product does not make. One click to dismiss, one to open the next, is
+   what a scrim means.
 
-   EVERY PANEL THE BAR OPENS, not a chosen two. This began as Improve and the
-   app menu, and stopping there would have left the bell dimming and covering
-   the header while its two neighbours did not — the same half-applied rule
-   that made the app menu's dim look wrong beside the Improve panel's one
-   round ago. The interaction argument settles it rather than the visual one:
-   "the header stays live" is only true if it is true whichever panel is open,
-   and with the notifications rail at `top: 0` a click on Improve landed on
-   #notifications-screen-tabs instead.
-
-   Desktop only. Below `sm` these are bottom sheets over the page, and on
-   touch the kit draws its own backdrop over everything; a phone header
-   half-lit above a sheet would be a different decision, and one nobody has
-   asked for. One rule for all of them so they cannot drift apart. */
-@media (min-width: 640px) {
-  #improve-overlay,
-  #apps-switcher-overlay,
-  #notifications-sheet-overlay,
-  #messages-sheet-overlay {
-    top: calc(var(--platform-header-h) + var(--platform-safe-top));
-  }
-}
+   The behaviour the offset made reachable — Improve.open() dismissing the
+   other registered sheets — STAYS. It is unreachable from the header again,
+   but it is still the correct thing for a panel to do when something else
+   opens it, and removing it would be undoing a fix rather than a geometry
+   change. tests/header-stays-live.test.js pins both halves. */
 
 /* Below `sm` (640px — the same boundary HomeLayout.BREAKPOINT_PX and the
    kanban media queries use, so the shell has ONE phone/desktop line) the
@@ -8455,12 +8687,19 @@ a.drawer-ver--fork:hover {
    (`#switcher-nav`, the one `flex-1 min-h-0` child) take the rest. */
 @media (min-width: 640px) {
   #apps-switcher-sheet {
-    /* THE HEADER'S HEIGHT, RESTATED ONCE. --platform-header-h is the 52px the
-       "Header height invariant" block above derives (py-3 around a 28px
+    /* THE HEADER'S HEIGHT, RESTATED ONCE. --platform-header-h is the 60px the
+       "Header height invariant" block above derives (pt-3/pb-5 around a 28px
        content row, no hairline since the reskin); --platform-safe-top is the
        status-bar inset the bar extends into via .un-safe-top-extend, and 0 in
        a desktop browser. If the header's height ever moves, this moves with
        it — tests/app-switcher-dropdown.test.js pins the pair.
+
+       AND THIS MENU IS THE ONE SURFACE THAT STILL HANGS FROM THE BAR. The
+       two rails cover it now; a dropdown cannot, because it is anchored to
+       the chip that opens it and a menu drawn over its own trigger has
+       nothing to point at. Its BACKDROP still dims the bar like every other
+       one — the chip is greyed with the rest of the page, and only the panel
+       itself starts below it.
 
        FLUSH, NOT FLOATING. There were 0.5rem of daylight here, on the
        argument that a gap makes the panel read as its own surface. It reads
@@ -8468,12 +8707,12 @@ a.drawer-ver--fork:hover {
        the two are one piece of chrome and a seam between them was a seam in
        the middle of one object. The panel's own border and shadow do the
        separating. That held when the wallpaper routes cleared the bar's
-       surface, and for a second reason: every panel the bar opens starts on
-       this same line and every backdrop stops at it (the "header stays
-       live" rule, tests/header-stays-live.test.js), so a gap here alone
-       would put the menu on a different line from the Improve rail. What
-       did change is the hairline: the brand one (below), so the menu ties
-       to the chip's own ring rather than to a zinc bar it no longer sits on. */
+       surface, and it still holds now that the Improve rail covers the bar
+       rather than starting beside this menu: flush is what makes a dropdown
+       part of the control it hangs off, and that argument never depended on
+       the rail. What did change is the hairline: the brand one (below), so
+       the menu ties to the chip's own ring rather than to a zinc bar it no
+       longer sits on. */
     top: calc(var(--platform-header-h) + var(--platform-safe-top));
     left: 50%;
     right: auto;
@@ -8613,8 +8852,9 @@ a.drawer-ver--fork:hover {
    opened from a control in the middle of the bar belongs under that control.
    These take the same near-full-height cap the Improve panel does and let
    their own scroller take over. */
-/* Under the bar, like the Improve rail and the app menu — the bar opens all
-   three and none of them may cover it. See the backdrop block above.
+/* Over the bar, like the Improve rail — the two full-height rails cover the
+   header and the app menu, being a dropdown anchored to the chip, does not.
+   See the backdrop block above for what that costs and why.
    `#messages-sheet` is DEAD in this selector and is left alone rather than
    quietly removed here: Messages went back to being a screen (#messages-screen,
    see tests/shell-id-inventory.test.js), so the id matches nothing in the
@@ -8622,7 +8862,7 @@ a.drawer-ver--fork:hover {
    a tidy-up of its own, not something to smuggle into a geometry change. */
 #notifications-sheet,
 #messages-sheet {
-  top: calc(var(--platform-header-h) + var(--platform-safe-top));
+  top: 0;
   right: 0;
   bottom: 0;
   width: 24rem;

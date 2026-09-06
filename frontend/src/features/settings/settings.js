@@ -249,6 +249,14 @@
       // Every control below is bound ONCE, here, by id: the section markup
       // is static in index.html and only ever hidden/shown, never rebuilt
       // (see the "MOVE, DON'T REWRITE" note on #settings-screen).
+
+      // The Usernode app → connection panel offers wallet recovery only while
+      // native admission is refused for want of a seeded wallet
+      // (_walletRecoveryAvailable). Admission flipping either way — the
+      // recovery dialog succeeding, a sign-out — must repaint that panel
+      // without a navigation, and this event is how NativeChrome says so.
+      window.addEventListener('usernode:native-session-admission',
+        () => this._publishUsernode());
       document.getElementById('settings-save').addEventListener('click', () => this.save());
       document.getElementById('settings-remove').addEventListener('click', () => this.remove());
 
@@ -3922,6 +3930,45 @@
       return this._demoParam('bridgediag') === 'demo';
     },
 
+    // ── `?bridgediag=wallet` ──────────────────────────────────────────
+    //
+    // Screenshot-state deep link for the connection panel's OTHER refusal:
+    // the secure connection is fine, but native admission reported
+    // `native_session_wallet_pool_exhausted` — no seeded wallet is left for
+    // this account. That state used to announce itself as a pop-up (the
+    // "Connect your existing wallet" dialog opened on every admission
+    // retry); it is a button on this panel now, and this link is how a
+    // browser can reach it. Same rules as `?bridgediag=demo`: a fixed
+    // snapshot, no bridge call, no writes, and the button renders disabled
+    // because there is no real session for it to recover.
+    _walletRecoveryDemo() {
+      return this._demoParam('bridgediag') === 'wallet';
+    },
+
+    DEMO_BRIDGE_DIAGNOSTICS_WALLET: {
+      isNative: true,
+      isTopFrame: true,
+      inIframe: false,
+      usesIframeRelay: false,
+      hasNativeChannel: true,
+      origin: 'https://staging.demo.invalid',
+      bridgeVersion: 5,
+      capabilities: ['getBridgeInfo', 'getSettingsState', 'logout',
+        'establishNativeSession'],
+      appVersion: '0.0.0-demo',
+      buildNumber: '0',
+      privileged: {
+        state: 'ready',
+        code: null,
+        kind: null,
+        message: 'Staging demo: no seeded wallet is available for this account',
+        at: 0,
+        attempts: 1,
+      },
+      lastErrors: {},
+      collectedAt: 0,
+    },
+
     // ── `?widgeticons=demo` ───────────────────────────────────────────
     //
     // Screenshot-state deep link for the widget-icon diagnostics box,
@@ -4077,6 +4124,7 @@
 
     _bridgeDiagnostics() {
       if (this._bridgeDiagDemo()) return this.DEMO_BRIDGE_DIAGNOSTICS;
+      if (this._walletRecoveryDemo()) return this.DEMO_BRIDGE_DIAGNOSTICS_WALLET;
       const bridge = window.usernode;
       if (!bridge || typeof bridge.getBridgeDiagnostics !== 'function') {
         return null;
@@ -4188,7 +4236,8 @@
       // device whose privileged handshake is refused.
       const bridge = window.usernode;
       const demo = this._unDemoMode();
-      const gated = this._bridgeDiagDemo() || this._widgetIconsDemo() || !!demo ||
+      const gated = this._bridgeDiagDemo() || this._walletRecoveryDemo() ||
+        this._widgetIconsDemo() || !!demo ||
         (!!bridge && bridge.isNative === true);
       // The gate resolves asynchronously downstream, so the "Usernode app"
       // menu row is only settled here — re-render the nav either way.
@@ -4957,8 +5006,9 @@
           (diag.buildNumber ? ` (${diag.buildNumber})` : ''));
       }
       bits.push(`Bridge v${diag.bridgeVersion}`);
+      const demo = !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo();
       return {
-        demo: !!this._bridgeDiagDemo(),
+        demo: !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo(),
         row: {
           label: 'Secure app connection',
           ok: state === 'ready',
@@ -4972,8 +5022,62 @@
         message: (diag.privileged && diag.privileged.message) || null,
         // Read-only hook: the buttons render so the screenshot shows the real
         // panel, but they must not touch a bridge or a session.
-        retryDisabled: !!this._bridgeDiagDemo(),
+        retryDisabled: !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo(),
+        // The pre-merge wallet recovery, offered HERE and nowhere else. It
+        // was a dialog that opened itself whenever admission failed with
+        // `native_session_wallet_pool_exhausted` — several times a session,
+        // since admission retries on every online / pageshow /
+        // visibilitychange — for what is a minor feature. Now the failure is
+        // only recorded (NativeChrome.lastSessionFailure) and this button is
+        // the one way in.
+        walletRecovery: this._walletRecoveryAvailable() ? {
+          id: 'settings-usernode-connect-wallet',
+          label: 'Connect existing wallet',
+          action: '_openWalletRecovery',
+          disabled: demo,
+        } : null,
       };
+    },
+
+    WALLET_POOL_EXHAUSTED: 'native_session_wallet_pool_exhausted',
+
+    // True when the LAST native admission attempt was refused because no
+    // seeded wallet is left for this account and the session is still not
+    // admitted — the one state the recovery dialog can do anything about.
+    // Clears itself: a successful admission nulls _lastSessionFailure, and
+    // `usernode:native-session-admission` (bound in init) republishes the
+    // panel so the button goes away without a navigation.
+    _walletRecoveryAvailable() {
+      if (this._walletRecoveryDemo()) return true;
+      const nc = window.NativeChrome;
+      if (!nc || typeof nc.lastSessionFailure !== 'function' ||
+          typeof nc.isSessionAdmitted !== 'function') return false;
+      if (nc.isSessionAdmitted()) return false;
+      const failure = nc.lastSessionFailure();
+      if (!failure || failure.code !== this.WALLET_POOL_EXHAUSTED) return false;
+      const dialogs = window.UsernodeReact && window.UsernodeReact.dialogs;
+      return !!(dialogs && dialogs.walletRecovery &&
+        typeof dialogs.walletRecovery.open === 'function');
+    },
+
+    // The button's action. Opens features/dialogs/wallet-recovery.tsx for the
+    // signed-in user; the dialog replays the same admission attempt once the
+    // wallet is claimed, and the admission event above repaints this panel.
+    _openWalletRecovery() {
+      if (this._walletRecoveryDemo()) {
+        throw new Error('Staging demo: there is no session to recover here.');
+      }
+      const dialogs = window.UsernodeReact && window.UsernodeReact.dialogs;
+      const dialog = dialogs && dialogs.walletRecovery;
+      if (!dialog || typeof dialog.open !== 'function') {
+        throw new Error('Wallet recovery is not available on this screen.');
+      }
+      const raw = window.App && App.user ? App.user.id : null;
+      const userId = raw == null ? '' : String(raw);
+      if (!/^[1-9][0-9]*$/.test(userId)) {
+        throw new Error('Sign in before connecting a wallet.');
+      }
+      dialog.open({ userId });
     },
 
     _usernodeBodyView() {

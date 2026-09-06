@@ -886,6 +886,12 @@
       "expectText": "Nothing featured right now"
     },
     {
+      "name": "Adding from Discover lands in Your apps with no reload, and removing takes it out again (#1567)",
+      "path": "/?shot=discover-add",
+      "expectSelector": "body[data-shot-add=\"round-trip\"] #home-apps-section #app-list",
+      "expectText": "Your apps"
+    },
+    {
       "name": "The launcher grid shows two rows by default, with a way to the rest",
       "path": "/?demo=1",
       "expectSelector": "#home-body #home-apps-section #home-apps-more:not(.hidden) button",
@@ -1213,6 +1219,18 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Waitlist countries are one flat list, so Switzerland is a top-level option (#1527)",
+      "path": "/?shot=anon#waitlist",
+      "expectSelector": "#waitlist-country > option[value=\"CH\"]",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist countries start at A, with Aland Islands sorted as an A (#1527)",
+      "path": "/?shot=anon#waitlist",
+      "expectSelector": "#waitlist-country > option:nth-child(3)[value=\"AX\"]",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Landing CTA area is a compact link, not the survey",
       "path": "/?shot=anon#landing",
       "expectSelector": "#landing-waitlist a[href=\"#waitlist\"]",
@@ -1249,6 +1267,13 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Waitlist confirmed state names the registered address",
+      "path": "/?shot=waitlist-confirmed",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-confirmed-email:not(.hidden)",
+      "expectText": "Registered with",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Stage-2 survey says where a pending signup stands",
       "path": "/?shot=waitlist-more#more/deaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddead",
       "expectSelector": "#more-form #more-status-pill",
@@ -1260,6 +1285,13 @@
       "path": "/?shot=waitlist-more#more/cafecafecafecafecafecafecafecafecafecafecafecafe",
       "expectSelector": "#more-form #more-status-pill",
       "expectText": "You're in",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Stage-2 survey names the address the signup was made with",
+      "path": "/?shot=waitlist-more#more/beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef",
+      "expectSelector": "#more-form #more-signup-email",
+      "expectText": "staging-demo-waitlist-confirmed@example.invalid",
       "allowConsoleErrors": true
     },
     {
@@ -1965,15 +1997,35 @@
       "expectText": "[Mock] Did the notifications change land yet?"
     },
     {
-      "name": "The Messages screen draws a real head over its conversation list",
+      "name": "The Messages screen draws its title over the conversation list, on the frosted strip",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout .messages-list-pane .messages-list-toolbar .messages-list-title h2",
-      "expectText": "Direct and group conversations"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.dc-lift.dc-lift-strip .messages-list-pane .messages-list-toolbar .messages-list-title h2",
+      "expectText": "Messages"
     },
     {
       "name": "...and a styled empty pane where the conversation goes",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden) .messages-layout .messages-thread-pane.messages-no-selection"
+    },
+    {
+      "name": "A conversation row carries the name, the time and the unread count on the language's two lines",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-conversation-row .messages-row-line .messages-row-name + .messages-row-time-unread"
+    },
+    {
+      "name": "A direct conversation is a bubble transcript on the frosted sheet, with your own turn tinted on the right",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct .messages-message-bubble.messages-message-self .messages-bubble-wrap .messages-bubble"
+    },
+    {
+      "name": "...and the sheet carries the conversation's own title row",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift-session .messages-thread-header .messages-thread-name + .messages-thread-sub"
+    },
+    {
+      "name": "A group conversation is a named-row transcript",
+      "path": "/?demo=1#messages/910002",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-message:not(.messages-message-bubble) .messages-message-head time"
     },
     {
       "name": "The notifications strip reads Unread, Messages, All — and opens on Unread",
@@ -2165,6 +2217,12 @@
       "path": "/#settings/usernode?bridgediag=demo",
       "expectSelector": "#settings-usernode-connection #settings-usernode-connection-retry + #settings-usernode-connection-copy",
       "expectText": "Force-close the app and reopen it"
+    },
+    {
+      "name": "Wallet recovery is a Settings button, not a pop-up: the connection panel offers it when no seeded wallet is left",
+      "path": "/#settings/usernode?bridgediag=wallet",
+      "expectSelector": "#settings-usernode-connection #settings-usernode-wallet-recovery p + button#settings-usernode-connect-wallet[disabled]",
+      "expectText": "Connect existing wallet"
     },
     {
       "name": "The in-app notifications row is itself a control, so tapping it can't do nothing (#1193)",
@@ -2571,6 +2629,18 @@
       "name": "Admin Waitlist is a first-class menu section (#1179)",
       "path": "/#admin/waitlist",
       "expectSelector": "#admin-topo-content"
+    },
+    {
+      "name": "Admin Waitlist says where a signup is in words, not the route's name (#1544)",
+      "path": "/#admin/waitlist",
+      "expectSelector": "#admin-topo-wl-table",
+      "expectText": "Waiting"
+    },
+    {
+      "name": "Admin Waitlist counts answered sections against the live total (#1544)",
+      "path": "/#admin/waitlist",
+      "expectSelector": "#admin-topo-wl-table",
+      "expectText": "of 7 answered"
     },
     {
       "name": "Legacy #admin/seasons/<screen> addresses still deep-link their promoted section (#1179)",
@@ -3021,7 +3091,7 @@
     },
     {
       "name": "Feed issue rows show recent comments with relative ages (#1585)",
-      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "path": "/?demo=1&shot=feed-comments&view=feed#app/usernode-2d5619/dev",
       "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time"
     },
     {
